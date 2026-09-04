@@ -23,6 +23,7 @@
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
+
 /* Begin PBXFrameworksBuildPhase section */
 		DA7F47802FBA52C1004F3E72 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -68,7 +69,6 @@
 			);
 			fileSystemSynchronizedGroups = (
 				DA7F47A42FBA543B004F3E72 /* objekat */,
-				DAA3BB1B2FBA6A8A009014E3 /* OBJEKAT - claude project */,
 			);
 			name = objekat;
 			packageProductDependencies = (
