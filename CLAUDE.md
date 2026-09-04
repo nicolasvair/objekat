@@ -37,8 +37,11 @@ own history was rewritten on 4 September; `494e91d2ff5` is still its ancestor.
 An engine series of **29** patches in `engine-patches/3.5/`, numbered `0001`→`0031` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). The next one will be `0032`. It is the ONLY series left: the four archives of
-the 3.2 base went out on 4 September, with the engine branch they rebuild, into
-`../objekat-archive-3.2/` — they insured only `sav-moteur-en-pistes`, which is published nowhere.
+the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
+they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
+that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
+v3.2.0), is still in the local clone `tracktion_engine/` of this machine, and that clone is now
+its ONLY copy — a `git branch -D objekat-patches` there would be the point of no return.
 
 What has landed since mid-August, in order:
 

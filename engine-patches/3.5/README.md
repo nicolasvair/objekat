@@ -3,10 +3,11 @@
 This is the **live** series: `main` has been running on it since 2026-08-08. The app is on
 **tracktion 3.5.0** (`origin/develop` of the official repository, base `494e91d2ff5`) and JUCE
 **8.0.13** (`37c894f`). It is also the ONLY series this repository carries: the four archives
-of the abandoned 3.2 base left on 2026-09-04, when the repository was opened — they insured
-nothing but the local branch `sav-moteur-en-pistes`, which is published nowhere. They were not
-destroyed: they sit, with the engine branch they rebuild, in `objekat-archive-3.2/` beside the
-repository on the author's machine.
+of the abandoned 3.2 base left on 2026-09-04, when the repository was opened, and were deleted
+the same day — they insured nothing but the local branch `sav-moteur-en-pistes`, which is
+published nowhere. What they rebuilt survives all the same: the engine branch `objekat-patches`
+(head `8d4f23711df`, base Tracktion v3.2.0) is still in the local clone of `tracktion_engine/`
+on the author's machine, which is now its only copy.
 
 The submodule pointer is tracked by git, so:
 
@@ -277,8 +278,9 @@ Checked as still biting: `develop` still had the linear `std::find`.
   loop until the app was restarted. An `else if (localPlayHead.isLooping())` restores the
   symmetry: what arms disarms.
 
-**Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (in the
-archive outside this repository, its only copy) and the commit
+**Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
+`.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
+branch `objekat-patches`) and the commit
 "A dynamic time offset for clips in nested groups". They serve only the
 `DynamicOffsetNode` path, which this branch abandons in favour of `ContainerClipNode`
 (step 1). `develop` has its own `setDynamicOffsetBeats` anyway.
