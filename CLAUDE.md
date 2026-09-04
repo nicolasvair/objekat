@@ -16,16 +16,29 @@ memo keeps only the state and the traps.
 
 ---
 
-## Current state (2 September 2026)
+## Current state (4 September 2026)
 
-Branch: `claude/multilingual-ui-translation-1x8d35`, **37 commits ahead of `main` and not
-merged** (`main` is still at `b7b8a97`); pushed to its own remote except the last commit.
+Branch: `main`, and **the repository is open source** at `github.com/nicolasvair/objekat`.
+What the public sees is **ONE commit** (`c89bfb0`): on 4 September 2026 the history was
+squashed for publication. It is not lost — it is here, and only here. `git log` shows 728
+commits on this machine because a **graft** (`git replace`, `refs/replace/`) hangs the old
+history under the initial commit. That graft is local by nature and is NEVER pushed; the
+branch `history` holds the old tip so that a `git gc` cannot take it. The consequence for a
+session: **never `git push --mirror`** on this repository — it would send the graft, hence the
+whole history. A second copy lives outside the repository, in
+`../objekat-historique-avant-greffe-2026-09-04.bundle`.
+Four local branches are published NOWHERE and must stay that way: `history`,
+`sav-moteur-en-pistes`, `claude/tracktion-au-seamless-swap-j2t708` and
+`claude/multilingual-ui-translation-1x8d35` (the last two are stale, the first two are not).
 Engine base **tracktion 3.5**, in `tracktion_engine/` — the folder carried the version in its
 name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump); it no
-longer does, so it can no longer go stale.
+longer does, so it can no longer go stale. The fork's branch is at `f7fd2e9fd45` since its
+own history was rewritten on 4 September; `494e91d2ff5` is still its ancestor.
 An engine series of **29** patches in `engine-patches/3.5/`, numbered `0001`→`0031` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0032`.
+(see its README). The next one will be `0032`. It is the ONLY series left: the four archives of
+the 3.2 base went out on 4 September, with the engine branch they rebuild, into
+`../objekat-archive-3.2/` — they insured only `sav-moteur-en-pistes`, which is published nowhere.
 
 What has landed since mid-August, in order:
 
@@ -112,7 +125,9 @@ a second one elsewhere. The most exposed points:
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged
-commit, laid on 19 August: plan a **rebase**, not a blind merge.
+commit, laid on 19 August: plan a **rebase**, not a blind merge. It is now **local only** —
+it left the remote when the history was squashed — and it shares no ancestor with the
+published `main`, so a cherry-pick is the likely tool rather than a merge.
 [[tracktion-au-seamless-swap]].
 
 ---

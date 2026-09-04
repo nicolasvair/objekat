@@ -2,8 +2,11 @@
 
 This is the **live** series: `main` has been running on it since 2026-08-08. The app is on
 **tracktion 3.5.0** (`origin/develop` of the official repository, base `494e91d2ff5`) and JUCE
-**8.0.13** (`37c894f`). The 3.2 base is now used only by the branch
-`sav-moteur-en-pistes` — see `../3.2/README.md`.
+**8.0.13** (`37c894f`). It is also the ONLY series this repository carries: the four archives
+of the abandoned 3.2 base left on 2026-09-04, when the repository was opened — they insured
+nothing but the local branch `sav-moteur-en-pistes`, which is published nowhere. They were not
+destroyed: they sit, with the engine branch they rebuild, in `objekat-archive-3.2/` beside the
+repository on the author's machine.
 
 The submodule pointer is tracked by git, so:
 
@@ -24,7 +27,8 @@ private. `tools/rebuild-engine.sh` automates the "from scratch" procedure below,
 
 ## Contents
 
-The 3.5 ports of the performance patches of the 3.2 branch (`../3.2/0003`, `../3.2/0004`, `../3.2/0005`).
+The 3.5 ports of the three performance patches of the old 3.2 branch (its `0003`, `0004` and
+`0005`, now in the archive outside this repository).
 Checked as still biting: `develop` still had the linear `std::find`.
 
 - `0001` — removes two N²s in the rebuilding of the graph (`VisitedNodes` with a
@@ -273,7 +277,8 @@ Checked as still biting: `develop` still had the linear `std::find`.
   loop until the app was restarted. An `else if (localPlayHead.isLooping())` restores the
   symmetry: what arms disarms.
 
-**Not carried over:** `../3.2/0002-wavenode-dynamic-offset-time-for-varispeed` and the commit
+**Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (in the
+archive outside this repository, its only copy) and the commit
 "A dynamic time offset for clips in nested groups". They serve only the
 `DynamicOffsetNode` path, which this branch abandons in favour of `ContainerClipNode`
 (step 1). `develop` has its own `setDynamicOffsetBeats` anyway.

@@ -45,7 +45,7 @@ OBJEKAT/
 ├── OBJEKAT_work_plan.md                   # the 2026 plan/roadmap
 ├── Mémoire - Objekat - Nicolas Vercambre 2016.pdf
 ├── objekat/                               # Swift sources + the Obj-C++ bridge
-├── engine-patches/                        # the engine's .patch archives (3.5/ active, 3.2/ a safety net)
+├── engine-patches/3.5/                    # the engine's .patch archives — the live series
 ├── tools/                                 # CLI, MCP, test scenarios
 └── tracktion_engine/                # the audio engine, a submodule (version 3.5)
     └── modules/juce/                       # a sub-submodule, branch objekat-patches-3.5
