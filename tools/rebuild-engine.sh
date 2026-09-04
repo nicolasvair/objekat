@@ -2,23 +2,31 @@
 #
 # Rebuilds OBJEKAT's audio engine from the archives in engine-patches/3.5/.
 #
-# Why this script exists: the `tracktion_engine/` submodule points at Tracktion's
-# OFFICIAL repository, but the commit it references is the one on the local branch
-# `objekat-patches-3.5`, which is pushed nowhere. On a fresh machine,
-# `git submodule update --init --recursive` therefore fails with:
+# Why this script exists: it is the SAFETY NET, not the way in. Since 3 September 2026 the
+# `tracktion_engine/` submodule points at a fork that carries the patched branch, and a plain
+# `git clone --recurse-submodules` brings the engine down on its own. Before that, the gitlink
+# named a branch pushed nowhere, and a third-party clone failed with:
 #
 #     fatal: remote error: upload-pack: not our ref d74e7b5…
 #
-# The engine is REbuilt: the pinned official bases plus the series of patches, whole and in
-# order. That is what this script does.
+# Should that come back — the fork moved, was renamed, or went private — the engine is
+# REbuilt here: the pinned official bases plus the series of patches, whole and in order.
+#
+# Where it clones from: the URL in .gitmodules (the fork) by default, since that is a plain
+# clone of Tracktion and holds the pinned base. If it is unreachable, the script falls back on
+# Tracktion's OFFICIAL repository by itself — the base commit lives there too, and the patches
+# do the rest. So the rebuild holds even if every fork disappeared.
 #
 # Usage:
-#     tools/rebuild-engine.sh [--force] [--patches-dir=engine-patches/3.5]
+#     tools/rebuild-engine.sh [--force] [--patches-dir=engine-patches/3.5] [--tracktion-url=URL]
 #
-#     --force   overwrites an `objekat-patches-3.5` branch already present in the submodules.
-#     --ssh     keeps the SSH URLs as they are (by default they are switched to HTTPS: the
-#               tracktion .gitmodules names juce as `git@github.com:`, which requires an SSH
-#               key registered on GitHub — needless just to read the repository).
+#     --force            overwrites an `objekat-patches-3.5` branch already present in the
+#                        submodules.
+#     --ssh              keeps the SSH URLs as they are (by default they are switched to HTTPS:
+#                        the tracktion .gitmodules names juce as `git@github.com:`, which
+#                        requires an SSH key registered on GitHub — needless just to read the
+#                        repository).
+#     --tracktion-url=   clones tracktion from this URL instead of the one in .gitmodules.
 #
 # No effect outside this machine: no push, nothing written outside the repository.
 
@@ -29,6 +37,8 @@ TE_DIR="tracktion_engine"
 TE_BASE="494e91d2ff5"                                    # develop at 2026-08-08
 JUCE_BASE="37c894f83d379179b2070d437ccd0f1cd9af9576"     # JUCE 8.0.13
 PATCHES_REL="engine-patches/3.5"
+TE_UPSTREAM="https://github.com/Tracktion/tracktion_engine.git"   # the fallback, if the fork is gone
+TE_URL_ARG=""
 FORCE=0
 KEEP_SSH=0
 
@@ -37,7 +47,8 @@ for arg in "$@"; do
         --force)         FORCE=1 ;;
         --ssh)           KEEP_SSH=1 ;;
         --patches-dir=*) PATCHES_REL="${arg#*=}" ;;
-        -h|--help)       sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --tracktion-url=*) TE_URL_ARG="${arg#*=}" ;;
+        -h|--help)       sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)               echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -77,19 +88,33 @@ TE_PATCHES=()
 while IFS= read -r p; do TE_PATCHES+=("$p"); done < <(ls "$PATCHES"/0*.patch | grep -v '/0010-')
 [ "${#TE_PATCHES[@]}" -gt 0 ] || die "no tracktion patch in $PATCHES_REL."
 
-TE_URL="$(to_https "$(git config -f "$ROOT/.gitmodules" --get "submodule.$TE_DIR.url" || true)")"
+TE_URL="$TE_URL_ARG"
+[ -n "$TE_URL" ] || TE_URL="$(git config -f "$ROOT/.gitmodules" --get "submodule.$TE_DIR.url" || true)"
+TE_URL="$(to_https "$TE_URL")"
 [ -n "$TE_URL" ] || die "URL of submodule $TE_DIR not found in .gitmodules."
 
-clone_if_needed() {  # <directory> <url> <what>
-    local dir="$1" url="$2" what="$3"
+clone_if_needed() {  # <directory> <url> <what> [fallback-url]
+    local dir="$1" url="$2" what="$3" fallback="${4:-}"
     if [ -e "$dir/.git" ]; then
         say "$what: repository already present, fetching what is new"
         git -C "$dir" fetch --tags origin
-    else
-        say "$what: cloning from $url (long, it is a large repository)"
-        mkdir -p "$dir"
-        git clone "$url" "$dir"
+        return
     fi
+    say "$what: cloning from $url (long, it is a large repository)"
+    mkdir -p "$dir"
+    if git clone "$url" "$dir"; then
+        return
+    fi
+    # The fork is unreachable — the very case this script exists for. The official repository
+    # holds the pinned base just as well; the patches do the rest.
+    if [ -z "$fallback" ] || [ "$fallback" = "$url" ]; then
+        die "$what: cloning from $url failed."
+    fi
+    say "$what: $url is unreachable, falling back on $fallback"
+    # A failed clone cleans up after itself; rmdir only ever removes an EMPTY directory, so
+    # nothing of yours can go with it. If something is left, git says so below.
+    rmdir "$dir" 2>/dev/null || true
+    git clone "$fallback" "$dir" || die "$what: cloning from $fallback failed too."
 }
 
 branch_guard() {  # <directory> <what>
@@ -102,7 +127,7 @@ branch_guard() {  # <directory> <what>
     fi
 }
 
-clone_if_needed "$TE" "$TE_URL" "tracktion"
+clone_if_needed "$TE" "$TE_URL" "tracktion" "$TE_UPSTREAM"
 
 JUCE_URL="$(git config -f "$TE/.gitmodules" --get "submodule.modules/juce.url" \
          || git config -f "$TE/.gitmodules" --get "submodule.juce.url" || true)"

@@ -55,10 +55,16 @@ cd objekat
 tools/rebuild-engine.sh
 ```
 
-The script clones the two official repositories, lays down the pinned bases (Tracktion
-`494e91d2ff5`, JUCE `37c894f83d3`), and applies the whole series in order onto Tracktion. JUCE
-needs no patch and no branch: it settles on the commit Tracktion pins. The script pushes nothing
-and writes nothing outside the repository.
+The script lays down the pinned bases (Tracktion `494e91d2ff5`, JUCE `37c894f83d3`) and applies
+the whole series in order onto Tracktion. JUCE needs no patch and no branch: it settles on the
+commit Tracktion pins. The script pushes nothing and writes nothing outside the repository.
+
+**Where it clones Tracktion from** is worth being precise about, since it is what the safety net
+rests on. By default the URL in `.gitmodules` — the fork — because it is a plain clone of
+Tracktion and carries the pinned base. If it does not answer, the script falls back on
+`Tracktion/tracktion_engine` by itself: the base commit lives there just as well, and the patches
+do the rest. `--tracktion-url=URL` forces the choice. So the rebuild really does hold even if
+every fork disappeared — which is the whole point of path B.
 
 The equivalent manual procedure, and the detail of what each patch does, are in
 [`engine-patches/3.5/README.md`](engine-patches/3.5/README.md) — with one snag the script takes
@@ -67,7 +73,10 @@ registered on GitHub. The patches also apply with `git am --keep-cr`, which is n
 braces rather than a requirement — only the JUCE sources were CRLF.
 
 The rebuild has been verified end to end on 3 September 2026: the patches applied onto the
-pinned base, clean tree, and `modules/juce` on `37c894f83d379179b2070d437ccd0f1cd9af9576`.
+pinned base, clean tree, and `modules/juce` on `37c894f83d379179b2070d437ccd0f1cd9af9576`. The
+fallback onto the official repository was added on 4 September and exercised on its own (an
+unreachable URL, the switch, a clone that succeeds), not through a full rebuild — what has been
+checked upstream is that both pinned bases are still there.
 
 ### Two traps, once the engine is rebuilt
 

@@ -5,7 +5,7 @@ automatically** at the start of a session: no more hoping somebody thinks to ope
 
 The documents that are the authority, to be opened as needed:
 
-- `OBJEKAT - claude project/README.md` — the project, its concept, its progress.
+- `README.md` (at the root, and what GitHub shows) — the project, its concept, its progress.
 - `OBJEKAT - claude project/docs/architecture_decisions.md` — the architecture decisions.
 - `OBJEKAT - claude project/docs/command_api.md` — the command API, the launch arguments,
   driving by script.

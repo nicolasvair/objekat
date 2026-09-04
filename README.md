@@ -21,9 +21,9 @@ A DAW where every sound is an object carrying its own attributes (position in ti
 
 The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic (series and parallel), MIDI clips + a piano roll, **sound objects** (one baked definition reused in N places; opening one instance edits the shared content, closing it resynchronises all the others), **automation** through curves that travel with the object, and the **loop** of a clip, of a group or of a MIDI clip.
 
-It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See `docs/command_api.md`.
+It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See [`docs/command_api.md`](OBJEKAT%20-%20claude%20project/docs/command_api.md).
 
-See `docs/architecture_decisions.md` and `CLAUDE.md`, at the root of the repository (current state / next steps).
+See [`docs/architecture_decisions.md`](OBJEKAT%20-%20claude%20project/docs/architecture_decisions.md) and [`CLAUDE.md`](CLAUDE.md) (current state / next steps).
 
 ## Technical stack
 
@@ -35,25 +35,29 @@ See `docs/architecture_decisions.md` and `CLAUDE.md`, at the root of the reposit
 ## Folder structure
 
 ```
-OBJEKAT/
-├── CLAUDE.md                              # (at the ROOT of the repository) the continuity memo,
-│                                          #   loaded automatically by Claude Code
-├── INSTALL.md                             # (at the ROOT) installing and building on a fresh
-│                                          #   machine — the engine is NOT in the repository
-├── README.md                              # this file
-├── OBJEKAT_thesis_digest.md               # a structured digest of the 2016 thesis
-├── OBJEKAT_work_plan.md                   # the 2026 plan/roadmap
-├── Mémoire - Objekat - Nicolas Vercambre 2016.pdf
-├── objekat/                               # Swift sources + the Obj-C++ bridge
-├── engine-patches/3.5/                    # the engine's .patch archives — the live series
-├── tools/                                 # CLI, MCP, test scenarios
-└── tracktion_engine/                # the audio engine, a submodule (version 3.5)
-    └── modules/juce/                       # a sub-submodule, branch objekat-patches-3.5
+objekat/
+├── README.md                     # this file
+├── INSTALL.md                    # installing and building on a fresh machine — the
+│                                 #   engine is NOT in the repository
+├── CLAUDE.md                     # the continuity memo, loaded automatically by Claude Code
+├── LICENSE  NOTICE               # the AGPLv3, and the third-party components
+├── objekat/                      # Swift sources + the Obj-C++ bridge
+├── objekat.xcodeproj             # the Xcode project — target and scheme `objekat`
+├── lame-3.100/                   # LAME, vendored and cut down to what is compiled
+├── engine-patches/3.5/           # the engine's .patch archives — the live series
+├── tools/                        # CLI, MCP, test scenarios, i18n
+├── tracktion_engine/             # the audio engine, a submodule (version 3.5, patched)
+│   └── modules/juce/             # a sub-submodule, on an official JUCE commit
+└── OBJEKAT - claude project/     # the reference documents
+    ├── OBJEKAT_thesis_digest.md  # a structured digest of the 2016 thesis
+    ├── OBJEKAT_work_plan.md      # the 2026 plan/roadmap
+    ├── Mémoire - Objekat - Nicolas Vercambre 2016.pdf
+    └── docs/                     # architecture decisions, command API, glossary
 ```
 
 > The engine comes down with a `git clone --recurse-submodules`: the submodule points at the
 > fork that carries the patched branch, and `modules/juce` at an official commit. On a fresh
-> machine, see [`INSTALL.md`](../INSTALL.md) — and `tools/rebuild-engine.sh` if ever the fork
+> machine, see [`INSTALL.md`](INSTALL.md) — and `tools/rebuild-engine.sh` if ever the fork
 > were no longer reachable.
 >
 > Reapplying the patches after a clone or a bump: `engine-patches/3.5/README.md`. The series is
@@ -61,9 +65,9 @@ OBJEKAT/
 
 ## Reference documents
 
-- **[Thesis digest](OBJEKAT_thesis_digest.md)** — concepts, ergonomics, features. To be read first to understand OBJEKAT.
-- **[Work plan](OBJEKAT_work_plan.md)** — architecture, phases, milestones, risks. To be read to know what to do.
-- **[The original thesis (PDF, in French)](Mémoire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)** — 137 pages, the primary source.
+- **[Thesis digest](OBJEKAT%20-%20claude%20project/OBJEKAT_thesis_digest.md)** — concepts, ergonomics, features. To be read first to understand OBJEKAT.
+- **[Work plan](OBJEKAT%20-%20claude%20project/OBJEKAT_work_plan.md)** — architecture, phases, milestones, risks. To be read to know what to do.
+- **[The original thesis (PDF, in French)](OBJEKAT%20-%20claude%20project/M%C3%A9moire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)** — 137 pages, the primary source.
 
 ## Guiding principles
 
@@ -74,8 +78,17 @@ OBJEKAT/
 
 ## Getting started
 
-- Installing and building on a fresh machine: [INSTALL.md](../INSTALL.md), at the root of the repository.
-- Picking up the thread of development: [CLAUDE.md](../CLAUDE.md), at the root of the repository.
+```sh
+git clone --recurse-submodules https://github.com/nicolasvair/objekat
+cd objekat
+xcodebuild -project objekat.xcodeproj -scheme objekat -configuration Debug build
+```
+
+macOS 15.6 and Xcode 26.2. The `--recurse-submodules` is not optional: it is what brings the
+patched engine down. The project signs ad hoc — no Apple account, no development team.
+
+- The detail, and what to do if the clone fails: [INSTALL.md](INSTALL.md).
+- Picking up the thread of development: [CLAUDE.md](CLAUDE.md) — the state of play and the traps.
 
 ## Contact
 
@@ -86,7 +99,7 @@ that reaches a human.
 
 ## Licence
 
-OBJEKAT is free software, under the **[GNU Affero General Public License v3](../LICENSE)** or
+OBJEKAT is free software, under the **[GNU Affero General Public License v3](LICENSE)** or
 later. Copyright © 2026 Nicolas Vair.
 
 The Affero clause is inherited rather than chosen: the app is built on Tracktion Engine, which
@@ -95,5 +108,5 @@ run on one's own machine that clause never comes into play — it is about users
 the software remotely, over a network.
 
 The third-party components and their respective licences — Tracktion Engine (GPL3), JUCE
-(AGPLv3), LAME (LGPL2 or later) — are listed in [NOTICE](../NOTICE), which also sets out the
+(AGPLv3), LAME (LGPL2 or later) — are listed in [NOTICE](NOTICE), which also sets out the
 reasoning in full.
