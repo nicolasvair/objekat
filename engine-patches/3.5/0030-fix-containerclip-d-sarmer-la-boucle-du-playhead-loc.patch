@@ -1,0 +1,61 @@
+From d74e7b542b327bbb279bc07e6bd8dc548d21b5b1 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 19:44:03 +0200
+Subject: [PATCH] =?UTF-8?q?fix(containerclip)=20:=20d=C3=A9sarmer=20la=20b?=
+ =?UTF-8?q?oucle=20du=20playhead=20local=20quand=20la=20plage=20est=20vide?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`process()` ne savait qu'ARMER la boucle : `if (! loopRangeSamples.isEmpty() &&
+…) localPlayHead.setLoopRange (true, …)`. Une plage devenue VIDE — la façon
+même dont le modèle dit « plus de boucle » — ne déclenchait donc rien, et
+personne d'autre ne désarmait ce playhead.
+
+Ça n'aurait été qu'un oubli sans conséquence si le playhead mourait avec le
+graphe. Mais il appartient au PlayerContext, que `prepareToPlay` reprend du
+graphe précédent pour garder la continuité du container : il SURVIT aux
+reconstructions. Couper la boucle d'un groupe reconstruisait donc bien le
+graphe, remettait bien `ContainerClip::setLoopRange({})` — et le playhead local
+continuait de replier comme avant. Le groupe restait en boucle jusqu'au
+redémarrage de l'app.
+
+Un `else if (localPlayHead.isLooping())` rétablit la symétrie : ce qui arme
+désarme. `updatePosition` reste à false, la position est posée manuellement
+juste en dessous, comme pour l'armement.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_ContainerClipNode.cpp        | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 59d5058a611..982dc9c68c8 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -200,8 +200,20 @@ void ContainerClipNode::process (ProcessContext& pc)
+     localPlayHead.setReferenceSampleRange (pc.referenceSampleRange);
+ 
+     // We don't want to update the playhead position as we'll do that manually below to avoid triggering playhead jumps
+-    if (! loopRangeSamples.isEmpty() && localPlayHead.getLoopRange() != loopRangeSamples)
+-        localPlayHead.setLoopRange (true, loopRangeSamples, false);
++    if (! loopRangeSamples.isEmpty())
++    {
++        if (localPlayHead.getLoopRange() != loopRangeSamples)
++            localPlayHead.setLoopRange (true, loopRangeSamples, false);
++    }
++    // Patch local Objekat — une plage VIDE veut dire « plus de boucle », et il faut le DIRE au
++    // playhead local. La branche ci-dessus ne sait qu'ARMER une boucle ; personne ne la
++    // désarmait jamais. Or ce playhead appartient au PlayerContext, que `prepareToPlay` reprend
++    // du graphe précédent pour garder la continuité : il SURVIT aux reconstructions. Couper la
++    // boucle d'un groupe (`ContainerClip::setLoopRange({})`, posé par updateGroupWindow:)
++    // reconstruisait donc bien le graphe, mais le playhead local continuait de replier — le
++    // groupe jouait en boucle jusqu'au redémarrage de l'app.
++    else if (localPlayHead.isLooping())
++        localPlayHead.setLoopRange (false, {}, false);
+ 
+     // Syncronise positions
+     const auto playheadOffset = toSamples (editStartTimeOfLocalTimeline, sampleRate);
+-- 
+2.50.1 (Apple Git-155)
+

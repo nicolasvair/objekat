@@ -1,0 +1,97 @@
+From 448909a2d5f78122bae00ddb943b679bd8b32ed8 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 13 Aug 2026 15:53:19 +0200
+Subject: [PATCH] =?UTF-8?q?fix(clips):=20findClipForID=20descend=20dans=20?=
+ =?UTF-8?q?les=20containers=20imbriqu=C3=A9s,=20=C3=A0=20toute=20profondeu?=
+ =?UTF-8?q?r?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`findClipForID (const Edit&, EditItemID)` promet « le clip de cet ID s'il est dans
+l'Edit », mais ne descendait que d'UN niveau de container : il balaie les
+`ContainerClip` posés DIRECTEMENT sur la piste (`getTrackItemsOfType`, qui ne récurse
+pas), puis déléguait à la surcharge `findClipForID (ClipOwner&, EditItemID)`, plate elle
+aussi (simple boucle sur `co.getClips()`). Profondeur 0 et 1 : trouvé. Profondeur ≥ 2 :
+nullptr, en silence.
+
+Deux groupes regroupés dans un troisième mettent les clips à la profondeur 2 — cas
+banal, et le défaut ne se signale pas : l'appelant reçoit nullptr et perd les propriétés
+du clip sans que rien n'échoue. `Plugin::getOwnerClip()` en est le consommateur le plus
+exposé (il délègue directement ici) : côté Objekat, `ObjGainPlugin` n'y voyait plus la
+configuration de canaux du clip porteur, `sourceIsMono` restait faux, et un fichier mono
+ne partait jamais vers le canal droit — audible franchement à gauche dès qu'on
+regroupait deux groupes. `createNodeForPlugin` y perd de la même façon son plafond
+`maxNumChannels`.
+
+Le correctif est un helper récursif local, qui court-circuite au premier match plutôt que
+de bâtir un tableau. Il descend sur `dynamic_cast<ClipOwner*>` et non sur `ContainerClip`,
+pour suivre l'idiome déjà posé par `getClipsOfTypeRecursive`.
+
+La surcharge `findClipForID (ClipOwner&, EditItemID)` n'est PAS touchée : sa
+documentation dit « if the ClipOwner contains it », ses appelants demandent bien cette
+question-là, et son seul appelant interne était précisément la ligne corrigée ici.
+
+Restent atteints du même défaut, hors périmètre de ce commit faute de pouvoir en mesurer
+les effets : `visitAllTrackItems` (donc `findClipForState (const Edit&, ValueTree)`, qui
+en dérive) et `containsClip`, qui s'arrêtent au même premier niveau.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../model/edit/tracktion_EditUtilities.cpp    | 31 ++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp b/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
+index 0d15e1c96e4..294478a0b6c 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
++++ b/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
+@@ -734,6 +734,29 @@ int findClipSlotIndex (ClipSlot& slot)
+ 
+ 
+ //==============================================================================
++/** Searches a ClipOwner and every ContainerClip nested inside it, at any depth.
++
++    The flat findClipForID (ClipOwner&, EditItemID) is deliberately shallow — it answers
++    "does this owner contain it", which is what its callers ask. The Edit-level lookup below
++    promises something else ("if contained in the Edit"), so it has to descend all the way.
++*/
++static Clip* findClipForIDRecursive (ClipOwner& owner, EditItemID clipID)
++{
++    for (auto c : owner.getClips())
++    {
++        if (c->itemID == clipID)
++            return c;
++
++        // Any clip that owns clips, matching getClipsOfTypeRecursive's idiom rather than
++        // naming ContainerClip — today's only such type, but not necessarily tomorrow's.
++        if (auto nested = dynamic_cast<ClipOwner*> (c))
++            if (auto found = findClipForIDRecursive (*nested, clipID))
++                return found;
++    }
++
++    return {};
++}
++
+ Clip* findClipForID (const Edit& edit, EditItemID clipID)
+ {
+     Clip* result = nullptr;
+@@ -746,9 +769,15 @@ Clip* findClipForID (const Edit& edit, EditItemID clipID)
+                                           return false;
+                                       }
+ 
++                                      // Descend through NESTED containers, not just the ones sitting
++                                      // directly on the track. Stopping at the first level made this
++                                      // return nullptr for any clip two groups deep — a group inside a
++                                      // group — and every caller then silently lost the clip's
++                                      // properties: Plugin::getOwnerClip() is the one that hurt, a mono
++                                      // source no longer reporting itself as mono.
+                                       for (auto cc : getTrackItemsOfType<ContainerClip> (t))
+                                       {
+-                                          if (auto c = findClipForID (*cc, clipID))
++                                          if (auto c = findClipForIDRecursive (*cc, clipID))
+                                           {
+                                               result = c;
+                                               return false;
+-- 
+2.50.1 (Apple Git-155)
+

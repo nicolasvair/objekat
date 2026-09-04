@@ -1,0 +1,73 @@
+From f62e0fc8ff10bd0bf5c64426688b3dccc13a4610 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Tue, 11 Aug 2026 01:29:42 +0200
+Subject: [PATCH] =?UTF-8?q?fix(plugins):=20une=20PluginList=20accepte=20l'?=
+ =?UTF-8?q?arbre=20<BRANCH>=20d'un=20bloc=20parall=C3=A8le?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le jassert de PluginList::initialise énumère les hôtes légitimes d'une chaîne de
+plugins : pistes, clips, master. Depuis le dépliage des blocs parallèles (0011), une
+branche en est un aussi — sa chaîne vit dans un enfant <BRANCH> de l'état du plugin,
+qui n'est ni une piste ni un clip. Toute création de bloc parallèle cassait donc dans
+le debugger en Debug, alors que le chemin est correct.
+
+Le tag devient une déclaration de l'interface (ParallelPluginBlock::branchTreeType)
+plutôt qu'un littéral recopié : l'implémentation concrète vit côté application, et la
+même chaîne de caractères écrite des deux côtés ne serait pas un contrat.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../plugins/tracktion_PluginList.cpp                 |  6 +++++-
+ .../tracktion_engine/plugins/tracktion_PluginList.h  | 12 ++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/plugins/tracktion_PluginList.cpp b/modules/tracktion_engine/plugins/tracktion_PluginList.cpp
+index f8dc351ee35..271f165a0e4 100644
+--- a/modules/tracktion_engine/plugins/tracktion_PluginList.cpp
++++ b/modules/tracktion_engine/plugins/tracktion_PluginList.cpp
+@@ -89,7 +89,11 @@ void PluginList::initialise (const juce::ValueTree& v)
+               || v.hasType (IDs::MIDICLIP)
+               || v.hasType (IDs::STEPCLIP)
+               || v.hasType (IDs::EDITCLIP)
+-              || v.hasType (IDs::CONTAINERCLIP));
++              || v.hasType (IDs::CONTAINERCLIP)
++              // Patch local Objekat — une branche de bloc de plugins parallèles porte sa chaîne
++              // dans un enfant <BRANCH> de l'état du plugin. Ce n'est ni une piste ni un clip,
++              // et c'est pourtant un hôte de plugin-list légitime. @see ParallelPluginBlock
++              || v.hasType (ParallelPluginBlock::branchTreeType));
+ 
+     state = v;
+     list = std::make_unique<ObjectList> (*this, state);
+diff --git a/modules/tracktion_engine/plugins/tracktion_PluginList.h b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+index 3ca0f176c63..94cf136c29a 100644
+--- a/modules/tracktion_engine/plugins/tracktion_PluginList.h
++++ b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+@@ -113,6 +113,16 @@ struct ParallelPluginBlock
+ {
+     virtual ~ParallelPluginBlock() = default;
+ 
++    /** Type de l'arbre qui porte la chaîne d'une branche : un enfant `<BRANCH>` de l'état du
++        plugin. C'est un hôte légitime de `PluginList` — @see PluginList::initialise, qui
++        l'accepte au même titre qu'une piste ou un clip.
++
++        Déclaré ici pour que le tag soit un CONTRAT de l'interface : l'implémentation concrète
++        vit côté application, et la même chaîne de caractères écrite des deux côtés n'en serait
++        pas un.
++    */
++    static const juce::Identifier branchTreeType;
++
+     /** Les branches, dans l'ordre. Une liste vide laisse simplement passer l'entrée. */
+     virtual std::vector<PluginList*> getParallelBranches() = 0;
+ 
+@@ -143,4 +153,6 @@ struct ParallelPluginBlock
+     }
+ };
+ 
++inline const juce::Identifier ParallelPluginBlock::branchTreeType ("BRANCH");
++
+ } // namespace tracktion::inline engine
+-- 
+2.50.1 (Apple Git-155)
+

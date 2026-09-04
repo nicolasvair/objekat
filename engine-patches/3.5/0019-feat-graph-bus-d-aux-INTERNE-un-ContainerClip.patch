@@ -1,0 +1,466 @@
+From 1353271fa60692ff6fbdfdc17b534354cffe314c Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Tue, 11 Aug 2026 20:24:29 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20bus=20d'aux=20INTERNE=20=C3=A0?=
+ =?UTF-8?q?=20un=20ContainerClip?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un ContainerClip marqué `objAuxBus` cesse d'être une source : createNodeForContainerClip
+l'écarte du CombiningNode de ses frères et lui substitue une branche de retour.
+
+    contenu   = CombiningNode { enfants non-aux }        ← les envois y écrivent
+    partagé   = shared_ptr (contenu)
+    sec       = ConnectedNode (partagé)
+    retour_i  = ObjAuxReturnNode (dépend de partagé) → FX de l'aux i → fades de l'aux i
+    résultat  = SummingNode { sec, retour_1…retour_n }
+
+L'arête `retour_i → partagé` n'est pas décorative : elle seule ordonne les envois avant
+leur lecture — deux frères d'un SummingNode n'ont aucun ordre garanti entre eux.
+
+L'envoi est un PLUGIN (interface `ContainerAuxSend`), pas un nœud, et ce n'est pas un
+détail de goût : la chaîne de chaque objet vit sur la plugin-list de son CLIP, donc dans
+un TimedNode du CombiningNode — et CombiningNode::getInternalNodes() expose tous ces
+nœuds au graphe englobant, où un transform les rattraperait. C'est le piège qui avait tué
+LatencyMaskingNode ; on ne le repose pas. Chaque envoi porte SON buffer, dimensionné dans
+initialise() : aucune propriété partagée, aucune énigme de durée de vie, et un envoi qui
+ne joue pas ne coûte rien.
+
+Portée : l'émetteur et l'aux doivent être enfants DIRECTS du même container. Un container
+est une frontière de graphe (getDirectInputNodes et getInternalNodes renvoient {}) — rien
+ne la traverse.
+
+ObjAuxReturnNode consomme TOUJOURS les taps, y compris hors de sa fenêtre : un tap laissé
+en attente ressortirait tel quel à la réactivation suivante (le piège du patch 0014).
+---
+ .../model/clips/tracktion_ContainerClip.cpp   |   2 +
+ .../model/clips/tracktion_ContainerClip.h     |  23 ++++
+ .../graph/tracktion_ContainerClipNode.cpp     | 101 +++++++++++++++
+ .../graph/tracktion_ContainerClipNode.h       |  54 ++++++++
+ .../graph/tracktion_EditNodeBuilder.cpp       | 116 +++++++++++++++++-
+ .../plugins/tracktion_PluginList.h            |  44 +++++++
+ 6 files changed, 338 insertions(+), 2 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+index 197ef1984e6..28524f9eeab 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+@@ -13,6 +13,8 @@ namespace tracktion::inline engine {
+ ContainerClip::ContainerClip (const juce::ValueTree& v, EditItemID clipID, ClipOwner& targetParent)
+     : AudioClipBase (v, clipID, Type::container, targetParent)
+ {
++    // Patch local Objekat — @see isObjAuxBus
++    objAuxBus.referTo (state, juce::Identifier ("objAuxBus"), getUndoManager(), false);
+ }
+ 
+ ContainerClip::~ContainerClip()
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+index ff3d9610a4c..5d3664c5a1c 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+@@ -66,6 +66,26 @@ public:
+     // déclare sa latence comme n'importe quel clip et la PDC globale l'aligne.
+     // @see Clip::compensatesOwnPluginLatency
+ 
++    //==============================================================================
++    /** Patch local Objekat — ce container n'est pas un GROUPE mais un BUS D'AUX interne.
++
++        Un aux d'objekat est un objet à part entière : position, fenêtre, fades, lane, chaîne
++        de FX, splittable, gelable. Le `ContainerClip` lui apporte tout ça gratuitement — il
++        ne lui manque qu'une source, et c'est justement ce que ce drapeau change : au lieu de
++        jouer des enfants (il n'en a aucun), il joue la somme des envois qui le visent.
++
++        `createNodeForContainerClip` intercepte donc ses enfants aux AVANT de bâtir son
++        `CombiningNode`, et leur donne un `ObjAuxReturnNode` pour source. Un aux qui n'est
++        enfant d'aucun container ne produit aucun nœud : il n'y a pas de bus local à qui il
++        appartiendrait, et c'est exactement la portée décidée pour l'étape 3.
++
++        @see ObjAuxReturnNode, ContainerAuxSend
++    */
++    bool isObjAuxBus() const                                    { return objAuxBus; }
++
++    /** @see isObjAuxBus */
++    void setObjAuxBus (bool shouldBeAuxBus)                     { objAuxBus = shouldBeAuxBus; }
++
+     /** @internal */
+     void setLoopDefaults() override;
+     /** @internal */
+@@ -81,6 +101,9 @@ private:
+     //==============================================================================
+     juce::ValueTree clipListState;
+ 
++    // Patch local Objekat — @see isObjAuxBus
++    juce::CachedValue<bool> objAuxBus;
++
+     void clipCreated (Clip&) override;
+     void clipAddedOrRemoved() override;
+     void clipOrderChanged() override;
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index c10fd8a81cd..10546823842 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -247,4 +247,105 @@ void ContainerClipNode::process (ProcessContext& pc)
+     }
+ }
+ 
++//==============================================================================
++//==============================================================================
++ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
++                                    std::shared_ptr<tracktion::graph::Node> dependencyToUse,
++                                    std::vector<Plugin::Ptr> sendersToUse,
++                                    TimeRange auxTimeRange,
++                                    int numChannelsToUse,
++                                    size_t nodeIDToUse)
++    : TracktionEngineNode (editProcessState),
++      dependency (std::move (dependencyToUse)),
++      senderPlugins (std::move (sendersToUse)),
++      auxRange (auxTimeRange),
++      numChannels (std::max (1, numChannelsToUse)),
++      auxNodeID (nodeIDToUse)
++{
++    assert (dependency);
++
++    for (auto& p : senderPlugins)
++        if (auto send = dynamic_cast<ContainerAuxSend*> (p.get()))
++            senders.push_back (send);
++
++    setOptimisations ({ tracktion::graph::ClearBuffers::no,
++                        tracktion::graph::AllocateAudioBuffer::yes });
++}
++
++tracktion::graph::NodeProperties ObjAuxReturnNode::getNodeProperties()
++{
++    tracktion::graph::NodeProperties props;
++    props.hasAudio = true;
++    props.hasMidi = false;
++    props.numberOfChannels = numChannels;
++    props.latencyNumSamples = 0;
++    props.nodeID = auxNodeID;
++
++    return props;
++}
++
++std::vector<tracktion::graph::Node*> ObjAuxReturnNode::getDirectInputNodes()
++{
++    // L'audio de cette entrée n'est PAS consommé — seule l'arête compte, pour l'ordre.
++    return { dependency.get() };
++}
++
++bool ObjAuxReturnNode::isReadyToProcess()
++{
++    return dependency->hasProcessed();
++}
++
++void ObjAuxReturnNode::process (ProcessContext& pc)
++{
++    auto destAudio = pc.buffers.audio;
++    destAudio.clear();
++
++    const auto numDestFrames = (choc::buffer::FrameCount) destAudio.getNumFrames();
++    const auto numDestChans  = (choc::buffer::ChannelCount) destAudio.getNumChannels();
++
++    if (numDestFrames == 0 || numDestChans == 0)
++        return;
++
++    // Les taps sont TOUJOURS consommés, y compris hors de la fenêtre de l'aux : un tap laissé
++    // en attente ressortirait tel quel à la réactivation suivante. C'est exactement le piège
++    // du pré-roll (patch 0014) — ce qu'on croit jeter, on le rend audible plus tard.
++    for (auto send : senders)
++    {
++        int numSamples = 0;
++        auto tap = send->getAndClearAuxTap (numSamples);
++
++        // nullptr : l'envoi n'a pas tourné ce bloc — son émetteur est hors de sa fenêtre, ou
++        // bypassé. C'est le cas nominal et il ne coûte rien.
++        if (tap == nullptr || numSamples <= 0)
++            continue;
++
++        auto srcView = tracktion::graph::toBufferView (*const_cast<juce::AudioBuffer<float>*> (tap));
++
++        const auto frames = std::min (numDestFrames, (choc::buffer::FrameCount) numSamples);
++        const auto chans  = std::min (numDestChans, srcView.getNumChannels());
++
++        choc::buffer::add (destAudio.getChannelRange ({ 0, chans }).getStart (frames),
++                           srcView.getChannelRange ({ 0, chans }).getStart (frames));
++    }
++
++    // Bornes de l'aux. Sans ça il sonnerait hors de sa propre fenêtre dès qu'un émetteur joue :
++    // le nœud n'a pas de CombiningNode au-dessus de lui pour l'activer par tranches — c'est le
++    // prix de l'arête de dépendance. Même geste que ContainerClipNode::process pour son contenu.
++    {
++        const auto sectionRange = getTimelineSampleRange();
++        const auto clipRange = toSamples (auxRange, getSampleRate());
++
++        auto numToClearAtStart = std::min (clipRange.getStart() - sectionRange.getStart(),
++                                           (SampleCount) numDestFrames);
++        auto numToClearAtEnd   = std::min (sectionRange.getEnd() - clipRange.getEnd(),
++                                           (SampleCount) numDestFrames);
++
++        if (numToClearAtStart > 0)
++            destAudio.getStart ((choc::buffer::FrameCount) numToClearAtStart).clear();
++
++        if (numToClearAtEnd > 0)
++            destAudio.getEnd ((choc::buffer::FrameCount) numToClearAtEnd).clear();
++    }
++}
++
+ } // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index 84235842182..cb43d4b04ab 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -68,4 +68,58 @@ private:
+ };
+ 
+ 
++//==============================================================================
++//==============================================================================
++/** Patch local Objekat — source d'un BUS D'AUX interne à un ContainerClip.
++
++    Émet la somme des envois (`ContainerAuxSend`) qui visent l'aux, puis la chaîne de FX de
++    l'aux et ses fades sont posées par-dessus par `createNodeForContainerClip`, et le tout est
++    sommé avec la sortie sèche du container.
++
++    **Le seul point non négociable de ce nœud : `dependency`.** Il s'agit du `CombiningNode`
++    des enfants du container, déclaré en ENTRÉE DIRECTE alors que son audio n'est pas utilisé.
++    C'est cette arête, et elle seule, qui garantit que tous les envois ont écrit avant qu'on
++    les lise : deux nœuds frères d'un `SummingNode` n'ont aucun ordre relatif garanti. Le
++    `ConnectedNode` de la branche sèche possède le même nœud — même partage de `shared_ptr`
++    que le dépliage d'un bloc parallèle, où c'est déjà éprouvé.
++
++    N.B. `ClearBuffers::no` : le nœud vide lui-même son buffer avant de sommer. Ne pas s'en
++    remettre au framework ici — @see le patch `0012`, où ~15 types comptaient sur le
++    `CombiningNode` pour vider et où plus personne ne le faisait.
++*/
++class ObjAuxReturnNode final : public tracktion::graph::Node,
++                               public TracktionEngineNode
++{
++public:
++    ObjAuxReturnNode (ProcessState& editProcessState,
++                      std::shared_ptr<tracktion::graph::Node> dependency,
++                      std::vector<Plugin::Ptr> senders,
++                      TimeRange auxTimeRange,
++                      int numChannels,
++                      size_t nodeID);
++
++    //==============================================================================
++    tracktion::graph::NodeProperties getNodeProperties() override;
++    std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    bool isReadyToProcess() override;
++    void process (ProcessContext&) override;
++
++private:
++    //==============================================================================
++    std::shared_ptr<tracktion::graph::Node> dependency;
++
++    // Les Ptr tiennent les plugins en vie ; le vecteur parallèle évite un dynamic_cast par bloc.
++    std::vector<Plugin::Ptr> senderPlugins;
++    std::vector<ContainerAuxSend*> senders;
++
++    // Bornes de l'aux, en temps d'EDIT. Comparables telles quelles au temps local du container :
++    // son offset vaut le début de son étendue, donc temps local == temps edit (invariant posé
++    // côté application par refreshContainerSpanForKey).
++    const TimeRange auxRange;
++
++    const int numChannels;
++    const size_t auxNodeID;
++};
++
++
+ } // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index ddc61e03fcf..1ce68f1292f 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -877,12 +877,122 @@ std::unique_ptr<tracktion::graph::Node> createNodeForStepClip (StepClip& clip, c
+     return node;
+ }
+ 
++// Patch local Objekat — greffe les retours d'aux INTERNES sur le graphe local d'un container.
++//
++//     contenu   = CombiningNode { enfants non-aux }        ← les envois y écrivent
++//     partagé   = shared_ptr (contenu)
++//     sec       = ConnectedNode (partagé)                   ← branche sèche
++//     retour_i  = ObjAuxReturnNode (dépend de partagé) → FX de l'aux i → fades de l'aux i
++//     résultat  = SummingNode { sec, retour_1…retour_n }
++//
++// L'arête `retour_i → partagé` n'est pas décorative : elle seule ordonne les envois avant leur
++// lecture. Deux frères d'un SummingNode n'ont aucun ordre garanti entre eux.
++//
++// Les envois sont cherchés au niveau supérieur de la chaîne de chaque enfant DIRECT. Pas dans
++// les branches d'un bloc parallèle : une branche n'est pas un objet, et l'application pose
++// l'envoi post-fader. Pas non plus dans la chaîne du container lui-même : elle vit en AVAL du
++// ContainerClipNode, donc hors de ce graphe — et viser son propre aux serait un bouclage.
++static std::unique_ptr<Node> createAuxReturnsForContainer (const juce::Array<Clip*>& contentClips,
++                                                           const juce::Array<ContainerClip*>& auxClips,
++                                                           std::unique_ptr<Node> contentNode,
++                                                           const CreateNodeParams& params)
++{
++    if (auxClips.isEmpty() || contentNode == nullptr)
++        return contentNode;
++
++    auto sendersFor = [&contentClips] (EditItemID auxID)
++    {
++        std::vector<Plugin::Ptr> result;
++
++        for (auto c : contentClips)
++            if (auto pl = c->getPluginList())
++                for (auto p : *pl)
++                    if (auto send = dynamic_cast<ContainerAuxSend*> (p))
++                        if (send->getTargetAuxClipID() == auxID)
++                            result.push_back (p);
++
++        return result;
++    };
++
++    const auto contentProps = contentNode->getNodeProperties();
++    const int numChannels = std::max (2, contentProps.numberOfChannels);
++
++    std::shared_ptr<Node> sharedContent (std::move (contentNode));
++    std::vector<std::unique_ptr<Node>> summedNodes;
++
++    // Branche sèche : un ConnectedNode, comme le dépliage d'un bloc parallèle — le contenu est
++    // désormais détenu par des shared_ptr et lu par plusieurs nœuds.
++    {
++        size_t nodeID = 0;
++        hash_combine (nodeID, (size_t) 0x0B7A0DE7);
++        hash_combine (nodeID, contentProps.nodeID);
++
++        auto connected = std::make_unique<tracktion::graph::ConnectedNode> (nodeID);
++
++        for (int c = 0; c < contentProps.numberOfChannels; ++c)
++            connected->addAudioConnection (sharedContent, { c, c });
++
++        if (contentProps.hasMidi)
++            connected->addMidiConnection (sharedContent);
++
++        summedNodes.push_back (std::move (connected));
++    }
++
++    for (auto auxClip : auxClips)
++    {
++        size_t nodeID = 0;
++        hash_combine (nodeID, (size_t) 0x0B7A0E37);
++        hash_combine (nodeID, auxClip->itemID.getRawID());
++
++        std::unique_ptr<Node> returnNode = makeNode<ObjAuxReturnNode> (params.processState,
++                                                                       sharedContent,
++                                                                       sendersFor (auxClip->itemID),
++                                                                       auxClip->getEditTimeRange(),
++                                                                       numChannels,
++                                                                       nodeID);
++
++        if (params.includePlugins)
++        {
++            if (auto pluginList = auxClip->getPluginList())
++            {
++                // Comme pour un groupe : ces plugins ne sont dans aucune liste hôte déjà
++                // initialisée, et leur latence lirait 0 au premier build.
++                for (auto p : *pluginList)
++                    p->initialiseFully();
++
++                returnNode = createPluginNodeForList (*pluginList, nullptr, std::move (returnNode),
++                                                      params.processState.playHeadState, params);
++            }
++        }
++
++        summedNodes.push_back (createFadeNodeForClip (*auxClip, auxClip->getEditTimeRange(),
++                                                      std::move (returnNode), params));
++    }
++
++    return makeNode<tracktion::graph::SummingNode> (std::move (summedNodes));
++}
++
+ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerClip& clip, [[ maybe_unused ]] const TrackMuteState& trackMuteState,
+                                                                     const CreateNodeParams& params, ClipRole role)
+ {
+     CRASH_TRACER
+-    const auto& clips = clip.getClips();
++    const auto& allChildClips = clip.getClips();
++
++    // Patch local Objekat — un enfant marqué « bus d'aux » n'est pas une source : il REÇOIT.
++    // On l'écarte du CombiningNode et il devient une branche de retour. @see ContainerClip::isObjAuxBus
++    juce::Array<Clip*> clips;
++    juce::Array<ContainerClip*> auxClips;
++
++    for (auto c : allChildClips)
++    {
++        if (auto cc = dynamic_cast<ContainerClip*> (c); cc != nullptr && cc->isObjAuxBus())
++            auxClips.add (cc);
++        else
++            clips.add (c);
++    }
+ 
++    // Un container sans contenu ne produit rien — même s'il porte des aux, personne ne leur
++    // enverrait quoi que ce soit.
+     if (clips.isEmpty())
+         return {};
+ 
+@@ -939,7 +1049,9 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+                                              BeatRange (clip.getStartBeat(), clip.getEndBeat()),
+                                              clip.getOffsetInBeats(),
+                                              clip.getLoopRangeBeats(),
+-                                             createNodeForClips (clip.itemID, clips, trackMuteState, params),
++                                             createAuxReturnsForContainer (clips, auxClips,
++                                                                           createNodeForClips (clip.itemID, clips, trackMuteState, params),
++                                                                           params),
+                                              pluginLatencyNumSamples);
+    #endif
+ 
+diff --git a/modules/tracktion_engine/plugins/tracktion_PluginList.h b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+index 94cf136c29a..596775b7ef4 100644
+--- a/modules/tracktion_engine/plugins/tracktion_PluginList.h
++++ b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+@@ -155,4 +155,48 @@ struct ParallelPluginBlock
+ 
+ inline const juce::Identifier ParallelPluginBlock::branchTreeType ("BRANCH");
+ 
++
++//==============================================================================
++/** Patch local Objekat — interface d'un plugin qui ENVOIE vers un bus d'aux interne au
++    ContainerClip englobant.
++
++    Le bus est strictement local : l'émetteur et l'aux visé doivent être enfants directs du
++    MÊME container. C'est la règle de frontière de graphe — le graphe local d'un container est
++    transformé séparément, donc un `SendNode`/`ReturnNode` posé dedans ne se verrait pas.
++
++    **Pourquoi un plugin plutôt qu'un nœud.** `CombiningNode::getInternalNodes()` renvoie tous
++    les nœuds de toutes ses chaînes `TimedNode` au graphe englobant. Comme la chaîne de chaque
++    objet vit sur la plugin-list de son CLIP, tout nœud inséré là est visible du transform
++    externe, qui le câblerait comme dépendance d'un return schedulé en continu — alors que le
++    `CombiningNode` ne traite ses `TimedNode` que dans leur fenêtre. C'est ce qui a tué
++    `LatencyMaskingNode`. Un plugin, lui, est enveloppé dans un `PluginNode` parfaitement
++    ordinaire : aucun transform ne s'y intéresse.
++
++    **Pourquoi un buffer PAR ENVOI et non un buffer par bus.** Un buffer partagé devrait être
++    alloué quelque part et sa durée de vie recouper celle de deux graphes pendant une
++    reconstruction. Ici chaque envoi possède le sien, dimensionné dans son propre
++    `Plugin::initialise` — au bon moment, sur le bon thread, avec la bonne taille de bloc — et
++    le nœud de retour se contente de sommer ceux qui ont écrit. Aucune propriété partagée,
++    aucun atomique, aucune énigme de durée de vie. Un envoi qui ne joue pas n'écrit rien : le
++    silence est gratuit.
++
++    @see ObjAuxReturnNode, createNodeForContainerClip
++*/
++struct ContainerAuxSend
++{
++    virtual ~ContainerAuxSend() = default;
++
++    /** Le clip aux visé. Doit être un enfant direct du même container, sinon l'envoi est
++        ignoré à la construction du graphe (et journalisé côté application).
++    */
++    virtual EditItemID getTargetAuxClipID() const = 0;
++
++    /** Rend le buffer écrit pendant CE bloc, ou nullptr si l'envoi n'a pas tourné (hors de la
++        fenêtre de son clip, bypassé, niveau à zéro). Consomme le drapeau : deux appels dans le
++        même bloc ne rendent la donnée qu'une fois. Appelé par le nœud de retour, donc après
++        toute la chaîne d'émetteurs — l'arête de dépendance vers le `CombiningNode` le garantit.
++    */
++    virtual const juce::AudioBuffer<float>* getAndClearAuxTap (int& numSamples) = 0;
++};
++
+ } // namespace tracktion::inline engine
+-- 
+2.50.1 (Apple Git-155)
+

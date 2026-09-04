@@ -1,0 +1,120 @@
+From e998f69b3158605c6c0431e78aed5b1de3175e43 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 13 Aug 2026 02:07:35 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20un=20aux=20de=20la=20racine=20re?=
+ =?UTF-8?q?crute=20ses=20=C3=A9metteurs=20dans=20les=20stems?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Une réverbe partagée par plusieurs stems était impossible : un envoi ne se
+câblait qu'entre objets d'un même niveau de montage, et le montage à la racine
+ne recensait ses émetteurs que sur les pistes racine.
+
+Le niveau d'un aux ne change pas — il appartient toujours à son folder, c'est
+0024 — mais son RECRUTEMENT descend : createTopLevelAuxReturns cueille les
+émetteurs dans tout l'Edit et ne garde comme aux que ceux des pistes racine.
+La dissymétrie est celle du graphe, pas une faveur : le folder submix d'un stem
+est l'un des inputs de la somme dont ce retour dépend (createNodeForEdit le
+pousse dans le vecteur du device de sortie, et même détaché du Main il y entre
+enveloppé d'un SinkNode). Tout ce qui vit dans un stem est donc en amont par
+construction, ses taps sont écrits avant d'être lus, et dépendre d'une somme
+continue d'interdire les cycles.
+
+L'inverse reste impossible : un émetteur de la racine n'est pas en amont de la
+somme des pistes filles d'un stem, et deux stems frères ne se voient pas.
+createSubmixAuxReturns ne recense donc toujours que ses propres pistes — c'est
+la moitié descendante de la règle, que l'application fait respecter des deux
+côtés (canRouteSend / isSend:routableToAux:).
+
+La PDC n'a rien à ajouter : le retard d'un tap vaut « référence − latence du
+tap » (0022), et l'égalisation posée entre le tap et le point de référence amène
+le sec exactement à la latence de référence, chaîne du stem traversée comprise.
+
+Contrepartie assumée, côté application : le humide sort du stem de l'émetteur —
+hors de son VU, hors de son bounce — donc « Σ stems = mix » suppose que le Main
+soit livré comme un stem.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 41 +++++++++++++++----
+ 1 file changed, 32 insertions(+), 9 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index cbff7349135..21effe4c092 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -2326,6 +2326,10 @@ std::unique_ptr<tracktion::graph::Node> createMasterPluginsNode (Edit& edit,
+ // au-dessus de tous les bus — hors du VU du stem, hors de son mute, hors de son bounce, et
+ // « Σ stems = mix » devenait faux dès qu'un envoi existait. Le niveau d'un aux est donc son
+ // FOLDER, comme le niveau d'un aux de groupe est son container.
++//
++// Un aux appartient à un niveau, mais son recrutement d'ÉMETTEURS descend : le montage à la
++// racine accepte les envois des stems, qui lui sont forcément antérieurs. Une réverbe unique
++// partagée par plusieurs stems tient à ça, et à rien d'autre (@see createTopLevelAuxReturns).
+ 
+ // Le folder submix le plus proche au-dessus de `t`, nullptr s'il n'y en a aucun. C'est ce qui
+ // dit à quel NIVEAU une piste — donc les aux et les émetteurs qu'elle porte — appartient.
+@@ -2381,6 +2385,21 @@ static bool shouldBuildAuxReturns (const Node* node, const CreateNodeParams& par
+             && params.allowedClips == nullptr;
+ }
+ 
++// Un aux monté à la racine accepte les envois de TOUT l'Edit, stems compris, alors que ses aux
++// à lui restent ceux des pistes racine. La dissymétrie n'est pas une faveur : le folder submix
++// d'un stem EST l'un des inputs de la somme dont ce retour dépend (createNodeForEdit le pousse
++// dans le vecteur du device de sortie — et même détaché du Main, il y entre enveloppé d'un
++// SinkNode). Tout ce qui vit dans un stem est donc en amont par construction, ses taps sont
++// écrits avant d'être lus, et dépendre d'une somme continue d'interdire les cycles.
++//
++// L'inverse reste impossible et le restera : un émetteur de la racine n'est PAS en amont de la
++// somme des pistes filles d'un stem (@see createSubmixAuxReturns). D'où la règle applicative
++// « un envoi monte, il ne descend pas » (@see -isSend:routableToAux:). Deux stems frères ne se
++// voient pas davantage — c'est ce qui rend une réverbe partagée possible au Main, et là seulement.
++//
++// La PDC suit sans rien ajouter : le retard d'un tap vaut « référence − latence du tap », et
++// l'égalisation posée entre le tap et le point de référence amène le sec exactement à la latence
++// de référence, quelle que soit la traversée (chaîne du stem comprise). @see ObjAuxReturnNode.
+ static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+                                                        std::unique_ptr<Node> tracksNode,
+                                                        const CreateNodeParams& params)
+@@ -2388,15 +2407,17 @@ static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+     if (! shouldBuildAuxReturns (tracksNode.get(), params))
+         return tracksNode;
+ 
+-    juce::Array<Track*> rootTracks;
+-
+-    for (auto t : getAllTracks (edit))
+-        if (nearestSubmixAncestor (*t) == nullptr)
+-            rootTracks.add (t);
++    juce::Array<ContainerClip*> allAuxClips;
++    std::vector<PluginList*> senderLists;
++    collectAuxClipsAndSenders (getAllTracks (edit), allAuxClips, senderLists);
+ 
++    // Les aux d'un stem appartiennent à leur folder, qui monte les siens : ne restent ici que
++    // ceux des pistes racine. Les émetteurs, eux, viennent d'être recensés partout.
+     juce::Array<ContainerClip*> auxClips;
+-    std::vector<PluginList*> senderLists;
+-    collectAuxClipsAndSenders (rootTracks, auxClips, senderLists);
++
++    for (auto cc : allAuxClips)
++        if (auto t = cc->getTrack(); t != nullptr && nearestSubmixAncestor (*t) == nullptr)
++            auxClips.add (cc);
+ 
+     return createAuxReturns (senderLists, auxClips, std::move (tracksNode), params);
+ }
+@@ -2407,8 +2428,10 @@ static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+ //
+ // La contrainte d'ordonnancement est la même qu'à la racine, un cran plus bas : le retour dépend
+ // de la somme des pistes du folder, donc seuls les émetteurs DE CE FOLDER sont garantis en amont.
+-// Un envoi venu d'un autre stem serait lu sans ordre établi — c'est pourquoi l'application
+-// restreint la portée d'un envoi top-level aux objets du même stem (@see -isSend:routableToAux:).
++// Un envoi venu d'un autre stem — ou de la racine — serait lu sans ordre établi ; on ne recense
++// donc ici que les pistes du folder, et l'application refuse ces envois de son côté
++// (@see -isSend:routableToAux:). C'est la moitié DESCENDANTE de la règle : un envoi monte vers
++// l'aux d'un bus qui contient déjà son émetteur (@see createTopLevelAuxReturns), il ne descend pas.
+ //
+ // Les pistes d'un submix IMBRIQUÉ sont exclues : elles appartiennent à leur propre niveau, et
+ // c'est l'appel récursif de createNodeForSubmixTrack qui y montera leurs aux.
+-- 
+2.50.1 (Apple Git-155)
+

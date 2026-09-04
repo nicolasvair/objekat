@@ -1,0 +1,399 @@
+From e2ed12e1623a0ff40eebb44bfd81f203fd80b163 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 19:11:28 +0200
+Subject: [PATCH] =?UTF-8?q?fix(containerclip):=20la=20lecture=20anticip?=
+ =?UTF-8?q?=C3=A9e=20doit=20aussi=20corriger=20le=20temps=20d'edit?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un groupe portant un plugin à latence perdait ses L premières millisecondes.
+Le pré-roll était pourtant bien servi et le contenu bien lu en avance : la
+mesure bloc par bloc montrait le ContainerClipNode sortir l'attaque L avant
+le début nominal, et la chaîne ne la restituer jamais.
+
+Cause : PluginNode recule le temps d'edit de la latence cumulée en amont
+(automationAdjustmentTime). Dans une piste c'est juste — un plugin derrière
+une latence de Lc traite du matériau vieux de Lc. Ça cesse de l'être dans la
+chaîne d'un container auto-compensé, qui lit son contenu avec L d'avance : au
+bloc t le matériau appartient à t + L - Lc. Le décalage n'est alors pas une
+dérive d'automation mais une erreur franche pour tout plugin qui se sert de
+PluginRenderContext::editTime comme d'une porte — la fenêtre de groupe
+d'Objekat coupait exactement les L premiers samples.
+
+PluginNode::setReadAheadNumSamples porte cette correction, posée par
+createNodeForContainerClip sur toute la chaîne du container. Vaut 0 partout
+ailleurs, où le comportement est inchangé.
+
+Au passage, remplace LatencyMaskingNode par un drapeau ignoreLatency sur
+CombiningNode::addInput. Le nœud était inséré dans une chaîne TimedNode, où
+numOutputNodes vaut -1 (createNodeGraph ne passe jamais par là) : le garde
+copié de ReturnNode laissait donc passer un partage de buffer non valide, et
+getInternalNodes() l'exposait en plus au graphe englobant. Son unique rôle
+était de mettre un champ de NodeProperties à zéro — autant le dire au
+CombiningNode, qui les agrège.
+
+Retire aussi le suivi de contiguïté propre au container : le signaler comme
+un saut faisait flusher les readers des WaveNode juste à l'entrée du groupe.
+Et cesse de filtrer sur isEnabled() dans getPluginLatencySeconds(), que
+PluginNode::getNodeProperties() ne regarde pas non plus.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../model/clips/tracktion_ContainerClip.cpp   |  9 +-
+ .../graph/tracktion_CombiningNode.cpp         | 14 ++-
+ .../playback/graph/tracktion_CombiningNode.h  |  4 +-
+ .../graph/tracktion_ContainerClipNode.cpp     | 19 ++--
+ .../graph/tracktion_ContainerClipNode.h       | 88 ++-----------------
+ .../graph/tracktion_EditNodeBuilder.cpp       | 30 ++++---
+ .../playback/graph/tracktion_PluginNode.cpp   |  7 +-
+ .../playback/graph/tracktion_PluginNode.h     | 18 ++++
+ 8 files changed, 76 insertions(+), 113 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+index c7d6a12b834..b59447c63ee 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+@@ -72,10 +72,15 @@ double ContainerClip::getPluginLatencySeconds() const
+ 
+     // getPluginList() n'existe qu'en version non-const dans Clip ; le calcul, lui, ne
+     // modifie rien.
++    //
++    // N.B. ne PAS filtrer sur isEnabled() : PluginNode::getNodeProperties() ajoute la latence
++    // sans regarder l'état d'activation, et un plugin externe bypassé retarde quand même le
++    // signal via son latencyProcessor (canProcessBypassed). Filtrer ici sous-estimerait L, et
++    // le container serait retardé sans lecture anticipée ni pré-roll : en phase grâce à la PDC
++    // globale, mais amputé de ses L premières secondes.
+     if (auto pluginList = const_cast<ContainerClip*> (this)->getPluginList())
+         for (auto p : *pluginList)
+-            if (p->isEnabled())
+-                latency += std::max (0.0, p->getLatencySeconds());
++            latency += std::max (0.0, p->getLatencySeconds());
+ 
+     return latency;
+ }
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+index 827a5597018..7eadafa8ed6 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+@@ -143,13 +143,13 @@ CombiningNode::CombiningNode (EditItemID id, ProcessState& ps)
+ 
+ CombiningNode::~CombiningNode() {}
+ 
+-void CombiningNode::addInput (std::unique_ptr<Node> input, TimeRange time)
++void CombiningNode::addInput (std::unique_ptr<Node> input, TimeRange time, bool ignoreLatency)
+ {
+     jassert (time.getEnd() <= Edit::getMaximumEditEnd());
+-    addInput (std::move (input), toBeats (*getProcessState().getTempoSequence(), time));
++    addInput (std::move (input), toBeats (*getProcessState().getTempoSequence(), time), ignoreLatency);
+ }
+ 
+-void CombiningNode::addInput (std::unique_ptr<Node> input, BeatRange beatRange)
++void CombiningNode::addInput (std::unique_ptr<Node> input, BeatRange beatRange, bool ignoreLatency)
+ {
+     assert (input != nullptr);
+ 
+@@ -161,7 +161,13 @@ void CombiningNode::addInput (std::unique_ptr<Node> input, BeatRange beatRange)
+     nodeProperties.hasAudio |= props.hasAudio;
+     nodeProperties.hasMidi |= props.hasMidi;
+     nodeProperties.numberOfChannels = std::max (nodeProperties.numberOfChannels, props.numberOfChannels);
+-    nodeProperties.latencyNumSamples = std::max (nodeProperties.latencyNumSamples, props.latencyNumSamples);
++    // Patch local Objekat — une entrée qui compense elle-même sa latence (@see
++    // Clip::compensatesOwnPluginLatency) est déjà alignée : elle lit son matériau en avance de
++    // ce que sa chaîne retarde. Remonter sa latence la ferait compenser une deuxième fois, et
++    // surtout elle contaminerait toute la piste.
++    if (! ignoreLatency)
++        nodeProperties.latencyNumSamples = std::max (nodeProperties.latencyNumSamples, props.latencyNumSamples);
++
+     hash_combine (nodeProperties.nodeID, props.nodeID);
+ 
+    #if USE_PARTITION_INSERTION
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
+index f37d06f1677..085bfe2ec67 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
+@@ -33,7 +33,7 @@ public:
+ 
+         Any nodes passed-in will be deleted by this node when required.
+     */
+-    void addInput (std::unique_ptr<Node>, TimeRange);
++    void addInput (std::unique_ptr<Node>, TimeRange, bool ignoreLatency = false);
+ 
+     /** Adds an input node to be played at a given beat range.
+ 
+@@ -42,7 +42,7 @@ public:
+ 
+         Any nodes passed-in will be deleted by this node when required.
+     */
+-    void addInput (std::unique_ptr<Node>, BeatRange);
++    void addInput (std::unique_ptr<Node>, BeatRange, bool ignoreLatency = false);
+ 
+     /** Returns the number of inputs added. */
+     int getNumInputs() const;
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 5ce1ecb01e6..439731a6184 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -197,17 +197,14 @@ void ContainerClipNode::process (ProcessContext& pc)
+     if (localPlayHead.isLooping())
+         newPosition = localPlayHead.linearPositionToLoopPosition (newPosition, localPlayHead.getLoopRange());
+ 
+-    // Réactivation après une période hors fenêtre : le CombiningNode ne nous a pas appelés
+-    // pendant que le clip était hors du bloc, donc nos blocs à nous ne se suivent pas — même
+-    // quand ceux de l'Edit se suivent. Sans ce test on prendrait overridePosition() et le
+-    // graphe interne ne verrait aucun saut : notes MIDI suspendues, FIFOs de plugins pleines
+-    // de matériau périmé. setPosition() marque l'interaction, PlayHeadState local propage le
+-    // saut, et les nœuds internes se remettent d'aplomb (cf. PluginNode : all-notes-off sur
+-    // didPlayheadJump).
+-    const bool contiguousForUs = lastProcessedReferenceSampleEnd == pc.referenceSampleRange.getStart();
+-    lastProcessedReferenceSampleEnd = pc.referenceSampleRange.getEnd();
+-
+-    if (contiguousForUs && editPlayHeadState.isContiguousWithPreviousBlock())
++    // N.B. on suit la contiguïté de l'EDIT, pas la nôtre. Hors fenêtre le CombiningNode ne nous
++    // appelle pas, donc nos blocs à nous ne se suivent pas — tentant d'en faire un saut pour que
++    // le graphe interne se réinitialise. À ne pas faire : les nœuds internes lisent par position
++    // absolue, ils n'ont pas besoin du saut pour se placer, et le signaler ferait flusher les
++    // readers des WaveNode (bloc de silence + fade, cf. tracktion_WaveNode.cpp) juste à l'entrée
++    // du groupe — soit les premières ms perdues. Ce que le saut aurait purgé — les FIFOs de
++    // latence — l'est déjà par le pré-roll de ContainerClip::getHead().
++    if (editPlayHeadState.isContiguousWithPreviousBlock())
+         localPlayHead.overridePosition (newPosition);
+     else
+         localPlayHead.setPosition (newPosition);
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index 265511cd569..84235842182 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -42,20 +42,17 @@ private:
+ 
+     // Patch local Objekat — latence de la PluginList posée AUTOUR de ce nœud, en samples.
+     // On lit le contenu du container avec cette avance, pour que la sortie retardée d'autant
+-    // par la chaîne retombe alignée sur la timeline de l'Edit. @see ContainerClip::getHead.
++    // par la chaîne retombe alignée sur la timeline de l'Edit. La latence n'est PAS remontée au
++    // CombiningNode de la piste : createNodeForClips passe ignoreLatency pour les clips
++    // auto-compensés. @see Clip::compensatesOwnPluginLatency, ContainerClip::getHead.
+     //
+-    // Écart connu et assumé : PluginNode règle son automationAdjustmentTime sur SA latence
+-    // (-L1 pour le premier plugin), sans savoir que le matériau qu'il reçoit est déjà avancé
+-    // de L. L'automation de la chaîne du container est donc décalée de L (quelques ms) par
+-    // rapport au modèle à pistes. Audio et MIDI, eux, restent alignés à l'échantillon près.
++    // Corollaire : le temps d'edit vu par les plugins de cette chaîne doit être corrigé de +L,
++    // faute de quoi ils se croient L trop tôt. PluginNode::setReadAheadNumSamples s'en charge,
++    // posé par createNodeForContainerClip. Ce n'est pas cosmétique : un plugin qui se sert de
++    // PluginRenderContext::editTime comme d'une porte coupait les L premiers samples du groupe.
+     const int pluginLatencyNumSamples = 0;
+     std::unique_ptr<tempo::Sequence::Position> tempoPosition;
+ 
+-    // Patch local Objekat — fin du dernier bloc RÉELLEMENT processé. Le CombiningNode ne nous
+-    // appelle pas hors fenêtre : nos blocs à nous ne sont donc pas contigus, même quand ceux de
+-    // l'Edit le sont. @see process().
+-    int64_t lastProcessedReferenceSampleEnd = -1;
+-
+     std::unique_ptr<tracktion::graph::Node> input;
+     NodeProperties nodeProperties { input->getNodeProperties() };
+ 
+@@ -71,75 +68,4 @@ private:
+ };
+ 
+ 
+-//==============================================================================
+-//==============================================================================
+-/** Patch local Objekat — laisse passer l'audio et le MIDI, mais déclare une latence NULLE.
+-
+-    Posé autour d'un ContainerClip et de sa chaîne de plugins. Le contenu du container est
+-    déjà lu en avance de la latence de la chaîne (@see ContainerClipNode), donc la sortie est
+-    alignée : annoncer la latence des plugins vers l'extérieur ferait compenser une deuxième
+-    fois. Surtout, ça la ferait remonter au CombiningNode de la piste, alors que tout l'intérêt
+-    est justement qu'il n'ait rien à compenser et reste paresseux.
+-*/
+-class LatencyMaskingNode final : public tracktion::graph::Node
+-{
+-public:
+-    LatencyMaskingNode (std::unique_ptr<Node> inputNode)
+-        : input (std::move (inputNode))
+-    {
+-        assert (input);
+-        setOptimisations ({ tracktion::graph::ClearBuffers::no,
+-                            tracktion::graph::AllocateAudioBuffer::yes });
+-    }
+-
+-    tracktion::graph::NodeProperties getNodeProperties() override
+-    {
+-        auto props = input->getNodeProperties();
+-        props.latencyNumSamples = 0;
+-
+-        if (props.nodeID != 0)
+-            hash_combine (props.nodeID, static_cast<size_t> (0x4c61744d61736bull)); // "LatMask"
+-
+-        return props;
+-    }
+-
+-    std::vector<Node*> getDirectInputNodes() override       { return { input.get() }; }
+-    bool isReadyToProcess() override                        { return input->hasProcessed(); }
+-
+-    void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info) override
+-    {
+-        // Même optimisation que ReturnNode : si on est le seul consommateur, on lit
+-        // directement le buffer de l'entrée au lieu d'en recopier un par bloc.
+-        if (! info.enableNodeMemorySharing)
+-            return;
+-
+-        if (input->numOutputNodes > 1 || ! input->canShareOutputBuffer())
+-            return;
+-
+-        if (input->getNodeProperties().numberOfChannels >= getNodeProperties().numberOfChannels)
+-        {
+-            canUseSourceBuffers = true;
+-            setOptimisations ({ tracktion::graph::ClearBuffers::no,
+-                                tracktion::graph::AllocateAudioBuffer::no });
+-        }
+-    }
+-
+-    void preProcess (choc::buffer::FrameCount, juce::Range<int64_t>) override
+-    {
+-        if (canUseSourceBuffers)
+-            setBufferViewToUse (input.get(), input->getProcessedOutput().audio);
+-    }
+-
+-    void process (ProcessContext& pc) override
+-    {
+-        auto source = input->getProcessedOutput();
+-        setAudioOutput (input.get(), source.audio);
+-        pc.buffers.midi.copyFrom (source.midi);
+-    }
+-
+-private:
+-    std::unique_ptr<Node> input;
+-    bool canUseSourceBuffers = false;
+-};
+-
+ } // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 136fae979dc..a17ad6cb34a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -867,17 +867,24 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+                 p->initialiseFully();
+ 
+             node = createPluginNodeForList (*pluginList, nullptr, std::move (node), params.processState.playHeadState, params);
++
++           #if ! USE_DYNAMIC_OFFSET_CONTAINER_CLIP
++            // Patch local Objekat — le ContainerClipNode lit son contenu avec L d'avance, donc
++            // au bloc `t` toute cette chaîne traite du matériau appartenant à `t`, pas à `t - L`.
++            // On l'annonce à chaque PluginNode pour qu'il corrige son temps d'edit ; sans quoi la
++            // fenêtre de groupe, qui s'en sert comme d'une porte, coupe les L premiers samples.
++            // Le parcours s'arrête au ContainerClipNode, qui n'expose pas d'entrées directes.
++            if (pluginLatencyNumSamples > 0)
++                visitNodes (*node,
++                            [pluginLatencyNumSamples] (auto& n)
++                            {
++                                if (auto pn = dynamic_cast<PluginNode*> (&n))
++                                    pn->setReadAheadNumSamples (pluginLatencyNumSamples);
++                            }, true);
++           #endif
+         }
+     }
+ 
+-   #if ! USE_DYNAMIC_OFFSET_CONTAINER_CLIP
+-    // La chaîne ci-dessus a bien retardé de L, mais le contenu a été lu avec L d'avance :
+-    // vu du dehors, c'est aligné. On masque donc la latence, sinon elle serait compensée
+-    // une seconde fois — et surtout elle remonterait au CombiningNode.
+-    if (pluginLatencyNumSamples > 0)
+-        node = makeNode<LatencyMaskingNode> (std::move (node));
+-   #endif
+-
+     // Create FadeInOutNode
+     if (role != ClipRole::launcher)
+         return createFadeNodeForClip (clip, clip.getEditTimeRange(), std::move (node), params);
+@@ -980,7 +987,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+                 auto timeRange = clip->getPosition().time;
+                 timeRange = timeRange.withStart (timeRange.getStart() - clip->getHead())
+                                      .withEnd (timeRange.getEnd() + clip->getTail());
+-                combiner->addInput (std::move (clipNode), timeRange);
++                combiner->addInput (std::move (clipNode), timeRange, clip->compensatesOwnPluginLatency());
+             }
+ 
+             return combiner;
+@@ -991,6 +998,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+     {
+         std::unique_ptr<Node> node;
+         TimeRange timeRange;
++        bool ignoreLatency = false;
+     };
+ 
+     std::vector<ClipNodeEntry> clipEntries;
+@@ -1002,7 +1010,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+                 auto timeRange = clip->getPosition().time;
+                 timeRange = timeRange.withStart (timeRange.getStart() - clip->getHead())
+                                      .withEnd (timeRange.getEnd() + clip->getTail());
+-                clipEntries.push_back ({ std::move (clipNode), timeRange });
++                clipEntries.push_back ({ std::move (clipNode), timeRange, clip->compensatesOwnPluginLatency() });
+             }
+ 
+     // Extract nodes, match channels, then put back
+@@ -1018,7 +1026,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+     auto combiner = std::make_unique<CombiningNode> (trackID, params.processState);
+ 
+     for (auto& e : clipEntries)
+-        combiner->addInput (std::move (e.node), e.timeRange);
++        combiner->addInput (std::move (e.node), e.timeRange, e.ignoreLatency);
+ 
+     return combiner;
+ }
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+index ddf2a95858b..4b1ec22f7d4 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+@@ -114,8 +114,11 @@ void PluginNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationIn
+ 
+     auto props = getNodeProperties();
+ 
+-    if (props.latencyNumSamples > 0)
+-        automationAdjustmentTime = TimeDuration::fromSamples (-props.latencyNumSamples, sampleRate);
++    // Patch local Objekat — `readAheadNumSamples` compense l'avance de lecture d'un
++    // ContainerClip auto-compensé, où le matériau du bloc `t` appartient à `t + L - Lc`
++    // et non à `t - Lc`. Vaut 0 partout ailleurs. @see setReadAheadNumSamples
++    if (const auto adjustment = readAheadNumSamples - props.latencyNumSamples; adjustment != 0)
++        automationAdjustmentTime = TimeDuration::fromSamples (adjustment, sampleRate);
+ 
+     if (shouldUseFineGrainAutomation (*plugin))
+         subBlockSizeToUse = std::max (128, 128 * juce::roundToInt (info.sampleRate / 44100.0));
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.h b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.h
+index 9000b7e20b4..4fad2beab36 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.h
+@@ -48,6 +48,23 @@ public:
+     //==============================================================================
+     Plugin& getPlugin()                                 { return *plugin; }
+ 
++    /** Patch local Objekat — avance de lecture appliquée en amont de ce nœud, en samples.
++
++        Le temps d'edit passé au plugin est normalement reculé de la latence cumulée en
++        amont : dans une piste, un plugin derrière une latence de Lc traite bien du
++        matériau vieux de Lc, donc il doit lire son automation à `t - Lc`.
++
++        Ça cesse d'être vrai dans la chaîne d'un ContainerClip auto-compensé : celui-ci
++        lit son contenu avec L d'avance, si bien qu'au bloc `t` le matériau appartient
++        réellement à `t + L - Lc`. Sans cette correction, le décalage n'est pas qu'une
++        dérive d'automation — un plugin qui se sert de `PluginRenderContext::editTime`
++        comme d'une porte (la fenêtre de groupe d'Objekat) coupe alors les L premiers
++        samples du groupe.
++
++        À appeler avant initialise(). @see Clip::compensatesOwnPluginLatency
++    */
++    void setReadAheadNumSamples (int numSamples)        { readAheadNumSamples = numSamples; }
++
+     tracktion::graph::NodeProperties getNodeProperties() override;
+     std::vector<Node*> getDirectInputNodes() override   { return { input.get() }; }
+     bool isReadyToProcess() override                    { return input->hasProcessed(); }
+@@ -71,6 +88,7 @@ private:
+     tracktion::engine::MidiMessageArray midiMessageArray;
+     int subBlockSizeToUse = -1;
+     bool balanceLatency = true, canProcessBypassed = false;
++    int readAheadNumSamples = 0;
+     TimeDuration automationAdjustmentTime;
+ 
+     std::shared_ptr<tracktion::graph::LatencyProcessor> latencyProcessor;
+-- 
+2.50.1 (Apple Git-155)
+

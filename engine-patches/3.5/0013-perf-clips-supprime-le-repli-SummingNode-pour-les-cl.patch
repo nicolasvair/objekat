@@ -1,0 +1,358 @@
+From 66b50b4aff777d55a04f4613203440a01359a711 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 19:57:27 +0200
+Subject: [PATCH 13/13] =?UTF-8?q?perf(clips):=20supprime=20le=20repli=20Su?=
+ =?UTF-8?q?mmingNode=20pour=20les=20clips=20=C3=A0=20latence?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un seul clip portant un plugin à latence sortait TOUTE la lane du CombiningNode pour
+la mettre dans un SummingNode traité en continu — et donc coûteux quel que soit le
+nombre de clips qui jouent. Sur cette branche, la paresse du CombiningNode est
+justement ce qui doit faire tenir 1000 groupes dont un seul joue : le repli en
+annulait l'objet, et un plugin caché dans une branche parallèle suffisait à le
+déclencher.
+
+Trois pièces le remplacent, toutes à l'intérieur du CombiningNode :
+
+- Clip::getHead()/getTail() généralisent au cas ordinaire ce que ContainerClip
+  faisait déjà : la fenêtre d'activation s'ouvre L avant le clip, ce qui pousse L de
+  silence dans la chaîne et chasse le résidu de l'activation précédente, et se ferme
+  2L après pour la drainer. C'était le seul vrai grief contre le CombiningNode.
+  AudioClipBase ajoute la marge ARA par-dessus au lieu de la remplacer.
+- Le clip déclare sa latence normalement ; la PDC globale aligne la piste.
+- createNodeForClips égalise les entrées entre elles avec un LatencyNode, sans quoi
+  un clip sans latence sortirait L trop tôt dans une lane décalée en aval.
+
+Un ContainerClip s'exclut des trois : il lit son matériau en avance et reporte 0.
+Ses getHead/getTail/getPluginLatencySeconds remontent dans Clip, à l'identique.
+---
+ .../model/clips/tracktion_AudioClipBase.cpp   |  6 +-
+ .../model/clips/tracktion_Clip.cpp            | 23 +++++
+ .../model/clips/tracktion_Clip.h              | 50 +++++++---
+ .../model/clips/tracktion_ContainerClip.cpp   | 34 -------
+ .../model/clips/tracktion_ContainerClip.h     | 16 +---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 91 +++++++++++--------
+ 6 files changed, 119 insertions(+), 101 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp b/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
+index b13f36e7ed3..2b60720c578 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
+@@ -1191,8 +1191,10 @@ void AudioClipBase::selectionStatusChanged (bool isNowSelected)
+    #endif
+ }
+ 
+-TimeDuration AudioClipBase::getHead() const  { return araProxy != nullptr ? araProxy->getHead() : TimeDuration(); }
+-TimeDuration AudioClipBase::getTail() const  { return araProxy != nullptr ? araProxy->getTail() : TimeDuration(); }
++// Patch local Objekat — la marge ARA s'ajoute à celle de la chaîne de plugins du clip
++// (Clip::getHead/getTail), elle ne la remplace pas : les deux besoins sont indépendants.
++TimeDuration AudioClipBase::getHead() const  { return Clip::getHead() + (araProxy != nullptr ? araProxy->getHead() : TimeDuration()); }
++TimeDuration AudioClipBase::getTail() const  { return Clip::getTail() + (araProxy != nullptr ? araProxy->getTail() : TimeDuration()); }
+ 
+ void AudioClipBase::loadARAState()
+ {
+diff --git a/modules/tracktion_engine/model/clips/tracktion_Clip.cpp b/modules/tracktion_engine/model/clips/tracktion_Clip.cpp
+index f4e55107fcd..59112f26bdb 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_Clip.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_Clip.cpp
+@@ -416,6 +416,29 @@ void Clip::setOffset (TimeDuration newOffset)
+     setPosition (pos);
+ }
+ 
++// Patch local Objekat — @see Clip::getPluginLatencySeconds pour le détail.
++double Clip::getPluginLatencySeconds() const
++{
++    double latency = 0.0;
++
++    // getPluginList() n'existe qu'en version non-const ; le calcul, lui, ne modifie rien.
++    if (auto pluginList = const_cast<Clip*> (this)->getPluginList())
++        for (auto p : *pluginList)
++            latency += std::max (0.0, p->getLatencySeconds());
++
++    return latency;
++}
++
++TimeDuration Clip::getHead() const
++{
++    return TimeDuration::fromSeconds (getPluginLatencySeconds());
++}
++
++TimeDuration Clip::getTail() const
++{
++    return TimeDuration::fromSeconds (getPluginLatencySeconds() * 2.0);
++}
++
+ juce::Array<TimePosition> Clip::getInterestingTimes()
+ {
+     juce::Array<TimePosition> times;
+diff --git a/modules/tracktion_engine/model/clips/tracktion_Clip.h b/modules/tracktion_engine/model/clips/tracktion_Clip.h
+index e23cb246a6a..36ce741476f 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_Clip.h
++++ b/modules/tracktion_engine/model/clips/tracktion_Clip.h
+@@ -198,25 +198,45 @@ public:
+     /** Returns the maximum length this clip can have. */
+     virtual TimeDuration getMaximumLength()               { return toDuration (Edit::getMaximumEditEnd()); }
+ 
+-    /** Returns extra time before the clip start that needs processing (e.g., ARA head time). */
+-    virtual TimeDuration getHead() const                  { return {}; }
++    /** Patch local Objekat — latence totale de la PluginList de CE clip, en secondes.
+ 
+-    /** Returns extra time after the clip end that needs processing (e.g., ARA tail time). */
+-    virtual TimeDuration getTail() const                  { return {}; }
++        N.B. ne PAS filtrer sur isEnabled() : PluginNode::getNodeProperties() ajoute la latence
++        sans regarder l'état d'activation, et un plugin externe bypassé retarde quand même le
++        signal via son latencyProcessor (canProcessBypassed). Sous-estimer L, c'est étendre la
++        fenêtre d'activation trop court et amputer le clip de son début.
++    */
++    double getPluginLatencySeconds() const;
++
++    /** Returns extra time before the clip start that needs processing (e.g., ARA head time).
++
++        Patch local Objekat — inclut le pré-roll de la chaîne du clip. Le CombiningNode ne
++        traite pas ses entrées en continu : sans ce pré-roll, un plugin à latence entrerait en
++        jeu avec ses FIFOs encore pleines du résidu de l'activation précédente. Pendant ces L
++        secondes le clip pousse du silence dans sa chaîne, ce qui les purge.
++        @see createNodeForClips
++    */
++    virtual TimeDuration getHead() const;
++
++    /** Returns extra time after the clip end that needs processing (e.g., ARA tail time).
++
++        Patch local Objekat — ×2 sur la latence de la chaîne : L pour vider les FIFOs, L de
++        marge pour ce que la latence déclarée ne dit pas (queues courtes de reverb/delay).
++    */
++    virtual TimeDuration getTail() const;
+ 
+     /** Patch local Objekat — le clip compense lui-même la latence de sa propre PluginList.
+ 
+-        Par défaut false : un plugin à latence sur une plugin-list de clip force toute la piste
+-        à retomber du CombiningNode vers un SummingNode (cf. createNodeForClips), parce que le
+-        CombiningNode ne processe pas en continu et que les FIFOs de latence ne seraient jamais
+-        vidés. C'est la paresse qui saute, donc l'objectif même de cette branche.
+-
+-        Un clip qui renvoie true garantit deux choses :
+-          - il aligne sa sortie tout seul (lecture anticipée du matériau de L samples), donc il
+-            reporte une latence NULLE vers l'extérieur ;
+-          - il étend sa fenêtre d'activation via getHead()/getTail() d'au moins L, pour que les
+-            FIFOs se remplissent avant le clip et se vident après.
+-        Le fallback SummingNode peut alors l'ignorer. @see ContainerClip.
++        Par défaut false : le clip déclare sa latence normalement et la PDC globale l'aligne,
++        comme n'importe quelle piste. C'est le bon comportement pour un clip ordinaire.
++
++        Un clip qui renvoie true garantit à la place :
++          - qu'il aligne sa sortie tout seul, en lisant son matériau L samples en avance, et
++            reporte donc une latence NULLE vers l'extérieur ;
++          - que le temps d'edit vu par sa chaîne est corrigé de +L en conséquence.
++        C'est ce que fait un ContainerClip, pour que la latence d'un groupe ne remonte pas au
++        CombiningNode de la piste. @see ContainerClip, PluginNode::setReadAheadNumSamples.
++
++        Dans les deux cas getHead()/getTail() élargissent la fenêtre d'activation.
+     */
+     virtual bool compensatesOwnPluginLatency() const      { return false; }
+ 
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+index b59447c63ee..197ef1984e6 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.cpp
+@@ -66,40 +66,6 @@ TimeDuration ContainerClip::getSourceLength() const
+     return l;
+ }
+ 
+-double ContainerClip::getPluginLatencySeconds() const
+-{
+-    double latency = 0.0;
+-
+-    // getPluginList() n'existe qu'en version non-const dans Clip ; le calcul, lui, ne
+-    // modifie rien.
+-    //
+-    // N.B. ne PAS filtrer sur isEnabled() : PluginNode::getNodeProperties() ajoute la latence
+-    // sans regarder l'état d'activation, et un plugin externe bypassé retarde quand même le
+-    // signal via son latencyProcessor (canProcessBypassed). Filtrer ici sous-estimerait L, et
+-    // le container serait retardé sans lecture anticipée ni pré-roll : en phase grâce à la PDC
+-    // globale, mais amputé de ses L premières secondes.
+-    if (auto pluginList = const_cast<ContainerClip*> (this)->getPluginList())
+-        for (auto p : *pluginList)
+-            latency += std::max (0.0, p->getLatencySeconds());
+-
+-    return latency;
+-}
+-
+-TimeDuration ContainerClip::getHead() const
+-{
+-    // Pré-roll : la chaîne doit tourner L avant le clip pour que ses FIFOs soient pleines
+-    // au moment où le premier échantillon utile doit sortir.
+-    return TimeDuration::fromSeconds (getPluginLatencySeconds());
+-}
+-
+-TimeDuration ContainerClip::getTail() const
+-{
+-    // Queue : ×2 sur le tail. L pour purger les FIFOs de latence, L de marge pour ce que la
+-    // latence déclarée ne dit pas (queues de reverb/delay courtes). C'est le comportement que
+-    // le modèle à pistes donnait gratuitement, et que le container coupait net à sa borne.
+-    return TimeDuration::fromSeconds (getPluginLatencySeconds() * 2.0);
+-}
+-
+ HashCode ContainerClip::getHash() const
+ {
+     size_t hash = 0;
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+index e52defc67bf..efe81a2caa1 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+@@ -63,19 +63,11 @@ public:
+     HashCode getHash() const override;
+ 
+     //==============================================================================
+-    /** Patch local Objekat — latence totale, en secondes, de la chaîne de plugins du container.
+-
+-        Somme des latences des plugins en série. C'est le L de la compensation : le
+-        ContainerClipNode lit son contenu L secondes en avance pour que la sortie, retardée
+-        d'autant par la chaîne, retombe alignée sur la timeline de l'Edit.
++    /** @internal Patch local Objekat — le container lit son contenu getPluginLatencySeconds()
++        en avance pour que la sortie, retardée d'autant par sa chaîne, retombe alignée sur la
++        timeline de l'Edit, et reporte donc une latence nulle vers l'extérieur.
++        getHead()/getTail() sont ceux de Clip. @see Clip::compensatesOwnPluginLatency
+     */
+-    double getPluginLatencySeconds() const;
+-
+-    /** @internal Marge avant le clip pour laisser les FIFOs de latence se remplir. */
+-    TimeDuration getHead() const override;
+-    /** @internal Marge après le clip pour laisser les queues (FIFOs, reverbs) se vider. */
+-    TimeDuration getTail() const override;
+-    /** @internal @see Clip::compensatesOwnPluginLatency */
+     bool compensatesOwnPluginLatency() const override           { return true; }
+ 
+     /** @internal */
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 37e205de39d..b642c386a45 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -922,20 +922,6 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+     if (clips.size() == 0)
+         return std::make_unique<CombiningNode> (trackID, params.processState);
+ 
+-    const bool clipsHaveLatency = [&]
+-    {
+-        if (params.includePlugins)
+-            for (auto clip : clips)
+-                if (params.allowedClips == nullptr || params.allowedClips->contains (clip))
+-                    if (! clip->compensatesOwnPluginLatency()) // Patch local Objekat @see Clip
+-                        if (auto pluginList = clip->getPluginList())
+-                            for (auto p : *pluginList)
+-                                if (p->getLatencySeconds() > 0.0)
+-                                    return true;
+-
+-        return false;
+-    }();
+-
+     // Upmix any clip nodes with fewer channels than the max so they sum correctly
+     auto matchChannelCounts = [] (std::vector<std::unique_ptr<Node>>& nodes)
+     {
+@@ -952,27 +938,60 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+         }
+     };
+ 
+-    // If any of the clips have latency, it's impossible to use a CombiningNode as it doesn't
+-    // continuously process Nodes which means the latency FIFO doesn't get flushed. So just
+-    // use a normal SummingNode instead
+-    if (clipsHaveLatency)
+-    {
+-        std::vector<std::unique_ptr<Node>> clipNodes;
++    // Patch local Objekat — plus de repli vers un SummingNode quand un clip a de la latence.
++    //
++    // Le motif d'origine était que le CombiningNode ne traite pas ses entrées en continu, donc
++    // que les FIFOs de latence n'étaient jamais purgées. Mais il condamnait TOUTE la piste au
++    // traitement continu pour un seul clip — et sur cette branche c'est précisément la paresse
++    // du CombiningNode qui fait tenir 1000 groupes dont un seul joue.
++    //
++    // Trois pièces remplacent ce repli :
++    //   1. getHead()/getTail() répondent au grief là où il se pose : pendant le pré-roll de L,
++    //      le clip pousse du silence dans sa chaîne, ce qui chasse le résidu de l'activation
++    //      précédente ; la queue (2L) draine le reste ;
++    //   2. le CombiningNode remonte la plus grande latence de ses entrées, et la PDC globale
++    //      aligne la piste comme n'importe quelle autre ;
++    //   3. `laneLatency` ci-dessous égalise les entrées entre elles — sans quoi, la piste étant
++    //      décalée de L en aval, un clip SANS plugin à latence sortirait L trop tôt.
++    // Un ContainerClip s'exclut des trois : il lit son matériau en avance et reporte 0.
++    // @see Clip::getHead, Clip::compensatesOwnPluginLatency
++    const auto laneLatencySeconds = [&]
++    {
++        double l = 0.0;
+ 
+-        for (auto clip : clips)
+-            if (params.allowedClips == nullptr || params.allowedClips->contains (clip))
+-                if (auto clipNode = createNodeForClip (*clip, trackMuteState, params, ClipRole::arranger))
+-                    clipNodes.push_back (std::move (clipNode));
++        if (params.includePlugins)
++            for (auto clip : clips)
++                if (params.allowedClips == nullptr || params.allowedClips->contains (clip))
++                    if (! clip->compensatesOwnPluginLatency())
++                        l = std::max (l, clip->getPluginLatencySeconds());
+ 
+-        matchChannelCounts (clipNodes);
++        return l;
++    }();
+ 
+-        auto combiner = std::make_unique<SummingNode>();
++    // Complète la chaîne d'un clip pour qu'elle retarde d'autant que la plus lente de la lane,
++    // et élargit sa fenêtre d'activation de ce même montant : le rembourrage a lui aussi une
++    // FIFO à remplir avant le clip et à vider après.
++    auto equaliseLatency = [&] (Clip& clip, std::unique_ptr<Node> clipNode) -> std::pair<std::unique_ptr<Node>, TimeRange>
++    {
++        auto timeRange = clip.getPosition().time;
++        auto head = clip.getHead();
++        auto tail = clip.getTail();
+ 
+-        for (auto& n : clipNodes)
+-            combiner->addInput (std::move (n));
++        if (laneLatencySeconds > 0.0 && ! clip.compensatesOwnPluginLatency())
++        {
++            const auto padSeconds = laneLatencySeconds - clip.getPluginLatencySeconds();
+ 
+-        return combiner;
+-    }
++            if (const auto padSamples = juce::roundToInt (padSeconds * params.sampleRate); padSamples > 0)
++                clipNode = makeNode<tracktion::graph::LatencyNode> (std::move (clipNode), padSamples);
++
++            head = std::max (head, TimeDuration::fromSeconds (laneLatencySeconds));
++            tail = std::max (tail, TimeDuration::fromSeconds (laneLatencySeconds * 2.0));
++        }
++
++        return { std::move (clipNode),
++                 timeRange.withStart (timeRange.getStart() - head)
++                          .withEnd (timeRange.getEnd() + tail) };
++    };
+ 
+     if (clips.size() == 1)
+     {
+@@ -984,10 +1003,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+ 
+             if (auto clipNode = createNodeForClip (*clip, trackMuteState, params, ClipRole::arranger))
+             {
+-                auto timeRange = clip->getPosition().time;
+-                timeRange = timeRange.withStart (timeRange.getStart() - clip->getHead())
+-                                     .withEnd (timeRange.getEnd() + clip->getTail());
+-                combiner->addInput (std::move (clipNode), timeRange, clip->compensatesOwnPluginLatency());
++                auto [node, timeRange] = equaliseLatency (*clip, std::move (clipNode));
++                combiner->addInput (std::move (node), timeRange, clip->compensatesOwnPluginLatency());
+             }
+ 
+             return combiner;
+@@ -1007,10 +1024,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+         if (params.allowedClips == nullptr || params.allowedClips->contains (clip))
+             if (auto clipNode = createNodeForClip (*clip, trackMuteState, params, ClipRole::arranger))
+             {
+-                auto timeRange = clip->getPosition().time;
+-                timeRange = timeRange.withStart (timeRange.getStart() - clip->getHead())
+-                                     .withEnd (timeRange.getEnd() + clip->getTail());
+-                clipEntries.push_back ({ std::move (clipNode), timeRange, clip->compensatesOwnPluginLatency() });
++                auto [node, timeRange] = equaliseLatency (*clip, std::move (clipNode));
++                clipEntries.push_back ({ std::move (node), timeRange, clip->compensatesOwnPluginLatency() });
+             }
+ 
+     // Extract nodes, match channels, then put back
+-- 
+2.50.1 (Apple Git-155)
+

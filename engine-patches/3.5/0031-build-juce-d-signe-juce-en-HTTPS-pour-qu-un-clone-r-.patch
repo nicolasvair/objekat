@@ -1,0 +1,39 @@
+From 1ec02786c14e351058f5e7192d7fbe3cb03a2585 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 23:14:47 +0200
+Subject: [PATCH] =?UTF-8?q?build(juce):=20d=C3=A9signe=20juce=20en=20HTTPS?=
+ =?UTF-8?q?,=20pour=20qu'un=20clone=20r=C3=A9cursif=20passe?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le .gitmodules hérité de l'amont nomme juce en git@github.com:, donc en SSH.
+Un `git clone --recurse-submodules` d'Objekat réussit alors à récupérer
+tracktion depuis le fork, puis échoue un étage plus bas :
+
+    fatal: clone of 'git@github.com:juce-framework/JUCE.git' into submodule
+    path '…/modules/juce' failed
+
+Le SSH exige une clé déclarée sur GitHub — inutile pour lire un dépôt public,
+et rédhibitoire pour quiconque découvre le projet. tools/rebuild-engine.sh
+réécrivait déjà l'URL en HTTPS de son côté, mais un clone récursif ne passe pas
+par lui : la correction doit vivre dans la branche elle-même.
+
+Le dépôt visé ne change pas — c'est le juce officiel, même commit.
+---
+ .gitmodules | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.gitmodules b/.gitmodules
+index 8ad62d2c2f0..6783cf1815a 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -1,4 +1,4 @@
+ [submodule "modules/juce"]
+ 	path = modules/juce
+-	url = git@github.com:juce-framework/JUCE.git
++	url = https://github.com/juce-framework/JUCE.git
+ 	branch = develop
+-- 
+2.50.1 (Apple Git-155)
+

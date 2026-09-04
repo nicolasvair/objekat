@@ -1,0 +1,60 @@
+From 4bc759547785e20cd1d4f18ccacdd79cc2002a81 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 13 Aug 2026 02:27:26 +0200
+Subject: [PATCH] =?UTF-8?q?fix(containerclip):=20vide=20le=20buffer=20MIDI?=
+ =?UTF-8?q?=20de=20sortie,=20il=20s'accumulait=20bloc=20apr=C3=A8s=20bloc?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ContainerClipNode déclare ClearBuffers::no, ce qui dispense Node::process de vider
+les DEUX buffers du nœud — audio et midi. Pour l'audio le contrat est repris par le
+CombiningNode (tempAudioBuffer.clear()) ou par le TimedNode (0012) ; ni l'un ni
+l'autre ne touche au MIDI, et midiBuffer est un membre du nœud, persistant d'un bloc
+à l'autre. Or le player local ne fait qu'AJOUTER dedans (NodePlayer :
+pc.buffers.midi.mergeFrom).
+
+Les messages du bloc précédent repartaient donc au bloc suivant, timestamp compris :
+l'instrument posé en tête de la plugin-list du container recevait le même note-on à
+chaque bloc (~90/s à 512 échantillons) et la liste grossissait sans borne. Voix
+empilées, saturation — le larsen du 0012, côté MIDI. Il ne s'entend que depuis 0021 :
+avant, aucun container ne produisait de MIDI.
+
+Vidé avant le garde de fenêtre, sinon un bloc hors fenêtre — qui sort sans rien
+écrire — ré-émettrait le dernier bloc joué (le piège du tap en attente, 0014).
+---
+ .../graph/tracktion_ContainerClipNode.cpp      | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 2ce319720b4..8bc1cfd08bd 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -135,6 +135,24 @@ bool ContainerClipNode::isReadyToProcess()
+ 
+ void ContainerClipNode::process (ProcessContext& pc)
+ {
++    // Patch local Objekat — vide notre buffer MIDI de sortie : personne d'autre ne le fait.
++    //
++    // setOptimisations ({ ClearBuffers::no, … }) dispense Node::process de vider les DEUX
++    // buffers du nœud, audio et midi. Pour l'audio le contrat est repris par le CombiningNode
++    // (tempAudioBuffer.clear()) ou par le TimedNode (@see 0012) ; ni l'un ni l'autre ne touche
++    // au MIDI, et midiBuffer est un MEMBRE du nœud, persistant d'un bloc à l'autre. Or notre
++    // player local ne fait qu'AJOUTER dedans (NodePlayer : pc.buffers.midi.mergeFrom).
++    //
++    // Sans ce vidage les messages du bloc précédent restent — avec leur timestamp, situé dans
++    // [0, taille de bloc) — et repartent au bloc suivant : l'instrument posé en tête de la
++    // plugin-list du container reçoit le même note-on à CHAQUE bloc, et la liste grossit sans
++    // borne. C'est le larsen du 0012, côté MIDI ; il ne s'entend que depuis 0021, seul un
++    // container qui héberge un MidiClip produisant du MIDI.
++    //
++    // Vidé AVANT le garde de fenêtre : un bloc hors fenêtre sort sans rien écrire et
++    // ré-émettrait sinon le dernier bloc joué (le piège du tap en attente, @see 0014).
++    pc.buffers.midi.clear();
++
+     const auto sectionEditSampleRange = getTimelineSampleRange();
+     const auto sampleRate = getSampleRate();
+ 
+-- 
+2.50.1 (Apple Git-155)
+

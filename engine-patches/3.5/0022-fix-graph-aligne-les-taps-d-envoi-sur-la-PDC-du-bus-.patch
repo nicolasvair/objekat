@@ -1,0 +1,401 @@
+From b1b25f1ea3729db814a0cb1b073753f4416e5e28 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 12 Aug 2026 01:48:32 +0200
+Subject: [PATCH] =?UTF-8?q?fix(graph):=20aligne=20les=20taps=20d'envoi=20s?=
+ =?UTF-8?q?ur=20la=20PDC=20du=20bus=20qui=20les=20re=C3=A7oit?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un tap est prélevé au MILIEU du graphe — à la fin de la chaîne de son
+émetteur — alors que toute l'égalisation de latence se fait en aval : le
+rembourrage qui met les clips d'une lane d'accord entre eux, puis les
+LatencyNode que le SummingNode pose entre ses branches. La copie humide
+manquait donc de ce retard, et d'un montant DIFFÉRENT par émetteur : un
+émetteur avec 1000 échantillons de latence de chaîne ressortait 1000
+échantillons en retard sur son propre signal sec, son voisin sans plugin
+tombant juste. Inaudible sur une réverbe, rédhibitoire pour des stems,
+dont le critère de vérité est « Σ stems = mix, à l'échantillon près ».
+
+Correctif en une règle : retarder le tap i de (référence − tapLatence_i)
+et DÉCLARER référence, la référence étant la latence du nœud de contenu
+auquel le retour sera sommé. Il suffit que tapLatence_i + retard_i soit
+égal à la latence déclarée pour que l'égalisation d'aval retombe juste,
+quelle que soit la précision par ailleurs de la PDC amont.
+
+ - createPluginNodeForList relève la latence accumulée au point de
+   prélèvement sur le nœud d'entrée de l'envoi. C'est le nombre du
+   graphe, pas une reconstitution côté modèle : le contenu d'un
+   container et les plugins précédents y sont déjà comptés.
+ - ObjAuxReturnNode porte une ligne à retard circulaire par envoi,
+   allouée seulement quand le retard est non nul, et qui avance à chaque
+   bloc même sans tap — une ligne qui saute des blocs ne retarde plus de
+   ce qu'elle annonce.
+ - les bornes de la fenêtre de l'aux se lisent maintenant sur l'âge du
+   MATÉRIAU (décalé de la latence déclarée), même convention que
+   PluginNode avec le temps d'edit qu'il donne à ses plugins.
+---
+ .../graph/tracktion_ContainerClipNode.cpp     | 141 ++++++++++++++++--
+ .../graph/tracktion_ContainerClipNode.h       |  43 +++++-
+ .../graph/tracktion_EditNodeBuilder.cpp       |  13 +-
+ .../plugins/tracktion_PluginList.h            |  28 ++++
+ 4 files changed, 207 insertions(+), 18 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 10546823842..2ce319720b4 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -254,13 +254,15 @@ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+                                     std::vector<Plugin::Ptr> sendersToUse,
+                                     TimeRange auxTimeRange,
+                                     int numChannelsToUse,
+-                                    size_t nodeIDToUse)
++                                    size_t nodeIDToUse,
++                                    int referenceLatencyNumSamples)
+     : TracktionEngineNode (editProcessState),
+       dependency (std::move (dependencyToUse)),
+       senderPlugins (std::move (sendersToUse)),
+       auxRange (auxTimeRange),
+       numChannels (std::max (1, numChannelsToUse)),
+-      auxNodeID (nodeIDToUse)
++      auxNodeID (nodeIDToUse),
++      referenceLatency (std::max (0, referenceLatencyNumSamples))
+ {
+     assert (dependency);
+ 
+@@ -268,6 +270,14 @@ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+         if (auto send = dynamic_cast<ContainerAuxSend*> (p.get()))
+             senders.push_back (send);
+ 
++    // Le retard de chaque tap est connu dès ici : sa latence de prélèvement a été relevée à la
++    // construction de la chaîne de son émetteur, qui précède forcément la nôtre (le nœud de
++    // contenu est notre dépendance, et les envois vivent dedans). @see la doc de la classe.
++    tapDelays.resize (senders.size());
++
++    for (size_t i = 0; i < senders.size(); ++i)
++        tapDelays[i].numSamples = std::max (0, referenceLatency - senders[i]->getTapLatencyNumSamples());
++
+     setOptimisations ({ tracktion::graph::ClearBuffers::no,
+                         tracktion::graph::AllocateAudioBuffer::yes });
+ }
+@@ -278,7 +288,10 @@ tracktion::graph::NodeProperties ObjAuxReturnNode::getNodeProperties()
+     props.hasAudio = true;
+     props.hasMidi = false;
+     props.numberOfChannels = numChannels;
+-    props.latencyNumSamples = 0;
++    // Ce que ce nœud émet est aussi vieux que ce que le nœud de contenu émet : les taps ont été
++    // remis à cet âge-là un par un. Le déclarer est ce qui fait retomber juste l'égalisation
++    // d'aval. @see la doc de la classe.
++    props.latencyNumSamples = referenceLatency;
+     props.nodeID = auxNodeID;
+ 
+     return props;
+@@ -290,6 +303,101 @@ std::vector<tracktion::graph::Node*> ObjAuxReturnNode::getDirectInputNodes()
+     return { dependency.get() };
+ }
+ 
++void ObjAuxReturnNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
++{
++    for (auto& d : tapDelays)
++    {
++        if (d.numSamples <= 0)
++        {
++            d.buffer.setSize (0, 0);
++            continue;
++        }
++
++        // Capacité = retard + un bloc : une écriture de bloc ne peut alors enjamber la fin du
++        // tampon qu'une fois, ce dont les deux copies ci-dessous se contentent.
++        d.buffer.setSize (numChannels, d.numSamples + std::max (1, info.blockSize), false, true, true);
++        d.buffer.clear();
++        d.writePos = 0;
++    }
++}
++
++// Somme un tap dans `dest`, à travers sa ligne à retard s'il en a une.
++void ObjAuxReturnNode::addTap (const juce::AudioBuffer<float>* tap, int tapNumSamples,
++                               TapDelay* delay, choc::buffer::ChannelArrayView<float> dest)
++{
++    const auto numDestFrames = (choc::buffer::FrameCount) dest.getNumFrames();
++    const auto numDestChans  = (choc::buffer::ChannelCount) dest.getNumChannels();
++
++    if (delay == nullptr)
++    {
++        // Chemin direct : aucune latence à rattraper, donc pas un octet alloué ni recopié.
++        if (tap == nullptr || tapNumSamples <= 0)
++            return;
++
++        auto srcView = tracktion::graph::toBufferView (*const_cast<juce::AudioBuffer<float>*> (tap));
++
++        const auto frames = std::min (numDestFrames, (choc::buffer::FrameCount) tapNumSamples);
++        const auto chans  = std::min (numDestChans, srcView.getNumChannels());
++
++        choc::buffer::add (dest.getChannelRange ({ 0, chans }).getStart (frames),
++                           srcView.getChannelRange ({ 0, chans }).getStart (frames));
++        return;
++    }
++
++    const auto capacity = (choc::buffer::FrameCount) delay->buffer.getNumSamples();
++
++    if (capacity == 0 || numDestFrames == 0 || numDestFrames > capacity - (choc::buffer::FrameCount) delay->numSamples)
++        return;   // bloc plus grand que prévu : mieux vaut ne rien émettre que déphaser la ligne
++
++    auto line = tracktion::graph::toBufferView (delay->buffer);
++    const auto chans = std::min (numDestChans, line.getNumChannels());
++    const auto writePos = (choc::buffer::FrameCount) delay->writePos;
++
++    // Découpe un intervalle circulaire de la ligne en une ou deux tranches contiguës.
++    const auto sliceLine = [&] (choc::buffer::FrameCount start, choc::buffer::FrameCount num)
++    {
++        const auto firstNum = std::min (num, capacity - start);
++        return std::pair { line.getChannelRange ({ 0, chans }).getFrameRange ({ start, start + firstNum }),
++                           line.getChannelRange ({ 0, chans }).getFrameRange ({ 0, num - firstNum }) };
++    };
++
++    // 1) Écrire le bloc courant. Du silence là où l'envoi n'a rien produit : la ligne doit
++    //    avancer du même nombre d'échantillons à chaque bloc, quoi qu'il arrive.
++    {
++        auto [w1, w2] = sliceLine (writePos, numDestFrames);
++        w1.clear();
++        w2.clear();
++
++        if (tap != nullptr && tapNumSamples > 0)
++        {
++            auto srcView = tracktion::graph::toBufferView (*const_cast<juce::AudioBuffer<float>*> (tap));
++            const auto tapChans  = std::min (chans, srcView.getNumChannels());
++            const auto tapFrames = std::min (numDestFrames, (choc::buffer::FrameCount) tapNumSamples);
++            const auto inFirst   = std::min (tapFrames, w1.getNumFrames());
++
++            choc::buffer::copy (w1.getChannelRange ({ 0, tapChans }).getStart (inFirst),
++                                srcView.getChannelRange ({ 0, tapChans }).getStart (inFirst));
++
++            if (tapFrames > inFirst)
++                choc::buffer::copy (w2.getChannelRange ({ 0, tapChans }).getStart (tapFrames - inFirst),
++                                    srcView.getChannelRange ({ 0, tapChans }).getFrameRange ({ inFirst, tapFrames }));
++        }
++    }
++
++    // 2) Lire ce qui a été écrit `numSamples` échantillons plus tôt, et le sommer.
++    {
++        const auto readPos = (writePos + capacity - (choc::buffer::FrameCount) delay->numSamples) % capacity;
++        auto [r1, r2] = sliceLine (readPos, numDestFrames);
++
++        choc::buffer::add (dest.getChannelRange ({ 0, chans }).getStart (r1.getNumFrames()), r1);
++
++        if (r2.getNumFrames() > 0)
++            choc::buffer::add (dest.getChannelRange ({ 0, chans }).getEnd (r2.getNumFrames()), r2);
++    }
++
++    delay->writePos = (int) ((writePos + numDestFrames) % capacity);
++}
++
+ bool ObjAuxReturnNode::isReadyToProcess()
+ {
+     return dependency->hasProcessed();
+@@ -308,32 +416,33 @@ void ObjAuxReturnNode::process (ProcessContext& pc)
+ 
+     // Les taps sont TOUJOURS consommés, y compris hors de la fenêtre de l'aux : un tap laissé
+     // en attente ressortirait tel quel à la réactivation suivante. C'est exactement le piège
+-    // du pré-roll (patch 0014) — ce qu'on croit jeter, on le rend audible plus tard.
+-    for (auto send : senders)
++    // du pré-roll (patch 0014) — ce qu'on croit jeter, on le rend audible plus tard. Idem pour
++    // les lignes à retard : elles avancent à chaque bloc, tap ou pas.
++    for (size_t i = 0; i < senders.size(); ++i)
+     {
+         int numSamples = 0;
+-        auto tap = send->getAndClearAuxTap (numSamples);
+-
+         // nullptr : l'envoi n'a pas tourné ce bloc — son émetteur est hors de sa fenêtre, ou
+         // bypassé. C'est le cas nominal et il ne coûte rien.
+-        if (tap == nullptr || numSamples <= 0)
+-            continue;
++        auto tap = senders[i]->getAndClearAuxTap (numSamples);
++        auto* delay = tapDelays[i].numSamples > 0 ? &tapDelays[i] : nullptr;
+ 
+-        auto srcView = tracktion::graph::toBufferView (*const_cast<juce::AudioBuffer<float>*> (tap));
+-
+-        const auto frames = std::min (numDestFrames, (choc::buffer::FrameCount) numSamples);
+-        const auto chans  = std::min (numDestChans, srcView.getNumChannels());
++        if (tap == nullptr && delay == nullptr)
++            continue;
+ 
+-        choc::buffer::add (destAudio.getChannelRange ({ 0, chans }).getStart (frames),
+-                           srcView.getChannelRange ({ 0, chans }).getStart (frames));
++        addTap (tap, numSamples, delay, destAudio);
+     }
+ 
+     // Bornes de l'aux. Sans ça il sonnerait hors de sa propre fenêtre dès qu'un émetteur joue :
+     // le nœud n'a pas de CombiningNode au-dessus de lui pour l'activer par tranches — c'est le
+     // prix de l'arête de dépendance. Même geste que ContainerClipNode::process pour son contenu.
++    //
++    // N.B. les bornes sont décalées de +L : ce qu'on émet à l'instant T est le matériau de
++    // T − L (on déclare L de latence), et c'est l'âge du MATÉRIAU qui doit tomber dans la
++    // fenêtre. Même convention que PluginNode, qui recule d'autant le temps d'edit qu'il donne
++    // à ses plugins.
+     {
+         const auto sectionRange = getTimelineSampleRange();
+-        const auto clipRange = toSamples (auxRange, getSampleRate());
++        const auto clipRange = toSamples (auxRange, getSampleRate()) + (SampleCount) referenceLatency;
+ 
+         auto numToClearAtStart = std::min (clipRange.getStart() - sectionRange.getStart(),
+                                            (SampleCount) numDestFrames);
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index cb43d4b04ab..0f3f130ef86 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -86,6 +86,25 @@ private:
+     N.B. `ClearBuffers::no` : le nœud vide lui-même son buffer avant de sommer. Ne pas s'en
+     remettre au framework ici — @see le patch `0012`, où ~15 types comptaient sur le
+     `CombiningNode` pour vider et où plus personne ne le faisait.
++
++    **Alignement (PDC).** Un tap est prélevé au MILIEU du graphe — à la fin de la chaîne de son
++    émetteur — alors que toute l'égalisation de latence se fait en aval : le rembourrage qui met
++    les clips d'une lane d'accord entre eux, puis les `LatencyNode` que le `SummingNode` pose
++    entre ses branches. La copie humide manque donc de tout ce retard-là, et d'un montant qui
++    diffère d'un émetteur à l'autre.
++
++    Ce nœud le rattrape avec une règle en une ligne : **retarder le tap i de
++    `référence − tapLatence_i`, et DÉCLARER `référence`**. La référence est la latence du nœud
++    de contenu — celui-là même auquel le retour sera sommé. Il suffit alors que
++    `tapLatence_i + retard_i` soit égal à la latence déclarée pour que l'égalisation d'aval
++    retombe exactement juste, quelle que soit la précision par ailleurs de la PDC amont : c'est
++    la définition même de ce que « déclarer une latence » veut dire dans ce graphe. La référence
++    majore toujours les taps (elle est un max sur des chemins qui les contiennent), donc les
++    retards sont positifs.
++
++    Corollaire : les bornes de la fenêtre de l'aux se lisent sur le temps du MATÉRIAU, décalé de
++    la latence déclarée — même convention que `PluginNode`, qui recule le temps d'edit qu'il
++    donne à ses plugins.
+ */
+ class ObjAuxReturnNode final : public tracktion::graph::Node,
+                                public TracktionEngineNode
+@@ -96,21 +115,41 @@ public:
+                       std::vector<Plugin::Ptr> senders,
+                       TimeRange auxTimeRange,
+                       int numChannels,
+-                      size_t nodeID);
++                      size_t nodeID,
++                      int referenceLatencyNumSamples);
+ 
+     //==============================================================================
+     tracktion::graph::NodeProperties getNodeProperties() override;
+     std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&) override;
+     bool isReadyToProcess() override;
+     void process (ProcessContext&) override;
+ 
+ private:
++    //==============================================================================
++    /** Ligne à retard d'UN tap. Circulaire, allouée dans prepareToPlay, et seulement pour les
++        envois dont le retard est non nul — le cas courant (aucune latence nulle part) ne coûte
++        donc rien. Elle avance à chaque bloc même quand l'envoi n'a rien écrit : une ligne à
++        retard qui saute des blocs ne retarde plus de ce qu'elle annonce.
++    */
++    struct TapDelay
++    {
++        juce::AudioBuffer<float> buffer;
++        int numSamples = 0;
++        int writePos = 0;
++    };
++
++    void addTap (const juce::AudioBuffer<float>* tap, int tapNumSamples,
++                 TapDelay*, choc::buffer::ChannelArrayView<float> dest);
++
+     //==============================================================================
+     std::shared_ptr<tracktion::graph::Node> dependency;
+ 
+     // Les Ptr tiennent les plugins en vie ; le vecteur parallèle évite un dynamic_cast par bloc.
+     std::vector<Plugin::Ptr> senderPlugins;
+     std::vector<ContainerAuxSend*> senders;
++    // Parallèle à `senders` : la ligne à retard de chacun (vide si son retard est nul).
++    std::vector<TapDelay> tapDelays;
+ 
+     // Bornes de l'aux, en temps d'EDIT. Comparables telles quelles au temps local du container :
+     // son offset vaut le début de son étendue, donc temps local == temps edit (invariant posé
+@@ -119,6 +158,8 @@ private:
+ 
+     const int numChannels;
+     const size_t auxNodeID;
++    // Latence déclarée = celle du nœud de contenu auquel ce retour sera sommé. @see la doc.
++    const int referenceLatency;
+ };
+ 
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index e72d086c032..2c7bee3f61b 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -957,12 +957,15 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
+         hash_combine (nodeID, (size_t) 0x0B7A0E37);
+         hash_combine (nodeID, auxClip->itemID.getRawID());
+ 
++        // La latence du nœud de CONTENU est la référence d'alignement des taps : c'est à cette
++        // somme-là que le retour ira s'ajouter. @see ObjAuxReturnNode.
+         std::unique_ptr<Node> returnNode = makeNode<ObjAuxReturnNode> (params.processState,
+                                                                        sharedContent,
+                                                                        sendersFor (auxClip->itemID),
+                                                                        auxClip->getEditTimeRange(),
+                                                                        numChannels,
+-                                                                       nodeID);
++                                                                       nodeID,
++                                                                       contentProps.latencyNumSamples);
+ 
+         if (params.includePlugins)
+         {
+@@ -1720,6 +1723,14 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+         if (! params.forRendering && p->isFrozen())
+             continue;
+ 
++        // Patch local Objekat — un envoi d'aux relève ici la latence accumulée à son point de
++        // prélèvement : c'est le seul endroit où on la connaisse, et c'est le nombre exact du
++        // graphe, pas une reconstitution côté modèle (le contenu d'un container, les FIFOs
++        // d'un bloc parallèle et les plugins précédents y sont déjà tous comptés).
++        // @see ContainerAuxSend::setTapLatencyNumSamples
++        if (auto auxSend = dynamic_cast<ContainerAuxSend*> (p))
++            auxSend->setTapLatencyNumSamples (node != nullptr ? node->getNodeProperties().latencyNumSamples : 0);
++
+         if (auto meterPlugin = dynamic_cast<LevelMeterPlugin*> (p))
+         {
+             node = makeNode<LevelMeasurerProcessingNode> (std::move (node), *meterPlugin);
+diff --git a/modules/tracktion_engine/plugins/tracktion_PluginList.h b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+index 596775b7ef4..5f1f4b1a9e6 100644
+--- a/modules/tracktion_engine/plugins/tracktion_PluginList.h
++++ b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+@@ -197,6 +197,34 @@ struct ContainerAuxSend
+         toute la chaîne d'émetteurs — l'arête de dépendance vers le `CombiningNode` le garantit.
+     */
+     virtual const juce::AudioBuffer<float>* getAndClearAuxTap (int& numSamples) = 0;
++
++    //==============================================================================
++    /** Latence ACCUMULÉE en amont du point de prélèvement, en échantillons — relevée à la
++        construction du graphe par `createPluginNodeForList`, qui la lit sur le nœud d'entrée
++        de cet envoi.
++
++        Pourquoi le nœud de retour en a besoin : le tap est prélevé au milieu du graphe, à la
++        fin de la chaîne de son émetteur, alors que la PDC — celle qui égalise les clips d'une
++        même lane entre eux, puis les branches d'un `SummingNode` — n'opère qu'en AVAL de ce
++        point. Le signal sec de l'émetteur y gagne encore du retard que sa copie humide n'a
++        pas. Sans correctif, le retour sonne en avance de la latence propre de l'émetteur, et
++        d'un montant DIFFÉRENT par émetteur.
++
++        La correction est exacte pour un retard `d_i` tel que `d_i + tapLatence_i` soit égal
++        pour tous les envois d'un même retour, ET égal à la latence que ce retour DÉCLARE :
++        c'est la seule condition pour que l'égalisation en aval retombe juste. @see
++        ObjAuxReturnNode.
++
++        Inaudible sur une réverbe, mais rédhibitoire dès qu'on veut « Σ stems = mix, à
++        l'échantillon près ».
++    */
++    void setTapLatencyNumSamples (int n) noexcept           { tapLatencyNumSamples = std::max (0, n); }
++
++    /** @see setTapLatencyNumSamples */
++    int getTapLatencyNumSamples() const noexcept            { return tapLatencyNumSamples; }
++
++private:
++    int tapLatencyNumSamples = 0;
+ };
+ 
+ } // namespace tracktion::inline engine
+-- 
+2.50.1 (Apple Git-155)
+

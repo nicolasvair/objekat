@@ -1,0 +1,238 @@
+From a5f951500b8cff43a4b586fee99533fc411cd567 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 19:26:59 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20d=C3=A9pliage=20d'un=20bloc=20de?=
+ =?UTF-8?q?=20plugins=20parall=C3=A8les?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Socle moteur de l'étape 2b. ParallelPluginBlock (tracktion_PluginList.h) est
+une interface : un plugin qui, au lieu d'une chaîne, en contient N en
+parallèle. createPluginNodeForList la reconnaît et déplie le plugin en
+SummingNode { branche... }, chaque branche partant de la même entrée via un
+ConnectedNode — donc le nœud d'entrée est détenu par des shared_ptr et le DFS
+dédupliqué de TimedNode ne le processe qu'une fois.
+SummingNode::createLatencyNodes() égalise ensuite les branches.
+
+Cas dégénérés court-circuités : zéro branche laisse passer l'entrée, une seule
+est mise en série sans payer ConnectedNode ni SummingNode.
+
+getMaxBranchLatencySeconds() donne la latence à déclarer — la branche la plus
+longue, chaque branche étant la somme série de ses plugins, récursif. Sans
+elle, la lecture anticipée du ContainerClip sous-compenserait en silence.
+
+Complète 0009 : la chaîne d'un TimedNode est désormais transformée quand elle
+se ramifie. Le graphe englobant ne la voit pas (getDirectInputNodes() renvoie
+{}), donc transform() n'y était jamais appelé et un SummingNode n'aurait
+jamais posé ses LatencyNode. Uniquement quand elle se ramifie : sur une chaîne
+série transform() n'a rien à faire, et c'est un coût par clip à chaque
+reconstruction.
+
+Ce n'est pas la voie RackInstance que suggérait la spec : createNodeForRackInstance
+bâtit le graphe du rack à la RACINE de l'Edit et relie ses Send/Return en
+cherchant dans le graphe en cours de transformation — invisible depuis le
+graphe local d'un container.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_CombiningNode.cpp         | 39 ++++++++++----
+ .../graph/tracktion_EditNodeBuilder.cpp       | 53 +++++++++++++++++++
+ .../plugins/tracktion_PluginList.h            | 53 +++++++++++++++++++
+ 3 files changed, 136 insertions(+), 9 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+index 33b08b63657..bc412c62dd7 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+@@ -40,17 +40,19 @@ struct CombiningNode::TimedNode
+         // processé après tous ses inputs, et la déduplication qu'un nœud partagé entre deux
+         // branches ne l'est qu'une fois.
+         nodesToProcess = tracktion::graph::getNodes (*node, tracktion::graph::VertexOrdering::postordering);
++        inspectChain();
+ 
+-        // Les feuilles sont les seules dont la disponibilité dépend de l'extérieur : tous les
+-        // autres nœuds ont leurs inputs dans cette liste, processés avant eux.
+-        for (auto n : nodesToProcess)
++        if (! isLinearChain)
+         {
+-            const auto numInputs = n->getDirectInputNodes().size();
+-
+-            if (numInputs == 0)
+-                leafNodes.push_back (n);
+-            else if (numInputs > 1)
+-                isLinearChain = false;
++            // La chaîne d'un TimedNode n'est jamais transformée : le graphe englobant ne la voit
++            // pas (CombiningNode::getDirectInputNodes() renvoie {}). Sans transformation, un
++            // SummingNode ne poserait pas ses LatencyNode et les branches parallèles sortiraient
++            // désalignées. On la traite donc comme le petit graphe qu'elle est — mais seulement
++            // quand elle se ramifie : sur une chaîne série, transform() n'a rien à faire et on
++            // s'épargne un coût payé par clip, à chaque reconstruction.
++            nodesToProcess = tracktion::graph::transformNodes (*node, false);
++            leafNodes.clear();
++            inspectChain();
+         }
+     }
+ 
+@@ -155,6 +157,25 @@ private:
+     const std::unique_ptr<Node> node;
+     std::vector<Node*> nodesToProcess, leafNodes;
+     bool isLinearChain = true;
++
++    /** Relève les feuilles — les seules dont la disponibilité dépende de l'extérieur, tous les
++        autres nœuds ayant leurs inputs dans la liste et processés avant eux — et note si la
++        chaîne se ramifie.
++    */
++    void inspectChain()
++    {
++        isLinearChain = true;
++
++        for (auto n : nodesToProcess)
++        {
++            const auto numInputs = n->getDirectInputNodes().size();
++
++            if (numInputs == 0)
++                leafNodes.push_back (n);
++            else if (numInputs > 1)
++                isLinearChain = false;
++        }
++    }
+    #if JUCE_DEBUG
+     bool hasPrefetched = false;
+    #endif
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index a17ad6cb34a..37e205de39d 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -1440,6 +1440,53 @@ std::unique_ptr<tracktion::graph::Node> createNodeForRackInstance (RackInstance&
+                                      [dryGain = rackInstance.dryGain] { return dryGain->getCurrentValue(); });
+ }
+ 
++// Patch local Objekat — déplie un bloc de plugins parallèles en SummingNode { branche… }.
++// Chaque branche part de la MÊME entrée, partagée par un ConnectedNode : le nœud d'entrée est
++// donc détenu par des shared_ptr, pas par la chaîne unique_ptr. Le DFS dédupliqué de
++// CombiningNode::TimedNode ne le processe qu'une fois. @see ParallelPluginBlock
++std::unique_ptr<tracktion::graph::Node> createNodeForParallelBlock (ParallelPluginBlock& block, Plugin& plugin,
++                                                                    const TrackMuteState* trackMuteState,
++                                                                    std::unique_ptr<Node> input,
++                                                                    tracktion::graph::PlayHeadState& playHeadState,
++                                                                    const CreateNodeParams& params)
++{
++    auto branches = block.getParallelBranches();
++
++    branches.erase (std::remove (branches.begin(), branches.end(), nullptr), branches.end());
++
++    // Aucune branche : le bloc est transparent. Une seule : inutile de payer un ConnectedNode
++    // et un SummingNode pour ça, on la met en série.
++    if (branches.empty())
++        return input;
++
++    if (branches.size() == 1)
++        return createPluginNodeForList (*branches.front(), trackMuteState, std::move (input), playHeadState, params);
++
++    const auto inputProps = input->getNodeProperties();
++    std::shared_ptr<Node> sharedInput (std::move (input));
++    std::vector<std::unique_ptr<Node>> branchNodes;
++
++    for (size_t i = 0; i < branches.size(); ++i)
++    {
++        size_t nodeID = 0;
++        hash_combine (nodeID, plugin.itemID.getRawID());
++        hash_combine (nodeID, i);
++
++        auto connected = std::make_unique<tracktion::graph::ConnectedNode> (nodeID);
++
++        for (int c = 0; c < inputProps.numberOfChannels; ++c)
++            connected->addAudioConnection (sharedInput, { c, c });
++
++        if (inputProps.hasMidi)
++            connected->addMidiConnection (sharedInput);
++
++        branchNodes.push_back (createPluginNodeForList (*branches[i], trackMuteState,
++                                                        std::move (connected), playHeadState, params));
++    }
++
++    return makeNode<tracktion::graph::SummingNode> (std::move (branchNodes));
++}
++
+ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& list, const TrackMuteState* trackMuteState, std::unique_ptr<Node> node,
+                                                                  tracktion::graph::PlayHeadState& playHeadState, const CreateNodeParams& params)
+ {
+@@ -1466,6 +1513,12 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+             if (returnPlugin->isEnabled())
+                 node = makeNode<ReturnNode> (std::move (node), returnPlugin->busNumber);
+         }
++        else if (auto parallelBlock = dynamic_cast<ParallelPluginBlock*> (p))
++        {
++            if (p->isEnabled())
++                node = createNodeForParallelBlock (*parallelBlock, *p, trackMuteState,
++                                                   std::move (node), playHeadState, params);
++        }
+         else if (auto rackInstance = dynamic_cast<RackInstance*> (p))
+         {
+             node = createNodeForRackInstance (*rackInstance, std::move (node), params.processState,
+diff --git a/modules/tracktion_engine/plugins/tracktion_PluginList.h b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+index 6463cc42b1d..3ca0f176c63 100644
+--- a/modules/tracktion_engine/plugins/tracktion_PluginList.h
++++ b/modules/tracktion_engine/plugins/tracktion_PluginList.h
+@@ -90,4 +90,57 @@ private:
+     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginList)
+ };
+ 
++
++//==============================================================================
++/** Patch local Objekat — interface d'un plugin qui, au lieu d'une chaîne, en contient N
++    en PARALLÈLE.
++
++    `createPluginNodeForList` reconnaît cette interface et déplie le plugin en
++    `SummingNode { branche… }`, chaque branche partant de la même entrée via un
++    `ConnectedNode`. `SummingNode::createLatencyNodes()` égalise ensuite les branches
++    entre elles.
++
++    Pourquoi pas un `RackInstance`, comme le suggérait la spec : `createNodeForRackInstance`
++    ne construit pas le rack sur place, il pose des `SendNode`/`ReturnNode` sur des bus et le
++    graphe du rack est bâti à la RACINE de l'Edit. `ReturnNode::findSendNodes` cherche alors
++    ses sends dans le graphe en cours de transformation — invisible depuis le graphe local
++    d'un container. C'est la règle du container : frontière de graphe, rien ne traverse.
++
++    Le plugin lui-même ne traite aucun audio, il est purement structurel : tout se joue à la
++    construction du nœud.
++*/
++struct ParallelPluginBlock
++{
++    virtual ~ParallelPluginBlock() = default;
++
++    /** Les branches, dans l'ordre. Une liste vide laisse simplement passer l'entrée. */
++    virtual std::vector<PluginList*> getParallelBranches() = 0;
++
++    /** Latence du bloc : la branche la plus longue, chaque branche étant la somme SÉRIE de
++        ses plugins. Récursif, un bloc pouvant en contenir un autre.
++
++        À renvoyer depuis `Plugin::getLatencySeconds()` de l'implémentation concrète : sans
++        ça la PDC du container sous-compenserait, silencieusement.
++    */
++    static double getMaxBranchLatencySeconds (ParallelPluginBlock& block)
++    {
++        double maxLatency = 0.0;
++
++        for (auto branch : block.getParallelBranches())
++        {
++            if (branch == nullptr)
++                continue;
++
++            double branchLatency = 0.0;
++
++            for (auto p : *branch)
++                branchLatency += std::max (0.0, p->getLatencySeconds());
++
++            maxLatency = std::max (maxLatency, branchLatency);
++        }
++
++        return maxLatency;
++    }
++};
++
+ } // namespace tracktion::inline engine
+-- 
+2.50.1 (Apple Git-155)
+

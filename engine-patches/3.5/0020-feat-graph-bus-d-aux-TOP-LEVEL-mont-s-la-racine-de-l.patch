@@ -1,0 +1,220 @@
+From a8a3fdd9707ea6e1078f0617f63aefecbff19f68 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Tue, 11 Aug 2026 21:14:55 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20bus=20d'aux=20TOP-LEVEL,=20mont?=
+ =?UTF-8?q?=C3=A9s=20=C3=A0=20la=20racine=20de=20l'Edit?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Même montage qu'un aux de container (`createAuxReturns`, factorisé), mais greffé au-dessus
+de la somme des pistes et donc juste avant la chaîne master :
+
+    pistes   = SummingNode { piste_1…piste_n }     ← les envois y écrivent
+    partagé  = shared_ptr(pistes)
+    sec      = ConnectedNode(partagé)
+    retour_i = ObjAuxReturnNode(dépend de partagé) → FX de l'aux i → fades de l'aux i
+    résultat = SummingNode { sec, retour_1…retour_n }   → master
+
+Pourquoi à la RACINE et pas piste par piste : « une lane = une piste », donc un émetteur
+top-level et l'aux qu'il vise vivent sur des AudioTrack différentes. Faire dépendre le
+retour de chaque piste émettrice demanderait un fan-out par piste, et surtout ouvrirait des
+CYCLES — lane 3 → aux lane 0 pendant que lane 0 → aux lane 3, sur quoi `areThereAnyCycles`
+assert et qu'il faudrait détecter et casser. Dépendre de la SOMME des pistes supprime les
+deux problèmes d'un coup : tout ce qui émet est en amont, par construction.
+
+Les envois sont désormais cherchés dans des `PluginList` et non dans des clips : au
+top-level, la chaîne d'un clip MIDI vit sur sa piste dédiée, pas sur son clip.
+
+Un rendu RESTREINT (gel d'un objet, `allowedTracks`/`allowedClips`) n'a pas de retours :
+un aux top-level est un objet à lui, qui joue de son côté — le cuire dans l'émetteur le
+compterait deux fois.
+
+Contrepartie assumée : ce retour est schedulé à chaque bloc de la session, il n'y a aucune
+fenêtre de container pour le borner — un coût par aux top-level, pas par groupe. On ne peut
+PAS le gater en le posant dans un TimedNode : la chaîne d'un TimedNode n'est pas ordonnancée
+par le graphe englobant alors qu'elle lui est exposée par getInternalNodes (le piège qui a
+tué LatencyMaskingNode), et un retour endormi cesserait de consommer les taps, qui
+ressortiraient au réveil (piège 0014).
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 121 +++++++++++++++---
+ 1 file changed, 101 insertions(+), 20 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 1ce68f1292f..d252843363a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -877,9 +877,10 @@ std::unique_ptr<tracktion::graph::Node> createNodeForStepClip (StepClip& clip, c
+     return node;
+ }
+ 
+-// Patch local Objekat — greffe les retours d'aux INTERNES sur le graphe local d'un container.
++// Patch local Objekat — greffe des retours d'aux au-dessus d'un nœud de contenu.
+ //
+-//     contenu   = CombiningNode { enfants non-aux }        ← les envois y écrivent
++//     contenu   = le nœud où les envois écrivent (CombiningNode d'un container, ou la somme
++//                 des pistes à la racine de l'Edit)
+ //     partagé   = shared_ptr (contenu)
+ //     sec       = ConnectedNode (partagé)                   ← branche sèche
+ //     retour_i  = ObjAuxReturnNode (dépend de partagé) → FX de l'aux i → fades de l'aux i
+@@ -888,28 +889,40 @@ std::unique_ptr<tracktion::graph::Node> createNodeForStepClip (StepClip& clip, c
+ // L'arête `retour_i → partagé` n'est pas décorative : elle seule ordonne les envois avant leur
+ // lecture. Deux frères d'un SummingNode n'ont aucun ordre garanti entre eux.
+ //
+-// Les envois sont cherchés au niveau supérieur de la chaîne de chaque enfant DIRECT. Pas dans
+-// les branches d'un bloc parallèle : une branche n'est pas un objet, et l'application pose
+-// l'envoi post-fader. Pas non plus dans la chaîne du container lui-même : elle vit en AVAL du
+-// ContainerClipNode, donc hors de ce graphe — et viser son propre aux serait un bouclage.
+-static std::unique_ptr<Node> createAuxReturnsForContainer (const juce::Array<Clip*>& contentClips,
+-                                                           const juce::Array<ContainerClip*>& auxClips,
+-                                                           std::unique_ptr<Node> contentNode,
+-                                                           const CreateNodeParams& params)
++// Les envois sont cherchés au niveau supérieur de chacune des `senderLists`. Pas dans les
++// branches d'un bloc parallèle : une branche n'est pas un objet, et l'application pose l'envoi
++// en fin de chaîne. Dans un container, la chaîne du container lui-même n'en fait pas partie :
++// elle vit en AVAL du ContainerClipNode, donc hors de ce graphe — et viser son propre aux
++// serait un bouclage.
++// Les chaînes où chercher les envois d'une fratrie de clips : celle de chaque clip.
++static std::vector<PluginList*> senderPluginLists (const juce::Array<Clip*>& clips)
++{
++    std::vector<PluginList*> result;
++
++    for (auto c : clips)
++        if (auto pl = c->getPluginList())
++            result.push_back (pl);
++
++    return result;
++}
++
++static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& senderLists,
++                                               const juce::Array<ContainerClip*>& auxClips,
++                                               std::unique_ptr<Node> contentNode,
++                                               const CreateNodeParams& params)
+ {
+     if (auxClips.isEmpty() || contentNode == nullptr)
+         return contentNode;
+ 
+-    auto sendersFor = [&contentClips] (EditItemID auxID)
++    auto sendersFor = [&senderLists] (EditItemID auxID)
+     {
+         std::vector<Plugin::Ptr> result;
+ 
+-        for (auto c : contentClips)
+-            if (auto pl = c->getPluginList())
+-                for (auto p : *pl)
+-                    if (auto send = dynamic_cast<ContainerAuxSend*> (p))
+-                        if (send->getTargetAuxClipID() == auxID)
+-                            result.push_back (p);
++        for (auto pl : senderLists)
++            for (auto p : *pl)
++                if (auto send = dynamic_cast<ContainerAuxSend*> (p))
++                    if (send->getTargetAuxClipID() == auxID)
++                        result.push_back (p);
+ 
+         return result;
+     };
+@@ -1049,9 +1062,9 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+                                              BeatRange (clip.getStartBeat(), clip.getEndBeat()),
+                                              clip.getOffsetInBeats(),
+                                              clip.getLoopRangeBeats(),
+-                                             createAuxReturnsForContainer (clips, auxClips,
+-                                                                           createNodeForClips (clip.itemID, clips, trackMuteState, params),
+-                                                                           params),
++                                             createAuxReturns (senderPluginLists (clips), auxClips,
++                                                               createNodeForClips (clip.itemID, clips, trackMuteState, params),
++                                                               params),
+                                              pluginLatencyNumSamples);
+    #endif
+ 
+@@ -2279,6 +2292,70 @@ std::unique_ptr<tracktion::graph::Node> createMasterPluginsNode (Edit& edit,
+     return node;
+ }
+ 
++// Patch local Objekat — retours des aux TOP-LEVEL, greffés à la RACINE de l'Edit, juste au-dessus
++// de la somme des pistes et donc juste avant la chaîne master.
++//
++// Pourquoi à la racine et pas piste par piste : « une lane = une piste », donc un émetteur
++// top-level et l'aux qu'il vise vivent sur des AudioTrack DIFFÉRENTES. Faire dépendre le retour
++// de chacune des pistes émettrices demanderait un fan-out par piste, et surtout ouvrirait des
++// CYCLES — un objet de la lane 3 envoyant vers un aux de la lane 0 pendant qu'un objet de la
++// lane 0 envoie vers un aux de la lane 3 ; `areThereAnyCycles` assert dessus, et il faudrait
++// détecter et casser l'envoi fautif. Dépendre de la SOMME des pistes supprime les deux
++// problèmes d'un coup : tout ce qui émet est en amont, par construction.
++//
++// Le retour dépend de la somme des pistes mais n'en consomme pas l'audio — c'est la même arête
++// d'ordonnancement qu'à l'intérieur d'un container.
++//
++// Contrepartie assumée : ce retour est schedulé à CHAQUE bloc de la session, il n'y a aucune
++// fenêtre de container pour le borner. C'est le coût fixe que le niveau 1 évitait, ici borné à
++// « un par aux top-level », pas un par groupe. On ne peut PAS le gater en le posant dans un
++// TimedNode : la chaîne d'un TimedNode n'est pas ordonnancée par le graphe englobant (mais lui
++// est exposée par getInternalNodes) — c'est le piège qui a tué LatencyMaskingNode — et un
++// retour endormi cesserait de consommer les taps, qui ressortiraient au réveil (piège 0014).
++static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
++                                                       std::unique_ptr<Node> tracksNode,
++                                                       const CreateNodeParams& params)
++{
++    if (tracksNode == nullptr || ! params.includePlugins)
++        return tracksNode;
++
++    // Rendu restreint (gel d'un objet) : on ne bâtit que ce que la sélection demande. Un aux
++    // top-level est un objet à lui, qui joue de son côté — le cuire dans l'émetteur le
++    // compterait deux fois.
++    if (params.allowedTracks != nullptr || params.allowedClips != nullptr)
++        return tracksNode;
++
++    juce::Array<ContainerClip*> auxClips;
++    juce::Array<Clip*> senderClips;
++    std::vector<PluginList*> senderLists;
++
++    for (auto t : getAllTracks (edit))
++    {
++        auto ct = dynamic_cast<ClipTrack*> (t);
++
++        if (ct == nullptr)
++            continue;
++
++        for (auto c : ct->getClips())
++        {
++            if (auto cc = dynamic_cast<ContainerClip*> (c); cc != nullptr && cc->isObjAuxBus())
++                auxClips.add (cc);
++            else
++                senderClips.add (c);
++        }
++
++        // La chaîne de la PISTE compte aussi : un clip MIDI garde une piste dédiée, et c'est
++        // là que vit sa chaîne — donc son envoi. Une piste de lane ordinaire, elle, ne porte
++        // jamais de plugin dans ce modèle, la boucle n'y trouvera rien.
++        senderLists.push_back (&ct->pluginList);
++    }
++
++    for (auto pl : senderPluginLists (senderClips))
++        senderLists.push_back (pl);
++
++    return createAuxReturns (senderLists, auxClips, std::move (tracksNode), params);
++}
++
+ std::unique_ptr<tracktion::graph::Node> createMasterFadeInOutNode (Edit& edit,
+                                                                    std::unique_ptr<Node> node,
+                                                                    const CreateNodeParams& params)
+@@ -2451,6 +2528,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext&
+         {
+             if (edit.engine.getDeviceManager().getDefaultWaveOutDeviceID() == device->getDeviceID())
+             {
++                // Patch local Objekat — les aux top-level se somment aux pistes, avant le master.
++                node = createTopLevelAuxReturns (edit, std::move (node), params);
+                 node = createMasterPluginsNode (edit, playHeadState, std::move (node), params);
+ 
+                 if (auto waveDevice = dynamic_cast<WaveOutputDevice*> (device))
+@@ -2540,6 +2619,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const Cre
+     sumNode->setDoubleProcessingPrecision (edit.engine.getPropertyStorage().getProperty (SettingID::use64Bit, false));
+ 
+     auto node = std::unique_ptr<Node> (std::move (sumNode));
++    // Patch local Objekat — les aux top-level se somment aux pistes, avant le master.
++    node = createTopLevelAuxReturns (edit, std::move (node), params);
+     node = createMasterPluginsNode (edit, playHeadState, std::move (node), params);
+     node = createMasterFadeInOutNode (edit, std::move (node), params);
+     node = createRackNode (std::move (node), edit.getRackList(), params);
+-- 
+2.50.1 (Apple Git-155)
+

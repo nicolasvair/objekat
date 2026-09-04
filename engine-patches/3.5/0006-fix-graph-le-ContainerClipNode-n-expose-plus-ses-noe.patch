@@ -1,0 +1,69 @@
+From 43b12b4efe577f36ef534a0b053fe013341580e0 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 16:13:54 +0200
+Subject: [PATCH 6/6] fix(graph): le ContainerClipNode n'expose plus ses noeuds
+ internes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+createNodeMap() recurse dans getInternalNodes() pour bâtir sortedNodes, la table
+balayée par findNode/findNodeWithID sur l'ANCIEN graphe à chaque reconstruction.
+Les nœuds internes d'un container n'appartiennent pas au graphe englobant : ils
+vivent dans le NodeGraph local de son player, de durée de vie indépendante.
+
+Deux dangling en découlaient : les pointeurs sont relevés avant que le player local
+ne prenne le sous-arbre et ne le re-transforme (transformNodes peut détruire des
+nœuds), et poser un nouveau graphe local détruit le précédent alors que l'ancien
+graphe englobant, encore utilisé comme nodeGraphToReplace, pointe dessus. D'où un
+dynamic_cast sur mémoire libérée (EXC_BAD_ACCESS à 0xfffffffffffffff0) dès la
+deuxième reconstruction avec un container.
+
+getDirectInputNodes() renvoyait déjà {} pour le même motif d'isolement. Le
+ContainerClipNode reste dans orderedNodes, donc la continuité du PlayerContext est
+préservée.
+---
+ .../graph/tracktion_ContainerClipNode.cpp     | 27 ++++++++++++++++---
+ 1 file changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 846aec92bd7..1e1a8a00e7d 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -62,10 +62,29 @@ std::vector<tracktion::graph::Node*> ContainerClipNode::getDirectInputNodes()
+ 
+ std::vector<Node*> ContainerClipNode::getInternalNodes()
+ {
+-    if (input)
+-        return { input.get() };
+-
+-    return { playerContext->player.getNode() };
++    // Patch local Objekat — le graphe englobant ne doit PAS voir nos nœuds internes.
++    //
++    // createNodeMap() recurse dans getInternalNodes() pour bâtir sortedNodes, la table
++    // que findNode/findNodeWithID balaient sur l'ANCIEN graphe à chaque reconstruction.
++    // Or nos nœuds internes n'appartiennent pas au graphe englobant : ils vivent dans
++    // le NodeGraph local du player du container, dont la durée de vie est indépendante.
++    // Deux façons de dangling en découlent :
++    //   - les pointeurs sont relevés AVANT que le player local ne prenne le sous-arbre
++    //     et ne le re-transforme (transformNodes peut détruire des nœuds) ;
++    //   - poser un nouveau graphe local détruit le précédent, alors que l'ancien graphe
++    //     englobant — toujours en cours d'utilisation comme nodeGraphToReplace — pointe
++    //     encore dessus.
++    // D'où un dynamic_cast sur mémoire libérée (EXC_BAD_ACCESS) dès la 2e reconstruction.
++    //
++    // getDirectInputNodes() renvoie déjà {} pour la même raison d'isolement : le container
++    // est une frontière de graphe. Le ContainerClipNode lui-même reste dans orderedNodes,
++    // donc findNodeWithID<ContainerClipNode> le retrouve et la continuité du PlayerContext
++    // est préservée ; la continuité des nœuds internes, elle, se fait via le graphe local.
++    //
++    // Contrepartie assumée : un clip qui entre dans un groupe (ou en sort) ne retrouve pas
++    // son prédécesseur d'un graphe à l'autre — au pire une discontinuité au moment du
++    // regroupement, là où l'ancien comportement plantait.
++    return {};
+ }
+ 
+ void ContainerClipNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+-- 
+2.50.1 (Apple Git-155)
+

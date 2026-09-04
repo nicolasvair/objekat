@@ -1,0 +1,104 @@
+From 4f0abf9bc0c6adde379910ee38d3dfb64d2e62c2 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 20:41:28 +0200
+Subject: [PATCH] =?UTF-8?q?fix(containerclip):=20abandonne=20la=20lecture?=
+ =?UTF-8?q?=20anticip=C3=A9e,=20le=20groupe=20d=C3=A9clare=20sa=20latence?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Au retour d'une boucle dont le IN tombe sur le début du groupe, les premières
+millisecondes du groupe manquaient à chaque tour. Cause structurelle : lire L en
+avance suppose d'avoir tourné L AVANT le groupe pour que la chaîne ait de quoi
+sortir à son début. Ce sursis n'existe pas au retour d'une boucle — on arrive sur le
+groupe sans élan, et la chaîne débite encore le contenu de ses FIFOs. Un clip
+ordinaire n'a jamais eu ce problème, d'où « pas de souci avec un clip qui porte le
+même plugin ».
+
+La lecture anticipée (0007/0008) n'existait que pour faire reporter au container une
+latence nulle, seul moyen de le soustraire au repli clipsHaveLatency. Ce repli a
+disparu en 0013, avec l'égalisation de lane et la PDC globale qui le remplacent — le
+container n'a donc plus aucune raison de se compenser lui-même. Il déclare sa latence
+comme tout le monde, et rien n'a plus besoin d'élan.
+
+PluginNode::setReadAheadNumSamples et le paramètre de ContainerClipNode restent en
+place mais ne sont plus employés : ils ne valaient que pour ce mode.
+---
+ .../model/clips/tracktion_ContainerClip.h     | 10 ++----
+ .../graph/tracktion_EditNodeBuilder.cpp       | 32 +++++++------------
+ 2 files changed, 15 insertions(+), 27 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+index efe81a2caa1..ff3d9610a4c 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
++++ b/modules/tracktion_engine/model/clips/tracktion_ContainerClip.h
+@@ -62,13 +62,9 @@ public:
+     /** @internal */
+     HashCode getHash() const override;
+ 
+-    //==============================================================================
+-    /** @internal Patch local Objekat — le container lit son contenu getPluginLatencySeconds()
+-        en avance pour que la sortie, retardée d'autant par sa chaîne, retombe alignée sur la
+-        timeline de l'Edit, et reporte donc une latence nulle vers l'extérieur.
+-        getHead()/getTail() sont ceux de Clip. @see Clip::compensatesOwnPluginLatency
+-    */
+-    bool compensatesOwnPluginLatency() const override           { return true; }
++    // Patch local Objekat — le container ne surcharge PLUS compensatesOwnPluginLatency() : il
++    // déclare sa latence comme n'importe quel clip et la PDC globale l'aligne.
++    // @see Clip::compensatesOwnPluginLatency
+ 
+     /** @internal */
+     void setLoopDefaults() override;
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index f0cf53a3c26..ddc61e03fcf 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -921,12 +921,18 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+     // Combiner clip and the contained clips need their own, local PlayHeadState.
+     // This also needs to persist across graph rebuilds to maintain continuity.
+     // Once the ContainerClipNode has been initialised it will update it's children with its own ProcessState
+-    // Patch local Objekat — latence de la chaîne de plugins du container, compensée en
+-    // interne par lecture anticipée pour que le CombiningNode de la piste n'ait rien à
+-    // compenser et reste paresseux. @see Clip::compensatesOwnPluginLatency
+-    const auto pluginLatencyNumSamples = params.includePlugins
+-                                            ? juce::roundToInt (clip.getPluginLatencySeconds() * params.sampleRate)
+-                                            : 0;
++    // Patch local Objekat — plus de lecture anticipée (elle valait 0007/0008).
++    //
++    // Elle n'existait que pour faire reporter au container une latence NULLE, seul moyen à
++    // l'époque de le soustraire au repli `clipsHaveLatency` qui condamnait toute la lane au
++    // traitement continu. Ce repli a disparu, donc la raison d'être aussi.
++    //
++    // Et elle a un défaut structurel : lire L en avance suppose d'avoir tourné L avant le
++    // groupe. Au retour d'une boucle dont le IN tombe sur le début du groupe, cet élan
++    // n'existe pas — les L premières millisecondes du groupe sortaient perdues à chaque tour.
++    // Un clip ordinaire n'a jamais eu ce problème : il déclare sa latence, la PDC globale
++    // retarde le reste, et rien n'a besoin d'élan. Le container fait pareil désormais.
++    const auto pluginLatencyNumSamples = 0;
+ 
+     auto node = makeNode<ContainerClipNode> (params.processState,
+                                              clip.itemID,
+@@ -947,20 +953,6 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+ 
+             node = createPluginNodeForList (*pluginList, nullptr, std::move (node), params.processState.playHeadState, params);
+ 
+-           #if ! USE_DYNAMIC_OFFSET_CONTAINER_CLIP
+-            // Patch local Objekat — le ContainerClipNode lit son contenu avec L d'avance, donc
+-            // au bloc `t` toute cette chaîne traite du matériau appartenant à `t`, pas à `t - L`.
+-            // On l'annonce à chaque PluginNode pour qu'il corrige son temps d'edit ; sans quoi la
+-            // fenêtre de groupe, qui s'en sert comme d'une porte, coupe les L premiers samples.
+-            // Le parcours s'arrête au ContainerClipNode, qui n'expose pas d'entrées directes.
+-            if (pluginLatencyNumSamples > 0)
+-                visitNodes (*node,
+-                            [pluginLatencyNumSamples] (auto& n)
+-                            {
+-                                if (auto pn = dynamic_cast<PluginNode*> (&n))
+-                                    pn->setReadAheadNumSamples (pluginLatencyNumSamples);
+-                            }, true);
+-           #endif
+         }
+     }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

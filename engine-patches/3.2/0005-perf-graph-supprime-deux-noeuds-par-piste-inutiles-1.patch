@@ -1,0 +1,109 @@
+From 8d4f23711df9f7e9205d7455d112ffd9d8736551 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 7 Aug 2026 23:57:58 +0200
+Subject: [PATCH] perf(graph): supprime deux noeuds par piste inutiles (~18% du
+ graphe)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mesuré par le recensement OBJ_GRAPH_CENSUS sur une session réelle
+(3765 noeuds, 348 pistes) : 348 LiveMidiOutputNode + 348 LiveMidiInjectingNode,
+soit un peu plus de 18% du graphe, pour des services dont aucune piste
+d'objet sonore audio n'a besoin.
+
+1. LiveMidiOutputNode — n'existe que pour appeler
+   Listener::recordedMidiMessageSentToPlugins sur les écouteurs de la piste.
+   Or LiveMidiInjectingNode s'inscrit lui-même comme écouteur et implémente
+   ce rappel par un corps VIDE : le seul destinataire était un autre noeud du
+   graphe, qui jetait le message.
+
+   La condition se mordait la queue : au premier build il n'y a pas encore
+   d'écouteur, les LiveMidiInjectingNode s'inscrivent, et la reconstruction
+   SUIVANTE ajoute un LiveMidiOutputNode par piste. D'où une reconstruction
+   complète supplémentaire après chaque geste (visible dans le log : +228
+   puis +24, +228 puis +24...). On ne compte donc plus que les écouteurs qui
+   ne sont pas des noeuds du graphe.
+
+2. LiveMidiInjectingNode — créé sur toute piste ayant un noeud, alors qu'il
+   ne sert qu'à recevoir du MIDI joué en direct. Conditionné à : une entrée
+   assignée à la piste, ou un plugin produisant du son sans entrée audio
+   (instrument virtuel, cible des notes-guides).
+
+Dans les deux cas les portes sont larges : dès qu'un vrai écouteur ou une
+vraie source live existe, le noeud est créé comme avant.
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 58 ++++++++++++++++++-
+ 1 file changed, 55 insertions(+), 3 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 91fa9f5fa0d..2761e9f7836 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -1453,11 +1453,63 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioTrack (AudioTrack& at,
+ 
+     auto liveInputNode = createLiveInputsNode (at, playHeadState, params);
+ 
+-    if (node && ! at.getListeners().isEmpty())
+-        node = makeNode<LiveMidiOutputNode> (at, std::move (node));
++    // OBJEKAT — LiveMidiOutputNode n'existe que pour appeler
++    // Listener::recordedMidiMessageSentToPlugins sur les écouteurs de la piste.
++    // Or LiveMidiInjectingNode s'inscrit lui-même comme écouteur (dans son
++    // constructeur) et implémente ce rappel par un corps VIDE. Sur une piste sans
++    // véritable écouteur, on créait donc un nœud par piste dont l'unique
++    // destinataire est un autre nœud du graphe, qui jette le message.
++    //
++    // Pire, la condition se mordait la queue : au premier build il n'y a pas
++    // encore d'écouteur, les LiveMidiInjectingNode s'inscrivent, et la
++    // reconstruction SUIVANTE ajoute un LiveMidiOutputNode par piste — d'où une
++    // reconstruction complète supplémentaire après chaque geste d'édition.
++    // Mesuré : 348 nœuds sur 3765 (9 %) + une reconstruction sur deux.
++    //
++    // On ne compte donc que les écouteurs qui ne sont pas des nœuds du graphe.
++    // Dès qu'un vrai écouteur existe (témoin d'activité MIDI, etc.), le nœud est
++    // recréé comme avant : le comportement observable est inchangé.
++    if (node)
++    {
++        const auto& trackListeners = at.getListeners().getListeners();
++
++        const bool hasRealListener = std::any_of (trackListeners.begin(), trackListeners.end(),
++                                                  [] (auto* l)
++                                                  {
++                                                      return dynamic_cast<LiveMidiInjectingNode*> (l) == nullptr;
++                                                  });
+ 
++        if (hasRealListener)
++            node = makeNode<LiveMidiOutputNode> (at, std::move (node));
++    }
++
++    // OBJEKAT — LiveMidiInjectingNode était créé sur TOUTE piste ayant un nœud,
++    // alors qu'il ne sert qu'à recevoir du MIDI joué en direct : entrée MIDI
++    // surveillée, ou notes-guides envoyées depuis l'interface (piano-roll,
++    // audition). Une piste ne portant qu'un objet sonore audio ne peut rien
++    // recevoir de tel. Mesuré : 348 nœuds sur 3765 (9 %).
++    //
++    // Deux portes, larges à dessein : une entrée assignée à la piste, ou un
++    // plugin capable de produire du son sans entrée audio (instrument virtuel,
++    // la cible des notes-guides). Dès qu'une des deux est vraie, le nœud est
++    // créé comme avant.
+     if (node)
+-        node = makeNode<LiveMidiInjectingNode> (at, std::move (node));
++    {
++        const bool hasLiveInput = ! at.edit.getEditInputDevices().getDevicesForTargetTrack (at).isEmpty();
++
++        bool hasInstrument = false;
++
++        if (! hasLiveInput)
++            for (auto plugin : at.pluginList)
++                if (plugin->producesAudioWhenNoAudioInput())
++                {
++                    hasInstrument = true;
++                    break;
++                }
++
++        if (hasLiveInput || hasInstrument)
++            node = makeNode<LiveMidiInjectingNode> (at, std::move (node));
++    }
+ 
+     if (node == nullptr && inputTracks.isEmpty() && liveInputNode == nullptr)
+     {

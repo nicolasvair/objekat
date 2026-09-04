@@ -1,0 +1,156 @@
+From 132563ee23bb5542d539e4fa0200af78558335af Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 21:51:58 +0200
+Subject: [PATCH 29/29] fix(graph) : un aux purge sa queue quand ses blocs ne
+ se suivent plus
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Les FX d'un aux vivent dans le graphe INTERNE du ContainerClip qui l'héberge,
+lequel n'est processé que dans la fenêtre de celui-ci. Hors fenêtre, une réverbe
+d'aux ne décroît donc pas : elle GÈLE, et repart telle quelle à la réactivation
+suivante. En boucle, avec un groupe plus court que la boucle, on réentendait au
+tour suivant la queue du tour précédent — une réverbe qu'on aurait mise en pause
+puis relâchée. Allonger le groupe à la taille de la boucle faisait disparaître le
+symptôme, ce qui désignait le coupable : la fenêtre du container, pas celle de
+l'aux.
+
+ObjAuxReturnNode reçoit désormais la liste des plugins de la chaîne de son aux
+— ils vivent en aval de lui, mais c'est lui qui voit passer le temps — et les
+reset() dès que la fin du dernier bloc traité ne coïncide plus avec le début du
+bloc courant. Un seul test couvre les trois discontinuités : rebouclage (le
+playhead local recule), saut du transport, et sortie de la fenêtre du container
+(où le nœud n'est pas appelé du tout).
+
+À l'arrêt le test est neutralisé : le transport rejoue la même tranche de temps
+bloc après bloc, qu'on prendrait pour une discontinuité permanente — et on
+purgerait à chaque bloc. La position n'y est pas mémorisée non plus, si bien que
+reprendre une lecture en pause repart de la queue là où elle en était : c'est le
+sens même de « pause ».
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_ContainerClipNode.cpp     | 35 +++++++++++++++++++
+ .../graph/tracktion_ContainerClipNode.h       | 11 ++++++
+ .../graph/tracktion_EditNodeBuilder.cpp       | 10 ++++++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 8bc1cfd08bd..59d5058a611 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -270,6 +270,7 @@ void ContainerClipNode::process (ProcessContext& pc)
+ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+                                     std::shared_ptr<tracktion::graph::Node> dependencyToUse,
+                                     std::vector<Plugin::Ptr> sendersToUse,
++                                    std::vector<Plugin::Ptr> auxChainPlugins,
+                                     TimeRange auxTimeRange,
+                                     int numChannelsToUse,
+                                     size_t nodeIDToUse,
+@@ -277,6 +278,7 @@ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+     : TracktionEngineNode (editProcessState),
+       dependency (std::move (dependencyToUse)),
+       senderPlugins (std::move (sendersToUse)),
++      chainPlugins (std::move (auxChainPlugins)),
+       auxRange (auxTimeRange),
+       numChannels (std::max (1, numChannelsToUse)),
+       auxNodeID (nodeIDToUse),
+@@ -426,6 +428,39 @@ void ObjAuxReturnNode::process (ProcessContext& pc)
+     auto destAudio = pc.buffers.audio;
+     destAudio.clear();
+ 
++    // Purge des queues de la chaîne d'aux sur discontinuité.
++    //
++    // Cette branche vit dans le graphe INTERNE du container, lequel n'est processé que dans la
++    // fenêtre de celui-ci. Hors fenêtre, une réverbe d'aux ne décroît donc pas : elle GÈLE, et
++    // repart telle quelle à la réactivation suivante. En boucle, avec un groupe plus court que
++    // la boucle, on réentendait au tour suivant la queue du tour précédent — comme une réverbe
++    // qu'on aurait mise en pause. Un tour de boucle repart d'une chaîne propre.
++    //
++    // Un seul test suffit à couvrir les trois cas : la fin du dernier bloc traité. Elle ne
++    // coïncide avec le début du bloc courant que si le temps s'est écoulé normalement — ni
++    // rebouclage (le playhead local recule), ni saut du transport, ni passage hors fenêtre
++    // (où l'on n'est pas appelé du tout).
++    // À l'arrêt on ne juge rien : le transport rejoue la même tranche de temps bloc après bloc,
++    // qu'on prendrait pour une discontinuité permanente — et on purgerait à chaque bloc. On ne
++    // mémorise pas non plus la position : reprendre une lecture mise en pause repart forcément
++    // du dernier bloc joué, donc de la queue là où elle en était, ce qui est le sens de « pause ».
++    if (getPlayHead().isPlaying())
++    {
++        const auto blockRange = getTimelineSampleRange();
++        // Tolérance : les bornes viennent d'une conversion depuis les beats, qui peut arrondir
++        // d'un échantillon. Une vraie discontinuité se compte en blocs, jamais en samples.
++        const bool contiguous = haveProcessedBlock
++                             && std::abs (blockRange.getStart() - lastBlockEndSample) <= 4;
++
++        if (! contiguous)
++            for (auto& p : chainPlugins)
++                if (p != nullptr)
++                    p->reset();
++
++        lastBlockEndSample = blockRange.getEnd();
++        haveProcessedBlock = true;
++    }
++
+     const auto numDestFrames = (choc::buffer::FrameCount) destAudio.getNumFrames();
+     const auto numDestChans  = (choc::buffer::ChannelCount) destAudio.getNumChannels();
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index 0f3f130ef86..091b1dea4d0 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -113,6 +113,7 @@ public:
+     ObjAuxReturnNode (ProcessState& editProcessState,
+                       std::shared_ptr<tracktion::graph::Node> dependency,
+                       std::vector<Plugin::Ptr> senders,
++                      std::vector<Plugin::Ptr> auxChainPlugins,
+                       TimeRange auxTimeRange,
+                       int numChannels,
+                       size_t nodeID,
+@@ -148,6 +149,16 @@ private:
+     // Les Ptr tiennent les plugins en vie ; le vecteur parallèle évite un dynamic_cast par bloc.
+     std::vector<Plugin::Ptr> senderPlugins;
+     std::vector<ContainerAuxSend*> senders;
++
++    // Chaîne de FX de CET aux — elle vit en AVAL de ce nœud, mais c'est ici qu'on sait quand
++    // purger ses queues. @see le garde de contiguïté dans process().
++    std::vector<Plugin::Ptr> chainPlugins;
++    // Fin (en samples de la timeline locale) du dernier bloc traité. Sert à repérer les
++    // discontinuités : rebouclage, saut du transport, ou simple sortie de la fenêtre du
++    // container — auquel cas ce nœud n'est pas appelé du tout. Le booléen distingue « pas
++    // encore de bloc » d'une position (une sentinelle numérique déborderait à la soustraction).
++    int64_t lastBlockEndSample = 0;
++    bool    haveProcessedBlock = false;
+     // Parallèle à `senders` : la ligne à retard de chacun (vide si son retard est nul).
+     std::vector<TapDelay> tapDelays;
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 21effe4c092..dbc77f2b3ca 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -957,11 +957,21 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
+         hash_combine (nodeID, (size_t) 0x0B7A0E37);
+         hash_combine (nodeID, auxClip->itemID.getRawID());
+ 
++        // Chaîne de FX de l'aux. Elle se branche en AVAL du nœud de retour, mais celui-ci en tient
++        // la liste : c'est lui qui voit les discontinuités et purge les queues. @see son process().
++        std::vector<Plugin::Ptr> chainPlugins;
++
++        if (params.includePlugins)
++            if (auto pluginList = auxClip->getPluginList())
++                for (auto p : *pluginList)
++                    chainPlugins.push_back (p);
++
+         // La latence du nœud de CONTENU est la référence d'alignement des taps : c'est à cette
+         // somme-là que le retour ira s'ajouter. @see ObjAuxReturnNode.
+         std::unique_ptr<Node> returnNode = makeNode<ObjAuxReturnNode> (params.processState,
+                                                                        sharedContent,
+                                                                        sendersFor (auxClip->itemID),
++                                                                       std::move (chainPlugins),
+                                                                        auxClip->getEditTimeRange(),
+                                                                        numChannels,
+                                                                        nodeID,
+-- 
+2.50.1 (Apple Git-155)
+

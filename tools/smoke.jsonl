@@ -1,0 +1,18 @@
+# A replayable smoke scenario:  ./tools/objekat_cli.py --batch tools/smoke.jsonl
+# `{DIR}` is replaced by the folder of this file — no personal path here,
+# so the scenario is shareable as it is.
+{"cmd":"project.new"}
+{"cmd":"app.info"}
+{"cmd":"object.add","params":{"path":"{DIR}/fixtures/bip.wav","lane":0,"start":0}}
+{"cmd":"object.add","params":{"path":"{DIR}/fixtures/bip.wav","lane":1,"start":2}}
+{"cmd":"wait_idle","params":{"timeout_ms":5000}}
+{"cmd":"object.list"}
+{"cmd":"perf.census"}
+{"cmd":"selection.all"}
+{"cmd":"object.set_gain","params":{"db":-6}}
+{"cmd":"object.duplicate"}
+{"cmd":"edit.undo"}
+{"cmd":"edit.undo"}
+{"cmd":"object.list"}
+{"cmd":"transport.seek","params":{"seconds":1.0}}
+{"cmd":"transport.state"}

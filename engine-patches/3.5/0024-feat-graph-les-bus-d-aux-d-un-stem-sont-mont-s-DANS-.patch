@@ -1,0 +1,181 @@
+From 88093cbc72e273c6dbd2462afc693c0e14e4d4b0 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 12 Aug 2026 14:48:28 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20les=20bus=20d'aux=20d'un=20stem?=
+ =?UTF-8?q?=20sont=20mont=C3=A9s=20DANS=20son=20folder=20submix?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un retour d'aux top-level était greffé à la racine de l'Edit, au-dessus de la
+somme de TOUTES les pistes — donc au-dessus des FolderTrack submix. Le humide
+d'un objet assigné à un stem ressortait hors de ce stem : absent de son VU, de
+son bounce, et surtout insensible à son mute et à son « vers le Main » (couper
+le bus laissait passer la reverb des objets qu'il contenait). « Σ stems = mix »
+devenait faux dès qu'un envoi existait.
+
+Le niveau de montage d'un retour est désormais celui du bus qui porte l'aux :
+`createNodeForSubmixTrack` greffe les retours des aux de SON sous-arbre sur la
+somme de ses pistes filles, en amont de la chaîne du folder, de son VU et de son
+TrackMutingNode ; `createTopLevelAuxReturns` ne voit plus que les pistes sans
+ancêtre submix. C'est la transposition exacte de ce que fait un container pour
+ses aux internes — un aux appartient à un niveau, et à un seul.
+
+La contrainte d'ordonnancement suit le même déplacement : le retour dépend de la
+somme des pistes de son folder, donc seuls les émetteurs de CE folder sont
+garantis en amont. La portée d'un envoi top-level devient « même stem », que
+l'application fait respecter des deux côtés (canRouteSend / isSend:routableToAux:).
+Comme à la racine, dépendre d'une somme rend les cycles impossibles.
+
+`collectAuxClipsAndSenders` et `shouldBuildAuxReturns` factorisent ce que les
+deux niveaux ont en commun ; `nearestSubmixAncestor` dit à quel niveau une piste
+appartient et exclut les submix imbriqués, qui montent les leurs eux-mêmes.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 103 +++++++++++++++---
+ 1 file changed, 90 insertions(+), 13 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index e18df1df043..cbff7349135 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -2021,6 +2021,10 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioTrack (AudioTrack& at,
+ }
+ 
+ //==============================================================================
++// Patch local Objekat — défini plus bas, à côté de son pendant top-level.
++static std::unique_ptr<Node> createSubmixAuxReturns (FolderTrack&, std::unique_ptr<Node>,
++                                                     const CreateNodeParams&);
++
+ std::unique_ptr<tracktion::graph::Node> createNodeForSubmixTrack (FolderTrack& submixTrack, const CreateNodeParams& params)
+ {
+     CRASH_TRACER
+@@ -2079,6 +2083,11 @@ std::unique_ptr<tracktion::graph::Node> createNodeForSubmixTrack (FolderTrack& s
+ 
+     // Finally the effects
+     std::unique_ptr<Node> node = std::move (sumNode);
++
++    // Patch local Objekat — les retours des aux de CE stem se somment ici, sur ses pistes filles :
++    // en amont de sa chaîne, de son VU et de son mute, pour que le humide soit solidaire du bus.
++    node = createSubmixAuxReturns (submixTrack, std::move (node), params);
++
+     auto trackMuteState = std::make_unique<TrackMuteState> (submixTrack, false, false);
+ 
+     if (params.tracksToProcessWhileMuted.contains (submixTrack.itemID))
+@@ -2311,24 +2320,33 @@ std::unique_ptr<tracktion::graph::Node> createMasterPluginsNode (Edit& edit,
+ // TimedNode : la chaîne d'un TimedNode n'est pas ordonnancée par le graphe englobant (mais lui
+ // est exposée par getInternalNodes) — c'est le piège qui a tué LatencyMaskingNode — et un
+ // retour endormi cesserait de consommer les taps, qui ressortiraient au réveil (piège 0014).
+-static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+-                                                       std::unique_ptr<Node> tracksNode,
+-                                                       const CreateNodeParams& params)
++//
++// « RACINE » ne veut plus dire « tout l'Edit » : un aux posé dans un FolderTrack submix est monté
++// DANS ce folder (@see createSubmixAuxReturns). Sans ça, le humide d'un objet de stem ressortait
++// au-dessus de tous les bus — hors du VU du stem, hors de son mute, hors de son bounce, et
++// « Σ stems = mix » devenait faux dès qu'un envoi existait. Le niveau d'un aux est donc son
++// FOLDER, comme le niveau d'un aux de groupe est son container.
++
++// Le folder submix le plus proche au-dessus de `t`, nullptr s'il n'y en a aucun. C'est ce qui
++// dit à quel NIVEAU une piste — donc les aux et les émetteurs qu'elle porte — appartient.
++static FolderTrack* nearestSubmixAncestor (Track& t)
+ {
+-    if (tracksNode == nullptr || ! params.includePlugins)
+-        return tracksNode;
++    for (auto p = t.getParentTrack(); p != nullptr; p = p->getParentTrack())
++        if (auto ft = dynamic_cast<FolderTrack*> (p); ft != nullptr && ft->isSubmixFolder())
++            return ft;
+ 
+-    // Rendu restreint (gel d'un objet) : on ne bâtit que ce que la sélection demande. Un aux
+-    // top-level est un objet à lui, qui joue de son côté — le cuire dans l'émetteur le
+-    // compterait deux fois.
+-    if (params.allowedTracks != nullptr || params.allowedClips != nullptr)
+-        return tracksNode;
++    return nullptr;
++}
+ 
+-    juce::Array<ContainerClip*> auxClips;
++// Recense, dans un ensemble de pistes, les bus d'aux d'une part et les chaînes où chercher les
++// envois qui les visent d'autre part. Commun aux deux niveaux de montage.
++static void collectAuxClipsAndSenders (const juce::Array<Track*>& tracks,
++                                       juce::Array<ContainerClip*>& auxClips,
++                                       std::vector<PluginList*>& senderLists)
++{
+     juce::Array<Clip*> senderClips;
+-    std::vector<PluginList*> senderLists;
+ 
+-    for (auto t : getAllTracks (edit))
++    for (auto t : tracks)
+     {
+         auto ct = dynamic_cast<ClipTrack*> (t);
+ 
+@@ -2351,6 +2369,65 @@ static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+ 
+     for (auto pl : senderPluginLists (senderClips))
+         senderLists.push_back (pl);
++}
++
++// Un rendu RESTREINT (gel d'un objet) ne monte aucun retour, à aucun niveau : un aux est un objet
++// à lui, qui joue de son côté — le cuire dans l'émetteur le compterait deux fois.
++static bool shouldBuildAuxReturns (const Node* node, const CreateNodeParams& params)
++{
++    return node != nullptr
++            && params.includePlugins
++            && params.allowedTracks == nullptr
++            && params.allowedClips == nullptr;
++}
++
++static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
++                                                       std::unique_ptr<Node> tracksNode,
++                                                       const CreateNodeParams& params)
++{
++    if (! shouldBuildAuxReturns (tracksNode.get(), params))
++        return tracksNode;
++
++    juce::Array<Track*> rootTracks;
++
++    for (auto t : getAllTracks (edit))
++        if (nearestSubmixAncestor (*t) == nullptr)
++            rootTracks.add (t);
++
++    juce::Array<ContainerClip*> auxClips;
++    std::vector<PluginList*> senderLists;
++    collectAuxClipsAndSenders (rootTracks, auxClips, senderLists);
++
++    return createAuxReturns (senderLists, auxClips, std::move (tracksNode), params);
++}
++
++// Retours des aux d'un FolderTrack submix, greffés sur la somme de SES pistes filles — donc en
++// amont de la chaîne du bus, de son VU et de son mute. C'est ce qui rend le humide solidaire du
++// stem : il passe par ses FX, il compte dans son niveau, il se tait avec lui.
++//
++// La contrainte d'ordonnancement est la même qu'à la racine, un cran plus bas : le retour dépend
++// de la somme des pistes du folder, donc seuls les émetteurs DE CE FOLDER sont garantis en amont.
++// Un envoi venu d'un autre stem serait lu sans ordre établi — c'est pourquoi l'application
++// restreint la portée d'un envoi top-level aux objets du même stem (@see -isSend:routableToAux:).
++//
++// Les pistes d'un submix IMBRIQUÉ sont exclues : elles appartiennent à leur propre niveau, et
++// c'est l'appel récursif de createNodeForSubmixTrack qui y montera leurs aux.
++static std::unique_ptr<Node> createSubmixAuxReturns (FolderTrack& submixTrack,
++                                                     std::unique_ptr<Node> tracksNode,
++                                                     const CreateNodeParams& params)
++{
++    if (! shouldBuildAuxReturns (tracksNode.get(), params))
++        return tracksNode;
++
++    juce::Array<Track*> ownTracks;
++
++    for (auto t : submixTrack.getAllSubTracks (true))
++        if (nearestSubmixAncestor (*t) == &submixTrack)
++            ownTracks.add (t);
++
++    juce::Array<ContainerClip*> auxClips;
++    std::vector<PluginList*> senderLists;
++    collectAuxClipsAndSenders (ownTracks, auxClips, senderLists);
+ 
+     return createAuxReturns (senderLists, auxClips, std::move (tracksNode), params);
+ }
+-- 
+2.50.1 (Apple Git-155)
+

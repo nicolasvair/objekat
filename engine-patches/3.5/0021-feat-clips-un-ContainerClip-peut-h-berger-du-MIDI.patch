@@ -1,0 +1,88 @@
+From 559e7ee97fb337241f3a027ac7ad402b947ac6b7 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 12 Aug 2026 01:19:44 +0200
+Subject: [PATCH] =?UTF-8?q?feat(clips):=20un=20ContainerClip=20peut=20h?=
+ =?UTF-8?q?=C3=A9berger=20du=20MIDI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+canContainMIDI refusait le ContainerClip alors que canContainAudio,
+juste en dessous, l'accepte. C'était le seul verrou : createNodeForClip
+dispatche déjà MidiClip depuis le CombiningNode interne du container, et
+ContainerClipNode::process passe pc.buffers.midi à son player local — le
+MIDI ressort donc du container et traverse sa plugin-list, où l'hôte peut
+poser un instrument virtuel en index 0.
+
+Deux ajustements qui en découlent :
+ - MidiClip::scaleVerticallyToFit déréférençait getAudioTrack() sans
+   garde ; dans un container il n'y a pas de piste porteuse directe, et
+   l'échelle verticale est une donnée de piste — il n'y a rien à régler.
+ - le commentaire de createTopLevelAuxReturns n'invoque plus « la piste
+   dédiée d'un clip MIDI » pour justifier qu'on balaie aussi la chaîne de
+   piste : cette piste dédiée n'existe plus côté hôte.
+---
+ .../tracktion_engine/model/clips/tracktion_ClipOwner.cpp | 8 ++++++++
+ .../tracktion_engine/model/clips/tracktion_MidiClip.cpp  | 9 +++++++--
+ .../playback/graph/tracktion_EditNodeBuilder.cpp         | 6 +++---
+ 3 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp b/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
+index f40ff3e36be..0eae93d5fb1 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
+@@ -813,6 +813,14 @@ bool isArrangerTrack (const ClipOwner& t)                       { return dynamic
+ //==============================================================================
+ bool canContainMIDI (const ClipOwner& co)
+ {
++    // Patch local Objekat — un ContainerClip accepte le MIDI, comme il accepte déjà l'audio
++    // juste en dessous. Rien d'autre ne manquait : createNodeForClip dispatche déjà MidiClip
++    // depuis le CombiningNode INTERNE du container, et ContainerClipNode::process passe
++    // `pc.buffers.midi` à son player local — le MIDI ressort donc du container et traverse sa
++    // plugin-list, où l'instrument virtuel est posé en index 0.
++    if (dynamic_cast<const ContainerClip*> (&co) != nullptr)
++        return true;
++
+     if (auto track = dynamic_cast<const Track*> (&co))
+         return isAudioTrack (*track);
+ 
+diff --git a/modules/tracktion_engine/model/clips/tracktion_MidiClip.cpp b/modules/tracktion_engine/model/clips/tracktion_MidiClip.cpp
+index 2332f61a7f8..0b709b833f7 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_MidiClip.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_MidiClip.cpp
+@@ -442,8 +442,13 @@ void MidiClip::scaleVerticallyToFit()
+     {
+         const double newVisProp = (maxNote - minNote) / 128.0;
+ 
+-        if (newVisProp < getAudioTrack()->getMidiVisibleProportion())
+-            getAudioTrack()->setMidiVerticalPos (newVisProp, 1.0 - (maxNote / 128.0));
++        // Patch local Objekat — un clip MIDI peut désormais vivre dans un ContainerClip, où il
++        // n'a PAS de piste porteuse directe : getAudioTrack() y est nul. L'échelle verticale
++        // étant une donnée de la piste, il n'y a simplement rien à régler dans ce cas.
++        // @see canContainMIDI
++        if (auto* at = getAudioTrack())
++            if (newVisProp < at->getMidiVisibleProportion())
++                at->setMidiVerticalPos (newVisProp, 1.0 - (maxNote / 128.0));
+     }
+ }
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index d252843363a..e72d086c032 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -2344,9 +2344,9 @@ static std::unique_ptr<Node> createTopLevelAuxReturns (Edit& edit,
+                 senderClips.add (c);
+         }
+ 
+-        // La chaîne de la PISTE compte aussi : un clip MIDI garde une piste dédiée, et c'est
+-        // là que vit sa chaîne — donc son envoi. Une piste de lane ordinaire, elle, ne porte
+-        // jamais de plugin dans ce modèle, la boucle n'y trouvera rien.
++        // La chaîne de la PISTE compte aussi, au cas où l'hôte en pose une : dans le modèle
++        // d'Objekat les pistes du pool ne portent aucun plugin (toute chaîne d'objet vit sur
++        // son clip), donc la boucle n'y trouve rien — mais rien n'oblige un hôte à faire ça.
+         senderLists.push_back (&ct->pluginList);
+     }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

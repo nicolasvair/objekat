@@ -1,0 +1,51 @@
+From 73a6c0d2b558e7b7367a47d48f7b2e6e29629e7d Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 16:02:19 +0200
+Subject: [PATCH 5/6] feat(graph): bascule les ContainerClips sur
+ ContainerClipNode
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+USE_DYNAMIC_OFFSET_CONTAINER_CLIP passe à 0, et devient surchargeable depuis
+les réglages de build plutôt que figé dans le source.
+
+Le chemin DynamicOffsetNode aplatit les clips enfants dans le graphe de l'Edit :
+pas de graphe local, donc pas de PlayerContext. Or c'est le PlayerContext (PlayHead
++ ProcessState + player propres au container) dont dépendent les aux internes et
+les branches de plugins parallèles, et c'est lui qui donne la paresse recherchée.
+
+Au passage, ça retire les deux assert() de createNodeForContainerClip qui faisaient
+planter le groupage sur ce socle 3.5 : le patch local 3.2 « offset dynamique
+temporel » les avait desserrés, et il n'a délibérément pas été reporté.
+---
+ .../playback/graph/tracktion_EditNodeBuilder.cpp    | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index bfc93971366..e2a9d58e431 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -12,7 +12,18 @@
+ // N.B. There are some limitations to this at the moment:
+ // - Only works with audio clips
+ // - Only works with WaveAudioClips which have setUsesProxy (false) on them
+-#define USE_DYNAMIC_OFFSET_CONTAINER_CLIP 1
++//
++// Patch local Objekat : sélecteur de variante de nœud pour les ContainerClips.
++//   1 = DynamicOffsetNode : les clips enfants sont aplatis dans le graphe de l'Edit,
++//       avec un décalage temporel. Pas de graphe local, donc pas de PlayerContext.
++//   0 = ContainerClipNode : le container possède son propre PlayHead / ProcessState /
++//       player. C'est la variante dont dépendent les aux internes et les branches de
++//       plugins parallèles, et la seule qui donne la paresse recherchée (un groupe qui
++//       ne joue pas ne coûte rien).
++// Surchargeable depuis les réglages de build.
++#ifndef USE_DYNAMIC_OFFSET_CONTAINER_CLIP
++ #define USE_DYNAMIC_OFFSET_CONTAINER_CLIP 0
++#endif
+ 
+ 
+ namespace tracktion::inline engine
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,46 @@
+From 2af24c8ccb9098914d5b917f63f1a82487238669 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 20:34:35 +0200
+Subject: [PATCH] =?UTF-8?q?fix(containerclip):=20le=20bouclage=20du=20tran?=
+ =?UTF-8?q?sport=20n'est=20pas=20un=20saut=20de=20t=C3=AAte=20de=20lecture?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le container recalait son playhead local avec setPosition() dès que le bloc n'était
+pas contigu avec le précédent. Or isContiguousWithPreviousBlock() est faux au
+bouclage de l'Edit (in/out du transport) alors que RIEN n'a sauté : à chaque tour, le
+playhead local recevait un userInteraction(), les WaveNode internes voyaient un saut
+et purgeaient leurs readers — bloc de silence + fondu pile au début de la boucle.
+
+Le critère devient didPlayheadJump(), qui est bien distinct de isFirstBlockOfLoop().
+setPosition() ne diffère d'overridePosition() que par ce drapeau, donc la position
+atterrit au même endroit dans les deux cas ; seule la purge disparaît. C'est ce que
+WaveNode fait déjà pour lui-même, en exemptant explicitement isFirstBlockOfLoop().
+---
+ .../playback/graph/tracktion_ContainerClipNode.cpp       | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 439731a6184..c10fd8a81cd 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -204,7 +204,14 @@ void ContainerClipNode::process (ProcessContext& pc)
+     // readers des WaveNode (bloc de silence + fade, cf. tracktion_WaveNode.cpp) juste à l'entrée
+     // du groupe — soit les premières ms perdues. Ce que le saut aurait purgé — les FIFOs de
+     // latence — l'est déjà par le pré-roll de ContainerClip::getHead().
+-    if (editPlayHeadState.isContiguousWithPreviousBlock())
++    //
++    // Même raison de ne PAS passer par isContiguousWithPreviousBlock(), qui est faux au bouclage
++    // de l'Edit (in/out du transport) alors que rien n'a sauté : le début de la boucle partait
++    // au silence à chaque tour. Les deux fonctions ne diffèrent que par ce drapeau —
++    // setPosition() == overridePosition() + userInteraction() — donc la position atterrit au même
++    // endroit dans les deux cas. C'est d'ailleurs ce que fait WaveNode lui-même, qui exempte
++    // explicitement isFirstBlockOfLoop() de sa purge.
++    if (! editPlayHeadState.didPlayheadJump())
+         localPlayHead.overridePosition (newPosition);
+     else
+         localPlayHead.setPosition (newPosition);
+-- 
+2.50.1 (Apple Git-155)
+

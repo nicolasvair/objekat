@@ -1,0 +1,64 @@
+OBJEKAT
+Copyright (C) 2026 Nicolas Vair
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+WHY THE AGPL, AND NOT THE GPL
+-----------------------------
+
+OBJEKAT itself would sit happily under the GPL. The Affero clause is inherited:
+the app is built on Tracktion Engine, which cannot run without JUCE, and the
+free option of JUCE 8 is the AGPLv3. Section 13 of the GPLv3 expressly allows a
+GPLv3 work to be combined with an AGPLv3 one, and states that the AGPL's network
+requirements then apply to the combination. The AGPLv3 is therefore the licence
+that covers the whole.
+
+In practice, for a desktop application that people run on their own machine,
+that clause never comes into play: it is about users interacting with the
+software remotely, over a network. The command API is a local UNIX socket, not
+a network service.
+
+Anyone holding commercial licences for Tracktion Engine and JUCE is not bound by
+this reasoning, and may license their own work as they see fit.
+
+
+THIRD-PARTY COMPONENTS
+----------------------
+
+Tracktion Engine 3.5
+    https://github.com/Tracktion/tracktion_engine
+    Copyright (C) Tracktion Software Corporation
+    Dual-licensed: GPL3 (or later) / commercial.
+    Used here under the GPL3 option. A submodule — not redistributed in this
+    repository, apart from the patch archives in engine-patches/, which are
+    derivative works of it and fall under the same terms.
+
+JUCE 8.0.13
+    https://github.com/juce-framework/JUCE
+    Copyright (C) Raw Material Software Limited
+    The framework modules are dual-licensed: AGPLv3 / commercial.
+    Used here under the AGPLv3 option. A sub-submodule of Tracktion Engine —
+    not redistributed in this repository.
+
+LAME 3.100
+    https://lame.sourceforge.io/
+    Copyright (C) the LAME project contributors
+    GNU Library General Public License, version 2 or (at your option) any later
+    version. Taken here under version 3, which the AGPLv3 accommodates.
+    Vendored, cut down to what is compiled, in lame-3.100/ — see
+    lame-3.100/OBJEKAT-INTEGRATION.md for what departs from the original and why,
+    and lame-3.100/COPYING for the licence itself.
+
+The complete text of the licence covering OBJEKAT is in LICENSE, at the root of
+this repository.

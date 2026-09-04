@@ -1,0 +1,119 @@
+From: Objekat varispeed patch
+Subject: [PATCH 2/2] Add setDynamicOffsetTime support to WaveNodeRealTime
+
+WaveNodeRealTime already overrides setDynamicOffsetBeats for the beat-based
+(autoTempo) path. The time-based (varispeed) path uses EditToClipTimeReader
+which had no dynamic offset mechanism, so a child clip in a ContainerClip
+always played at its local position (t=0) regardless of where the container
+was placed in the edit.
+
+This patch:
+- Adds dynamicOffsetTime shared_ptr member (mirrors dynamicOffsetBeats)
+- Declares and implements setDynamicOffsetTime override
+- Passes dynamicOffsetTime into EditToClipTimeReader so read() subtracts it
+  from the edit time before mapping to file time
+- Updates processSection gate checks to account for the time offset
+- Copies dynamicOffsetTime in replaceStateIfPossible (graph rebuild continuity)
+
+The beat/autoTempo path is unchanged.
+---
+ .../playback/graph/tracktion_WaveNode.h   |  2 +
+ .../playback/graph/tracktion_WaveNode.cpp | 28 ++++++++++++++++---
+ 2 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.h b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.h
+--- a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.h
+@@ -203,6 +203,7 @@
+     */
+     void setDynamicOffsetBeats (BeatDuration) override;
++    void setDynamicOffsetTime (TimeDuration) override;
+
+     //==============================================================================
+     graph::NodeProperties getNodeProperties() override;
+@@ -241,6 +242,7 @@
+     std::shared_ptr<BeatDuration> dynamicOffsetBeats = std::make_shared<BeatDuration>();
++    std::shared_ptr<TimeDuration> dynamicOffsetTime  = std::make_shared<TimeDuration>();
+
+     std::shared_ptr<tempo::Sequence> fileTempoSequence;
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
+--- a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
+
+ // --- EditToClipTimeReader constructor (~line 1093) ---
+@@ -1093,9 +1093,12 @@
+     EditToClipTimeReader (std::unique_ptr<TimeRangeReader> input,
+                           TimeRange sourceTimeRange, TimeDuration offsetTime,
+-                          double speedRatioToUse)
++                          double speedRatioToUse,
++                          std::shared_ptr<TimeDuration> dynamicOffset_ = nullptr)
+         : source (std::move (input)),
+           clipPosition (sourceTimeRange), offset (offsetTime),
+-          speedRatio (speedRatioToUse)
++          speedRatio (speedRatioToUse),
++          dynamicOffset (dynamicOffset_ ? std::move (dynamicOffset_) : std::make_shared<TimeDuration>())
+     {
+     }
+
+ // --- EditToClipTimeReader::read() (~line 1108) ---
+@@ -1108,8 +1111,8 @@
+         const auto clipStartOffset = toDuration (clipPosition.getStart());
+-        TimeRange tr ((editTimeRange.getStart() - clipStartOffset) * speedRatio,
+-                      (editTimeRange.getEnd() - clipStartOffset) * speedRatio);
++        TimeRange tr ((editTimeRange.getStart() - clipStartOffset - *dynamicOffset) * speedRatio,
++                      (editTimeRange.getEnd()   - clipStartOffset - *dynamicOffset) * speedRatio);
+         tr = tr + (offset * speedRatio);
+
+ // --- EditToClipTimeReader private members (~line 1154) ---
+@@ -1154,6 +1157,7 @@
+     std::unique_ptr<TimeRangeReader> source;
+     const TimeRange clipPosition;
+     const TimeDuration offset;
+     const double speedRatio;
++    std::shared_ptr<TimeDuration> dynamicOffset;
+ };
+
+ // --- setDynamicOffsetTime (~line 2022, after setDynamicOffsetBeats) ---
+@@ -2022,6 +2025,15 @@
+     isFirstBlock = true;
+ }
+
++void WaveNodeRealTime::setDynamicOffsetTime (TimeDuration newOffset)
++{
++    if (juce::approximatelyEqual (dynamicOffsetTime->inSeconds(), newOffset.inSeconds()))
++        return;
++
++    (*dynamicOffsetTime) = newOffset;
++    isFirstBlock = true;
++}
++
+ //==============================================================================
+ tracktion::graph::NodeProperties WaveNodeRealTime::getNodeProperties()
+
+ // --- buildAudioReaderGraph (~line 2174) ---
+@@ -2174,7 +2186,7 @@
+-        auto editToClipTimeReader = std::make_unique<EditToClipTimeReader> (std::move (timeRangeReader), editPositionTime, offsetTime, speedRatio);
++        auto editToClipTimeReader = std::make_unique<EditToClipTimeReader> (std::move (timeRangeReader), editPositionTime, offsetTime, speedRatio, dynamicOffsetTime);
+
+ // --- replaceStateIfPossible (~line 2226) ---
+@@ -2226,6 +2239,7 @@
+     dynamicOffsetBeats = other.dynamicOffsetBeats;
++    dynamicOffsetTime  = other.dynamicOffsetTime;
+ }
+
+ // --- processSection: time-based gate check (~line 2240) ---
+@@ -2240,8 +2253,8 @@
+     if (editReader->isTimeBased()
+-        && (sectionEditTime.getEnd() <= editPositionTime.getStart()
+-            || sectionEditTime.getStart() >= editPositionTime.getEnd()))
++        && (sectionEditTime.getEnd() <= editPositionTime.getStart() + *dynamicOffsetTime
++            || sectionEditTime.getStart() >= editPositionTime.getEnd() + *dynamicOffsetTime))
+         return;
+
+ // --- processSection: sectionContainsStartOfClip (~line 2252) ---
+@@ -2252,6 +2265,6 @@
+         if (editReader->isTimeBased()
+-            && sectionEditTime.contains (editPositionTime.getStart()))
++            && sectionEditTime.contains (editPositionTime.getStart() + *dynamicOffsetTime))
+            return true;

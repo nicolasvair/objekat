@@ -1,0 +1,38 @@
+From 56cb73c496ce1b81a2f91f96203844edb4749558 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 15:44:22 +0200
+Subject: [PATCH] VST3: retire le jassert factory != nullptr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Plante en Debug quand un VST3 ne fournit pas de factory (plugin cassé
+ou mismatch 32/64-bit). La factory nulle est déjà gérée par l'appelant.
+
+Report du patch local Objekat sur JUCE 37c894f (pin de tracktion develop) :
+le code a déménagé de juce_audio_processors/format_types/juce_VST3PluginFormat.cpp
+vers juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../format_types/juce_VST3PluginFormatImpl.h               | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h b/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
+index feeb930012..0e8738375a 100644
+--- a/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
++++ b/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
+@@ -1098,10 +1098,9 @@ struct DLLHandle
+             if (auto* proc = (GetFactoryProc) getFunction (factoryFnName))
+                 factory = VSTComSmartPtr (proc(), IncrementRef::no);
+ 
+-        // The plugin NEEDS to provide a factory to be able to be called a VST3!
+-        // Most likely you are trying to load a 32-bit VST3 from a 64-bit host
+-        // or vice versa.
+-        jassert (factory != nullptr);
++        // N.B. Patch local Objekat : le jassert (factory != nullptr) d'origine plante en
++        // Debug quand un VST3 ne fournit pas de factory (plugin cassé ou mismatch 32/64-bit).
++        // La factory nulle est déjà gérée par l'appelant.
+         return factory;
+     }
+ 

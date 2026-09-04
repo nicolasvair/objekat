@@ -1,0 +1,67 @@
+From c142ac624eed2afd15d1b49acdc5f304bcc63440 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 20:20:51 +0200
+Subject: [PATCH] =?UTF-8?q?fix(clips):=20b=C3=A2illonne=20le=20pr=C3=A9-ro?=
+ =?UTF-8?q?ll,=20qui=20laissait=20sortir=20la=20queue=20du=20passage=20pr?=
+ =?UTF-8?q?=C3=A9c=C3=A9dent?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Purger les FIFOs de latence n'est pas silencieux : ce qu'on en chasse, c'est la queue
+de l'activation PRÉCÉDENTE, et elle sortait telle quelle pendant le pré-roll — donc
+AVANT le clip. Audible en rejouant deux fois le même endroit avec un plugin à latence.
+
+Le premier échantillon utile sort de la chaîne à « début + latence reportée vers
+l'extérieur » : la latence de la lane pour un clip ordinaire, zéro pour un
+ContainerClip qui lit en avance. Tout ce qui précède est du résidu et part à zéro,
+via un FadeInOutNode à fondus vides dont seul clearSamplesOutsideFade sert. Le fondu
+de sortie est repoussé à la fin de l'Edit : la queue, elle, est légitime — et le nœud
+redevient passant une fois le bâillon franchi.
+
+Aucun coût pour un clip sans latence dans une lane sans latence : pas de nœud posé.
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 27 +++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index b642c386a45..d1b6269b3c1 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -988,6 +988,33 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+             tail = std::max (tail, TimeDuration::fromSeconds (laneLatencySeconds * 2.0));
+         }
+ 
++        // Bâillon sur le pré-roll. La purge des FIFOs n'est pas silencieuse : ce qu'on en
++        // chasse, c'est la queue de l'activation PRÉCÉDENTE, et elle sort telle quelle avant le
++        // clip. À rejouer deux fois le même endroit, on entend la queue du passage d'avant
++        // arriver AVANT le clip.
++        //
++        // Le premier échantillon utile sort de la chaîne à `début + latence reportée vers
++        // l'extérieur` : la latence de la lane pour un clip ordinaire (la PDC globale ramène
++        // ensuite la piste en phase), zéro pour un ContainerClip, qui lit en avance. Tout ce
++        // qui précède est du résidu, et n'a donc qu'à être mis à zéro.
++        const auto gateOffset = clip.compensatesOwnPluginLatency() ? 0_td
++                                                                   : TimeDuration::fromSeconds (laneLatencySeconds);
++
++        if (gateOffset > 0_td || clip.getPluginLatencySeconds() > 0.0)
++        {
++            const auto gateEnd = timeRange.getStart() + gateOffset;
++
++            // Fondus vides : seul `clearSamplesOutsideFade` nous intéresse. Le fondu de sortie
++            // est repoussé à la fin de l'Edit pour ne rien couper de la queue, qui elle est
++            // légitime — et FadeInOutNode::renderingNeeded rend alors le nœud passant une fois
++            // le bâillon franchi.
++            clipNode = makeNode<FadeInOutNode> (std::move (clipNode), params.processState,
++                                                TimeRange (gateEnd, gateEnd),
++                                                TimeRange (Edit::getMaximumEditEnd(), Edit::getMaximumEditEnd()),
++                                                AudioFadeCurve::linear, AudioFadeCurve::linear,
++                                                true);
++        }
++
+         return { std::move (clipNode),
+                  timeRange.withStart (timeRange.getStart() - head)
+                           .withEnd (timeRange.getEnd() + tail) };
+-- 
+2.50.1 (Apple Git-155)
+

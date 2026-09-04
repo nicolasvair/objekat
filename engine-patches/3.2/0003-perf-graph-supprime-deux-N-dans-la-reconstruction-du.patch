@@ -1,0 +1,396 @@
+From 36eaa38d08c56d0af59aecfe928a814ca530c7ee Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 7 Aug 2026 02:35:11 +0200
+Subject: [PATCH 3/4] =?UTF-8?q?perf(graph):=20supprime=20deux=20N=C2=B2=20?=
+ =?UTF-8?q?dans=20la=20reconstruction=20du=20graphe=20+=20amortisseur?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mesuré via une sonde dans node_player_utils::prepareToPlay (seul point de
+passage obligé des 4 lecteurs) : 18 reconstructions, 1552 -> 3009 noeuds,
+colonne "build" x3,64 pour x1,94 noeuds, soit un exposant de 1,95. N²
+confirmé. La reconstruction tourne sur le fil des messages : l'UI gèle.
+
+1. tracktion_Node.h — detail::VisitedNodes
+   Les noeuds déjà visités étaient cherchés par std::find sur un vecteur,
+   relu en entier à chaque noeud. Ajout d'un unordered_set tenu en
+   parallèle, alimenté exactement aux mêmes points que le vecteur.
+   L'ordre du vecteur (= ordre de traitement audio) est inchangé : le son
+   produit est identique. Aggravant d'origine : transformNodes rappelle
+   getNodes en boucle à chaque passe de transformation.
+   Mesuré : exposant 1,95 -> 1,02 (linéaire), x5,7 à 3009 noeuds.
+
+2. tracktion_Utility.h — findNodeWithID
+   Balayage linéaire avec un dynamic_cast sur CHAQUE élément traversé,
+   alors que sortedNodes est déjà trié par id (operator< de NodeAndID) et
+   documenté comme tel. Remplacé par std::equal_range, le cast n'ayant
+   plus lieu que dans la plage d'égalité. Appelé par chaque noeud pendant
+   l'initialisation, donc N². Comportement identique (les entrées de même
+   id sont contiguës, le premier résultat trouvé est le même).
+
+3. tracktion_Edit.cpp/.h — vrai amortisseur sur restartPlayback
+   Le minuteur était armé 1 ms après la PREMIÈRE demande et n'était pas
+   réarmé par les suivantes : une action modifiant le modèle sur deux
+   tours de boucle payait deux reconstructions complètes. Il est
+   maintenant réarmé à chaque demande (30 ms), avec un plafond de 150 ms
+   depuis la plus ancienne demande en attente pour qu'un flux continu de
+   demandes ne puisse pas affamer la reconstruction.
+
+4. tracktion_NodePlayerUtilities.h — sonde de mesure
+   Macro OBJ_GRAPH_PROFILE (1 par défaut en Debug, 0 = tout le code
+   disparaît). Chronomètre + compteur de noeuds découpés en 4 phases,
+   sortie sur stderr et dans ~/objekat-graph.log. Conservée pour la
+   prochaine campagne de mesure.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../model/edit/tracktion_Edit.cpp             | 25 +++++-
+ .../model/edit/tracktion_Edit.h               |  3 +
+ .../players/tracktion_NodePlayerUtilities.h   | 79 +++++++++++++++++++
+ .../tracktion_graph/tracktion_Node.h          | 61 ++++++++++----
+ .../tracktion_graph/tracktion_Utility.h       | 26 +++---
+ 5 files changed, 166 insertions(+), 28 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/edit/tracktion_Edit.cpp b/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
+index aa510afe7ac..a73a2b86e37 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
++++ b/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
+@@ -1189,8 +1189,31 @@ void Edit::restartPlayback()
+ {
+     shouldRestartPlayback = true;
+ 
++    // OBJEKAT — amortisseur de reconstruction du graphe.
++    //
++    // Avant : le minuteur était armé à 1 ms après la PREMIÈRE demande et n'était
++    // pas réarmé par les suivantes. Une action qui modifie le modèle sur deux
++    // tours de boucle de messages (dupliquer un groupe, par exemple) payait donc
++    // deux reconstructions complètes au lieu d'une.
++    //
++    // Maintenant : chaque demande réarme le minuteur, donc une rafale d'éditions
++    // ne produit qu'une seule reconstruction, peu après le dernier geste. Le
++    // graphe se rebâtit toujours de lui-même et très vite : aucun objet ne peut
++    // rester silencieux, et rien n'est retardé au moment du play.
++    //
++    // Le plafond évite qu'un flux continu de demandes (un veilleur périodique,
++    // un glisser qui modifie le modèle en boucle) ne repousse indéfiniment la
++    // reconstruction : passé ce délai depuis la première demande en attente, on
++    // reconstruit sans plus attendre.
++    static constexpr int debounceMs = 30;
++    static constexpr juce::uint32 maxDelayMs = 150;
++
++    const auto now = juce::Time::getMillisecondCounter();
++
+     if (! isTimerRunning())
+-        startTimer (1);
++        firstPendingRestartMs = now;
++
++    startTimer ((now - firstPendingRestartMs) >= maxDelayMs ? 1 : debounceMs);
+ }
+ 
+ EditPlaybackContext* Edit::getCurrentPlaybackContext() const
+diff --git a/modules/tracktion_engine/model/edit/tracktion_Edit.h b/modules/tracktion_engine/model/edit/tracktion_Edit.h
+index e2c1d322ecb..aac2f917433 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_Edit.h
++++ b/modules/tracktion_engine/model/edit/tracktion_Edit.h
+@@ -895,6 +895,9 @@ private:
+     std::atomic<bool> isLoadInProgress { true };
+     std::atomic<int> performingRenderCount { 0 };
+     bool shouldRestartPlayback = false;
++    /** OBJEKAT — date de la plus ancienne demande de reconstruction encore en
++        attente, pour plafonner l'amortisseur de restartPlayback(). */
++    juce::uint32 firstPendingRestartMs = 0;
+     bool blinkBright = false;
+     bool lowLatencyMonitoring = false;
+     bool latencyCompensationEnabled = true;
+diff --git a/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h b/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
+index b7d690692e5..a6eb6605b0d 100644
+--- a/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
++++ b/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
+@@ -12,6 +12,25 @@
+ 
+ #include <span>
+ 
++/** OBJEKAT — sonde de mesure des reconstructions de graphe (étape 1).
++    Activée à 1 par défaut en Debug. Mettre à 0 (ou définir OBJ_GRAPH_PROFILE=0
++    dans les build settings) pour la désactiver complètement : le code disparaît.
++*/
++#ifndef OBJ_GRAPH_PROFILE
++ #if JUCE_DEBUG
++  #define OBJ_GRAPH_PROFILE 1
++ #else
++  #define OBJ_GRAPH_PROFILE 0
++ #endif
++#endif
++
++#if OBJ_GRAPH_PROFILE
++ #include <atomic>
++ #include <chrono>
++ #include <cstdio>
++ #include <cstdlib>
++#endif
++
+ namespace tracktion { inline namespace graph
+ {
+ 
+@@ -117,11 +136,32 @@ namespace node_player_utils
+         if (node == nullptr)
+             return {};
+ 
++       #if OBJ_GRAPH_PROFILE
++        using obj_clock = std::chrono::steady_clock;
++        static std::atomic<int> objRebuildCounter { 0 };
++        const auto objRebuildIndex = ++objRebuildCounter;
++        const auto objT0 = obj_clock::now();
++       #endif
++
+         // First give the Nodes a chance to transform
+         auto nodeGraph = createNodeGraph (std::move (node), disableLatencyCompensation);
++
++       #if OBJ_GRAPH_PROFILE
++        const auto objT1 = obj_clock::now();
++       #endif
++
+         assert (! areThereAnyCycles (nodeGraph->orderedNodes));
++
++       #if OBJ_GRAPH_PROFILE
++        const auto objT2 = obj_clock::now();
++       #endif
++
+         jassert (areNodeIDsUnique (nodeGraph->orderedNodes, true));
+ 
++       #if OBJ_GRAPH_PROFILE
++        const auto objT3 = obj_clock::now();
++       #endif
++
+         // Next, initialise all the nodes, this will call prepareToPlay on them
+         const PlaybackInitialisationInfo info { sampleRate, blockSize,
+                                                 *nodeGraph, oldGraph,
+@@ -131,6 +171,45 @@ namespace node_player_utils
+         for (auto n : nodeGraph->orderedNodes)
+             n->initialise (info);
+ 
++       #if OBJ_GRAPH_PROFILE
++        {
++            const auto objT4 = obj_clock::now();
++            auto ms = [] (auto a, auto b)
++            {
++                return std::chrono::duration<double, std::milli> (b - a).count();
++            };
++
++            char objLine[256] = {};
++            std::snprintf (objLine, sizeof (objLine),
++                "[GRAPH] rebuild #%d - %d noeuds - %.1f ms  (build %.1f | cycles %.1f | ids %.1f | init %.1f)\n",
++                objRebuildIndex,
++                (int) nodeGraph->orderedNodes.size(),
++                ms (objT0, objT4),
++                ms (objT0, objT1),
++                ms (objT1, objT2),
++                ms (objT2, objT3),
++                ms (objT3, objT4));
++
++            // Console Xcode
++            std::fputs (objLine, stderr);
++            std::fflush (stderr);
++
++            // ...et un fichier, pour que la mesure survive à un lancement hors Xcode.
++            // Réécrit à zéro au premier rebuild de chaque lancement.
++            if (const auto* home = std::getenv ("HOME"))
++            {
++                char objPath[512] = {};
++                std::snprintf (objPath, sizeof (objPath), "%s/objekat-graph.log", home);
++
++                if (auto* f = std::fopen (objPath, objRebuildIndex == 1 ? "w" : "a"))
++                {
++                    std::fputs (objLine, f);
++                    std::fclose (f);
++                }
++            }
++        }
++       #endif
++
+         return nodeGraph;
+     }
+ 
+diff --git a/modules/tracktion_graph/tracktion_graph/tracktion_Node.h b/modules/tracktion_graph/tracktion_graph/tracktion_Node.h
+index 55af6593d8c..d5a00118aff 100644
+--- a/modules/tracktion_graph/tracktion_graph/tracktion_Node.h
++++ b/modules/tracktion_graph/tracktion_graph/tracktion_Node.h
+@@ -10,6 +10,8 @@
+ 
+ #pragma once
+ 
++#include <unordered_set>
++
+ //==============================================================================
+ //==============================================================================
+ /**
+@@ -659,17 +661,42 @@ inline void Node::release()
+ //==============================================================================
+ namespace detail
+ {
++    /** OBJEKAT — accélère le test « ai-je déjà vu ce nœud ? ».
++
++        Auparavant les nœuds visités n'étaient gardés que dans un std::vector,
++        relu de bout en bout (std::find) à chaque nœud rencontré : coût N² sur le
++        nombre de nœuds du graphe. On ajoute simplement un ensemble de hachage
++        tenu en parallèle, alimenté EXACTEMENT aux mêmes endroits que le vecteur.
++
++        Le vecteur reste la seule source de l'ordre de visite, et cet ordre est
++        celui du traitement audio : il est inchangé, à un nœud près. L'ensemble
++        ne sert qu'à la recherche.
++    */
++    struct VisitedNodes
++    {
++        std::vector<Node*> ordered;
++        std::unordered_set<Node*> seen;
++
++        bool contains (Node* n) const noexcept   { return seen.find (n) != seen.end(); }
++
++        void add (Node* n)
++        {
++            ordered.push_back (n);
++            seen.insert (n);
++        }
++    };
++
+     struct VisitNodesWithRecord
+     {
+         template<typename Visitor>
+-        static void visit (std::vector<Node*>& visitedNodes, Node& visitingNode, Visitor&& visitor, bool preordering)
++        static void visit (VisitedNodes& visitedNodes, Node& visitingNode, Visitor&& visitor, bool preordering)
+         {
+-            if (std::find (visitedNodes.begin(), visitedNodes.end(), &visitingNode) != visitedNodes.end())
++            if (visitedNodes.contains (&visitingNode))
+                 return;
+ 
+             if (preordering)
+             {
+-                visitedNodes.push_back (&visitingNode);
++                visitedNodes.add (&visitingNode);
+                 visitor (visitingNode);
+             }
+ 
+@@ -678,7 +705,7 @@ namespace detail
+ 
+             if (! preordering)
+             {
+-                visitedNodes.push_back (&visitingNode);
++                visitedNodes.add (&visitingNode);
+                 visitor (visitingNode);
+             }
+         }
+@@ -687,11 +714,11 @@ namespace detail
+     struct VisitNodesWithRecordBFS
+     {
+         template<typename Visitor>
+-        static void visit (std::vector<Node*>& visitedNodes, Node& visitingNode, Visitor&& visitor)
++        static void visit (VisitedNodes& visitedNodes, Node& visitingNode, Visitor&& visitor)
+         {
+-            if (std::find (visitedNodes.begin(), visitedNodes.end(), &visitingNode) == visitedNodes.end())
++            if (! visitedNodes.contains (&visitingNode))
+             {
+-                visitedNodes.push_back (&visitingNode);
++                visitedNodes.add (&visitingNode);
+                 visitor (visitingNode);
+             }
+ 
+@@ -700,9 +727,9 @@ namespace detail
+             // Visit each node then go back to the first and recurse
+             for (auto n : inputs)
+             {
+-                if (std::find (visitedNodes.begin(), visitedNodes.end(), n) == visitedNodes.end())
++                if (! visitedNodes.contains (n))
+                 {
+-                    visitedNodes.push_back (n);
++                    visitedNodes.add (n);
+                     visitor (visitingNode);
+                 }
+             }
+@@ -716,14 +743,14 @@ namespace detail
+ template<typename Visitor>
+ inline void visitNodes (Node& node, Visitor&& visitor, bool preordering)
+ {
+-    std::vector<Node*> visitedNodes;
++    detail::VisitedNodes visitedNodes;
+     detail::VisitNodesWithRecord::visit (visitedNodes, node, visitor, preordering);
+ }
+ 
+ template<typename Visitor>
+ inline void visitNodesBFS (Node& node, Visitor&& visitor)
+ {
+-    std::vector<Node*> visitedNodes;
++    detail::VisitedNodes visitedNodes;
+     detail::VisitNodesWithRecordBFS::visit (visitedNodes, node, visitor);
+ }
+ 
+@@ -732,26 +759,26 @@ inline std::vector<Node*> getNodes (Node& node, VertexOrdering vertexOrdering)
+     if (vertexOrdering == VertexOrdering::bfsPreordering
+         || vertexOrdering == VertexOrdering::bfsReversePreordering)
+     {
+-        std::vector<Node*> visitedNodes;
++        detail::VisitedNodes visitedNodes;
+         detail::VisitNodesWithRecordBFS::visit (visitedNodes, node, [](auto&){});
+ 
+         if (vertexOrdering == VertexOrdering::bfsReversePreordering)
+-            std::reverse (visitedNodes.begin(), visitedNodes.end());
++            std::reverse (visitedNodes.ordered.begin(), visitedNodes.ordered.end());
+ 
+-        return visitedNodes;
++        return std::move (visitedNodes.ordered);
+     }
+ 
+     bool preordering = vertexOrdering == VertexOrdering::preordering
+                     || vertexOrdering == VertexOrdering::reversePreordering;
+ 
+-    std::vector<Node*> visitedNodes;
++    detail::VisitedNodes visitedNodes;
+     detail::VisitNodesWithRecord::visit (visitedNodes, node, [](auto&){}, preordering);
+ 
+     if (vertexOrdering == VertexOrdering::reversePreordering
+         || vertexOrdering == VertexOrdering::reversePostordering)
+-       std::reverse (visitedNodes.begin(), visitedNodes.end());
++       std::reverse (visitedNodes.ordered.begin(), visitedNodes.ordered.end());
+ 
+-    return visitedNodes;
++    return std::move (visitedNodes.ordered);
+ }
+ 
+ inline void addNodesRecursive (std::vector<NodeAndID>& nodeMap, Node& n)
+diff --git a/modules/tracktion_graph/tracktion_graph/tracktion_Utility.h b/modules/tracktion_graph/tracktion_graph/tracktion_Utility.h
+index 9d925ccddf7..69e2cb87d9c 100644
+--- a/modules/tracktion_graph/tracktion_graph/tracktion_Utility.h
++++ b/modules/tracktion_graph/tracktion_graph/tracktion_Utility.h
+@@ -84,16 +84,22 @@ NodeType* findNode (NodeGraph& nodeGraph, Predicate pred)
+ template<typename NodeType>
+ NodeType* findNodeWithID (NodeGraph& nodeGraph, size_t nodeIDToLookFor)
+ {
+-    auto found = std::find_if (nodeGraph.sortedNodes.begin(),
+-                               nodeGraph.sortedNodes.end(),
+-                               [nodeIDToLookFor] (auto nodeAndID)
+-                               {
+-                                   return nodeAndID.id == nodeIDToLookFor
+-                                       && dynamic_cast<NodeType*> (nodeAndID.node) != nullptr;
+-                               });
+-
+-    if (found != nodeGraph.sortedNodes.end())
+-        return dynamic_cast<NodeType*> (found->node);
++    // OBJEKAT — sortedNodes est trié par identifiant (cf. operator< de NodeAndID),
++    // mais cette recherche le balayait linéairement, avec un dynamic_cast sur
++    // CHAQUE élément traversé. Comme chaque nœud appelle cette fonction pendant
++    // l'initialisation, le coût était N² sur le nombre de nœuds.
++    //
++    // On dichotomise pour isoler la plage des entrées portant cet identifiant
++    // (plusieurs nœuds peuvent le partager), et on ne teste le type que dans
++    // cette plage. Les entrées de même identifiant étant contiguës, le premier
++    // résultat trouvé est le même qu'avant : comportement identique.
++    const auto range = std::equal_range (nodeGraph.sortedNodes.begin(),
++                                         nodeGraph.sortedNodes.end(),
++                                         NodeAndID { nullptr, nodeIDToLookFor });
++
++    for (auto iter = range.first; iter != range.second; ++iter)
++        if (auto* castNode = dynamic_cast<NodeType*> (iter->node))
++            return castNode;
+ 
+     return nullptr;
+ }

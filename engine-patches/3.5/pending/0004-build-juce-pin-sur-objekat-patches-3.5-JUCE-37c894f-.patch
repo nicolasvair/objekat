@@ -1,0 +1,25 @@
+From a806726f6c7d96cef0b3da9914c6ae5180b8a106 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 8 Aug 2026 15:45:42 +0200
+Subject: [PATCH 4/4] build(juce): pin sur objekat-patches-3.5 (JUCE 37c894f +
+ patch VST3)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le pin de tracktion develop (37c894f) plus le report du patch local
+"VST3: retire le jassert factory != nullptr", dont le code a déménagé vers
+juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ modules/juce | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/modules/juce b/modules/juce
+index 37c894f83d3..56cb73c496c 160000
+--- a/modules/juce
++++ b/modules/juce
+@@ -1 +1 @@
+-Subproject commit 37c894f83d379179b2070d437ccd0f1cd9af9576
++Subproject commit 56cb73c496ce1b81a2f91f96203844edb4749558

@@ -1,0 +1,21 @@
+# Build / DerivedData
+.build_refactor/
+DerivedData/
+build/
+*.o
+*.pcm
+*.dia
+
+# Finder droppings
+.DS_Store
+
+# Xcode user state (par utilisateur, ne pas versionner)
+*.xcuserstate
+xcuserdata/
+
+# Caches Python des outils de pilotage
+__pycache__/
+*.pyc
+
+# Claude Code local settings (per machine)
+.claude/settings.local.json

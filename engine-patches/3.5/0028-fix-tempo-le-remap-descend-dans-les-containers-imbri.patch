@@ -1,0 +1,68 @@
+From fdd3f63349d97408c6dd259e67369fbc6aabf290 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 21:51:49 +0200
+Subject: [PATCH 28/29] =?UTF-8?q?fix(tempo)=20:=20le=20remap=20descend=20d?=
+ =?UTF-8?q?ans=20les=20containers=20imbriqu=C3=A9s,=20=C3=A0=20toute=20pro?=
+ =?UTF-8?q?fondeur?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+EditTimecodeRemapperSnapshot::savePreChangeState ne descendait que d'UN niveau
+dans les clips conteneurs : les enfants directs d'un groupe entraient dans
+l'instantané, ceux d'un SOUS-groupe non. Au changement de tempo en mode bpm,
+ces derniers gardaient donc leurs anciennes secondes pendant que tout le reste
+était remappé.
+
+Même geste que 0027 pour findClipForID : la descente devient récursive
+(addClipTree), sur les clips de piste comme sur ceux des clip slots.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../model/edit/tracktion_TempoSequence.cpp    | 23 ++++++++++++-------
+ 1 file changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/edit/tracktion_TempoSequence.cpp b/modules/tracktion_engine/model/edit/tracktion_TempoSequence.cpp
+index 56569e9f8d7..b4b2a2d070d 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_TempoSequence.cpp
++++ b/modules/tracktion_engine/model/edit/tracktion_TempoSequence.cpp
+@@ -712,21 +712,28 @@ void EditTimecodeRemapperSnapshot::savePreChangeState (Edit& ed)
+         clips.add (cp);
+     };
+ 
++    // Un clip conteneur peut en contenir un autre (groupe dans un groupe), sans limite de
++    // profondeur : la descente doit être RÉCURSIVE. Avec une descente d'un seul niveau, les
++    // clips d'un sous-groupe n'entraient pas dans l'instantané et gardaient donc leurs anciennes
++    // secondes après le changement de tempo, pendant que tout le reste était remappé.
++    auto addClipTree = [&addClip] (auto&& self, auto clip) -> void
++    {
++        addClip (clip);
++
++        if (auto cc = dynamic_cast<ClipOwner*> (clip))
++            for (auto childClip : cc->getClips())
++                self (self, childClip);
++    };
++
+     for (auto t : getClipTracks (ed))
+     {
+         for (auto& c : t->getClips())
+-        {
+-            addClip (c);
++            addClipTree (addClipTree, c);
+ 
+-            if (auto cc = dynamic_cast<ClipOwner*> (c))
+-                for (auto childClip : cc->getClips())
+-                    addClip (childClip);
+-        }
+-        
+         if (auto at = dynamic_cast<AudioTrack*> (t))
+             for (auto slot : at->getClipSlotList().getClipSlots())
+                 if (auto cc = slot->getClip())
+-                    addClip (cc);
++                    addClipTree (addClipTree, cc);
+     }
+ 
+     automation.clear();
+-- 
+2.50.1 (Apple Git-155)
+
