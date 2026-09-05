@@ -8051,6 +8051,29 @@
         }
       }
     },
+    "trace.menu.cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel the capture"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelar la captura"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler la capture"
+          }
+        }
+      }
+    },
     "trace.menu.capture": {
       "extractionState": "manual",
       "localizations": {
@@ -8323,6 +8346,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce plugin contient de l'aléatoire : la trace fige UNE performance, elle ne sera plus retirée au hasard à chaque lecture."
+          }
+        }
+      }
+    },
+    "trace.report.groupLimit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On a group, the trace does not redistribute onto the individual sources as soon as the plugin distorts: a memoryless non-linearity does not distribute over a sum. That is a mathematical limit, not an implementation one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En un grupo, la traza no se redistribuye sobre las fuentes individuales en cuanto el plugin distorsiona: una no linealidad sin memoria no se distribuye sobre una suma. Es un límite matemático, no de implementación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sur un groupe, la trace ne se redistribue pas sur les sources prises une à une dès que le plugin distord : une non-linéarité sans mémoire ne se distribue pas sur une somme. C'est une limite mathématique, pas une limite d'implémentation."
           }
         }
       }

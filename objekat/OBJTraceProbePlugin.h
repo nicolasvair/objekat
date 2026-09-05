@@ -66,14 +66,20 @@ struct ObjTraceCaptureBuffer
 
     std::atomic<int>     numChannels { 0 };
     std::atomic<int64_t> samplesWritten { 0 };
+    /// Blocks that fell wholly outside the window. NOT an error count: the pre-roll's blocks
+    /// belong here by construction, since their material predates the region.
     std::atomic<int64_t> blocksOutsideWindow { 0 };
     std::atomic<bool>    allocationFailed { false };
 
     /** Sizes the buffer for the channel count the graph turned out to carry. Called from the
-        render thread, on the first block only. */
+        render thread, and ALLOCATING ONLY ONCE: a later block arriving with more channels must
+        not resize, because resizing does not keep what is already written and would silently
+        empty the capture halfway through. Within one render the graph's channel count is fixed,
+        so the case should not arise; if it ever does, the extra channels are dropped and the
+        capture stays whole rather than becoming half of one. */
     void ensureChannels (int channels)
     {
-        if (numChannels.load() >= channels || channels <= 0 || numSamples <= 0)
+        if (audio.getNumSamples() > 0 || channels <= 0 || numSamples <= 0)
             return;
 
         // A trace covers region + tail at full rate: 8 bytes per sample per channel once it

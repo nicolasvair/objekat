@@ -93,6 +93,8 @@ struct SynopticActions {
     // TRACE — freezing what a plugin does to this signal, so the session travels without it.
     // nil = the actions are not wired (the demo). @see docs/objekat-capture-trace.md
     var onCaptureTrace: ((UUID) -> Void)? = nil
+    /// Stops the capture under way. Offered on the card that is showing its progress.
+    var onCancelTrace: (() -> Void)? = nil
     /// Plays the slot from its trace, or back from its plugin. Only ever offered where BOTH are
     /// available: with the plugin missing, the trace is not a choice, it is what is left.
     var onSetTraceUse: ((_ pluginID: UUID, _ useTrace: Bool) -> Void)? = nil
@@ -352,6 +354,7 @@ struct SynopticView: View {
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
                     linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
                     onCaptureTrace: actions.onCaptureTrace.map { f in { f(c.plugin.id) } },
+                    onCancelTrace: actions.onCancelTrace,
                     onSetTraceUse: actions.onSetTraceUse.map { f in { use in f(c.plugin.id, use) } },
                     onClearTrace: actions.onClearTrace.map { f in { f(c.plugin.id) } },
                     traceSummary: actions.traceSummary?(c.plugin.id),
@@ -596,6 +599,7 @@ struct SynopticCardView: View {
 
     // TRACE. nil closures = the card cannot be driven (the demo): no menu entry is offered.
     var onCaptureTrace: (() -> Void)? = nil
+    var onCancelTrace: (() -> Void)? = nil
     var onSetTraceUse: ((Bool) -> Void)? = nil
     var onClearTrace: (() -> Void)? = nil
     /// A one-line summary of the trace, for the badge's tooltip.
@@ -778,10 +782,14 @@ struct SynopticCardView: View {
     // already carries four controls. @see docs/objekat-capture-trace.md
 
     @ViewBuilder private var traceMenu: some View {
-        if let onCaptureTrace {
+        // A capture is two or three offline renders: minutes, on a session with a heavy AU. It
+        // has to be possible to change one's mind, and the place to do it is where it was
+        // started — the same menu, on the same card that shows the progress.
+        if traceProgress != nil, let onCancelTrace {
+            Button(L("trace.menu.cancel"), action: onCancelTrace)
+        } else if let onCaptureTrace {
             Button(plugin.traceHealth == nil ? L("trace.menu.capture") : L("trace.menu.recapture"),
                    action: onCaptureTrace)
-                .disabled(traceProgress != nil)
         }
 
         if plugin.traceHealth != nil {
@@ -1791,11 +1799,10 @@ struct SynopticBoundView: View {
         let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
                                                       traces: traces)
 
-        let instLeaf = obj?.instruments.first.map { inst -> SynopticPlugin in
-            let t = viewModel.traceStates(for: [inst], on: objectID)[inst.id]
-            return SynopticMapping.leaf(inst, vu: levels[inst.id] ?? 0,
-                                        traceHealth: t?.health, traceInUse: t?.inUse ?? false)
-        }
+        // No trace state on the instrument, and none is asked for: tracing is offered on the FX
+        // chain only. The instrument card below wires no trace action either, so the two agree —
+        // a badge on a slot with no way to capture one would be a promise nothing keeps.
+        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -1906,6 +1913,7 @@ struct SynopticBoundView: View {
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
             onCaptureTrace: { viewModel.captureTrace(hostID: objectID, pluginID: $0) },
+            onCancelTrace: { viewModel.cancelTraceCapture() },
             onSetTraceUse: { pluginID, use in
                 viewModel.edit { viewModel.setTraceForced(hostID: objectID, pluginID: pluginID, forced: use) }
             },

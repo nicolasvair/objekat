@@ -253,9 +253,11 @@ extension EditViewModel {
             // interesting cases (a fractional latency, a plugin that turns out to hold
             // randomness) with no way of being noticed. Under external driving `notify`
             // journals instead of blocking, so a script sees it too.
-            if reportsToUser { self.notify(Self.traceReportTitle(dict),
-                                           self.traceReportBody(dict),
-                                           style: Self.traceReportStyle(dict)) }
+            if reportsToUser {
+                self.notify(Self.traceReportTitle(dict),
+                            self.traceReportBody(dict, isGroupHost: self.find(id: hostID)?.isGroup ?? false),
+                            style: Self.traceReportStyle(dict))
+            }
 
             completion?(dict)
         }
@@ -512,7 +514,7 @@ extension EditViewModel {
         return (report["status"] as? String) == "exact" ? .informational : .warning
     }
 
-    func traceReportBody(_ report: [String: Any]) -> String {
+    func traceReportBody(_ report: [String: Any], isGroupHost: Bool = false) -> String {
         guard report["ok"] as? Bool == true else {
             return report["message"] as? String ?? L("trace.report.failed.unknown")
         }
@@ -540,6 +542,13 @@ extension EditViewModel {
         }
         if report["input_hash"] as? String == "" {
             lines.append(L("trace.report.noFingerprint"))
+        }
+        if isGroupHost {
+            // A mathematical limit, not an implementation one, and the interface owes the user
+            // the difference: on a group, g[n] only redistributes onto the individual sources if
+            // the plugin introduces no distortion — a memoryless non-linearity does not
+            // distribute over a sum. Said once, here, where a group has just been traced.
+            lines.append(L("trace.report.groupLimit"))
         }
 
         let bytes = (report["file_bytes"] as? NSNumber)?.int64Value ?? 0

@@ -644,7 +644,15 @@ inline std::string fingerprint (const float* const* channels, int numChannels, u
 */
 inline double correlationLag (const float* x, const float* y, uint64_t numSamples, int maxLag = 256)
 {
-    if (numSamples < 64 || maxLag < 1)
+    if (x == nullptr || y == nullptr || numSamples < 64 || maxLag < 1)
+        return 0.0;
+
+    // The search has to fit inside the buffer with room on BOTH sides, and the arithmetic below
+    // is unsigned: `numSamples - maxLag` on a region shorter than the search would wrap to an
+    // enormous number and walk off the end. A quarter of the length leaves the window something
+    // to correlate over.
+    maxLag = (int) std::min<uint64_t> ((uint64_t) maxLag, numSamples / 4);
+    if (maxLag < 1)
         return 0.0;
 
     // Centre the window on the strongest transient of x: a steady tone correlates equally well
@@ -726,6 +734,19 @@ inline void computeChannel (const float* y, const float* x, const float* dFree,
         const double free = dFree != nullptr ? (double) dFree[n] : 0.0;
         const double num  = (double) y[n] - free;
 
+        // A plugin that emits a NaN or an infinity poisons everything downstream of it: the
+        // ratio becomes NaN, the run-length encoding cannot compare it against its default
+        // (NaN equals nothing, not even itself), the read-back check reports a mismatch that is
+        // not one, and the restitution would replay the NaN into the mix for ever. We refuse to
+        // carry it: g = 1 and d = 0 makes the trace transparent at that sample, which is the
+        // one honest answer to a value that means nothing.
+        if (! std::isfinite (num) || ! std::isfinite (xn))
+        {
+            gOut[(size_t) n] = 1.0;
+            dOut[(size_t) n] = 0.0;
+            continue;
+        }
+
         if (std::abs (xn) < xMin)
         {
             gOut[(size_t) n] = 1.0;
@@ -735,7 +756,7 @@ inline void computeChannel (const float* y, const float* x, const float* dFree,
 
         const double ratio = num / xn;
 
-        if (std::abs (ratio) > gMax)
+        if (! std::isfinite (ratio) || std::abs (ratio) > gMax)
         {
             const double clamped = std::copysign (gMax, ratio);
             gOut[(size_t) n] = clamped;
