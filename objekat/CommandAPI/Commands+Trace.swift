@@ -243,7 +243,7 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
 
             var entries: [JSONValue] = []
-            func note(_ hostID: UUID, _ hostName: String, _ plugins: [ObjectPlugin]) {
+            @MainActor func note(_ hostID: UUID, _ hostName: String, _ plugins: [ObjectPlugin]) {
                 for p in EditViewModel.flattenLeaves(plugins) {
                     guard let ref = p.trace else { continue }
                     entries.append(.object([
@@ -257,7 +257,7 @@ extension CommandRegistry {
                     ]))
                 }
             }
-            func walk(_ objects: [SoundObject]) {
+            @MainActor func walk(_ objects: [SoundObject]) {
                 for o in objects {
                     note(o.id, o.displayName, o.plugins)
                     note(o.id, o.displayName, o.instruments)

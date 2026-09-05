@@ -142,8 +142,9 @@ extension EditViewModel {
                 if p.id == pluginID { reached = true; return }
                 if let rack = p.rack {
                     parts.append("rack:\(p.id):\(rack.voices.count)")
+                    let wet = Self.paddedWetDb(rack.wetDb, count: rack.voices.count)
                     for (i, v) in rack.voices.enumerated() {
-                        parts.append("voice:\(i):\(rack.wetDb.indices.contains(i) ? rack.wetDb[i] : 0)")
+                        parts.append("voice:\(i):\(wet[i])")
                         walk(v)
                     }
                 } else {

@@ -1912,16 +1912,6 @@ struct SynopticBoundView: View {
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
-            onCaptureTrace: { viewModel.captureTrace(hostID: objectID, pluginID: $0) },
-            onCancelTrace: { viewModel.cancelTraceCapture() },
-            onSetTraceUse: { pluginID, use in
-                viewModel.edit { viewModel.setTraceForced(hostID: objectID, pluginID: pluginID, forced: use) }
-            },
-            onClearTrace: { pluginID in
-                viewModel.edit { viewModel.clearTrace(hostID: objectID, pluginID: pluginID) }
-            },
-            traceSummary: { viewModel.traceSummary(pluginID: $0, on: objectID) },
-            traceProgress: { viewModel.capturingTracePluginID == $0 ? viewModel.traceProgress : nil },
             dragProvider: { dragProvider($0) },
             onReorder: { pluginID, seriesID, toIndex, copy in
                 if let loc = locations[seriesID] {
@@ -2024,7 +2014,17 @@ struct SynopticBoundView: View {
                 }
             },
             onBeginSendEdit: { viewModel.pushUndo() },
-            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) }
+            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) },
+            onCaptureTrace: { viewModel.captureTrace(hostID: objectID, pluginID: $0) },
+            onCancelTrace: { viewModel.cancelTraceCapture() },
+            onSetTraceUse: { pluginID, use in
+                viewModel.edit { viewModel.setTraceForced(hostID: objectID, pluginID: pluginID, forced: use) }
+            },
+            onClearTrace: { pluginID in
+                viewModel.edit { viewModel.clearTrace(hostID: objectID, pluginID: pluginID) }
+            },
+            traceSummary: { viewModel.traceSummary(pluginID: $0, on: objectID) },
+            traceProgress: { viewModel.capturingTracePluginID == $0 ? viewModel.traceProgress : nil }
         ))
         .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
         .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
