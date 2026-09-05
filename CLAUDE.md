@@ -103,6 +103,29 @@ What has landed since mid-August, in order:
   Verified with no screen on the optimised binary: `tools/smoke.jsonl` passes whole, and a
   48 kHz / 24-bit WAV export re-read at RMS gives real signal. **Nothing has been seen or heard**
   of this build either. The procedure and its traps: [[publication-release-github]].
+- **Capturing a plugin's trace** (5 September) — a session stops being portable the moment it
+  leans on an AudioUnit. For one plugin on one object, we now freeze what it does to THAT signal,
+  `y[n] = g[n]·x[n] + d[n]` sample by sample, and a light node plays that back where the plugin
+  is missing. The specification is the authority and it is in the repository:
+  `docs/objekat-capture-trace.md`. Four things worth carrying between sessions:
+    - the capture is two or three offline renders on a fresh clone each — the fresh clone IS the
+      plugin reset — with two probe plugins around the target. **The alignment is the engine's own
+      PDC and nothing else**: `PluginNode` hands each plugin an `editTime` already pulled back by
+      the latency accumulated upstream, so indexing both captures by it lines `x` and `y` up
+      sample for sample. Read the header of `OBJTraceProbePlugin.h` before touching any of it;
+    - the pre-roll is a DECLARED LATENCY on the input probe. The plugin starts on an empty delay
+      line, which is exactly digital silence, and the samples fall outside the capture window on
+      their own. The clip's extent is opened to the right so the tail exists at all, and the same
+      probe gates the region back shut so the opening lets no material through;
+    - **the determinism null test comes first**, between the two B passes, because it decides
+      whether the null-input pass runs at all. A plugin with randomness gets no pass A and no
+      subtraction — the realisation captured on silence is a different draw, and subtracting it
+      would ADD noise. One performance is frozen instead, and the report says so;
+    - the validation residual proves the arithmetic, the codec and the file — NOT the alignment,
+      which the affine solve absorbs by construction. Only the cross-correlation sees a
+      misalignment, and what it costs is the trace's weight, not its exactness. That is written
+      up in the spec under « What each check actually catches », and it is the point a session
+      is most likely to get backwards.
 
 ### What is owed
 
@@ -118,6 +141,13 @@ a second one elsewhere. The most exposed points:
   fixing it pre-emptively**;
 - the temporary `[MIXFOCUS]` logs in `Inspector/Synoptic/SynopticView.swift` (4 `NSLog`s), to be
   removed as soon as the volume/pan fix is confirmed at runtime;
+- **the whole of the plugin trace** — captured, restituted and reported, and NOTHING of it has
+  been built, run or heard. The machine that wrote it had neither Xcode nor audio. In order of
+  exposure: that the probes see the block sizes and the `editTime` the reasoning assumes (a
+  single `[TRACE]` log line answers it); that the pre-roll really reaches the plugin as silence;
+  that a container's read-ahead does not shift the capture window; that the restitution nulls
+  against the plugin — `plugin.trace.use` exists for exactly that comparison, and the recipe is
+  in `docs/command_api.md`;
 - the three languages of the interface, never seen on screen: neither the layout under a longer
   text, nor the plurals, nor `--language=`. The labels of 2 September sharpen the point, since
   they live in narrow pills: "rogner" / "recortar" against "crop" in the piano-roll's band,
@@ -179,6 +209,15 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
       `Label("\(prefix)\(name)", systemImage:)`, which yields a `%@%@`.
   A format is the dangerous one: `"%lld dB"` is a template with a hole in it, and a translation
   that loses its `%lld` makes `String(format:)` read the argument stack askew.
+- **A plugin trace's `g[n]` and `d[n]` are SIGNALS, never curves.** Two consequences that come
+  back at every touch: a trace is bound to the sample rate it was captured at — resampling `g`
+  would invent values the plugin never produced, so the restitution goes transparent rather than
+  stretch it — and the run-length encoding compares against its default EXACTLY (`== 1.0`,
+  `== 0.0`), never with a tolerance. A tolerance there would be lossy compression, which is the
+  one thing this format is not. It costs nothing because the values that compress are the ones
+  the arithmetic ASSIGNS (the gate's `g = 1`, the deterministic branch's `d = 0`), not ones we
+  hope will land round.
+
 - **`--language=fr|en|es`** forces the language for one launch (a volatile argument domain, nothing
   is persisted); `app.info` returns `language`.
 

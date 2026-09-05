@@ -252,12 +252,49 @@ That is end-of-process noise, with no effect on the result.
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters |
+| `plugin.trace.*` | capture a plugin's trace, play it in the plugin's place, list, purge |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
 | `export.*` | render the mix into a file, follow the progress, cancel |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
+
+### Plugin traces
+
+`plugin.trace.capture` freezes what a plugin does to the signal it currently receives —
+`y[n] = g[n]·x[n] + d[n]`, sample by sample — so that the session plays on a machine where the
+plugin is absent. It is two or three offline renders, so it returns a `job_id` and `job.wait`
+closes the loop. The job's result is the validation report: the residual, the flags, the weight.
+
+The whole family matters more here than elsewhere, because **a trace can be judged with no
+screen and no ears.** It is measurements from end to end: the null test between the two capture
+passes says whether the plugin holds randomness, and the validation residual says whether the
+reconstruction can be trusted. A script reads exactly what the panel shows.
+
+`plugin.trace.use` has no equivalent in the interface's ordinary path, and it is the one to
+reach for when checking the feature: it plays a slot from its trace on a machine that **has**
+the plugin. That is the only way to compare, inside one session, what the plugin does against
+what its trace does —
+
+```
+plugin.trace.capture   host=… plugin=…      # then job.wait
+export.run             …/with-plugin.wav    # the plugin
+plugin.trace.use       host=… plugin=… forced=true
+export.run             …/with-trace.wav     # its trace
+```
+
+— and null the two files. Anything above the residual the capture reported is a bug in the
+restitution, not in the capture.
+
+`plugin.trace.info` also reads the header back **from the file**, so it says what is on disk and
+not only what the model believes. `plugin.trace.list` names every traced slot plus the trace
+files nothing references any more; `plugin.trace.purge` deletes those. A trace is heavy — 8
+bytes per sample per channel before encoding — and nothing else removes them: dropping a trace
+from a slot deliberately leaves the file, because dropping a reference is undoable and deleting
+a file is not.
+
+The full specification, thresholds included, is in `docs/objekat-capture-trace.md`.
 
 ### Export
 

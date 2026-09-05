@@ -149,6 +149,27 @@ Critical, and the first cause of failure.
    refusing cleanly is acceptable in v1.
 4. Record the delay used in the metadata.
 
+### What each check actually catches
+
+Worth stating plainly, because a first reading gets it backwards and the code would then be
+written to the wrong purpose.
+
+**The validation null test cannot catch a misalignment.** The affine model is exact at every
+sample *whatever* the alignment: `g` and `d` are solved from the same pair `(x[n], y[n])`, so
+`g·x + d` reproduces `y` even when `y` was captured half a sample late. What the validation
+proves is the arithmetic, the run-length codec and the file — which is why it is run by
+reconstructing from the trace *as written and read back*, not from the values still in memory.
+
+**The cross-correlation is the only thing that sees a misalignment**, and a misalignment is not
+a correctness problem: the restitution still reproduces what was captured. It is a *quality*
+problem, and an expensive one. `g` stops living near 1 and starts swinging over orders of
+magnitude, the clamp tips everything into `d`, the run-length encoding finds nothing left to
+compress, and the file grows by a factor of ten. That is the reason to refuse, and it is a
+reason of economy and numerical conditioning — not of exactness.
+
+So: measure it, record it, say so in the report. Refusing outright is available and acceptable
+in v1, but it is a policy, not a safety rule.
+
 ---
 
 ## Computing the trace
