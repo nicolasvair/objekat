@@ -5951,6 +5951,43 @@ static void objDumpPluginList(te::PluginList& pl,
         }
 
         const std::string& pk = n.key;
+
+        // LA NATURE DU SLOT A-T-ELLE CHANGÉ ? La réconciliation par clé réutilise l'instance
+        // vivante, ce qui est tout l'intérêt — mais une clé peut passer du PLUGIN à sa TRACE et
+        // inversement, et là il ne s'agit plus de la même chose. Sans ce contrôle, basculer un
+        // slot sur sa trace retrouvait l'AU en place et ne changeait rien : la commande répondait
+        // « fait », et on entendait toujours le plugin.
+        //
+        // On compare donc ce que le modèle demande à ce qui est là, et on détruit ce qui ne
+        // correspond plus. Même ménage que la purge de l'étape 1 : le lien, la fenêtre
+        // d'éditeur, puis l'instance.
+        if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end()) {
+            const bool wantsTrace = ([n.info[@"tracePath"] length] > 0);
+            auto* playback = dynamic_cast<te::ObjTracePlaybackPlugin*>(pit->second.get());
+            bool mismatched = (wantsTrace != (playback != nullptr));
+
+            // Même nature, mais une AUTRE trace (recapturée, ou un fichier qui a bougé) :
+            // recharger suffit, l'instance n'a rien de propre à perdre.
+            if (!mismatched && playback != nullptr) {
+                juce::File wanted(juce::String::fromUTF8([n.info[@"tracePath"] UTF8String]));
+                if (wanted.getFullPathName() != playback->tracePath.get())
+                    if (!playback->loadTrace(wanted)) {
+                        const juce::String path = wanted.getFullPathName();
+                        NSLog(@"[TRACE] restitution '%s' : trace illisible ou absente (%s)",
+                              pk.c_str(), path.toRawUTF8());
+                    }
+            }
+
+            if (mismatched) {
+                NSLog(@"[TRACE] slot '%s' : bascule %s", pk.c_str(),
+                      wantsTrace ? "plugin → trace" : "trace → plugin");
+                [self teardownPluginLink:pk];
+                _editorWindows.erase(pk);
+                pit->second->deleteFromParent();
+                _pluginMap.erase(pit);
+            }
+        }
+
         if (_pluginMap.find(pk) == _pluginMap.end()) {
             juce::ValueTree vt = [self resolvedPluginTreeForInfo:n.info
                                                         stateXML:n.info[@"stateXML"]];

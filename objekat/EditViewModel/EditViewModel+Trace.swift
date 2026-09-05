@@ -36,10 +36,28 @@ extension EditViewModel {
     // MARK: - Should this slot play its plugin, or its trace?
 
     /// Is this plugin actually installed on this machine? The Tracktion built-ins always are.
+    ///
+    /// An EMPTY catalogue answers "installed", which is the opposite of what
+    /// `missingPluginNames` decides on the same question — and deliberately so. There, an empty
+    /// catalogue means a warning nobody has to act on; here it would mean silently playing a
+    /// recording of a plugin instead of the plugin, on a machine that has it and has merely not
+    /// scanned yet. So we do not guess. What actually catches an absent plugin is the engine
+    /// failing to resolve it, and `compileRack` switches those to their trace rather than
+    /// dropping them — a fact, not an inference. @see EditViewModel.compileRack
     func isPluginInstalled(_ plugin: ObjectPlugin) -> Bool {
         if plugin.isBuiltIn || plugin.isRack { return true }
+        if availablePlugins.isEmpty { return true }
         return availablePlugins.contains { $0.identifier == plugin.identifier
                                         && $0.formatName == plugin.formatName }
+    }
+
+    /// The trace of a plugin the engine could not resolve, if it has one that can actually be
+    /// played. Used by `compileRack` to switch a slot over rather than lose it.
+    func usableTrace(for plugin: ObjectPlugin) -> PluginTraceRef? {
+        guard let ref = plugin.trace,
+              let url = traceURL(ref),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return ref
     }
 
     /// True when the chain must compile this slot as a TRACE instead of as its plugin.
@@ -258,8 +276,15 @@ extension EditViewModel {
     // MARK: - Using and dropping a trace
 
     /// Switches a slot between "play the plugin" and "play its trace" on a machine that has
-    /// both. Recompiles: it is a change of what sits in the chain.
+    /// both. Recompiles: it is a change of what actually sits in the chain.
+    ///
+    /// The plugin's live state is written into the model FIRST, because switching to the trace
+    /// destroys the instance. An AU carries its settings in itself and only hands them over when
+    /// asked; without this, every knob moved since the last save would be lost the moment the
+    /// trace took over — and lost silently, since the trace would go on sounding exactly right.
     func setTraceForced(hostID: UUID, pluginID: UUID, forced: Bool) {
+        if forced { captureLivePluginState(hostID: hostID, pluginID: pluginID) }
+
         updateChainPlugins(hostID) { list in
             list = Self.mappingPlugin(pluginID, in: list) { p in
                 guard p.trace != nil else { return p }
@@ -270,6 +295,19 @@ extension EditViewModel {
         }
         compileRack(objectID: hostID)
         isDirty = true
+    }
+
+    /// Writes one plugin's live engine state into the model. A narrow version of
+    /// `withCapturedPluginStates`, which works on a whole sub-tree: here we are about to destroy
+    /// exactly one instance and want to lose nothing of it.
+    private func captureLivePluginState(hostID: UUID, pluginID: UUID) {
+        guard let engine,
+              let xml = engine.getPluginStateXML(pluginID.uuidString), !xml.isEmpty else { return }
+        updateChainPlugins(hostID) { list in
+            list = Self.mappingPlugin(pluginID, in: list) { p in
+                var n = p; n.stateXML = xml; return n
+            }
+        }
     }
 
     /// Drops a slot's trace. The plugin comes back — where it is installed.

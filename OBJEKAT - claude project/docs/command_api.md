@@ -287,6 +287,17 @@ export.run             …/with-trace.wav     # its trace
 — and null the two files. Anything above the residual the capture reported is a bug in the
 restitution, not in the capture.
 
+`tools/trace_check.py` does exactly that, end to end, against a windowless instance:
+
+```
+objekat --headless --api --socket=/tmp/objekat.sock --no-recent --no-audio &
+./tools/trace_check.py /tmp/objekat.sock
+```
+
+It traces a built-in **reverb** on purpose: a reverb puts signal where there is none, which is
+the one case the `X_MIN` gate exists for, and it fills the tail window that nothing else would
+exercise.
+
 `plugin.trace.info` also reads the header back **from the file**, so it says what is on disk and
 not only what the model believes. `plugin.trace.list` names every traced slot plus the trace
 files nothing references any more; `plugin.trace.purge` deletes those. A trace is heavy — 8

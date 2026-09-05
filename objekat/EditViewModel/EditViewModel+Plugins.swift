@@ -229,15 +229,47 @@ extension EditViewModel {
 
     /// (Re)compiles the object's engine rack from the `plugins` given, then removes from the model
     /// the plugins the engine could not resolve (not found). Returns those ids.
+    ///
+    /// `retryingTraces` is the recursion guard of the one exception below; callers leave it alone.
     @discardableResult
     func compileRack(objectID: UUID, plugins: [ObjectPlugin],
-                     chainInDb: Float, chainOutDb: Float) -> [UUID] {
+                     chainInDb: Float, chainOutDb: Float,
+                     retryingTraces: Bool = true) -> [UUID] {
         guard let engine else { return [] }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
                                                 tree: rackSpec(for: plugins),
                                                 chainInDb: chainInDb,
                                                 chainOutDb: chainOutDb) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
+
+        // A PLUGIN THAT DID NOT RESOLVE BUT HAS A TRACE IS NOT LOST — it switches over to it.
+        // This is the case the whole trace feature exists for: the session opens on a machine
+        // without the plugin, and it sounds. It has to be caught HERE, on the engine's refusal,
+        // rather than by asking the catalogue whether the plugin is installed: an empty or stale
+        // catalogue would answer wrongly, and the price of a wrong answer is a slot removed from
+        // the model, taking its trace reference with it. A failure to resolve is a fact.
+        //
+        // One retry only: a trace entry always yields a valid tree, so it cannot come back in
+        // `failed`. The guard is there so that a future change cannot turn this into a loop.
+        if !failed.isEmpty, retryingTraces {
+            let switchable = failed.filter { id in
+                EditViewModel.findPlugin(id, in: plugins).flatMap { usableTrace(for: $0) } != nil
+            }
+            if !switchable.isEmpty {
+                for id in switchable {
+                    updateChainPlugins(objectID) { list in
+                        list = EditViewModel.mappingPlugin(id, in: list) { p in
+                            var n = p; n.trace?.forced = true; return n
+                        }
+                    }
+                }
+                let refreshed = chainPlugins(objectID) ?? plugins
+                return compileRack(objectID: objectID, plugins: refreshed,
+                                   chainInDb: chainInDb, chainOutDb: chainOutDb,
+                                   retryingTraces: false)
+            }
+        }
+
         if !failed.isEmpty {
             // During a load, remembers the name of the plugins that cannot be found (before removing them from the
             // model) for the summary confirmation message — see applyProjectDocument.
