@@ -51,6 +51,20 @@ final class EditViewModel {
     /// Lets ⌘A select every note of that clip even with no note selection
     /// active. Reset to nil as soon as a click lands elsewhere in the timeline. Pure UI.
     var focusedMidiClipID: UUID? = nil
+    /// The plugin whose TRACE is being captured, nil if none. One at a time: a capture holds the
+    /// graph for two or three offline renders, and running two would only make both slower.
+    /// See EditViewModel+Trace.
+    var capturingTracePluginID: UUID? = nil
+    /// Where that capture has got to, 0…1 over all its passes. Polled, like the export's.
+    var traceProgress: Double = 0
+    /// The report of the last capture that finished — what the validation panel shows. Not
+    /// persisted: it describes a moment, not the project.
+    var lastTraceReport: [String: Any]? = nil
+    /// pluginID → the signature of everything upstream of it AT THE MOMENT ITS TRACE WAS TAKEN.
+    /// A cheap, continuous staleness check: the signature moves, the trace no longer describes
+    /// the signal. Rebuilt at load from the project. @see EditViewModel.upstreamSignature
+    var traceSignatures: [UUID: String] = [:]
+
     /// The objects whose BAKE (a background render) is UNDER WAY: a soft lock. The sub-tree
     /// stays live and playable, but creating/opening/detaching/dissolving is blocked while
     /// the render runs. Emptied in the render's completion. See EditViewModel+Bake.

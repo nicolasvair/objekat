@@ -455,6 +455,14 @@ extension EditViewModel {
         syncStemRouting()  // reapplies the remembered routing to the Main (detached buses)
         refreshAudibility()  // remembered bus mutes → a composed silence on every object
 
+        // Traces: the signature that says whether one is still valid is taken FROM THE PROJECT
+        // JUST LOADED, and therefore says "fresh" at the moment of opening. That is the honest
+        // answer here — a trace saved with its project describes the signal that project
+        // carries. What it will catch is the first edit made upstream from now on. The trace's
+        // own fingerprint of x remains the real promise, and re-capturing x is the only way to
+        // check it. @see EditViewModel.traceHealth
+        rebuildTraceSignatures()
+
         // The content is in place: the timeline can rearm the length of its canvas (@see
         // projectLoadToken). To be done AFTER `items`, otherwise it would rearm on the old content.
         projectLoadToken &+= 1

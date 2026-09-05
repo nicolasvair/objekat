@@ -58,11 +58,19 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// halo/border and the link badge all derive from it, so that a glance is enough to tie
     /// a card in the signal view to its plugin.
     var color: Color = .gray
+    /// The health of this slot's captured trace, nil if it has never been traced. @see
+    /// PluginTraceHealth, docs/objekat-capture-trace.md
+    var traceHealth: PluginTraceHealth? = nil
+    /// The chain is playing the TRACE and not the plugin — because the plugin is missing here,
+    /// or because it was forced. This is the state the card has to make unmistakable: what is
+    /// heard is a recording of the plugin, not the plugin.
+    var traceInUse: Bool = false
 
     init(id: UUID = UUID(), name: String, category: PluginCategory,
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
-         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray) {
+         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
+         traceHealth: PluginTraceHealth? = nil, traceInUse: Bool = false) {
         self.id = id
         self.name = name
         self.category = category
@@ -73,6 +81,8 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.isLinked = isLinked
         self.isLinkDetached = isLinkDetached
         self.color = color
+        self.traceHealth = traceHealth
+        self.traceInUse = traceInUse
     }
 
     /// A generic plugin inserted by a '+' in phase A (in phase B, the '+' will open

@@ -179,6 +179,68 @@
                           end:(double)endSecs
                    completion:(void(^)(BOOL ok))completion;
 
+// MARK: - Capture de trace — geler ce qu'un plugin fait à UN signal
+//
+// Une session cesse d'être portable dès qu'elle s'appuie sur un AudioUnit : ouverte sur une
+// autre machine, le plugin manque et le mix n'est plus le mix. Capturer une TRACE enregistre ce
+// que le plugin fait à CE signal précis, sous forme affine et échantillon par échantillon —
+//
+//     y[n] = g[n] · x[n] + d[n]
+//
+// — de sorte qu'on puisse le restituer sans lui. Exact par construction pour tout traitement
+// déterministe, tant que l'entrée reste la même.
+//
+// LA PROCÉDURE tient en deux ou trois rendus offline, dans le même contexte de graphe, à la même
+// fréquence et avec la même taille de bloc :
+//   • la passe B (signal réel) DEUX FOIS, puis le null test entre les deux. C'est lui qui décide
+//     de la suite, et c'est pourquoi il passe avant tout le reste ;
+//   • plugin déterministe → passe A (entrée nulle) pour obtenir `d_free`, la composante que le
+//     plugin produit tout seul — un SIGNAL complet, pas une constante : ronflement, dérive
+//     lente, bruit de fond ;
+//   • plugin non déterministe → PAS de passe A et rien à soustraire. La réalisation captée sur
+//     du silence serait un autre tirage : la soustraire ajouterait du bruit au lieu d'en
+//     retirer. On fige une performance, et le rapport le dit.
+//
+// `regionStart`/`regionEnd` sont les bornes de l'objet, en secondes d'edit. `preRoll` (2 s au
+// moins) laisse les détecteurs et les cellules de lissage se stabiliser ; `tail` (5 s au moins)
+// laisse sortir les queues et les releases longs.
+//
+// `options` (facultatif) : @{@"g_max": @64.0, @"x_min_db": @(-100.0), @"merge_gap": @16}.
+//
+// `completion` est appelé sur le thread principal avec un rapport. `ok` = NO porte `error` et
+// `message` ; `ok` = YES porte le chemin du fichier, le `status` de validation
+// (exact / acceptable / problem), les résidus mesurés et les drapeaux du format. Une capture à
+// la fois : un appel pendant qu'une autre tourne est refusé (`error` = "busy").
+- (void)capturePluginTrace:(NSString*)pluginKey
+                  objectID:(NSString*)objectID
+               regionStart:(double)regionStart
+                 regionEnd:(double)regionEnd
+                   preRoll:(double)preRollSecs
+                      tail:(double)tailSecs
+                  filePath:(NSString*)filePath
+                   options:(NSDictionary* _Nullable)options
+                completion:(void(^)(NSDictionary* report))completion
+                NS_SWIFT_UI_ACTOR;
+
+// Avancement de la capture en cours (0…1, toutes passes confondues), 0 si aucune.
+- (float)traceCaptureProgress;
+
+// YES tant qu'une capture est en cours.
+- (BOOL)isCapturingTrace;
+
+// Demande l'arrêt de la capture en cours. Le completion arrive avec `error` = "cancelled".
+- (void)cancelTraceCapture;
+
+// L'en-tête d'une trace posée sur le disque, sans charger ses données. Sert au modèle Swift à
+// afficher l'état d'un slot tracé et à vérifier sa péremption (`input_hash`). nil si le fichier
+// est absent ou n'est pas une trace lisible par cette version.
+- (NSDictionary* _Nullable)readTraceHeader:(NSString*)filePath;
+
+// La RESTITUTION ne s'installe pas par une méthode à elle : elle passe par la compilation de
+// chaîne comme n'importe quel plugin. Une entrée de `compileUserRackForObjectID:tree:` qui porte
+// @"tracePath" produit un nœud de trace au lieu d'un plugin — même clé, même place, même bypass,
+// même ordre. @see resolvedPluginTreeForInfo:stateXML:
+
 // MARK: - Export — rendu du MIX COMPLET
 //
 // Rend la sortie générale de l'Edit — toutes les pistes, tous les bus de stems, chaîne de

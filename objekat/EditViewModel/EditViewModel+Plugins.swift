@@ -19,6 +19,10 @@ extension EditViewModel {
         for p in refs where !p.isBuiltIn {   // the Tracktion built-ins are always available
             let key = "\(p.formatName)\u{1}\(p.identifier)"
             guard !installed.contains(key), seen.insert(key).inserted else { continue }
+            // A slot that carries a usable trace is NOT missing: that is the whole point of a
+            // trace, and warning about it would ask the user to worry about something already
+            // handled. @see EditViewModel.playsFromTrace
+            guard !playsFromTrace(p) else { continue }
             out.append("\(p.name) [\(p.formatLabel)]")
         }
         return out
@@ -208,7 +212,17 @@ extension EditViewModel {
                 "name":       p.name,
                 "enabled":    p.isEnabled
             ]
-            if let s = p.stateXML, !s.isEmpty { d["stateXML"] = s }
+            // TRACE. A slot that plays from its trace hands the engine a path instead of an
+            // identifier, and the compiler puts a restitution node where the plugin would have
+            // gone — same id, same place, same bypass, same ordering. It goes through the SAME
+            // spec entry on purpose: a second path would be a second thing to keep in step.
+            // @see EditViewModel.playsFromTrace, docs/objekat-capture-trace.md
+            if playsFromTrace(p), let ref = p.trace, let url = traceURL(ref) {
+                d["tracePath"] = url.path
+                d["name"] = ref.pluginName.isEmpty ? p.name : ref.pluginName
+            } else if let s = p.stateXML, !s.isEmpty {
+                d["stateXML"] = s
+            }
             return d
         }
     }

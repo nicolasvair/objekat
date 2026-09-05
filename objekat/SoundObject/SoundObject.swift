@@ -133,12 +133,18 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// (the same identity); an independent copy (⌥) or a fresh addition draws a new one at
     /// random.
     var colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count)
+    /// The captured TRACE of this instance, if one was taken: what the plugin does to the signal
+    /// it currently receives, frozen so that the session stays portable where the plugin is
+    /// absent. The samples live in a `.objtrace` file beside the session; this only references
+    /// it. nil = never traced. @see PluginTraceRef, docs/objekat-capture-trace.md
+    var trace: PluginTraceRef? = nil
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
          linkGroupID: UUID? = nil, detachedLinkGroupID: UUID? = nil,
          rack: PluginRack? = nil,
-         colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count)) {
+         colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
+         trace: PluginTraceRef? = nil) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -150,6 +156,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.detachedLinkGroupID = detachedLinkGroupID
         self.rack = rack
         self.colorIndex = colorIndex
+        self.trace = trace
     }
 
     /// True if this entry represents a parallel block (and not a plain plugin).
@@ -175,7 +182,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, colorIndex
+             linkGroupID, detachedLinkGroupID, rack, colorIndex, trace
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -193,6 +200,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         // stable from the first save that follows.
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
                         ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
+        trace = try c.decodeIfPresent(PluginTraceRef.self, forKey: .trace)
     }
 }
 

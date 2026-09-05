@@ -26,18 +26,24 @@ enum SynopticMapping {
     /// `rack` block) plus the `seriesID → SeriesLocation` table that lets the insertion actions
     /// find the right series again. The series/branch ids are regenerated on every build: the
     /// action closures capture the table from the SAME build, so it is consistent.
-    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:])
+    /// `traces` answers, per plugin id, "what is this slot's trace worth, and is it what is
+    /// playing?" — nil for a slot that has never been traced. It comes from the view-model
+    /// (@see EditViewModel.traceHealth / playsFromTrace); this mapping only carries it through.
+    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:],
+                      traces: [UUID: (health: PluginTraceHealth, inUse: Bool)] = [:])
         -> (node: SynopticNode, locations: [UUID: SeriesLocation]) {
         var locations: [UUID: SeriesLocation] = [:]
         let node = buildSeries(plugins, seriesID: objectID, location: .root,
-                               locations: &locations, levels: levels)
+                               locations: &locations, levels: levels, traces: traces)
         return (node, locations)
     }
 
     private static func buildSeries(_ plugins: [ObjectPlugin], seriesID: UUID,
                                     location: SeriesLocation,
                                     locations: inout [UUID: SeriesLocation],
-                                    levels: [UUID: Double]) -> SynopticNode {
+                                    levels: [UUID: Double],
+                                    traces: [UUID: (health: PluginTraceHealth, inUse: Bool)])
+                                    -> SynopticNode {
         locations[seriesID] = location
         let children: [SynopticNode] = plugins.map { p in
             if let rack = p.rack {
@@ -46,24 +52,34 @@ enum SynopticMapping {
                 let voices: [SynopticNode] = rack.voices.enumerated().map { vi, voice in
                     var vnode = buildSeries(voice, seriesID: UUID(),
                                             location: .voice(blockID: p.id, voiceIndex: vi),
-                                            locations: &locations, levels: levels)
+                                            locations: &locations, levels: levels, traces: traces)
                     vnode.voiceGainDb = gains[vi]   // the end-of-branch dB gain → a UI control
                     vnode.voiceMuted  = mutes[vi]   // the branch's mute → a UI button
                     return vnode
                 }
                 return SynopticNode(id: p.id, kind: .parallel(voices))
             }
-            return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0)))
+            let trace = traces[p.id]
+            return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0,
+                                                             traceHealth: trace?.health,
+                                                             traceInUse: trace?.inUse ?? false)))
         }
         return SynopticNode(id: seriesID, kind: .series(children))
     }
 
-    static func leaf(_ p: ObjectPlugin, vu: Double = 0) -> SynopticPlugin {
+    /// `traceHealth`/`traceInUse` are handed in rather than read here: judging them needs the
+    /// view-model (is the plugin installed on this machine? has anything upstream moved?) and
+    /// this mapping is deliberately kept able to run on a bare model — that is what lets the
+    /// demo graph exist at all.
+    static func leaf(_ p: ObjectPlugin, vu: Double = 0,
+                     traceHealth: PluginTraceHealth? = nil,
+                     traceInUse: Bool = false) -> SynopticPlugin {
         SynopticPlugin(id: p.id, name: p.name, category: .infer(from: p),
                        isEnabled: p.isEnabled, vu: vu,
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
-                       color: p.color)
+                       color: p.color,
+                       traceHealth: traceHealth, traceInUse: traceInUse)
     }
 }
 

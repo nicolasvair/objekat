@@ -16,7 +16,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 10
+    static let formatVersion = 11
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -25,7 +25,8 @@ enum SessionSchema {
         "",
         "PROJECT FOLDER — this file lives at its root; several versions can live side by side and",
         "share: samples/ (imported sounds), samples/objects/ (baked sound objects plus their",
-        "sidecars *_objectstate.json), waveforms/ (display caches, throwaway).",
+        "sidecars *_objectstate.json), waveforms/ (display caches, throwaway), traces/",
+        "(captured plugin traces, heavy — see `plugins.trace` below).",
         "File paths are RELATIVE to that folder when the file lives in it: the folder can be",
         "moved. A path outside the folder stays absolute.",
         "",
@@ -47,6 +48,12 @@ enum SessionSchema {
         "sends — sends towards an aux object: { auxID, levelDb, enabled }.",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
+        "  trace — this slot has a captured TRACE: what the plugin does to the signal it",
+        "  receives, as y[n] = g[n]·x[n] + d[n], sample by sample, so the session plays on a",
+        "  machine where the plugin is absent. The samples live in traces/<pluginID>.objtrace",
+        "  beside this file; `fileName` names it and nothing here is absolute. `forced` = play",
+        "  the trace even where the plugin IS installed. A trace is valid FOR THAT INPUT ONLY:",
+        "  anything changed upstream invalidates it. See docs/objekat-capture-trace.md.",
         "",
         "automation — an object's curves, one entry per parameter: { param, points }.",
         "  param names the target: {type:volume|pan|chainInGain|chainOutGain},",

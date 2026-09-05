@@ -11,12 +11,17 @@
 #include "OBJWindowFadePlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
+#include "OBJTrace.h"
+#include "OBJTraceProbePlugin.h"
+#include "OBJTracePlaybackPlugin.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
 #include <string>
 #include <vector>
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <dlfcn.h>
 
@@ -571,6 +576,56 @@ struct OBJRenderJob {
     std::shared_ptr<te::EditRenderer::Handle>       handle;
 };
 
+// CAPTURE DE TRACE — l'état qui traverse les DEUX OU TROIS passes de rendu.
+//
+// Une capture n'est pas un rendu, c'est une petite machine à états : passe B, passe B encore,
+// null test, puis — et seulement si le plugin s'est révélé déterministe — passe A. Chaque passe
+// est un rendu offline complet, sur son propre clone, et rend la main au thread principal entre
+// deux. Tout ce que la suite doit retrouver vit donc ici, et pas dans des variables de pile.
+//
+// @see docs/objekat-capture-trace.md, et -capturePluginTrace:...
+struct OBJTraceSession {
+    // Ce qu'on trace
+    std::string      pluginKey, objectKey;
+    te::EditItemID   pluginItemID, hostClipID, trackID;
+    std::vector<te::EditItemID> allowed, ancestors;
+
+    // La fenêtre, en secondes d'edit
+    double regionStart = 0.0, regionEnd = 0.0;
+    double preRoll = 2.0, tail = 5.0;
+
+    // Le contexte de rendu, figé pour toutes les passes (le même graphe, la même fréquence, le
+    // même bloc : un plugin dont le comportement dépend du bloc doit voir le même bloc partout).
+    double  sampleRate = 44100.0;
+    int     blockSize  = 512;
+    int64_t numSamples = 0;         // région + queue, par canal
+    int64_t regionSamples = 0;      // la région seule — c'est la porte du probe d'entrée
+
+    // Les réglages de l'arithmétique
+    double   gMax = objtrace::kDefaultGMax;
+    double   xMinDbfs = objtrace::kDefaultXMinDbfs;
+    uint64_t mergeGap = objtrace::kDefaultMergeGap;
+
+    // De quoi remplir l'en-tête
+    std::string pluginName, pluginIdentifier, pluginFormat, pluginVersion;
+    int  latencySamples = 0;
+    bool pluginWasBypassed = false;
+    bool hasAutomation = false;
+
+    juce::File destFile;
+
+    // Les captures. x2/y2 sont relâchées dès le null test : elles ne servent qu'à lui.
+    te::ObjTraceCaptureBufferPtr x1, y1, x2, y2, dFree;
+
+    // Où on en est
+    int  passIndex = 0;             // 0 = B1, 1 = B2, 2 = A
+    int  numPasses = 3;             // ramené à 2 dès que le plugin se révèle non déterministe
+    bool nonDeterministic = false;
+    bool cancelled = false;
+
+    objtrace::Residual determinismY, determinismX;
+};
+
 // MARK: - OBJEngineCore
 
 // INC 2 — veilleur de latence (PDC à chaud). Un te::Plugin peut changer la latence qu'il rapporte
@@ -703,6 +758,71 @@ static te::Plugin::Array objAllPluginsDeep(te::Edit& edit) {
     return list;
 }
 
+// MARK: - Capture de trace — helpers de repérage
+//
+// La procédure, ses seuils et son format sont spécifiés dans `docs/objekat-capture-trace.md`.
+
+/// Où vit un plugin dans une chaîne compilée : la liste qui le porte, et son index dedans.
+/// Descend dans les branches d'un bloc parallèle — un FX y vit sous le PLUGIN qui l'héberge et
+/// non sous la plugin-list du clip.
+struct OBJPluginSite {
+    te::PluginList* list = nullptr;
+    int index = -1;
+    bool isValid() const { return list != nullptr && index >= 0; }
+};
+
+static OBJPluginSite objFindPluginSite(te::PluginList& pl, te::EditItemID wanted) {
+    int i = 0;
+    for (auto* p : pl) {
+        if (p != nullptr) {
+            if (p->itemID == wanted) return { &pl, i };
+
+            if (auto* block = dynamic_cast<te::ObjParallelBlockPlugin*>(p))
+                for (int b = 0; b < block->getNumBranches(); ++b)
+                    if (auto* branch = block->getBranch(b))
+                        if (auto found = objFindPluginSite(*branch, wanted); found.isValid())
+                            return found;
+        }
+        ++i;
+    }
+    return {};
+}
+
+/// Le plugin d'identifiant `wanted` dans une Edit (le clone), à n'importe quelle profondeur.
+static te::Plugin* objFindPluginByItemID(te::Edit& edit, te::EditItemID wanted) {
+    for (auto* p : objAllPluginsDeep(edit))
+        if (p != nullptr && p->itemID == wanted) return p;
+    return nullptr;
+}
+
+/// Le plugin porte-t-il une courbe d'automation ? Consigné dans l'en-tête de la trace : une
+/// trace dont les paramètres bougeaient ne vaut que pour ce mouvement-là, rejoué à l'identique.
+static bool objPluginHasAutomation(te::Plugin& p) {
+    for (auto* param : p.getAutomatableParameters())
+        if (param != nullptr && param->hasAutomationPoints()) return true;
+    return false;
+}
+
+/// Deux signaux encodés portent-ils exactement la même chose ? Sert à la détection du cas
+/// `linked` — comparer les signaux ENCODÉS plutôt que les tableaux plats évite de garder ces
+/// derniers en vie pour tous les canaux à la fois (8 octets par échantillon et par canal).
+static bool objTraceSignalsEqual(const objtrace::Signal& a, const objtrace::Signal& b) {
+    if (a.defaultValue != b.defaultValue) return false;
+    if (a.segments.size() != b.segments.size()) return false;
+    for (size_t i = 0; i < a.segments.size(); ++i)
+        if (a.segments[i].start != b.segments[i].start
+            || a.segments[i].length != b.segments[i].length) return false;
+    return a.data == b.data;
+}
+
+/// Le pire des deux résidus, canal par canal : une trace vaut ce que vaut son canal le moins bon.
+static objtrace::Residual objWorstResidual(const objtrace::Residual& a, const objtrace::Residual& b) {
+    objtrace::Residual r;
+    r.peakDbfs = std::max(a.peakDbfs, b.peakDbfs);
+    r.rmsDbfs  = std::max(a.rmsDbfs,  b.rmsDbfs);
+    return r;
+}
+
 // DIAGNOSTIC PERF : seuls les plugins EXTERNES coûtent à l'instanciation — un AU se charge,
 // s'initialise et restaure son chunk, là où un plugin interne n'est qu'un objet C++. Le second
 // nombre est celui qui compte vraiment : combien ont une INSTANCE, c'est-à-dire combien ont
@@ -827,6 +947,15 @@ struct OBJRenderChain {
                        prepare:(std::function<void(te::Track*)>)prepare
                           desc:(NSString*)desc
                     completion:(void(^)(BOOL ok))completion;
+// Clone de rendu partagé (flush + copie + chargement filtré + ré-affirmation des états).
+// @see buildRenderCloneAllowing:track:desc:
+- (std::unique_ptr<te::Edit>)buildRenderCloneAllowing:(const std::vector<te::EditItemID>&)allowedClipIDs
+                                                track:(te::EditItemID)trackID
+                                                 desc:(NSString*)desc;
+// CAPTURE DE TRACE — les trois temps de la machine à états. @see OBJTraceSession.
+- (void)runTracePass;
+- (void)tracePassFinished:(BOOL)ok;
+- (void)finishTraceCaptureWithError:(NSString* _Nullable)errorMessage;
 // Chaîne des clips à laisser vivre pour qu'un objet sonne : lui-même, son contenu, puis chacun
 // de ses containers ancêtres jusqu'à la piste.
 - (OBJRenderChain)renderChainForKey:(const std::string&)key;
@@ -980,6 +1109,15 @@ struct OBJRenderChain {
     // leur signature porte un message d'erreur. @see exportMixToFileAsync:.
     std::string                                            _exportJobID;
     NSMutableDictionary<NSString*, id>*                    _exportCompletions;
+
+    // CAPTURE DE TRACE — une seule à la fois (elle monopolise le graphe pendant deux ou trois
+    // rendus, et rien ne serait gagné à en mener deux de front). `_traceSession` non nul =
+    // capture en cours ; `_traceJob` porte le clone et le handle de la passe COURANTE, remplacés
+    // à chaque passe. Le completion est retenu côté ObjC (même règle que les rendus : ne jamais
+    // capturer un block ObjC dans un lambda C++ type-erasé). @see -capturePluginTrace:...
+    std::unique_ptr<OBJTraceSession>                       _traceSession;
+    std::unique_ptr<OBJRenderJob>                          _traceJob;
+    void (^_traceCompletion)(NSDictionary*);
 }
 
 /// Drapeau global posé par main.swift AVANT toute construction du moteur (c'est `init` qui ouvre
@@ -1006,6 +1144,12 @@ static BOOL gOBJAudioDisabled = NO;
         _engine->getPluginManager().createBuiltInType<te::ObjWindowFadePlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjParallelBlockPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjAuxSendPlugin>();
+        // Trace de plugin. La SONDE ne vit que dans un clone de rendu (elle n'apparaît dans aucun
+        // projet), la RESTITUTION vit dans le graphe et se charge depuis le projet : les deux
+        // s'enregistrent quand même ici, parce qu'un type non enregistré ne s'insère nulle part.
+        // @see docs/objekat-capture-trace.md
+        _engine->getPluginManager().createBuiltInType<te::ObjTraceProbePlugin>();
+        _engine->getPluginManager().createBuiltInType<te::ObjTracePlaybackPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
         // que de sauter l'appel — Tracktion s'attend à un device manager initialisé, et le
         // court-circuiter le ferait trébucher plus loin. Zéro canal suffit à ne pas réquisitionner
@@ -2516,21 +2660,20 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     return chain;
 }
 
-- (void)renderTrackToFileAsync:(te::EditItemID)trackID
-                      filePath:(NSString*)filePath
-                         start:(double)startSecs
-                           end:(double)endSecs
-                 allowedClipIDs:(const std::vector<te::EditItemID>&)allowedClipIDs
-                       prepare:(std::function<void(te::Track*)>)prepare
-                          desc:(NSString*)desc
-                    completion:(void(^)(BOOL ok))completion {
-    if (!_edit) { if (completion) completion(NO); return; }
+// Construit le CLONE DE RENDU d'un rendu offline : flush des états, copie de l'arbre, chargement
+// en rôle `forRendering` sous le filtre de plugins, puis ré-affirmation des états qu'un AU aurait
+// refusés. Tout cela tourne sur le THREAD PRINCIPAL — c'est la fenêtre pendant laquelle l'UI est
+// bloquée, et les quatre jalons journalisés en séparent les postes. Ces mesures restent : le clone
+// est le premier suspect dès qu'un rendu rame, et sans elles le diagnostic repart de zéro.
+//
+// Partagé par le bake et par la capture de trace : ils rendent des choses différentes, mais ils
+// partent tous deux de la même copie sous le même filtre, et c'est la partie coûteuse.
+// Retourne nullptr si le chargement échoue.
+- (std::unique_ptr<te::Edit>)buildRenderCloneAllowing:(const std::vector<te::EditItemID>&)allowedClipIDs
+                                                track:(te::EditItemID)trackID
+                                                 desc:(NSString*)desc {
+    if (!_edit) return nullptr;
 
-    // Tout ce qui suit jusqu'au lancement du job tourne sur le THREAD PRINCIPAL : c'est la
-    // fenêtre pendant laquelle l'UI est bloquée, et les quatre jalons en séparent les postes —
-    // flush d'états, copie de l'arbre, construction du clone (qui INSTANCIE les plugins),
-    // ré-affirmation. Ces mesures restent : le clone est le premier suspect dès qu'un bake rame,
-    // et sans elles le diagnostic repart de zéro.
     const double tStart = juce::Time::getMillisecondCounterHiRes();
 
     // L'état binaire d'un plugin ne descend dans la ValueTree que via flushPluginStateToValueTree :
@@ -2558,21 +2701,38 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         clone = te::loadEditFromState(*_engine, stateCopy, te::Edit::EditRole::forRendering);
     }
     const double tClone = juce::Time::getMillisecondCounterHiRes();
-    if (!clone) { if (completion) completion(NO); return; }
+    if (!clone) return nullptr;
 
     // Le clone recrée ses plugins depuis la ValueTree → même refus de restauration que le graphe
     // live, mais sans délai d'attente possible : on force l'état AVANT de lancer le rendu, sinon
-    // un AU récalcitrant serait baké à ses réglages d'usine.
+    // un AU récalcitrant serait rendu à ses réglages d'usine.
     [self forcePluginStatesForRenderClone:*clone];
     const double tForce = juce::Time::getMillisecondCounterHiRes();
 
     // « chargés / déclarés » mesure directement l'effet du filtre : tout AU déclaré mais non
     // chargé est une instanciation évitée sur le thread principal.
     const auto auCount = objCountExternalPlugins(*clone);
-    NSLog(@"[PERF] bake « %@ » : flush %d/%d plugin(s) %.0f ms | copie d'arbre %.0f ms | "
+    NSLog(@"[PERF] clone de rendu « %@ » : flush %d/%d plugin(s) %.0f ms | copie d'arbre %.0f ms | "
           @"clone %.0f ms (%d/%d AU chargés) | ré-affirmation %.0f ms",
           desc, flushedCount, livePlugins.size(), tFlush - tStart, tCopy - tFlush,
           tClone - tCopy, auCount.loaded, auCount.declared, tForce - tClone);
+
+    return clone;
+}
+
+- (void)renderTrackToFileAsync:(te::EditItemID)trackID
+                      filePath:(NSString*)filePath
+                         start:(double)startSecs
+                           end:(double)endSecs
+                 allowedClipIDs:(const std::vector<te::EditItemID>&)allowedClipIDs
+                       prepare:(std::function<void(te::Track*)>)prepare
+                          desc:(NSString*)desc
+                    completion:(void(^)(BOOL ok))completion {
+    if (!_edit) { if (completion) completion(NO); return; }
+
+    const double tStart = juce::Time::getMillisecondCounterHiRes();
+    auto clone = [self buildRenderCloneAllowing:allowedClipIDs track:trackID desc:desc];
+    if (!clone) { if (completion) completion(NO); return; }
 
     te::Track* track = te::findTrackForID(*clone, trackID);
     if (!track) {
@@ -2801,6 +2961,675 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                    completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:clipID filePath:filePath start:startSecs end:endSecs
                              desc:clipID completion:completion];
+}
+
+// MARK: - Capture de trace — la machine à états
+//
+// Trois idées, et tout le reste en découle :
+//
+//  1. UN RENDU PAR PASSE, sur un clone NEUF. Le clone neuf n'est pas une précaution de style :
+//     c'est ce qui garantit un plugin réellement réinitialisé d'une passe à l'autre (instance
+//     recréée), là où un `reset()` s'en remet à la bonne volonté du plugin.
+//  2. DEUX SONDES autour du plugin, qui capturent x et y dans le MÊME rendu, indexées par temps
+//     d'edit. C'est l'indexation qui aligne : @see OBJTraceProbePlugin, dont l'en-tête porte le
+//     raisonnement complet sur la PDC.
+//  3. LE PRÉ-ROLL EST UNE LATENCE. La sonde d'entrée retarde de N secondes et le DÉCLARE ; le
+//     plugin démarre donc sur une ligne à retard vide — du silence numérique strict — et
+//     l'engine range les échantillons à leur place tout seul.
+//
+// Ce qu'on ouvre sur le clone, et pourquoi. L'étendue du clip hôte est prolongée à DROITE de
+// (pré-roll + queue + marge) : sans ça le nœud du clip cesse de produire des blocs à la fin de
+// l'objet, et la queue — qui est précisément ce qu'on vient chercher — n'existe pas. Son
+// ObjWindowFade est désactivé pour la même raison, ses ancêtres rendus transparents comme au
+// bake. La sonde d'entrée referme ensuite la porte sur la région exacte : l'ouverture ne doit
+// pas laisser passer de matière (un groupe en boucle qui se répète, un clip audio qui lit
+// au-delà de sa fenêtre).
+//
+// @see docs/objekat-capture-trace.md
+
+- (BOOL)isCapturingTrace {
+    return _traceSession != nullptr;
+}
+
+- (float)traceCaptureProgress {
+    if (!_traceSession) return 0.0f;
+    const float within = (_traceJob && _traceJob->handle) ? _traceJob->handle->getProgress() : 0.0f;
+    const float passes = (float) std::max(1, _traceSession->numPasses);
+    return juce::jlimit(0.0f, 1.0f, ((float) _traceSession->passIndex + within) / passes);
+}
+
+- (void)cancelTraceCapture {
+    if (!_traceSession) return;
+    _traceSession->cancelled = true;
+    if (_traceJob && _traceJob->handle) _traceJob->handle->cancel();
+}
+
+- (void)capturePluginTrace:(NSString*)pluginKey
+                  objectID:(NSString*)objectID
+               regionStart:(double)regionStart
+                 regionEnd:(double)regionEnd
+                   preRoll:(double)preRollSecs
+                      tail:(double)tailSecs
+                  filePath:(NSString*)filePath
+                   options:(NSDictionary*)options
+                completion:(void(^)(NSDictionary*))completion {
+
+    // Un BLOCK et non un lambda C++ : la règle de ce fichier est de ne jamais faire capturer un
+    // block ObjC par du C++, et elle vaut aussi pour ce qui n'est que du confort d'écriture.
+    void (^refuse)(NSString*, NSString*) = ^(NSString* code, NSString* message) {
+        NSLog(@"[TRACE] refus : %@ — %@", code, message);
+        if (completion) completion(@{ @"ok": @NO, @"error": code, @"message": message });
+    };
+
+    if (!_edit)          { refuse(@"no_edit", @"no edit loaded"); return; }
+    if (_traceSession)   { refuse(@"busy", @"a trace capture is already running"); return; }
+    if (!pluginKey || !objectID || !filePath) { refuse(@"bad_arguments", @"missing argument"); return; }
+    if (regionEnd <= regionStart) { refuse(@"empty_region", @"the region is empty"); return; }
+
+    const std::string key([pluginKey UTF8String]);
+    const std::string objKey([objectID UTF8String]);
+
+    auto pit = _pluginMap.find(key);
+    if (pit == _pluginMap.end() || pit->second == nullptr) {
+        refuse(@"unknown_plugin", @"no live instance for that plugin");
+        return;
+    }
+    te::Plugin& plugin = *pit->second;
+
+    // Un plugin externe pas encore chargé tracerait son propre silence : la liste de ses
+    // paramètres est vide, son instance audio n'existe pas, et le rendu passerait sans erreur.
+    if (auto* ext = dynamic_cast<te::ExternalPlugin*>(&plugin))
+        if (ext->getAudioPluginInstance() == nullptr) {
+            refuse(@"plugin_not_loaded", @"the plugin instance is not loaded yet");
+            return;
+        }
+
+    te::Clip* host = nullptr;
+    if (auto cit = _containerClipMap.find(objKey); cit != _containerClipMap.end()) host = cit->second;
+    else if (auto it = _clipMap.find(objKey); it != _clipMap.end())                 host = it->second.get();
+    if (!host) { refuse(@"unknown_object", @"no clip for that object"); return; }
+
+    te::Track* track = [self trackForKey:objKey];
+    if (!track) { refuse(@"no_track", @"the object is on no track"); return; }
+
+    auto& dm = _engine->getDeviceManager();
+    const double sampleRate = dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0;
+    const int    blockSize  = dm.getBlockSize()  > 0 ? dm.getBlockSize()  : 512;
+
+    auto session = std::make_unique<OBJTraceSession>();
+    session->pluginKey    = key;
+    session->objectKey    = objKey;
+    session->pluginItemID = plugin.itemID;
+    session->hostClipID   = host->itemID;
+    session->trackID      = track->itemID;
+
+    const auto chain = [self renderChainForKey:objKey];
+    session->allowed   = chain.allowed;
+    session->ancestors = chain.ancestors;
+
+    session->regionStart = regionStart;
+    session->regionEnd   = regionEnd;
+    session->preRoll     = juce::jmax(0.0, preRollSecs);
+    session->tail        = juce::jmax(0.0, tailSecs);
+    session->sampleRate  = sampleRate;
+    session->blockSize   = blockSize;
+
+    session->regionSamples = (int64_t) std::llround((regionEnd - regionStart) * sampleRate);
+    session->numSamples    = session->regionSamples
+                           + (int64_t) std::llround(session->tail * sampleRate);
+
+    if (session->numSamples <= 0) { refuse(@"empty_region", @"the region rounds to zero samples"); return; }
+
+    if (options) {
+        if (NSNumber* g = options[@"g_max"])     session->gMax     = juce::jmax(1.0, [g doubleValue]);
+        if (NSNumber* x = options[@"x_min_db"])  session->xMinDbfs = [x doubleValue];
+        if (NSNumber* m = options[@"merge_gap"]) session->mergeGap = (uint64_t) juce::jmax(1, [m intValue]);
+    }
+
+    session->pluginName       = plugin.getName().toStdString();
+    session->pluginFormat     = plugin.getPluginType().toStdString();
+    session->pluginWasBypassed = !plugin.isEnabled();
+    session->hasAutomation    = objPluginHasAutomation(plugin);
+    session->latencySamples   = juce::roundToInt(plugin.getLatencySeconds() * sampleRate);
+
+    if (auto* ext = dynamic_cast<te::ExternalPlugin*>(&plugin)) {
+        session->pluginIdentifier = ext->desc.createIdentifierString().toStdString();
+        session->pluginFormat     = ext->desc.pluginFormatName.toStdString();
+        session->pluginVersion    = ext->desc.version.toStdString();
+    }
+
+    session->destFile = juce::File(juce::String::fromUTF8([filePath UTF8String]));
+    if (session->destFile.getParentDirectory().createDirectory().failed()) {
+        refuse(@"no_folder", @"cannot create the trace folder");
+        return;
+    }
+
+    NSLog(@"[TRACE] capture « %s » sur %s — région %.3f→%.3f s, pré-roll %.1f s, queue %.1f s, "
+          @"%lld échantillons à %.0f Hz (bloc %d), latence déclarée %d échantillon(s)",
+          session->pluginName.c_str(), objKey.c_str(), regionStart, regionEnd,
+          session->preRoll, session->tail, (long long) session->numSamples,
+          sampleRate, blockSize, session->latencySamples);
+
+    _traceSession   = std::move(session);
+    _traceCompletion = [completion copy];
+    [self runTracePass];
+}
+
+// Une passe : un clone neuf, les sondes posées autour du plugin, un rendu offline.
+- (void)runTracePass {
+    if (!_traceSession) return;
+    auto& S = *_traceSession;
+
+    // Les tampons de CETTE passe. La passe A ne capture que la sortie : son entrée est du
+    // silence qu'on vient d'imposer, la relire n'apprendrait rien.
+    const bool isPassA = (S.passIndex == 2);
+
+    auto makeBuffer = [&S]() {
+        auto b = std::make_shared<te::ObjTraceCaptureBuffer>();
+        b->sampleRate = S.sampleRate;
+        b->startSecs  = S.regionStart;
+        b->numSamples = S.numSamples;
+        return b;
+    };
+
+    te::ObjTraceCaptureBufferPtr inBuffer, outBuffer;
+    if (isPassA) {
+        S.dFree = makeBuffer();
+        outBuffer = S.dFree;
+    } else if (S.passIndex == 0) {
+        S.x1 = makeBuffer(); S.y1 = makeBuffer();
+        inBuffer = S.x1; outBuffer = S.y1;
+    } else {
+        S.x2 = makeBuffer(); S.y2 = makeBuffer();
+        inBuffer = S.x2; outBuffer = S.y2;
+    }
+
+    NSString* desc = [NSString stringWithFormat:@"trace %s passe %s",
+                      S.pluginKey.c_str(), isPassA ? "A" : (S.passIndex == 0 ? "B1" : "B2")];
+
+    auto clone = [self buildRenderCloneAllowing:S.allowed track:S.trackID desc:desc];
+    if (!clone) { [self finishTraceCaptureWithError:@"clone failed"]; return; }
+
+    te::Track* track = te::findTrackForID(*clone, S.trackID);
+    if (!track) { [self finishTraceCaptureWithError:@"track missing from the clone"]; return; }
+
+    clone->moveTrack(track, te::TrackInsertPoint((te::Track*)nullptr, (te::Track*)nullptr));
+
+    // La plage de rendu, en temps NOMINAL. Le pré-roll retarde la matière d'autant : le dernier
+    // échantillon de la région sort à `regionEnd + preRoll`, et sa queue court après lui. La
+    // marge couvre les latences déclarées ailleurs dans la chaîne — une seconde de rendu en trop
+    // ne coûte rien, une queue tronquée coûte la capture.
+    const double renderStart = S.regionStart;
+    const double renderEnd   = S.regionEnd + S.preRoll + S.tail
+                             + (double) S.latencySamples / S.sampleRate + 1.0;
+
+    // Ouvrir l'étendue d'un container sur toute la plage, et annuler ses fondus : sur un
+    // ContainerClip, bornes et fondus sont de la géométrie et non des plugins. Même geste qu'au
+    // bake (@see renderObjectToFileAsync), au décalage près : ici on n'ouvre QUE vers la droite
+    // pour le clip hôte, dont le début est le repère de toute la capture.
+    auto openContainerRight = [renderEnd](te::Clip* c) {
+        auto* cc = dynamic_cast<te::ContainerClip*>(c);
+        if (!cc) return;
+        te::ClipPosition pos = cc->getPosition();
+        const double s = pos.time.getStart().inSeconds();
+        pos.time = te::TimeRange(te::TimePosition::fromSeconds(s),
+                                 te::TimePosition::fromSeconds(juce::jmax(s + 1.0e-3, renderEnd)));
+        cc->setPosition(pos);
+        cc->setFadeIn (te::TimeDuration());
+        cc->setFadeOut(te::TimeDuration());
+    };
+
+    te::Clip* hostClip = te::findClipForID(*clone, S.hostClipID);
+    if (!hostClip) { [self finishTraceCaptureWithError:@"host clip missing from the clone"]; return; }
+
+    // L'hôte : on prolonge son étendue à droite et on lève sa fenêtre. Son fader reste — il est
+    // en aval du plugin tracé, il ne touche ni x ni y.
+    {
+        te::ClipPosition pos = hostClip->getPosition();
+        pos.time = te::TimeRange(pos.time.getStart(),
+                                 te::TimePosition::fromSeconds(
+                                     juce::jmax(pos.time.getEnd().inSeconds(), renderEnd)));
+        hostClip->setPosition(pos);
+        openContainerRight(hostClip);
+
+        if (auto* pl = hostClip->getPluginList())
+            for (auto* p : *pl)
+                if (dynamic_cast<te::ObjWindowFadePlugin*>(p))
+                    p->setEnabled(false);
+    }
+
+    // Les ancêtres ne sont là que pour porter l'hôte : leur fenêtre le rognerait, leur
+    // traitement s'ajouterait au signal. On les rend transparents, comme au bake.
+    for (auto ancestorID : S.ancestors) {
+        auto* c = te::findClipForID(*clone, ancestorID);
+        if (!c || c->itemID == S.hostClipID) continue;
+        if (auto* pl = c->getPluginList())
+            for (auto* p : *pl) p->setEnabled(false);
+        openContainerRight(c);
+    }
+
+    // Poser les sondes. L'ordre compte : la sortie D'ABORD, sinon insérer l'entrée décale
+    // l'index de la cible sous nos pieds.
+    te::Plugin* target = objFindPluginByItemID(*clone, S.pluginItemID);
+    if (!target) { [self finishTraceCaptureWithError:@"the plugin is missing from the clone"]; return; }
+
+    auto* hostList = hostClip->getPluginList();
+    if (!hostList) { [self finishTraceCaptureWithError:@"the host carries no chain"]; return; }
+
+    auto site = objFindPluginSite(*hostList, S.pluginItemID);
+    if (!site.isValid()) { [self finishTraceCaptureWithError:@"the plugin is not in the host chain"]; return; }
+
+    auto outProbe = site.list->insertPlugin(te::ObjTraceProbePlugin::create(), site.index + 1);
+    auto inProbe  = site.list->insertPlugin(te::ObjTraceProbePlugin::create(), site.index);
+    auto* out = dynamic_cast<te::ObjTraceProbePlugin*>(outProbe.get());
+    auto* in  = dynamic_cast<te::ObjTraceProbePlugin*>(inProbe.get());
+    if (!out || !in) { [self finishTraceCaptureWithError:@"could not insert the probes"]; return; }
+
+    // Les deux sondes raisonnent dans la MÊME fenêtre — début de région, région + queue — ce
+    // qui est très exactement ce qui les aligne : chacune indexe par le temps d'edit de la
+    // matière qui la traverse, et l'engine a déjà retiré à ce temps la latence accumulée en
+    // amont d'elle. @see OBJTraceProbePlugin.
+    in->setWindow(S.regionStart, S.numSamples);
+    out->setWindow(S.regionStart, S.numSamples);
+
+    in->setPreRoll(S.preRoll);
+    in->setGate(0, S.regionSamples);
+    in->setSilencesInput(isPassA);
+    if (inBuffer) in->setCapture(inBuffer);
+    out->setCapture(outBuffer);
+
+    // Un plugin bypassé rend g == 1 et d == 0 : la trace reste juste, mais ce n'est presque
+    // jamais ce qu'on voulait. On le trace tel qu'il est — le clone porte son état — et on le
+    // DIT dans le rapport (`plugin_was_bypassed`).
+
+    // Le rendu. Le wave produit ne sert à rien — les sondes ont déjà tout — mais le renderer
+    // veut un fichier : on lui en donne un temporaire, effacé à la fin.
+    auto tempWave = juce::File::createTempFile("objtrace.wav");
+
+    juce::Array<te::Clip*> allowedClips;
+    for (auto itemID : S.allowed)
+        if (auto* c = te::findClipForID(*clone, itemID)) allowedClips.add(c);
+
+    auto allTracks = te::getAllTracks(*clone);
+    juce::BigInteger tracksToDo;
+    const int idx = allTracks.indexOf(track);
+    if (idx >= 0) tracksToDo.setBit(idx);
+
+    te::Renderer::Parameters r(*clone);
+    r.tracksToDo         = tracksToDo;
+    r.allowedClips       = allowedClips;
+    r.destFile           = tempWave;
+    r.audioFormat        = _engine->getAudioFileFormatManager().getWavFormat();
+    r.bitDepth           = 32;
+    r.sampleRateForAudio = S.sampleRate;
+    r.blockSizeForAudio  = S.blockSize;
+    r.time               = te::TimeRange(te::TimePosition::fromSeconds(renderStart),
+                                         te::TimePosition::fromSeconds(renderEnd));
+    r.endAllowance       = te::TimeDuration();
+    r.usePlugins         = true;
+    r.useMasterPlugins   = false;
+    r.canRenderInMono    = false;
+    r.trimSilenceAtEnds  = false;
+    // La passe A rend, par construction, un fichier qui peut être parfaitement muet : c'est même
+    // le cas NORMAL, celui d'un plugin qui répond du silence au silence. Sans ce faux, le
+    // renderer refuserait de rendre « une Edit qui ne produit pas d'audio » et la passe qui
+    // détecte `multiplicative_only` échouerait précisément quand elle a raison.
+    r.checkNodesForAudio = false;
+
+    __unsafe_unretained OBJEngineCore* weakSelf = self;   // l'engine vit pour toute la session
+    auto handle = te::EditRenderer::render(r,
+        [weakSelf, tempWave](tl::expected<juce::File, std::string> res) {
+            const bool ok = res.has_value();
+            juce::MessageManager::callAsync([weakSelf, tempWave, ok] {
+                tempWave.deleteFile();
+                [weakSelf tracePassFinished:(ok ? YES : NO)];
+            });
+        });
+
+    if (!handle) { [self finishTraceCaptureWithError:@"the render could not be started"]; return; }
+
+    _traceJob = std::make_unique<OBJRenderJob>(OBJRenderJob{ std::move(clone), handle });
+}
+
+- (void)tracePassFinished:(BOOL)ok {
+    if (!_traceSession) return;
+    auto& S = *_traceSession;
+
+    // Le clone (et ses instances d'AU) meurt ici, sur le thread principal — le seul endroit où
+    // fermer un AU soit légal.
+    _traceJob.reset();
+
+    if (S.cancelled) { [self finishTraceCaptureWithError:@"cancelled"]; return; }
+    if (!ok)         { [self finishTraceCaptureWithError:@"a render pass failed"]; return; }
+
+    // Après la seconde passe B : le null test, qui décide de la suite. C'est lui, et pas la
+    // capture, qui dit s'il faut faire la passe A — d'où son rang. @see la spec.
+    if (S.passIndex == 1) {
+        const int channels = juce::jmin(S.x1 ? S.x1->numChannels.load() : 0,
+                                        S.y1 ? S.y1->numChannels.load() : 0);
+        if (channels <= 0) { [self finishTraceCaptureWithError:@"the capture is empty"]; return; }
+
+        for (int c = 0; c < channels; ++c) {
+            const auto* y1 = S.y1->read(c); const auto* y2 = S.y2->read(c);
+            const auto* x1 = S.x1->read(c); const auto* x2 = S.x2->read(c);
+            if (y1 && y2) S.determinismY = objWorstResidual(S.determinismY,
+                              objtrace::nullTest(y1, y2, (size_t) S.numSamples));
+            if (x1 && x2) S.determinismX = objWorstResidual(S.determinismX,
+                              objtrace::nullTest(x1, x2, (size_t) S.numSamples));
+        }
+
+        S.nonDeterministic = !S.determinismY.isExact();
+
+        NSLog(@"[TRACE] null test — y : crête %.1f dBFS / RMS %.1f dBFS · x : crête %.1f dBFS. "
+              @"Mode %s.",
+              S.determinismY.peakDbfs, S.determinismY.rmsDbfs, S.determinismX.peakDbfs,
+              S.nonDeterministic ? "NON DÉTERMINISTE (pas de passe A)" : "déterministe");
+
+        // Les secondes captures ne servaient qu'au null test : autant de mémoire rendue tout de
+        // suite plutôt qu'à la fin (elles pèsent autant que celles qu'on garde).
+        S.x2.reset(); S.y2.reset();
+
+        if (S.nonDeterministic) {
+            // PAS de passe A, et rien à soustraire : la réalisation captée sur du silence serait
+            // un AUTRE tirage que celle de la passe B, et la soustraire AJOUTERAIT une seconde
+            // source de bruit au lieu d'en retirer une. Le bruit reste dans le numérateur et se
+            // fige dans g — c'est le but. @see la spec, « mode non déterministe ».
+            S.numPasses = 2;
+            [self finishTraceCaptureWithError:nil];
+            return;
+        }
+    }
+
+    ++S.passIndex;
+
+    if (S.passIndex >= S.numPasses) { [self finishTraceCaptureWithError:nil]; return; }
+
+    [self runTracePass];
+}
+
+// Fin de capture : le calcul, l'écriture, la validation, le rapport. `errorMessage` non nil =
+// on s'arrête là et on le dit ; nil = les passes ont abouti et il reste à en faire une trace.
+- (void)finishTraceCaptureWithError:(NSString*)errorMessage {
+    if (!_traceSession) return;
+
+    // Sortir la session et le completion des ivars AVANT d'appeler quoi que ce soit : le
+    // completion a parfaitement le droit de relancer une capture, et il la trouverait « déjà en
+    // cours » si l'état vivait encore ici.
+    auto session = std::move(_traceSession);
+    void (^completion)(NSDictionary*) = _traceCompletion;
+    _traceSession.reset();
+    _traceJob.reset();
+    _traceCompletion = nil;
+
+    auto& S = *session;
+
+    void (^answer)(NSDictionary*) = ^(NSDictionary* report) {
+        if (completion) completion(report);
+    };
+
+    if (errorMessage != nil) {
+        NSLog(@"[TRACE] abandon : %@", errorMessage);
+        answer(@{ @"ok": @NO,
+                  @"error": [errorMessage isEqualToString:@"cancelled"] ? @"cancelled" : @"capture_failed",
+                  @"message": errorMessage });
+        return;
+    }
+
+    const int64_t N = S.numSamples;
+    const int channels = juce::jmin(S.x1 ? S.x1->numChannels.load() : 0,
+                                    S.y1 ? S.y1->numChannels.load() : 0);
+    if (channels <= 0 || N <= 0) {
+        answer(@{ @"ok": @NO, @"error": @"empty_capture",
+                  @"message": @"the probes captured nothing — the object may not sound over that region" });
+        return;
+    }
+
+    if ((S.x1 && S.x1->allocationFailed.load()) || (S.y1 && S.y1->allocationFailed.load())) {
+        answer(@{ @"ok": @NO, @"error": @"too_large",
+                  @"message": @"the region is too long to capture in one go" });
+        return;
+    }
+
+    // Mode déterministe : la passe A a tourné et `d_free` est un SIGNAL complet — offset,
+    // ronflement, dérive lente, bruit de fond — sur toute la longueur, région ET queue. Mode non
+    // déterministe : elle n'a pas tourné, et il n'y a rien à soustraire. @see la spec.
+    const bool hasFree = !S.nonDeterministic && S.dFree != nullptr
+                       && S.dFree->numChannels.load() >= channels;
+
+    const double xMin = std::pow(10.0, S.xMinDbfs / 20.0);
+
+    std::vector<objtrace::Signal> gSignals, dSignals;
+    gSignals.reserve((size_t) channels);
+    dSignals.reserve((size_t) channels);
+
+    for (int c = 0; c < channels; ++c) {
+        std::vector<double> gFlat, dFlat;
+        objtrace::computeChannel(S.y1->read(c), S.x1->read(c),
+                                 hasFree ? S.dFree->read(c) : nullptr,
+                                 (uint64_t) N, S.gMax, xMin, gFlat, dFlat);
+
+        gSignals.push_back(objtrace::encodeSignal(gFlat, 1.0, S.mergeGap));
+        dSignals.push_back(objtrace::encodeSignal(dFlat, 0.0, S.mergeGap));
+        // gFlat/dFlat meurent ici : 16 octets par échantillon et par canal, on ne les garde pas
+        // tous en vie pour rien. La détection de `linked` compare les signaux ENCODÉS.
+    }
+
+    objtrace::Trace trace;
+    auto& H = trace.header;
+
+    H.multiplicativeOnly = std::all_of(dSignals.begin(), dSignals.end(),
+                                       [](const objtrace::Signal& s) { return s.isConstant(); });
+
+    H.linked = channels > 1;
+    for (int c = 1; c < channels && H.linked; ++c) {
+        if (!objTraceSignalsEqual(gSignals[(size_t) c], gSignals[0])) H.linked = false;
+        if (!H.multiplicativeOnly && !objTraceSignalsEqual(dSignals[(size_t) c], dSignals[0]))
+            H.linked = false;
+    }
+
+    H.slotID           = S.pluginKey;
+    H.pluginName       = S.pluginName;
+    H.pluginIdentifier = S.pluginIdentifier;
+    H.pluginFormat     = S.pluginFormat;
+    H.pluginVersion    = S.pluginVersion;
+
+    H.sampleRate     = S.sampleRate;
+    H.numChannels    = channels;
+    H.storedChannels = H.linked ? 1 : channels;
+    H.blockSize      = S.blockSize;
+
+    H.regionStart    = S.regionStart;
+    H.regionEnd      = S.regionEnd;
+    H.tailSeconds    = S.tail;
+    H.preRollSeconds = S.preRoll;
+    H.numSamples     = (uint64_t) N;
+
+    H.latencySamples = S.latencySamples;
+    H.gMax           = S.gMax;
+    H.xMinDbfs       = S.xMinDbfs;
+    H.mergeGap       = S.mergeGap;
+
+    H.nonDeterministic  = S.nonDeterministic;
+    H.pluginWasBypassed = S.pluginWasBypassed;
+    H.hasAutomation     = S.hasAutomation;
+    H.determinismY      = S.determinismY;
+    H.determinismX      = S.determinismX;
+    H.capturedAt        = juce::Time::getCurrentTime().toMilliseconds() / 1000.0;
+
+    // L'alignement, mesuré. Ce qu'il attrape n'est PAS ce qu'on croit : le modèle affine est
+    // exact quel que soit le décalage, puisque g et d sont résolus sur le MÊME couple
+    // (x[n], y[n]). Un décalage ne casse donc pas la reconstruction, il casse la QUALITÉ de la
+    // trace — g cesse d'être proche de 1, le clamp verse tout dans d, l'encodage par plages ne
+    // trouve plus rien à comprimer et le fichier enfle. D'où : on mesure, on consigne, on le
+    // dit dans le rapport ; on ne refuse pas. @see objtrace::correlationLag.
+    H.correlationLagSamples = objtrace::correlationLag(S.x1->read(0), S.y1->read(0), (uint64_t) N);
+    H.fractionalLatency = std::abs(H.correlationLagSamples
+                                   - std::round(H.correlationLagSamples)) > 0.05;
+
+    // L'empreinte de x, pour l'invalidation. ABSENTE quand le null test sur x a échoué : il n'y
+    // a alors pas d'entrée stable dont prendre l'empreinte, et la péremption ne peut plus se
+    // détecter. Mieux vaut ne rien promettre que promettre à faux.
+    if (S.determinismX.isExact()) {
+        std::vector<const float*> xChannels;
+        for (int c = 0; c < channels; ++c) xChannels.push_back(S.x1->read(c));
+        H.inputHash = objtrace::fingerprint(xChannels.data(), channels, (uint64_t) N);
+    }
+
+    trace.g.assign(gSignals.begin(), gSignals.begin() + H.storedChannels);
+    if (!H.multiplicativeOnly)
+        trace.d.assign(dSignals.begin(), dSignals.begin() + H.storedChannels);
+
+    // VALIDATION — reconstruire, soustraire, mesurer. Elle porte sur les signaux DÉCODÉS : c'est
+    // le codec par plages qu'elle éprouve, en plus de l'arithmétique. Canal par canal, chaque
+    // décodage relâché avant le suivant.
+    objtrace::Residual validation;
+    for (int c = 0; c < channels; ++c) {
+        const int stored = juce::jmin(c, H.storedChannels - 1);
+        const auto g = objtrace::decodeSignal(trace.g[(size_t) stored], (uint64_t) N);
+        const auto d = H.multiplicativeOnly
+                         ? std::vector<double>((size_t) N, 0.0)
+                         : objtrace::decodeSignal(trace.d[(size_t) stored], (uint64_t) N);
+
+        const float* x = S.x1->read(c);
+        const float* y = S.y1->read(c);
+        double peak = 0.0, sumSquares = 0.0;
+
+        for (int64_t n = 0; n < N; ++n) {
+            const double diff = g[(size_t) n] * (double) x[n] + d[(size_t) n] - (double) y[n];
+            peak = std::max(peak, std::abs(diff));
+            sumSquares += diff * diff;
+        }
+
+        objtrace::Residual here;
+        here.peakDbfs = objtrace::toDbfs(peak);
+        here.rmsDbfs  = objtrace::toDbfs(std::sqrt(sumSquares / (double) N));
+        validation = objWorstResidual(validation, here);
+    }
+    H.validation = validation;
+
+    // Écriture, puis relecture : la relecture n'est pas de la coquetterie, c'est la seule chose
+    // qui éprouve le format sur le disque. Une trace qu'on ne sait pas relire ne vaut rien, et
+    // le moment de s'en apercevoir est maintenant.
+    if (!objtrace::writeToFile(trace, S.destFile)) {
+        answer(@{ @"ok": @NO, @"error": @"write_failed",
+                  @"message": @"could not write the trace file" });
+        return;
+    }
+
+    objtrace::Trace reread;
+    if (!objtrace::readFromFile(S.destFile, reread)) {
+        S.destFile.deleteFile();
+        answer(@{ @"ok": @NO, @"error": @"reread_failed",
+                  @"message": @"the trace was written but cannot be read back" });
+        return;
+    }
+
+    for (size_t c = 0; c < trace.g.size(); ++c) {
+        const bool same = c < reread.g.size()
+                       && objTraceSignalsEqual(trace.g[c], reread.g[c])
+                       && (H.multiplicativeOnly
+                           || (c < reread.d.size() && objTraceSignalsEqual(trace.d[c], reread.d[c])));
+        if (!same) {
+            S.destFile.deleteFile();
+            answer(@{ @"ok": @NO, @"error": @"reread_mismatch",
+                      @"message": @"the trace does not read back identical to what was written" });
+            return;
+        }
+    }
+
+    // Ce que l'encodage par plages a effectivement épargné. `flat` est ce qu'aurait coûté un
+    // float64 à taux plein pour les mêmes signaux — le chiffre que la spec veut voir baisser.
+    const int64_t fileBytes = S.destFile.getSize();
+    const int64_t flatBytes = (int64_t) H.storedChannels * (int64_t) N * 8
+                            * (H.multiplicativeOnly ? 1 : 2);
+
+    const juce::String destPath = S.destFile.getFullPathName();   // local nommé → toRawUTF8 sûr
+    NSString* tracePath = [NSString stringWithUTF8String:destPath.toRawUTF8()];
+
+    NSString* status = H.validation.isExact()      ? @"exact"
+                     : H.validation.isAcceptable() ? @"acceptable"
+                                                   : @"problem";
+
+    NSLog(@"[TRACE] « %s » : %d canal(aux), %lld échantillons, %s%s%s — validation crête "
+          @"%.1f dBFS (%@) — %lld octets au lieu de %lld (%.1f %%) — décalage mesuré %.2f "
+          @"échantillon(s)%s",
+          H.pluginName.c_str(), channels, (long long) N,
+          H.nonDeterministic ? "NON DÉTERMINISTE, " : "",
+          H.multiplicativeOnly ? "multiplicatif seul" : "avec terme additif",
+          H.linked ? ", canaux liés" : "",
+          H.validation.peakDbfs, status,
+          (long long) fileBytes, (long long) flatBytes,
+          flatBytes > 0 ? 100.0 * (double) fileBytes / (double) flatBytes : 0.0,
+          H.correlationLagSamples, H.fractionalLatency ? " (FRACTIONNAIRE)" : "");
+
+    answer(@{
+        @"ok":                   @YES,
+        @"path":                 tracePath,
+        @"status":               status,
+        @"plugin":               [NSString stringWithUTF8String:H.pluginName.c_str()],
+        @"sample_rate":          @(H.sampleRate),
+        @"block_size":           @(H.blockSize),
+        @"num_channels":         @(H.numChannels),
+        @"stored_channels":      @(H.storedChannels),
+        @"num_samples":          @((long long) H.numSamples),
+        @"region_start":         @(H.regionStart),
+        @"region_end":           @(H.regionEnd),
+        @"pre_roll_seconds":     @(H.preRollSeconds),
+        @"tail_seconds":         @(H.tailSeconds),
+        @"latency_samples":      @(H.latencySamples),
+        @"correlation_lag":      @(H.correlationLagSamples),
+        @"fractional_latency":   @(H.fractionalLatency),
+        @"multiplicative_only":  @(H.multiplicativeOnly),
+        @"linked":               @(H.linked),
+        @"non_deterministic":    @(H.nonDeterministic),
+        @"plugin_was_bypassed":  @(H.pluginWasBypassed),
+        @"has_automation":       @(H.hasAutomation),
+        @"determinism_y_peak_db": @(H.determinismY.peakDbfs),
+        @"determinism_y_rms_db":  @(H.determinismY.rmsDbfs),
+        @"determinism_x_peak_db": @(H.determinismX.peakDbfs),
+        @"validation_peak_db":    @(H.validation.peakDbfs),
+        @"validation_rms_db":     @(H.validation.rmsDbfs),
+        @"input_hash":            [NSString stringWithUTF8String:H.inputHash.c_str()],
+        @"file_bytes":            @((long long) fileBytes),
+        @"flat_bytes":            @((long long) flatBytes),
+    });
+}
+
+// L'en-tête d'une trace posée sur le disque, sans rien charger de ses données. Sert au modèle
+// Swift à afficher l'état d'un slot `traced` et à vérifier sa péremption.
+- (NSDictionary*)readTraceHeader:(NSString*)filePath {
+    if (!filePath) return nil;
+
+    objtrace::Trace t;
+    juce::File f(juce::String::fromUTF8([filePath UTF8String]));
+    if (!objtrace::readFromFile(f, t)) return nil;
+
+    const auto& H = t.header;
+    return @{
+        @"path":                 filePath,
+        @"plugin":               [NSString stringWithUTF8String:H.pluginName.c_str()],
+        @"plugin_identifier":    [NSString stringWithUTF8String:H.pluginIdentifier.c_str()],
+        @"plugin_format":        [NSString stringWithUTF8String:H.pluginFormat.c_str()],
+        @"sample_rate":          @(H.sampleRate),
+        @"num_channels":         @(H.numChannels),
+        @"stored_channels":      @(H.storedChannels),
+        @"num_samples":          @((long long) H.numSamples),
+        @"region_start":         @(H.regionStart),
+        @"region_end":           @(H.regionEnd),
+        @"tail_seconds":         @(H.tailSeconds),
+        @"pre_roll_seconds":     @(H.preRollSeconds),
+        @"latency_samples":      @(H.latencySamples),
+        @"correlation_lag":      @(H.correlationLagSamples),
+        @"fractional_latency":   @(H.fractionalLatency),
+        @"multiplicative_only":  @(H.multiplicativeOnly),
+        @"linked":               @(H.linked),
+        @"non_deterministic":    @(H.nonDeterministic),
+        @"has_automation":       @(H.hasAutomation),
+        @"validation_peak_db":   @(H.validation.peakDbfs),
+        @"validation_rms_db":    @(H.validation.rmsDbfs),
+        @"input_hash":           [NSString stringWithUTF8String:H.inputHash.c_str()],
+        @"captured_at":          @(H.capturedAt),
+    };
 }
 
 // MARK: - Export — rendu du mix complet
@@ -4905,6 +5734,22 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
     NSString* identifier = pluginInfo[@"identifier"];
     NSString* format     = pluginInfo[@"format"];
     NSString* pluginName = pluginInfo[@"name"] ?: @"?";
+
+    // TRACE : le modèle demande la RESTITUTION plutôt que le plugin. C'est le même slot, à la
+    // même place dans la chaîne, avec la même clé — seule change la nature de ce qu'on y met.
+    // Passer par ici plutôt que par une méthode d'installation à part, c'est ce qui fait que
+    // l'ordre, le bypass, le déplacement et la persistance marchent sans une ligne de plus.
+    // Le fichier lui-même se charge après l'insertion, dans compileSeries: — un constructeur de
+    // plugin n'a rien à faire d'un accès disque. @see docs/objekat-capture-trace.md
+    if (NSString* tracePath = pluginInfo[@"tracePath"]; tracePath.length > 0) {
+        juce::ValueTree v = te::ObjTracePlaybackPlugin::create();
+        v.setProperty(juce::Identifier("tracePath"),
+                      juce::String::fromUTF8([tracePath UTF8String]), nullptr);
+        v.setProperty(juce::Identifier("traceName"),
+                      juce::String::fromUTF8([pluginName UTF8String]), nullptr);
+        return v;
+    }
+
     if (!identifier || !format) return {};
 
     juce::String fmtStr(juce::String::fromUTF8([format UTF8String]));
@@ -5121,6 +5966,18 @@ static void objDumpPluginList(te::PluginList& pl,
                 continue;
             }
             _pluginMap[pk] = p;
+            // Une restitution de trace charge son fichier maintenant : le constructeur n'a rien à
+            // faire d'un accès disque, et le nœud reste transparent tant que rien n'est chargé —
+            // ce qui est exactement ce qu'on veut d'une trace introuvable. @see OBJTracePlaybackPlugin.
+            if (auto* playback = dynamic_cast<te::ObjTracePlaybackPlugin*>(p.get())) {
+                NSString* tracePath = n.info[@"tracePath"];
+                juce::File file(juce::String::fromUTF8([(tracePath ?: @"") UTF8String]));
+                if (!playback->loadTrace(file)) {
+                    const juce::String path = file.getFullPathName();   // local nommé → toRawUTF8 sûr
+                    NSLog(@"[TRACE] restitution '%s' : trace illisible ou absente (%s)",
+                          pk.c_str(), path.toRawUTF8());
+                }
+            }
             // Certains AU refusent leur état tant qu'ils ne sont pas préparés → on revérifie plus tard.
             [self schedulePluginStateReassert:p fromTree:vt];
         }

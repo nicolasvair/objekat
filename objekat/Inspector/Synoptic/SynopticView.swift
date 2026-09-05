@@ -89,6 +89,18 @@ struct SynopticActions {
 
     // A bus's chain head: the 'infinite' toggle (a top-level aux / group).
     var onToggleInfinite: (() -> Void)? = nil
+
+    // TRACE — freezing what a plugin does to this signal, so the session travels without it.
+    // nil = the actions are not wired (the demo). @see docs/objekat-capture-trace.md
+    var onCaptureTrace: ((UUID) -> Void)? = nil
+    /// Plays the slot from its trace, or back from its plugin. Only ever offered where BOTH are
+    /// available: with the plugin missing, the trace is not a choice, it is what is left.
+    var onSetTraceUse: ((_ pluginID: UUID, _ useTrace: Bool) -> Void)? = nil
+    var onClearTrace: ((UUID) -> Void)? = nil
+    /// A one-line summary of a slot's trace, for the tooltip on its badge.
+    var traceSummary: ((UUID) -> String?)? = nil
+    /// The capture under way, if it is this plugin's: 0…1. nil = nothing running on it.
+    var traceProgress: ((UUID) -> Double?)? = nil
 }
 
 /// The data of the 'audio file' zone (an audio clip), carried over into the signal view.
@@ -338,7 +350,16 @@ struct SynopticView: View {
                     onDropPlugin: actions.onDropOntoCard.map { f in { dragged, copy in f(c.plugin.id, dragged, copy) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
+                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
+                    onCaptureTrace: actions.onCaptureTrace.map { f in { f(c.plugin.id) } },
+                    onSetTraceUse: actions.onSetTraceUse.map { f in { use in f(c.plugin.id, use) } },
+                    onClearTrace: actions.onClearTrace.map { f in { f(c.plugin.id) } },
+                    traceSummary: actions.traceSummary?(c.plugin.id),
+                    traceProgress: actions.traceProgress?(c.plugin.id),
+                    // 'Missing' says the plugin cannot be gone back to — which is exactly the
+                    // state a trace exists for. The instance state (3 = error) is what the card
+                    // already uses to say a plugin did not load.
+                    pluginIsMissing: (actions.instanceState?(c.plugin.id) ?? 0) == 3
                 )
                 .position(x: c.frame.midX, y: c.frame.midY)
             }
@@ -573,6 +594,18 @@ struct SynopticCardView: View {
     /// The number of linked instances (for the tooltip). 0 if unlinked.
     var linkSiblingCount: Int = 0
 
+    // TRACE. nil closures = the card cannot be driven (the demo): no menu entry is offered.
+    var onCaptureTrace: (() -> Void)? = nil
+    var onSetTraceUse: ((Bool) -> Void)? = nil
+    var onClearTrace: (() -> Void)? = nil
+    /// A one-line summary of the trace, for the badge's tooltip.
+    var traceSummary: String? = nil
+    /// A capture running ON THIS PLUGIN: 0…1. nil = none.
+    var traceProgress: Double? = nil
+    /// True when the plugin is not installed here — the case the trace exists for. It changes
+    /// what the menu may offer: with no plugin there is nothing to switch back to.
+    var pluginIsMissing: Bool = false
+
     @State private var dropTargeted = false
 
     private let cardW = SynopticLayout.cardW
@@ -647,6 +680,23 @@ struct SynopticCardView: View {
                         .help(linkHelp)
                     }
 
+                    // TRACE — the badge. Present as soon as a trace exists; FILLED when the
+                    // chain is actually playing it, hollow when the plugin is still what is
+                    // heard. The distinction is the whole point: a captured trace changes
+                    // nothing until it is in use, and a slot that plays a recording of a plugin
+                    // instead of the plugin must never look like an ordinary slot.
+                    if let health = plugin.traceHealth {
+                        Image(systemName: Self.traceIcon(health))
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(plugin.traceInUse ? .white : Self.traceTint(health))
+                            .padding(3)
+                            .background {
+                                if plugin.traceInUse { Circle().fill(Self.traceTint(health)) }
+                                else { Circle().strokeBorder(Self.traceTint(health).opacity(0.55), lineWidth: 1.5) }
+                            }
+                            .helpIf(traceSummary)
+                    }
+
                     // ✕ — remove the fx (always visible)
                     Button(action: onRemove) {
                         Image(systemName: "xmark")
@@ -704,6 +754,72 @@ struct SynopticCardView: View {
         // (with no descendant source) received drops but the axis did not. The background steals no
         // click from the buttons (bypass / ✕ / link), which stay above it.
         .background(dropLayer)
+        // A capture running on THIS plugin: a thin progress line laid across the foot of the
+        // card. Two or three offline renders are long enough that saying nothing would read as
+        // a freeze, and short enough that a modal would be in the way.
+        .overlay(alignment: .bottom) {
+            if let progress = traceProgress {
+                GeometryReader { g in
+                    Capsule()
+                        .fill(Color.accentColor)
+                        .frame(width: max(0, g.size.width * progress), height: 3)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .allowsHitTesting(false)
+            }
+        }
+        .contextMenu { traceMenu }
+    }
+
+    // MARK: - The trace menu
+    //
+    // Capturing a trace is a right-click on the plugin and nothing else: it is a rare, deliberate
+    // act — minutes of render for one slot — and it has no business taking room on a card that
+    // already carries four controls. @see docs/objekat-capture-trace.md
+
+    @ViewBuilder private var traceMenu: some View {
+        if let onCaptureTrace {
+            Button(plugin.traceHealth == nil ? L("trace.menu.capture") : L("trace.menu.recapture"),
+                   action: onCaptureTrace)
+                .disabled(traceProgress != nil)
+        }
+
+        if plugin.traceHealth != nil {
+            // Switching to the trace is only a CHOICE where the plugin is installed. With the
+            // plugin missing, the trace is not one option among two — it is what is left, and
+            // offering to "go back to the plugin" would offer silence.
+            if let onSetTraceUse, !pluginIsMissing {
+                Button(plugin.traceInUse ? L("trace.menu.usePlugin") : L("trace.menu.useTrace")) {
+                    onSetTraceUse(!plugin.traceInUse)
+                }
+            }
+            if let onClearTrace {
+                Divider()
+                Button(L("trace.menu.clear"), action: onClearTrace)
+            }
+        }
+    }
+
+    /// The badge's icon: what the trace is worth, at a glance and without a tooltip.
+    static func traceIcon(_ health: PluginTraceHealth) -> String {
+        switch health {
+        case .exact, .acceptable: return "waveform.badge.checkmark"
+        case .frozen:             return "snowflake"
+        case .stale:              return "exclamationmark.triangle.fill"
+        case .problem:            return "waveform.badge.exclamationmark"
+        }
+    }
+
+    /// And its colour. `stale` and `problem` are warnings and read as warnings; `frozen` is not
+    /// a fault but a change of behaviour, so it gets its own tint rather than a red one.
+    static func traceTint(_ health: PluginTraceHealth) -> Color {
+        switch health {
+        case .exact:      return .green
+        case .acceptable: return .teal
+        case .frozen:     return .cyan
+        case .problem:    return .orange
+        case .stale:      return .orange
+        }
     }
 
     @ViewBuilder private var dropLayer: some View {
@@ -1668,9 +1784,18 @@ struct SynopticBoundView: View {
         let obj = viewModel.find(id: objectID)
         let model = viewModel.chainPlugins(objectID) ?? []
         let gains = viewModel.chainGains(objectID)
-        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels)
+        // TRACE. Judging a slot's trace needs the view-model — is the plugin installed on this
+        // machine, has anything upstream moved since the capture — so it is settled here and
+        // handed to the mapping ready made. @see EditViewModel.traceHealth
+        let traces = viewModel.traceStates(for: model, on: objectID)
+        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
+                                                      traces: traces)
 
-        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
+        let instLeaf = obj?.instruments.first.map { inst -> SynopticPlugin in
+            let t = viewModel.traceStates(for: [inst], on: objectID)[inst.id]
+            return SynopticMapping.leaf(inst, vu: levels[inst.id] ?? 0,
+                                        traceHealth: t?.health, traceInUse: t?.inUse ?? false)
+        }
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -1780,6 +1905,15 @@ struct SynopticBoundView: View {
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
+            onCaptureTrace: { viewModel.captureTrace(hostID: objectID, pluginID: $0) },
+            onSetTraceUse: { pluginID, use in
+                viewModel.edit { viewModel.setTraceForced(hostID: objectID, pluginID: pluginID, forced: use) }
+            },
+            onClearTrace: { pluginID in
+                viewModel.edit { viewModel.clearTrace(hostID: objectID, pluginID: pluginID) }
+            },
+            traceSummary: { viewModel.traceSummary(pluginID: $0, on: objectID) },
+            traceProgress: { viewModel.capturingTracePluginID == $0 ? viewModel.traceProgress : nil },
             dragProvider: { dragProvider($0) },
             onReorder: { pluginID, seriesID, toIndex, copy in
                 if let loc = locations[seriesID] {

@@ -7959,6 +7959,627 @@
         }
       }
     },
+    "trace.error.folder.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The “traces” folder could not be created: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo crear la carpeta «traces»: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier « traces » n'a pas pu être créé : %@"
+          }
+        }
+      }
+    },
+    "trace.error.folder.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot create the traces folder"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede crear la carpeta de trazas"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dossier de traces impossible à créer"
+          }
+        }
+      }
+    },
+    "trace.error.saveFirst.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A trace lives in the project folder, beside the session. Save once, then try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una traza vive en la carpeta del proyecto, junto a la sesión. Guarde una vez y vuelva a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une trace vit dans le dossier du projet, à côté de la session. Enregistrez une première fois, puis recommencez."
+          }
+        }
+      }
+    },
+    "trace.error.saveFirst.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save the project before capturing a trace"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarde el proyecto antes de capturar una traza"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrez le projet avant de capturer une trace"
+          }
+        }
+      }
+    },
+    "trace.menu.capture": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture trace"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capturar la traza"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capturer la trace"
+          }
+        }
+      }
+    },
+    "trace.menu.clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove the trace"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar la traza"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer la trace"
+          }
+        }
+      }
+    },
+    "trace.menu.recapture": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture the trace again"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a capturar la traza"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recapturer la trace"
+          }
+        }
+      }
+    },
+    "trace.menu.usePlugin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play the plugin again"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a reproducir el plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rejouer le plugin"
+          }
+        }
+      }
+    },
+    "trace.menu.useTrace": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play the trace"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reproducir la traza"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jouer la trace"
+          }
+        }
+      }
+    },
+    "trace.report.acceptable.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace captured"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza capturada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace capturée"
+          }
+        }
+      }
+    },
+    "trace.report.bypassed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The plugin was bypassed: the trace therefore describes no processing at all."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El plugin estaba en bypass: la traza no describe ningún procesamiento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le plugin était bypassé : la trace ne décrit donc aucun traitement."
+          }
+        }
+      }
+    },
+    "trace.report.diagnosis.alignment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured lag: %@ sample(s). A fractional lag comes from oversampling inside the plugin; the trace stays correct, but it is heavier and harder to read."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desfase medido: %@ muestra(s). Un desfase fraccionario proviene del sobremuestreo interno del plugin; la traza sigue siendo correcta, pero pesa más y se lee peor."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Décalage mesuré : %@ échantillon(s). Un décalage fractionnaire vient d'un suréchantillonnage interne au plugin ; la trace reste juste, mais elle est plus lourde et moins lisible."
+          }
+        }
+      }
+    },
+    "trace.report.exact.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace captured — exact"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza capturada — exacta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace capturée — exacte"
+          }
+        }
+      }
+    },
+    "trace.report.failed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The capture failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La captura ha fallado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La capture a échoué"
+          }
+        }
+      }
+    },
+    "trace.report.failed.unknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The capture stopped without saying why."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La captura se detuvo sin decir por qué."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La capture s'est arrêtée sans dire pourquoi."
+          }
+        }
+      }
+    },
+    "trace.report.frozen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plugin holds randomness: the trace freezes ONE performance, and it will not be drawn again on each playback."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este plugin contiene aleatoriedad: la traza congela UNA interpretación y ya no se sorteará de nuevo en cada reproducción."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce plugin contient de l'aléatoire : la trace fige UNE performance, elle ne sera plus retirée au hasard à chaque lecture."
+          }
+        }
+      }
+    },
+    "trace.report.noFingerprint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The signal upstream is not reproducible: the trace carries no fingerprint, and going stale will not be detected."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La señal anterior no es reproducible: la traza no lleva huella y no se podrá detectar cuándo queda obsoleta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le signal en amont n'est pas reproductible : la trace ne porte pas d'empreinte, et sa péremption ne pourra pas être détectée."
+          }
+        }
+      }
+    },
+    "trace.report.problem.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace captured — worth checking"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza capturada — conviene comprobarla"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace capturée — à vérifier"
+          }
+        }
+      }
+    },
+    "trace.report.residual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Validation residual: %1$@ dBFS peak, %2$@ dBFS RMS."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residuo de validación: %1$@ dBFS de pico, %2$@ dBFS RMS."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Résidu de validation : %1$@ dBFS crête, %2$@ dBFS RMS."
+          }
+        }
+      }
+    },
+    "trace.report.size": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size: %1$@, which is %2$@ %% of what storing it flat would have cost."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tamaño: %1$@, es decir el %2$@ %% de lo que habría costado guardarla sin comprimir."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taille : %1$@, soit %2$@ %% de ce qu'un stockage à taux plein aurait coûté."
+          }
+        }
+      }
+    },
+    "trace.summary.acceptable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@, %2$@ — residual %3$@ dBFS, acceptable."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza %1$@ el %2$@ — residuo %3$@ dBFS, aceptable."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@ le %2$@ — résidu %3$@ dBFS, acceptable."
+          }
+        }
+      }
+    },
+    "trace.summary.captured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "captured"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "capturada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "capturée"
+          }
+        }
+      }
+    },
+    "trace.summary.exact": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@, %2$@ — exact reconstruction."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza %1$@ el %2$@ — reconstrucción exacta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@ le %2$@ — reconstruction exacte."
+          }
+        }
+      }
+    },
+    "trace.summary.frozen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@, %2$@ — the plugin holds randomness: one performance is frozen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza %1$@ el %2$@ — el plugin contiene aleatoriedad: se ha congelado una interpretación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@ le %2$@ — le plugin contient de l'aléatoire : une performance est figée."
+          }
+        }
+      }
+    },
+    "trace.summary.playing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "playing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "reproduciéndose"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "jouée"
+          }
+        }
+      }
+    },
+    "trace.summary.problem": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@, %2$@ — residual %3$@ dBFS: worth checking."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza %1$@ el %2$@ — residuo %3$@ dBFS: conviene comprobarla."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@ le %2$@ — résidu %3$@ dBFS : à vérifier."
+          }
+        }
+      }
+    },
+    "trace.summary.stale": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@, %2$@ — something changed upstream: the reconstruction is no longer guaranteed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traza %1$@ el %2$@ — algo cambió antes en la cadena: la reconstrucción ya no está garantizada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trace %1$@ le %2$@ — quelque chose a changé en amont : la reconstruction n'est plus garantie."
+          }
+        }
+      }
+    },
     "transport.grid.bpm": {
       "extractionState": "manual",
       "localizations": {
