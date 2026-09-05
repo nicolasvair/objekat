@@ -44,6 +44,11 @@ source, not a translation.
 | lever un solo | clear a solo | levantar un solo |  |
 | délier / relier | unlink / link | desvincular / vincular | for linked plugin instances |
 | détacher | detach | separar | for an instance being made independent |
+| capturer une trace | capture trace | capturar traza | freezing what a plugin does to one signal |
+| trace | trace | traza | the recording of that action: `g·x + d`, sample by sample |
+| composante libre | free-running component | componente libre | what a plugin emits fed with silence (`d_free`) |
+| tracé (état d'un slot) | traced | trazado | a plugin slot playing back from its trace, without the plugin |
+| trace périmée | stale trace | traza obsoleta | the input changed: the reconstruction is no longer guaranteed |
 | réglages | settings | ajustes |  |
 | carte son | audio device | tarjeta de sonido |  |
 | fréquence d'échantillonnage | sample rate | frecuencia de muestreo |  |
