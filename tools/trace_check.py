@@ -6,12 +6,14 @@ A trace is measurements from end to end, so this is not a stand-in for listening
 verification. Run it against a windowless instance:
 
     objekat --headless --api --socket=/tmp/objekat.sock --no-recent --no-audio &
-    ./tools/trace_check.py /tmp/objekat.sock
+    ./tools/trace_check.py /tmp/objekat.sock            # a compressor (multiplicative)
+    ./tools/trace_check.py /tmp/objekat.sock reverb     # a reverb (additive: a tail over silence)
 
 WHAT IT DOES
 
   1. a project with one clip and a Tracktion BUILT-IN effect on it — built-in so the check runs
-     anywhere, with no scan and no third-party install;
+     anywhere, with no scan and no third-party install. Which one is the second argument
+     (`compressor` by default, `reverb` for the additive case);
   2. `plugin.trace.capture`, and reads the report:
 
        determinism_y_peak_db  under -250 → the plugin is deterministic, so pass A ran
@@ -117,6 +119,8 @@ def main():
     if not sock_path:
         sys.stderr.write(__doc__)
         return 2
+    # Which built-in to trace. `compressor` is the default: see the comment at the choice below.
+    want = sys.argv[2] if len(sys.argv) > 2 else "compressor"
 
     app = Objekat(sock_path)
     folder = tempfile.mkdtemp(prefix="objekat-trace-check-")
@@ -136,20 +140,22 @@ def main():
     host = added["id"]
     app.send("wait_idle", {"timeout_ms": 10000})
 
-    # A REVERB, and a built-in, for two separate reasons.
+    # A BUILT-IN, so this runs with no scan and no third-party install. WHICH built-in is the
+    # second argument, because the two interesting cases do not test the same thing:
     #
-    # Built-in: always in the catalogue, so this runs with no scan and no third-party install.
+    #   compressor (the default) — a gain that MOVES with the signal and nothing else. It is the
+    #     multiplicative case in its pure form: `d` should stay at zero and `multiplicative_only`
+    #     should come back TRUE. What it exercises is `g[n]` as a signal, sample by sample.
     #
-    # Reverb: it is the hardest case the arithmetic has, and therefore the one worth checking.
-    # It puts signal where there is none — a tail over silence — which is exactly what the X_MIN
-    # gate exists for: `g` is forced to 1 and the whole tail rides in `d`. So `multiplicative_only`
-    # should come back FALSE here, and a run where it comes back true means the tail never
-    # reached the capture. It also fills the tail window, which nothing else in this scenario
-    # would exercise.
-    catalogue = app.send("plugin.list_available", {"filter": "reverb"})["plugins"]
-    builtin = next((p for p in catalogue if p["format"] == "TracktionInternal"), None)
+    #   reverb — the additive case: it puts signal where there is none, a tail over silence,
+    #     which is what the X_MIN gate exists for (`g` forced to 1, the tail riding in `d`).
+    #     `multiplicative_only` should come back FALSE, and a run where it comes back true means
+    #     the tail never reached the capture.
+    catalogue = app.send("plugin.list_available", {"filter": want})["plugins"]
+    builtin = next((p for p in catalogue
+                    if p["format"] == "TracktionInternal" and p["identifier"] == want), None)
     if builtin is None:
-        sys.stderr.write("no built-in effect in the catalogue — run plugin.scan first\n")
+        sys.stderr.write("no built-in '%s' in the catalogue — run plugin.scan first\n" % want)
         return 1
 
     plugin = app.send("plugin.add", {"host": host,
@@ -175,22 +181,45 @@ def main():
     if flat:
         print("  %-22s %.1f %% of a flat float64 store" % ("encoding", 100.0 * size / flat))
 
-    failures = []
+    failures, warnings = [], []
     if report.get("validation_peak_db", 0) >= EXACT_DBFS:
         failures.append("the validation residual is not exact (%.1f dBFS)"
                         % report["validation_peak_db"])
+    # A fractional lag is REPORTED, never a failure — the engine takes the same line, and says so
+    # where it measures it (@see objtrace::correlationLag). The affine model is exact whatever the
+    # alignment, so what a real misalignment costs is the trace's weight, not its exactness; and
+    # this run has a far stronger alignment verdict a few lines below, in the null test against
+    # the plugin itself.
+    #
+    # On this fixture the measurement is degenerate anyway, and worth knowing about before
+    # believing it: bip.wav is a pure 440 Hz sine, so at 44.1 kHz its period is 100.2 samples —
+    # and the correlation is taken in ABSOLUTE value, which makes every half period a tied
+    # maximum (an anti-phase peak scores exactly as high as an in-phase one). The 250.6 samples
+    # it comes back with are 2.501 periods: a tie broken at random, not a latency.
     if report.get("fractional_latency"):
-        failures.append("fractional latency: %.3f samples" % report["correlation_lag"])
+        warnings.append("fractional lag measured: %.3f samples (on a pure tone, see the note in "
+                        "the source — the null test below is the alignment verdict)"
+                        % report["correlation_lag"])
 
     # 2 — the plugin, then its trace, then null the two
     with_plugin = os.path.join(folder, "with-plugin.wav")
     with_trace = os.path.join(folder, "with-trace.wav")
 
+    # AT THE TRACE'S OWN SAMPLE RATE, and this is not a detail. `g[n]` and `d[n]` are SIGNALS,
+    # not curves: a trace read at any other rate describes nothing, and the restitution node
+    # refuses to play it (it goes transparent — @see OBJTracePlaybackPlugin::isUsableAt). Export
+    # at the wrong rate and the comparison below measures "the plugin against no plugin at all",
+    # which looks exactly like a broken restitution and is not one.
+    #
+    # The two defaults have no reason to agree on their own: the capture takes the device's rate
+    # and falls back to 48000 with no device, while `export.run` defaults to 44100. So we ask.
+    rate = report.get("sample_rate") or 44100
+
     def export(path):
         # 24-bit WAV, dithering OFF. `export.run` takes 16 or 24 only, and dither is exactly the
         # kind of added noise that would drown the comparison we are about to make: it is a
         # deliberate choice, not a consequence of the depth.
-        job = app.send("export.run", {"path": path, "format": "wav",
+        job = app.send("export.run", {"path": path, "format": "wav", "sample_rate": rate,
                                       "bit_depth": 24, "dithering": False})
         app.wait_job(job["job_id"])
         return path
@@ -198,7 +227,8 @@ def main():
     export(with_plugin)
     app.send("plugin.trace.use", {"host": host, "plugin": plugin, "forced": True})
     app.send("wait_idle", {"timeout_ms": 10000})
-    print("\nin use      : %s" % app.send("plugin.trace.info",
+    print("\nexport rate : %g Hz (the trace's own)" % rate)
+    print("in use      : %s" % app.send("plugin.trace.info",
                                           {"host": host, "plugin": plugin})["in_use"])
     export(with_trace)
 
@@ -216,6 +246,10 @@ def main():
                         "(%.1f dBFS, budget %.1f)" % (peak, budget))
 
     print("\nfiles in %s" % folder)
+    if warnings:
+        print("\nWARNINGS:")
+        for w in warnings:
+            print("  • %s" % w)
     if failures:
         print("\nFAILED:")
         for f in failures:
