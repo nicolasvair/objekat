@@ -258,10 +258,10 @@ struct ObjectInspectorView: View {
                             relVolume = 0; volRelative = false
                         }
                     )
-                    Toggle("M", isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { !selectedObjects.isEmpty && selectedObjects.allSatisfy(\.isMuted) },
                         set: { _ in viewModel.edit { viewModel.toggleMuteSelected() } }
-                    ))
+                    )) { Text(verbatim: "M") }
                     .toggleStyle(.button)
                     .controlSize(.mini)
                     .tint(.red)

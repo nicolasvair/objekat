@@ -1135,7 +1135,7 @@ struct AudioFileZoneView: View {
 
                     Spacer(minLength: 0)
 
-                    TextField("—", text: $bpmBaseText)
+                    TextField(text: $bpmBaseText) { Text(verbatim: "—") }
                         .frame(width: 34).multilineTextAlignment(.center)
                         .font(.system(size: 10, design: .monospaced))
                         .textFieldStyle(.plain)
