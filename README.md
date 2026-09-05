@@ -9,7 +9,7 @@ Following a 2016 graduation thesis of Nicolas Vercambre (ENS Louis Lumière, Sou
 
 ## Progress
 
-The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **sound objects** (more on this later), **automation** , and the **loop** of a clip, of a group or of a MIDI clip.
+The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **automation** , and the **loop** of a clip, of a group or of a MIDI clip. I also introduced **sound objects**, which are basically a freeze or wav render of a clip or a group, but that you can revert back to previous "live" state if needed.
 
 It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See [`docs/command_api.md`](OBJEKAT%20-%20claude%20project/docs/command_api.md).
 
@@ -103,5 +103,3 @@ the software remotely, over a network.
 The third-party components and their respective licences — Tracktion Engine (GPL3), JUCE
 (AGPLv3), LAME (LGPL2 or later) — are listed in [NOTICE](NOTICE), which also sets out the
 reasoning in full.
-
-The signing is Label Peche because they share their apple developper account. 
