@@ -1,29 +1,26 @@
 # OBJEKAT
 
-**An object-oriented audio editor for macOS.**
+**An object-oriented audio editor (current support is macOS only).**
 
-A 2026 revival of the OBJEKAT project, sketched out in 2016 in the graduation thesis of Nicolas Vercambre (ENS Louis Lumière, Sound department). The central idea: replace the *audio track* with the *sound object* (in Pierre Schaeffer's sense) as the structuring primitive of the interface.
+Following a 2016 graduation thesis of Nicolas Vercambre (ENS Louis Lumière, Sound department). The central idea: replace the *audio track* with the *sound object* (in Pierre Schaeffer's sense) as the structuring primitive of the interface.
 
-## The pitch in one sentence
+**[The original thesis is available here (PDF, in French)](OBJEKAT%20-%20claude%20project/M%C3%A9moire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)** 
 
-A DAW where every sound is an object carrying its own attributes (position in time, volume, pan, plugins, routing) — thought out for film sound editors, built for macOS.
 
 ## Progress
 
-| Phase | Status |
-|---|---|
-| **Phase 0** — Technical spike & architecture validation | ✅ Done |
-| Phase 1 — UI skeleton with no audio | ✅ Done |
-| Phase 2 — Audio wired in (= MVP V1) | ✅ Done |
-| Phase 3 — Loose selection + the tool system | ✅ Done |
-| Phase 4 — Stems, groups, auxiliaries | ✅ Done |
-| Phase 5+ — Plugins, synoptic, MIDI, sound objects, stems/aux, automation, loop | 🚧 Under way |
-
-The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic (series and parallel), MIDI clips + a piano roll, **sound objects** (one baked definition reused in N places; opening one instance edits the shared content, closing it resynchronises all the others), **automation** through curves that travel with the object, and the **loop** of a clip, of a group or of a MIDI clip.
+The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **sound objects** (more on this later), **automation** , and the **loop** of a clip, of a group or of a MIDI clip.
 
 It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See [`docs/command_api.md`](OBJEKAT%20-%20claude%20project/docs/command_api.md).
 
-See [`docs/architecture_decisions.md`](OBJEKAT%20-%20claude%20project/docs/architecture_decisions.md) and [`CLAUDE.md`](CLAUDE.md) (current state / next steps).
+It has been though to be usable by an AI like Claude. The projects are json easy to understand / edit, and it can also runs the app headless to automate some things.
+
+There is also a starting point to add custom scripts / extensions. It hasn't been deeply tested so don't expect much from it so far.
+
+Not yet implemented : audio / midi recording, advanced export options (stems / objects). 
+
+Everything is full vibe coded with claude code, closely monitored in the first steps and not so much since opus 5. The program runs well but the md documents are quite a mess. 
+
 
 ## Technical stack
 
@@ -31,6 +28,7 @@ See [`docs/architecture_decisions.md`](OBJEKAT%20-%20claude%20project/docs/archi
 - **Audio engine**: Tracktion Engine **3.5** (C++ / JUCE 8.0.13), as a submodule in `tracktion_engine/` — the folder no longer carries a version number, which used to go stale at every bump. The engine carries a series of 29 local patches (`engine-patches/3.5/`, numbered `0001`→`0031` with two holes: `0004` and `0010`, the only JUCE ones, sit in `pending/`).
 - **Swift ↔ C++ bridge**: an Objective-C++ (`.mm`) wrapper exposing a simple API to Swift.
 - **Build**: Xcode (`objekat.xcodeproj`); the engine is compiled as a JUCE module inside the target.
+
 
 ## Folder structure
 
@@ -63,11 +61,6 @@ objekat/
 > Reapplying the patches after a clone or a bump: `engine-patches/3.5/README.md`. The series is
 > a history, not a set of independent fixes — it applies whole and in order.
 
-## Reference documents
-
-- **[Thesis digest](OBJEKAT%20-%20claude%20project/OBJEKAT_thesis_digest.md)** — concepts, ergonomics, features. To be read first to understand OBJEKAT.
-- **[Work plan](OBJEKAT%20-%20claude%20project/OBJEKAT_work_plan.md)** — architecture, phases, milestones, risks. To be read to know what to do.
-- **[The original thesis (PDF, in French)](OBJEKAT%20-%20claude%20project/M%C3%A9moire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)** — 137 pages, the primary source.
 
 ## Guiding principles
 
@@ -75,6 +68,7 @@ objekat/
 2. **A strict UI ↔ engine decoupling** — the Swift layer has no direct dependency on JUCE/Tracktion. Everything goes through the Obj-C++ bridge's API.
 3. **Short iterations** in the Lean Startup spirit — one testable deliverable at each phase.
 4. **Test on real editing sessions as soon as possible** — the conclusion of the 2016 thesis was clear: only prolonged use reveals the inconsistencies.
+
 
 ## Getting started
 
@@ -90,12 +84,11 @@ patched engine down. The project signs ad hoc — no Apple account, no developme
 - The detail, and what to do if the clone fails: [INSTALL.md](INSTALL.md).
 - Picking up the thread of development: [CLAUDE.md](CLAUDE.md) — the state of play and the traps.
 
+
 ## Contact
 
 Questions, bug reports, patches: **ruisseaux-chances-1r@icloud.com**.
 
-Commits carry a `users.noreply.github.com` address, which delivers nowhere — this is the one
-that reaches a human.
 
 ## Licence
 
@@ -110,3 +103,5 @@ the software remotely, over a network.
 The third-party components and their respective licences — Tracktion Engine (GPL3), JUCE
 (AGPLv3), LAME (LGPL2 or later) — are listed in [NOTICE](NOTICE), which also sets out the
 reasoning in full.
+
+The signing is Label Peche because they share their apple developper account. 
