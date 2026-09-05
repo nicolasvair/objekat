@@ -3159,7 +3159,32 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // échantillon de la région sort à `regionEnd + preRoll`, et sa queue court après lui. La
     // marge couvre les latences déclarées ailleurs dans la chaîne — une seconde de rendu en trop
     // ne coûte rien, une queue tronquée coûte la capture.
-    const double renderStart = S.regionStart;
+    // Le début du rendu est RECULÉ jusqu'à la frontière de bloc précédente, et ce n'est pas une
+    // coquetterie d'arrondi. Un rendu ancre sa grille de blocs sur son propre début : partir
+    // exactement à `regionStart` fait tomber l'objet sur une frontière de bloc, alors qu'un
+    // export part de zéro et l'y fait tomber à la phase que veut sa position. Or le chemin audio
+    // dépend de cette phase — le rééchantillonnage d'une source qui n'est pas à la fréquence du
+    // moteur, au minimum : `x` diffère alors d'un cheveu entre la capture et la lecture.
+    //
+    // Un cheveu suffit. Là où le solveur affine est mal conditionné — au voisinage d'un passage
+    // par zéro, où `g = y/x` explose et se fait écrêter à `gMax` — cet écart est amplifié
+    // d'autant, jusqu'à 64 fois. Mesuré : un objet posé à 3,000 s (144000 échantillons, soit
+    // 281,25 blocs de 512) rendait une restitution SATURÉE, +1,9 dBFS de résidu, quand le même
+    // objet à 3,008 s (282 blocs pile) tombait à -41,5 dB. Aligner la grille supprime la cause.
+    //
+    // Ça ne coûte qu'un bloc de rendu en plus, et rien d'autre ne bouge : les sondes indexent par
+    // temps d'edit relatif à `regionStart`, donc les blocs qui précèdent la fenêtre sont écartés
+    // comme ils l'étaient déjà, et le gate de la sonde d'entrée les tient à zéro.
+    const int64_t regionStartSample = (int64_t) std::llround(S.regionStart * S.sampleRate);
+    const int64_t alignedStartSample = S.blockSize > 0
+                                     ? (regionStartSample / S.blockSize) * S.blockSize
+                                     : regionStartSample;
+
+    // La plage de rendu, en temps NOMINAL. Le pré-roll retarde la matière d'autant : le dernier
+    // échantillon de la région sort à `regionEnd + preRoll`, et sa queue court après lui. La
+    // marge couvre les latences déclarées ailleurs dans la chaîne — une seconde de rendu en trop
+    // ne coûte rien, une queue tronquée coûte la capture.
+    const double renderStart = (double) alignedStartSample / S.sampleRate;
     const double renderEnd   = S.regionEnd + S.preRoll + S.tail
                              + (double) S.latencySamples / S.sampleRate + 1.0;
 
