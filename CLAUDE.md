@@ -16,7 +16,7 @@ memo keeps only the state and the traps.
 
 ---
 
-## Current state (4 September 2026)
+## Current state (5 September 2026)
 
 Branch: `main`, and **the repository is open source** at `github.com/nicolasvair/objekat`.
 What the public sees is **ONE commit** (`c89bfb0`): on 4 September 2026 the history was
@@ -90,6 +90,19 @@ What has landed since mid-August, in order:
   at every build launched from the IDE.
   **This machine HAS a compiler** (Xcode 26.2): a build is from now on part of what can be
   verified with no screen, and it was run. Seen on screen: still nothing.
+- **A first public release, `v0.1.0-alpha`** (5 September) — and the build settings it forced out
+  into the open. The `Release` configuration carried NO optimisation level at all: neither
+  `GCC_OPTIMIZATION_LEVEL` nor `SWIFT_OPTIMIZATION_LEVEL` was set, so the compilers fell back on
+  their own defaults — `-O0` and `-Onone`. A "Release" that ran at Debug's pace. `NDEBUG` was
+  missing too, and JUCE draws a precise conclusion from that: without it `juce_TargetPlatform.h`
+  sets `JUCE_DEBUG = 1`, so the whole engine believed it was a debug build in the configuration
+  meant for distribution. Now `-O3` / `-O` / `NDEBUG=1`, `wholemodule` having been there already.
+  `MARKETING_VERSION` went from `1.0` to `0.1.0`, which is what the debt below actually deserves.
+  Two ZIPs on the release, one slice each (arm64, x86_64), signed ad hoc and NOT notarised — the
+  notes carry the `xattr -dr com.apple.quarantine` without which macOS says "damaged".
+  Verified with no screen on the optimised binary: `tools/smoke.jsonl` passes whole, and a
+  48 kHz / 24-bit WAV export re-read at RMS gives real signal. **Nothing has been seen or heard**
+  of this build either. The procedure and its traps: [[publication-release-github]].
 
 ### What is owed
 
