@@ -346,10 +346,8 @@ extension EditViewModel {
         if compileRack(objectID: objectID).contains(plug.id) {
             // Not found: compileRack has already removed the entry from the model → purge the catalogue.
             availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
-        } else if plug.isBuiltIn {
-            openBuiltInPluginEditor(plug: plug)
         } else {
-            openPluginEditor(objectID: objectID, pluginID: plug.id)
+            openEditorForNewPlugin(objectID: objectID, plug: plug)
         }
         isDirty = true
     }
@@ -605,6 +603,22 @@ extension EditViewModel {
     /// built-in plugin. The counterpart of `openPluginEditor` for external plugins — the same role
     /// (`openEditorPluginID`), but with a window managed on the Swift side rather than by the JUCE engine
     /// since the built-in UI is already 100% SwiftUI (@see BuiltInPluginEditorWindowController).
+    /// Opens the editor of a plugin that has just been ADDED — and does NOTHING with no window.
+    ///
+    /// `--headless` promises a windowless run, and this is the one path that breaks it: a driving
+    /// script that adds twenty plugins would put twenty editor windows on the user's screen,
+    /// floating above everything, out of a process that was asked not to show one. Opening on a
+    /// deliberate gesture (`togglePluginEditor`) is untouched: there is an interface to put it in
+    /// by then, since somebody is looking at it.
+    func openEditorForNewPlugin(objectID: UUID, plug: ObjectPlugin) {
+        guard !LaunchArguments.process.headless else { return }
+        if plug.isBuiltIn {
+            openBuiltInPluginEditor(plug: plug)
+        } else {
+            openPluginEditor(objectID: objectID, pluginID: plug.id)
+        }
+    }
+
     func openBuiltInPluginEditor(plug: ObjectPlugin) {
         if let existing = builtInEditorWindows[plug.id] {
             existing.window?.makeKeyAndOrderFront(nil)

@@ -113,10 +113,8 @@ extension EditViewModel {
         updateChainPlugins(objectID) { $0 = Self.inserting(newPlug, into: location, at: index, plugins: plugins) }
         if compileRack(objectID: objectID).contains(newPlug.id) {
             availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
-        } else if newPlug.isBuiltIn {
-            openBuiltInPluginEditor(plug: newPlug)
         } else {
-            openPluginEditor(objectID: objectID, pluginID: newPlug.id)
+            openEditorForNewPlugin(objectID: objectID, plug: newPlug)
         }
         isDirty = true
     }
