@@ -5961,15 +5961,17 @@ static void objDumpPluginList(te::PluginList& pl,
         // On compare donc ce que le modèle demande à ce qui est là, et on détruit ce qui ne
         // correspond plus. Même ménage que la purge de l'étape 1 : le lien, la fenêtre
         // d'éditeur, puis l'instance.
+        NSString* const wantedTracePath = n.info[@"tracePath"];
+        const bool wantsTrace = (wantedTracePath.length > 0);
+
         if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end()) {
-            const bool wantsTrace = ([n.info[@"tracePath"] length] > 0);
             auto* playback = dynamic_cast<te::ObjTracePlaybackPlugin*>(pit->second.get());
-            bool mismatched = (wantsTrace != (playback != nullptr));
+            const bool mismatched = (wantsTrace != (playback != nullptr));
 
             // Même nature, mais une AUTRE trace (recapturée, ou un fichier qui a bougé) :
             // recharger suffit, l'instance n'a rien de propre à perdre.
             if (!mismatched && playback != nullptr) {
-                juce::File wanted(juce::String::fromUTF8([n.info[@"tracePath"] UTF8String]));
+                juce::File wanted(juce::String::fromUTF8([wantedTracePath UTF8String]));
                 if (wanted.getFullPathName() != playback->tracePath.get())
                     if (!playback->loadTrace(wanted)) {
                         const juce::String path = wanted.getFullPathName();
@@ -6007,8 +6009,7 @@ static void objDumpPluginList(te::PluginList& pl,
             // faire d'un accès disque, et le nœud reste transparent tant que rien n'est chargé —
             // ce qui est exactement ce qu'on veut d'une trace introuvable. @see OBJTracePlaybackPlugin.
             if (auto* playback = dynamic_cast<te::ObjTracePlaybackPlugin*>(p.get())) {
-                NSString* tracePath = n.info[@"tracePath"];
-                juce::File file(juce::String::fromUTF8([(tracePath ?: @"") UTF8String]));
+                juce::File file(juce::String::fromUTF8([(wantedTracePath ?: @"") UTF8String]));
                 if (!playback->loadTrace(file)) {
                     const juce::String path = file.getFullPathName();   // local nommé → toRawUTF8 sûr
                     NSLog(@"[TRACE] restitution '%s' : trace illisible ou absente (%s)",

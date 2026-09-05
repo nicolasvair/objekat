@@ -88,7 +88,7 @@ extension EditViewModel {
     ///
     /// It is a PROXY, not the promise. The promise is the fingerprint of `x[n]` in the trace's
     /// own header, and comparing it means capturing `x` again — a whole render. That check is
-    /// available on demand (`plugin.trace.verify`), and it is the one that answers for real.
+    /// available on demand (`verifyTrace`, `plugin.trace.verify`), and it answers for real.
     /// This one answers "something upstream moved", which is enough to colour a badge as a
     /// warning and to stop claiming the reconstruction is guaranteed.
     func traceHealth(_ plugin: ObjectPlugin, on hostID: UUID) -> PluginTraceHealth? {
@@ -549,5 +549,101 @@ extension EditViewModel {
                        flat > 0 ? String(format: "%.0f", 100.0 * Double(bytes) / Double(flat)) : "?"))
 
         return lines.joined(separator: "\n\n")
+    }
+}
+
+extension EditViewModel {
+
+    // MARK: - Verifying a trace against its own fingerprint
+    //
+    // `traceHealth` answers cheaply and continuously, from a signature of the model. THIS answers
+    // for real, from the trace's own fingerprint of `x[n]` — and it costs a capture, because
+    // taking that fingerprint again means rendering the signal again. So it is on demand, and
+    // never on a redraw.
+    //
+    // It works even when the slot is currently playing its TRACE rather than its plugin: the
+    // fingerprint is of the INPUT, and the input is upstream of the slot either way. That is
+    // what makes the check available on the machine where it matters most — the one without the
+    // plugin.
+
+    /// A signature no `upstreamSignature` can ever produce (they are 64 hex characters). Parked
+    /// under a plugin's id, it makes `traceHealth` answer `stale` until a fresh capture or a
+    /// passing verification replaces it — which is exactly what a failed fingerprint means.
+    static let staleTraceSignature = "stale"
+
+    /// Re-renders the input and compares its fingerprint with the one the trace carries.
+    ///
+    /// `completion` gets `matches` (nil = the check could not be made) plus the two hashes.
+    func verifyTrace(hostID: UUID, pluginID: UUID,
+                     completion: (([String: Any]) -> Void)? = nil) {
+        guard let engine else { completion?(Self.traceFailure("no_engine")); return }
+        guard let plugins = chainPlugins(hostID),
+              let plugin = Self.findPlugin(pluginID, in: plugins),
+              let ref = plugin.trace else {
+            completion?(Self.traceFailure("not_traced"))
+            return
+        }
+        guard ref.isVerifiable else {
+            // No fingerprint was taken, because the upstream was not reproducible at capture
+            // time. There is nothing to compare against, and saying "fresh" would be a promise
+            // the trace never made.
+            completion?(Self.traceFailure("no_fingerprint"))
+            return
+        }
+        guard !isCapturingTrace, !isBaking(hostID) else {
+            completion?(Self.traceFailure("busy"))
+            return
+        }
+        guard let host = find(id: hostID) else {
+            completion?(Self.traceFailure("no_region"))
+            return
+        }
+
+        // A TEMPORARY destination: this capture exists to be measured and thrown away. Writing
+        // it over the real trace would replace the very thing we are checking.
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("objekat-verify-\(pluginID.uuidString).objtrace")
+
+        engine.flushObjectEditPluginStates()
+        capturingTracePluginID = pluginID
+        traceProgress = 0
+
+        engine.capturePluginTrace(pluginID.uuidString,
+                                  objectID: hostID.uuidString,
+                                  regionStart: host.startTime,
+                                  regionEnd: host.startTime + host.duration,
+                                  // The pre-roll does not enter `x`: the captures are indexed by
+                                  // the material's own time, so the delay shifts nothing inside
+                                  // the window. The TAIL does — it sets the window's length, and
+                                  // therefore what the fingerprint is taken over — so it is
+                                  // reconstructed from the trace rather than defaulted.
+                                  preRoll: 2.0,
+                                  tail: max(0, Double(ref.numSamples) / max(1, ref.sampleRate)
+                                               - (ref.regionEnd - ref.regionStart)),
+                                  filePath: temporary.path,
+                                  options: nil) { [weak self] report in
+            guard let self else { return }
+            let dict = report as? [String: Any] ?? [:]
+            self.capturingTracePluginID = nil
+            self.traceProgress = 0
+            try? FileManager.default.removeItem(at: temporary)
+
+            guard dict["ok"] as? Bool == true else { completion?(dict); return }
+
+            let fresh = dict["input_hash"] as? String ?? ""
+            let matches = !fresh.isEmpty && fresh == ref.inputHash
+
+            // The verdict replaces the cheap proxy in both directions: a pass clears a signature
+            // that had drifted for a reason that did not change the signal (an object nudged and
+            // put back), and a failure outlives a signature that happens to match.
+            self.traceSignatures[pluginID] = matches
+                ? self.upstreamSignature(of: pluginID, on: hostID)
+                : Self.staleTraceSignature
+
+            completion?(["ok": true,
+                         "matches": matches,
+                         "expected": ref.inputHash,
+                         "measured": fresh])
+        }
     }
 }

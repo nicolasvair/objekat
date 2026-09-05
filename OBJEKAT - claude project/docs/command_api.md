@@ -252,7 +252,7 @@ That is end-of-process noise, with no effect on the result.
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters |
-| `plugin.trace.*` | capture a plugin's trace, play it in the plugin's place, list, purge |
+| `plugin.trace.*` | capture a plugin's trace, play it in the plugin's place, verify, list, purge |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
@@ -297,6 +297,15 @@ objekat --headless --api --socket=/tmp/objekat.sock --no-recent --no-audio &
 It traces a built-in **reverb** on purpose: a reverb puts signal where there is none, which is
 the one case the `X_MIN` gate exists for, and it fills the tail window that nothing else would
 exercise.
+
+`plugin.trace.verify` is the staleness check that actually answers. The `health` a slot reports
+continuously comes from a cheap signature of the model — it says "something upstream moved", and
+it is what colours a badge. The promise is the fingerprint of `x[n]` the trace carries, and
+comparing it means rendering the input again: that is a capture, so it is on demand and never on
+a redraw. It works even where the slot is already playing its trace, since the fingerprint is of
+the INPUT — which is why it is available on the machine that most needs it, the one without the
+plugin. A trace captured with no fingerprint (an upstream that was not reproducible) refuses the
+check rather than answering "fresh".
 
 `plugin.trace.info` also reads the header back **from the file**, so it says what is on disk and
 not only what the model believes. `plugin.trace.list` names every traced slot plus the trace

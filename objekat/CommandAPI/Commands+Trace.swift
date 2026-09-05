@@ -157,6 +157,44 @@ extension CommandRegistry {
             return .object(payload)
         }
 
+        register("plugin.trace.verify",
+                 summary: "Renders the input again and compares its fingerprint with the one the "
+                        + "trace carries — the REAL staleness check, as against the cheap "
+                        + "continuous one behind `health`. Costs a capture. Returns a job_id.",
+                 params: [ParamSpec("host", "uuid", "Carrying host."),
+                          ParamSpec("plugin", "uuid", "Target plugin.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            _ = try CommandContext.shared.requireEngine()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            let plugin = try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+
+            guard let ref = plugin.trace else {
+                throw CommandError(code: .invalid_state, message: "this plugin has no trace")
+            }
+            guard ref.isVerifiable else {
+                throw CommandError(code: .invalid_state,
+                                   message: "this trace carries no fingerprint: its upstream was "
+                                          + "not reproducible when it was captured, so staleness "
+                                          + "cannot be checked")
+            }
+
+            let jobID = JobRegistry.shared.begin(command: "plugin.trace.verify")
+            vm.verifyTrace(hostID: host, pluginID: pluginID) { report in
+                if report["ok"] as? Bool == true {
+                    JobRegistry.shared.finish(jobID, result: CommandAdapters.tracePayload(report))
+                } else {
+                    JobRegistry.shared.fail(jobID, error: CommandError(
+                        code: .engine_error,
+                        message: report["message"] as? String
+                              ?? report["error"] as? String ?? "the verification failed",
+                        details: CommandAdapters.tracePayload(report)))
+                }
+            }
+            return .object(["job_id": .string(jobID)])
+        }
+
         register("plugin.trace.use",
                  summary: "Plays a slot from its trace, or back from its plugin. Where the plugin "
                         + "is missing the trace is used anyway — this only settles the case where "
@@ -259,12 +297,16 @@ extension CommandAdapters {
         var out: [String: JSONValue] = [:]
         for (key, value) in report {
             switch value {
-            case let b as Bool:   out[key] = .bool(b)
             case let n as NSNumber:
-                // NSNumber swallows Bool: ask it what it really holds before deciding.
-                if CFGetTypeID(n) == CFBooleanGetTypeID() { out[key] = .bool(n.boolValue) }
-                else if CFNumberIsFloatType(n)            { out[key] = .number(n.doubleValue) }
-                else                                      { out[key] = .int(n.intValue) }
+                // `as? Bool` is NOT usable to tell a flag from a number here: Swift's NSNumber
+                // bridging answers yes to any 0 or 1, so `num_channels: 1` would arrive in a
+                // script as `true`. The encoding the number was BUILT with is the only thing
+                // that knows, and NSNumber keeps it.
+                switch String(cString: n.objCType) {
+                case "c", "B": out[key] = .bool(n.boolValue)
+                case "f", "d": out[key] = .number(n.doubleValue)
+                default:       out[key] = .int(n.intValue)
+                }
             case let s as String: out[key] = .string(s)
             default:              out[key] = .string(String(describing: value))
             }
