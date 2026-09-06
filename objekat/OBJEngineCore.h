@@ -206,9 +206,10 @@
 // laisse sortir les queues et les releases longs.
 //
 // `options` (facultatif) : @{@"g_max": @1.0, @"x_min_db": @(-100.0), @"merge_gap": @16}.
-// `g_max` est le plus grand |g| que le modèle multiplicatif ait le droit de réclamer — au-delà
-// l'échantillon passe en additif. Le monter, c'est réadmettre l'amplification de tout changement
-// fait en amont APRÈS la capture. @see objtrace::computeChannel.
+// `g_max` est un MULTIPLE du gain fixe de la trace (le gain propre du plugin, mesuré et rangé
+// dans l'en-tête sous `fixed_gain`) : le plafond réel vaut `g_max × fixed_gain`, et ce qu'il
+// borne est l'amplification de tout changement fait en amont APRÈS la capture.
+// @see objtrace::computeChannel et objtrace::estimateFixedGain.
 //
 // `completion` est appelé sur le thread principal avec un rapport. `ok` = NO porte `error` et
 // `message` ; `ok` = YES porte le chemin du fichier, le `status` de validation

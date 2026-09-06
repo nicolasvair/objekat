@@ -181,7 +181,28 @@ Two configurable thresholds:
 | constant | default | what it guards |
 |---|---|---|
 | `X_MIN` | −100 dBFS | the input is too quiet for a ratio to mean anything |
-| `G_MAX` | 1.0 | the ratio is real, but too large to be the plugin's gain |
+| `G_MAX` | 1.0 | a MULTIPLE of `FIXED_GAIN`: the ratio is real, but too large to be a gain |
+
+`FIXED_GAIN` is not a constant but a MEASUREMENT, taken once per trace and written into the
+header as `fixed_gain`: the plugin's own broadband gain, `peak(y) / peak(x)` over every channel.
+It is what `g` is normalised against — the value the gates fall back to, the value `g` is
+encoded against, and the anchor of the ceiling. At `G_MAX = 1` the rule reads: *normalise by the
+plugin's own gain, and the residual never exceeds 1.*
+
+Without it, a flat ceiling gets the amplifying plugin wrong. A compressor with +6 dB of output
+gain has an honest `g` near 2, so a ceiling of 1 gates nearly every sample: the trace loses its
+multiplicative form, `d` goes dense (48 % of samples), and a 6 dB change upstream comes out
+1.35 dB too loud, because the gated samples pass the change at unity where the plugin would have
+doubled it. Factoring G out gives `d` non-zero on 0.8 % of samples and the same change predicted
+to within 0.00 dB.
+
+**The peak ratio, and not a mean.** What the ceiling has to bound is the largest gain the plugin
+applies to material that carries sound, so the estimate reaches for the top of the range rather
+than its centre. Against a compressor whose output gain was set to exactly +6.00 dB, the peak
+ratio answers 1.995; a least-squares fit answers 1.916, pulled down by the compression itself;
+a 99th centile of `|y/x|` over the loud samples answers 5.043 on an EQ, because a shelf's ratio
+explodes wherever the input has no energy in that band. Only the peak ratio stayed sane on all
+four plugins it was tried against.
 
 ```
 num[n] = y[n] − d_free[n]        (deterministic mode)
@@ -200,14 +221,14 @@ y' = g·x' + d = (g·x + d) + g·δ = y + g·δ
 so **`g` is the factor by which any change made upstream AFTER the capture is amplified**. That
 is the whole basis of the rule:
 
-- **`|x[n]| < X_MIN` → gate.** `g[n] = 1`.
+- **`|x[n]| < X_MIN` → gate.** `g[n] = FIXED_GAIN`.
 
   The case where the plugin produces signal out of silence: noise, a tail, hum. There is nothing
   to divide by, and the whole response rides in `d`. It also keeps the trace readable: `g` stays
-  at 1 across silences instead of wandering over six orders of magnitude, which is exactly what
+  put across silences instead of wandering over six orders of magnitude, which is exactly what
   makes the run-length encoding below worth anything.
 
-- **`|num[n] / x[n]| > G_MAX` → gate as well.** `g[n] = 1`. Not a clamp.
+- **`|num[n] / x[n]| > G_MAX · FIXED_GAIN` → gate as well.** `g[n] = FIXED_GAIN`. Not a clamp.
 
   A ratio that large is never the plugin's gain. It is the sign that `y` is not a multiple of
   `x` at all: a plugin with memory — crossover filters, oversampling, a DC blocker — is still
@@ -218,9 +239,17 @@ is the whole basis of the rule:
 
 - Otherwise → `g[n] = num[n] / x[n]`, the ratio the plugin actually applied.
 
-A plugin that legitimately amplifies loses its multiplicative form under a ceiling of 1, and
-pays for it in file size. That is the trade, and it is recorded per trace: `G_MAX` lives in the
-header, and raising it re-admits the amplification.
+Both gates fall back to the SAME value, and that matters twice: two different fallbacks would
+leave the run-length encoding with two defaults and one of them dense; and it is the value `g`
+is normally encoded against. *Normally*, because the default is settled by COUNTING rather than
+assumed — for a compressor the modal `g` is exactly 1 (whenever it is not reducing) rather than
+`FIXED_GAIN`, and encoding against the wrong one took a measured trace from 94 kB to 1292 kB.
+Which candidate wins is a size question, never a correctness one, so it is decided empirically.
+
+The invariant that comes out of the rule: **a change made upstream after the capture is never
+amplified by more than `G_MAX` times the plugin's own broadband gain.** Not "never amplified" —
+that would be wrong for a plugin that amplifies — but never beyond what the plugin itself does.
+`G_MAX` lives in the header, per trace, and raising it re-admits more.
 
 So `d[n]` serves three purposes at once — the processing's own free-running output, the gate's
 output over silence, and the numerical relief valve near the zeros of `x`. Computing it in every
@@ -250,7 +279,7 @@ A binary file beside the session, referenced by the plugin slot's identifier.
 - the pre-roll and tail actually applied
 - the alignment delay applied
 - `X_MIN` and `G_MAX` used
-- flags `multiplicative_only`, `linked`, `non_deterministic`
+- `fixed_gain`, and the flags `multiplicative_only`, `linked`, `non_deterministic`
 - the fingerprint of the input signal (a hash of `x[n]`), for invalidation — **absent** when
   the `x` null test failed, since there is then no stable input to fingerprint
 - the null-test residuals, on `y` and on `x`, in dBFS

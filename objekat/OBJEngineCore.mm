@@ -3425,17 +3425,33 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
 
     const double xMin = std::pow(10.0, S.xMinDbfs / 20.0);
 
+    // LE GAIN FIXE — la part constante de ce que fait le plugin, sortie de `g`. Estimé UNE fois
+    // sur tous les canaux : un gain par canal donnerait deux traces différentes à deux canaux
+    // identiques, et `linked` ne se déclencherait plus jamais. @see objtrace::estimateFixedGain
+    std::vector<const float*> yAll, xAll;
+    yAll.reserve((size_t) channels); xAll.reserve((size_t) channels);
+    for (int c = 0; c < channels; ++c) { yAll.push_back(S.y1->read(c)); xAll.push_back(S.x1->read(c)); }
+    const double fixedGain = objtrace::estimateFixedGain(yAll, xAll, (uint64_t) N);
+
     std::vector<objtrace::Signal> gSignals, dSignals;
     gSignals.reserve((size_t) channels);
     dSignals.reserve((size_t) channels);
+
+    // La valeur par défaut de `g` se DÉCIDE en comptant, et une seule fois pour tous les canaux :
+    // deux canaux identiques doivent produire deux signaux identiques, sinon `linked` ne se
+    // déclenche plus. @see objtrace::bestDefaultFor
+    double gDefault = fixedGain;
 
     for (int c = 0; c < channels; ++c) {
         std::vector<double> gFlat, dFlat;
         objtrace::computeChannel(S.y1->read(c), S.x1->read(c),
                                  hasFree ? S.dFree->read(c) : nullptr,
-                                 (uint64_t) N, S.gMax, xMin, gFlat, dFlat);
+                                 (uint64_t) N, S.gMax, xMin, fixedGain, gFlat, dFlat);
 
-        gSignals.push_back(objtrace::encodeSignal(gFlat, 1.0, S.mergeGap));
+        if (c == 0)
+            gDefault = objtrace::bestDefaultFor(gFlat, fixedGain);
+
+        gSignals.push_back(objtrace::encodeSignal(gFlat, gDefault, S.mergeGap));
         dSignals.push_back(objtrace::encodeSignal(dFlat, 0.0, S.mergeGap));
         // gFlat/dFlat meurent ici : 16 octets par échantillon et par canal, on ne les garde pas
         // tous en vie pour rien. La détection de `linked` compare les signaux ENCODÉS.
@@ -3472,6 +3488,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     H.numSamples     = (uint64_t) N;
 
     H.latencySamples = S.latencySamples;
+    H.fixedGain      = fixedGain;
     H.gMax           = S.gMax;
     H.xMinDbfs       = S.xMinDbfs;
     H.mergeGap       = S.mergeGap;
@@ -3610,6 +3627,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         @"linked":               @(H.linked),
         @"non_deterministic":    @(H.nonDeterministic),
         @"plugin_was_bypassed":  @(H.pluginWasBypassed),
+        @"fixed_gain":           @(H.fixedGain),
         @"has_automation":       @(H.hasAutomation),
         @"determinism_y_peak_db": @(H.determinismY.peakDbfs),
         @"determinism_y_rms_db":  @(H.determinismY.rmsDbfs),
@@ -3654,6 +3672,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         @"has_automation":       @(H.hasAutomation),
         @"validation_peak_db":   @(H.validation.peakDbfs),
         @"validation_rms_db":    @(H.validation.rmsDbfs),
+        @"fixed_gain":           @(H.fixedGain),
         @"input_hash":           [NSString stringWithUTF8String:H.inputHash.c_str()],
         @"captured_at":          @(H.capturedAt),
     };

@@ -18,6 +18,7 @@ WHAT IT DOES
 
        determinism_y_peak_db  under -250 → the plugin is deterministic, so pass A ran
        determinism_x_peak_db  under -250 → the input is reproducible, so the trace is fingerprinted
+       fixed_gain             the plugin's own broadband gain, factored out of g
        validation_peak_db     under -250 → the reconstruction is exact
        file_bytes/flat_bytes            → what the run-length encoding actually saved
 
@@ -174,6 +175,7 @@ def main():
 
     print("\n--- capture ---")
     for key in ("status", "num_channels", "num_samples", "sample_rate", "block_size",
+                "fixed_gain",
                 "latency_samples", "correlation_lag", "fractional_latency",
                 "multiplicative_only", "linked", "non_deterministic",
                 "determinism_y_peak_db", "determinism_x_peak_db",

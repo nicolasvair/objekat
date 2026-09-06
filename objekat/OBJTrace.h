@@ -43,9 +43,16 @@ static constexpr double kExactDbfs = -250.0;
 /// Between this and `kExactDbfs`, a validation residual is acceptable but worth reporting.
 static constexpr double kAcceptableDbfs = -120.0;
 
-/// The largest |g| the multiplicative model is allowed to claim. Beyond it the sample goes
-/// ADDITIVE (g = 1) rather than being clamped — @see computeChannel for why that is not the
-/// same decision, and why the default is 1 rather than a generous ceiling.
+/// The ceiling on |g|, expressed as a MULTIPLE of the trace's fixed gain — so the real ceiling
+/// is `gMax · fixedGain`, and what it bounds is the amplification of any change made upstream
+/// after the capture. At the default of 1 it says: normalise by the plugin's own gain, and the
+/// residual never exceeds 1. @see computeChannel and estimateFixedGain.
+///
+/// Why 1 and not something more generous. Measured over four plugins, a ceiling of 2 was never
+/// more accurate and cost MORE on three of them: letting ratios between 1 and 2 through stores
+/// a value per sample where the gate would have stored nothing. The exception is a plugin whose
+/// gain the estimate slightly under-reads, where 2 halves the file. 1 is the better default;
+/// the field is in the header, per trace.
 ///
 /// TENTATIVE, 2026-09-06: measured, not yet listened to. @see docs/objekat-capture-trace.md
 static constexpr double kDefaultGMax = 1.0;
@@ -288,6 +295,8 @@ struct Header
     bool     fractionalLatency = false; ///< the measured lag is not a whole number of samples
 
     // Arithmetic
+    /// The plugin's own broadband gain, factored out of `g`. @see estimateFixedGain.
+    double   fixedGain = 1.0;
     double   gMax = kDefaultGMax;
     double   xMinDbfs = kDefaultXMinDbfs;
     uint64_t mergeGap = kDefaultMergeGap;
@@ -364,6 +373,7 @@ inline juce::var headerToVar (const Header& h)
     o->setProperty ("correlation_lag_samples", h.correlationLagSamples);
     o->setProperty ("fractional_latency",      h.fractionalLatency);
 
+    o->setProperty ("fixed_gain", h.fixedGain);
     o->setProperty ("g_max",     h.gMax);
     o->setProperty ("x_min_db",  h.xMinDbfs);
     o->setProperty ("merge_gap", (juce::int64) h.mergeGap);
@@ -420,6 +430,7 @@ inline Header headerFromVar (const juce::var& v)
         h.correlationLagSamples = dbl ("correlation_lag_samples", 0.0);
         h.fractionalLatency     = flg ("fractional_latency");
 
+        h.fixedGain = dbl ("fixed_gain", 1.0);
         h.gMax     = dbl ("g_max", kDefaultGMax);
         h.xMinDbfs = dbl ("x_min_db", kDefaultXMinDbfs);
         h.mergeGap = (uint64_t) std::max (1.0, dbl ("merge_gap", (double) kDefaultMergeGap));
@@ -707,6 +718,97 @@ inline double correlationLag (const float* x, const float* y, uint64_t numSample
 }
 
 //==============================================================================
+/** The plugin's own broadband gain — the constant part of what it does, factored out of `g`.
+
+    A trace with a fixed gain of G reads `y = g·x + d` where `g` now sits AROUND G rather than
+    around 1: G is the RLE default for `g`, the value the gates fall back to, and the anchor of
+    the ceiling. It is the "normalise, then keep the residual under 1" idea, and what it buys is
+    the case a flat ceiling gets wrong — a plugin that genuinely amplifies.
+
+    Take a compressor with +6 dB of output gain. Its honest `g` sits near 2, so a ceiling of 1
+    gates almost every sample: the trace loses its multiplicative form, `d` goes dense (measured:
+    48 % of samples), and a 6 dB change upstream comes out 1.35 dB too loud because the gated
+    samples pass the change at unity when the plugin would have doubled it. Factor G = 2 out and
+    the same trace keeps `g ≈ 1·G` throughout — `d` non-zero on 0.8 % of samples, and the same
+    6 dB change predicted to within 0.00 dB.
+
+    THE PEAK RATIO, and not a mean. What the ceiling has to bound is the largest gain the plugin
+    applies to material that carries sound, so the estimate has to reach for the top of the
+    range, not its centre. Measured against a compressor whose output gain was set to exactly
+    +6.00 dB: the peak ratio answers 1.995, a least-squares fit answers 1.916 (pulled down by
+    the compression itself), and a 99th centile of |y/x| over the loud samples answers 5.043 on
+    an EQ — far too high, because a shelf's ratio explodes wherever the input has no energy in
+    that band. The peak ratio was the only one of the three to stay sane on all four plugins it
+    was tried against.
+
+    Global over the channels, deliberately: a per-channel gain would give two identical channels
+    two different traces, and `linked` would never fire again.
+*/
+inline double estimateFixedGain (const std::vector<const float*>& y,
+                                 const std::vector<const float*>& x,
+                                 uint64_t numSamples)
+{
+    double peakY = 0.0, peakX = 0.0;
+
+    for (size_t c = 0; c < y.size() && c < x.size(); ++c)
+        for (uint64_t n = 0; n < numSamples; ++n)
+        {
+            const double yv = (double) y[c][n], xv = (double) x[c][n];
+
+            if (std::isfinite (yv)) peakY = std::max (peakY, std::abs (yv));
+            if (std::isfinite (xv)) peakX = std::max (peakX, std::abs (xv));
+        }
+
+    // No input, or an answer that means nothing: 1 is the honest fallback, and it is exactly
+    // the behaviour of a trace taken before this existed.
+    if (peakX <= 0.0 || peakY <= 0.0)
+        return 1.0;
+
+    const double g = peakY / peakX;
+
+    return (std::isfinite (g) && g > 1.0e-6 && g < 1.0e6) ? g : 1.0;
+}
+
+//==============================================================================
+/** Which of two candidate values `g` should be encoded against — the one it actually holds most
+    often.
+
+    The run-length encoding stores only what DIFFERS from a default, so the default has to be
+    the modal value or the encoding buys nothing. There are exactly two candidates, and which
+    one wins depends on the plugin rather than on anything we can decide in advance:
+
+      • `fixedGain`, where the gates fall back. It wins for a plugin whose ratio is meaningless —
+        a multiband saturator gates 80 % of its samples;
+      • `1.0`, the ratio of a plugin that is doing nothing at this instant. It wins for a
+        compressor, which sits at exactly unity whenever it is not reducing — and that is most
+        of the time.
+
+    Getting it wrong is not a correctness problem, only a size one, which is why it can be
+    settled by counting rather than by theory. Measured: a compressor encoded against a
+    `fixedGain` a hair away from 1 went from 94 kB to 1292 kB, because every sample it was
+    passing through untouched suddenly differed from the default.
+
+    Exact comparison, no tolerance — the same rule as the encoding itself. A tolerance here
+    would be lossy compression, and the values that compress are the ones the arithmetic
+    ASSIGNS, not ones we hope will land round.
+*/
+inline double bestDefaultFor (const std::vector<double>& g, double fixedGain)
+{
+    if (fixedGain == 1.0)
+        return 1.0;
+
+    uint64_t atGain = 0, atUnity = 0;
+
+    for (const double v : g)
+    {
+        if (v == fixedGain) ++atGain;
+        else if (v == 1.0)  ++atUnity;
+    }
+
+    return atUnity > atGain ? 1.0 : fixedGain;
+}
+
+//==============================================================================
 /** Turns one channel's captures into its two signals.
 
     `dFree` may be null — that is the non-deterministic mode, where pass A is deliberately NOT
@@ -722,27 +824,33 @@ inline double correlationLag (const float* x, const float* y, uint64_t numSample
         y' = g·x' + d = (g·x + d) + g·delta = y + g·delta
 
     so `g` is exactly the factor by which any later change UPSTREAM of the plugin is amplified.
-    That is what sets the rule below, and it is the whole reason the ceiling is 1.
+    That is what sets the rule below.
 
-      |x| < xMin      → GATE. g = 1.
-                        Where a plugin produces signal out of silence — noise, a tail, hum —
-                        there is nothing to divide by, and the whole response rides in d.
-      |num/x| > gMax  → GATE too, and NOT a clamp. A ratio that big is never the plugin's gain:
-                        it is the sign that y is not a multiple of x at all. A plugin with
-                        memory — crossover filters, oversampling, a DC blocker — is still
-                        finishing the previous swing at the instant x crosses zero, so the
-                        ratio explodes on the QUIETEST samples, the ones that carry no sound.
-                        Clamping left an amplifier standing where the model had already failed.
-                        Measured on a multiband saturator: 0.1 % of samples held g = 64, and a
-                        6 dB change on one item upstream drove the restitution from -14.9 dBFS
-                        to full scale. Refusing the multiplicative model at that sample costs
-                        nothing on the captured input, and bounds the damage on every other.
-      otherwise       → g = num/x, the ratio the plugin actually applied.
+      |x| < xMin                    → GATE. g = fixedGain.
+                                      Where a plugin produces signal out of silence — noise, a
+                                      tail, hum — there is nothing to divide by, and the whole
+                                      response rides in d.
+      |num/x| > gMax · fixedGain    → GATE too, and NOT a clamp. A ratio that far above the
+                                      plugin's own gain is never a gain: it is the sign that y
+                                      is not a multiple of x at all. A plugin with memory —
+                                      crossover filters, oversampling, a DC blocker — is still
+                                      finishing the previous swing at the instant x crosses
+                                      zero, so the ratio explodes on the QUIETEST samples, the
+                                      ones that carry no sound. Clamping left an amplifier
+                                      standing where the model had already failed. Measured on a
+                                      multiband saturator: 0.1 % of samples held g = 64, and a
+                                      6 dB change on one item upstream drove the restitution
+                                      from -14.9 dBFS to full scale.
+      otherwise                     → g = num/x, the ratio the plugin actually applied.
 
-    A plugin that legitimately AMPLIFIES therefore loses its multiplicative form under the
-    default ceiling of 1, and pays for it in file size. That is the trade, stated plainly:
-    `gMax` lives in the header, so a trace records the ceiling it was taken under, and raising
-    it re-admits amplification of whatever changes upstream later.
+    The invariant that comes out of it: a change made upstream after the capture is never
+    amplified by more than `gMax` times the plugin's own broadband gain. Not "never amplified" —
+    that would be wrong for a plugin that amplifies — but never amplified beyond what the plugin
+    itself does, which is the useful promise.
+
+    Both gates fall back to the SAME value, and that matters twice: it is what `g` is encoded
+    against, so a gated sample costs nothing to store; and two different fallbacks would leave
+    the run-length encoding with two defaults and one of them dense.
 
     `d` is computed rather than assumed, in all three cases. It costs a handful of stored
     samples where the division does not round back exactly, and it buys two things: the
@@ -752,11 +860,13 @@ inline double correlationLag (const float* x, const float* y, uint64_t numSample
 */
 inline void computeChannel (const float* y, const float* x, const float* dFree,
                             uint64_t numSamples,
-                            double gMax, double xMin,
+                            double gMax, double xMin, double fixedGain,
                             std::vector<double>& gOut, std::vector<double>& dOut)
 {
-    gOut.assign ((size_t) numSamples, 1.0);
+    gOut.assign ((size_t) numSamples, fixedGain);
     dOut.assign ((size_t) numSamples, 0.0);
+
+    const double ceiling = gMax * std::abs (fixedGain);
 
     for (uint64_t n = 0; n < numSamples; ++n)
     {
@@ -769,18 +879,18 @@ inline void computeChannel (const float* y, const float* x, const float* dFree,
         // ratio becomes NaN, the run-length encoding cannot compare it against its default
         // (NaN equals nothing, not even itself), the read-back check reports a mismatch that is
         // not one, and the restitution would replay the NaN into the mix for ever. We refuse to
-        // carry it: g = 1 and d = 0 makes the trace transparent at that sample, which is the
-        // one honest answer to a value that means nothing.
+        // carry it: g at its default and d = 0 makes the trace as harmless as it can be at that
+        // sample, which is the one honest answer to a value that means nothing.
         if (! std::isfinite (num) || ! std::isfinite (xn) || ! std::isfinite (yn))
             continue;
 
-        double g = 1.0;
+        double g = fixedGain;
 
         if (std::abs (xn) >= xMin)
         {
             const double ratio = num / xn;
 
-            if (std::isfinite (ratio) && std::abs (ratio) <= gMax)
+            if (std::isfinite (ratio) && std::abs (ratio) <= ceiling)
                 g = ratio;
         }
 
