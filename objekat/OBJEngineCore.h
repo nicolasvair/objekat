@@ -205,7 +205,10 @@
 // moins) laisse les détecteurs et les cellules de lissage se stabiliser ; `tail` (5 s au moins)
 // laisse sortir les queues et les releases longs.
 //
-// `options` (facultatif) : @{@"g_max": @64.0, @"x_min_db": @(-100.0), @"merge_gap": @16}.
+// `options` (facultatif) : @{@"g_max": @1.0, @"x_min_db": @(-100.0), @"merge_gap": @16}.
+// `g_max` est le plus grand |g| que le modèle multiplicatif ait le droit de réclamer — au-delà
+// l'échantillon passe en additif. Le monter, c'est réadmettre l'amplification de tout changement
+// fait en amont APRÈS la capture. @see objtrace::computeChannel.
 //
 // `completion` est appelé sur le thread principal avec un rapport. `ok` = NO porte `error` et
 // `message` ; `ok` = YES porte le chemin du fichier, le `status` de validation

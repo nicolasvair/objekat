@@ -3167,8 +3167,10 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // moteur, au minimum : `x` diffère alors d'un cheveu entre la capture et la lecture.
     //
     // Un cheveu suffit. Là où le solveur affine est mal conditionné — au voisinage d'un passage
-    // par zéro, où `g = y/x` explose et se fait écrêter à `gMax` — cet écart est amplifié
-    // d'autant, jusqu'à 64 fois. Mesuré : un objet posé à 3,000 s (144000 échantillons, soit
+    // par zéro, où `g = y/x` explose — cet écart est amplifié d'autant. Au moment où ce défaut a
+    // été mesuré, `g` s'écrêtait alors à 64 et le facteur valait 64 ; il vaut 1 depuis que la
+    // branche porte au lieu d'écrêter (@see objtrace::computeChannel), ce qui atténue le
+    // symptôme sans rien changer à la cause traitée ici. Mesuré : un objet posé à 3,000 s (144000 échantillons, soit
     // 281,25 blocs de 512) rendait une restitution SATURÉE, +1,9 dBFS de résidu, quand le même
     // objet à 3,008 s (282 blocs pile) tombait à -41,5 dB. Aligner la grille supprime la cause.
     //
@@ -6003,6 +6005,11 @@ static void objDumpPluginList(te::PluginList& pl,
                         NSLog(@"[TRACE] restitution '%s' : trace illisible ou absente (%s)",
                               pk.c_str(), path.toRawUTF8());
                     }
+                // La péremption se relit à CHAQUE compilation, et pas seulement à l'insertion :
+                // c'est justement le cas où le chemin ne bouge pas — on a touché à un objet en
+                // amont, la trace ne décrit plus son entrée, et l'instance en place doit se
+                // taire. @see ObjTracePlaybackPlugin::setStale
+                playback->setStale([n.info[@"traceStale"] boolValue]);
             }
 
             if (mismatched) {
@@ -6034,6 +6041,7 @@ static void objDumpPluginList(te::PluginList& pl,
             // faire d'un accès disque, et le nœud reste transparent tant que rien n'est chargé —
             // ce qui est exactement ce qu'on veut d'une trace introuvable. @see OBJTracePlaybackPlugin.
             if (auto* playback = dynamic_cast<te::ObjTracePlaybackPlugin*>(p.get())) {
+                playback->setStale([n.info[@"traceStale"] boolValue]);
                 juce::File file(juce::String::fromUTF8([(wantedTracePath ?: @"") UTF8String]));
                 if (!playback->loadTrace(file)) {
                     const juce::String path = file.getFullPathName();   // local nommé → toRawUTF8 sûr

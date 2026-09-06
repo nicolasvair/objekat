@@ -195,12 +195,12 @@ extension EditViewModel {
 
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
-    private func rackSpec(for plugins: [ObjectPlugin]) -> [[String: Any]] {
+    private func rackSpec(for plugins: [ObjectPlugin], host hostID: UUID) -> [[String: Any]] {
         plugins.map { p in
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
-                        "voices": rack.voices.map { rackSpec(for: $0) },
+                        "voices": rack.voices.map { rackSpec(for: $0, host: hostID) },
                         // The effective gain (silence for muted branches) → the mute survives the recompile.
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
@@ -220,6 +220,12 @@ extension EditViewModel {
             if playsFromTrace(p), let ref = p.trace, let url = traceURL(ref) {
                 d["tracePath"] = url.path
                 d["name"] = ref.pluginName.isEmpty ? p.name : ref.pluginName
+                // STALE = the node is inserted but plays TRANSPARENT. It is deliberately not
+                // "do not play the trace": the slot would then fail to resolve on a machine
+                // without the plugin, and `compileRack` removes what does not resolve — the
+                // trace reference would go with it. So the node stays, and shuts up.
+                // Same reflex as a trace read at another sample rate. @see traceIsStale
+                if traceIsStale(p, on: hostID) { d["traceStale"] = true }
             } else if let s = p.stateXML, !s.isEmpty {
                 d["stateXML"] = s
             }
@@ -237,7 +243,7 @@ extension EditViewModel {
                      retryingTraces: Bool = true) -> [UUID] {
         guard let engine else { return [] }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
-                                                tree: rackSpec(for: plugins),
+                                                tree: rackSpec(for: plugins, host: objectID),
                                                 chainInDb: chainInDb,
                                                 chainOutDb: chainOutDb) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })

@@ -43,8 +43,12 @@ static constexpr double kExactDbfs = -250.0;
 /// Between this and `kExactDbfs`, a validation residual is acceptable but worth reporting.
 static constexpr double kAcceptableDbfs = -120.0;
 
-/// Default ceiling on |g| before the excess tips into the additive term. @see computeTrace.
-static constexpr double kDefaultGMax = 64.0;
+/// The largest |g| the multiplicative model is allowed to claim. Beyond it the sample goes
+/// ADDITIVE (g = 1) rather than being clamped — @see computeChannel for why that is not the
+/// same decision, and why the default is 1 rather than a generous ceiling.
+///
+/// TENTATIVE, 2026-09-06: measured, not yet listened to. @see docs/objekat-capture-trace.md
+static constexpr double kDefaultGMax = 1.0;
 
 /// Default input gate: below it a ratio means nothing, so g is forced to 1 and everything
 /// goes to d. @see computeTrace.
@@ -710,15 +714,41 @@ inline double correlationLag (const float* x, const float* y, uint64_t numSample
     and subtracting it would ADD a second source of noise instead of removing one. The noise
     then rides in the numerator and gets frozen into `g`, which is the point.
 
-    The branches, in order, each sample falling in exactly one:
+    ONE FORMULA, AND A CHOICE OF `g`. Whatever value g takes, `d = y - g·x` makes the model
+    exact at that sample: one equation, two unknowns, and d absorbs whatever is left. So the
+    choice of g costs NOTHING in exactness — and it is not what it decides. Replay the trace on
+    a changed input `x' = x + delta` and it produces
 
-      |x| < xMin  → GATE.  g = 1, d = num - x.
-                    This is where a plugin produces signal out of silence: noise, a tail, hum.
-                    Without the gate, g has to explode to represent it and the clamp below tips
-                    the whole thing into d anyway — the right answer, reached by accident,
-                    through absurd intermediate values.
-      |num/x| > gMax → CLAMP. g = ±gMax, d = num - g·x.
-      otherwise      → g = num/x, d = dFree (or 0).
+        y' = g·x' + d = (g·x + d) + g·delta = y + g·delta
+
+    so `g` is exactly the factor by which any later change UPSTREAM of the plugin is amplified.
+    That is what sets the rule below, and it is the whole reason the ceiling is 1.
+
+      |x| < xMin      → GATE. g = 1.
+                        Where a plugin produces signal out of silence — noise, a tail, hum —
+                        there is nothing to divide by, and the whole response rides in d.
+      |num/x| > gMax  → GATE too, and NOT a clamp. A ratio that big is never the plugin's gain:
+                        it is the sign that y is not a multiple of x at all. A plugin with
+                        memory — crossover filters, oversampling, a DC blocker — is still
+                        finishing the previous swing at the instant x crosses zero, so the
+                        ratio explodes on the QUIETEST samples, the ones that carry no sound.
+                        Clamping left an amplifier standing where the model had already failed.
+                        Measured on a multiband saturator: 0.1 % of samples held g = 64, and a
+                        6 dB change on one item upstream drove the restitution from -14.9 dBFS
+                        to full scale. Refusing the multiplicative model at that sample costs
+                        nothing on the captured input, and bounds the damage on every other.
+      otherwise       → g = num/x, the ratio the plugin actually applied.
+
+    A plugin that legitimately AMPLIFIES therefore loses its multiplicative form under the
+    default ceiling of 1, and pays for it in file size. That is the trade, stated plainly:
+    `gMax` lives in the header, so a trace records the ceiling it was taken under, and raising
+    it re-admits amplification of whatever changes upstream later.
+
+    `d` is computed rather than assumed, in all three cases. It costs a handful of stored
+    samples where the division does not round back exactly, and it buys two things: the
+    reconstruction becomes bit-exact, so `validation_peak_db` measures the codec and the file
+    instead of measuring float64 rounding; and `dFree` — the plugin's autonomous output, which
+    the gate branches used to drop — is carried in every branch instead of only one.
 */
 inline void computeChannel (const float* y, const float* x, const float* dFree,
                             uint64_t numSamples,
@@ -731,8 +761,9 @@ inline void computeChannel (const float* y, const float* x, const float* dFree,
     for (uint64_t n = 0; n < numSamples; ++n)
     {
         const double xn   = (double) x[n];
+        const double yn   = (double) y[n];
         const double free = dFree != nullptr ? (double) dFree[n] : 0.0;
-        const double num  = (double) y[n] - free;
+        const double num  = yn - free;
 
         // A plugin that emits a NaN or an infinity poisons everything downstream of it: the
         // ratio becomes NaN, the run-length encoding cannot compare it against its default
@@ -740,32 +771,21 @@ inline void computeChannel (const float* y, const float* x, const float* dFree,
         // not one, and the restitution would replay the NaN into the mix for ever. We refuse to
         // carry it: g = 1 and d = 0 makes the trace transparent at that sample, which is the
         // one honest answer to a value that means nothing.
-        if (! std::isfinite (num) || ! std::isfinite (xn))
-        {
-            gOut[(size_t) n] = 1.0;
-            dOut[(size_t) n] = 0.0;
+        if (! std::isfinite (num) || ! std::isfinite (xn) || ! std::isfinite (yn))
             continue;
+
+        double g = 1.0;
+
+        if (std::abs (xn) >= xMin)
+        {
+            const double ratio = num / xn;
+
+            if (std::isfinite (ratio) && std::abs (ratio) <= gMax)
+                g = ratio;
         }
 
-        if (std::abs (xn) < xMin)
-        {
-            gOut[(size_t) n] = 1.0;
-            dOut[(size_t) n] = num - xn;
-            continue;
-        }
-
-        const double ratio = num / xn;
-
-        if (! std::isfinite (ratio) || std::abs (ratio) > gMax)
-        {
-            const double clamped = std::copysign (gMax, ratio);
-            gOut[(size_t) n] = clamped;
-            dOut[(size_t) n] = num - clamped * xn;
-            continue;
-        }
-
-        gOut[(size_t) n] = ratio;
-        dOut[(size_t) n] = free;
+        gOut[(size_t) n] = g;
+        dOut[(size_t) n] = yn - g * xn;
     }
 }
 

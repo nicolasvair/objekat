@@ -57,6 +57,18 @@ struct PluginTraceRef: Codable, Equatable {
     /// staleness can then never be detected. @see `isVerifiable`.
     var inputHash: String
 
+    /// The signature of everything UPSTREAM of the plugin at the moment the trace was taken.
+    ///
+    /// Persisted here, and not merely held in memory, because that is what makes staleness
+    /// survive a save. It used to be re-taken from the current project at every load — which
+    /// meant editing upstream, saving, and reopening quietly laundered the trace back to
+    /// "fresh" while it went on replaying a signal that no longer existed.
+    ///
+    /// Empty for a trace captured before this was recorded: staleness then falls back to the
+    /// in-memory baseline, which is the old behaviour and no worse than it was.
+    /// @see EditViewModel.upstreamSignature
+    var upstreamSignature: String = ""
+
     /// Play this slot from its trace even though the plugin IS installed here.
     ///
     /// Not a convenience: it is the only way to exercise the restitution on a machine that has
@@ -83,13 +95,14 @@ struct PluginTraceRef: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case fileName, capturedAt, pluginName, sampleRate, numChannels, numSamples,
              regionStart, regionEnd, multiplicativeOnly, linked, nonDeterministic,
-             validationPeakDb, inputHash, forced
+             validationPeakDb, inputHash, upstreamSignature, forced
     }
 
     init(fileName: String, capturedAt: Date, pluginName: String, sampleRate: Double,
          numChannels: Int, numSamples: Int, regionStart: Double, regionEnd: Double,
          multiplicativeOnly: Bool, linked: Bool, nonDeterministic: Bool,
-         validationPeakDb: Double, inputHash: String, forced: Bool = false) {
+         validationPeakDb: Double, inputHash: String,
+         upstreamSignature: String = "", forced: Bool = false) {
         self.fileName = fileName
         self.capturedAt = capturedAt
         self.pluginName = pluginName
@@ -103,6 +116,7 @@ struct PluginTraceRef: Codable, Equatable {
         self.nonDeterministic = nonDeterministic
         self.validationPeakDb = validationPeakDb
         self.inputHash = inputHash
+        self.upstreamSignature = upstreamSignature
         self.forced = forced
     }
 
@@ -121,6 +135,7 @@ struct PluginTraceRef: Codable, Equatable {
         nonDeterministic = try c.decodeIfPresent(Bool.self, forKey: .nonDeterministic) ?? false
         validationPeakDb = try c.decodeIfPresent(Double.self, forKey: .validationPeakDb) ?? 0
         inputHash = try c.decodeIfPresent(String.self, forKey: .inputHash) ?? ""
+        upstreamSignature = try c.decodeIfPresent(String.self, forKey: .upstreamSignature) ?? ""
         forced = try c.decodeIfPresent(Bool.self, forKey: .forced) ?? false
     }
 
@@ -129,7 +144,7 @@ struct PluginTraceRef: Codable, Equatable {
     /// Everything numeric goes through `NSNumber`: the report crosses from Objective-C, where
     /// every number is one, and asking for `Double` on a value that happened to bridge as `Int`
     /// silently yields nil — that is, a zero where a sample rate should be.
-    init?(report: [String: Any], fileName: String) {
+    init?(report: [String: Any], fileName: String, upstreamSignature: String = "") {
         guard report["ok"] as? Bool == true else { return nil }
 
         func number(_ key: String) -> NSNumber? { report[key] as? NSNumber }
@@ -146,6 +161,7 @@ struct PluginTraceRef: Codable, Equatable {
                   linked: report["linked"] as? Bool ?? false,
                   nonDeterministic: report["non_deterministic"] as? Bool ?? false,
                   validationPeakDb: number("validation_peak_db")?.doubleValue ?? 0,
-                  inputHash: report["input_hash"] as? String ?? "")
+                  inputHash: report["input_hash"] as? String ?? "",
+                  upstreamSignature: upstreamSignature)
     }
 }

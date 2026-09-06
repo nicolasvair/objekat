@@ -93,11 +93,23 @@ extension EditViewModel {
     /// warning and to stop claiming the reconstruction is guaranteed.
     func traceHealth(_ plugin: ObjectPlugin, on hostID: UUID) -> PluginTraceHealth? {
         guard let ref = plugin.trace else { return nil }
-        if let recorded = traceSignatures[plugin.id],
-           recorded != upstreamSignature(of: plugin.id, on: hostID) {
+        // The trace's OWN signature first: it was saved with the project, so a change made
+        // upstream still reads as stale after a save and a reopen. `traceSignatures` is only
+        // the fallback for traces captured before that was recorded.
+        let recorded = ref.upstreamSignature.isEmpty ? traceSignatures[plugin.id]
+                                                     : ref.upstreamSignature
+        if let recorded, recorded != upstreamSignature(of: plugin.id, on: hostID) {
             return .stale
         }
         return ref.health
+    }
+
+    /// Has the signal feeding this trace moved since it was captured?
+    ///
+    /// The one question the chain compiler asks: a stale trace is played TRANSPARENT rather
+    /// than played wrong. @see rackSpec, and `traceHealth` for what the check promises.
+    func traceIsStale(_ plugin: ObjectPlugin, on hostID: UUID) -> Bool {
+        traceHealth(plugin, on: hostID) == .stale
     }
 
     /// A stable digest of everything that feeds `pluginID` in `hostID`'s chain.
@@ -235,7 +247,8 @@ extension EditViewModel {
             self.capturingTracePluginID = nil
             self.traceProgress = 0
 
-            if var ref = PluginTraceRef(report: dict, fileName: fileName) {
+            if var ref = PluginTraceRef(report: dict, fileName: fileName,
+                                        upstreamSignature: signature) {
                 ref.forced = forced
                 self.updateChainPlugins(hostID) { list in
                     list = Self.settingTrace(ref, on: pluginID, in: list)
@@ -423,17 +436,20 @@ extension EditViewModel {
 
 extension EditViewModel {
 
-    /// Retakes the upstream signature of every traced slot in the project.
+    /// Baselines the upstream signature of the LEGACY traced slots — those captured before the
+    /// signature was written into the trace itself.
     ///
-    /// Called once at load. A trace saved with its project describes the signal that project
-    /// carries, so the answer at opening is "fresh": there is nothing to compare against yet.
-    /// From here on, every edit upstream of a traced plugin will move its signature and the slot
-    /// will say so. @see traceHealth for what this check does and does not promise.
+    /// Called once at load. It used to do this for every trace, which was the defect: retaking
+    /// the baseline from the project as it stands means a project SAVED in a stale state
+    /// reopens declaring itself fresh, and goes on replaying a trace of a signal that no longer
+    /// exists. A trace that carries its own signature is now compared against that, and this
+    /// only fills in for the ones that have none. @see traceHealth.
     func rebuildTraceSignatures() {
         traceSignatures.removeAll()
 
         func note(_ hostID: UUID, _ plugins: [ObjectPlugin]) {
-            for p in Self.flattenLeaves(plugins) where p.trace != nil {
+            for p in Self.flattenLeaves(plugins)
+            where p.trace != nil && p.trace?.upstreamSignature.isEmpty == true {
                 traceSignatures[p.id] = upstreamSignature(of: p.id, on: hostID)
             }
         }
@@ -646,9 +662,21 @@ extension EditViewModel {
             // The verdict replaces the cheap proxy in both directions: a pass clears a signature
             // that had drifted for a reason that did not change the signal (an object nudged and
             // put back), and a failure outlives a signature that happens to match.
-            self.traceSignatures[pluginID] = matches
-                ? self.upstreamSignature(of: pluginID, on: hostID)
-                : Self.staleTraceSignature
+            //
+            // It is written into the TRACE, not merely into the in-memory cache, for the same
+            // reason the capture writes it there: a verification is expensive, and its answer
+            // has to survive closing the project. The cache is still written for the traces
+            // that carry no signature of their own.
+            let verdict = matches ? self.upstreamSignature(of: pluginID, on: hostID)
+                                  : Self.staleTraceSignature
+            self.updateChainPlugins(hostID) { list in
+                list = Self.mappingPlugin(pluginID, in: list) { p in
+                    var n = p; n.trace?.upstreamSignature = verdict; return n
+                }
+            }
+            self.traceSignatures[pluginID] = verdict
+            self.isDirty = true
+            self.compileRack(objectID: hostID)
 
             completion?(["ok": true,
                          "matches": matches,

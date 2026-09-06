@@ -27,6 +27,7 @@
 
 #include "OBJTrace.h"
 
+#include <atomic>
 #include <cmath>
 #include <memory>
 
@@ -79,6 +80,23 @@ public:
     /** The trace currently loaded, or nullptr. */
     std::shared_ptr<const objtrace::Trace> getTrace() const  { return trace; }
 
+    /** STALE: something upstream of the plugin has changed since the capture, so this trace no
+        longer describes the signal reaching it. The node stays in the chain and goes
+        TRANSPARENT.
+
+        Why transparent rather than absent. A trace is exact only for the input it was solved
+        on: replay it on `x + delta` and it yields `y + g·delta`, so `g` multiplies whatever
+        changed. Bounding `g` (@see objtrace::computeChannel) keeps that from exploding, but
+        bounded is not correct — the honest answer to "the input is no longer the one captured"
+        is to stop claiming to know what the plugin would have done. And it has to be
+        TRANSPARENT rather than simply not compiled: on a machine without the plugin, a slot
+        that does not resolve is REMOVED from the model, taking its trace reference with it.
+
+        Derived, never persisted: the chain compiler recomputes it at every compile.
+        Written from the main thread, read on the audio thread. */
+    void setStale (bool s) noexcept                          { stale.store (s, std::memory_order_relaxed); }
+    bool isStale() const noexcept                            { return stale.load (std::memory_order_relaxed); }
+
     /** True when the node has a trace it can actually apply at this sample rate. A trace read at
         a rate other than the one it was captured at describes nothing: `g[n]` is a sequence of
         samples, not a curve to resample, and stretching it would invent values the plugin never
@@ -119,6 +137,9 @@ public:
         auto* buffer = fc.destBuffer;
         if (buffer == nullptr || fc.bufferNumSamples <= 0 || trace == nullptr)
             return;
+
+        if (stale.load (std::memory_order_relaxed))
+            return;   // the input is no longer the one captured: transparent rather than wrong
 
         const auto& header = trace->header;
         if (std::abs (header.sampleRate - currentSampleRate) > 0.5 || header.numSamples <= 0)
@@ -186,6 +207,7 @@ private:
     }
 
     std::shared_ptr<const objtrace::Trace> trace;
+    std::atomic<bool> stale { false };
     double currentSampleRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ObjTracePlaybackPlugin)

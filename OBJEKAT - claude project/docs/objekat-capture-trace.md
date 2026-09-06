@@ -163,7 +163,7 @@ reconstructing from the trace *as written and read back*, not from the values st
 **The cross-correlation is the only thing that sees a misalignment**, and a misalignment is not
 a correctness problem: the restitution still reproduces what was captured. It is a *quality*
 problem, and an expensive one. `g` stops living near 1 and starts swinging over orders of
-magnitude, the clamp tips everything into `d`, the run-length encoding finds nothing left to
+magnitude, the gate tips everything into `d`, the run-length encoding finds nothing left to
 compress, and the file grows by a factor of ten. That is the reason to refuse, and it is a
 reason of economy and numerical conditioning — not of exactness.
 
@@ -181,37 +181,59 @@ Two configurable thresholds:
 | constant | default | what it guards |
 |---|---|---|
 | `X_MIN` | −100 dBFS | the input is too quiet for a ratio to mean anything |
-| `G_MAX` | 64.0 | the ratio is real but absurdly large |
+| `G_MAX` | 1.0 | the ratio is real, but too large to be the plugin's gain |
 
 ```
 num[n] = y[n] − d_free[n]        (deterministic mode)
 num[n] = y[n]                    (non-deterministic mode: d_free is not captured)
 ```
 
-Then, in this order — the gate first, and it is exclusive:
+**`d[n] = y[n] − g[n]·x[n]`, always.** One equation, two unknowns per sample: whatever `g` is,
+`d` closes the gap and the model is exact at that sample. So the choice of `g` costs nothing in
+exactness — and exactness is not what it decides. Replay the trace on a changed input
+`x' = x + δ` and it produces
 
-- **`|x[n]| < X_MIN` → gate.** Force `g[n] = 1` and `d[n] = num[n] − x[n]`.
+```
+y' = g·x' + d = (g·x + d) + g·δ = y + g·δ
+```
 
-  This is the case where the plugin produces signal out of silence: noise, a tail, hum. Without
-  the gate, `g` has to explode to represent it and the `G_MAX` clamp then tips the whole thing
-  into the additive term anyway — the right answer, reached by accident, through absurd
-  intermediate values. Make it explicit instead. It also keeps the trace readable: `g` stays at
-  1 across silences instead of wandering over six orders of magnitude, which is exactly what
+so **`g` is the factor by which any change made upstream AFTER the capture is amplified**. That
+is the whole basis of the rule:
+
+- **`|x[n]| < X_MIN` → gate.** `g[n] = 1`.
+
+  The case where the plugin produces signal out of silence: noise, a tail, hum. There is nothing
+  to divide by, and the whole response rides in `d`. It also keeps the trace readable: `g` stays
+  at 1 across silences instead of wandering over six orders of magnitude, which is exactly what
   makes the run-length encoding below worth anything.
 
-- Otherwise, `|num[n] / x[n]| > G_MAX` → **clamp** `g[n]` to `G_MAX` with the original sign,
-  and tip the difference into the additive term: `d[n] = num[n] − g[n]·x[n]`.
+- **`|num[n] / x[n]| > G_MAX` → gate as well.** `g[n] = 1`. Not a clamp.
 
-- Otherwise → `g[n] = num[n] / x[n]`, and `d[n] = d_free[n]` (deterministic) or `0`
-  (non-deterministic).
+  A ratio that large is never the plugin's gain. It is the sign that `y` is not a multiple of
+  `x` at all: a plugin with memory — crossover filters, oversampling, a DC blocker — is still
+  finishing the previous swing at the instant `x` crosses zero. The ratio therefore explodes on
+  the *quietest* samples, the ones that carry no sound, which is to say the trace's most
+  dangerous coefficients sit on its least audible material. Clamping to `G_MAX` left an
+  amplifier standing exactly where the model had already failed.
+
+- Otherwise → `g[n] = num[n] / x[n]`, the ratio the plugin actually applied.
+
+A plugin that legitimately amplifies loses its multiplicative form under a ceiling of 1, and
+pays for it in file size. That is the trade, and it is recorded per trace: `G_MAX` lives in the
+header, and raising it re-admits the amplification.
 
 So `d[n]` serves three purposes at once — the processing's own free-running output, the gate's
-output over silence, and the numerical relief valve near the zeros of `x`. They coexist without
-conflict: each sample falls in exactly one branch.
+output over silence, and the numerical relief valve near the zeros of `x`. Computing it in every
+branch rather than assuming it also buys two things: the reconstruction becomes bit-exact, so
+`validation_peak_db` measures the codec and the file instead of float64 rounding; and `d_free`
+is carried everywhere instead of only in the last branch.
 
 ### Detecting the simple cases
 
-- `d[n]` zero everywhere → do not store `d`, flag the trace `multiplicative_only`.
+- `d[n]` zero everywhere → do not store `d`, flag the trace `multiplicative_only`. Since `d` is
+  computed rather than assumed (@see *Computing the trace*), this now holds only for a plugin
+  whose every division rounds back exactly — in practice a bypass. A purely multiplicative
+  plugin still encodes to a few percent of the flat store; it simply carries a sparse `d`.
 - `g[n]` bit-identical across channels → store a single channel, flag it `linked`.
 
 ---
@@ -323,7 +345,7 @@ separately.
 1. Offline render of the passes with pre-roll and tail, mono first
 2. Alignment + fractional-latency detection (a clean refusal in v1)
 3. The determinism null test and the two-mode branch
-4. Computing the trace, with the `X_MIN` gate and the `G_MAX` clamp
+4. Computing the trace, with the `X_MIN` and `G_MAX` gates
 5. Validation by null test, and the report
 6. The restitution node
 7. The context-menu entry, and the visual states in the signal view

@@ -144,8 +144,12 @@ def main():
     # second argument, because the two interesting cases do not test the same thing:
     #
     #   compressor (the default) — a gain that MOVES with the signal and nothing else. It is the
-    #     multiplicative case in its pure form: `d` should stay at zero and `multiplicative_only`
-    #     should come back TRUE. What it exercises is `g[n]` as a signal, sample by sample.
+    #     multiplicative case in its pure form. What it exercises is `g[n]` as a signal, sample
+    #     by sample, and what it should show is an encoding of a few percent of the flat store.
+    #     `multiplicative_only` does NOT come back true any more, and that is expected: `d` is
+    #     now computed as `y - g·x` in every branch rather than assumed zero, so it holds the
+    #     handful of samples where the division does not round back exactly. That is the price
+    #     of a validation residual that measures the codec instead of measuring float64.
     #
     #   reverb — the additive case: it puts signal where there is none, a tail over silence,
     #     which is what the X_MIN gate exists for (`g` forced to 1, the tail riding in `d`).
