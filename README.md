@@ -4,22 +4,22 @@
 
 Following a 2016 graduation thesis of Nicolas Vercambre (ENS Louis Lumière, Sound department). The central idea: replace the *audio track* with the *sound object* (in Pierre Schaeffer's sense) as the structuring primitive of the interface.
 
-**[The original thesis is available here (PDF, in French)](OBJEKAT%20-%20claude%20project/M%C3%A9moire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)** 
+**[The original thesis is available here (PDF, in French)](OBJEKAT%20-%20claude%20project/M%C3%A9moire%20-%20Objekat%20-%20Nicolas%20Vercambre%202016.pdf)**
 
 
 ## Progress
 
-The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **automation** , and the **loop** of a clip, of a group or of a MIDI clip. I also introduced **sound objects**, which are basically a freeze or wav render of a clip or a group, but that you can revert back to previous "live" state if needed.
+The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **automation**, and the **loop** of a clip, of a group or of a MIDI clip. I also introduced **sound objects**, which are basically a freeze or wav render of a clip or a group, but that you can revert back to a previous "live" state if needed.
 
 It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See [`docs/command_api.md`](OBJEKAT%20-%20claude%20project/docs/command_api.md).
 
-It has been though to be usable by an AI like Claude. The projects are json easy to understand / edit, and it can also runs the app headless to automate some things.
+It has been thought out to be usable by an AI like Claude. The projects are JSON, easy to understand / edit, and it can also run the app headless to automate some things.
 
 There is also a starting point to add custom scripts / extensions. It hasn't been deeply tested so don't expect much from it so far.
 
-Not yet implemented : audio / midi recording, advanced export options (stems / objects). 
+Not yet implemented: audio / MIDI recording, advanced export options (stems / objects).
 
-Everything is full vibe coded with claude code, closely monitored in the first steps and not so much since opus 5. The program runs well but the md documents are quite a mess. 
+Everything is fully vibe coded with Claude Code, closely monitored in the first steps and not so much since Opus 5. The program runs well but the .md documents are quite a mess.
 
 
 ## Technical stack
