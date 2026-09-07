@@ -13,8 +13,12 @@
 # network round-trip and no right-click.
 #
 # Usage:
-#   tools/release.sh --version=0.1.1 --notary-profile=objekat-notary
-#   tools/release.sh --version=0.1.1 --skip-notarize      # dry run, signature only
+#   tools/release.sh --version=0.1.0 --notary-profile=objekat-notary
+#   tools/release.sh --version=0.1.0 --skip-notarize      # dry run, signature only
+#
+# --version is what goes into the app's Info.plist, so it stays numeric. --label
+# is what names the zips, and defaults to --version; pass it when the tag carries
+# something Info.plist will not take, as in --version=0.1.0 --label=0.1.0-alpha.
 #
 # The notary profile is created ONCE, by a human, and stores its own credentials:
 #   xcrun notarytool store-credentials objekat-notary \
@@ -25,6 +29,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=""
+LABEL=""
 IDENTITY=""
 NOTARY_PROFILE=""
 SKIP_NOTARIZE=0
@@ -33,6 +38,7 @@ OUT_DIR="build/release"
 for arg in "$@"; do
   case "$arg" in
     --version=*)        VERSION="${arg#*=}" ;;
+    --label=*)          LABEL="${arg#*=}" ;;
     --identity=*)       IDENTITY="${arg#*=}" ;;
     --notary-profile=*) NOTARY_PROFILE="${arg#*=}" ;;
     --out=*)            OUT_DIR="${arg#*=}" ;;
@@ -42,6 +48,7 @@ for arg in "$@"; do
 done
 
 [ -n "$VERSION" ] || { echo "--version=X.Y.Z is required" >&2; exit 2; }
+[ -n "$LABEL" ] || LABEL="$VERSION"
 
 # ---------------------------------------------------------------- preflight
 
@@ -76,7 +83,7 @@ if [ "$SKIP_NOTARIZE" -eq 0 ]; then
 fi
 
 echo "identity : $IDENTITY"
-echo "version  : $VERSION"
+echo "version  : $VERSION (assets named $LABEL)"
 echo "notarise : $([ "$SKIP_NOTARIZE" -eq 1 ] && echo no || echo "yes ($NOTARY_PROFILE)")"
 echo
 
@@ -119,7 +126,7 @@ for ARCH in arm64 x86_64; do
   codesign --verify --strict --verbose=2 "$APP"
 
   # ditto is what preserves the signature through the round trip.
-  ZIP="$OUT_DIR/objekat-$VERSION-$ARCH.zip"
+  ZIP="$OUT_DIR/objekat-$LABEL-$ARCH.zip"
   rm -f "$ZIP"
   ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
