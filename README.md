@@ -85,6 +85,12 @@ patched engine down. The project signs ad hoc — no Apple account, no developme
 - Picking up the thread of development: [CLAUDE.md](CLAUDE.md) — the state of play and the traps.
 
 
+## Thanks
+
+The signed and notarised releases are made possible by **Label Pêche**, who lend the project
+their Apple developer account. OBJEKAT is not otherwise affiliated with them — many thanks.
+
+
 ## Contact
 
 Questions, bug reports, patches: **ruisseaux-chances-1r@icloud.com**.
