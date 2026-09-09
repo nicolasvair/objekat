@@ -350,6 +350,18 @@ handles already meet, whereas the fade handle is visible, already under the hand
 is about to do. Past that edge the travel is bounded by what the CROSSFADE can hold and not by the
 object's own file, so a side with nothing left still opens the zone from the other side.
 
+A zone **FOLLOWS the objects that hold it**. `object.move` notes the pairs an object belongs to
+before moving it and re-forms them after: move the right one of a pair 20 px to the right and the
+overlap loses 20 px off its LEFT — the left object has not budged, and the zone shortens rather
+than sliding. It is the same arithmetic in both directions, so moving the left one changes the zone
+off its right instead. Three ends to that:
+
+- shrunk to **nothing** — the objects merely meet — the crossfade is gone and what is left is an
+  ordinary join, then an ordinary gap;
+- widened past what the pair can hold (one object swallowing the other, or a lane or container
+  change) the fades go too, and `resolveOverlaps` takes over with its normal overwrite;
+- anywhere in between, both fades are reset to the new overlap, equal on the two sides.
+
 `resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
 merely LANDS on an object, having no matching fades, still overwrites.
 

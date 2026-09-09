@@ -348,12 +348,20 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'lane' or 'start' required")
             }
             let snap = try p.bool("snap", or: false)
+            // The crossfades this object is part of, noted while they still exist: a displaced
+            // pair no longer answers to `isCrossfadePair` (@see refitCrossfade).
+            let pairs = vm.crossfadePairs(around: [id])
             if let lane { vm.updateLane(id: id, lane: max(0, lane)) }
             // Always go back through `updateStartTime`, even without a change of start: it is what
             // calls `syncPosition`, the only place where the lane is pushed to the engine.
             CommandAdapters.withSnapping(snap, vm) {
                 vm.updateStartTime(id: id, newStart: start ?? current.startTime)
             }
+            // The crossfade FOLLOWS, exactly as it does under the hand: the zone is the span the
+            // two share, and moving one of them changes that span and nothing else. This command
+            // still does not overwrite — that is the interface's policy, not the API's — so a
+            // move that would have one swallow the other simply ends the crossfade.
+            for pair in pairs { vm.refitCrossfade(leftID: pair.left, rightID: pair.right) }
             vm.isDirty = true
             guard let moved = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "object lost during the move")

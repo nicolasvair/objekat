@@ -435,6 +435,86 @@ extension EditViewModel {
         return r
     }
 
+    /// Re-forms the crossfade a MOVE has displaced, and says whether there is still one.
+    ///
+    /// Moving one of a crossfaded pair is not editing the crossfade — it is editing an object —
+    /// and the zone is only ever the span the two have in common, so it has nothing to say about
+    /// where they go. It simply follows: push the right-hand one 20 px to the right and the left
+    /// one has not moved, so the common span loses 20 px OFF ITS LEFT and the two fades are that
+    /// much shorter. Nothing is recentred, nothing is preserved — the geometry decides, as it
+    /// always does here.
+    ///
+    /// Without this the pair stopped being one the instant it moved (the fades no longer matched
+    /// the overlap), `resolveOverlaps` saw an ordinary superposition and OVERWROTE: the crossfade
+    /// went and the left-hand object was cut back to the other's new start.
+    ///
+    /// Two ways out of being a crossfade, both of them the ordinary behaviour resuming:
+    ///  • pushed apart until they no longer meet, they are simply two objects with a gap between
+    ///    them — the fades go, and a move opens gaps everywhere else too;
+    ///  • pushed together until one would swallow the other, this refuses and hands the pair back
+    ///    to `resolveOverlaps`, whose overwrite policy is exactly what a drop onto an object means.
+    ///    The fades go there as well: an overwrite leaves the survivor a clean edge.
+    ///
+    /// Returns true only when the pair is STILL a crossfade — in which case `resolveOverlaps` will
+    /// leave it alone by itself (@see isCrossfadePair), so the caller has nothing else to do.
+    @discardableResult
+    func refitCrossfade(leftID: UUID, rightID: UUID) -> Bool {
+        guard var a = find(id: leftID), var b = find(id: rightID) else { return false }
+        // A move can put them the other way round, so they are re-ordered rather than trusted.
+        if a.startTime > b.startTime { swap(&a, &b) }
+
+        func giveUp() -> Bool {
+            updateFadeOut(id: a.id, fadeOut: 0)
+            updateFadeCurve(id: a.id, fadeOut: .linear)
+            updateFadeIn(id: b.id, fadeIn: 0)
+            updateFadeCurve(id: b.id, fadeIn: .linear)
+            return false
+        }
+
+        // A move that changes lane, or that takes an object out of its container, separates them
+        // as surely as a gap does.
+        guard a.lane == b.lane,
+              parentGroup(for: a.id)?.id == parentGroup(for: b.id)?.id
+        else { return giveUp() }
+
+        let aEnd = a.startTime + a.duration
+        let bEnd = b.startTime + b.duration
+        let overlap = aEnd - b.startTime
+        guard overlap > Self.seamEpsilon else { return giveUp() }
+
+        // Side by side, each keeping something of its own outside the zone — the same floors the
+        // opener uses, so a crossfade born of a move cannot be one the opener would have refused.
+        let minDur = Self.crossfadeMinDuration
+        guard b.startTime > a.startTime, bEnd > aEnd,
+              overlap <= a.duration - max(a.fadeIn, minDur),
+              overlap <= b.duration - max(b.fadeOut, minDur)
+        else { return giveUp() }
+
+        updateFadeOut(id: a.id, fadeOut: overlap)
+        updateFadeIn(id: b.id, fadeIn: overlap)
+        isDirty = true
+        return true
+    }
+
+    /// The crossfades these objects are part of, read WHILE THEY STILL EXIST — a move destroys the
+    /// evidence, since a displaced pair no longer satisfies `isCrossfadePair`. So a gesture that is
+    /// about to move something notes its pairs first and refits them afterwards.
+    func crossfadePairs(around ids: Set<UUID>) -> [(left: UUID, right: UUID)] {
+        var pairs: [(left: UUID, right: UUID)] = []
+        var seen = Set<String>()
+        func note(_ l: UUID, _ r: UUID) {
+            let key = l.uuidString + r.uuidString
+            if seen.insert(key).inserted { pairs.append((l, r)) }
+        }
+        for id in ids {
+            if let n = seamNeighbour(of: id, onRight: true),
+               crossfadeZone(leftID: id, rightID: n) != nil { note(id, n) }
+            if let n = seamNeighbour(of: id, onRight: false),
+               crossfadeZone(leftID: n, rightID: id) != nil { note(n, id) }
+        }
+        return pairs
+    }
+
     /// Slides the zone earlier or later WITHOUT changing its width: the two objects go on meeting
     /// for just as long, but they meet somewhere else. This is the body of the gesture — moving the
     /// seam — and it is a trim of both edges at once, so the matter stays where it is on the

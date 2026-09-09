@@ -997,6 +997,9 @@ extension TimelineView {
                             anchors: state.anchors, grabbedID: state.grabbedID, dt: dt,
                             baseLane: baseLane)
                     } else {
+                        // Noted BEFORE anything moves: a displaced pair no longer answers to
+                        // `isCrossfadePair`, so the evidence has to be taken while it stands.
+                        let pairs = viewModel.crossfadePairs(around: state.ids)
                         for (id, anchor) in state.anchors {
                             let newStart = max(0, anchor.start + dt)
                             viewModel.update(id: id) { item in
@@ -1010,6 +1013,10 @@ extension TimelineView {
                             viewModel.updateLane(id: id, lane: max(0, anchor.lane + dl))
                             if let obj = viewModel.find(id: id) { viewModel.syncPosition(obj) }
                         }
+                        // The crossfades FOLLOW: the zone is the span the two have in common, and
+                        // moving one of them changes that span, nothing more. What is refitted is
+                        // then invisible to `resolveOverlaps` below; what is not, it settles.
+                        for p in pairs { viewModel.refitCrossfade(leftID: p.left, rightID: p.right) }
                         for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
                     }
                 }
@@ -1046,10 +1053,14 @@ extension TimelineView {
                 viewModel.moveTranslatedItems(state.anchors, dt: dt, dl: dl)
             } else {
                 viewModel.pushUndo()
+                // Noted before the move: a displaced pair stops satisfying `isCrossfadePair`.
+                let pairs = viewModel.crossfadePairs(around: state.ids)
                 for (id, anchor) in state.anchors {
                     viewModel.updateStartTime(id: id, newStart: anchor.start + dt)
                     viewModel.updateLane(id: id, lane: max(0, anchor.lane + dActual))
                 }
+                // The crossfades FOLLOW the objects that carry them (@see refitCrossfade).
+                for p in pairs { viewModel.refitCrossfade(leftID: p.left, rightID: p.right) }
                 for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
             }
             moveDrag = nil
