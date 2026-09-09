@@ -92,6 +92,14 @@ extension TimelineView {
             }
         }
 
+        // A double click inside a CROSSFADE zone resets the zone, before the fade below can claim
+        // it: the zone IS two fade triangles, and letting the fade branch have it would erase one
+        // side and leave the other lying over its neighbour.
+        // ⌥ + double click is the automation band's, everywhere and on every object: it is left
+        // alone here rather than swallowed by the zone.
+        if isDoubleTap, !NSEvent.modifierFlags.contains(.option),
+           handleCrossfadeDoubleTap(at: point) { return }
+
         // A double click on a fade (its handle or its triangle) → the fade is reset. The counterpart
         // of the gesture: you pull to set a fade, you double-click to erase it.
         //
@@ -120,6 +128,15 @@ extension TimelineView {
             DispatchQueue.main.async {
                 editZoneHover = selectionZoneHover(at: point)?.hover
             }
+            return
+        }
+
+        // A plain click on the BODY of a crossfade (its bare bottom triangle) selects the zone —
+        // the thing itself, not its two objects — which is what gives ⌫ something to take. The
+        // other three parts fall through: they are gestures, and a click that merely lands on one
+        // has asked for nothing.
+        if let hit = crossfadeHit(at: point), hit.part == .move {
+            viewModel.selectCrossfade(left: hit.zone.leftID, right: hit.zone.rightID)
             return
         }
 

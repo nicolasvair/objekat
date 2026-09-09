@@ -29,6 +29,13 @@ struct SoundBlockView: View {
     let previewFadeOut: Double?
     var previewFadeInCurve:  FadeCurve? = nil
     var previewFadeOutCurve: FadeCurve? = nil
+    /// The widths, in px, that this block SHARES with a crossfaded neighbour at each end. The
+    /// opaque white base is punched out there — two crossfaded blocks occupy the same pixels, and
+    /// whichever is drawn second was hiding the other's waveform whole (it happened the moment one
+    /// of them was selected, since a selected block leaves the batched Canvas for a view laid over
+    /// it). The tints stay: they are translucent, so both waveforms read through them.
+    var sharedLeadingPx:  Double = 0
+    var sharedTrailingPx: Double = 0
     /// The loop's IN/OUT bounds in preview (seconds local to the block), @see previewLoopRange(for:)
     /// in TimelineView+DragHandler. `nil` if the object does not loop.
     var previewLoopRange: (start: Double, end: Double)? = nil
@@ -173,6 +180,7 @@ struct SoundBlockView: View {
             // without ever losing the stem membership, which occupies all the rest.
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(Color.white)
+                .mask { OpaqueBaseMask(leading: sharedLeadingPx, trailing: sharedTrailingPx) }
             if let custom = object.customColor {
                 VStack(spacing: 0) {
                     UnevenRoundedRectangle(topLeadingRadius: cornerRadius, topTrailingRadius: cornerRadius)

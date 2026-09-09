@@ -44,6 +44,12 @@ final class EditViewModel {
         }
     }
     var selectedIDs: Set<UUID> = []
+    /// The crossfade selected, if any: the pair whose shared zone the click landed in. Its own
+    /// slot rather than a place in `selectedIDs`, because a crossfade is not an object — it is
+    /// the zone two objects have in common, and putting either of them in the selection would
+    /// arm every command that acts on objects (move, delete, bake) against the wrong thing.
+    /// Exclusive with `selectedIDs`: selecting one clears the other (@see selectCrossfade).
+    var selectedCrossfade: (left: UUID, right: UUID)? = nil
     /// The MIDI notes selected in the open piano rolls (ids of `MidiNote`, unique across every
     /// clip). Independent of `selectedIDs` (which carries the clips/groups).
     var selectedMidiNoteIDs: Set<UUID> = []

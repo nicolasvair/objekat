@@ -44,6 +44,9 @@ extension EditViewModel {
     }
 
     func select(_ id: UUID?, additive: Bool = false) {
+        // Any selection of OBJECTS puts a selected crossfade out: the two are exclusive, and
+        // there is exactly one place that says so rather than one per call site.
+        selectedCrossfade = nil
         guard let id else { clearSelection(); return }
         if additive {
             if selectedIDs.contains(id) { selectedIDs.remove(id) }
@@ -53,9 +56,19 @@ extension EditViewModel {
         }
     }
 
-    func selectIDs(_ ids: Set<UUID>) { selectedIDs = ids }
+    func selectIDs(_ ids: Set<UUID>) { selectedCrossfade = nil; selectedIDs = ids }
+
+    /// Selects a crossfade — the zone, not its two objects. Exclusive with the object selection,
+    /// so ⌫ can mean "this crossfade" without ever meaning "these two objects" as well.
+    func selectCrossfade(left: UUID, right: UUID) {
+        selectedIDs = []
+        timeSelection = nil
+        selectedMidiNoteIDs = []
+        selectedCrossfade = (left, right)
+    }
 
     func clearSelection() {
+        selectedCrossfade = nil
         selectedIDs = []
         timeSelection = nil
     }

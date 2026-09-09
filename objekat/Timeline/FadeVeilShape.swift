@@ -13,17 +13,20 @@ struct FadeVeilShape: Shape {
     let widthPx: Double
     let side: FadeSide
 
-    /// One sample per pixel, and no more: past that the eye gains nothing and a Path built per
-    /// frame during a drag starts to cost. Two points are the floor — a degenerate fade must
-    /// still close its path.
-    private func steps() -> Int { max(2, min(Int(widthPx.rounded()), 512)) }
-
     func path(in rect: CGRect) -> Path {
+        Self.path(curve: curve, widthPx: widthPx, side: side, in: rect)
+    }
+
+    /// The same veil, drawable OUTSIDE a `Shape` — the timeline's batched Canvas draws the blocks
+    /// it does not give a SwiftUI view to, and it drew a straight triangle there whatever the
+    /// curve said. One definition, so a fade is not shaped when a block is selected and straight
+    /// when it is not.
+    static func path(curve: FadeCurve, widthPx: Double, side: FadeSide, in rect: CGRect) -> Path {
         var p = Path()
         let w = min(widthPx, rect.width)
         let h = rect.height
         guard w > 0, h > 0 else { return p }
-        let n = steps()
+        let n = max(2, min(Int(widthPx.rounded()), 512))
 
         switch side {
         case .in:

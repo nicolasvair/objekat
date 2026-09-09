@@ -97,6 +97,11 @@ enum TimelineCursors {
     static let fadeIn: NSCursor    = makeDiagonal(slash: true)
     static let fadeOut: NSCursor   = makeDiagonal(slash: false)
 
+    /// The crossfade cursor: the two fade cursors at once, because that is exactly what the
+    /// gesture does — the upper triangle of a shared zone takes hold of BOTH curves, and the '/'
+    /// or '\\' of a single fade would say the opposite.
+    static let crossfade: NSCursor = makeDiagonal(slash: true, both: true)
+
     /// The edge cursor: the bracket of the edge being grabbed (`[` start, `]` end) and, BELOW it,
     /// two small arrows saying where that edge can still go. They go out one by one when a stop is
     /// reached (timeline 0, the start / end of the source content, the minimum length) — on hover
@@ -190,7 +195,7 @@ enum TimelineCursors {
         return NSCursor(image: image, hotSpot: NSPoint(x: cx, y: strSize.height / 2 + 1))
     }
 
-    private static func makeDiagonal(slash: Bool) -> NSCursor {
+    private static func makeDiagonal(slash: Bool, both: Bool = false) -> NSCursor {
         let size: CGFloat = 16
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
@@ -198,7 +203,12 @@ enum TimelineCursors {
 
         let path = NSBezierPath()
         let inset: CGFloat = 2
-        if slash {
+        if both {
+            path.move(to: NSPoint(x: inset, y: inset))
+            path.line(to: NSPoint(x: size - inset, y: size - inset))
+            path.move(to: NSPoint(x: inset, y: size - inset))
+            path.line(to: NSPoint(x: size - inset, y: inset))
+        } else if slash {
             // "/" — bottom-left -> top-right
             path.move(to: NSPoint(x: inset, y: inset))
             path.line(to: NSPoint(x: size - inset, y: size - inset))

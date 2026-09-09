@@ -354,6 +354,14 @@ extension TimelineView {
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
                 if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
+                } else if let xf = vm.selectedCrossfade {
+                    // A selected CROSSFADE: ⌫ takes the zone, not the two objects. The pair comes
+                    // back onto the middle of the zone and each loses its fade — the two are cut
+                    // clean at the point where they were handing over.
+                    DispatchQueue.main.async {
+                        vm.edit { vm.closeCrossfade(leftID: xf.left, rightID: xf.right) }
+                        vm.selectedCrossfade = nil
+                    }
                 } else if vm.timeSelection != nil {
                     // ⌥ = RIPPLE: the passage goes AND the time it took goes with it, the scope
                     // closing up behind. Bounded by the container — inside a group, only that

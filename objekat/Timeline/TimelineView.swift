@@ -1017,14 +1017,13 @@ struct TimelineView: View {
             if cutHover != nil { cutHover = nil }
             return
         }
-        // A CROSSFADE zone, or a seam still shut: the same priority as in the drag, and for the
-        // same reason — the surfaces the per-block carve-up would name here are the two fade
-        // triangles the zone is made of, and naming one of them would promise a gesture on one
-        // side alone. `resizeLeftRight` throughout: every part of it is settled horizontally,
-        // the body sliding the seam and the edges widening it (the vertical bends the curves,
-        // as on a fade, and has no cursor of its own there either).
-        if viewModel.activeTool == .toolSelection, crossfadeHit(at: pos) != nil {
-            TimelineCursorKeeper.set(NSCursor.resizeLeftRight)
+        // A CROSSFADE zone: the same priority as in the drag, and for the same reason — the
+        // surfaces the per-block carve-up would name here are the two fade triangles the zone is
+        // made of, and naming one of them would promise a gesture on one side alone. The cursor
+        // says WHICH of the zone's four parts the hand is on: ✕ for the pair of curves, the open
+        // hand for the body, and one fade cursor per side (@see crossfadeCursor).
+        if viewModel.activeTool == .toolSelection, let c = crossfadeCursor(at: pos) {
+            TimelineCursorKeeper.set(c)
             if editZoneHover != nil { editZoneHover = nil }
             if cutHover != nil { cutHover = nil }
             return
@@ -1554,6 +1553,8 @@ struct TimelineView: View {
             previewFadeOut:   previewFadeOut(for: object),
             previewFadeInCurve:  previewFadeCurveIn(for: object),
             previewFadeOutCurve: previewFadeCurveOut(for: object),
+            sharedLeadingPx:  crossfadeSharedPx(for: object).leading,
+            sharedTrailingPx: crossfadeSharedPx(for: object).trailing,
             previewLoopRange: previewLoopRange(for: object),
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
@@ -1613,6 +1614,9 @@ struct TimelineView: View {
         if previewResizeDX(for: item) != 0 { return false }
         if previewTrimDX(for: item) != 0 { return false }
         if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return false }
+        // The NEIGHBOUR of a spilling fade moves too, and it is in none of the drag's id sets:
+        // without this it stayed in the batched Canvas, motionless, until the mouse came up.
+        if spillPlan(for: item.id) != nil { return false }
         return true
     }
 
@@ -1704,6 +1708,7 @@ struct TimelineView: View {
                             clipDuration: item.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.volume,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
+                            curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
                             loopRange: item.loopMarkerLocalRange)
                         continue
@@ -1719,6 +1724,7 @@ struct TimelineView: View {
                         clipDuration: item.duration, speedRatio: item.speedRatio,
                         isReversed: item.isReversed, volumeDb: item.volume,
                         fadeIn: item.fadeIn, fadeOut: item.fadeOut,
+                        curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                         waveformDisplayDB: waveformDisplayDB, loopRange: item.loopMarkerLocalRange)
                     if !handled {
                         // Samples mode (extreme zoom, few blocks) → drawn individually and in full.
@@ -1732,6 +1738,7 @@ struct TimelineView: View {
                             clipDuration: item.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.volume,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
+                            curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
                             loopRange: item.loopMarkerLocalRange)
                     } else if let loopLocal = item.loopMarkerLocalRange {
@@ -1779,23 +1786,24 @@ struct TimelineView: View {
                     if isDim(item) { c.opacity = 0.25 }
 
                     if needsFade {
+                        // The veil follows the CURVE here too. It used to be a straight triangle
+                        // whatever the shape said, so a fade drawn bent while its block was
+                        // selected went straight again the moment it was deselected and fell back
+                        // into this Canvas — the same `FadeVeilShape` path settles it (measured on
+                        // a bent fade, 9 September 2026).
+                        let box = CGRect(x: 0, y: 0, width: w, height: blockHeight)
+                        let move = CGAffineTransform(translationX: x, y: y)
                         let fiPx = item.fadeIn * pixelsPerSecond
                         let foPx = item.fadeOut * pixelsPerSecond
                         if fiPx > 0 {
-                            var p = Path()
-                            p.move(to: CGPoint(x: x, y: y))
-                            p.addLine(to: CGPoint(x: x + min(fiPx, w), y: y))
-                            p.addLine(to: CGPoint(x: x, y: y + blockHeight))
-                            p.closeSubpath()
-                            c.fill(p, with: .color(.black.opacity(0.30)))
+                            c.fill(FadeVeilShape.path(curve: item.fadeInCurve, widthPx: fiPx,
+                                                      side: .in, in: box).applying(move),
+                                   with: .color(.black.opacity(0.30)))
                         }
                         if foPx > 0 {
-                            var p = Path()
-                            p.move(to: CGPoint(x: x + w - min(foPx, w), y: y))
-                            p.addLine(to: CGPoint(x: x + w, y: y))
-                            p.addLine(to: CGPoint(x: x + w, y: y + blockHeight))
-                            p.closeSubpath()
-                            c.fill(p, with: .color(.black.opacity(0.30)))
+                            c.fill(FadeVeilShape.path(curve: item.fadeOutCurve, widthPx: foPx,
+                                                      side: .out, in: box).applying(move),
+                                   with: .color(.black.opacity(0.30)))
                         }
                     }
 
@@ -1843,6 +1851,8 @@ struct TimelineView: View {
             previewFadeOut:  previewFadeOut(for: group),
             previewFadeInCurve:  previewFadeCurveIn(for: group),
             previewFadeOutCurve: previewFadeCurveOut(for: group),
+            sharedLeadingPx:  crossfadeSharedPx(for: group).leading,
+            sharedTrailingPx: crossfadeSharedPx(for: group).trailing,
             previewLoopRange: previewLoopRange(for: group),
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
@@ -1991,7 +2001,17 @@ struct TimelineView: View {
                 Text(L("hud.crossfade.title")).font(.system(size: 11, weight: .bold))
                 Text(Self.selectionDurationString(width))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                if cd.atCeiling {
+                if cd.spilloverFade > 0 {
+                    // The zone is shut and the travel that is left has become a PLAIN fade on the
+                    // side being held. The HUD has to say the gesture changed nature, otherwise a
+                    // hand that goes too far reads a crossfade that stopped obeying.
+                    Text(verbatim: "→").foregroundStyle(.secondary)
+                    Text(L("hud.crossfade.becomesFade"))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(Self.selectionDurationString(cd.spilloverFade))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                } else if cd.atCeiling {
                     Text(verbatim: "·").foregroundStyle(.secondary)
                     Text(L("hud.crossfade.atLimit"))
                         .font(.system(size: 10, weight: .bold))

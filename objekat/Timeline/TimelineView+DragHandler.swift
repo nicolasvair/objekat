@@ -708,12 +708,16 @@ extension TimelineView {
                         let pair = state.side == .out ? (id, neighbour) : (neighbour, id)
                         let width = (state.zoneAnchors[id] ?? 0) + abs(state.dEdge)
                         viewModel.openCrossfade(leftID: pair.0, rightID: pair.1, width: width)
-                        let curve = state.curve(for: id)
-                        if curve != state.curveAnchors[id] {
-                            // Both sides of the zone, since it is ONE crossfade the hand is bending.
-                            viewModel.updateFadeCurve(id: pair.0, fadeOut: curve)
-                            viewModel.updateFadeCurve(id: pair.1, fadeIn: curve)
-                        }
+                        // A crossfade is SYMMETRIC or it is not one, and the shape is half of that:
+                        // a bent fade spilling onto a flat neighbour used to make a lopsided X, one
+                        // side bulged and the other straight. So the pair takes ONE curve — the
+                        // hand's if it bent anything during the drag, the straight line otherwise.
+                        // Not the fade's own former shape: that shape was made for an edge, and it
+                        // arrives here as an asymmetry nobody asked for.
+                        let bent = state.overshootY != 0
+                        let curve = bent ? state.curve(for: id) : .linear
+                        viewModel.updateFadeCurve(id: pair.0, fadeOut: curve)
+                        viewModel.updateFadeCurve(id: pair.1, fadeIn: curve)
                         continue
                     }
                     if state.dEdge != 0, let a = state.edgeAnchors[id] {
@@ -1166,6 +1170,12 @@ extension TimelineView {
 
     func previewResizeDX(for object: SoundObject) -> Double {
         if let rd = resizeDrag, rd.ids.contains(object.id) { return rd.dDur * pixelsPerSecond }
+        // A spill: the pair's geometry commands both edges (@see spillPlan). The left object ends
+        // where the zone ends; the right one's right edge does not move at all.
+        if let sp = spillPlan(for: object.id) {
+            guard sp.isLeft else { return 0 }
+            return (sp.plan.end - (object.startTime + object.duration)) * pixelsPerSecond
+        }
         // A fade out pulled beyond the edge: the block grows live, like a resize.
         if let fd = fadeDrag, fd.side == .out, fd.dEdge != 0, fd.ids.contains(object.id) {
             return fd.dEdge * pixelsPerSecond
@@ -1188,6 +1198,11 @@ extension TimelineView {
         if let td = trimDrag, td.ids.contains(object.id) {
             return (td.dStart * pixelsPerSecond).rounded()
         }
+        // A spill in progress commands both edges of the pair: what the block must draw is the
+        // zone's own geometry, not this object's fade growing on its own (@see spillPlan).
+        if let sp = spillPlan(for: object.id) {
+            return sp.isLeft ? 0 : ((sp.plan.start - object.startTime) * pixelsPerSecond).rounded()
+        }
         // A fade in pulled beyond the edge: the start of the sound is revealed live, like a trim.
         if let fd = fadeDrag, fd.side == .in, fd.dEdge != 0, fd.ids.contains(object.id) {
             return (fd.dEdge * pixelsPerSecond).rounded()
@@ -1196,11 +1211,13 @@ extension TimelineView {
     }
 
     func previewFadeIn(for object: SoundObject) -> Double? {
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : sp.plan.width }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.finalFade
     }
 
     func previewFadeOut(for object: SoundObject) -> Double? {
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? sp.plan.width : nil }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.finalFade
     }
@@ -1208,11 +1225,13 @@ extension TimelineView {
     /// The SHAPE under way, so the block draws what one is about to get — including the return to
     /// straight when the hand comes back inside the row.
     func previewFadeCurveIn(for object: SoundObject) -> FadeCurve? {
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : spillCurve }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.curve(for: object.id)
     }
 
     func previewFadeCurveOut(for object: SoundObject) -> FadeCurve? {
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? spillCurve : nil }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.curve(for: object.id)
     }

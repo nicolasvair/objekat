@@ -52,20 +52,29 @@ struct CrossfadeVeilOverlay: View {
     let height:   Double
     /// Dimmed when something else is going on, so the X never competes with a gesture's own preview.
     var emphasis: Double = 1
+    /// The zone is SELECTED: it is cerned, because ⌫ is about to act on it and one must be able to
+    /// see which of several crossfades it will take.
+    var isSelected: Bool = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             // The ground marks the SPAN, which no block can: each of them stops at its own edge,
             // and the zone is precisely the part they have in common.
             Rectangle()
-                .fill(Color.white.opacity(0.05 * emphasis))
+                .fill(Color.white.opacity((isSelected ? 0.12 : 0.05) * emphasis))
             // The two boundaries of the zone: thin, so they read as the limits of a passage rather
-            // than as two more object edges.
-            Path { p in
-                p.move(to: .zero);              p.addLine(to: CGPoint(x: 0, y: height))
-                p.move(to: CGPoint(x: width, y: 0)); p.addLine(to: CGPoint(x: width, y: height))
+            // than as two more object edges. Selected, the outline closes right round it — the
+            // zone stops being a passage between two blocks and becomes the thing one is holding.
+            if isSelected {
+                Rectangle()
+                    .strokeBorder(Color.accentColor.opacity(0.95), lineWidth: 1.5)
+            } else {
+                Path { p in
+                    p.move(to: .zero);              p.addLine(to: CGPoint(x: 0, y: height))
+                    p.move(to: CGPoint(x: width, y: 0)); p.addLine(to: CGPoint(x: width, y: height))
+                }
+                .stroke(Color.white.opacity(0.28 * emphasis), lineWidth: 1)
             }
-            .stroke(Color.white.opacity(0.28 * emphasis), lineWidth: 1)
 
             CrossfadeCurvePath(curve: outCurve, side: .out)
                 .stroke(Color.white.opacity(0.85 * emphasis), lineWidth: 1.5)
@@ -94,10 +103,12 @@ extension TimelineView {
             let y = rulerHeight + Double(z.lane) * laneStep
             let w = z.width * pixelsPerSecond
             if w >= 1 {
+                let sel = viewModel.selectedCrossfade
                 CrossfadeVeilOverlay(
                     outCurve: viewModel.find(id: z.leftID)?.fadeOutCurve ?? .linear,
                     inCurve:  viewModel.find(id: z.rightID)?.fadeInCurve ?? .linear,
-                    width: w, height: blockHeight)
+                    width: w, height: blockHeight,
+                    isSelected: sel?.left == z.leftID && sel?.right == z.rightID)
                 .offset(x: x, y: y)
             }
         }
@@ -109,6 +120,37 @@ extension TimelineView {
                                  width: ghost.width, height: blockHeight, emphasis: 0.6)
                 .offset(x: ghost.x, y: ghost.y)
         }
+    }
+
+    /// The crossfade a spilling fade drag is about to lay down, for EITHER of the two objects it
+    /// concerns — the one whose fade is being pulled and the neighbour it is spilling onto.
+    ///
+    /// It exists because a spill moves BOTH blocks and the fade preview knew about neither. The
+    /// block went on drawing its own fade growing from its own edge while the ghost X drew the
+    /// zone somewhere else, and the neighbour did not move at all until the mouse came up. Both
+    /// now read the plan `openCrossfade` will apply, so the drag shows the result and not a
+    /// rehearsal of it.
+    func spillPlan(for id: UUID) -> (plan: EditViewModel.CrossfadePlan, isLeft: Bool)? {
+        guard let fd = fadeDrag, fd.dEdge != 0 else { return nil }
+        for held in fd.ids {
+            guard let neighbour = fd.seamNeighbours[held],
+                  held == id || neighbour == id else { continue }
+            let pair = fd.side == .out ? (held, neighbour) : (neighbour, held)
+            let width = (fd.zoneAnchors[held] ?? 0) + abs(fd.dEdge)
+            guard case .success(let plan) = viewModel.plannedCrossfade(leftID: pair.0,
+                                                                      rightID: pair.1,
+                                                                      width: width)
+            else { return nil }
+            return (plan, plan.leftID == id)
+        }
+        return nil
+    }
+
+    /// The curve a spill is about to lay on BOTH sides: the hand's if it bent anything, straight
+    /// otherwise — the same rule as the commit, so the preview cannot promise another shape.
+    var spillCurve: FadeCurve {
+        guard let fd = fadeDrag, fd.overshootY != 0 else { return .linear }
+        return fd.curve(for: fd.grabbedID)
     }
 
     /// The crossfade the fade drag under way would open if it were released now, in canvas
@@ -133,10 +175,51 @@ extension TimelineView {
         // The plan speaks in the container's time; the canvas in absolute time. One offset, read
         // off the row the gesture started on — the same conversion the rest of the canvas makes.
         let offset = entry.absStart - entry.item.startTime
-        let curve = fd.curve(for: fd.grabbedID)
+        let curve = spillCurve
         return (x: (plan.start + offset) * pixelsPerSecond,
                 y: rulerHeight + Double(entry.displayLane) * laneStep,
                 width: plan.width * pixelsPerSecond,
                 outCurve: curve, inCurve: curve)
+    }
+}
+
+/// The mask that punches a block's opaque base out of the spans it SHARES with a crossfaded
+/// neighbour. A flexible middle rather than a computed width: the block's own width never has to
+/// be known here, and the mask follows it through every resize and every zoom.
+struct OpaqueBaseMask: View {
+    let leading:  Double
+    let trailing: Double
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: max(0, leading))
+            Color.black
+            Color.clear.frame(width: max(0, trailing))
+        }
+    }
+}
+
+extension TimelineView {
+
+    /// How much of a block, at each end, is shared with a crossfaded neighbour — in px, and in the
+    /// geometry the drag is showing rather than the one the model holds, so the punched-out base
+    /// tracks the hand.
+    func crossfadeSharedPx(for item: SoundObject) -> (leading: Double, trailing: Double) {
+        var lead = 0.0, trail = 0.0
+        if let n = viewModel.seamNeighbour(of: item.id, onRight: false),
+           let z = viewModel.crossfadeZone(leftID: n, rightID: item.id) {
+            lead = z.width * pixelsPerSecond
+        }
+        if let n = viewModel.seamNeighbour(of: item.id, onRight: true),
+           let z = viewModel.crossfadeZone(leftID: item.id, rightID: n) {
+            trail = z.width * pixelsPerSecond
+        }
+        // A spill under way: the zone it is about to lay down wins over the one the model still
+        // holds, on that side only — the other end may carry a crossfade of its own.
+        if let sp = spillPlan(for: item.id) {
+            if sp.isLeft { trail = sp.plan.width * pixelsPerSecond }
+            else         { lead  = sp.plan.width * pixelsPerSecond }
+        }
+        return (lead, trail)
     }
 }

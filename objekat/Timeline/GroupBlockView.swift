@@ -25,6 +25,10 @@ struct GroupBlockView: View {
     let previewFadeOut: Double?
     var previewFadeInCurve:  FadeCurve? = nil
     var previewFadeOutCurve: FadeCurve? = nil
+    /// See `SoundBlockView.sharedLeadingPx`: the span shared with a crossfaded neighbour, where
+    /// the opaque base is punched out so the other block's content still reads.
+    var sharedLeadingPx:  Double = 0
+    var sharedTrailingPx: Double = 0
     /// The loop's IN/OUT bounds in preview (seconds local to the block), @see previewLoopRange(for:)
     /// in TimelineView+DragHandler. `nil` if the group does not loop.
     var previewLoopRange: (start: Double, end: Double)? = nil
@@ -113,6 +117,7 @@ struct GroupBlockView: View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white)
+                .mask { OpaqueBaseMask(leading: sharedLeadingPx, trailing: sharedTrailingPx) }
             // The same split as a clip (@see SoundBlockView): the name band in the custom colour,
             // the body in the stem's colour.
             if let custom = group.customColor {

@@ -422,7 +422,17 @@ extension EditViewModel {
     /// trim always leaves it.
     @discardableResult
     func closeCrossfade(leftID: UUID, rightID: UUID) -> Result<CrossfadeZone?, SeamRefusal> {
-        openCrossfade(leftID: leftID, rightID: rightID, width: 0)
+        let r = openCrossfade(leftID: leftID, rightID: rightID, width: 0)
+        if case .success = r, let a = find(id: leftID), let b = find(id: rightID) {
+            // The SHAPE goes with the length, as it does on the double click that erases a fade:
+            // a bend left behind a cleared fade lies in wait for the next time that edge is
+            // pulled, and nothing in the gestures brings a curve back to the straight line.
+            // Ordered here, since the caller may name the pair either way round.
+            let (l, rr) = a.startTime <= b.startTime ? (a.id, b.id) : (b.id, a.id)
+            updateFadeCurve(id: l,  fadeOut: .linear)
+            updateFadeCurve(id: rr, fadeIn:  .linear)
+        }
+        return r
     }
 
     /// Slides the zone earlier or later WITHOUT changing its width: the two objects go on meeting
