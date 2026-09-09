@@ -437,16 +437,21 @@ extension EditViewModel {
 
     /// Re-forms the crossfade a MOVE has displaced, and says whether there is still one.
     ///
-    /// Moving one of a crossfaded pair is not editing the crossfade — it is editing an object —
-    /// and the zone is only ever the span the two have in common, so it has nothing to say about
-    /// where they go. It simply follows: push the right-hand one 20 px to the right and the left
-    /// one has not moved, so the common span loses 20 px OFF ITS LEFT and the two fades are that
-    /// much shorter. Nothing is recentred, nothing is preserved — the geometry decides, as it
-    /// always does here.
+    /// Moving or CROPPING one of a crossfaded pair is not editing the crossfade — it is editing an
+    /// object — and the zone is only ever the span the two have in common, so it has nothing to
+    /// say about what one does to them. It simply follows: push the right-hand one 20 px to the
+    /// right and the left one has not moved, so the common span loses 20 px OFF ITS LEFT and the
+    /// two fades are that much shorter; crop that same edge instead and the span loses exactly as
+    /// much, for exactly the same reason. Nothing is recentred, nothing is preserved — the
+    /// geometry decides, as it always does here.
     ///
     /// Without this the pair stopped being one the instant it moved (the fades no longer matched
     /// the overlap), `resolveOverlaps` saw an ordinary superposition and OVERWROTE: the crossfade
-    /// went and the left-hand object was cut back to the other's new start.
+    /// went and the left-hand object was cut back to the other's new start. A CROP was worse still,
+    /// since it does not go through the overlap policy at all: the zone quietly stopped being one
+    /// while both fades kept the length the zone had given them, so cropping an edge to the bone
+    /// left a two-second fade standing inside an object that no longer overlapped anything — a
+    /// fade that looked as though it had GROWN, the object's edge having come to meet it.
     ///
     /// Two ways out of being a crossfade, both of them the ordinary behaviour resuming:
     ///  • pushed apart until they no longer meet, they are simply two objects with a gap between
@@ -480,11 +485,16 @@ extension EditViewModel {
     }
 
     /// Where each object of a pair actually SITS, as `projectedCrossfade` reads it: the container's
-    /// own time and the model's lane.
-    func modelPlacement(_ id: UUID) -> (start: Double, lane: Int, container: UUID?)? {
+    /// own time, its length, and the model's lane.
+    func modelPlacement(_ id: UUID) -> Placement? {
         guard let o = find(id: id) else { return nil }
-        return (o.startTime, o.lane, parentGroup(for: id)?.id)
+        return (o.startTime, o.duration, o.lane, parentGroup(for: id)?.id)
     }
+
+    /// Everything about an object a crossfade depends on: WHERE it is and HOW LONG it is. A move
+    /// changes the first, a crop the second, and the zone — the span the two have in common —
+    /// cannot tell the difference: both of them reshape it, and by the same arithmetic.
+    typealias Placement = (start: Double, duration: Double, lane: Int, container: UUID?)
 
     /// What `refitCrossfade` WOULD leave of this pair, given where the two objects sit — worked
     /// out and not applied. `nil` = the placement has broken the pair, and the fades go.
@@ -497,8 +507,7 @@ extension EditViewModel {
     ///
     /// The lengths and the fades always come from the model: a move changes where an object is,
     /// never what it is.
-    func projectedCrossfade(leftID: UUID, rightID: UUID,
-                            placement: (UUID) -> (start: Double, lane: Int, container: UUID?)?)
+    func projectedCrossfade(leftID: UUID, rightID: UUID, placement: (UUID) -> Placement?)
         -> (leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)? {
         guard var a = find(id: leftID), var b = find(id: rightID),
               var pa = placement(leftID), var pb = placement(rightID) else { return nil }
@@ -508,17 +517,18 @@ extension EditViewModel {
         // as surely as a gap does.
         guard pa.lane == pb.lane, pa.container == pb.container else { return nil }
 
-        let aEnd = pa.start + a.duration
-        let bEnd = pb.start + b.duration
+        let aEnd = pa.start + pa.duration
+        let bEnd = pb.start + pb.duration
         let overlap = aEnd - pb.start
         guard overlap > Self.seamEpsilon else { return nil }
 
         // Side by side, each keeping something of its own outside the zone — the same floors the
         // opener uses, so a crossfade born of a move cannot be one the opener would have refused.
+        // The FAR fade is the model's: a gesture on one edge says nothing about the other one.
         let minDur = Self.crossfadeMinDuration
         guard pb.start > pa.start, bEnd > aEnd,
-              overlap <= a.duration - max(a.fadeIn, minDur),
-              overlap <= b.duration - max(b.fadeOut, minDur)
+              overlap <= pa.duration - max(a.fadeIn, minDur),
+              overlap <= pb.duration - max(b.fadeOut, minDur)
         else { return nil }
 
         return (a.id, b.id, pb.start, aEnd, pa.lane)

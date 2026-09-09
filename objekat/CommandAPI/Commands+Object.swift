@@ -278,7 +278,12 @@ extension CommandRegistry {
             guard duration > 0 else {
                 throw CommandError(code: .bad_params, message: "length is zero or negative")
             }
+            // A crop moves an edge, and a crossfade is made of edges: the zone follows, exactly as
+            // it does under the hand (@see refitCrossfade). Noted first — a pair whose overlap has
+            // changed no longer answers to `isCrossfadePair`.
+            let pairs = vm.crossfadePairs(around: [id])
             vm.updateDuration(id: id, duration: duration)
+            for pair in pairs { vm.refitCrossfade(leftID: pair.left, rightID: pair.right) }
             return .object(["id": .string(id.uuidString),
                             "duration": .number(vm.find(id: id)?.duration ?? duration)])
         }
@@ -300,7 +305,9 @@ extension CommandRegistry {
             guard duration > 0 else {
                 throw CommandError(code: .bad_params, message: "length is zero or negative")
             }
+            let pairs = vm.crossfadePairs(around: [id])
             vm.updateTrim(id: id, newStart: start, newDuration: duration)
+            for pair in pairs { vm.refitCrossfade(leftID: pair.left, rightID: pair.right) }
             guard let after = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "object lost")
             }

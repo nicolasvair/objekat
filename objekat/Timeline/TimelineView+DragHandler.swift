@@ -825,9 +825,14 @@ extension TimelineView {
             if phase == .ended {
                 viewModel.objectSnapGuide = nil
                 viewModel.pushUndo()
+                // Noted before the crop: a pair whose overlap has changed stops satisfying
+                // `isCrossfadePair`, and there is then nothing left to recognise.
+                let pairs = viewModel.crossfadePairs(around: state.ids)
                 for (id, anchor) in state.anchors {
                     viewModel.updateDuration(id: id, duration: anchor.duration + dDur)
                 }
+                // A crop moves an edge, and the zone is made of edges (@see refitCrossfade).
+                for p in pairs { viewModel.refitCrossfade(leftID: p.left, rightID: p.right) }
                 for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
                 resizeDrag = nil
             } else {
@@ -854,11 +859,13 @@ extension TimelineView {
             if phase == .ended {
                 viewModel.objectSnapGuide = nil
                 viewModel.pushUndo()
+                let pairs = viewModel.crossfadePairs(around: state.ids)
                 for (id, anchor) in state.anchors {
                     viewModel.updateTrim(id: id,
                                         newStart: anchor.start + dStart,
                                         newDuration: anchor.duration - dStart)
                 }
+                for p in pairs { viewModel.refitCrossfade(leftID: p.left, rightID: p.right) }
                 for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
                 trimDrag = nil
             } else {
@@ -1239,14 +1246,14 @@ extension TimelineView {
 
     func previewFadeIn(for object: SoundObject) -> Double? {
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : sp.plan.width }
-        if let w = movedCrossfadeFade(for: object.id, side: .in) { return w }
+        if let w = reshapedCrossfadeFade(for: object.id, side: .in) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.finalFade
     }
 
     func previewFadeOut(for object: SoundObject) -> Double? {
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? sp.plan.width : nil }
-        if let w = movedCrossfadeFade(for: object.id, side: .out) { return w }
+        if let w = reshapedCrossfadeFade(for: object.id, side: .out) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.finalFade
     }

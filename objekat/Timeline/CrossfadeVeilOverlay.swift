@@ -141,53 +141,75 @@ extension TimelineView {
         let model = viewModel.visibleCrossfadeZones().map {
             (leftID: $0.leftID, rightID: $0.rightID, start: $0.start, end: $0.end, lane: $0.lane)
         }
-        // ⌥ copies rather than displaces: the originals do not budge, so neither do their zones.
-        guard let md = moveDrag, !md.isAltCopy, md.dt != 0 || md.dl != 0 else { return model }
-        let pairs = viewModel.crossfadePairs(around: md.ids)
+        guard let ids = reshapingDragIDs else { return model }
+        let pairs = viewModel.crossfadePairs(around: ids)
         guard !pairs.isEmpty else { return model }
 
         let touched = Set(pairs.map { $0.left.uuidString + $0.right.uuidString })
         var shown = model.filter { !touched.contains($0.leftID.uuidString + $0.rightID.uuidString) }
         for p in pairs {
             if let z = viewModel.projectedCrossfade(leftID: p.left, rightID: p.right,
-                                                    placement: movePlacement) {
+                                                    placement: dragPlacement) {
                 shown.append(z)
             }
         }
         return shown
     }
 
-    /// Where an object is being DRAWN: its display row and absolute time, the move's travel added
-    /// when it is one of the objects being carried. The container is the one it is still in — a
-    /// plain move changes a row and a time, never a parent.
-    func movePlacement(_ id: UUID) -> (start: Double, lane: Int, container: UUID?)? {
-        guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
-        guard let md = moveDrag, !md.isAltCopy, md.ids.contains(id) else {
-            return (e.absStart, e.displayLane, e.parentID)
-        }
-        return (e.absStart + md.dt, max(0, e.displayLane + md.dl), e.parentID)
+    /// The objects a gesture under way is RESHAPING — displacing or cropping — or `nil` when
+    /// nothing is being reshaped. ⌥ copies rather than displaces, so its originals do not budge
+    /// and neither do their zones.
+    var reshapingDragIDs: Set<UUID>? {
+        if let md = moveDrag, !md.isAltCopy, md.dt != 0 || md.dl != 0 { return md.ids }
+        if let td = trimDrag,   td.dStart != 0 { return td.ids }
+        if let rd = resizeDrag, rd.dDur   != 0 { return rd.ids }
+        return nil
     }
 
-    /// The fade a move under way is on its way to leave on one edge of `id` — the new zone's width
-    /// while the pair survives, 0 the moment the move breaks it, `nil` when no move touches a zone
-    /// of its.
+    /// Where an object is being DRAWN and how long it is being drawn: its display row, its
+    /// absolute time and its length, with the gesture's travel already added when it is one of the
+    /// objects under the hand. The container is the one it is still in — neither a move nor a crop
+    /// changes a parent.
+    func dragPlacement(_ id: UUID) -> EditViewModel.Placement? {
+        guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        var p: EditViewModel.Placement = (e.absStart, e.item.duration, e.displayLane, e.parentID)
+        if let md = moveDrag, !md.isAltCopy, md.ids.contains(id) {
+            p.start += md.dt
+            p.lane   = max(0, p.lane + md.dl)
+        }
+        // A trim pins the END and moves the start; a resize pins the start and moves the end. Both
+        // of them shift an edge, which is all a zone is made of.
+        if let td = trimDrag, td.ids.contains(id) {
+            p.start    += td.dStart
+            p.duration -= td.dStart
+        }
+        if let rd = resizeDrag, rd.ids.contains(id) {
+            p.duration += rd.dDur
+        }
+        return p
+    }
+
+    /// The fade a gesture under way is on its way to leave on one edge of `id` — the new zone's
+    /// width while the pair survives, 0 the moment the gesture breaks it, `nil` when nothing being
+    /// moved or cropped touches a zone of its.
     ///
     /// The X alone would not have been enough: a zone narrowed to half its width inside two veils
     /// still wearing their old one is a picture that contradicts itself. An edge engaged in a
     /// crossfade has no fade length of its own — the zone commands it — so when the zone follows
     /// the hand, the two veils follow with it.
-    func movedCrossfadeFade(for id: UUID, side: FadeSide) -> Double? {
-        guard let md = moveDrag, !md.isAltCopy, md.dt != 0 || md.dl != 0 else { return nil }
+    func reshapedCrossfadeFade(for id: UUID, side: FadeSide) -> Double? {
+        guard let ids = reshapingDragIDs else { return nil }
         let onRight = side == .out
         guard let n = viewModel.seamNeighbour(of: id, onRight: onRight),
-              // A move that carries BOTH of them changes nothing between them: the zone travels
-              // whole, and there is nothing to preview.
-              md.ids.contains(id) != md.ids.contains(n),
+              // The gesture has to hold one of the two, otherwise this pair is none of its
+              // business — and every crossfade on screen would leave the batched canvas for the
+              // duration of any drag at all.
+              ids.contains(id) || ids.contains(n),
               viewModel.crossfadeZone(leftID: onRight ? id : n,
                                       rightID: onRight ? n : id) != nil else { return nil }
         guard let z = viewModel.projectedCrossfade(leftID: onRight ? id : n,
                                                    rightID: onRight ? n : id,
-                                                   placement: movePlacement) else { return 0 }
+                                                   placement: dragPlacement) else { return 0 }
         return z.end - z.start
     }
 
@@ -281,13 +303,13 @@ extension TimelineView {
         if let n = viewModel.seamNeighbour(of: item.id, onRight: false),
            viewModel.crossfadeZone(leftID: n, rightID: item.id) != nil,
            let z = viewModel.projectedCrossfade(leftID: n, rightID: item.id,
-                                                placement: movePlacement) {
+                                                placement: dragPlacement) {
             lead = (z.end - z.start) * pixelsPerSecond
         }
         if let n = viewModel.seamNeighbour(of: item.id, onRight: true),
            viewModel.crossfadeZone(leftID: item.id, rightID: n) != nil,
            let z = viewModel.projectedCrossfade(leftID: item.id, rightID: n,
-                                                placement: movePlacement) {
+                                                placement: dragPlacement) {
             trail = (z.end - z.start) * pixelsPerSecond
         }
         // A spill under way: the zone it is about to lay down wins over the one the model still
