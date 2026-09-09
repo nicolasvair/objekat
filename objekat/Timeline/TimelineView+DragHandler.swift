@@ -749,6 +749,22 @@ extension TimelineView {
                     for id in state.ids where state.seamNeighbours[id] == nil {
                         viewModel.resolveOverlaps(for: id)
                     }
+                    // A crossfade one has just MADE is selected, like anything else one has just
+                    // made: the hand let go of a fade and what is there now is a zone, so the zone
+                    // is what the eye should find under the cursor — cerned, blue, and ready for
+                    // the ⌫ that undoes it. Otherwise the newborn thing had to be clicked before
+                    // it would admit to existing. The pair is the GRABBED object's: a multiple
+                    // selection may spill several fades at once, and only one of them is the one
+                    // the hand was on.
+                    if let n = state.seamNeighbours[state.grabbedID] {
+                        let pair = state.side == .out ? (state.grabbedID, n) : (n, state.grabbedID)
+                        if let z = viewModel.crossfadeZone(leftID: pair.0, rightID: pair.1) {
+                            // The zone's own ordering, not the gesture's: the overlay recognises a
+                            // selected pair by (left, right) and a pair named backwards is a pair
+                            // it will never light up.
+                            viewModel.selectCrossfade(left: z.leftID, right: z.rightID)
+                        }
+                    }
                 }
                 fadeDrag = nil
             } else {
@@ -1223,12 +1239,14 @@ extension TimelineView {
 
     func previewFadeIn(for object: SoundObject) -> Double? {
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : sp.plan.width }
+        if let w = movedCrossfadeFade(for: object.id, side: .in) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.finalFade
     }
 
     func previewFadeOut(for object: SoundObject) -> Double? {
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? sp.plan.width : nil }
+        if let w = movedCrossfadeFade(for: object.id, side: .out) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.finalFade
     }

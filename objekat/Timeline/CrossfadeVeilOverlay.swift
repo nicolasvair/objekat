@@ -59,9 +59,13 @@ struct CrossfadeVeilOverlay: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             // The ground marks the SPAN, which no block can: each of them stops at its own edge,
-            // and the zone is precisely the part they have in common.
+            // and the zone is precisely the part they have in common. Selected, that ground turns
+            // BLUE rather than merely paler: the zone is a thing one holds, and a thing one holds
+            // in OBJEKAT wears the accent colour — a white veil a shade denser said nothing at all
+            // over blocks that are already white.
             Rectangle()
-                .fill(Color.white.opacity((isSelected ? 0.12 : 0.05) * emphasis))
+                .fill(isSelected ? Color.accentColor.opacity(0.32)
+                                 : Color.white.opacity(0.05 * emphasis))
             // The two boundaries of the zone: thin, so they read as the limits of a passage rather
             // than as two more object edges. Selected, the outline closes right round it — the
             // zone stops being a passage between two blocks and becomes the thing one is holding.
@@ -97,11 +101,11 @@ extension TimelineView {
     /// objects at once, so no block can own it without one of them hiding the other's half.
     @ViewBuilder
     var crossfadeLayer: some View {
-        let zones = viewModel.visibleCrossfadeZones()
+        let zones = displayedCrossfadeZones()
         ForEach(Array(zones.enumerated()), id: \.offset) { _, z in
             let x = z.start * pixelsPerSecond
             let y = rulerHeight + Double(z.lane) * laneStep
-            let w = z.width * pixelsPerSecond
+            let w = (z.end - z.start) * pixelsPerSecond
             if w >= 1 {
                 let sel = viewModel.selectedCrossfade
                 CrossfadeVeilOverlay(
@@ -120,6 +124,71 @@ extension TimelineView {
                                  width: ghost.width, height: blockHeight, emphasis: 0.6)
                 .offset(x: ghost.x, y: ghost.y)
         }
+    }
+
+    /// Every crossfade AS IT IS BEING SHOWN, the move under way already applied to it.
+    ///
+    /// A zone is the span two objects have in common, so displacing one of them changes it on the
+    /// spot — and a move that only announced its zone on release would leave the blocks sliding
+    /// under an X pinned where the objects used to be. The pairs are read off the model (which the
+    /// drag has not touched yet), and each one is re-projected through the same arithmetic the
+    /// commit will run, fed the geometry the hand is showing rather than the one the model holds.
+    ///
+    /// A pair the move BREAKS simply drops out of the list, which is what the release will do to
+    /// it too: the X goes as the objects come apart, or as one starts swallowing the other.
+    func displayedCrossfadeZones() -> [(leftID: UUID, rightID: UUID,
+                                        start: Double, end: Double, lane: Int)] {
+        let model = viewModel.visibleCrossfadeZones().map {
+            (leftID: $0.leftID, rightID: $0.rightID, start: $0.start, end: $0.end, lane: $0.lane)
+        }
+        // ⌥ copies rather than displaces: the originals do not budge, so neither do their zones.
+        guard let md = moveDrag, !md.isAltCopy, md.dt != 0 || md.dl != 0 else { return model }
+        let pairs = viewModel.crossfadePairs(around: md.ids)
+        guard !pairs.isEmpty else { return model }
+
+        let touched = Set(pairs.map { $0.left.uuidString + $0.right.uuidString })
+        var shown = model.filter { !touched.contains($0.leftID.uuidString + $0.rightID.uuidString) }
+        for p in pairs {
+            if let z = viewModel.projectedCrossfade(leftID: p.left, rightID: p.right,
+                                                    placement: movePlacement) {
+                shown.append(z)
+            }
+        }
+        return shown
+    }
+
+    /// Where an object is being DRAWN: its display row and absolute time, the move's travel added
+    /// when it is one of the objects being carried. The container is the one it is still in — a
+    /// plain move changes a row and a time, never a parent.
+    func movePlacement(_ id: UUID) -> (start: Double, lane: Int, container: UUID?)? {
+        guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        guard let md = moveDrag, !md.isAltCopy, md.ids.contains(id) else {
+            return (e.absStart, e.displayLane, e.parentID)
+        }
+        return (e.absStart + md.dt, max(0, e.displayLane + md.dl), e.parentID)
+    }
+
+    /// The fade a move under way is on its way to leave on one edge of `id` — the new zone's width
+    /// while the pair survives, 0 the moment the move breaks it, `nil` when no move touches a zone
+    /// of its.
+    ///
+    /// The X alone would not have been enough: a zone narrowed to half its width inside two veils
+    /// still wearing their old one is a picture that contradicts itself. An edge engaged in a
+    /// crossfade has no fade length of its own — the zone commands it — so when the zone follows
+    /// the hand, the two veils follow with it.
+    func movedCrossfadeFade(for id: UUID, side: FadeSide) -> Double? {
+        guard let md = moveDrag, !md.isAltCopy, md.dt != 0 || md.dl != 0 else { return nil }
+        let onRight = side == .out
+        guard let n = viewModel.seamNeighbour(of: id, onRight: onRight),
+              // A move that carries BOTH of them changes nothing between them: the zone travels
+              // whole, and there is nothing to preview.
+              md.ids.contains(id) != md.ids.contains(n),
+              viewModel.crossfadeZone(leftID: onRight ? id : n,
+                                      rightID: onRight ? n : id) != nil else { return nil }
+        guard let z = viewModel.projectedCrossfade(leftID: onRight ? id : n,
+                                                   rightID: onRight ? n : id,
+                                                   placement: movePlacement) else { return 0 }
+        return z.end - z.start
     }
 
     /// The crossfade a spilling fade drag is about to lay down, for EITHER of the two objects it
@@ -206,13 +275,20 @@ extension TimelineView {
     /// tracks the hand.
     func crossfadeSharedPx(for item: SoundObject) -> (leading: Double, trailing: Double) {
         var lead = 0.0, trail = 0.0
+        // The zone as it is being DRAWN and not as the model holds it: while a move is displacing
+        // one of the pair the shared span is already shrinking, and the punched-out base has to
+        // shrink with it or the neighbour's waveform would go on being hidden under nothing.
         if let n = viewModel.seamNeighbour(of: item.id, onRight: false),
-           let z = viewModel.crossfadeZone(leftID: n, rightID: item.id) {
-            lead = z.width * pixelsPerSecond
+           viewModel.crossfadeZone(leftID: n, rightID: item.id) != nil,
+           let z = viewModel.projectedCrossfade(leftID: n, rightID: item.id,
+                                                placement: movePlacement) {
+            lead = (z.end - z.start) * pixelsPerSecond
         }
         if let n = viewModel.seamNeighbour(of: item.id, onRight: true),
-           let z = viewModel.crossfadeZone(leftID: item.id, rightID: n) {
-            trail = z.width * pixelsPerSecond
+           viewModel.crossfadeZone(leftID: item.id, rightID: n) != nil,
+           let z = viewModel.projectedCrossfade(leftID: item.id, rightID: n,
+                                                placement: movePlacement) {
+            trail = (z.end - z.start) * pixelsPerSecond
         }
         // A spill under way: the zone it is about to lay down wins over the one the model still
         // holds, on that side only — the other end may carry a crossfade of its own.

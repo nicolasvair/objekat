@@ -463,7 +463,8 @@ extension EditViewModel {
         // A move can put them the other way round, so they are re-ordered rather than trusted.
         if a.startTime > b.startTime { swap(&a, &b) }
 
-        func giveUp() -> Bool {
+        guard let zone = projectedCrossfade(leftID: a.id, rightID: b.id,
+                                            placement: modelPlacement) else {
             updateFadeOut(id: a.id, fadeOut: 0)
             updateFadeCurve(id: a.id, fadeOut: .linear)
             updateFadeIn(id: b.id, fadeIn: 0)
@@ -471,29 +472,56 @@ extension EditViewModel {
             return false
         }
 
-        // A move that changes lane, or that takes an object out of its container, separates them
-        // as surely as a gap does.
-        guard a.lane == b.lane,
-              parentGroup(for: a.id)?.id == parentGroup(for: b.id)?.id
-        else { return giveUp() }
+        let overlap = zone.end - zone.start
+        updateFadeOut(id: zone.leftID, fadeOut: overlap)
+        updateFadeIn(id: zone.rightID, fadeIn: overlap)
+        isDirty = true
+        return true
+    }
 
-        let aEnd = a.startTime + a.duration
-        let bEnd = b.startTime + b.duration
-        let overlap = aEnd - b.startTime
-        guard overlap > Self.seamEpsilon else { return giveUp() }
+    /// Where each object of a pair actually SITS, as `projectedCrossfade` reads it: the container's
+    /// own time and the model's lane.
+    func modelPlacement(_ id: UUID) -> (start: Double, lane: Int, container: UUID?)? {
+        guard let o = find(id: id) else { return nil }
+        return (o.startTime, o.lane, parentGroup(for: id)?.id)
+    }
+
+    /// What `refitCrossfade` WOULD leave of this pair, given where the two objects sit — worked
+    /// out and not applied. `nil` = the placement has broken the pair, and the fades go.
+    ///
+    /// The placement is a PARAMETER, and that is the whole point: fed the model, it answers what
+    /// the commit is about to write; fed the geometry a drag is SHOWING (a display row, an
+    /// absolute time, the move's travel already added), it answers what the eye should be seeing
+    /// while the hand is still down. One arithmetic, so the zone that follows the block during the
+    /// gesture is the zone the release will lay down and not a resemblance of it.
+    ///
+    /// The lengths and the fades always come from the model: a move changes where an object is,
+    /// never what it is.
+    func projectedCrossfade(leftID: UUID, rightID: UUID,
+                            placement: (UUID) -> (start: Double, lane: Int, container: UUID?)?)
+        -> (leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)? {
+        guard var a = find(id: leftID), var b = find(id: rightID),
+              var pa = placement(leftID), var pb = placement(rightID) else { return nil }
+        if pa.start > pb.start { swap(&a, &b); swap(&pa, &pb) }
+
+        // A move that changes row, or that takes an object out of its container, separates them
+        // as surely as a gap does.
+        guard pa.lane == pb.lane, pa.container == pb.container else { return nil }
+
+        let aEnd = pa.start + a.duration
+        let bEnd = pb.start + b.duration
+        let overlap = aEnd - pb.start
+        guard overlap > Self.seamEpsilon else { return nil }
 
         // Side by side, each keeping something of its own outside the zone — the same floors the
         // opener uses, so a crossfade born of a move cannot be one the opener would have refused.
         let minDur = Self.crossfadeMinDuration
-        guard b.startTime > a.startTime, bEnd > aEnd,
+        guard pb.start > pa.start, bEnd > aEnd,
               overlap <= a.duration - max(a.fadeIn, minDur),
               overlap <= b.duration - max(b.fadeOut, minDur)
-        else { return giveUp() }
+        else { return nil }
 
-        updateFadeOut(id: a.id, fadeOut: overlap)
-        updateFadeIn(id: b.id, fadeIn: overlap)
-        isDirty = true
-        return true
+        return (a.id, b.id, pb.start, aEnd, pa.lane)
     }
 
     /// The crossfades these objects are part of, read WHILE THEY STILL EXIST — a move destroys the
