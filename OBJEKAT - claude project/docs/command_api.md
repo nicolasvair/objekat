@@ -256,6 +256,7 @@ That is end-of-process noise, with no effect on the result.
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
 | `export.*` | render the mix into a file, follow the progress, cancel |
+| `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
@@ -298,6 +299,47 @@ then bulge, `sCurveInverse` = the other way round).
 Every object wears them, clip and group alike: in this engine ALL fades live in
 `ObjWindowFadePlugin` at the tail of the object's chain, and Tracktion's own clip fades are held at
 zero on purpose (@see OBJEngineCore.mm) — so there is one shape implementation and not two.
+
+### Crossfades
+
+A crossfade is **the zone two neighbours share**, and nothing else. There is no crossfade object and
+no flag saying a pair is crossfaded: two objects of one lane overlap, the left one fades out right
+across the common zone and the right one fades in across it, and that IS the crossfade. Because it
+is pure geometry, saving, reloading and undo carry it with no help, and `crossfade.list` derives it
+rather than reads it back.
+
+It is born from the **seam** and from nowhere else. Dropping an object onto another still overwrites
+it, exactly as before — the overwrite policy has not moved. What creates a crossfade is taking the
+join between two ADJACENT objects and opening it:
+
+    crossfade.open --left UUID --right UUID --width 2.0
+    crossfade.open --at 4.0 --lane 0 --width 2.0      # the seam nearest that time
+    crossfade.open --left UUID --right UUID --width 0 # shut, same as crossfade.close
+
+Opening is free because OBJEKAT's trim is **non-destructive**: a clip's window is a view on the file
+(`sourceOffset` + `fileDuration`), so the matter an earlier trim or overwrite hid is still there.
+Opening re-exposes it, it does not fabricate any. Hence the rules a script has to expect:
+
+- the zone opens **symmetrically** when both sides have file left, each giving half the width;
+- when one side has none, the other gives the **whole** width — the seam slides rather than refusing;
+- when neither has any, it refuses (`no material left on either side`). A group or a MIDI clip has
+  no file and therefore no limit: a group opened past its content crossfades into silence, which is
+  the answer that was asked for, not an error;
+- the width is **clamped, never refused for being too big**: a width is what a hand pulls and a hand
+  pulls past the end. Compare `requested_width` with the `zone.width` you were handed. The ceiling
+  also keeps each object some matter of its own — a zone that swallowed one whole would not be a
+  crossfade but one object hidden under another;
+- a **looping** container refuses it, the same rule as the ripple's and for the same reason.
+
+An edge engaged in a crossfade **has no fade length of its own** any more: the zone commands, and
+setting the width sets both fades. The SHAPE stays each edge's own business — `object.set_fade_curve`
+on each side — which is what lets a crossfade be equal-gain or equal-power at will. The default,
+`linear` on both, is equal-gain: the amplitudes sum to exactly 1 across the zone (measured). Exact
+equal-**power** is `convex` at a bend of ⅓: the exponent is then 8^(1/3) = 2 and the gain √α, so
+α + (1−α) = 1 the whole way (measured, power sum flat to 3·10⁻⁴).
+
+`resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
+merely LANDS on an object, having no matching fades, still overwrites.
 
 ### Ripple
 

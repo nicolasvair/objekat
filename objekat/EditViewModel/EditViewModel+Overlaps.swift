@@ -94,6 +94,26 @@ extension EditViewModel {
     /// The source offset of a piece that survived an overlap: its window is a trim of `ex`'s,
     /// hence the same reverse mirroring as a trim or a cut
     /// (@see WaveformShaping.retrimmedSourceOffset).
+    /// Brings the fades of a piece that survived an overwrite back inside it.
+    ///
+    /// A trim shortens the window, and a fade longer than what is left starts the object PART-WAY
+    /// DOWN its own curve: `ObjWindowFadePlugin` measures the fade from the edge, so a 2 s fade-out
+    /// left on a 0.5 s piece opens it at a quarter of its level. The group path had always done
+    /// this (@see `_applyGroupOp`), the clip path never had — and a crossfade, whose whole point is
+    /// a fade exactly as long as the shared zone, is what makes an overwrite land on such an edge
+    /// as a matter of course rather than by accident.
+    ///
+    /// `clearFadeOut` is the hole's left-hand piece: its right edge is not a trim, it is the cut
+    /// the new object made, so the fade that used to run to the old end has no meaning there. The
+    /// mirror of the right-hand piece being born with `fadeIn: 0`.
+    ///
+    /// Shared with `carveTimeRange`, which shortens windows the same way and had the same hole.
+    static func clampFades(_ o: inout SoundObject, clearFadeOut: Bool = false) {
+        if clearFadeOut { o.fadeOut = 0 }
+        o.fadeOut = min(o.fadeOut, max(0, o.duration))
+        o.fadeIn  = min(o.fadeIn, max(0, o.duration - o.fadeOut))
+    }
+
     private func overlapOffset(_ ex: SoundObject, newStart: Double, newDuration: Double) -> Double {
         WaveformShaping.retrimmedSourceOffset(ex.sourceOffset,
                                               oldStart: ex.startTime, oldDuration: ex.duration,
@@ -106,7 +126,8 @@ extension EditViewModel {
         let ne = ns + new.duration
         let minDur = 0.05
 
-        struct Trim { let id: UUID; let startTime: Double; let sourceOffset: Double; let duration: Double }
+        struct Trim { let id: UUID; let startTime: Double; let sourceOffset: Double; let duration: Double
+                      var holeLeftPiece = false }
         var toDelete: [UUID]           = []
         var toTrim:   [Trim]           = []
         var toAdd:    [SoundObject]    = []
@@ -116,6 +137,11 @@ extension EditViewModel {
             let es = ex.startTime
             let ee = es + ex.duration
             guard ne > es && ns < ee else { continue }
+            // A CROSSFADE is not an accident to settle: the common zone is the feature itself
+            // (@see EditViewModel+Crossfade). Nothing marks the pair — the geometry does, the two
+            // being side by side and each fading right across the zone — so a drop that merely
+            // LANDS on this object has no such fades and still overwrites, policy untouched.
+            if isCrossfadePair(new, ex) { continue }
 
             guard case .clip(let exFP, _, let exFD, let exSR, let exRev) = ex.kind else {
                 // An overlapped group: the same rules as clips.
@@ -140,7 +166,8 @@ extension EditViewModel {
                 let lDur = ns - es
                 let rDur = ee - ne
                 if lDur >= minDur {
-                    toTrim.append(Trim(id: ex.id, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur))
+                    toTrim.append(Trim(id: ex.id, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur,
+                                       holeLeftPiece: true))
                 } else {
                     toDelete.append(ex.id)
                 }
@@ -180,7 +207,10 @@ extension EditViewModel {
             items[i].startTime    = t.startTime
             items[i].sourceOffset = t.sourceOffset
             items[i].duration     = t.duration
+            Self.clampFades(&items[i], clearFadeOut: t.holeLeftPiece)
             syncPosition(items[i])
+            engine?.updateFade(in: items[i].fadeIn, fadeOut: items[i].fadeOut,
+                               forID: items[i].id.uuidString)
         }
         for obj in toAdd {
             items.append(obj)
@@ -198,7 +228,8 @@ extension EditViewModel {
         let ne = ns + child.duration
         let minDur = 0.05
 
-        struct Trim { let old: SoundObject; let startTime: Double; let sourceOffset: Double; let duration: Double }
+        struct Trim { let old: SoundObject; let startTime: Double; let sourceOffset: Double; let duration: Double
+                      var holeLeftPiece = false }
         var toDelete: [UUID]           = []
         var toTrim:   [Trim]           = []
         var toAdd:    [SoundObject]    = []
@@ -208,6 +239,8 @@ extension EditViewModel {
             let es = ex.startTime
             let ee = es + ex.duration
             guard ne > es && ns < ee else { continue }
+            // The same crossfade guard as at the top level, and for the same reason.
+            if isCrossfadePair(child, ex) { continue }
 
             guard case .clip(let exFP, _, let exFD, let exSR, let exRev) = ex.kind else {
                 // An overlapped sibling sub-group: the same rules as clips.
@@ -232,7 +265,8 @@ extension EditViewModel {
                 let lDur = ns - es
                 let rDur = ee - ne
                 if lDur >= minDur {
-                    toTrim.append(Trim(old: ex, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur))
+                    toTrim.append(Trim(old: ex, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur,
+                                       holeLeftPiece: true))
                 } else {
                     toDelete.append(ex.id)
                 }
@@ -266,7 +300,12 @@ extension EditViewModel {
                                    sourceOffset: t.sourceOffset, loopEnabled: t.old.loopEnabled,
                                    loopRangeStart: loopBounds.start, loopRangeEnd: loopBounds.end,
                                    forID: t.old.id.uuidString)
-            engine?.updateFade(in: t.old.fadeIn, fadeOut: t.old.fadeOut, forID: t.old.id.uuidString)
+            // The fades of the piece AS TRIMMED, not as it was: a window that has just shrunk can
+            // no longer hold the fade it had (@see `clampFades`).
+            var faded = t.old
+            faded.duration = t.duration
+            Self.clampFades(&faded, clearFadeOut: t.holeLeftPiece)
+            engine?.updateFade(in: faded.fadeIn, fadeOut: faded.fadeOut, forID: t.old.id.uuidString)
             // A trim without going through `syncPosition`: the trimmed sibling's curves, for their part,
             // are in relative time. They follow its new start on the ENGINE side, and realign on the
             // matter on the model side if it is the LEFT edge that moved (see `updateTrim`).
@@ -293,6 +332,7 @@ extension EditViewModel {
                 current[i].startTime    = t.startTime
                 current[i].sourceOffset = t.sourceOffset
                 current[i].duration     = t.duration
+                Self.clampFades(&current[i], clearFadeOut: t.holeLeftPiece)
             }
             current.append(contentsOf: toAdd)
             obj.kind = .group(children: current, isExpanded: isExpanded)

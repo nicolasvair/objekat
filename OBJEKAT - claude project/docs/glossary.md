@@ -40,6 +40,10 @@ source, not a translation.
 | fondu creusé | hollowed fade | fundido hundido | below the diagonal: the level hangs back |
 | fondu en S | S fade | fundido en S | the same power on each half, the second turned over: flat-steep-flat, or the reverse |
 | pli d'un fondu | fade bend | pliegue del fundido | HOW FAR the curve leaves the straight line, 0…1; the family says which way |
+| couture | seam | costura | the join between two adjacent objects of one lane; what one opens to make a crossfade |
+| fondu enchaîné | crossfade | fundido encadenado | the zone two neighbours SHARE: nothing records one, the common zone IS it |
+| zone commune | common zone | zona común | the overlap a crossfade is made of; its width is both fades' length |
+| matière disponible | headroom | material disponible | how much further an edge can be pulled before the file runs out |
 | aimantation | snap | snap / imantado |  |
 | grille temporelle | time grid | rejilla temporal |  |
 | vitesse / demi-tons | speed / semitones | velocidad / semitonos |  |

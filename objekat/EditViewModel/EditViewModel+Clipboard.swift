@@ -492,7 +492,9 @@ extension EditViewModel {
                 remove(id: id)
 
             } else if s < lo && e <= hi {
-                update(id: id) { $0.duration = lo - s; $0.fadeOut = 0 }
+                // The window shrinks: the fade at the FAR edge has to come back inside it, or the
+                // piece opens part-way down a curve longer than itself (@see `clampFades`).
+                update(id: id) { $0.duration = lo - s; $0.fadeOut = 0; EditViewModel.clampFades(&$0) }
                 if let obj = find(id: id) {
                     syncPosition(obj)
                     if obj.isClip || obj.isMIDI {
@@ -509,6 +511,7 @@ extension EditViewModel {
                     obj.sourceOffset += delta * obj.speedRatio  // timeline delta → source = delta×speed
                     obj.duration      = e - hi
                     obj.fadeIn        = 0
+                    EditViewModel.clampFades(&obj)   // the mirror of the branch above
                     // The start has advanced, the matter has not: the curves realign on it
                     // (the same rule as `updateTrim`).
                     obj.automation    = obj.automation.shiftedInTime(by: -delta)
@@ -534,14 +537,14 @@ extension EditViewModel {
                 if _splitInternal(id: id, atTime: hi) == nil {
                     // A safety net (split refused: degenerate bounds…): truncate at the
                     // selection's left edge rather than do nothing.
-                    update(id: id) { $0.duration = lo - s; $0.fadeOut = 0 }
+                    update(id: id) { $0.duration = lo - s; $0.fadeOut = 0; EditViewModel.clampFades(&$0) }
                     if let obj = find(id: id) {
                         syncPosition(obj)
                         engine?.updateFade(in: obj.fadeIn, fadeOut: 0, forID: id.uuidString)
                     }
                     continue
                 }
-                update(id: id) { $0.duration = lo - s; $0.fadeOut = 0 }
+                update(id: id) { $0.duration = lo - s; $0.fadeOut = 0; EditViewModel.clampFades(&$0) }
                 if let obj = find(id: id) {
                     syncPosition(obj)
                     if case .clip = obj.kind {

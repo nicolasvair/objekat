@@ -229,6 +229,7 @@ final class CommandRegistry {
         registerDefinitionCommands()
         registerExportCommands()
         registerTimeSelectionCommands()
+        registerCrossfadeCommands()
     }
 
     private func registerIntrospection() {
