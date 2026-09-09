@@ -94,13 +94,25 @@ extension TimelineView {
 
         // A double click on a fade (its handle or its triangle) → the fade is reset. The counterpart
         // of the gesture: you pull to set a fade, you double-click to erase it.
+        //
+        // The SHAPE goes with the length, and that is the whole point of it being here: a bend is
+        // laid down by a hand that leaves the row and moved from where it already was
+        // (@see FadeDragState.curve(for:)), so nothing in the drag ever brings a curve back to the
+        // straight line except crossing it from the other side. Wiping the length while leaving
+        // the bend would also leave it lying in wait, ready to reappear the next time the fade is
+        // pulled out of an edge one had just cleared. One double click, one fade, gone whole.
         if isDoubleTap, let (hover, item) = selectionZoneHover(at: point),
            hover.zone == .fadeIn || hover.zone == .fadeOut,
            // A sound object's double click (open / close) still takes priority.
            !item.isObjectInstance, viewModel.editingPlacementID != item.id {
             viewModel.edit {
-                if hover.zone == .fadeIn { viewModel.updateFadeIn(id: hover.id, fadeIn: 0) }
-                else                     { viewModel.updateFadeOut(id: hover.id, fadeOut: 0) }
+                if hover.zone == .fadeIn {
+                    viewModel.updateFadeIn(id: hover.id, fadeIn: 0)
+                    viewModel.updateFadeCurve(id: hover.id, fadeIn: .linear)
+                } else {
+                    viewModel.updateFadeOut(id: hover.id, fadeOut: 0)
+                    viewModel.updateFadeCurve(id: hover.id, fadeOut: .linear)
+                }
             }
             // The hover was resolved on the OLD triangle: with no mouse to refresh it, the veil
             // would stay laid on a fade that no longer exists. We replay it on the same point,

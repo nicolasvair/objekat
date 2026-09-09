@@ -133,7 +133,10 @@ What has landed since mid-August, in order:
   curve twice. It is also RELATIVE — the vertical ADDS to the bend the fade already had, frozen at
   the gesture's start — so lengthening a bulged fade leaves it bulged, and only a hand that leaves
   the row touches the shape at all. ⌥ FLIPS the S rather than imposing it, since an anchored bend
-  starts as often as not from a curve that is already one. What
+  starts as often as not from a curve that is already one. And the double click that erased a
+  fade's length erases its SHAPE with it — with the bend anchored, nothing else in the gesture
+  brings a curve back to the straight line, and a bend left behind a cleared fade would lie in wait
+  for the next time one pulled that edge. What
   gives the travel somewhere to GO is the family being a power `a^p` and not the quarter-sine it
   started with: `bend` maps to the exponent as `8 ^ bend` — geometric, which is what the eye and the
   ear read as an even progression — so the sine's whole bend now sits at about a third of the
