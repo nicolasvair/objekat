@@ -71,6 +71,14 @@ struct CrossfadeDragState {
     /// zone does not push an undo step for a gesture that changed nothing.
     var didChange = false
 
+    /// The width the hand asked for, and the one the seam gave. They part company as soon as the
+    /// clamp bites, and the HUD says so — a gesture that stops must say why it stopped, otherwise
+    /// the limit reads as the app having lost the drag.
+    var requestedWidth: Double = 0
+    var obtainedWidth:  Double = 0
+    /// The seam has given everything it has: the hand may go on travelling, the zone will not.
+    var atCeiling: Bool { requestedWidth - obtainedWidth > EditViewModel.seamEpsilon }
+
     var bendDelta: Double { -overshootY / max(1, bendTravelPx) }
 
     /// The two curves the gesture asks for. Both sides get the SAME bend: a crossfade is one
@@ -170,9 +178,13 @@ extension TimelineView {
                                                  width: width, idealStart: idealStart)
             // A zone shut to nothing stops being a crossfade, so the ids would no longer resolve
             // to one: the gesture keeps its own two ids and can reopen the seam on the way back.
-            if case .success(let zone) = result, let zone {
-                state.leftID = zone.leftID
-                state.rightID = zone.rightID
+            state.requestedWidth = width
+            if case .success(let zone) = result {
+                state.obtainedWidth = zone?.width ?? 0
+                if let zone {
+                    state.leftID = zone.leftID
+                    state.rightID = zone.rightID
+                }
             }
             let curves = state.curves()
             viewModel.updateFadeCurve(id: state.leftID,  fadeOut: curves.left)

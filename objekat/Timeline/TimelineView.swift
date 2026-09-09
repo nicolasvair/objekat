@@ -518,6 +518,14 @@ struct TimelineView: View {
                     }
                 }
 
+                // The crossfades, drawn ONCE above the blocks. A zone belongs to two objects at
+                // the same time — it is precisely the span they share — so neither block can draw
+                // it: whatever each of them puts in there, the upper one hides the lower. Above
+                // the blocks (1) and below the cut's lines (2.6), like the rest of what the canvas
+                // says about a gesture rather than about an object. @see CrossfadeVeilOverlay.
+                crossfadeLayer
+                    .zIndex(2.55)
+
                 // The hovered cut line (top level AND children) — rendered at canvas level,
                 // like all the rest of the geometry resolved on laneEntries.
                 // Conditioned on the tool → it disappears as soon as one leaves the cut (no phantom line).
@@ -882,6 +890,7 @@ struct TimelineView: View {
                 fileDropHintOverlay
                 moveDragHUD
                 fadeDragHUD
+                crossfadeDragHUD
                 heldSoloHUD
                 soloHUD
                 stemAssignHUD
@@ -1925,6 +1934,24 @@ struct TimelineView: View {
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentColor)
                 }
+                // The fade has run past its own edge onto the neighbour: what the hand is making
+                // is no longer a fade but a CROSSFADE, and it says so while it is being made.
+                if spillingCrossfadePreview != nil {
+                    Text(verbatim: "→").foregroundStyle(.secondary)
+                    Text(L("hud.crossfade.title"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                } else if fd.seamNeighbours[fd.grabbedID] != nil,
+                          fd.edgeRoom <= EditViewModel.seamEpsilon,
+                          fd.finalFade <= EditViewModel.seamEpsilon {
+                    // The edge touches a neighbour, so pulling further would open a crossfade —
+                    // and there is nothing behind either edge to open it with. Left mute, the
+                    // gesture would look broken; it is the seam that is empty.
+                    Text(verbatim: "·").foregroundStyle(.secondary)
+                    Text(L("hud.crossfade.seamEmpty"))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.orange)
+                }
                 Text(verbatim: "·")
                     .foregroundStyle(.secondary)
                 Text(L("hud.fade.leaveLane"))
@@ -1933,6 +1960,56 @@ struct TimelineView: View {
                 // Lit when the curve one is about to lay down IS an S, not when ⌥ is down: ⌥ flips
                 // the S rather than imposing it, so on a fade that already carries one the key is
                 // what turns the badge OFF.
+                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: curve.isS, locked: false)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The crossfade under the hand: what it is, how wide it is now, and the shape both its
+    /// curves are taking. The same three-part reading as the fade's, for the same reason — the
+    /// bend lives in the vertical, which nothing on the block announces.
+    ///
+    /// What is added here is the CEILING. A crossfade is bounded by what two objects can give
+    /// between them, and that bound is invisible: a hand that reaches it sees the zone stop and
+    /// has no way of telling a limit from a dropped gesture. So the HUD says the seam gives no
+    /// more, and goes on saying it while the hand travels on into nothing.
+    @ViewBuilder
+    private var crossfadeDragHUD: some View {
+        if let cd = crossfadeDrag {
+            let curve = cd.curves().left
+            let width = viewModel.crossfadeZone(leftID: cd.leftID, rightID: cd.rightID)?.width ?? 0
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(L("hud.crossfade.title")).font(.system(size: 11, weight: .bold))
+                Text(Self.selectionDurationString(width))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                if cd.atCeiling {
+                    Text(verbatim: "·").foregroundStyle(.secondary)
+                    Text(L("hud.crossfade.atLimit"))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.orange)
+                }
+                Text(verbatim: "·").foregroundStyle(.secondary)
+                Image(systemName: fadeHUDSymbol(curve.shape))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(L(fadeCurveNameKey(curve.shape)))
+                    .font(.system(size: 11, weight: .bold))
+                if !curve.isStraight {
+                    Text(verbatim: "\(Int((curve.amount * 100).rounded())) %")
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentColor)
+                }
+                Text(verbatim: "·").foregroundStyle(.secondary)
+                Text(L("hud.fade.leaveLane")).font(.system(size: 10)).foregroundStyle(.secondary)
                 modifierChip("⌥", L("hud.fade.chip.sCurve"), on: curve.isS, locked: false)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)

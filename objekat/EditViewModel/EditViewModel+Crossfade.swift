@@ -134,17 +134,27 @@ extension EditViewModel {
     /// which is what the API wants; hit-testing wants the rows actually on screen, so it reads
     /// `laneEntries` — and a folded group's children, having no row, are rightly invisible to it.
     func crossfadeZone(atTime t: Double, displayLane: Int) -> CrossfadeZone? {
-        let row = laneEntries.filter { $0.displayLane == displayLane }
-                             .sorted { $0.absStart < $1.absStart }
-        for (a, b) in zip(row, row.dropFirst()) where isCrossfadePair(a.item, b.item) {
-            let start = b.absStart, end = a.absStart + a.item.duration
-            if t >= start && t <= end {
-                return CrossfadeZone(leftID: a.item.id, rightID: b.item.id,
-                                     containerID: a.parentID, lane: displayLane,
-                                     start: start, end: end)
+        visibleCrossfadeZones(onDisplayLane: displayLane)
+            .first { t >= $0.start && t <= $0.end }
+    }
+
+    /// The crossfades SHOWN, in canvas coordinates — the same reading as the hit test above, and
+    /// deliberately the same function, so that what the eye is offered and what the hand can take
+    /// hold of can never come apart. `lane` here is a DISPLAY lane, not the model's.
+    /// `onDisplayLane: nil` = every row on screen.
+    func visibleCrossfadeZones(onDisplayLane wanted: Int? = nil) -> [CrossfadeZone] {
+        var zones: [CrossfadeZone] = []
+        let lanes = wanted.map { [$0] } ?? Set(laneEntries.map(\.displayLane)).sorted()
+        for lane in lanes {
+            let row = laneEntries.filter { $0.displayLane == lane }
+                                 .sorted { $0.absStart < $1.absStart }
+            for (a, b) in zip(row, row.dropFirst()) where isCrossfadePair(a.item, b.item) {
+                zones.append(CrossfadeZone(leftID: a.item.id, rightID: b.item.id,
+                                           containerID: a.parentID, lane: lane,
+                                           start: b.absStart, end: a.absStart + a.item.duration))
             }
         }
-        return nil
+        return zones
     }
 
     /// The widest zone a seam can hold — the `w` at which the four bounds on the zone's start meet
@@ -287,6 +297,50 @@ extension EditViewModel {
     @discardableResult
     func openCrossfade(leftID: UUID, rightID: UUID, width: Double,
                        idealStart: Double? = nil) -> Result<CrossfadeZone?, SeamRefusal> {
+        switch plannedCrossfade(leftID: leftID, rightID: rightID,
+                                width: width, idealStart: idealStart) {
+        case .failure(let reason):
+            return .failure(reason)
+        case .success(let plan):
+            // The two edges travel, and nothing else does. `updateTrim` is the non-destructive move
+            // the interface already uses: it carries the source offset (reverse mirrored), the
+            // automation and the MIDI notes, and leaves the matter where it is on the timeline.
+            updateTrim(id: plan.rightID, newStart: plan.start, newDuration: plan.rightEnd - plan.start)
+            updateTrim(id: plan.leftID, newStart: plan.leftStart,
+                       newDuration: (plan.start + plan.width) - plan.leftStart)
+
+            // The fades LAST: `updateTrim` clamps them against the duration it is given, and the
+            // durations only become big enough once both trims are through.
+            updateFadeOut(id: plan.leftID, fadeOut: plan.width)
+            updateFadeIn(id: plan.rightID, fadeIn: plan.width)
+
+            isDirty = true
+            return .success(plan.width > Self.seamEpsilon
+                            ? crossfadeZone(leftID: plan.leftID, rightID: plan.rightID) : nil)
+        }
+    }
+
+    /// What `openCrossfade` is ABOUT to lay down, worked out and clamped but not applied.
+    ///
+    /// It exists so that a gesture can DRAW the zone it is making before committing it — pulling a
+    /// fade out onto a neighbour shows the X it is opening — and so that what is previewed and what
+    /// is applied cannot be two different arithmetics. The refusals come out here too, which is
+    /// what lets a hand be told that a seam gives nothing rather than see nothing happen.
+    struct CrossfadePlan {
+        let leftID:  UUID
+        let rightID: UUID
+        let leftStart: Double
+        let rightEnd:  Double
+        /// Where the zone begins, and how wide it is — after the clamp, so this is what one gets.
+        let start: Double
+        let width: Double
+        let lane:  Int
+        let containerID: UUID?
+        var end: Double { start + width }
+    }
+
+    func plannedCrossfade(leftID: UUID, rightID: UUID, width: Double,
+                          idealStart: Double? = nil) -> Result<CrossfadePlan, SeamRefusal> {
         guard var left = find(id: leftID), var right = find(id: rightID),
               left.lane == right.lane,
               parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id
@@ -357,19 +411,10 @@ extension EditViewModel {
         let centre = (leftEnd + right.startTime) / 2
         let s = min(max(idealStart ?? (centre - w / 2), sMin), sMax)
 
-        // The two edges travel, and nothing else does. `updateTrim` is the non-destructive move
-        // the interface already uses: it carries the source offset (reverse mirrored), the
-        // automation and the MIDI notes, and leaves the matter where it is on the timeline.
-        updateTrim(id: right.id, newStart: s, newDuration: rightEnd - s)
-        updateTrim(id: left.id, newStart: left.startTime, newDuration: (s + w) - left.startTime)
-
-        // The fades LAST: `updateTrim` clamps them against the duration it is given, and the
-        // durations only become big enough once both trims are through.
-        updateFadeOut(id: left.id, fadeOut: w)
-        updateFadeIn(id: right.id, fadeIn: w)
-
-        isDirty = true
-        return .success(w > Self.seamEpsilon ? crossfadeZone(leftID: left.id, rightID: right.id) : nil)
+        return .success(CrossfadePlan(leftID: left.id, rightID: right.id,
+                                      leftStart: left.startTime, rightEnd: rightEnd,
+                                      start: s, width: w, lane: left.lane,
+                                      containerID: parentGroup(for: left.id)?.id))
     }
 
     /// Shuts the zone back to a butt joint, both edges coming back onto its middle. The objects
