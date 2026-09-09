@@ -173,12 +173,35 @@ extension EditViewModel {
 
     /// The container a ripple laid on OBJECTS acts in — the SHALLOWEST one selected decides, the
     /// same rule as for a time selection (@see the header). `nil` = the whole timeline.
+    ///
+    /// Read off `laneEntries`, hence off what is ON SCREEN, and that is why the callers filter
+    /// their ids through `rippleVisibleIDs` first: an object with no display row would answer
+    /// `nil` here — the whole timeline — for something that plainly lives inside a group.
     func rippleContainerID(forObjects ids: Set<UUID>) -> UUID? {
         var best: (depth: Int, parent: UUID?)? = nil
         for e in laneEntries where ids.contains(e.item.id) {
             if best == nil || e.depth < best!.depth { best = (e.depth, e.parentID) }
         }
         return best?.parent
+    }
+
+    /// The ones of `ids` that have a display row. A ripple is a DISPLAYED gesture from end to end:
+    /// its scope comes from `laneEntries`, and the lanes it hollows out come from there too.
+    ///
+    /// The filter is not tidiness, it is the difference between a ripple and a wreck. A selection
+    /// survives its group being folded — collapsing prunes nothing, and opening a group folds the
+    /// sibling on its lane by itself — so a child one can no longer see stays perfectly selectable.
+    /// Rippled as it is, it answers no container at all: the range would be carved out of the
+    /// WHOLE session and would split the very group the object sits inside. And even given its
+    /// true container by hand, the scope's lanes are not on screen either, so nothing would be
+    /// carved while the group's children slid anyway — matter left standing, moved.
+    ///
+    /// Refusing is the honest answer rather than a repair: a ripple hollows out every lane of its
+    /// scope, matter the selection never named, and a scope one cannot see is collateral one
+    /// cannot see coming. Unfolding the group puts the gesture back within reach.
+    func rippleVisibleIDs(_ ids: Set<UUID>) -> Set<UUID> {
+        let shown = Set(laneEntries.map(\.item.id))
+        return ids.intersection(shown)
     }
 
     /// ⌥⌫ with objects selected and NO time selection: each one's span goes, and the scope closes
@@ -194,7 +217,7 @@ extension EditViewModel {
         // `effectiveSelectedIDs`, not `selectedIDs`: a child whose ancestor is selected too is
         // dropped. Its span is already inside its parent's, and rippling it in the parent's own
         // scope would close the same gap twice.
-        var remaining = effectiveSelectedIDs
+        var remaining = rippleVisibleIDs(effectiveSelectedIDs)
         guard !remaining.isEmpty else { return false }
         let container = rippleContainerID(forObjects: remaining)
         pushUndo()

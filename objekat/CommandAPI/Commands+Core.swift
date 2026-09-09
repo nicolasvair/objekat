@@ -495,7 +495,16 @@ extension CommandRegistry {
             guard !vm.effectiveSelectedIDs.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no object selected")
             }
-            let container = vm.rippleContainerID(forObjects: vm.effectiveSelectedIDs)
+            // The VISIBLE ones decide the scope, exactly as the gesture does (@see
+            // `rippleVisibleIDs`): an object inside a folded group is refused rather than
+            // rippled against the whole session.
+            let targets = vm.rippleVisibleIDs(vm.effectiveSelectedIDs)
+            guard !targets.isEmpty else {
+                throw CommandError(code: .invalid_state,
+                                   message: "no selected object is on screen: a ripple acts in the "
+                                          + "scope it can see, so unfold the group first")
+            }
+            let container = vm.rippleContainerID(forObjects: targets)
             let before = vm.laneEntries.count
             guard vm.rippleDeleteSelectedObjects() else {
                 throw CommandError(code: .invalid_state, message: "the ripple would change nothing")
