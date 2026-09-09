@@ -254,6 +254,29 @@
         }
       }
     },
+    "cheatsheet.crossfade.sCurve": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "both curves to the S"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ambas curvas en S"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "les deux courbes en S"
+          }
+        }
+      }
+    },
     "cheatsheet.cut.atCursor": {
       "extractionState": "manual",
       "localizations": {
@@ -388,6 +411,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌘ (maintenu)"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.optDragCrossfade": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ + drag a crossfade"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ + arrastrar un fundido encadenado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ + glisser un fondu enchaîné"
           }
         }
       }

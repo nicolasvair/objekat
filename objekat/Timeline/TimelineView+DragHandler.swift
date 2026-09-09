@@ -277,6 +277,9 @@ extension TimelineView {
         guard viewModel.activeTool == .toolSelection else { return }
 
         // ── Initialising a new drag ───────────────────────────────────────────────
+        // A crossfade drag already running takes the frame before anything else.
+        if crossfadeDrag != nil { handleCrossfadeDrag(value, phase: phase); return }
+
         if moveDrag == nil && resizeDrag == nil && trimDrag == nil
             && fadeDrag == nil && timeSelectionDrag == nil && slipDrag == nil && loopRangeDrag == nil {
             guard phase == .changed else { return }
@@ -291,6 +294,15 @@ extension TimelineView {
             // The hem sits in the LOWER half of the block, which is otherwise the `.move` zone:
             // without this guard, aiming at the selector would move the object.
             if automationBezelHit(at: p) != nil { return }
+
+            // A CROSSFADE ZONE first: it is made of the two fade triangles that face each other,
+            // and the per-block carve-up below would hand the pixel to one of them and bend that
+            // side alone. Tested here for the same reason the loop markers are — a narrow target
+            // before the surfaces covering the same pixels (@see TimelineView+CrossfadeDrag).
+            if beginCrossfadeDragIfHit(at: p) {
+                handleCrossfadeDrag(value, phase: phase)
+                return
+            }
 
             // Hit-testing unified on viewModel.items (clips AND groups). An infinite bus has no
             // start/end: its clickable surface is its whole lane (0 → the content's width).

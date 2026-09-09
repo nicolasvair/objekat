@@ -129,6 +129,44 @@ extension EditViewModel {
         return zones
     }
 
+    /// The crossfade under a point of the TIMELINE, addressed the way the canvas addresses things:
+    /// a display lane and an absolute time. `crossfadeZones(among:)` works on the model's lanes,
+    /// which is what the API wants; hit-testing wants the rows actually on screen, so it reads
+    /// `laneEntries` — and a folded group's children, having no row, are rightly invisible to it.
+    func crossfadeZone(atTime t: Double, displayLane: Int) -> CrossfadeZone? {
+        let row = laneEntries.filter { $0.displayLane == displayLane }
+                             .sorted { $0.absStart < $1.absStart }
+        for (a, b) in zip(row, row.dropFirst()) where isCrossfadePair(a.item, b.item) {
+            let start = b.absStart, end = a.absStart + a.item.duration
+            if t >= start && t <= end {
+                return CrossfadeZone(leftID: a.item.id, rightID: b.item.id,
+                                     containerID: a.parentID, lane: displayLane,
+                                     start: start, end: end)
+            }
+        }
+        return nil
+    }
+
+    /// The SHUT seam nearest a time on a display lane: two neighbours that touch without
+    /// overlapping. It is what the hand grabs to CREATE a crossfade — the open zone above is the
+    /// one it grabs to change an existing one — and it returns the join's time so the gesture can
+    /// open symmetrically around it.
+    func buttSeam(nearTime t: Double, displayLane: Int,
+                  tolerance: Double) -> (left: UUID, right: UUID, at: Double)? {
+        let row = laneEntries.filter { $0.displayLane == displayLane }
+                             .sorted { $0.absStart < $1.absStart }
+        var best: (left: UUID, right: UUID, at: Double, d: Double)?
+        for (a, b) in zip(row, row.dropFirst()) {
+            let aEnd = a.absStart + a.item.duration
+            // Touching, not overlapping: an overlap is already a zone and answers above.
+            guard abs(aEnd - b.absStart) <= Self.seamEpsilon else { continue }
+            let d = abs(t - b.absStart)
+            guard d <= tolerance, best == nil || d < best!.d else { continue }
+            best = (a.item.id, b.item.id, b.absStart, d)
+        }
+        return best.map { (left: $0.left, right: $0.right, at: $0.at) }
+    }
+
     /// The crossfade these two form, if they form one.
     func crossfadeZone(leftID: UUID, rightID: UUID) -> CrossfadeZone? {
         guard let a = find(id: leftID), let b = find(id: rightID), isCrossfadePair(a, b) else {
@@ -198,9 +236,16 @@ extension EditViewModel {
     /// It also keeps each object clear of its OWN other fade, which is what stops two crossfades
     /// on the same object from eating into one another.
     ///
+    /// `idealStart` is where the caller would LIKE the zone to begin; `nil` means "centred on the
+    /// join", which is what opening a shut seam wants. It is what makes one primitive serve all
+    /// three gestures — opening centres, widening from an edge pins the OTHER edge, and moving
+    /// keeps the width and slides the start — instead of three near-copies of this arithmetic.
+    /// It is a wish, not an order: the clamp below has the last word.
+    ///
     /// Returns the refusal rather than a bare `false`: the gesture has to be able to show why.
     @discardableResult
-    func openCrossfade(leftID: UUID, rightID: UUID, width: Double) -> Result<CrossfadeZone?, SeamRefusal> {
+    func openCrossfade(leftID: UUID, rightID: UUID, width: Double,
+                       idealStart: Double? = nil) -> Result<CrossfadeZone?, SeamRefusal> {
         guard var left = find(id: leftID), var right = find(id: rightID),
               left.lane == right.lane,
               parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id
@@ -269,7 +314,7 @@ extension EditViewModel {
         }
 
         let centre = (leftEnd + right.startTime) / 2
-        let s = min(max(centre - w / 2, sMin), sMax)
+        let s = min(max(idealStart ?? (centre - w / 2), sMin), sMax)
 
         // The two edges travel, and nothing else does. `updateTrim` is the non-destructive move
         // the interface already uses: it carries the source offset (reverse mirrored), the
@@ -292,5 +337,31 @@ extension EditViewModel {
     @discardableResult
     func closeCrossfade(leftID: UUID, rightID: UUID) -> Result<CrossfadeZone?, SeamRefusal> {
         openCrossfade(leftID: leftID, rightID: rightID, width: 0)
+    }
+
+    /// Slides the zone earlier or later WITHOUT changing its width: the two objects go on meeting
+    /// for just as long, but they meet somewhere else. This is the body of the gesture — moving the
+    /// seam — and it is a trim of both edges at once, so the matter stays where it is on the
+    /// timeline and only the window that shows it travels.
+    @discardableResult
+    func moveCrossfade(leftID: UUID, rightID: UUID, by delta: Double) -> Result<CrossfadeZone?, SeamRefusal> {
+        guard let zone = crossfadeZone(leftID: leftID, rightID: rightID) else {
+            // Nothing open yet: a butt joint has a seam but no zone to slide.
+            return .failure(.gap)
+        }
+        return openCrossfade(leftID: zone.leftID, rightID: zone.rightID,
+                             width: zone.width, idealStart: zone.start + delta)
+    }
+
+    /// Widens or narrows the zone by pulling ONE of its edges, the other staying put. `fromStart`
+    /// is the left edge: pulling it left widens, so the zone's END is what gets pinned.
+    @discardableResult
+    func resizeCrossfade(leftID: UUID, rightID: UUID, edge fromStart: Bool,
+                         to time: Double) -> Result<CrossfadeZone?, SeamRefusal> {
+        guard let zone = crossfadeZone(leftID: leftID, rightID: rightID) else { return .failure(.gap) }
+        let width = fromStart ? zone.end - time : time - zone.start
+        return openCrossfade(leftID: zone.leftID, rightID: zone.rightID,
+                             width: max(0, width),
+                             idealStart: fromStart ? zone.end - max(0, width) : zone.start)
     }
 }

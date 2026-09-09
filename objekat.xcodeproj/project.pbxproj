@@ -23,7 +23,6 @@
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
-
 /* Begin PBXFrameworksBuildPhase section */
 		DA7F47802FBA52C1004F3E72 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;

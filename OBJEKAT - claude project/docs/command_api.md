@@ -338,6 +338,12 @@ on each side — which is what lets a crossfade be equal-gain or equal-power at 
 equal-**power** is `convex` at a bend of ⅓: the exponent is then 8^(1/3) = 2 and the gain √α, so
 α + (1−α) = 1 the whole way (measured, power sum flat to 3·10⁻⁴).
 
+The same three moves exist as a gesture on the timeline, and `start` is what expresses them: the
+zone's **body** slides the seam (same width, new start), its **edges** widen or narrow it (new
+width, the opposite edge kept), and a seam still shut is grabbed at the join and opens about it.
+A **vertical** drag bends both curves at once, measured from the object's own row exactly as on a
+fade, ⌥ flipping them to the S.
+
 `resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
 merely LANDS on an object, having no matching fades, still overwrites.
 

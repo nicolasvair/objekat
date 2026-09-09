@@ -152,6 +152,7 @@ struct TimelineView: View {
     @State var cutDrag: CutDragState? = nil
     @State var slipDrag: SlipDragState? = nil
     @State var loopRangeDrag: LoopRangeDragState? = nil
+    @State var crossfadeDrag: CrossfadeDragState? = nil
     @State var keyMonitor: Any? = nil
     @State var scrollMonitor: Any? = nil
     @State var magnifyMonitor: Any? = nil
@@ -1003,6 +1004,18 @@ struct TimelineView: View {
             // (@see TimeRulerView.resetCursorRects). We hand back to it, and set NOTHING: setting the
             // arrow here would take it away from the hovered marker on every mouse movement.
             TimelineCursorKeeper.relinquish()
+            if editZoneHover != nil { editZoneHover = nil }
+            if cutHover != nil { cutHover = nil }
+            return
+        }
+        // A CROSSFADE zone, or a seam still shut: the same priority as in the drag, and for the
+        // same reason — the surfaces the per-block carve-up would name here are the two fade
+        // triangles the zone is made of, and naming one of them would promise a gesture on one
+        // side alone. `resizeLeftRight` throughout: every part of it is settled horizontally,
+        // the body sliding the seam and the edges widening it (the vertical bends the curves,
+        // as on a fade, and has no cursor of its own there either).
+        if viewModel.activeTool == .toolSelection, crossfadeHit(at: pos) != nil {
+            TimelineCursorKeeper.set(NSCursor.resizeLeftRight)
             if editZoneHover != nil { editZoneHover = nil }
             if cutHover != nil { cutHover = nil }
             return

@@ -87,7 +87,13 @@ extension CommandRegistry {
                           ParamSpec("lane", "int", required: false, "With `at`: the lane (default 0)."),
                           ParamSpec("container", "uuid", required: false,
                                     "With `at`: search inside this group (default: the top level)."),
-                          ParamSpec("width", "number", "Width of the zone, in seconds.")],
+                          ParamSpec("width", "number", "Width of the zone, in seconds."),
+                          ParamSpec("start", "number", required: false,
+                                    "Where the zone should BEGIN. Default: centred on the join, "
+                                  + "which is what opening a shut seam wants. Same width plus a "
+                                  + "new start = moving the seam; a new width with one edge kept "
+                                  + "= widening from the other. A wish, not an order: it is "
+                                  + "clamped like the width.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let pair = try resolvePair(p, vm)
@@ -95,7 +101,9 @@ extension CommandRegistry {
             guard width >= 0 else {
                 throw CommandError(code: .bad_params, message: "'width' cannot be negative")
             }
-            switch vm.openCrossfade(leftID: pair.left, rightID: pair.right, width: width) {
+            let idealStart = p.raw["start"] != nil ? try p.double("start") : nil
+            switch vm.openCrossfade(leftID: pair.left, rightID: pair.right,
+                                    width: width, idealStart: idealStart) {
             case .failure(let reason):
                 throw refuse(reason)
             case .success(let zone):
