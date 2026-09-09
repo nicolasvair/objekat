@@ -346,9 +346,17 @@ own row exactly as on a fade, ⌥ flipping them to the S.
 An edge can be taken by two different doors, and they part company at the LIMIT. Taken by the fade
 triangle above, the travel left past the shut seam grows a plain fade on the object being held —
 the road that made the crossfade, walked backwards. Taken by the CROP band in the lower half, the
-same edge is merely being cropped, and cropping grows no fade anywhere in OBJEKAT: the gesture stops
-at the joint. Both wear a block's own edge cursor there, arrows included, and an arrow goes out when
-the file — or the joint — has nothing more to give.
+same edge is merely being cropped, and cropping grows no fade anywhere in OBJEKAT: it goes on
+cropping, and opens the gap a crop opens. Both wear a block's own edge cursor there, arrows
+included, and an arrow goes out when the file — or the object's own length — has nothing more to
+give.
+
+Either way the OPPOSITE edge is **pinned**, and `pin` is what says so. Given only a width, the seam
+gives what it can and takes the rest out of whichever side still has it: that is right for opening a
+seam — it is what lets a side with no file left still get a crossfade — and wrong under a hand
+holding an edge, which watched the zone go on growing out of the end it was not touching. `pin:
+"start"` or `pin: "end"` holds that edge of the zone described by `start` and `width`, and clamps
+the WIDTH instead. Compare `requested_width` with `zone.width` to know that it bit.
 
 A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it
 touches: the fade overflows the join, and the overlap it makes IS the crossfade. The join itself is

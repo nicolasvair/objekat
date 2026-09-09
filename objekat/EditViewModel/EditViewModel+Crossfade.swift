@@ -296,9 +296,10 @@ extension EditViewModel {
     /// Returns the refusal rather than a bare `false`: the gesture has to be able to show why.
     @discardableResult
     func openCrossfade(leftID: UUID, rightID: UUID, width: Double,
-                       idealStart: Double? = nil) -> Result<CrossfadeZone?, SeamRefusal> {
+                       idealStart: Double? = nil,
+                       pin: ZonePin? = nil) -> Result<CrossfadeZone?, SeamRefusal> {
         switch plannedCrossfade(leftID: leftID, rightID: rightID,
-                                width: width, idealStart: idealStart) {
+                                width: width, idealStart: idealStart, pin: pin) {
         case .failure(let reason):
             return .failure(reason)
         case .success(let plan):
@@ -339,8 +340,58 @@ extension EditViewModel {
         var end: Double { start + width }
     }
 
-    func plannedCrossfade(leftID: UUID, rightID: UUID, width: Double,
-                          idealStart: Double? = nil) -> Result<CrossfadePlan, SeamRefusal> {
+    /// Everything a seam's arithmetic knows about where its zone may sit — handed over, so that a
+    /// gesture holding ONE edge can bound ITSELF instead of watching the other edge slide.
+    ///
+    /// That is what it is for. The zone's start is hemmed between a floor and a ceiling, and the
+    /// ceiling recedes as the zone widens: asked for more than the held side can give, the clamp
+    /// used to keep the width and take the difference out of the OPPOSITE edge — perfectly correct
+    /// for opening a seam, where the point is that one side gives what the other has not got, and
+    /// quite wrong under a hand pinning that opposite edge, which watched the zone go on growing
+    /// backwards. A pinned edge is pinned.
+    struct SeamHem {
+        let leftID:  UUID
+        let rightID: UUID
+        let leftStart:  Double
+        let leftEnd:    Double
+        let rightStart: Double
+        let rightEnd:   Double
+        let lane: Int
+        let containerID: UUID?
+        /// The floor on the zone's start. It does not depend on the width.
+        let startFloor: Double
+        /// The ceiling on the zone's start is `startCeilingBase - width` — hence the recession.
+        let startCeilingBase: Double
+        /// The widest this seam can hold, both edges free.
+        let maxWidth: Double
+        /// The material the two files have between them: nil of it is a seam that cannot open at
+        /// all, as opposed to one that merely cannot go this far.
+        let byMaterial: Double
+
+        var centre: Double { (leftEnd + rightStart) / 2 }
+        /// The widest zone whose START stays exactly where it is.
+        func maxWidth(pinningStart s: Double) -> Double {
+            max(0, min(maxWidth, startCeilingBase - s))
+        }
+        /// The widest zone whose END stays exactly where it is.
+        func maxWidth(pinningEnd e: Double) -> Double {
+            max(0, min(maxWidth, e - startFloor))
+        }
+    }
+
+    /// One edge of the zone, held where it is. A gesture that grabs an edge has PINNED the other
+    /// one, and the difference is not cosmetic: told only a width, the seam gives what it can and
+    /// takes the rest out of whichever side still has it — which is right when one is opening a
+    /// seam and wrong when a hand is holding an edge, since the zone then grows out of the end the
+    /// hand is not touching.
+    enum ZonePin {
+        /// The zone begins here, whatever the width turns out to be.
+        case start(Double)
+        /// The zone ends here.
+        case end(Double)
+    }
+
+    func seamHem(leftID: UUID, rightID: UUID) -> Result<SeamHem, SeamRefusal> {
         guard var left = find(id: leftID), var right = find(id: rightID),
               left.lane == right.lane,
               parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id
@@ -376,45 +427,78 @@ extension EditViewModel {
         // with each ceiling gives the four ceilings on `w` below; which one bites decides what the
         // gesture is told, the FILE one being a seam that cannot open at all and the others a seam
         // that merely cannot go this far.
-        let byMaterial = currentOverlap + headL.right + headR.left
-        let maxWidth = Self.crossfadeCeiling(leftStart: left.startTime, leftEnd: leftEnd,
-                                             rightStart: right.startTime, rightEnd: rightEnd,
-                                             headLRight: headL.right, headRLeft: headR.left,
-                                             keepLeft: keepLeft, keepRight: keepRight)
-        guard maxWidth > Self.seamEpsilon || width <= Self.seamEpsilon else {
-            return .failure(byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
-        }
-
-        // CLAMPED, not refused. A width is what a hand pulls, and a hand pulls past the end: the
-        // gesture must stop at the limit rather than die on it, and the caller is told the width it
-        // GOT beside the one it asked for. Only a seam that can hold nothing at all refuses above.
-        let w = min(max(0, width), max(0, maxWidth))
-
-        // The unknown: `s`, the right-hand object's new start. The left one then ends at `s + w`,
-        // which is what makes the zone exactly `w` wide.
         //
         // Its floor: the file left under the right object's left edge, and the left object's own
         // fade-in, which the zone must not reach (its duration has to hold fadeIn + w).
         // Its ceiling: the file left past the left object's right edge, and the right object's own
         // fade-out, symmetrically. Plus the floor on both durations.
-        let sMin = max(right.startTime - headR.left,     // the right object's file
-                       left.startTime + keepLeft)        // what the left object keeps for itself
-        let sMax = min(leftEnd + headL.right - w,         // the left object's file
-                       rightEnd - w - keepRight)         // what the right object keeps for itself
+        return .success(SeamHem(
+            leftID: left.id, rightID: right.id,
+            leftStart: left.startTime, leftEnd: leftEnd,
+            rightStart: right.startTime, rightEnd: rightEnd,
+            lane: left.lane, containerID: parentGroup(for: left.id)?.id,
+            startFloor: max(right.startTime - headR.left,   // the right object's file
+                            left.startTime + keepLeft),     // what the left object keeps for itself
+            startCeilingBase: min(leftEnd + headL.right,    // the left object's file
+                                  rightEnd - keepRight),    // what the right object keeps
+            maxWidth: Self.crossfadeCeiling(leftStart: left.startTime, leftEnd: leftEnd,
+                                            rightStart: right.startTime, rightEnd: rightEnd,
+                                            headLRight: headL.right, headRLeft: headR.left,
+                                            keepLeft: keepLeft, keepRight: keepRight),
+            byMaterial: currentOverlap + headL.right + headR.left))
+    }
+
+    func plannedCrossfade(leftID: UUID, rightID: UUID, width: Double,
+                          idealStart: Double? = nil,
+                          pin: ZonePin? = nil) -> Result<CrossfadePlan, SeamRefusal> {
+        let hem: SeamHem
+        switch seamHem(leftID: leftID, rightID: rightID) {
+        case .failure(let reason): return .failure(reason)
+        case .success(let h):      hem = h
+        }
+
+        guard hem.maxWidth > Self.seamEpsilon || width <= Self.seamEpsilon else {
+            return .failure(hem.byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
+        }
+
+        // A pinned edge lowers the ceiling: the widest zone is no longer the widest this seam can
+        // hold, it is the widest one that leaves that edge where it is.
+        let ceiling: Double
+        switch pin {
+        case .start(let t)?: ceiling = hem.maxWidth(pinningStart: t)
+        case .end(let t)?:   ceiling = hem.maxWidth(pinningEnd: t)
+        case nil:            ceiling = hem.maxWidth
+        }
+
+        // CLAMPED, not refused. A width is what a hand pulls, and a hand pulls past the end: the
+        // gesture must stop at the limit rather than die on it, and the caller is told the width it
+        // GOT beside the one it asked for. Only a seam that can hold nothing at all refuses above.
+        let w = min(max(0, width), max(0, ceiling))
+
+        // The unknown: `s`, the right-hand object's new start. The left one then ends at `s + w`,
+        // which is what makes the zone exactly `w` wide. A pinned END fixes it: the start is
+        // wherever the clamped width leaves it, which is what "the far edge does not move" means.
+        let wish: Double?
+        switch pin {
+        case .start(let t)?: wish = t
+        case .end(let t)?:   wish = t - w
+        case nil:            wish = idealStart
+        }
+        let sMin = hem.startFloor
+        let sMax = hem.startCeilingBase - w
         // `maxWidth` above is exactly the width at which these two meet, so the clamp has already
         // made this feasible. It stays as a guard rather than a `!`: the arithmetic is the whole
         // feature, and a floating-point surprise must refuse rather than lay down a wrong zone.
         guard sMin <= sMax + 1e-9 else {
-            return .failure(byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
+            return .failure(hem.byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
         }
 
-        let centre = (leftEnd + right.startTime) / 2
-        let s = min(max(idealStart ?? (centre - w / 2), sMin), sMax)
+        let s = min(max(wish ?? (hem.centre - w / 2), sMin), sMax)
 
-        return .success(CrossfadePlan(leftID: left.id, rightID: right.id,
-                                      leftStart: left.startTime, rightEnd: rightEnd,
-                                      start: s, width: w, lane: left.lane,
-                                      containerID: parentGroup(for: left.id)?.id))
+        return .success(CrossfadePlan(leftID: hem.leftID, rightID: hem.rightID,
+                                      leftStart: hem.leftStart, rightEnd: hem.rightEnd,
+                                      start: s, width: w, lane: hem.lane,
+                                      containerID: hem.containerID))
     }
 
     /// Shuts the zone back to a butt joint, both edges coming back onto its middle. The objects

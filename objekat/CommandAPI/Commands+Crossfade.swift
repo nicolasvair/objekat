@@ -93,7 +93,13 @@ extension CommandRegistry {
                                   + "which is what opening a shut seam wants. Same width plus a "
                                   + "new start = moving the seam; a new width with one edge kept "
                                   + "= widening from the other. A wish, not an order: it is "
-                                  + "clamped like the width.")],
+                                  + "clamped like the width."),
+                          ParamSpec("pin", "string", required: false,
+                                    "'start' or 'end': that edge of the zone described by `start` "
+                                  + "and `width` is HELD, and the width is clamped rather than the "
+                                  + "edge slid. Without it a width the held side cannot give is "
+                                  + "taken out of the other edge — right for opening a seam, wrong "
+                                  + "for a hand holding one.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let pair = try resolvePair(p, vm)
@@ -102,8 +108,20 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'width' cannot be negative")
             }
             let idealStart = p.raw["start"] != nil ? try p.double("start") : nil
+            var pin: EditViewModel.ZonePin? = nil
+            if p.raw["pin"] != nil {
+                guard let s = idealStart else {
+                    throw CommandError(code: .bad_params, message: "'pin' needs 'start'")
+                }
+                switch try p.string("pin") {
+                case "start": pin = .start(s)
+                case "end":   pin = .end(s + width)
+                default:
+                    throw CommandError(code: .bad_params, message: "'pin' is 'start' or 'end'")
+                }
+            }
             switch vm.openCrossfade(leftID: pair.left, rightID: pair.right,
-                                    width: width, idealStart: idealStart) {
+                                    width: width, idealStart: idealStart, pin: pin) {
             case .failure(let reason):
                 throw refuse(reason)
             case .success(let zone):

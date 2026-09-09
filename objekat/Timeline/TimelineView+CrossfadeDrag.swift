@@ -234,7 +234,11 @@ extension TimelineView {
                       part: CrossfadeDragState.Part) -> (left: Double, right: Double) {
         let ceiling = viewModel.maxCrossfadeWidth(leftID: zone.leftID, rightID: zone.rightID)
         let outward = max(0, ceiling - zone.width)
-        let inward  = max(0, zone.width)
+        // INWARDS the edge shuts the zone and then goes on cropping, so the stop is the held
+        // object's own length and not the joint: one number covers both halves of the travel,
+        // since the held edge IS that object's edge the whole way.
+        let held = part == .sideStart ? zone.rightID : zone.leftID
+        let inward = max(0, (viewModel.find(id: held)?.duration ?? 0) - 0.01)
         return part == .sideStart ? (outward, inward) : (inward, outward)
     }
 
@@ -326,17 +330,28 @@ extension TimelineView {
             idealStart = state.anchorStart
         }
         let width = max(0, rawWidth)
+        // The OPPOSITE edge is PINNED, and the seam is TOLD so. Given only a width it gives what it
+        // can and takes the rest out of whichever side still has it — right when one is opening a
+        // seam, and quite wrong under a hand holding an edge: pushed past what the held side had
+        // left, the zone went on growing BACKWARDS while the hand pulled forwards. Named, the pin
+        // lowers the ceiling instead, and the gesture stops (@see ZonePin).
+        let pin: EditViewModel.ZonePin?
+        switch state.part {
+        case .sideStart: pin = .end(state.anchorEnd)
+        case .sideEnd:   pin = .start(state.anchorStart)
+        case .move, .both: pin = nil
+        }
         // Past the shut seam, the travel that is left is a PLAIN fade on the object whose edge the
         // hand holds. The two objects stay stuck together: a gesture that was making a crossfade
         // never opens a gap.
         //
         // Only from the FADE triangle. Taken by the crop band underneath, the same edge is being
-        // CROPPED, and cropping has never produced a fade anywhere else in OBJEKAT — the band is
-        // there precisely so that a hand reaching for an edge gets an edge and nothing more. It
-        // stops at the joint, where the crossfade ends.
+        // CROPPED, and a crop grows no fade anywhere else in OBJEKAT — it goes on cropping, and it
+        // opens the gap a crop opens (see `overCrop` below).
         let spill = (state.part == .move || state.viaEdgeBand) ? 0 : max(0, -rawWidth)
+        let overCrop = state.viaEdgeBand ? max(0, -rawWidth) : 0
 
-        let moved = abs(width - state.anchorWidth) > 1e-9 || spill > 0
+        let moved = abs(width - state.anchorWidth) > 1e-9 || spill > 0 || overCrop > 0
                  || (idealStart.map { abs($0 - state.anchorStart) > 1e-9 } ?? false)
         if (moved || state.overshootY != 0), !state.didChange {
             // The first frame that actually asks for something: one undo step for the whole drag.
@@ -346,8 +361,11 @@ extension TimelineView {
 
         if state.didChange {
             let result = viewModel.openCrossfade(leftID: state.leftID, rightID: state.rightID,
-                                                 width: width, idealStart: idealStart)
-            state.requestedWidth = width
+                                                 width: width, idealStart: idealStart, pin: pin)
+            // The width the HAND asked for, not the one the pinned edge allowed: the HUD's job is
+            // to say that the gesture stopped and why, and a pre-clamped figure would agree with
+            // itself for ever.
+            state.requestedWidth = max(0, rawWidth)
             // A zone shut to nothing stops being a crossfade, so the ids would no longer resolve
             // to one: the gesture keeps its own two ids and can reopen the seam on the way back.
             if case .success(let zone) = result {
@@ -377,6 +395,23 @@ extension TimelineView {
                     viewModel.updateFadeIn(id: o.id, fadeIn: min(spill, o.duration))
                 } else if state.part == .sideEnd, let o = viewModel.find(id: state.leftID) {
                     viewModel.updateFadeOut(id: o.id, fadeOut: min(spill, o.duration))
+                }
+            }
+
+            // Past the shut seam, from the CROP band: the crop simply carries on, and a crop that
+            // carries on opens a gap. Stopping the edge dead at the joint was the band claiming a
+            // limit no crop has ever had — the zone had ended, and what was left under the hand was
+            // an ordinary edge that had every right to keep travelling. Bounded only by the object
+            // keeping a length, which is a trim's own floor.
+            if overCrop > 0 {
+                let floor = 0.01
+                if state.part == .sideStart, let o = viewModel.find(id: state.rightID) {
+                    let end = o.startTime + o.duration
+                    let newStart = min(state.anchorEnd + overCrop, end - floor)
+                    viewModel.updateTrim(id: o.id, newStart: newStart, newDuration: end - newStart)
+                } else if state.part == .sideEnd, let o = viewModel.find(id: state.leftID) {
+                    let newEnd = max(state.anchorStart - overCrop, o.startTime + floor)
+                    viewModel.updateDuration(id: o.id, duration: newEnd - o.startTime)
                 }
             }
         }
