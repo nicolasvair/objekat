@@ -124,6 +124,11 @@ struct CutDragState {
     /// The dead travel before a drag becomes a directed cut.
     static let engageThreshold: Double = 8
 
+    /// ⌥ held: the cut becomes a RIPPLE — the half thrown away takes its time with it and the
+    /// scope closes up behind (@see EditViewModel+Ripple). Reread on every frame, like the ⌥ of
+    /// the move drag: one can arm or disarm it mid-gesture, and the preview says which it is.
+    var ripple: Bool = false
+
     var keep: CutKeepSide? {
         guard abs(dx) >= Self.engageThreshold else { return nil }
         return dx > 0 ? .left : .right
@@ -1089,18 +1094,44 @@ extension TimelineView {
         }
         guard var state = cutDrag else { return }
         state.dx = Double(value.translation.width)
+        state.ripple = NSEvent.modifierFlags.contains(.option)
 
         if phase == .ended {
-            viewModel.cut(ids: state.ids, atTime: state.cutTime, keeping: state.keep)
+            if state.ripple, let keep = state.keep {
+                viewModel.rippleCut(ids: state.ids, grabbedID: state.grabbedID,
+                                    atTime: state.cutTime, keeping: keep)
+            } else {
+                viewModel.cut(ids: state.ids, atTime: state.cutTime, keeping: state.keep)
+            }
             cutDrag = nil
         } else {
             cutDrag = state
         }
     }
 
+    /// The band a ripple cut would close: the hole read off the GRABBED object, spread over every
+    /// lane of the scope — because that is what the gesture really does (it hollows the whole
+    /// container out, not just the object one is holding). Shown INSTEAD of the per-object
+    /// portions, which would say nothing of the lanes about to lose their matter.
+    var cutDragRippleBand: CGRect? {
+        guard let cd = cutDrag, cd.ripple, let keep = cd.keep,
+              let range = viewModel.rippleCutRange(grabbedID: cd.grabbedID,
+                                                   atTime: cd.cutTime, keeping: keep)
+        else { return nil }
+        let lanes = Set(viewModel.laneEntries.filter { cd.ids.contains($0.item.id) }.map(\.displayLane))
+        let container = viewModel.rippleContainerID(forLanes: lanes)
+        let scope = viewModel.rippleLanes(in: container)
+        guard let lo = scope.min(), let hi = scope.max() else { return nil }
+        let x0 = range.lo * pixelsPerSecond
+        let x1 = range.hi * pixelsPerSecond
+        return CGRect(x: x0, y: rulerHeight + Double(lo) * laneStep,
+                      width: max(1, x1 - x0),
+                      height: Double(hi - lo) * laneStep + blockHeight)
+    }
+
     /// The portions that would disappear if one released now (a preview of the cut gesture).
     var cutDragDoomedRects: [CGRect] {
-        guard let cd = cutDrag, let keep = cd.keep else { return [] }
+        guard let cd = cutDrag, let keep = cd.keep, !cd.ripple else { return [] }
         let cutX = cd.cutTime * pixelsPerSecond
         return cd.ids.compactMap { id -> CGRect? in
             guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }

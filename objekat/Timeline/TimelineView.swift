@@ -531,6 +531,20 @@ struct TimelineView: View {
                             .allowsHitTesting(false)
                             .zIndex(2.62)
                     }
+                    // ⌥ = ripple: the band says what the gesture really takes — the whole SCOPE
+                    // over the hole's span, and not only the object one is holding. Struck through
+                    // like the plain cut, plus the edge that shows where everything will come back.
+                    if let band = cutDragRippleBand {
+                        Rectangle()
+                            .fill(Color.red.opacity(0.22))
+                            .overlay(alignment: .leading) {
+                                Rectangle().fill(Color.yellow.opacity(0.9)).frame(width: 1.5)
+                            }
+                            .frame(width: band.width, height: band.height)
+                            .offset(x: band.minX, y: band.minY)
+                            .allowsHitTesting(false)
+                            .zIndex(2.62)
+                    }
                     Rectangle()
                         .fill(Color.yellow.opacity(0.9))
                         .frame(width: 1.5, height: canvasHeight - rulerHeight)
@@ -906,6 +920,9 @@ struct TimelineView: View {
             if let pos = hoverState.position, moveDrag == nil { refreshHover(at: pos) }
             // Drags born of a time selection froze their nature (fragments, slip) at the start,
             // according to ⌥⌘: their state is not reread along the way, here no more than elsewhere.
+            // The cut by dragging rereads ⌥ on every frame too, and a frame only comes at the
+            // next pixel: without this, arming the ripple without moving changed nothing on screen.
+            cutDrag?.ripple = held
             guard moveDrag?.timeSelectionAnchor == nil else { return }
             moveDrag?.isAltCopy = held
         }

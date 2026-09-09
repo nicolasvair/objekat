@@ -256,8 +256,31 @@ That is end-of-process noise, with no effect on the result.
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
 | `export.*` | render the mix into a file, follow the progress, cancel |
-| `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, group, paste |
+| `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
+
+### Ripple
+
+`timesel.ripple_delete` and `object.ripple_cut` do not merely remove matter: they **close the gap
+behind it**, everything that followed sliding back onto the hole's left edge. What makes them worth
+a command of their own is their **scope**, which is the container and nothing wider: a ripple laid
+inside a group moves that group's objects, shrinks the group's own window by as much, and leaves the
+group's neighbours, its parent and the rest of the timeline exactly where they were.
+
+Three consequences a script has to know about:
+
+- **Every lane of the scope is hollowed out**, not just those the time selection covered — that is
+  what keeps the scope's internal synchronisation. So a ripple destroys matter the selection never
+  named. `timesel.delete` is the gesture that does not.
+- The scope is the **shallowest** container the gesture touches. `timesel.ripple_delete` returns it
+  as `container` (`null` = the whole timeline): read it back rather than assuming it.
+- `object.ripple_cut` reads the hole off the object it is given — `keep: "left"` removes
+  `[seconds, that object's end]`, `keep: "right"` removes `[its start, seconds]`. The answer says
+  which span went, in `removed_from` / `removed_to`.
+
+A ripple whose scope is a **looping** group is refused (`false`, no undo step): that group's window
+is a porthole onto a repeating pattern, and shortening the pattern would change every repeat at
+once, including those the gesture never aimed at.
 
 ### Export
 

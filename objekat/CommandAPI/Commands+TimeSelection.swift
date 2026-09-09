@@ -89,6 +89,23 @@ extension CommandRegistry {
                             "objects_after": .int(vm.laneEntries.count)])
         }
 
+        register("timesel.ripple_delete",
+                 summary: "Deletes the time selection AND closes the gap: what follows slides back, "
+                        + "bounded by the container (a group ripples alone, the outside does not move).",
+                 undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let sel = vm.timeSelection else {
+                throw CommandError(code: .invalid_state, message: "no time selection")
+            }
+            let container = vm.rippleContainerID(forLanes: sel.lanes)
+            let before = vm.laneEntries.count
+            vm.rippleDeleteTimeSelection()
+            return .object(["objects_before": .int(before),
+                            "objects_after": .int(vm.laneEntries.count),
+                            "closed": .number(sel.timeRange.upperBound - sel.timeRange.lowerBound),
+                            "container": container.map { .string($0.uuidString) } ?? .null])
+        }
+
         register("timesel.group",
                  summary: "Groups the content of the time selection (objects that straddle it are cut).",
                  undo: .handled) { _ in

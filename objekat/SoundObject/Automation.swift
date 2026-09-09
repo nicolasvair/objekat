@@ -344,4 +344,25 @@ extension Array where Element == AutomationLane {
         }
         return (l, r)
     }
+
+    /// Takes the span [from, to] OUT of every curve and closes the gap behind it: what followed
+    /// `to` comes back to rest on `from`. The ripple's counterpart of `splitInTime` — the object
+    /// keeps ONE identity (it is not divided in two), so its curves have to be spliced rather
+    /// than distributed. Times LOCAL to the object, as everywhere in this file.
+    ///
+    /// The seam takes the value of what comes AFTER: at `from` one now hears what one used to
+    /// hear at `to`, and the interpolated point the left cut left there would have drawn a jump
+    /// towards a value nothing plays any more.
+    func splicedInTime(removing from: Double, to: Double) -> [AutomationLane] {
+        let hole = to - from
+        guard hole > 1e-9 else { return self }
+        var out: [AutomationLane] = []
+        for lane in self where !lane.points.isEmpty {
+            let after  = lane.split(at: to).right.shifted(by: from)
+            let before = lane.split(at: from).left.points.filter { $0.t < from - 1e-9 }
+            let points = (before + after.points).sorted { $0.t < $1.t }
+            if !points.isEmpty { out.append(AutomationLane(param: lane.param, points: points)) }
+        }
+        return out
+    }
 }

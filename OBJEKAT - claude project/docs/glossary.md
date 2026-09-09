@@ -35,6 +35,7 @@ source, not a translation.
 | matière | material | contenido | what an object's window lets you see |
 | curseur noir | playhead | cabezal | the playback cursor |
 | coupe | cut | corte | the tool, and the gesture |
+| montage en cascade | ripple edit | edición en cascada | removing a passage AND the time it took; bounded by the container |
 | aimantation | snap | snap / imantado |  |
 | grille temporelle | time grid | rejilla temporal |  |
 | vitesse / demi-tons | speed / semitones | velocidad / semitonos |  |

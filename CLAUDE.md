@@ -104,6 +104,21 @@ What has landed since mid-August, in order:
   48 kHz / 24-bit WAV export re-read at RMS gives real signal. **Nothing has been seen or heard**
   of this build either. The procedure and its traps: [[publication-release-github]].
 
+- **Ripple editing, bounded by the container** (9 September 2026) — ⌥⌫ over a time selection, and
+  ⌥ + the Cut tool's drag: the passage goes AND the time it took goes with it, what followed
+  sliding back. Its whole point is the SCOPE, which is the container and nothing wider: done
+  inside a group it moves that group's objects, shrinks the group's own window by as much, and
+  leaves the neighbours, the parent and the rest of the timeline where they were. Three rules that
+  are not obvious and are written above `EditViewModel+Ripple`: EVERY lane of the scope is hollowed
+  out (otherwise the internal synchronisation goes, which is ripple's whole reason for existing —
+  so the gesture destroys matter the selection never named, and `timesel.delete` stays the one that
+  does not); the scope is the SHALLOWEST container touched; a LOOPING container refuses the gesture
+  (its window is a porthole onto a pattern). `deleteTimeSelection` was split in two for it —
+  `carveTimeRange` removes the matter, the caller owns the transaction. Verified with no screen:
+  build, eight cases through the API, and an export re-read at RMS proving the ENGINE followed and
+  not just the model. Commands: `timesel.ripple_delete`, `object.ripple_cut`.
+  **Not seen on screen**: the ⌥ preview band of the cut by dragging, and the two new cheat-sheet rows.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

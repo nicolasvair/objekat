@@ -445,6 +445,41 @@ extension CommandRegistry {
                             "count": .int(vm.selectedIDs.count)])
         }
 
+        register("object.ripple_cut",
+                 summary: "Cuts an object at an instant, throws the unwanted half away AND closes "
+                        + "the gap it leaves: the ⌥ of the cut by dragging. Bounded by the "
+                        + "container — inside a group, only that group's objects slide.",
+                 params: [ParamSpec("id", "uuid", "The object grabbed; its half gives the hole its length."),
+                          ParamSpec("seconds", "number", "Instant to cut at."),
+                          ParamSpec("keep", "string", required: false,
+                                    "The side KEPT: 'left' (default) or 'right'.")],
+                 // `rippleCut` pushes its undo, and drops it if it changed nothing.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object")
+            }
+            let t = try p.double("seconds")
+            let side = try p.string("keep", or: "left")
+            let keep: CutKeepSide
+            switch side {
+            case "left":  keep = .left
+            case "right": keep = .right
+            default:
+                throw CommandError(code: .bad_params, message: "'keep': 'left' or 'right' was expected")
+            }
+            guard let range = vm.rippleCutRange(grabbedID: id, atTime: t, keeping: keep) else {
+                throw CommandError(code: .invalid_state, message: "the cut leaves no half to remove")
+            }
+            let before = vm.laneEntries.count
+            vm.rippleCut(ids: [id], grabbedID: id, atTime: t, keeping: keep)
+            return .object(["objects_before": .int(before),
+                            "objects_after": .int(vm.laneEntries.count),
+                            "removed_from": .number(range.lo),
+                            "removed_to": .number(range.hi)])
+        }
+
         // MARK: edit
 
         register("edit.undo", summary: "Undoes the last gesture.", undo: .handled) { _ in

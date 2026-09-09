@@ -355,7 +355,14 @@ extension TimelineView {
                 if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
                 } else if vm.timeSelection != nil {
-                    DispatchQueue.main.async { vm.deleteTimeSelection() }  // internal undo push
+                    // ⌥ = RIPPLE: the passage goes AND the time it took goes with it, the scope
+                    // closing up behind. Bounded by the container — inside a group, only that
+                    // group's objects move (@see EditViewModel+Ripple).
+                    if flags.contains(.option) {
+                        DispatchQueue.main.async { vm.rippleDeleteTimeSelection() }  // internal undo push
+                    } else {
+                        DispatchQueue.main.async { vm.deleteTimeSelection() }  // internal undo push
+                    }
                 } else if vm.activeTool == .toolVolume {
                     DispatchQueue.main.async { vm.edit { vm.resetVolumeSelected() } }
                 } else if vm.activeTool == .toolPan {

@@ -369,6 +369,29 @@
         }
       }
     },
+    "cheatsheet.keys.optDragSide": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ drag left · right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ arrastrar izq. · der."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ drag gauche · droite"
+          }
+        }
+      }
+    },
     "cheatsheet.keys.optDragTop": {
       "extractionState": "manual",
       "localizations": {
@@ -530,6 +553,52 @@
         }
       }
     },
+    "cheatsheet.ripple.cut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cut and close the gap (the group only)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cortar y cerrar el hueco (sólo el grupo)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "couper et refermer le trou (le groupe seul)"
+          }
+        }
+      }
+    },
+    "cheatsheet.ripple.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "delete the passage and close the gap (the group only)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "borrar el pasaje y cerrar el hueco (sólo el grupo)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "supprimer le passage et refermer le trou (le groupe seul)"
+          }
+        }
+      }
+    },
     "cheatsheet.saveAs": {
       "extractionState": "manual",
       "localizations": {
@@ -572,6 +641,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clavier"
+          }
+        }
+      }
+    },
+    "cheatsheet.section.mouse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "mouse"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ratón"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "souris"
           }
         }
       }

@@ -73,6 +73,13 @@ enum ShortcutCheatsheet {
                 ShortcutSection(title: L("cheatsheet.section.keyboard"), rows: [
                     ShortcutRow(keys: "⏎", label: L("cheatsheet.cut.atCursor")),
                     ShortcutRow(keys: "⏎", label: L("cheatsheet.cut.atSelection")),
+                    ShortcutRow(keys: "⌥⌫", label: L("cheatsheet.ripple.delete")),
+                ]),
+                // The ONE mouse gesture that does not read off the block: ⌥ changes the nature of
+                // the cut by dragging instead of naming a zone of it, so no tooltip could carry it.
+                ShortcutSection(title: L("cheatsheet.section.mouse"), rows: [
+                    ShortcutRow(keys: L("cheatsheet.keys.optDragSide"),
+                                label: L("cheatsheet.ripple.cut")),
                 ]),
             ]
         // The mouse has moved into tooltips, laid on the zones of the block itself: the gesture
@@ -156,6 +163,7 @@ enum ShortcutCheatsheet {
             return [ShortcutSection(title: "⌥", rows: [
                 ShortcutRow(keys: L("cheatsheet.keys.optDragTop"),
                             label: L("cheatsheet.slip")),
+                ShortcutRow(keys: "⌥⌫", label: L("cheatsheet.ripple.delete")),
             ])]
         }
         // Any other combination: nothing to say. We do NOT put up a 'no shortcut' panel — an empty

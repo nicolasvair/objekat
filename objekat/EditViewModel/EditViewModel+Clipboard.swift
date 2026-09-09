@@ -430,12 +430,33 @@ extension EditViewModel {
     /// Deletes the content of the time selection (with no copy to the clipboard).
     func deleteTimeSelection() {
         guard let sel = timeSelection else { return }
+        pushUndo()
+        guard carveTimeRange(lo: sel.timeRange.lowerBound,
+                             hi: sel.timeRange.upperBound,
+                             lanes: sel.lanes) else {
+            _ = undoStack.popLast()
+            return
+        }
+        selectedIDs   = []
+        timeSelection = nil
+        isDirty       = true
+    }
 
-        let lo = sel.timeRange.lowerBound
-        let hi = sel.timeRange.upperBound
-
+    /// Hollows the range [lo, hi] out of the given DISPLAY lanes and returns whether it took
+    /// anything. It is `deleteTimeSelection`'s matter-removing half, taken out so that the
+    /// RIPPLE can reuse it before closing the gap (@see EditViewModel+Ripple) — it pushes no
+    /// undo of its own and touches neither the selection nor `isDirty`: the caller owns the
+    /// transaction.
+    ///
+    /// `skippingInfiniteBuses`: an infinite bus has no window to hollow (it spans the whole
+    /// project by definition). The plain delete still carves it, as it always has; the ripple,
+    /// which widens the lanes to a whole container, leaves it alone.
+    @discardableResult
+    func carveTimeRange(lo: Double, hi: Double, lanes: Set<Int>,
+                        skippingInfiniteBuses: Bool = false) -> Bool {
         let affectedAll = laneEntries.filter { e in
-            return sel.lanes.contains(e.displayLane)
+            if skippingInfiniteBuses && e.item.isInfiniteBus { return false }
+            return lanes.contains(e.displayLane)
                 && e.absStart < hi
                 && e.absStart + e.item.duration > lo
         }.sorted { $0.depth < $1.depth }
@@ -452,9 +473,7 @@ extension EditViewModel {
             }
             return true
         }
-        guard !affected.isEmpty else { return }
-
-        pushUndo()
+        guard !affected.isEmpty else { return false }
 
         for entry in affected {
             let id = entry.item.id
@@ -536,9 +555,7 @@ extension EditViewModel {
             }
         }
 
-        selectedIDs   = []
-        timeSelection = nil
-        isDirty       = true
+        return true
     }
 
     /// Removes the range [cutLo, cutHi] (absolute) from the DIRECT children of `groupID`,
