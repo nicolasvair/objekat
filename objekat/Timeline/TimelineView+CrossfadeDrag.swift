@@ -267,20 +267,25 @@ extension TimelineView {
         // give, and what is past zero becomes a plain fade below.
         let rawWidth: Double
         let idealStart: Double?
+        // The pair is EXCLUDED from the snap targets, exactly as a trim excludes the objects it
+        // moves: the zone's two boundaries ARE these two objects' edges, so leaving them in would
+        // have the travelling edge snap onto the very edge it is moving away from — the zone
+        // sticking shut, or leaping to the neighbour's far end.
+        let excl: Set<UUID> = [state.leftID, state.rightID]
         switch state.part {
         case .move:
             rawWidth   = state.anchorWidth
-            idealStart = viewModel.snapTime(state.anchorStart + dx)
+            idealStart = viewModel.snapTime(state.anchorStart + dx, excluding: excl)
         case .both:
             // Symmetric about the centre the zone had when the hand came down, so widening and
             // narrowing are the same travel seen from either side of it.
             rawWidth   = state.anchorWidth + 2 * state.widenSign * dx
             idealStart = state.anchorCentre - max(0, rawWidth) / 2
         case .sideStart:
-            rawWidth   = state.anchorEnd - viewModel.snapTime(state.anchorStart + dx)
+            rawWidth   = state.anchorEnd - viewModel.snapTime(state.anchorStart + dx, excluding: excl)
             idealStart = state.anchorEnd - max(0, rawWidth)
         case .sideEnd:
-            rawWidth   = viewModel.snapTime(state.anchorEnd + dx) - state.anchorStart
+            rawWidth   = viewModel.snapTime(state.anchorEnd + dx, excluding: excl) - state.anchorStart
             idealStart = state.anchorStart
         }
         let width = max(0, rawWidth)
@@ -316,11 +321,21 @@ extension TimelineView {
 
             // The plain fade past the joint, on the held side only. Bounded by that object's own
             // length, which is the only stop a fade has ever had.
+            //
+            // ONLY once there IS something past the joint, and that guard is the whole of it: run
+            // unconditionally, this wrote a fade of 0 over the one `openCrossfade` had just set
+            // three lines above, and a crossfade IS the two fades being equal to the overlap
+            // (@see isCrossfadePair) — so one side at 0 dissolved the pair on the first frame and
+            // the two side gestures looked as though they turned the crossfade off. Nothing else
+            // is needed on the way back either: `openCrossfade` sets both fades every frame, so
+            // returning inside the zone restores them by itself.
             state.spilloverFade = spill
-            if state.part == .sideStart, let o = viewModel.find(id: state.rightID) {
-                viewModel.updateFadeIn(id: o.id, fadeIn: min(spill, o.duration))
-            } else if state.part == .sideEnd, let o = viewModel.find(id: state.leftID) {
-                viewModel.updateFadeOut(id: o.id, fadeOut: min(spill, o.duration))
+            if spill > 0 {
+                if state.part == .sideStart, let o = viewModel.find(id: state.rightID) {
+                    viewModel.updateFadeIn(id: o.id, fadeIn: min(spill, o.duration))
+                } else if state.part == .sideEnd, let o = viewModel.find(id: state.leftID) {
+                    viewModel.updateFadeOut(id: o.id, fadeOut: min(spill, o.duration))
+                }
             }
         }
 
