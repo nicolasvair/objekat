@@ -147,24 +147,65 @@ extension EditViewModel {
         return nil
     }
 
-    /// The SHUT seam nearest a time on a display lane: two neighbours that touch without
-    /// overlapping. It is what the hand grabs to CREATE a crossfade — the open zone above is the
-    /// one it grabs to change an existing one — and it returns the join's time so the gesture can
-    /// open symmetrically around it.
-    func buttSeam(nearTime t: Double, displayLane: Int,
-                  tolerance: Double) -> (left: UUID, right: UUID, at: Double)? {
-        let row = laneEntries.filter { $0.displayLane == displayLane }
-                             .sorted { $0.absStart < $1.absStart }
-        var best: (left: UUID, right: UUID, at: Double, d: Double)?
-        for (a, b) in zip(row, row.dropFirst()) {
-            let aEnd = a.absStart + a.item.duration
-            // Touching, not overlapping: an overlap is already a zone and answers above.
-            guard abs(aEnd - b.absStart) <= Self.seamEpsilon else { continue }
-            let d = abs(t - b.absStart)
-            guard d <= tolerance, best == nil || d < best!.d else { continue }
-            best = (a.item.id, b.item.id, b.absStart, d)
+    /// The widest zone a seam can hold — the `w` at which the four bounds on the zone's start meet
+    /// (@see `openCrossfade`, where they are named). Shared so that a GESTURE can know the limit
+    /// before it reaches it: pulling a fade out onto its neighbour is bounded by this and not by
+    /// the object's own file, otherwise a side with nothing left would forbid a crossfade the
+    /// OTHER side could perfectly well have given.
+    static func crossfadeCeiling(leftStart: Double, leftEnd: Double,
+                                 rightStart: Double, rightEnd: Double,
+                                 headLRight: Double, headRLeft: Double,
+                                 keepLeft: Double, keepRight: Double) -> Double {
+        let currentOverlap = max(0, leftEnd - rightStart)
+        return min(currentOverlap + headLRight + headRLeft,
+                   (rightEnd - rightStart) - keepRight + headRLeft,
+                   (leftEnd - leftStart) - keepLeft + headLRight,
+                   rightEnd - keepRight - leftStart - keepLeft)
+    }
+
+    /// The widest crossfade these two neighbours could hold, 0 when the seam cannot open at all.
+    /// What a gesture asks before it starts, so it can stop at the limit — and so it can SHOW that
+    /// there is no room rather than silently doing nothing.
+    func maxCrossfadeWidth(leftID: UUID, rightID: UUID) -> Double {
+        guard var left = find(id: leftID), var right = find(id: rightID),
+              left.lane == right.lane,
+              parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id else { return 0 }
+        if left.startTime > right.startTime { swap(&left, &right) }
+        if isLoopedGroupPorthole(left) || isLoopedGroupPorthole(right) { return 0 }
+        let leftEnd = left.startTime + left.duration
+        let rightEnd = right.startTime + right.duration
+        guard leftEnd >= right.startTime - Self.seamEpsilon else { return 0 }
+        let headL = windowHeadroom(left), headR = windowHeadroom(right)
+        return max(0, Self.crossfadeCeiling(
+            leftStart: left.startTime, leftEnd: leftEnd,
+            rightStart: right.startTime, rightEnd: rightEnd,
+            headLRight: headL.right, headRLeft: headR.left,
+            keepLeft: max(left.fadeIn, Self.crossfadeMinDuration),
+            keepRight: max(right.fadeOut, Self.crossfadeMinDuration)))
+    }
+
+    /// The sibling this object BUTTS against on one side — the one a fade pulled out past that
+    /// edge would spill onto, which is how a crossfade is created. An already-crossfaded
+    /// neighbour counts: pulling further simply widens the zone that is there.
+    func seamNeighbour(of id: UUID, onRight: Bool) -> UUID? {
+        guard let me = find(id: id) else { return nil }
+        let myEnd = me.startTime + me.duration
+        for other in crossfadeSiblings(of: id) where other.id != id && other.lane == me.lane {
+            let otherEnd = other.startTime + other.duration
+            if onRight {
+                // It starts where I finish (a butt joint), or we already share a zone.
+                guard other.startTime > me.startTime, otherEnd > myEnd else { continue }
+                if abs(other.startTime - myEnd) <= Self.seamEpsilon || isCrossfadePair(me, other) {
+                    return other.id
+                }
+            } else {
+                guard other.startTime < me.startTime, otherEnd < myEnd else { continue }
+                if abs(me.startTime - otherEnd) <= Self.seamEpsilon || isCrossfadePair(other, me) {
+                    return other.id
+                }
+            }
         }
-        return best.map { (left: $0.left, right: $0.right, at: $0.at) }
+        return nil
     }
 
     /// The crossfade these two form, if they form one.
@@ -282,10 +323,10 @@ extension EditViewModel {
         // gesture is told, the FILE one being a seam that cannot open at all and the others a seam
         // that merely cannot go this far.
         let byMaterial = currentOverlap + headL.right + headR.left
-        let maxWidth = min(byMaterial,
-                           right.duration - keepRight + headR.left,
-                           left.duration - keepLeft + headL.right,
-                           rightEnd - keepRight - left.startTime - keepLeft)
+        let maxWidth = Self.crossfadeCeiling(leftStart: left.startTime, leftEnd: leftEnd,
+                                             rightStart: right.startTime, rightEnd: rightEnd,
+                                             headLRight: headL.right, headRLeft: headR.left,
+                                             keepLeft: keepLeft, keepRight: keepRight)
         guard maxWidth > Self.seamEpsilon || width <= Self.seamEpsilon else {
             return .failure(byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
         }

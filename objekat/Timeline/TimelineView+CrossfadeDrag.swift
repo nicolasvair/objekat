@@ -9,6 +9,13 @@ import AppKit
 // span is ALWAYS a crossfade and there is no general tie-break to spread through the code. One
 // case, tested in one place, before the per-block carve-up (@see ClipEditZone.resolve).
 //
+// This handles an EXISTING zone only. A crossfade is CREATED by pulling a fade out past its
+// object's edge onto the neighbour — the fade overflows the join and the overlap it makes is the
+// crossfade (@see the fade branch of `handleCanvasDrag`). The join itself is not a target: it is a
+// line with no surface, and it is exactly where the two blocks' own trim and resize handles already
+// meet, so grabbing it meant a 5 px target competing with two others. The fade handle is visible,
+// already under the hand, and says what it is about to do.
+//
 // What the hand does inside it, and why that split:
 //
 //  • the BODY moves the seam — the two go on meeting for just as long, but somewhere else. It is
@@ -35,10 +42,6 @@ struct CrossfadeDragState {
         case body
         /// An edge: widen or narrow, the opposite edge pinned.
         case edgeStart, edgeEnd
-        /// A seam still SHUT: the drag opens it, symmetrically about the join. This is the only
-        /// way a crossfade is created, and it is why the join is a target of its own — with no
-        /// zone yet there is no surface to grab, just the line where the two objects meet.
-        case openFromSeam
     }
 
     var leftID:  UUID
@@ -88,11 +91,6 @@ extension TimelineView {
     /// third of the zone, so the body stays reachable on a narrow crossfade.
     static let crossfadeEdgeGrabPx: Double = 7
 
-    /// How close to a SHUT seam counts as grabbing it. Wider than an edge of an open zone: there
-    /// is no surface to aim at, only a line, and the join is also where two blocks' own trim and
-    /// resize handles meet — so it has to be findable without being greedy.
-    static let seamGrabPx: Double = 5
-
     /// The crossfade under a canvas point, and which part of it the hand is on. `nil` when the
     /// point is not in a zone — the ordinary per-block carve-up then applies, untouched.
     func crossfadeHit(at p: CGPoint) -> (zone: EditViewModel.CrossfadeZone, part: CrossfadeDragState.Part)? {
@@ -101,16 +99,7 @@ extension TimelineView {
         let laneTop = rulerHeight + Double(lane) * laneStep
         guard p.y <= laneTop + blockHeight else { return nil }
         let t = p.x / pixelsPerSecond
-        guard let zone = viewModel.crossfadeZone(atTime: t, displayLane: lane) else {
-            // No zone here: perhaps a seam still shut, which is what one grabs to make one.
-            guard let seam = viewModel.buttSeam(nearTime: t, displayLane: lane,
-                                                tolerance: Self.seamGrabPx / pixelsPerSecond)
-            else { return nil }
-            let shut = EditViewModel.CrossfadeZone(leftID: seam.left, rightID: seam.right,
-                                                   containerID: nil, lane: lane,
-                                                   start: seam.at, end: seam.at)
-            return (shut, .openFromSeam)
-        }
+        guard let zone = viewModel.crossfadeZone(atTime: t, displayLane: lane) else { return nil }
 
         let x0 = zone.start * pixelsPerSecond
         let x1 = zone.end * pixelsPerSecond
@@ -167,16 +156,9 @@ extension TimelineView {
             let newEnd = viewModel.snapTime(state.anchorEnd + dx)
             width      = max(0, newEnd - state.anchorStart)
             idealStart = state.anchorStart
-        case .openFromSeam:
-            // Pulling either way opens it, and it opens ABOUT the join — hence `nil`, the centred
-            // default. Which way the hand went says how far, not which side gives: that is settled
-            // by the material each side has left.
-            width      = abs(dx)
-            idealStart = .nan   // stands for "centred"; see the call below
         }
 
-        let moved = (!idealStart.isNaN && abs(idealStart - state.anchorStart) > 1e-9)
-                 || abs(width - state.anchorWidth) > 1e-9
+        let moved = abs(idealStart - state.anchorStart) > 1e-9 || abs(width - state.anchorWidth) > 1e-9
         if (moved || state.overshootY != 0), !state.didChange {
             // The first frame that actually asks for something: one undo step for the whole drag.
             viewModel.pushUndo()
@@ -185,8 +167,7 @@ extension TimelineView {
 
         if state.didChange {
             let result = viewModel.openCrossfade(leftID: state.leftID, rightID: state.rightID,
-                                                 width: width,
-                                                 idealStart: idealStart.isNaN ? nil : idealStart)
+                                                 width: width, idealStart: idealStart)
             // A zone shut to nothing stops being a crossfade, so the ids would no longer resolve
             // to one: the gesture keeps its own two ids and can reopen the seam on the way back.
             if case .success(let zone) = result, let zone {

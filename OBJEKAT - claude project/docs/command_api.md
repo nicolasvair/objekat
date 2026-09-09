@@ -338,11 +338,17 @@ on each side — which is what lets a crossfade be equal-gain or equal-power at 
 equal-**power** is `convex` at a bend of ⅓: the exponent is then 8^(1/3) = 2 and the gain √α, so
 α + (1−α) = 1 the whole way (measured, power sum flat to 3·10⁻⁴).
 
-The same three moves exist as a gesture on the timeline, and `start` is what expresses them: the
-zone's **body** slides the seam (same width, new start), its **edges** widen or narrow it (new
-width, the opposite edge kept), and a seam still shut is grabbed at the join and opens about it.
-A **vertical** drag bends both curves at once, measured from the object's own row exactly as on a
-fade, ⌥ flipping them to the S.
+The same moves exist as a gesture on the timeline, and `start` is what expresses them: the zone's
+**body** slides the seam (same width, new start) and its **edges** widen or narrow it (new width,
+the opposite edge kept). A **vertical** drag bends both curves at once, measured from the object's
+own row exactly as on a fade, ⌥ flipping them to the S.
+
+A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it
+touches: the fade overflows the join, and the overlap it makes IS the crossfade. The join itself is
+not a target — it is a line with no surface, exactly where the two blocks' own trim and resize
+handles already meet, whereas the fade handle is visible, already under the hand, and says what it
+is about to do. Past that edge the travel is bounded by what the CROSSFADE can hold and not by the
+object's own file, so a side with nothing left still opens the zone from the other side.
 
 `resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
 merely LANDS on an object, having no matching fades, still overwrites.

@@ -155,6 +155,17 @@ struct FadeDragState {
     /// there, and there would otherwise be no way back from it.
     var sCurve: Bool = false
 
+    /// For each object of the gesture, the sibling its grabbed edge BUTTS against — the one the
+    /// fade spills onto when it is pulled out past that edge. Where there is one, the outward
+    /// travel opens a CROSSFADE instead of extending the window over the neighbour and having
+    /// `resolveOverlaps` eat it. Empty = nothing to spill onto, and the edge extends as it always
+    /// did. @see EditViewModel.seamNeighbour.
+    var seamNeighbours: [UUID: UUID] = [:]
+
+    /// The width the zone already had, per object: pulling further widens it from there rather
+    /// than restarting from nothing.
+    var zoneAnchors: [UUID: Double] = [:]
+
     /// What the hand has ADDED along the signed bend axis: + bulges (upwards), − hollows. Nothing
     /// eases it — the bend one sees is proportional to the travel one makes, and an easing curve on
     /// top would only make the same amount cost a different distance depending on where one already
@@ -503,9 +514,29 @@ extension TimelineView {
                 let side: FadeSide = zone == .fadeIn ? .in : .out
                 // The source-content margin available beyond the edge: once the fade is absorbed, going on
                 // pulling outwards EXTENDS the sound (the same stops as trim/resize).
+                // Whom each object's grabbed edge touches: pulling the fade out past that edge
+                // spills it onto that neighbour and makes a crossfade of the overlap.
+                var neighbours: [UUID: UUID] = [:]
+                var zones: [UUID: Double] = [:]
+                for obj in objs {
+                    guard let n = viewModel.seamNeighbour(of: obj.id, onRight: side == .out)
+                    else { continue }
+                    neighbours[obj.id] = n
+                    let pair = side == .out ? (obj.id, n) : (n, obj.id)
+                    zones[obj.id] = viewModel.crossfadeZone(leftID: pair.0, rightID: pair.1)?.width ?? 0
+                }
+                // The outward travel available. Where the edge touches a NEIGHBOUR the limit is
+                // not this object's own file but what the crossfade can hold: a side with nothing
+                // left would otherwise forbid a zone the other side could perfectly well give —
+                // which is the whole "if the matter is missing on one side, open on the other".
                 let room = objs.map { obj -> Double in
-                    side == .in ? min(obj.startTime, obj.contentRoomBefore)
-                                : obj.contentRoomAfter
+                    if let n = neighbours[obj.id] {
+                        let pair = side == .out ? (obj.id, n) : (n, obj.id)
+                        return max(0, viewModel.maxCrossfadeWidth(leftID: pair.0, rightID: pair.1)
+                                      - (zones[obj.id] ?? 0))
+                    }
+                    return side == .in ? min(obj.startTime, obj.contentRoomBefore)
+                                       : obj.contentRoomAfter
                 }.min() ?? 0
                 fadeDrag = FadeDragState(
                     ids: ids, grabbedID: item.id, side: side,
@@ -518,7 +549,9 @@ extension TimelineView {
                     // The bend each edge starts from: the vertical ADDS to it (@see `curve(for:)`),
                     // so a drag that never leaves the row gives every object its own curve back.
                     curveAnchors: Dictionary(uniqueKeysWithValues:
-                        objs.map { ($0.id, side == .in ? $0.fadeInCurve : $0.fadeOutCurve) })
+                        objs.map { ($0.id, side == .in ? $0.fadeInCurve : $0.fadeOutCurve) }),
+                    seamNeighbours: neighbours,
+                    zoneAnchors: zones
                 )
 
             case .trimLeft:
@@ -667,6 +700,22 @@ extension TimelineView {
                 viewModel.pushUndo()
                 let final = state.finalFade
                 for id in state.ids {
+                    // The fade has SPILLED past its edge onto the neighbour it touches: what the
+                    // hand made is a crossfade, not a longer window. Opening it sets both fades to
+                    // the zone's width, so the fade commit below is skipped for this object — the
+                    // zone commands the edge engaged in it (@see EditViewModel+Crossfade).
+                    if state.dEdge != 0, let neighbour = state.seamNeighbours[id] {
+                        let pair = state.side == .out ? (id, neighbour) : (neighbour, id)
+                        let width = (state.zoneAnchors[id] ?? 0) + abs(state.dEdge)
+                        viewModel.openCrossfade(leftID: pair.0, rightID: pair.1, width: width)
+                        let curve = state.curve(for: id)
+                        if curve != state.curveAnchors[id] {
+                            // Both sides of the zone, since it is ONE crossfade the hand is bending.
+                            viewModel.updateFadeCurve(id: pair.0, fadeOut: curve)
+                            viewModel.updateFadeCurve(id: pair.1, fadeIn: curve)
+                        }
+                        continue
+                    }
                     if state.dEdge != 0, let a = state.edgeAnchors[id] {
                         switch state.side {
                         case .in:  viewModel.updateTrim(id: id,
@@ -691,7 +740,11 @@ extension TimelineView {
                     }
                 }
                 if state.dEdge != 0 {
-                    for id in state.ids { viewModel.resolveOverlaps(for: id) }
+                    // Not for an object whose edge became a crossfade: its overlap is the feature,
+                    // and `resolveOverlaps` recognises it — but there is nothing to settle either.
+                    for id in state.ids where state.seamNeighbours[id] == nil {
+                        viewModel.resolveOverlaps(for: id)
+                    }
                 }
                 fadeDrag = nil
             } else {
