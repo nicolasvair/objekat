@@ -1249,11 +1249,13 @@ final class EditViewModel {
     /// `pushAutomationTree` and for the same reason: a shape lives in the ObjWindowFade plugin,
     /// which is reborn with the object, and every site that lays a fade LENGTH (`setWindowForKey:`)
     /// says nothing of the shape. Re-pushing from the model systematically, here and after each
-    /// geometry change, is what keeps the two from drifting apart. Two integer writes: cheap
-    /// enough to do without asking whether it was needed.
+    /// geometry change, is what keeps the two from drifting apart. Two families and two bends:
+    /// cheap enough to do without asking whether it was needed.
     func pushFadeCurveTree(_ object: SoundObject) {
-        engine?.updateFadeCurves(in: object.fadeInCurve.engineCode,
-                                 out: object.fadeOutCurve.engineCode,
+        engine?.updateFadeCurves(in: object.fadeInCurve.shape.engineCode,
+                                 amountIn: Float(object.fadeInCurve.amount),
+                                 out: object.fadeOutCurve.shape.engineCode,
+                                 amountOut: Float(object.fadeOutCurve.amount),
                                  forID: object.id.uuidString)
         if case .group(let children, _) = object.kind {
             for child in children { pushFadeCurveTree(child) }

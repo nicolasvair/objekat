@@ -318,9 +318,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var pan: Float
     var fadeIn: Double
     var fadeOut: Double
-    /// The SHAPE of each fade, next to its length (@see FadeCurve). Independent per edge: one
-    /// commonly wants a hollowed entry and a bulged exit. `linear` for everything made before
-    /// 9 September 2026, and for everything one never shapes.
+    /// The SHAPE of each fade — a family AND how far it bends (@see FadeCurve). Independent per
+    /// edge: one commonly wants a hollowed entry and a bulged exit. Straight for everything made
+    /// before 9 September 2026, and for everything one never shapes.
     var fadeInCurve:  FadeCurve = .linear
     var fadeOutCurve: FadeCurve = .linear
     var isMuted: Bool
@@ -1011,9 +1011,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encode(fadeIn,    forKey: .fadeIn)
         try c.encode(fadeOut,   forKey: .fadeOut)
         // Written only when they say something: a straight fade is the overwhelming case, and a
-        // session file gains nothing from carrying "linear" on every object.
-        if fadeInCurve  != .linear { try c.encode(fadeInCurve,  forKey: .fadeInCurve) }
-        if fadeOutCurve != .linear { try c.encode(fadeOutCurve, forKey: .fadeOutCurve) }
+        // session file gains nothing from carrying "linear" on every object. A family with a bend
+        // of zero IS straight (@see FadeCurve.isStraight), so it is not written either.
+        if !fadeInCurve.isStraight  { try c.encode(fadeInCurve,  forKey: .fadeInCurve) }
+        if !fadeOutCurve.isStraight { try c.encode(fadeOutCurve, forKey: .fadeOutCurve) }
         try c.encode(isMuted,   forKey: .isMuted)
         try c.encodeIfPresent(stemID,     forKey: .stemID)
         try c.encode(plugins,   forKey: .plugins)

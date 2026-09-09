@@ -23,8 +23,10 @@ extension CommandRegistry {
             }
             payload["fade_in"] = .number(item.fadeIn)
             payload["fade_out"] = .number(item.fadeOut)
-            payload["fade_in_curve"] = .string(item.fadeInCurve.rawValue)
-            payload["fade_out_curve"] = .string(item.fadeOutCurve.rawValue)
+            payload["fade_in_curve"] = .string(item.fadeInCurve.shape.rawValue)
+            payload["fade_out_curve"] = .string(item.fadeOutCurve.shape.rawValue)
+            payload["fade_in_bend"] = .number(item.fadeInCurve.amount)
+            payload["fade_out_bend"] = .number(item.fadeOutCurve.amount)
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)
@@ -84,34 +86,56 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "fade_in": .number(object.fadeIn),
                             "fade_out": .number(object.fadeOut),
-                            "fade_in_curve": .string(object.fadeInCurve.rawValue),
-                            "fade_out_curve": .string(object.fadeOutCurve.rawValue)])
+                            "fade_in_curve": .string(object.fadeInCurve.shape.rawValue),
+                            "fade_out_curve": .string(object.fadeOutCurve.shape.rawValue),
+                            "fade_in_bend": .number(object.fadeInCurve.amount),
+                            "fade_out_bend": .number(object.fadeOutCurve.amount)])
         }
 
         register("object.set_fade_curve",
-                 summary: "Sets the SHAPE of the fades: linear | convex | concave | sCurve | "
-                        + "sCurveInverse. Independent of their length — a shape set on an object "
-                        + "with no fade shows up the moment one is pulled.",
+                 summary: "Sets the SHAPE of the fades: a FAMILY — linear | convex | concave | "
+                        + "sCurve | sCurveInverse — and a BEND, 0…1, saying how far the curve "
+                        + "leaves the straight line (0 = straight whatever the family, 1 = the "
+                        + "full shape). Independent of the fades' length — a shape set on an "
+                        + "object with no fade shows up the moment one is pulled.",
                  params: [ParamSpec("id", "uuid", "Target object."),
-                          ParamSpec("in", "string", required: false, "Fade-in shape."),
-                          ParamSpec("out", "string", required: false, "Fade-out shape.")],
+                          ParamSpec("in", "string", required: false, "Fade-in family."),
+                          ParamSpec("out", "string", required: false, "Fade-out family."),
+                          ParamSpec("in_bend", "number", required: false,
+                                    "Fade-in bend 0…1 (default 1 with a family, else unchanged)."),
+                          ParamSpec("out_bend", "number", required: false,
+                                    "Fade-out bend 0…1 (default 1 with a family, else unchanged).")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard vm.find(id: id) != nil else {
+            guard let current = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
-            func curve(_ key: String) throws -> FadeCurve? {
-                guard p.raw[key] != nil else { return nil }
-                let name = try p.string(key)
-                guard let c = FadeCurve(rawValue: name) else {
-                    throw CommandError(code: .bad_params,
-                                       message: "'\(key)': expected one of "
-                                              + FadeCurve.allCases.map(\.rawValue).joined(separator: ", "))
+            // A family with no bend means the FULL shape — the shorthand the five fixed shapes
+            // used to be. A bend with no family bends the family already there, which is what
+            // lets a script sweep one curve open without naming it again at every step.
+            func curve(_ key: String, _ existing: FadeCurve) throws -> FadeCurve? {
+                let bendKey = key + "_bend"
+                let hasShape = p.raw[key] != nil, hasBend = p.raw[bendKey] != nil
+                guard hasShape || hasBend else { return nil }
+                var shape = existing.shape
+                if hasShape {
+                    let name = try p.string(key)
+                    guard let s = FadeShape(rawValue: name) else {
+                        throw CommandError(code: .bad_params,
+                                           message: "'\(key)': expected one of "
+                                                  + FadeShape.allCases.map(\.rawValue).joined(separator: ", "))
+                    }
+                    shape = s
                 }
-                return c
+                let bend = try hasBend ? p.double(bendKey) : (hasShape ? 1 : existing.amount)
+                guard bend >= 0, bend <= 1 else {
+                    throw CommandError(code: .bad_params, message: "'\(bendKey)': expected 0…1")
+                }
+                return FadeCurve(shape: shape, amount: bend)
             }
-            let cIn = try curve("in"), cOut = try curve("out")
+            let cIn = try curve("in", current.fadeInCurve)
+            let cOut = try curve("out", current.fadeOutCurve)
             guard cIn != nil || cOut != nil else {
                 throw CommandError(code: .bad_params, message: "'in' or 'out' required")
             }
@@ -120,8 +144,10 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "object lost")
             }
             return .object(["id": .string(id.uuidString),
-                            "fade_in_curve": .string(object.fadeInCurve.rawValue),
-                            "fade_out_curve": .string(object.fadeOutCurve.rawValue)])
+                            "fade_in_curve": .string(object.fadeInCurve.shape.rawValue),
+                            "fade_out_curve": .string(object.fadeOutCurve.shape.rawValue),
+                            "fade_in_bend": .number(object.fadeInCurve.amount),
+                            "fade_out_bend": .number(object.fadeOutCurve.amount)])
         }
 
         register("object.set_speed",

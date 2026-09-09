@@ -2974,19 +2974,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "leave the row: up bulges, down hollows"
+            "value": "leave the row: up bulges, down hollows — the further, the more"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "salir de la fila: arriba abomba, abajo hunde"
+            "value": "salir de la fila: arriba abomba, abajo hunde — cuanto más lejos, más curvado"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "sortir de la rangée : haut bombe, bas creuse"
+            "value": "sortir de la rangée : haut bombe, bas creuse — plus loin, plus courbé"
           }
         }
       }

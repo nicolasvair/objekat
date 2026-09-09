@@ -119,28 +119,40 @@ What has landed since mid-August, in order:
   not just the model. Commands: `timesel.ripple_delete`, `object.ripple_cut`.
   **Not seen on screen**: the ⌥ preview band of the cut by dragging, and the two new cheat-sheet rows.
 
-- **Shaped fades** (9 September 2026) — a fade now has a SHAPE beside its length: straight, bulged,
-  hollowed, and the two S's. One gesture carries both — the fade handle's HORIZONTAL travel says how
-  long, its VERTICAL says what shape, and the threshold is the object's own ROW rather than a number
-  of pixels: while the hand stays on the block the fade is straight, leaving the row upwards bulges
-  it and downwards hollows it, ⌥ turning the chosen shape into the S that STARTS with it. A gesture
-  whose limit one can SEE beats one calibrated in pixels.
+- **Shaped fades** (9 September 2026) — a fade now has a SHAPE beside its length: a FAMILY —
+  straight, bulged, hollowed, and the two S's — and a BEND saying how far it leaves the straight
+  line. One gesture carries all of it: the fade handle's HORIZONTAL travel says how long, its
+  VERTICAL says how bent, and the origin is the object's own ROW rather than a number of pixels —
+  while the hand stays on the block the fade is straight, leaving the row upwards bulges it and
+  downwards hollows it, ⌥ turning the chosen family into the S that STARTS with it. A gesture whose
+  limit one can SEE beats one calibrated in pixels.
+  The bend is CONTINUOUS, and that is the point (it was five fixed shapes for a few hours on
+  9 September, and snapping threw away everything the hand said past the first pixel outside the
+  row): the first pixel outside barely departs from the line, full bend one block-height further
+  out, and the drag HUD reads the percentage so one can come back to the same curve twice. What
+  gives the travel somewhere to GO is the family being a power `a^p` and not the quarter-sine it
+  started with: `bend` maps to the exponent as `8 ^ bend` — geometric, which is what the eye and the
+  ear read as an even progression — so the sine's whole bend now sits at about a third of the
+  travel. The power keeps what made the sine beat a logarithm (it reaches exactly 0 and 1 at its
+  ends, no clamp pulled out of nowhere at the silent end) and adds what the sine did not have:
+  `a^p` and `a^(1/p)` are exact reflections through the diagonal, so bulged and hollowed are the
+  same amount of bend seen from either side.
   The fact that makes this cheap, and that is worth knowing before touching a fade anywhere:
   **every fade in OBJEKAT already lives in `ObjWindowFadePlugin`** at the tail of the object's
   chain — clip, MIDI, group and aux alike — and Tracktion's own clip fades are held at zero on
   purpose (`OBJEngineCore.mm`, `updateGroupWindow:`), otherwise the graph's `FadeInOutNode` would
   apply them a second time. So the shape went into ONE `envelopeGain`, with no engine patch and no
-  second implementation. Closed forms per sample, never automation points, and the three plain
-  shapes are Tracktion's own (`AudioFadeCurve`): the quarter-sine rather than a logarithm, which
-  would run to −∞ at zero and have to be clamped somewhere arbitrary. `sCurveInverse` is ours —
-  Tracktion carries only one of the pair. `FadeCurve.gain` and `ObjWindowFadePlugin::curveGain` are
-  mirrors, and `WaveformShaping.fadeEnvelope` reads the first: the drawn waveform, the veil on the
-  block and what is heard all come from one definition.
-  Verified with no screen: build, then the five shapes RENDERED and measured window by window
-  against formulas written independently — worst deviation 0.008 — plus the outgoing edge, a group,
-  a save/reload, and undo. Command: `object.set_fade_curve`.
-  **Not seen on screen**: the veil bent to the curve, the drag HUD naming the shape, the cheat-sheet
-  row.
+  second implementation. Closed forms per sample, never automation points — and the exponent is
+  computed once per BLOCK, never per sample. `FadeCurve.gain` and `ObjWindowFadePlugin::curveGain`
+  are mirrors, and `WaveformShaping.fadeEnvelope` reads the first: the drawn waveform, the veil on
+  the block and what is heard all come from one definition — so "is it only the display?" always
+  has the same answer, no.
+  Verified with no screen: **a build, and nothing more** — the five shapes at full bend had been
+  rendered and measured against independent formulas before the bend became continuous, but the
+  power family that replaced them has been HEARD by nobody and MEASURED nowhere. Command:
+  `object.set_fade_curve` (`in` / `out` for the family, `in_bend` / `out_bend` 0…1).
+  **Not seen on screen**: the veil bent to the curve, the drag HUD naming the shape and its
+  percentage, the cheat-sheet row.
 
 ### What is owed
 

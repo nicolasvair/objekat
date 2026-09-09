@@ -116,27 +116,49 @@ struct FadeDragState {
 
     // MARK: The SHAPE, read off the vertical component
     //
-    // One gesture, two dimensions: the horizontal says HOW LONG, the vertical says WHAT SHAPE. And
-    // the threshold is not a number of pixels but the object's own LANE — while the hand stays on
-    // the block the fade is straight, and it takes leaving the block, up or down, to bend it. A
+    // One gesture, two dimensions: the horizontal says HOW LONG, the vertical says HOW BENT. And
+    // the origin is not a number of pixels but the object's own LANE — while the hand stays on the
+    // block the fade is straight, and it takes leaving the block, up or down, to bend it. A
     // gesture whose limit one can SEE is worth more than one calibrated in pixels: the row's edge
     // is drawn on screen, a 24 px dead zone is not.
+    //
+    // What leaving the row starts is a CONTINUOUS bend, not a shape: the first pixel outside
+    // barely departs from the straight line, and the curve goes on opening as the hand climbs —
+    // full bend one block-height further out. Anything else would throw away everything the hand
+    // says past that first pixel, and would make the one value it did give unreachable by halves.
 
     /// How far the cursor has left the grabbed object's lane, in px: 0 while it is still inside,
     /// negative above, positive below.
     var overshootY: Double = 0
 
+    /// The travel, in px, that takes the fade from straight to FULLY bent — one block-height,
+    /// frozen at the gesture's start. The block's own height rather than a constant: the row is
+    /// what one sees, and it is what the vertical zoom changes, so the gesture keeps the same feel
+    /// whatever the height of the rows.
+    var bendTravelPx: Double = 60
+
     /// ⌥ held: the two plain shapes become the two S's — the vertical direction keeps saying which
     /// shape comes FIRST, ⌥ merely says that the other one follows.
     var sCurve: Bool = false
 
-    /// The shape the gesture is asking for. Up = bulged (the level rises at once), down = hollowed
-    /// (it hangs back), inside the lane = straight.
-    var curve: FadeCurve {
+    /// The family the gesture is asking for. Up = bulged (the level rises at once), down =
+    /// hollowed (it hangs back), inside the row = straight.
+    var shape: FadeShape {
         if overshootY < 0 { return sCurve ? .sCurveInverse : .convex }
         if overshootY > 0 { return sCurve ? .sCurve        : .concave }
         return .linear
     }
+
+    /// How far from the straight line, 0…1: the distance travelled outside the row, over
+    /// `bendTravelPx`. Nothing eases it — the bend one sees is proportional to the travel one
+    /// makes, and an easing curve on top would only make the same amount cost a different distance
+    /// depending on where one already was.
+    var bendAmount: Double {
+        min(1, abs(overshootY) / max(1, bendTravelPx))
+    }
+
+    /// The curve the gesture is asking for: the family, bent by as much as the hand has travelled.
+    var curve: FadeCurve { FadeCurve(shape: shape, amount: bendAmount) }
 }
 
 /// Cutting by dragging (the Cut tool): the gesture's direction decides which side is KEPT.
@@ -584,12 +606,14 @@ extension TimelineView {
         // resize.
         if var state = fadeDrag {
             // The vertical component, measured against the grabbed object's ROW and not in
-            // pixels: inside it the fade stays straight, above it bulges, below it hollows. ⌥
-            // turns the chosen shape into the S that STARTS with it.
+            // pixels: inside it the fade stays straight, above it bulges, below it hollows — and
+            // it bends PROGRESSIVELY, one block-height of travel from straight to full. ⌥ turns
+            // the chosen shape into the S that STARTS with it.
             let laneTop = rulerHeight + Double(state.grabbedLane) * laneStep
             let y = value.location.y
             state.overshootY = y < laneTop ? y - laneTop
                              : (y > laneTop + blockHeight ? y - (laneTop + blockHeight) : 0)
+            state.bendTravelPx = blockHeight
             state.sCurve = NSEvent.modifierFlags.contains(.option)
 
             let rawDx    = Double(value.translation.width) / pixelsPerSecond

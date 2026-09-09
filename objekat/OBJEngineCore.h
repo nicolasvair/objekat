@@ -35,8 +35,9 @@
 - (void)updateFadeIn:(double)fadeIn fadeOut:(double)fadeOut forID:(NSString*)uuid;
 // Les FORMES des deux fondus, posées à part de leurs longueurs : tout geste qui déplace ou
 // redimensionne un objet repose sa fenêtre, et n'a rien à dire de la forme (@see setCurves).
-// Codes miroir de `FadeCurve.engineCode` côté Swift.
-- (void)updateFadeCurvesIn:(int)curveIn out:(int)curveOut forID:(NSString*)uuid;
+// Codes miroir de `FadeShape.engineCode` côté Swift ; les deux `amount` (0…1) disent de COMBIEN
+// la courbe s'écarte de la droite, la forme disant de quel côté.
+- (void)updateFadeCurvesIn:(int)curveIn amountIn:(float)amountIn out:(int)curveOut amountOut:(float)amountOut forID:(NSString*)uuid;
 - (void)updateIsReversed:(BOOL)reversed forID:(NSString*)uuid;
 - (void)updateSpeedRatio:(double)ratio forID:(NSString*)uuid;
 // Change la lane d'un objet top-level : son clip passe sur la piste porteuse de la lane cible

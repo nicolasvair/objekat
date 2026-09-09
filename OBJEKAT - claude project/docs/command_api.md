@@ -263,19 +263,37 @@ That is end-of-process noise, with no effect on the result.
 
 A fade has a length (`object.set_fade`) and a SHAPE (`object.set_fade_curve`), and the two are
 independent: a shape laid on an object with no fade changes nothing audible and shows up the moment
-one is pulled. Five values — `linear`, `convex`, `concave`, `sCurve`, `sCurveInverse` — reported by
-`object.get` as `fade_in_curve` / `fade_out_curve`.
+one is pulled. A shape is itself two things — a **family**, which way the curve leaves the straight
+line, and a **bend**, how far it leaves it:
+
+| | |
+|---|---|
+| `in` / `out` | the family: `linear`, `convex`, `concave`, `sCurve`, `sCurveInverse` |
+| `in_bend` / `out_bend` | 0…1. `0` is the straight line whatever the family, `1` the extreme |
+
+A family with no bend means the full bend; a bend with no family bends the family already there,
+which is what lets a script open one curve progressively without naming it again at every step.
+`object.get` reports the four as `fade_in_curve` / `fade_out_curve` and `fade_in_bend` /
+`fade_out_bend`.
+
+The bend is a **continuum and not five values**: the gesture that lays it down is a vertical travel,
+and the curve follows it pixel by pixel. `bend` is what the hand says, 0…1 of that travel; the curve
+is driven by the exponent it maps to, `8 ^ bend` — geometric rather than proportional, because that
+is what the eye and the ear read as an even progression.
 
 They are **closed forms evaluated per sample**, never automation points: a fade drawn with points
 would cost memory proportional to its length, would quantise exactly what the ear hears best (the
-start of a fade in), and would have to be redrawn at every trim.
+start of a fade in), and would have to be redrawn at every trim. A power `a^p` rather than a
+quarter-sine or a logarithm: a whole family where those are single shapes, so the bend has somewhere
+to go, and it still reaches exactly 0 and 1 at its ends with no clamp pulled out of nowhere at the
+silent end.
 
 The convention that makes the vocabulary hold on both edges: the argument is the fade's
 **progress**, 0 = silence and 1 = full level, so the outgoing edge reads the time it has LEFT.
 `convex` therefore means the same thing entering and leaving — the curve that stands ABOVE the
-diagonal, the level reached at once. `concave` is its opposite, and the two S shapes are the same
-blend of those two with the weights swapped (`sCurve` = hollow then bulge, `sCurveInverse` = the
-other way round; Tracktion carries only the first of the pair, the second is ours).
+diagonal, the level reached at once. `concave` is its exact reflection through the diagonal, and the
+two S's are the same power applied to each half with the second one turned over (`sCurve` = hollow
+then bulge, `sCurveInverse` = the other way round).
 
 Every object wears them, clip and group alike: in this engine ALL fades live in
 `ObjWindowFadePlugin` at the tail of the object's chain, and Tracktion's own clip fades are held at

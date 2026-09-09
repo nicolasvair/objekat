@@ -1884,26 +1884,31 @@ struct TimelineView: View {
         }
     }
 
-    /// A modifier's badge: lit while it is held. `locked` = the gesture froze that choice at its
-    /// start, and releasing it will change nothing.
-    /// The SHAPE the fade drag under way is about to lay down, named while one is making it. A
-    /// fade has two dimensions here — the length under the hand, the shape under the vertical
-    /// component — and nothing on the block announces the second one. The same reasoning as
-    /// `moveDragHUD`: the only moment a modifier counts is the moment one cannot go and read a
+    /// The SHAPE the fade drag under way is about to lay down, named AND measured while one is
+    /// making it. A fade has two dimensions here — the length under the hand, the bend under the
+    /// vertical component — and nothing on the block announces the second one. The same reasoning
+    /// as `moveDragHUD`: the only moment a modifier counts is the moment one cannot go and read a
     /// list, so the gesture says itself.
     ///
-    /// The shape shown is the one the STATE will apply, never a second reading of the mouse: what
-    /// one reads and what one gets cannot then diverge.
+    /// The percentage is what makes a CONTINUOUS bend usable: without it one sees the veil bend
+    /// but has no way of coming back to the same curve twice, and no way of knowing that one has
+    /// hit the end of the travel. It is read off the same state as the curve, never off a second
+    /// reading of the mouse: what one reads and what one gets cannot then diverge.
     @ViewBuilder
     private var fadeDragHUD: some View {
         if let fd = fadeDrag {
-            let curve = fd.curve
+            let shape = fd.shape
             HStack(spacing: 7) {
-                Image(systemName: fadeHUDSymbol(curve))
+                Image(systemName: fadeHUDSymbol(shape))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text(L(fadeCurveNameKey(curve)))
+                Text(L(fadeCurveNameKey(shape)))
                     .font(.system(size: 11, weight: .bold))
+                if shape != .linear {
+                    Text(verbatim: "\(Int((fd.bendAmount * 100).rounded())) %")
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentColor)
+                }
                 Text(verbatim: "·")
                     .foregroundStyle(.secondary)
                 Text(L("hud.fade.leaveLane"))
@@ -1920,9 +1925,9 @@ struct TimelineView: View {
         }
     }
 
-    /// The translation key naming a shape. Shared with the inspector, so that a curve is called the
-    /// same thing wherever it is named.
-    func fadeCurveNameKey(_ c: FadeCurve) -> String {
+    /// The translation key naming a shape's FAMILY. Shared with the inspector, so that a curve is
+    /// called the same thing wherever it is named.
+    func fadeCurveNameKey(_ c: FadeShape) -> String {
         switch c {
         case .linear:        return "fade.curve.linear"
         case .convex:        return "fade.curve.convex"
@@ -1932,7 +1937,7 @@ struct TimelineView: View {
         }
     }
 
-    private func fadeHUDSymbol(_ c: FadeCurve) -> String {
+    private func fadeHUDSymbol(_ c: FadeShape) -> String {
         switch c {
         case .linear:                    return "line.diagonal"
         case .convex, .sCurveInverse:    return "arrow.up.right"
@@ -1940,6 +1945,8 @@ struct TimelineView: View {
         }
     }
 
+    /// A modifier's badge: lit while it is held. `locked` = the gesture froze that choice at its
+    /// start, and releasing it will change nothing.
     private func modifierChip(_ glyph: String, _ label: String,
                               on: Bool, locked: Bool) -> some View {
         HStack(spacing: 4) {
