@@ -12,11 +12,17 @@ enum WaveformShaping {
 
     /// Fade envelope (0…1) at a local time `t` (s) inside an object of length `dur`.
     /// fadeIn: 0→1 over [0, fi]; fadeOut: 1→0 over [dur-fo, dur].
+    ///
+    /// The SHAPES are read the way the engine reads them (@see FadeCurve, mirrored in
+    /// `ObjWindowFadePlugin::curveGain`): the argument is the fade's PROGRESS, so the outgoing edge
+    /// passes the time it has LEFT. The drawn waveform and what is heard then come from one single
+    /// definition — a display that flattered a hollowed fade would be a lie one could not hear.
     static func fadeEnvelope(localTime t: Double, duration dur: Double,
-                             fadeIn fi: Double, fadeOut fo: Double) -> Double {
+                             fadeIn fi: Double, fadeOut fo: Double,
+                             curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear) -> Double {
         var g = 1.0
-        if fi > 0, t < fi            { g *= max(0, min(1, t / fi)) }
-        if fo > 0, t > dur - fo      { g *= max(0, min(1, (dur - t) / fo)) }
+        if fi > 0, t < fi            { g *= curveIn.gain(t / fi) }
+        if fo > 0, t > dur - fo      { g *= curveOut.gain((dur - t) / fo) }
         return max(0, g)
     }
 
@@ -57,11 +63,25 @@ enum WaveformShaping {
         let duration: Double
         let fadeIn: Double
         let fadeOut: Double
+        let curveIn: FadeCurve
+        let curveOut: FadeCurve
         let gain: Double       // = linearGain(volume), precomputed
+
+        init(absStart: Double, duration: Double, fadeIn: Double, fadeOut: Double,
+             curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear, gain: Double) {
+            self.absStart = absStart
+            self.duration = duration
+            self.fadeIn   = fadeIn
+            self.fadeOut  = fadeOut
+            self.curveIn  = curveIn
+            self.curveOut = curveOut
+            self.gain     = gain
+        }
 
         func multiplier(atAbsTime t: Double) -> Double {
             gain * fadeEnvelope(localTime: t - absStart, duration: duration,
-                                fadeIn: fadeIn, fadeOut: fadeOut)
+                                fadeIn: fadeIn, fadeOut: fadeOut,
+                                curveIn: curveIn, curveOut: curveOut)
         }
     }
 

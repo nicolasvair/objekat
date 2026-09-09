@@ -17,6 +17,8 @@ struct TimelineWaveformView: View {
     let volumeDb: Float
     let fadeIn: Double
     let fadeOut: Double
+    var curveIn:  FadeCurve = .linear
+    var curveOut: FadeCurve = .linear
     let isMuted: Bool
     let waveformDisplayDB: Double
     /// The loop's IN/OUT bounds in seconds LOCAL to the block (`nil` = no loop).
@@ -35,6 +37,7 @@ struct TimelineWaveformView: View {
                     stemColor: stemColor, isSelected: isSelected,
                     clipDuration: clipDuration, speedRatio: speedRatio, isReversed: isReversed,
                     volumeDb: volumeDb, fadeIn: fadeIn, fadeOut: fadeOut,
+                    curveIn: curveIn, curveOut: curveOut,
                     isMuted: isMuted, waveformDisplayDB: waveformDisplayDB, loopRange: loopRange)
             }
             .allowsHitTesting(false)

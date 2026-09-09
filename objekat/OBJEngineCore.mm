@@ -2222,6 +2222,14 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
                    fadeIn:fadeIn fadeOut:fadeOut];
 }
 
+- (void)updateFadeCurvesIn:(int)curveIn out:(int)curveOut forID:(NSString*)uuid {
+    std::string key([uuid UTF8String]);
+    auto it = _windowFadeMap.find(key);
+    if (it == _windowFadeMap.end()) return;
+    if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
+        w->setCurves(curveIn, curveOut);
+}
+
 // MARK: - Reverse
 // (updatePitchChange: retiré — API morte : le pitch passe par le varispeed,
 // updateSpeedRatio:, qui change durée ET hauteur. Cf. convention varispeed.)

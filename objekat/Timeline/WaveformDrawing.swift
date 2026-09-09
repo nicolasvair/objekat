@@ -40,6 +40,7 @@ enum WaveformDrawing {
         scrollOffsetX: CGFloat, viewportWidth: CGFloat,
         clipDuration: Double, speedRatio: Double, isReversed: Bool,
         volumeDb: Float, fadeIn: Double, fadeOut: Double,
+        curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear,
         waveformDisplayDB: Double,
         loopRange: (start: Double, end: Double)? = nil
     ) -> Bool {
@@ -56,7 +57,8 @@ enum WaveformDrawing {
         let vScale = mid * displayGain
         func mul(_ i: Int) -> Double {
             gainLin * WaveformShaping.fadeEnvelope(localTime: Double(i) / pixelsPerSecond,
-                                                   duration: clipDuration, fadeIn: fadeIn, fadeOut: fadeOut)
+                                                   duration: clipDuration, fadeIn: fadeIn, fadeOut: fadeOut,
+                                                   curveIn: curveIn, curveOut: curveOut)
         }
         func src(_ i: Int) -> Double {
             WaveformShaping.sourceTime(localTime: Double(i) / pixelsPerSecond,
@@ -162,6 +164,8 @@ enum WaveformDrawing {
         volumeDb: Float,
         fadeIn: Double,
         fadeOut: Double,
+        curveIn: FadeCurve = .linear,
+        curveOut: FadeCurve = .linear,
         isMuted: Bool,
         waveformDisplayDB: Double,
         loopRange: (start: Double, end: Double)? = nil
@@ -181,7 +185,8 @@ enum WaveformDrawing {
 
         func mulT(_ localT: Double) -> Double {
             gainLin * WaveformShaping.fadeEnvelope(
-                localTime: localT, duration: clipDuration, fadeIn: fadeIn, fadeOut: fadeOut)
+                localTime: localT, duration: clipDuration, fadeIn: fadeIn, fadeOut: fadeOut,
+                curveIn: curveIn, curveOut: curveOut)
         }
         func mul(_ i: Int) -> Double { mulT(Double(i) / pixelsPerSecond) }
         func src(_ i: Int) -> Double {

@@ -880,6 +880,7 @@ struct TimelineView: View {
                 cheatsheetOverlay
                 fileDropHintOverlay
                 moveDragHUD
+                fadeDragHUD
                 heldSoloHUD
                 soloHUD
                 stemAssignHUD
@@ -1529,6 +1530,8 @@ struct TimelineView: View {
             previewTrimDX:    previewTrimDX(for: object),
             previewFadeIn:    previewFadeIn(for: object),
             previewFadeOut:   previewFadeOut(for: object),
+            previewFadeInCurve:  previewFadeCurveIn(for: object),
+            previewFadeOutCurve: previewFadeCurveOut(for: object),
             previewLoopRange: previewLoopRange(for: object),
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
@@ -1816,6 +1819,8 @@ struct TimelineView: View {
             previewTrimDX:   previewTrimDX(for: group),
             previewFadeIn:   previewFadeIn(for: group),
             previewFadeOut:  previewFadeOut(for: group),
+            previewFadeInCurve:  previewFadeCurveIn(for: group),
+            previewFadeOutCurve: previewFadeCurveOut(for: group),
             previewLoopRange: previewLoopRange(for: group),
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
@@ -1881,6 +1886,60 @@ struct TimelineView: View {
 
     /// A modifier's badge: lit while it is held. `locked` = the gesture froze that choice at its
     /// start, and releasing it will change nothing.
+    /// The SHAPE the fade drag under way is about to lay down, named while one is making it. A
+    /// fade has two dimensions here — the length under the hand, the shape under the vertical
+    /// component — and nothing on the block announces the second one. The same reasoning as
+    /// `moveDragHUD`: the only moment a modifier counts is the moment one cannot go and read a
+    /// list, so the gesture says itself.
+    ///
+    /// The shape shown is the one the STATE will apply, never a second reading of the mouse: what
+    /// one reads and what one gets cannot then diverge.
+    @ViewBuilder
+    private var fadeDragHUD: some View {
+        if let fd = fadeDrag {
+            let curve = fd.curve
+            HStack(spacing: 7) {
+                Image(systemName: fadeHUDSymbol(curve))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(L(fadeCurveNameKey(curve)))
+                    .font(.system(size: 11, weight: .bold))
+                Text(verbatim: "·")
+                    .foregroundStyle(.secondary)
+                Text(L("hud.fade.leaveLane"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: fd.sCurve, locked: false)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The translation key naming a shape. Shared with the inspector, so that a curve is called the
+    /// same thing wherever it is named.
+    func fadeCurveNameKey(_ c: FadeCurve) -> String {
+        switch c {
+        case .linear:        return "fade.curve.linear"
+        case .convex:        return "fade.curve.convex"
+        case .concave:       return "fade.curve.concave"
+        case .sCurve:        return "fade.curve.sCurve"
+        case .sCurveInverse: return "fade.curve.sCurveInverse"
+        }
+    }
+
+    private func fadeHUDSymbol(_ c: FadeCurve) -> String {
+        switch c {
+        case .linear:                    return "line.diagonal"
+        case .convex, .sCurveInverse:    return "arrow.up.right"
+        case .concave, .sCurve:          return "arrow.down.right"
+        }
+    }
+
     private func modifierChip(_ glyph: String, _ label: String,
                               on: Bool, locked: Bool) -> some View {
         HStack(spacing: 4) {

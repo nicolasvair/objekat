@@ -1242,6 +1242,22 @@ final class EditViewModel {
         // The plugins carrying the curves have just been born: push again from the model.
         // (The sends of an aux not created yet will be caught up by `resyncAllSends`.)
         pushAutomationTree(object)
+        pushFadeCurveTree(object)
+    }
+
+    /// Pushes the SHAPE of the two fades, for the object and every descendant. It travels beside
+    /// `pushAutomationTree` and for the same reason: a shape lives in the ObjWindowFade plugin,
+    /// which is reborn with the object, and every site that lays a fade LENGTH (`setWindowForKey:`)
+    /// says nothing of the shape. Re-pushing from the model systematically, here and after each
+    /// geometry change, is what keeps the two from drifting apart. Two integer writes: cheap
+    /// enough to do without asking whether it was needed.
+    func pushFadeCurveTree(_ object: SoundObject) {
+        engine?.updateFadeCurves(in: object.fadeInCurve.engineCode,
+                                 out: object.fadeOutCurve.engineCode,
+                                 forID: object.id.uuidString)
+        if case .group(let children, _) = object.kind {
+            for child in children { pushFadeCurveTree(child) }
+        }
     }
 
     func syncPosition(_ object: SoundObject) {
@@ -1288,6 +1304,10 @@ final class EditViewModel {
         // `syncPosition` is the one way through for every geometry change (a move, a trim, a lane,
         // entering/leaving a group). The whole tree for a group: its children have moved with it.
         pushAutomationTree(object)
+        // The fades' SHAPES take the same road, and for the same reason: every geometry change
+        // relays the window's bounds and its two fade LENGTHS to the engine, and none of them
+        // carries the shape.
+        pushFadeCurveTree(object)
     }
 
     /// Pushes to the engine the absolute position of every descendant clip (sub-groups included).

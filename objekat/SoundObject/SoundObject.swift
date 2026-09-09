@@ -318,6 +318,11 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var pan: Float
     var fadeIn: Double
     var fadeOut: Double
+    /// The SHAPE of each fade, next to its length (@see FadeCurve). Independent per edge: one
+    /// commonly wants a hollowed entry and a bulged exit. `linear` for everything made before
+    /// 9 September 2026, and for everything one never shapes.
+    var fadeInCurve:  FadeCurve = .linear
+    var fadeOutCurve: FadeCurve = .linear
     var isMuted: Bool
     var stemID: UUID?
     var plugins: [ObjectPlugin]
@@ -849,6 +854,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     init(id: UUID = UUID(), startTime: Double, duration: Double, lane: Int,
          volume: Float = 0.0, pan: Float = 0.0,
          fadeIn: Double = 0.0, fadeOut: Double = 0.0,
+         fadeInCurve: FadeCurve = .linear, fadeOutCurve: FadeCurve = .linear,
          isMuted: Bool = false, stemID: UUID? = nil,
          plugins: [ObjectPlugin] = [], instruments: [ObjectPlugin] = [],
          label: String? = nil, colorIndex: Int? = nil,
@@ -872,6 +878,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.pan        = pan
         self.fadeIn     = fadeIn
         self.fadeOut    = fadeOut
+        self.fadeInCurve  = fadeInCurve
+        self.fadeOutCurve = fadeOutCurve
         self.isMuted    = isMuted
         self.stemID     = stemID
         self.plugins    = plugins
@@ -931,6 +939,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         let inherited = automation ?? self.automation
         return SoundObject(id: id, startTime: startTime, duration: duration, lane: lane,
                     volume: volume, pan: pan, fadeIn: fadeIn, fadeOut: fadeOut,
+                    // The LENGTHS are the caller's business (it cuts, trims, fragments); the
+                    // SHAPES are the object's identity and are inherited as they are.
+                    fadeInCurve: fadeInCurve, fadeOutCurve: fadeOutCurve,
                     isMuted: isMuted, stemID: stemID,
                     plugins: plugins, instruments: instruments,
                     label: label, colorIndex: colorIndex,
@@ -982,6 +993,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, startTime, duration, lane, volume, pan, fadeIn, fadeOut
+        case fadeInCurve, fadeOutCurve
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, definitionID, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
@@ -998,6 +1010,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encode(pan,       forKey: .pan)
         try c.encode(fadeIn,    forKey: .fadeIn)
         try c.encode(fadeOut,   forKey: .fadeOut)
+        // Written only when they say something: a straight fade is the overwhelming case, and a
+        // session file gains nothing from carrying "linear" on every object.
+        if fadeInCurve  != .linear { try c.encode(fadeInCurve,  forKey: .fadeInCurve) }
+        if fadeOutCurve != .linear { try c.encode(fadeOutCurve, forKey: .fadeOutCurve) }
         try c.encode(isMuted,   forKey: .isMuted)
         try c.encodeIfPresent(stemID,     forKey: .stemID)
         try c.encode(plugins,   forKey: .plugins)
@@ -1036,6 +1052,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         pan        = try c.decode(Float.self,  forKey: .pan)
         fadeIn     = try c.decodeIfPresent(Double.self, forKey: .fadeIn)  ?? 0.0
         fadeOut    = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0.0
+        fadeInCurve  = try c.decodeIfPresent(FadeCurve.self, forKey: .fadeInCurve)  ?? .linear
+        fadeOutCurve = try c.decodeIfPresent(FadeCurve.self, forKey: .fadeOutCurve) ?? .linear
         isMuted    = try c.decodeIfPresent(Bool.self,   forKey: .isMuted) ?? false
         stemID     = try c.decodeIfPresent(UUID.self,   forKey: .stemID)
         plugins    = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []

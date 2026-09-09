@@ -27,6 +27,8 @@ struct SoundBlockView: View {
     let previewTrimDX: Double
     let previewFadeIn: Double?
     let previewFadeOut: Double?
+    var previewFadeInCurve:  FadeCurve? = nil
+    var previewFadeOutCurve: FadeCurve? = nil
     /// The loop's IN/OUT bounds in preview (seconds local to the block), @see previewLoopRange(for:)
     /// in TimelineView+DragHandler. `nil` if the object does not loop.
     var previewLoopRange: (start: Double, end: Double)? = nil
@@ -91,6 +93,10 @@ struct SoundBlockView: View {
     private var effectiveFadeOut: Double { effectiveFades.fo }
     private var fadeInPx: Double  { effectiveFadeIn  * pixelsPerSecond }
     private var fadeOutPx: Double { effectiveFadeOut * pixelsPerSecond }
+    // The shape being dragged takes priority over the stored one, exactly as the length does:
+    // the block shows what one is about to get, the straightening included.
+    private var effectiveFadeInCurve:  FadeCurve { previewFadeInCurve  ?? object.fadeInCurve  }
+    private var effectiveFadeOutCurve: FadeCurve { previewFadeOutCurve ?? object.fadeOutCurve }
 
     /// The loop's IN/OUT bounds for display (px local to the block): a drag preview takes priority,
     /// otherwise the bounds that are set. `nil` if the object does not loop.
@@ -214,6 +220,8 @@ struct SoundBlockView: View {
                     volumeDb: object.volume,
                     fadeIn: effectiveFadeIn,
                     fadeOut: effectiveFadeOut,
+                    curveIn: effectiveFadeInCurve,
+                    curveOut: effectiveFadeOutCurve,
                     isMuted: object.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
                     loopRange: previewLoopRange
@@ -223,33 +231,14 @@ struct SoundBlockView: View {
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             }
 
-            // Fades
+            // Fades — the veil's lower edge IS the curve (@see FadeVeilShape).
             if fadeInPx > 0 {
-                GeometryReader { geo in
-                    let w = min(fadeInPx, geo.size.width)
-                    let h = geo.size.height
-                    Path { p in
-                        p.move(to: .zero)
-                        p.addLine(to: CGPoint(x: w, y: 0))
-                        p.addLine(to: CGPoint(x: 0, y: h))
-                        p.closeSubpath()
-                    }
+                FadeVeilShape(curve: effectiveFadeInCurve, widthPx: fadeInPx, side: .in)
                     .fill(Color.black.opacity(0.30))
-                }
             }
             if fadeOutPx > 0 {
-                GeometryReader { geo in
-                    let w = min(fadeOutPx, geo.size.width)
-                    let bw = geo.size.width
-                    let h = geo.size.height
-                    Path { p in
-                        p.move(to: CGPoint(x: bw - w, y: 0))
-                        p.addLine(to: CGPoint(x: bw, y: 0))
-                        p.addLine(to: CGPoint(x: bw, y: h))
-                        p.closeSubpath()
-                    }
+                FadeVeilShape(curve: effectiveFadeOutCurve, widthPx: fadeOutPx, side: .out)
                     .fill(Color.black.opacity(0.30))
-                }
             }
 
             // The loop's IN/OUT markers: two full-height vertical bars, with a small flag at the top

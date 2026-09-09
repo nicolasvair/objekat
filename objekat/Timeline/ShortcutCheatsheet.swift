@@ -164,6 +164,8 @@ enum ShortcutCheatsheet {
                 ShortcutRow(keys: L("cheatsheet.keys.optDragTop"),
                             label: L("cheatsheet.slip")),
                 ShortcutRow(keys: "⌥⌫", label: L("cheatsheet.ripple.delete")),
+                ShortcutRow(keys: L("cheatsheet.keys.optDragFade"),
+                            label: L("cheatsheet.fade.sCurve")),
             ])]
         }
         // Any other combination: nothing to say. We do NOT put up a 'no shortcut' panel — an empty

@@ -34,6 +34,7 @@ struct GroupWaveformView: View {
         WaveformShaping.Modifier(
             absStart: o.startTime, duration: o.duration,
             fadeIn: o.fadeIn, fadeOut: o.fadeOut,
+            curveIn: o.fadeInCurve, curveOut: o.fadeOutCurve,
             gain: WaveformShaping.linearGain(dB: o.volume))
     }
 

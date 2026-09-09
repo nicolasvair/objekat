@@ -26,6 +26,18 @@ extension EditViewModel {
         syncFade(id: id)
     }
 
+    /// The SHAPE of one edge, or of both. A shape has no length of its own: setting it on an
+    /// object with no fade changes nothing audible, and shows up the moment one is pulled.
+    func updateFadeCurve(id: UUID, fadeIn: FadeCurve? = nil, fadeOut: FadeCurve? = nil) {
+        guard fadeIn != nil || fadeOut != nil else { return }
+        update(id: id) { obj in
+            if let fadeIn  { obj.fadeInCurve  = fadeIn }
+            if let fadeOut { obj.fadeOutCurve = fadeOut }
+        }
+        if let obj = find(id: id) { pushFadeCurveTree(obj) }
+        isDirty = true
+    }
+
     /// Pushes the fade to the engine: the clip's native fade, or the folder's window+fade
     /// envelope for a group.
     private func syncFade(id: UUID) {

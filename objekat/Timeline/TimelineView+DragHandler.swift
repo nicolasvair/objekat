@@ -94,6 +94,9 @@ struct FadeDragState {
     var ids: Set<UUID>
     var grabbedID: UUID
     var side: FadeSide
+    /// The DISPLAY row of the object one grabbed: the shape's threshold is that row's own edges
+    /// (@see `curve`), so the gesture has to remember which row it started on.
+    var grabbedLane: Int
     var anchorFade: Double
     var globalMaxFade: Double
     var dFade: Double = 0
@@ -110,6 +113,30 @@ struct FadeDragState {
     /// The ceiling follows the edge's extension: the block grows by `|dEdge|`, so the fade can
     /// take up as much.
     var finalFade: Double { max(0, min(anchorFade + dFade, globalMaxFade + abs(dEdge))) }
+
+    // MARK: The SHAPE, read off the vertical component
+    //
+    // One gesture, two dimensions: the horizontal says HOW LONG, the vertical says WHAT SHAPE. And
+    // the threshold is not a number of pixels but the object's own LANE — while the hand stays on
+    // the block the fade is straight, and it takes leaving the block, up or down, to bend it. A
+    // gesture whose limit one can SEE is worth more than one calibrated in pixels: the row's edge
+    // is drawn on screen, a 24 px dead zone is not.
+
+    /// How far the cursor has left the grabbed object's lane, in px: 0 while it is still inside,
+    /// negative above, positive below.
+    var overshootY: Double = 0
+
+    /// ⌥ held: the two plain shapes become the two S's — the vertical direction keeps saying which
+    /// shape comes FIRST, ⌥ merely says that the other one follows.
+    var sCurve: Bool = false
+
+    /// The shape the gesture is asking for. Up = bulged (the level rises at once), down = hollowed
+    /// (it hangs back), inside the lane = straight.
+    var curve: FadeCurve {
+        if overshootY < 0 { return sCurve ? .sCurveInverse : .convex }
+        if overshootY > 0 { return sCurve ? .sCurve        : .concave }
+        return .linear
+    }
 }
 
 /// Cutting by dragging (the Cut tool): the gesture's direction decides which side is KEPT.
@@ -433,6 +460,7 @@ extension TimelineView {
                 }.min() ?? 0
                 fadeDrag = FadeDragState(
                     ids: ids, grabbedID: item.id, side: side,
+                    grabbedLane: hitDL,
                     anchorFade: side == .in ? item.fadeIn : item.fadeOut,
                     globalMaxFade: globalMaxFade,
                     edgeAnchors: Dictionary(uniqueKeysWithValues:
@@ -555,6 +583,15 @@ extension TimelineView {
         // follows the hand and extends the sound, with the same source-content stops as trim and
         // resize.
         if var state = fadeDrag {
+            // The vertical component, measured against the grabbed object's ROW and not in
+            // pixels: inside it the fade stays straight, above it bulges, below it hollows. ⌥
+            // turns the chosen shape into the S that STARTS with it.
+            let laneTop = rulerHeight + Double(state.grabbedLane) * laneStep
+            let y = value.location.y
+            state.overshootY = y < laneTop ? y - laneTop
+                             : (y > laneTop + blockHeight ? y - (laneTop + blockHeight) : 0)
+            state.sCurve = NSEvent.modifierFlags.contains(.option)
+
             let rawDx    = Double(value.translation.width) / pixelsPerSecond
             let deadZone = Self.fadeEdgeDeadZonePx / pixelsPerSecond
             let outward  = state.side == .in ? -rawDx : rawDx   // the travel outwards from the block
@@ -587,6 +624,12 @@ extension TimelineView {
                     case .in:  viewModel.updateFadeIn(id: id, fadeIn: final)
                     case .out: viewModel.updateFadeOut(id: id, fadeOut: final)
                     }
+                    // The shape is committed with the length, and a gesture kept INSIDE the row
+                    // really does set `linear` back: what the drag showed is what one gets, and
+                    // there is no other way to straighten a fade one has bent.
+                    viewModel.updateFadeCurve(id: id,
+                                              fadeIn:  state.side == .in  ? state.curve : nil,
+                                              fadeOut: state.side == .out ? state.curve : nil)
                 }
                 if state.dEdge != 0 {
                     for id in state.ids { viewModel.resolveOverlaps(for: id) }
@@ -1048,6 +1091,18 @@ extension TimelineView {
     func previewFadeOut(for object: SoundObject) -> Double? {
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.finalFade
+    }
+
+    /// The SHAPE under way, so the block draws what one is about to get — including the return to
+    /// straight when the hand comes back inside the row.
+    func previewFadeCurveIn(for object: SoundObject) -> FadeCurve? {
+        guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
+        return fd.curve
+    }
+
+    func previewFadeCurveOut(for object: SoundObject) -> FadeCurve? {
+        guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
+        return fd.curve
     }
 
     /// The loop's IN/OUT bounds in preview while a marker is dragged (in seconds LOCAL to the

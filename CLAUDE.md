@@ -119,6 +119,29 @@ What has landed since mid-August, in order:
   not just the model. Commands: `timesel.ripple_delete`, `object.ripple_cut`.
   **Not seen on screen**: the ⌥ preview band of the cut by dragging, and the two new cheat-sheet rows.
 
+- **Shaped fades** (9 September 2026) — a fade now has a SHAPE beside its length: straight, bulged,
+  hollowed, and the two S's. One gesture carries both — the fade handle's HORIZONTAL travel says how
+  long, its VERTICAL says what shape, and the threshold is the object's own ROW rather than a number
+  of pixels: while the hand stays on the block the fade is straight, leaving the row upwards bulges
+  it and downwards hollows it, ⌥ turning the chosen shape into the S that STARTS with it. A gesture
+  whose limit one can SEE beats one calibrated in pixels.
+  The fact that makes this cheap, and that is worth knowing before touching a fade anywhere:
+  **every fade in OBJEKAT already lives in `ObjWindowFadePlugin`** at the tail of the object's
+  chain — clip, MIDI, group and aux alike — and Tracktion's own clip fades are held at zero on
+  purpose (`OBJEngineCore.mm`, `updateGroupWindow:`), otherwise the graph's `FadeInOutNode` would
+  apply them a second time. So the shape went into ONE `envelopeGain`, with no engine patch and no
+  second implementation. Closed forms per sample, never automation points, and the three plain
+  shapes are Tracktion's own (`AudioFadeCurve`): the quarter-sine rather than a logarithm, which
+  would run to −∞ at zero and have to be clamped somewhere arbitrary. `sCurveInverse` is ours —
+  Tracktion carries only one of the pair. `FadeCurve.gain` and `ObjWindowFadePlugin::curveGain` are
+  mirrors, and `WaveformShaping.fadeEnvelope` reads the first: the drawn waveform, the veil on the
+  block and what is heard all come from one definition.
+  Verified with no screen: build, then the five shapes RENDERED and measured window by window
+  against formulas written independently — worst deviation 0.008 — plus the outgoing edge, a group,
+  a save/reload, and undo. Command: `object.set_fade_curve`.
+  **Not seen on screen**: the veil bent to the curve, the drag HUD naming the shape, the cheat-sheet
+  row.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

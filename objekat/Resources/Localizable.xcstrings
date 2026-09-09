@@ -300,6 +300,29 @@
         }
       }
     },
+    "cheatsheet.fade.sCurve": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turn the shape into an S"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "convertir la forma en S"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "transformer la forme en S"
+          }
+        }
+      }
+    },
     "cheatsheet.group": {
       "extractionState": "manual",
       "localizations": {
@@ -365,6 +388,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌘ (maintenu)"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.optDragFade": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ drag a fade"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ arrastrar un fundido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ drag un fondu"
           }
         }
       }
@@ -2416,6 +2462,121 @@
         }
       }
     },
+    "fade.curve.concave": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hollowed fade"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fundido hundido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fondu creusé"
+          }
+        }
+      }
+    },
+    "fade.curve.convex": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "bulged fade"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fundido abombado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fondu bombé"
+          }
+        }
+      }
+    },
+    "fade.curve.linear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "straight fade"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fundido recto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fondu droit"
+          }
+        }
+      }
+    },
+    "fade.curve.sCurve": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, hollow first"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, hundido primero"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, creusé d’abord"
+          }
+        }
+      }
+    },
+    "fade.curve.sCurveInverse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, bulge first"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, abombado primero"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S, bombé d’abord"
+          }
+        }
+      }
+    },
     "help.cut.impossible": {
       "extractionState": "manual",
       "localizations": {
@@ -2780,6 +2941,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d fichiers"
+          }
+        }
+      }
+    },
+    "hud.fade.chip.sCurve": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S curve"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "curva en S"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "courbe en S"
+          }
+        }
+      }
+    },
+    "hud.fade.leaveLane": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "leave the row: up bulges, down hollows"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "salir de la fila: arriba abomba, abajo hunde"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sortir de la rangée : haut bombe, bas creuse"
           }
         }
       }

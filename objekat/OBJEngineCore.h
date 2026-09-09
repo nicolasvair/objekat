@@ -33,6 +33,10 @@
 - (void)updatePosition:(double)startTime duration:(double)duration sourceOffset:(double)sourceOffset loopEnabled:(BOOL)loopEnabled loopRangeStart:(double)loopRangeStart loopRangeEnd:(double)loopRangeEnd forID:(NSString*)uuid;
 - (void)updateVolume:(float)volume pan:(float)pan forID:(NSString*)uuid;
 - (void)updateFadeIn:(double)fadeIn fadeOut:(double)fadeOut forID:(NSString*)uuid;
+// Les FORMES des deux fondus, posées à part de leurs longueurs : tout geste qui déplace ou
+// redimensionne un objet repose sa fenêtre, et n'a rien à dire de la forme (@see setCurves).
+// Codes miroir de `FadeCurve.engineCode` côté Swift.
+- (void)updateFadeCurvesIn:(int)curveIn out:(int)curveOut forID:(NSString*)uuid;
 - (void)updateIsReversed:(BOOL)reversed forID:(NSString*)uuid;
 - (void)updateSpeedRatio:(double)ratio forID:(NSString*)uuid;
 // Change la lane d'un objet top-level : son clip passe sur la piste porteuse de la lane cible

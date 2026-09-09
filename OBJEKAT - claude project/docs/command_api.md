@@ -248,7 +248,7 @@ That is end-of-process noise, with no effect on the result.
 | `project.*` | new, open, save, save as, serialised state, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
 | `selection.*` | all, clear, set, read |
-| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades, speed, direction, duration, trim, slip, rename, detail |
+| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters |
@@ -258,6 +258,28 @@ That is end-of-process noise, with no effect on the result.
 | `export.*` | render the mix into a file, follow the progress, cancel |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
+
+### Fade shapes
+
+A fade has a length (`object.set_fade`) and a SHAPE (`object.set_fade_curve`), and the two are
+independent: a shape laid on an object with no fade changes nothing audible and shows up the moment
+one is pulled. Five values — `linear`, `convex`, `concave`, `sCurve`, `sCurveInverse` — reported by
+`object.get` as `fade_in_curve` / `fade_out_curve`.
+
+They are **closed forms evaluated per sample**, never automation points: a fade drawn with points
+would cost memory proportional to its length, would quantise exactly what the ear hears best (the
+start of a fade in), and would have to be redrawn at every trim.
+
+The convention that makes the vocabulary hold on both edges: the argument is the fade's
+**progress**, 0 = silence and 1 = full level, so the outgoing edge reads the time it has LEFT.
+`convex` therefore means the same thing entering and leaving — the curve that stands ABOVE the
+diagonal, the level reached at once. `concave` is its opposite, and the two S shapes are the same
+blend of those two with the weights swapped (`sCurve` = hollow then bulge, `sCurveInverse` = the
+other way round; Tracktion carries only the first of the pair, the second is ours).
+
+Every object wears them, clip and group alike: in this engine ALL fades live in
+`ObjWindowFadePlugin` at the tail of the object's chain, and Tracktion's own clip fades are held at
+zero on purpose (@see OBJEngineCore.mm) — so there is one shape implementation and not two.
 
 ### Ripple
 

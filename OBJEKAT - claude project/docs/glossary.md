@@ -36,6 +36,9 @@ source, not a translation.
 | curseur noir | playhead | cabezal | the playback cursor |
 | coupe | cut | corte | the tool, and the gesture |
 | montage en cascade | ripple edit | edición en cascada | removing a passage AND the time it took; bounded by the container |
+| fondu bombé | bulged fade | fundido abombado | above the diagonal: the level is reached at once |
+| fondu creusé | hollowed fade | fundido hundido | below the diagonal: the level hangs back |
+| fondu en S | S fade | fundido en S | the two blended: flat-steep-flat, or the reverse |
 | aimantation | snap | snap / imantado |  |
 | grille temporelle | time grid | rejilla temporal |  |
 | vitesse / demi-tons | speed / semitones | velocidad / semitonos |  |

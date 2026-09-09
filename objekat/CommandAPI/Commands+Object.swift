@@ -23,6 +23,8 @@ extension CommandRegistry {
             }
             payload["fade_in"] = .number(item.fadeIn)
             payload["fade_out"] = .number(item.fadeOut)
+            payload["fade_in_curve"] = .string(item.fadeInCurve.rawValue)
+            payload["fade_out_curve"] = .string(item.fadeOutCurve.rawValue)
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)
@@ -81,7 +83,45 @@ extension CommandRegistry {
             }
             return .object(["id": .string(id.uuidString),
                             "fade_in": .number(object.fadeIn),
-                            "fade_out": .number(object.fadeOut)])
+                            "fade_out": .number(object.fadeOut),
+                            "fade_in_curve": .string(object.fadeInCurve.rawValue),
+                            "fade_out_curve": .string(object.fadeOutCurve.rawValue)])
+        }
+
+        register("object.set_fade_curve",
+                 summary: "Sets the SHAPE of the fades: linear | convex | concave | sCurve | "
+                        + "sCurveInverse. Independent of their length — a shape set on an object "
+                        + "with no fade shows up the moment one is pulled.",
+                 params: [ParamSpec("id", "uuid", "Target object."),
+                          ParamSpec("in", "string", required: false, "Fade-in shape."),
+                          ParamSpec("out", "string", required: false, "Fade-out shape.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            func curve(_ key: String) throws -> FadeCurve? {
+                guard p.raw[key] != nil else { return nil }
+                let name = try p.string(key)
+                guard let c = FadeCurve(rawValue: name) else {
+                    throw CommandError(code: .bad_params,
+                                       message: "'\(key)': expected one of "
+                                              + FadeCurve.allCases.map(\.rawValue).joined(separator: ", "))
+                }
+                return c
+            }
+            let cIn = try curve("in"), cOut = try curve("out")
+            guard cIn != nil || cOut != nil else {
+                throw CommandError(code: .bad_params, message: "'in' or 'out' required")
+            }
+            vm.updateFadeCurve(id: id, fadeIn: cIn, fadeOut: cOut)
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "object lost")
+            }
+            return .object(["id": .string(id.uuidString),
+                            "fade_in_curve": .string(object.fadeInCurve.rawValue),
+                            "fade_out_curve": .string(object.fadeOutCurve.rawValue)])
         }
 
         register("object.set_speed",
