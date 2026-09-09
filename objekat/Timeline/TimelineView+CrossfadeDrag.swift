@@ -17,24 +17,27 @@ import AppKit
 //
 // ── The carve-up, and why it is the one the X already draws ─────────────────────────────────
 //
-// The two fade veils cut the zone into four regions all by themselves, and each of them ALREADY
-// means something: the top triangle is under BOTH veils, the two side triangles under one each,
-// the bottom triangle under neither. So the hand is given exactly what the eye is shown, and the
-// carve-up needs no drawing of its own:
+// The HALF decides first, as it does on every block (@see ClipEditZone.resolve): the lower half
+// belongs to the object — its edges and its body — and the upper half is where the fades live.
+// That rule is what keeps a long fade from confiscating the trimming under it, and a crossfade IS
+// two long fades, so it applies here with more reason than anywhere.
 //
-//  • TOP (doubly veiled) — the crossfade AS a thing: widening and narrowing it symmetrically about
-//    its own centre, and bending BOTH curves at once. Cursor ✕, the two fade cursors together.
-//  • BOTTOM (bare) — the zone as an OBJECT: the hand takes it and slides the seam, the two going
-//    on meeting for just as long somewhere else. It also SELECTS the crossfade, which is what
-//    lets ⌫ mean "this zone" (@see selectCrossfade). Cursor: the open hand, as on a block's body.
-//  • SIDES (one veil) — one side of the zone: the edge on that side travels and the opposite one
-//    stays put. Cursor: that side's own fade cursor, ╱ or ╲.
-//  • the EDGE BAND, lower half — the same thing as the side, under the cursor a block's own edge
-//    wears. The zone covers the two blocks' trim and resize handles entirely, and a hand that
-//    goes for an object's edge must find an object's edge there.
+//  • the LOWER half is a block's, unchanged: a handle at each end — the same quarter-of-the-width
+//    capped at 50 px, none at all below 60 px — and the whole middle to the BODY. The handles take
+//    the same edges as the sides above them, under the cursor a block's own edge wears: the zone
+//    covers both blocks' trim and resize handles entirely, and a hand reaching for an edge must
+//    find an edge. The body slides the seam, the two going on meeting for just as long somewhere
+//    else, and taking hold of it SELECTS the crossfade — which is what lets ⌫ mean "this zone"
+//    (@see selectCrossfade).
 //
-// It mirrors `ClipEditZone.resolve` on purpose — upper half the fades, lower half the edges and
-// the body — so a crossfade is grabbed with the reflexes a block has already taught.
+//  • the UPPER half is carved by the two veils, which already draw the regions: under BOTH of them
+//    (the top triangle) the crossfade AS a thing — widened and narrowed symmetrically about its
+//    own centre, both curves bent at once, cursor ✕; under ONE of them, that side alone — its edge
+//    travels and the opposite one stays put, cursor ╱ or ╲; under neither, the body again, since
+//    two bulged curves cross high and carry the bare region up with them.
+//
+// So the hand is given exactly what the eye is shown, and a crossfade is grabbed with the reflexes
+// a block has already taught.
 //
 // What the edges do at their limit is the one rule that is not geometry: pushed past the opposite
 // edge the zone shuts, the two objects stay STUCK TOGETHER (no gap ever opens under a hand that
@@ -120,7 +123,7 @@ struct CrossfadeDragState {
 }
 
 /// What the hand is on, inside a zone: the part it will drive, and whether it took hold through
-/// the narrow edge band — which changes nothing but the cursor, and that matters.
+/// the lower half's handle — which changes nothing but the cursor, and that matters.
 struct CrossfadeHit {
     let zone: EditViewModel.CrossfadeZone
     let part: CrossfadeDragState.Part
@@ -132,16 +135,19 @@ struct CrossfadeHit {
 
 extension TimelineView {
 
-    /// The narrow band along each end of the zone that wears a block's own edge cursor, lower half
-    /// only — the upper half there belongs to the fade triangles, exactly as it does on a block.
-    static let crossfadeEdgeBandPx: Double = 8
-
     /// The crossfade under a canvas point, and which part of it the hand is on. `nil` when the
     /// point is not in a zone — the ordinary per-block carve-up then applies, untouched.
     ///
-    /// The four regions are read off the CURVES themselves and not off the diagonals of the box:
-    /// a strongly bent crossfade draws an X well away from its diagonals, and the hand has to find
-    /// the region it can SEE rather than the one the maths would have drawn if nothing were bent.
+    /// The HALF decides first, exactly as it does on a block (@see ClipEditZone.resolve): the
+    /// lower half is the object's — edges and body — and the upper half is where the fades live.
+    /// Nothing else keeps a long fade from confiscating the rognage under it, and a crossfade IS
+    /// two long fades. Read the other way round, the side triangles reached down into the corners
+    /// and the bottom of the zone answered as a curve where every block answers as a body.
+    ///
+    /// Inside the upper half the regions are read off the CURVES themselves and not off the
+    /// diagonals of the box: a strongly bent crossfade draws an X well away from its diagonals,
+    /// and the hand has to find the region it can SEE rather than the one the maths would have
+    /// drawn if nothing were bent.
     func crossfadeHit(at p: CGPoint) -> CrossfadeHit? {
         guard p.y > rulerHeight else { return nil }
         let lane = Int((p.y - rulerHeight) / laneStep)
@@ -158,22 +164,24 @@ extension TimelineView {
         let ly = min(max(p.y - laneTop, 0), blockHeight)
         let a  = lx / w
 
-        // The edge band, lower half: a block's own trim / resize handle, which the zone would
-        // otherwise have swallowed whole. Never more than a third of the zone, so a narrow
-        // crossfade keeps a middle.
-        let band = min(Self.crossfadeEdgeBandPx, w / 3)
+        // ── The LOWER half: the objects' own, and nothing else ──────────────────────────────
+        // The same handle as a block's, measured on the ZONE's width by the same function: a
+        // quarter of it capped at 50 px, and none at all below 60 px — where a block gives up its
+        // handles too and leaves its whole lower half to the body.
         if ly > blockHeight / 2 {
-            if lx <= band {
+            let band = handleWidth(blockWidth: w)
+            if band > 0, lx < band {
                 return CrossfadeHit(zone: zone, part: .sideStart, viaEdgeBand: true, alpha: a)
             }
-            if lx >= w - band {
+            if band > 0, lx > w - band {
                 return CrossfadeHit(zone: zone, part: .sideEnd, viaEdgeBand: true, alpha: a)
             }
+            return CrossfadeHit(zone: zone, part: .move, viaEdgeBand: false, alpha: a)
         }
 
-        // The two curves, in the zone's own coordinates — the same reading as the veil's
-        // (@see CrossfadeCurvePath): `alpha` is the fade's PROGRESS, so the outgoing one is read
-        // right to left.
+        // ── The UPPER half: the two curves ──────────────────────────────────────────────────
+        // In the zone's own coordinates, the same reading as the veil's (@see CrossfadeCurvePath):
+        // `alpha` is the fade's PROGRESS, so the outgoing one is read right to left.
         let outCurve = viewModel.find(id: zone.leftID)?.fadeOutCurve ?? .linear
         let inCurve  = viewModel.find(id: zone.rightID)?.fadeInCurve ?? .linear
         let yOut = blockHeight * (1 - outCurve.gain(1 - a))
@@ -181,7 +189,10 @@ extension TimelineView {
 
         let part: CrossfadeDragState.Part
         if ly < min(yIn, yOut)      { part = .both }        // under BOTH veils
-        else if ly > max(yIn, yOut) { part = .move }        // under neither
+        // Under NEITHER, up here: two bulged curves cross high, and the bare region rises above
+        // the middle with them. It is still the body — the bare part of the zone is the body
+        // wherever it happens to be.
+        else if ly > max(yIn, yOut) { part = .move }
         else if yOut < yIn          { part = .sideStart }   // left of the crossing
         else                        { part = .sideEnd }
         return CrossfadeHit(zone: zone, part: part, viaEdgeBand: false, alpha: a)
