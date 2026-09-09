@@ -118,6 +118,15 @@ What has landed since mid-August, in order:
   build, eight cases through the API, and an export re-read at RMS proving the ENGINE followed and
   not just the model. Commands: `timesel.ripple_delete`, `object.ripple_cut`.
   **Not seen on screen**: the ⌥ preview band of the cut by dragging, and the two new cheat-sheet rows.
+  Completed the same day by the ripple one reaches for FIRST: ⌥⌫ with OBJECTS selected and no range
+  traced — an object is a passage one can see, so one selects it rather than tracing over it. It was
+  falling back on the plain delete, which takes the matter and leaves the hole gaping. Same doctrine
+  throughout, plus two rules of its own: the objects are rippled from the LAST to the FIRST (closing
+  a gap only moves what comes after, so those still to do keep the position just read), and the
+  selection is read through `effectiveSelectedIDs` (a child whose parent is selected too is dropped,
+  otherwise the same gap closes twice). ⌥ wins over the Volume/Pan tools there — the modifier is an
+  explicit demand, whereas resetting a value is what the BARE ⌫ means.
+  Command: `object.ripple_delete`.
 
 - **Shaped fades** (9 September 2026) — a fade now has a SHAPE beside its length: a FAMILY —
   straight, bulged, hollowed, and the two S's — and a BEND saying how far it leaves the straight
@@ -278,6 +287,15 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   screen (a build + a headless CLI test), then I say explicitly what has NOT been seen or heard.
   No testing by screenshot, no reading meters. An export re-read in the CLI is in
   **24 bits**: re-reading it as `int16` makes it look like time stretched by a factor of 1.5.
+- **A letter shortcut read from `event.characters` loses ⌥.** macOS composes: with ⌥ held, the C
+  key gives `"ç"`, not `"c"`. The `case` never matches, the key goes back unconsumed and AppKit
+  **beeps** — and the beep is only the symptom: no ⌥+letter shortcut is reachable at all, which is
+  how the Cut tool became unreachable under ⌥, i.e. exactly the ripple-cut gesture (found
+  9 September 2026). The fix is NOT to read the whole switch from `charactersIgnoringModifiers`:
+  that also undoes ⇧, and ⇧ is what MAKES `<` and `>` on most layouts. A **letter** is read without
+  its modifiers, **punctuation** with them. Same family of trap as the digits, which are identified
+  by their PHYSICAL keyCode because AZERTY needs ⇧ for them — other remedy, same lesson: what a key
+  MEANS and what it TYPES are two different questions.
 - **Never lay a cursor with `NSCursor.set()` / `push()` / `pop()`** — go through
   `objekat/Shared/CursorClaim.swift`. It does not hold otherwise.
 - `toRawUTF8()`: always on a local `juce::String` variable, never on a temporary.

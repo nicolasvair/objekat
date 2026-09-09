@@ -363,6 +363,12 @@ extension TimelineView {
                     } else {
                         DispatchQueue.main.async { vm.deleteTimeSelection() }  // internal undo push
                     }
+                } else if flags.contains(.option), !vm.selectedIDs.isEmpty {
+                    // ⌥ + a selection of OBJECTS, no range traced: the same ripple, the objects'
+                    // own spans standing in for the passage. ⌥ wins over the tools below — the
+                    // modifier is an explicit demand, whereas resetting a volume is what the BARE
+                    // ⌫ means.
+                    DispatchQueue.main.async { vm.rippleDeleteSelectedObjects() }  // internal undo push
                 } else if vm.activeTool == .toolVolume {
                     DispatchQueue.main.async { vm.edit { vm.resetVolumeSelected() } }
                 } else if vm.activeTool == .toolPan {
@@ -491,7 +497,18 @@ extension TimelineView {
                 }
                 return nil
             default:
-                switch event.characters?.lowercased() {
+                // A LETTER is read without its modifiers, punctuation with them. ⌥ composes: on
+                // most layouts ⌥C gives "ç", so reading `characters` loses every ⌥+letter
+                // shortcut — the key falls through unconsumed and AppKit BEEPS, which is how the
+                // Cut tool became unreachable while ⌥ was held, i.e. exactly the ripple gesture.
+                // `charactersIgnoringModifiers` gives the letter back, but it also undoes ⇧ —
+                // and ⇧ is what MAKES "<" and ">" on most layouts. Hence the split: letters
+                // ignore the modifiers, everything else keeps them.
+                let ignoring = event.charactersIgnoringModifiers?.lowercased()
+                let typedKey = (ignoring?.count == 1 && ignoring!.first!.isLetter)
+                             ? ignoring
+                             : (event.characters?.lowercased() ?? ignoring)
+                switch typedKey {
                 case "z":
                     if flags.contains(.command),
                        !(NSApp.keyWindow?.firstResponder is NSTextView) {

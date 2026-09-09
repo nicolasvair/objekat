@@ -171,6 +171,48 @@ extension EditViewModel {
         isDirty       = true
     }
 
+    /// The container a ripple laid on OBJECTS acts in — the SHALLOWEST one selected decides, the
+    /// same rule as for a time selection (@see the header). `nil` = the whole timeline.
+    func rippleContainerID(forObjects ids: Set<UUID>) -> UUID? {
+        var best: (depth: Int, parent: UUID?)? = nil
+        for e in laneEntries where ids.contains(e.item.id) {
+            if best == nil || e.depth < best!.depth { best = (e.depth, e.parentID) }
+        }
+        return best?.parent
+    }
+
+    /// ⌥⌫ with objects selected and NO time selection: each one's span goes, and the scope closes
+    /// over it. It is the ripple a hand reaches for first — an object is a passage one can see, so
+    /// one selects it rather than tracing a range over it — and without this branch ⌥⌫ fell back
+    /// on the plain delete, which removes the matter and leaves the hole gaping.
+    ///
+    /// The objects are taken from the LAST to the FIRST: closing a gap only ever moves what comes
+    /// AFTER it, so those still to be done keep the positions just read. The other way round we
+    /// would be guessing where they had slid to.
+    @discardableResult
+    func rippleDeleteSelectedObjects() -> Bool {
+        // `effectiveSelectedIDs`, not `selectedIDs`: a child whose ancestor is selected too is
+        // dropped. Its span is already inside its parent's, and rippling it in the parent's own
+        // scope would close the same gap twice.
+        var remaining = effectiveSelectedIDs
+        guard !remaining.isEmpty else { return false }
+        let container = rippleContainerID(forObjects: remaining)
+        pushUndo()
+        var closed = false
+        // Re-read at every step rather than take a snapshot: a removal can have trimmed or
+        // destroyed an object still on the list (two selected objects overlapping in time, on two
+        // lanes of the same scope). An id that no longer resolves is simply dropped.
+        while let obj = remaining.compactMap({ find(id: $0) }).max(by: { $0.startTime < $1.startTime }) {
+            remaining.remove(obj.id)
+            if rippleRemoveTimeRange(lo: obj.startTime, hi: obj.startTime + obj.duration,
+                                     container: container) { closed = true }
+        }
+        guard closed else { _ = undoStack.popLast(); return false }
+        selectedIDs = []
+        isDirty     = true
+        return true
+    }
+
     /// The hole an ⌥ cut-by-dragging would close: the half the gesture throws away, read off the
     /// object one GRABBED. Pulling right keeps the left, so what goes is [the cut → that object's
     /// end]; pulling left is its mirror image. `nil` if the object has gone or the half is empty.

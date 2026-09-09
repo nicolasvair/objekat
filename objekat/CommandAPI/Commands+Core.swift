@@ -480,6 +480,31 @@ extension CommandRegistry {
                             "removed_to": .number(range.hi)])
         }
 
+        register("object.ripple_delete",
+                 summary: "Deletes the given objects (default: the selection) AND closes the time "
+                        + "they took: the ⌥⌫ with no time selection. Bounded by the container — "
+                        + "inside a group, only that group's objects slide.",
+                 params: [ParamSpec("ids", "array<uuid>", required: false, "Objects to ripple away.")],
+                 // `rippleDeleteSelectedObjects` pushes its undo, and drops it if it changed nothing.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            if p.raw["ids"] != nil {
+                let ids = try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm)
+                vm.selectIDs(Set(ids))
+            }
+            guard !vm.effectiveSelectedIDs.isEmpty else {
+                throw CommandError(code: .invalid_state, message: "no object selected")
+            }
+            let container = vm.rippleContainerID(forObjects: vm.effectiveSelectedIDs)
+            let before = vm.laneEntries.count
+            guard vm.rippleDeleteSelectedObjects() else {
+                throw CommandError(code: .invalid_state, message: "the ripple would change nothing")
+            }
+            return .object(["objects_before": .int(before),
+                            "objects_after": .int(vm.laneEntries.count),
+                            "container": container.map { .string($0.uuidString) } ?? .null])
+        }
+
         // MARK: edit
 
         register("edit.undo", summary: "Undoes the last gesture.", undo: .handled) { _ in
