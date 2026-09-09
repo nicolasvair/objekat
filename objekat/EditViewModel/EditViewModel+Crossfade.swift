@@ -464,16 +464,19 @@ extension EditViewModel {
     /// leave it alone by itself (@see isCrossfadePair), so the caller has nothing else to do.
     @discardableResult
     func refitCrossfade(leftID: UUID, rightID: UUID) -> Bool {
-        guard var a = find(id: leftID), var b = find(id: rightID) else { return false }
-        // A move can put them the other way round, so they are re-ordered rather than trusted.
-        if a.startTime > b.startTime { swap(&a, &b) }
+        guard find(id: leftID) != nil, find(id: rightID) != nil else { return false }
 
-        guard let zone = projectedCrossfade(leftID: a.id, rightID: b.id,
+        // The pair is taken AS NAMED, and that is deliberate: the two ids are not interchangeable,
+        // they are a role each. Carried past its neighbour, an object does not arrive at the far
+        // side still crossfaded with it — its outgoing edge would have to become an incoming one,
+        // and a fade the hand never asked for would appear on each of their opposite ends. Crossing
+        // over ENDS the crossfade; what happens next is `resolveOverlaps`', as after any drop.
+        guard let zone = projectedCrossfade(leftID: leftID, rightID: rightID,
                                             placement: modelPlacement) else {
-            updateFadeOut(id: a.id, fadeOut: 0)
-            updateFadeCurve(id: a.id, fadeOut: .linear)
-            updateFadeIn(id: b.id, fadeIn: 0)
-            updateFadeCurve(id: b.id, fadeIn: .linear)
+            updateFadeOut(id: leftID, fadeOut: 0)
+            updateFadeCurve(id: leftID, fadeOut: .linear)
+            updateFadeIn(id: rightID, fadeIn: 0)
+            updateFadeCurve(id: rightID, fadeIn: .linear)
             return false
         }
 
@@ -509,12 +512,13 @@ extension EditViewModel {
     /// never what it is.
     func projectedCrossfade(leftID: UUID, rightID: UUID, placement: (UUID) -> Placement?)
         -> (leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)? {
-        guard var a = find(id: leftID), var b = find(id: rightID),
-              var pa = placement(leftID), var pb = placement(rightID) else { return nil }
-        if pa.start > pb.start { swap(&a, &b); swap(&pa, &pb) }
+        guard let a = find(id: leftID), let b = find(id: rightID),
+              let pa = placement(leftID), let pb = placement(rightID) else { return nil }
 
         // A move that changes row, or that takes an object out of its container, separates them
-        // as surely as a gap does.
+        // as surely as a gap does. So does one that carries an object PAST its neighbour: the
+        // `pb.start > pa.start` below is what says so, and it is why the pair is never re-ordered
+        // here — left and right are roles, not a sort order.
         guard pa.lane == pb.lane, pa.container == pb.container else { return nil }
 
         let aEnd = pa.start + pa.duration

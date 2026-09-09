@@ -343,6 +343,13 @@ The same moves exist as a gesture on the timeline, and `start` is what expresses
 the opposite edge kept). A **vertical** drag bends both curves at once, measured from the object's
 own row exactly as on a fade, ⌥ flipping them to the S.
 
+An edge can be taken by two different doors, and they part company at the LIMIT. Taken by the fade
+triangle above, the travel left past the shut seam grows a plain fade on the object being held —
+the road that made the crossfade, walked backwards. Taken by the CROP band in the lower half, the
+same edge is merely being cropped, and cropping grows no fade anywhere in OBJEKAT: the gesture stops
+at the joint. Both wear a block's own edge cursor there, arrows included, and an arrow goes out when
+the file — or the joint — has nothing more to give.
+
 A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it
 touches: the fade overflows the join, and the overlap it makes IS the crossfade. The join itself is
 not a target — it is a line with no surface, exactly where the two blocks' own trim and resize
@@ -363,6 +370,10 @@ alone. Three ends to that:
   ordinary join, then an ordinary gap;
 - widened past what the pair can hold (one object swallowing the other, or a lane or container
   change) the fades go too, and `resolveOverlaps` takes over with its normal overwrite;
+- carried PAST its neighbour, right through to the far side, the crossfade ends there as well. The
+  two ids are a ROLE each and not a sort order: an object that crosses over would need its outgoing
+  edge to become an incoming one, which would put a fade nobody asked for on each of their opposite
+  ends;
 - anywhere in between, both fades are reset to the new overlap, equal on the two sides.
 
 The fades go **with** the zone in the first two cases, and that is the point of doing it here: an

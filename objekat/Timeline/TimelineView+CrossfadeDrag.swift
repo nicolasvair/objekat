@@ -68,6 +68,10 @@ struct CrossfadeDragState {
     var leftID:  UUID
     var rightID: UUID
     let part: Part
+    /// The gesture took hold through the LOWER half's handle — the crop band — rather than through
+    /// the veil above it. The two drive the same edge, and they part company at the limit: a crop
+    /// is a crop and grows nothing, while the fade triangle carries on into a plain fade.
+    var viaEdgeBand: Bool = false
 
     /// The zone as it stood when the hand came down. Everything is computed from this.
     let anchorStart: Double
@@ -206,16 +210,37 @@ extension TimelineView {
         case .move:  return NSCursor.openHand
         case .sideStart, .sideEnd:
             if hit.viaEdgeBand {
-                // A block's own edge cursor, brackets and all: the band is there so that a hand
-                // reaching for an edge finds an edge.
+                // A block's own edge cursor, brackets and all — small arrows included: the band is
+                // there so that a hand reaching for an edge finds an edge, and a block's edge says
+                // which way it can still go. Two arrows drawn regardless would promise travel that
+                // the file no longer has.
+                let r = edgeBandRoom(hit.zone, part: hit.part)
                 return TimelineCursors.edge(open: hit.part == .sideStart,
-                                            canLeft: true, canRight: true)
+                                            canLeft:  r.left  > edgeBandEpsilon,
+                                            canRight: r.right > edgeBandEpsilon)
             }
             // The fade cursor of the side one is holding: ╱ climbs (the incoming curve, on the
             // left), ╲ comes down (the outgoing one, on the right).
             return hit.part == .sideStart ? TimelineCursors.fadeIn : TimelineCursors.fadeOut
         }
     }
+
+    /// The travel a crop band still has, in seconds, to the left and to the right of the edge it
+    /// holds. OUTWARDS the zone widens, and the stop is the seam's own ceiling — which already
+    /// counts what each file has left beyond its edge and what each object must keep of its own
+    /// (@see maxCrossfadeWidth). INWARDS it narrows, and the stop is the joint: nothing is left to
+    /// give once the zone is shut.
+    func edgeBandRoom(_ zone: EditViewModel.CrossfadeZone,
+                      part: CrossfadeDragState.Part) -> (left: Double, right: Double) {
+        let ceiling = viewModel.maxCrossfadeWidth(leftID: zone.leftID, rightID: zone.rightID)
+        let outward = max(0, ceiling - zone.width)
+        let inward  = max(0, zone.width)
+        return part == .sideStart ? (outward, inward) : (inward, outward)
+    }
+
+    /// Half a pixel at the current scale, with a floor in seconds: the same 'this edge cannot move
+    /// any more' tolerance a block's own handles use.
+    var edgeBandEpsilon: Double { max(0.001, 0.5 / max(pixelsPerSecond, 1)) }
 
     /// Starts the gesture if the hand came down on a zone. Called BEFORE the per-block carve-up,
     /// the way the loop markers are: a narrow target tested before the surfaces that cover the
@@ -230,6 +255,7 @@ extension TimelineView {
         if hit.part == .move { viewModel.selectCrossfade(left: z.leftID, right: z.rightID) }
         crossfadeDrag = CrossfadeDragState(
             leftID: z.leftID, rightID: z.rightID, part: hit.part,
+            viaEdgeBand: hit.viaEdgeBand,
             anchorStart: z.start, anchorEnd: z.end,
             lane: Int((p.y - rulerHeight) / laneStep),
             widenSign: hit.alpha < 0.5 ? -1 : 1,
@@ -303,7 +329,12 @@ extension TimelineView {
         // Past the shut seam, the travel that is left is a PLAIN fade on the object whose edge the
         // hand holds. The two objects stay stuck together: a gesture that was making a crossfade
         // never opens a gap.
-        let spill = state.part == .move ? 0 : max(0, -rawWidth)
+        //
+        // Only from the FADE triangle. Taken by the crop band underneath, the same edge is being
+        // CROPPED, and cropping has never produced a fade anywhere else in OBJEKAT — the band is
+        // there precisely so that a hand reaching for an edge gets an edge and nothing more. It
+        // stops at the joint, where the crossfade ends.
+        let spill = (state.part == .move || state.viaEdgeBand) ? 0 : max(0, -rawWidth)
 
         let moved = abs(width - state.anchorWidth) > 1e-9 || spill > 0
                  || (idealStart.map { abs($0 - state.anchorStart) > 1e-9 } ?? false)
@@ -348,6 +379,18 @@ extension TimelineView {
                     viewModel.updateFadeOut(id: o.id, fadeOut: min(spill, o.duration))
                 }
             }
+        }
+
+        // The arrows follow the drag, as they do on a block's own edge: once the button is down the
+        // hover produces no more events, so it is here that an arrow goes out when the file — or
+        // the joint — has nothing more to give.
+        if state.viaEdgeBand {
+            let zone = viewModel.crossfadeZone(leftID: state.leftID, rightID: state.rightID)
+                    ?? EditViewModel.CrossfadeZone(leftID: state.leftID, rightID: state.rightID,
+                                                   containerID: nil, lane: state.lane,
+                                                   start: 0, end: 0)
+            setEdgeCursor(open: state.part == .sideStart,
+                          room: edgeBandRoom(zone, part: state.part))
         }
 
         if phase == .ended {
