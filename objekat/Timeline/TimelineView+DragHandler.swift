@@ -118,47 +118,62 @@ struct FadeDragState {
     //
     // One gesture, two dimensions: the horizontal says HOW LONG, the vertical says HOW BENT. And
     // the origin is not a number of pixels but the object's own LANE — while the hand stays on the
-    // block the fade is straight, and it takes leaving the block, up or down, to bend it. A
-    // gesture whose limit one can SEE is worth more than one calibrated in pixels: the row's edge
-    // is drawn on screen, a 24 px dead zone is not.
+    // block, nothing bends, and it takes leaving the block, up or down, to bend. A gesture whose
+    // limit one can SEE is worth more than one calibrated in pixels: the row's edge is drawn on
+    // screen, a 24 px dead zone is not.
     //
     // What leaving the row starts is a CONTINUOUS bend, not a shape: the first pixel outside
-    // barely departs from the straight line, and the curve goes on opening as the hand climbs —
-    // full bend one block-height further out. Anything else would throw away everything the hand
-    // says past that first pixel, and would make the one value it did give unreachable by halves.
+    // barely moves the curve, and it goes on opening as the hand climbs — a whole block-height of
+    // travel from the straight line to the extreme. Anything else would throw away everything the
+    // hand says past that first pixel, and would make the one value it did give unreachable by
+    // halves.
+    //
+    // And the vertical is RELATIVE, which is the other half of the rule: it adds to the bend the
+    // fade already had (`curveAnchors`, frozen at the gesture's start) instead of dictating one.
+    // Lengthening a bulged fade therefore leaves it bulged — the curve is only ever touched by a
+    // hand that leaves the row, and coming back inside puts back exactly the curve one started
+    // from. An absolute reading would make every length adjustment a straightening, and one would
+    // have to re-bend a fade each time one made it longer.
+
+    /// The bend each object's dragged edge had when the gesture started: what the vertical adds
+    /// to. Per object, since a selection can hold curves that differ.
+    var curveAnchors: [UUID: FadeCurve] = [:]
 
     /// How far the cursor has left the grabbed object's lane, in px: 0 while it is still inside,
     /// negative above, positive below.
     var overshootY: Double = 0
 
-    /// The travel, in px, that takes the fade from straight to FULLY bent — one block-height,
-    /// frozen at the gesture's start. The block's own height rather than a constant: the row is
-    /// what one sees, and it is what the vertical zoom changes, so the gesture keeps the same feel
-    /// whatever the height of the rows.
+    /// The travel, in px, that spans the WHOLE bend axis — one block-height, frozen at the
+    /// gesture's start. The block's own height rather than a constant: the row is what one sees,
+    /// and it is what the vertical zoom changes, so the gesture keeps the same feel whatever the
+    /// height of the rows.
     var bendTravelPx: Double = 60
 
-    /// ⌥ held: the two plain shapes become the two S's — the vertical direction keeps saying which
-    /// shape comes FIRST, ⌥ merely says that the other one follows.
+    /// ⌥ held: it FLIPS the S. On a plain fade it gives the S that starts with the same shape; on
+    /// a fade that is already an S it takes the S back off — a toggle rather than a one-way
+    /// switch, because with an anchored bend the S one starts from is as often as not already
+    /// there, and there would otherwise be no way back from it.
     var sCurve: Bool = false
 
-    /// The family the gesture is asking for. Up = bulged (the level rises at once), down =
-    /// hollowed (it hangs back), inside the row = straight.
-    var shape: FadeShape {
-        if overshootY < 0 { return sCurve ? .sCurveInverse : .convex }
-        if overshootY > 0 { return sCurve ? .sCurve        : .concave }
-        return .linear
+    /// What the hand has ADDED along the signed bend axis: + bulges (upwards), − hollows. Nothing
+    /// eases it — the bend one sees is proportional to the travel one makes, and an easing curve on
+    /// top would only make the same amount cost a different distance depending on where one already
+    /// was.
+    var bendDelta: Double { -overshootY / max(1, bendTravelPx) }
+
+    /// The curve the gesture is asking for, for one of the objects it holds: that object's own
+    /// starting curve, moved along the bend axis by what the hand has travelled outside the row.
+    /// A hand still INSIDE the row gives the anchor back untouched, ⌥ included — while nothing
+    /// bends, nothing about the shape moves at all.
+    func curve(for id: UUID) -> FadeCurve {
+        let anchor = curveAnchors[id] ?? .linear
+        guard overshootY != 0 else { return anchor }
+        return .signed(anchor.signedAmount + bendDelta, sCurve: anchor.isS != sCurve)
     }
 
-    /// How far from the straight line, 0…1: the distance travelled outside the row, over
-    /// `bendTravelPx`. Nothing eases it — the bend one sees is proportional to the travel one
-    /// makes, and an easing curve on top would only make the same amount cost a different distance
-    /// depending on where one already was.
-    var bendAmount: Double {
-        min(1, abs(overshootY) / max(1, bendTravelPx))
-    }
-
-    /// The curve the gesture is asking for: the family, bent by as much as the hand has travelled.
-    var curve: FadeCurve { FadeCurve(shape: shape, amount: bendAmount) }
+    /// The curve of the object under the hand: what the HUD names, and what stands for the gesture
+    /// when a selection is bent as a whole.
+    var grabbedCurve: FadeCurve { curve(for: grabbedID) }
 }
 
 /// Cutting by dragging (the Cut tool): the gesture's direction decides which side is KEPT.
@@ -487,7 +502,11 @@ extension TimelineView {
                     globalMaxFade: globalMaxFade,
                     edgeAnchors: Dictionary(uniqueKeysWithValues:
                         objs.map { ($0.id, (start: $0.startTime, duration: $0.duration)) }),
-                    edgeRoom: max(0, room)
+                    edgeRoom: max(0, room),
+                    // The bend each edge starts from: the vertical ADDS to it (@see `curve(for:)`),
+                    // so a drag that never leaves the row gives every object its own curve back.
+                    curveAnchors: Dictionary(uniqueKeysWithValues:
+                        objs.map { ($0.id, side == .in ? $0.fadeInCurve : $0.fadeOutCurve) })
                 )
 
             case .trimLeft:
@@ -648,12 +667,16 @@ extension TimelineView {
                     case .in:  viewModel.updateFadeIn(id: id, fadeIn: final)
                     case .out: viewModel.updateFadeOut(id: id, fadeOut: final)
                     }
-                    // The shape is committed with the length, and a gesture kept INSIDE the row
-                    // really does set `linear` back: what the drag showed is what one gets, and
-                    // there is no other way to straighten a fade one has bent.
-                    viewModel.updateFadeCurve(id: id,
-                                              fadeIn:  state.side == .in  ? state.curve : nil,
-                                              fadeOut: state.side == .out ? state.curve : nil)
+                    // The shape is committed with the length — but only when the hand actually
+                    // moved it: a drag kept inside the row leaves the curve alone rather than
+                    // writing back what was already there, so lengthening a fade does not mark
+                    // the project dirty on the shape's account.
+                    let curve = state.curve(for: id)
+                    if curve != state.curveAnchors[id] {
+                        viewModel.updateFadeCurve(id: id,
+                                                  fadeIn:  state.side == .in  ? curve : nil,
+                                                  fadeOut: state.side == .out ? curve : nil)
+                    }
                 }
                 if state.dEdge != 0 {
                     for id in state.ids { viewModel.resolveOverlaps(for: id) }
@@ -1121,12 +1144,12 @@ extension TimelineView {
     /// straight when the hand comes back inside the row.
     func previewFadeCurveIn(for object: SoundObject) -> FadeCurve? {
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
-        return fd.curve
+        return fd.curve(for: object.id)
     }
 
     func previewFadeCurveOut(for object: SoundObject) -> FadeCurve? {
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
-        return fd.curve
+        return fd.curve(for: object.id)
     }
 
     /// The loop's IN/OUT bounds in preview while a marker is dragged (in seconds LOCAL to the

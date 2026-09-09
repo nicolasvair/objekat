@@ -1892,20 +1892,23 @@ struct TimelineView: View {
     ///
     /// The percentage is what makes a CONTINUOUS bend usable: without it one sees the veil bend
     /// but has no way of coming back to the same curve twice, and no way of knowing that one has
-    /// hit the end of the travel. It is read off the same state as the curve, never off a second
-    /// reading of the mouse: what one reads and what one gets cannot then diverge.
+    /// hit the end of the travel. Both are read off the curve the gesture will COMMIT — the
+    /// grabbed object's own, anchor included — and never off a second reading of the mouse: what
+    /// one reads and what one gets cannot then diverge. Which is also why the HUD names the fade's
+    /// existing shape while the hand is still inside the row: that is precisely what a drag ending
+    /// there will leave behind.
     @ViewBuilder
     private var fadeDragHUD: some View {
         if let fd = fadeDrag {
-            let shape = fd.shape
+            let curve = fd.grabbedCurve
             HStack(spacing: 7) {
-                Image(systemName: fadeHUDSymbol(shape))
+                Image(systemName: fadeHUDSymbol(curve.shape))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text(L(fadeCurveNameKey(shape)))
+                Text(L(fadeCurveNameKey(curve.shape)))
                     .font(.system(size: 11, weight: .bold))
-                if shape != .linear {
-                    Text(verbatim: "\(Int((fd.bendAmount * 100).rounded())) %")
+                if !curve.isStraight {
+                    Text(verbatim: "\(Int((curve.amount * 100).rounded())) %")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
                         .foregroundStyle(Color.accentColor)
                 }
@@ -1914,7 +1917,10 @@ struct TimelineView: View {
                 Text(L("hud.fade.leaveLane"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: fd.sCurve, locked: false)
+                // Lit when the curve one is about to lay down IS an S, not when ⌥ is down: ⌥ flips
+                // the S rather than imposing it, so on a fade that already carries one the key is
+                // what turns the badge OFF.
+                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: curve.isS, locked: false)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))

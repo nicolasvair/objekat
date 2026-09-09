@@ -121,6 +121,31 @@ struct FadeCurve: Codable, Equatable, Sendable {
     /// The same curve bent by `amount`, family kept.
     func withAmount(_ a: Double) -> FadeCurve { FadeCurve(shape: shape, amount: a) }
 
+    /// True of the two S's, whichever way round they start.
+    var isS: Bool { shape == .sCurve || shape == .sCurveInverse }
+
+    // MARK: The bend on ONE signed axis
+    //
+    // A family plus a magnitude is what a curve IS; a single signed number is what a GESTURE
+    // needs — it has to be able to add to the bend already there, cross the straight line and come
+    // out the other side without the two halves of the shape being handled apart. Bulged is the
+    // positive direction on this axis (up on screen bulges), hollowed the negative one, and zero is
+    // the straight line whichever family one came from. Going through `signedAmount` and back is
+    // lossless except at zero, where the family is genuinely gone: a straight fade has no side.
+
+    /// The bend as a signed value, −1 … +1: + bulges, − hollows, 0 straight.
+    var signedAmount: Double { isStraight ? 0 : (shape.isHollow ? -amount : amount) }
+
+    /// The curve a signed bend names, clamped to −1 … +1. `sCurve` picks the S of that direction
+    /// over the plain shape.
+    static func signed(_ value: Double, sCurve: Bool) -> FadeCurve {
+        let magnitude = min(1, abs(value))
+        guard magnitude > 0 else { return .linear }
+        let shape: FadeShape = value > 0 ? (sCurve ? .sCurveInverse : .convex)
+                                         : (sCurve ? .sCurve        : .concave)
+        return FadeCurve(shape: shape, amount: magnitude)
+    }
+
     // MARK: Codable
     //
     // Two forms are read, one is written. A bare string is the shape as the very first version of

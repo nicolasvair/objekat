@@ -306,19 +306,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "turn the shape into an S"
+            "value": "switch the shape between plain and S"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "convertir la forma en S"
+            "value": "alternar la forma entre simple y S"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "transformer la forme en S"
+            "value": "basculer la forme entre simple et S"
           }
         }
       }
@@ -2974,19 +2974,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "leave the row: up bulges, down hollows — the further, the more"
+            "value": "leave the row to bend further: up bulges, down hollows"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "salir de la fila: arriba abomba, abajo hunde — cuanto más lejos, más curvado"
+            "value": "salir de la fila para curvar más: arriba abomba, abajo hunde"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "sortir de la rangée : haut bombe, bas creuse — plus loin, plus courbé"
+            "value": "sortir de la rangée pour courber plus : haut bombe, bas creuse"
           }
         }
       }

@@ -128,8 +128,12 @@ What has landed since mid-August, in order:
   limit one can SEE beats one calibrated in pixels.
   The bend is CONTINUOUS, and that is the point (it was five fixed shapes for a few hours on
   9 September, and snapping threw away everything the hand said past the first pixel outside the
-  row): the first pixel outside barely departs from the line, full bend one block-height further
-  out, and the drag HUD reads the percentage so one can come back to the same curve twice. What
+  row): the first pixel outside barely departs from the line, the whole bend axis spans one
+  block-height of travel, and the drag HUD reads the percentage so one can come back to the same
+  curve twice. It is also RELATIVE — the vertical ADDS to the bend the fade already had, frozen at
+  the gesture's start — so lengthening a bulged fade leaves it bulged, and only a hand that leaves
+  the row touches the shape at all. ⌥ FLIPS the S rather than imposing it, since an anchored bend
+  starts as often as not from a curve that is already one. What
   gives the travel somewhere to GO is the family being a power `a^p` and not the quarter-sine it
   started with: `bend` maps to the exponent as `8 ^ bend` — geometric, which is what the eye and the
   ear read as an even progression — so the sine's whole bend now sits at about a third of the
