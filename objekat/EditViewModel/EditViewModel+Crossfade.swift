@@ -582,7 +582,13 @@ extension EditViewModel {
     /// leave it alone by itself (@see isCrossfadePair), so the caller has nothing else to do.
     @discardableResult
     func refitCrossfade(leftID: UUID, rightID: UUID) -> Bool {
-        guard find(id: leftID) != nil, find(id: rightID) != nil else { return false }
+        guard find(id: leftID) != nil, find(id: rightID) != nil else {
+            // One of the two has GONE — thrown away by a cut, most often. The survivor's edge is
+            // no longer handing over to anything, so the fade the zone had given it goes with the
+            // partner. The update on the missing id is a no-op, which is what makes this one line.
+            clearSeamFades(leftID: leftID, rightID: rightID)
+            return false
+        }
 
         // The pair is taken AS NAMED, and that is deliberate: the two ids are not interchangeable,
         // they are a role each. Carried past its neighbour, an object does not arrive at the far
@@ -591,10 +597,7 @@ extension EditViewModel {
         // over ENDS the crossfade; what happens next is `resolveOverlaps`', as after any drop.
         guard let zone = projectedCrossfade(leftID: leftID, rightID: rightID,
                                             placement: modelPlacement) else {
-            updateFadeOut(id: leftID, fadeOut: 0)
-            updateFadeCurve(id: leftID, fadeOut: .linear)
-            updateFadeIn(id: rightID, fadeIn: 0)
-            updateFadeCurve(id: rightID, fadeIn: .linear)
+            clearSeamFades(leftID: leftID, rightID: rightID)
             return false
         }
 
@@ -603,6 +606,17 @@ extension EditViewModel {
         updateFadeIn(id: zone.rightID, fadeIn: overlap)
         isDirty = true
         return true
+    }
+
+    /// The two edges of a seam set free: the zone is over, and an edge engaged in a crossfade
+    /// has no fade of its own — the zone commanded it. The SHAPE goes with the length, as it does
+    /// on the double click that erases a fade: a bend left behind a cleared fade lies in wait for
+    /// the next time that edge is pulled.
+    private func clearSeamFades(leftID: UUID, rightID: UUID) {
+        updateFadeOut(id: leftID, fadeOut: 0)
+        updateFadeCurve(id: leftID, fadeOut: .linear)
+        updateFadeIn(id: rightID, fadeIn: 0)
+        updateFadeCurve(id: rightID, fadeIn: .linear)
     }
 
     /// Where each object of a pair actually SITS, as `projectedCrossfade` reads it: the container's

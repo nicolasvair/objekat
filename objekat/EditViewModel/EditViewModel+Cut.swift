@@ -66,17 +66,33 @@ extension EditViewModel {
     func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) {
         guard !ids.isEmpty else { return }
         pushUndo()
+        // The crossfades the cut objects are in, noted while they still stand — and this one
+        // cannot simply be wrapped like a move (@see withCrossfadeRefit), because a split hands
+        // the seam to a fragment that did not exist a moment ago.
+        //
+        // A zone is made of two EDGES: the left object's right edge, the right object's left one.
+        // Splitting the LEFT member gives its right edge to the new half, so the pair is renamed
+        // as the cut goes; splitting the RIGHT member leaves its left edge with the old id, so
+        // there is nothing to rename. Then the geometry decides as usual — cut far from the zone
+        // and the crossfade simply follows onto the fragment that carries it; cut THROUGH it and
+        // the two are no longer side by side, so the fades go.
+        var pairs = crossfadePairs(around: Set(ids))
         var result: Set<UUID> = []
         for id in ids {
             // An object already carried off by the cut of an ancestor no longer exists: it is skipped.
             guard find(id: id) != nil else { continue }
             guard let newID = _splitInternal(id: id, atTime: splitTime) else { continue }
+            pairs = pairs.map {
+                $0.left == id ? CrossfadePair(left: newID, right: $0.right) : $0
+            }
             switch keeping {
             case nil:      result.formUnion([id, newID])
             case .left?:   remove(id: newID); result.insert(id)
             case .right?:  remove(id: id);    result.insert(newID)
             }
         }
+        // A half thrown away takes its seam with it: `refitCrossfade` then clears what is left.
+        for p in pairs { refitCrossfade(leftID: p.left, rightID: p.right) }
         guard !result.isEmpty else {
             _ = undoStack.popLast()
             return
