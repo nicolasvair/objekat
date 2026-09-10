@@ -668,6 +668,27 @@ extension EditViewModel {
         let right: UUID
     }
 
+    /// Runs a gesture that displaces or crops these objects, and puts their crossfades back
+    /// afterwards. Every path that moves an EDGE owes this, and it is two lines of discipline:
+    /// note the pairs BEFORE — a displaced or cropped pair no longer satisfies `isCrossfadePair`,
+    /// so the evidence is gone the instant the gesture runs — and refit them after.
+    ///
+    /// Written out at each call site, those two lines were forgotten wherever the gesture did not
+    /// look like a move: re-parenting into a group, ejecting out of one, splitting through a zone.
+    /// Each of them left the zone's fade standing on an object that was no longer crossfaded —
+    /// the fault a crop had already been cured of. Wrapped, a gesture cannot forget.
+    ///
+    /// It does NOT settle the overlaps: a pair that is still a crossfade is invisible to
+    /// `resolveOverlaps` anyway, and a pair that is no longer one is an ordinary superposition the
+    /// caller settles with its own policy. The order matters — refit first, resolve after.
+    @discardableResult
+    func withCrossfadeRefit<T>(around ids: Set<UUID>, _ body: () -> T) -> T {
+        let pairs = crossfadePairs(around: ids)
+        let result = body()
+        for p in pairs { refitCrossfade(leftID: p.left, rightID: p.right) }
+        return result
+    }
+
     /// The crossfades these objects are part of, read WHILE THEY STILL EXIST — a move destroys the
     /// evidence, since a displaced pair no longer satisfies `isCrossfadePair`. So a gesture that is
     /// about to move something notes its pairs first and refits them afterwards.
