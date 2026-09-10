@@ -26,7 +26,15 @@ extension EditViewModel {
         isDirty = true
     }
 
+    /// Deleting one of a crossfaded pair frees the survivor's edge: the fade it wears is the
+    /// zone's, not its own, and the zone is over (@see withCrossfadeRefit — `refitCrossfade`
+    /// answers for a pair one of whose members has gone). The other object is left exactly where
+    /// it is, as a delete has always left it — only the fade the crossfade had lent it goes.
     func removeSelected() {
+        withCrossfadeRefit(around: effectiveSelectedIDs) { removeSelectedObjects() }
+    }
+
+    private func removeSelectedObjects() {
         var childrenByGroup: [UUID: [UUID]] = [:]
         var topLevel: [UUID] = []
         for id in effectiveSelectedIDs {
