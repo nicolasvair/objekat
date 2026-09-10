@@ -158,10 +158,13 @@ extension EditViewModel {
     }
 
     /// The widest zone a seam can hold — the `w` at which the four bounds on the zone's start meet
-    /// (@see `openCrossfade`, where they are named). Shared so that a GESTURE can know the limit
-    /// before it reaches it: pulling a fade out onto its neighbour is bounded by this and not by
-    /// the object's own file, otherwise a side with nothing left would forbid a crossfade the
-    /// OTHER side could perfectly well have given.
+    /// (@see `openCrossfade`, where they are named). It is `SeamHem.maxWidth`, and that is how a
+    /// GESTURE knows the limit before it reaches it: pulling a fade out onto its neighbour is
+    /// bounded by this and not by the object's own file, otherwise a side with nothing left would
+    /// forbid a crossfade the OTHER side could perfectly well have given.
+    ///
+    /// Kept apart from `seamHem` because it is pure arithmetic on eight numbers: no lookup, no
+    /// model, nothing to mock — which is what makes the four bounds checkable one by one.
     static func crossfadeCeiling(leftStart: Double, leftEnd: Double,
                                  rightStart: Double, rightEnd: Double,
                                  headLRight: Double, headRLeft: Double,
@@ -171,27 +174,6 @@ extension EditViewModel {
                    (rightEnd - rightStart) - keepRight + headRLeft,
                    (leftEnd - leftStart) - keepLeft + headLRight,
                    rightEnd - keepRight - leftStart - keepLeft)
-    }
-
-    /// The widest crossfade these two neighbours could hold, 0 when the seam cannot open at all.
-    /// What a gesture asks before it starts, so it can stop at the limit — and so it can SHOW that
-    /// there is no room rather than silently doing nothing.
-    func maxCrossfadeWidth(leftID: UUID, rightID: UUID) -> Double {
-        guard var left = find(id: leftID), var right = find(id: rightID),
-              left.lane == right.lane,
-              parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id else { return 0 }
-        if left.startTime > right.startTime { swap(&left, &right) }
-        if isLoopedGroupPorthole(left) || isLoopedGroupPorthole(right) { return 0 }
-        let leftEnd = left.startTime + left.duration
-        let rightEnd = right.startTime + right.duration
-        guard leftEnd >= right.startTime - Self.seamEpsilon else { return 0 }
-        let headL = windowHeadroom(left), headR = windowHeadroom(right)
-        return max(0, Self.crossfadeCeiling(
-            leftStart: left.startTime, leftEnd: leftEnd,
-            rightStart: right.startTime, rightEnd: rightEnd,
-            headLRight: headL.right, headRLeft: headR.left,
-            keepLeft: max(left.fadeIn, Self.crossfadeMinDuration),
-            keepRight: max(right.fadeOut, Self.crossfadeMinDuration)))
     }
 
     /// The sibling this object BUTTS against on one side — the one a fade pulled out past that
@@ -682,31 +664,5 @@ extension EditViewModel {
                crossfadeZone(leftID: n, rightID: id) != nil { note(n, id) }
         }
         return pairs
-    }
-
-    /// Slides the zone earlier or later WITHOUT changing its width: the two objects go on meeting
-    /// for just as long, but they meet somewhere else. This is the body of the gesture — moving the
-    /// seam — and it is a trim of both edges at once, so the matter stays where it is on the
-    /// timeline and only the window that shows it travels.
-    @discardableResult
-    func moveCrossfade(leftID: UUID, rightID: UUID, by delta: Double) -> Result<CrossfadeZone?, SeamRefusal> {
-        guard let zone = crossfadeZone(leftID: leftID, rightID: rightID) else {
-            // Nothing open yet: a butt joint has a seam but no zone to slide.
-            return .failure(.gap)
-        }
-        return openCrossfade(leftID: zone.leftID, rightID: zone.rightID,
-                             width: zone.width, idealStart: zone.start + delta)
-    }
-
-    /// Widens or narrows the zone by pulling ONE of its edges, the other staying put. `fromStart`
-    /// is the left edge: pulling it left widens, so the zone's END is what gets pinned.
-    @discardableResult
-    func resizeCrossfade(leftID: UUID, rightID: UUID, edge fromStart: Bool,
-                         to time: Double) -> Result<CrossfadeZone?, SeamRefusal> {
-        guard let zone = crossfadeZone(leftID: leftID, rightID: rightID) else { return .failure(.gap) }
-        let width = fromStart ? zone.end - time : time - zone.start
-        return openCrossfade(leftID: zone.leftID, rightID: zone.rightID,
-                             width: max(0, width),
-                             idealStart: fromStart ? zone.end - max(0, width) : zone.start)
     }
 }
