@@ -387,6 +387,25 @@ extension EditViewModel {
         case start(Double)
         /// The zone ends here.
         case end(Double)
+
+        /// The ceiling this pin puts on the width, in place of the seam's own: the widest zone
+        /// that leaves the held edge exactly where it is.
+        func ceiling(in hem: SeamHem) -> Double {
+            switch self {
+            case .start(let t): return hem.maxWidth(pinningStart: t)
+            case .end(let t):   return hem.maxWidth(pinningEnd: t)
+            }
+        }
+
+        /// Where the zone then BEGINS, once the clamp has had its say. A pinned START is the
+        /// answer outright; a pinned END fixes the start wherever the allowed width leaves it,
+        /// which is what "the far edge does not move" means.
+        func zoneStart(forWidth w: Double) -> Double {
+            switch self {
+            case .start(let t): return t
+            case .end(let t):   return t - w
+            }
+        }
     }
 
     /// A gesture that closes a GAP on its way to the seam. Two objects that no longer touch have
@@ -486,29 +505,19 @@ extension EditViewModel {
             return .failure(hem.byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)
         }
 
-        // A pinned edge lowers the ceiling: the widest zone is no longer the widest this seam can
-        // hold, it is the widest one that leaves that edge where it is.
-        let ceiling: Double
-        switch pin {
-        case .start(let t)?: ceiling = hem.maxWidth(pinningStart: t)
-        case .end(let t)?:   ceiling = hem.maxWidth(pinningEnd: t)
-        case nil:            ceiling = hem.maxWidth
-        }
-
+        // The pin read ONCE, in the order the arithmetic needs it: it lowers the ceiling first —
+        // the widest zone is no longer the widest this seam can hold, it is the widest one that
+        // leaves the held edge where it is — and only then, the width being settled, does it say
+        // where the zone begins.
+        //
         // CLAMPED, not refused. A width is what a hand pulls, and a hand pulls past the end: the
         // gesture must stop at the limit rather than die on it, and the caller is told the width it
         // GOT beside the one it asked for. Only a seam that can hold nothing at all refuses above.
-        let w = min(max(0, width), max(0, ceiling))
+        let w = min(max(0, width), max(0, pin?.ceiling(in: hem) ?? hem.maxWidth))
 
         // The unknown: `s`, the right-hand object's new start. The left one then ends at `s + w`,
-        // which is what makes the zone exactly `w` wide. A pinned END fixes it: the start is
-        // wherever the clamped width leaves it, which is what "the far edge does not move" means.
-        let wish: Double?
-        switch pin {
-        case .start(let t)?: wish = t
-        case .end(let t)?:   wish = t - w
-        case nil:            wish = idealStart
-        }
+        // which is what makes the zone exactly `w` wide. Unpinned, the caller's wish stands.
+        let wish: Double? = pin?.zoneStart(forWidth: w) ?? idealStart
         let sMin = hem.startFloor
         let sMax = hem.startCeilingBase - w
         // `maxWidth` above is exactly the width at which these two meet, so the clamp has already
