@@ -656,15 +656,27 @@ extension EditViewModel {
         return (a.id, b.id, pb.start, aEnd, pa.lane)
     }
 
+    /// One crossfaded pair, named by its two ROLES — left and right are not a sort order
+    /// (@see `projectedCrossfade`), which is why this is not a set of two ids.
+    ///
+    /// A type rather than a tuple because these have to be DEDUPED: both objects of a pair are
+    /// usually in the same selection, so each of them notes it. That was a `Set<String>` of the
+    /// two `uuidString`s concatenated, in two places — and one of them runs on every frame of
+    /// every move.
+    struct CrossfadePair: Hashable {
+        let left:  UUID
+        let right: UUID
+    }
+
     /// The crossfades these objects are part of, read WHILE THEY STILL EXIST — a move destroys the
     /// evidence, since a displaced pair no longer satisfies `isCrossfadePair`. So a gesture that is
     /// about to move something notes its pairs first and refits them afterwards.
-    func crossfadePairs(around ids: Set<UUID>) -> [(left: UUID, right: UUID)] {
-        var pairs: [(left: UUID, right: UUID)] = []
-        var seen = Set<String>()
+    func crossfadePairs(around ids: Set<UUID>) -> [CrossfadePair] {
+        var pairs: [CrossfadePair] = []
+        var seen = Set<CrossfadePair>()
         func note(_ l: UUID, _ r: UUID) {
-            let key = l.uuidString + r.uuidString
-            if seen.insert(key).inserted { pairs.append((l, r)) }
+            let pair = CrossfadePair(left: l, right: r)
+            if seen.insert(pair).inserted { pairs.append(pair) }
         }
         for id in ids {
             if let n = seamNeighbour(of: id, onRight: true),

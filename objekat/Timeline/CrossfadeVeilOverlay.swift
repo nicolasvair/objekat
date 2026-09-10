@@ -145,8 +145,10 @@ extension TimelineView {
         let pairs = viewModel.crossfadePairs(around: ids)
         guard !pairs.isEmpty else { return model }
 
-        let touched = Set(pairs.map { $0.left.uuidString + $0.right.uuidString })
-        var shown = model.filter { !touched.contains($0.leftID.uuidString + $0.rightID.uuidString) }
+        let touched = Set(pairs)
+        var shown = model.filter {
+            !touched.contains(EditViewModel.CrossfadePair(left: $0.leftID, right: $0.rightID))
+        }
         for p in pairs {
             if let z = viewModel.projectedCrossfade(leftID: p.left, rightID: p.right,
                                                     placement: dragPlacement) {
