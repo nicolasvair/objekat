@@ -10,7 +10,6 @@ extension TimelineView {
     func registerScrollMonitor() {
         let vm       = viewModel
         let hs       = hoverState
-        let rulerH   = rulerHeight
 
         /// True if this notch opens a new gesture (volume/pan/send by wheel): the caller then pushes
         /// an undo BEFORE applying, as a drag does at its start.
@@ -25,6 +24,10 @@ extension TimelineView {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             guard let pos = hs.position else { return event }
 
+            // Read at EVERY event, never captured: the header grows and shrinks with the marker
+            // rows shown, and a height frozen at registration would offset every lane by a row the
+            // moment somebody showed one.
+            let rulerH = MarkerBandGeometry.headerHeight(visibleLanes: vm.visibleMarkerLaneCount)
             let pps = vm.pixelsPerSecond
             let bh  = vm.blockHeight
             let ls  = bh + 4.0
@@ -354,6 +357,11 @@ extension TimelineView {
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
                 if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
+                } else if vm.selectedAnnotation != nil {
+                    // A marker, a region or a comment: ⌫ takes the ANNOTATION and nothing else. It
+                    // can afford to come first because the selection is exclusive — selecting one
+                    // clears the objects, and selecting an object clears it (@see selectedIDs).
+                    DispatchQueue.main.async { vm.deleteSelectedAnnotation() }  // internal undo push
                 } else if let xf = vm.selectedCrossfade {
                     // A selected CROSSFADE: ⌫ takes the zone, not the two objects. The pair comes
                     // back onto the middle of the zone and each loses its fade — the two are cut
@@ -633,6 +641,10 @@ extension TimelineView {
                     if flags.contains(.command) {
                         if vm.selectedIDs.count == 1 {
                             DispatchQueue.main.async { vm.renamingID = vm.selectedIDs.first }
+                        } else if let a = vm.selectedAnnotation {
+                            // The same shortcut for a marker's name, a region's and a comment's
+                            // text: one gesture to name a thing, whatever kind of thing it is.
+                            DispatchQueue.main.async { vm.renamingID = a.markerID }
                         }
                         return nil
                     }
@@ -819,13 +831,36 @@ extension TimelineView {
     func registerRightClickMonitor() {
         let vm     = viewModel
         let hs     = hoverState
-        let rulerH = rulerHeight
         let lg     = 4.0
 
         var proxies: [MenuActionProxy] = []
 
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
-            guard let pos = hs.position, pos.y > rulerH else { return event }
+            guard let pos = hs.position else { return event }
+
+            // Read at EVERY event, never captured: showing a marker row makes the header taller,
+            // and a height frozen at registration would put every lane's menu one row out.
+            let rulerH = MainActor.assumeIsolated {
+                MarkerBandGeometry.headerHeight(visibleLanes: vm.visibleMarkerLaneCount)
+            }
+
+            // The ruler and its band: their own menu, which is the ONLY way a marker or a region is
+            // created. A click that merely lands somewhere has asked for nothing.
+            if pos.y <= rulerH {
+                let menu: NSMenu = MainActor.assumeIsolated {
+                    let row = self.markerBandRow(at: pos)
+                    let lanes = vm.visibleMarkerLanes
+                    let laneID = row.flatMap { $0 < lanes.count ? lanes[$0].id : nil }
+                    let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
+                    return buildMarkerBandMenu(vm: vm, proxies: &proxies, laneID: laneID,
+                                               time: t, hit: self.markerBandHit(at: pos))
+                }
+                if let window = NSApp.keyWindow {
+                    let screenPt = window.convertPoint(toScreen: event.locationInWindow)
+                    menu.popUp(positioning: nil, at: screenPt, in: nil)
+                }
+                return nil
+            }
 
             typealias HitResult = (group: SoundObject?, clip: SoundObject?, instance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, isEditingObject: Bool, colorable: SoundObject?, clickedIsEditFrame: Bool)
             let hit: HitResult = MainActor.assumeIsolated {
@@ -1003,6 +1038,21 @@ extension TimelineView {
                         si.target = ps
                         menu.addItem(si)
                     }
+                }
+            }
+
+            // The annotations. A marker goes INSIDE the object aimed at, at the instant aimed at —
+            // it is the object's own mark, and it travels with it. A comment goes over the RANGE
+            // traced, because a comment is about a passage and a passage is what a range says.
+            MainActor.assumeIsolated {
+                if let target = hit.colorable {
+                    let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
+                    addObjectMarkerItem(menu: menu, proxies: &proxies, vm: vm,
+                                        objectID: target.id, atAbsoluteTime: t)
+                }
+                if let sel = hit.timeSelection {
+                    if !menu.items.isEmpty { menu.addItem(.separator()) }
+                    addCommentItem(menu: menu, proxies: &proxies, vm: vm, selection: sel)
                 }
             }
 

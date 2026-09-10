@@ -111,7 +111,13 @@ struct TimelineView: View {
     var pixelsPerSecond: Double { viewModel.pixelsPerSecond }
     private var minZoom: Double { max(1, Double(viewportWidth) / totalDuration) }
     private let maxZoom: Double = 200000
-    let rulerHeight: Double = 50
+    /// The WHOLE header: the ruler proper, plus one row per visible row of the marker band.
+    /// Computed, and that is the point — every lane offset in this file is measured from it, so a
+    /// row appearing or disappearing pushes the content down or lets it back up with no other
+    /// change anywhere. @see MarkerBandGeometry, the single source the AppKit monitors read too.
+    var rulerHeight: Double {
+        MarkerBandGeometry.headerHeight(visibleLanes: viewModel.visibleMarkerLaneCount)
+    }
     var blockHeight: Double { viewModel.blockHeight }
     var waveformDisplayDB: Double { viewModel.waveformDisplayDB }
     private let laneGap: Double = 4
@@ -378,14 +384,58 @@ struct TimelineView: View {
                 .offset(x: 0, y: rulerHeight)
                 .allowsHitTesting(false)
 
+                // The markers the objects carry, and the comments laid on the surface. Both above the
+                // blocks — a mark one cannot see names nothing — and both below the sticky header,
+                // which stays the topmost thing in the canvas.
+                ObjectMarkersOverlay(
+                    entries: viewModel.laneEntries,
+                    pixelsPerSecond: pixelsPerSecond,
+                    rulerHeight: rulerHeight,
+                    laneStep: laneStep,
+                    blockHeight: blockHeight,
+                    selected: viewModel.selectedAnnotation,
+                    renamingID: viewModel.renamingID,
+                    scrollOffsetX: cullScrollX,
+                    viewportWidth: cullViewportWidth,
+                    width: totalDuration * pixelsPerSecond,
+                    height: canvasHeight,
+                    onRename: { id, name in
+                        viewModel.renamingID = nil
+                        guard let name, !name.isEmpty,
+                              case .objectMarker(let o, let m)? = viewModel.selectedAnnotation,
+                              m == id else { return }
+                        viewModel.renameObjectMarker(objectID: o, markerID: m, to: name)
+                    }
+                )
+                .zIndex(2.66)
+
+                if !viewModel.comments.isEmpty {
+                    CommentsOverlay(
+                        comments: viewModel.comments,
+                        pixelsPerSecond: pixelsPerSecond,
+                        rulerHeight: rulerHeight,
+                        laneStep: laneStep,
+                        blockHeight: blockHeight,
+                        selected: viewModel.selectedAnnotation,
+                        editingID: viewModel.renamingID,
+                        onCommit: { id, text in
+                            viewModel.renamingID = nil
+                            guard let text else { return }
+                            viewModel.setCommentText(id: id, text)
+                        }
+                    )
+                    .zIndex(2.67)
+                }
+
                 // A sticky header: it follows the vertical scroll so as to stay at the top of the viewport,
                 // above all the content (blocks, piano rolls). The horizontal scroll is still handled
                 // internally (the graduations follow the content).
                 StickyToViewportTop(anchor: scrollAnchor) {
+                    VStack(spacing: 0) {
                     TimeRulerView(
                         totalDuration: totalDuration,
                         pixelsPerSecond: pixelsPerSecond,
-                        height: rulerHeight,
+                        height: MarkerBandGeometry.rulerCoreHeight,
                         snapEnabled: viewModel.effectiveSnapEnabled,
                         snapGrid: viewModel.effectiveSnapGrid,
                         gridLevels: viewModel.gridLevels,
@@ -399,6 +449,26 @@ struct TimelineView: View {
                         scrollOffsetX: cullScrollX,
                         viewportWidth: cullViewportWidth
                     )
+                    let bandLanes = viewModel.visibleMarkerLanes
+                    if !bandLanes.isEmpty {
+                        MarkerBandView(
+                            lanes: bandLanes,
+                            pixelsPerSecond: pixelsPerSecond,
+                            totalDuration: totalDuration,
+                            scrollOffsetX: cullScrollX,
+                            viewportWidth: cullViewportWidth,
+                            selected: viewModel.selectedAnnotation,
+                            renamingID: viewModel.renamingID,
+                            onRename: { id, name in
+                                viewModel.renamingID = nil
+                                guard let name, !name.isEmpty,
+                                      case .laneMarker(let l, let m)? = viewModel.selectedAnnotation,
+                                      m == id else { return }
+                                viewModel.renameMarker(laneID: l, markerID: m, to: name)
+                            }
+                        )
+                    }
+                    }
                 }
                 .zIndex(4)
 
@@ -881,6 +951,10 @@ struct TimelineView: View {
                 .onChange(of: geo.size.width)  { viewportWidth  = $0 }
                 .onChange(of: geo.size.height) { viewportHeight = $0 }
         })
+        // The rows' names and the button that governs them: PINNED to the viewport, in the same
+        // overlay layer as the tool indicator. A row's name is its identity, and an identity that
+        // scrolls off with the content stops naming anything. @see MarkerLaneHeaderView
+        .overlay(alignment: .topLeading) { markerLaneHeaders }
         .overlay(alignment: .bottomTrailing) { toolIndicator }
         // The cheat sheet and the HUD share the bottom of the view, stacked: the shortcut list reads
         // above the status bands, without hiding the centre of the timeline.
@@ -1502,7 +1576,90 @@ struct TimelineView: View {
     /// without which, once the view is scrolled, a click on the ruler would fall through onto the
     /// lanes it covers.
     func rulerBandContains(_ point: CGPoint) -> Bool {
-        point.y >= scrollOffsetY && point.y <= scrollOffsetY + CGFloat(rulerHeight)
+        point.y >= scrollOffsetY
+            && point.y <= scrollOffsetY + CGFloat(MarkerBandGeometry.rulerCoreHeight)
+    }
+
+    /// The row of the marker band a point falls on, or nil if it is not in the band.
+    ///
+    /// The band is part of the same sticky header, UNDER the ruler: in content coordinates it
+    /// occupies `[scrollOffsetY + rulerCoreHeight, scrollOffsetY + rulerHeight]`. It is deliberately
+    /// NOT part of `rulerBandContains`, which grants the ruler's one gesture — moving the cursor
+    /// and nothing else. The band has its own.
+    func markerBandRow(at point: CGPoint) -> Int? {
+        let top = scrollOffsetY + CGFloat(MarkerBandGeometry.rulerCoreHeight)
+        let rows = viewModel.visibleMarkerLaneCount
+        guard rows > 0, point.y >= top else { return nil }
+        let row = Int((point.y - top) / CGFloat(MarkerBandGeometry.rowHeight))
+        return row < rows ? row : nil
+    }
+
+    func markerBandContains(_ point: CGPoint) -> Bool { markerBandRow(at: point) != nil }
+
+    /// The marker or region a point in the band lands on. A REGION is taken anywhere along its
+    /// span; a point marker is taken within `grabPx` of its tick, or anywhere along the name that
+    /// hangs off it — one aims at the word one reads.
+    ///
+    /// Point markers are tried FIRST: one sitting inside a region has to stay reachable, and it is
+    /// the finer mark of the two.
+    func markerBandHit(at point: CGPoint) -> AnnotationSel? {
+        guard let row = markerBandRow(at: point) else { return nil }
+        let lanes = viewModel.visibleMarkerLanes
+        guard row < lanes.count, pixelsPerSecond > 0 else { return nil }
+        let lane = lanes[row]
+        let t = point.x / pixelsPerSecond
+        let grab = MarkerBandGeometry.grabPx / pixelsPerSecond
+
+        for m in lane.markers where !m.isRegion {
+            let labelSpan = MarkerBandGeometry.labelWidth(m.name) / pixelsPerSecond
+            if t >= m.time - grab && t <= m.time + max(grab, labelSpan) {
+                return .laneMarker(lane: lane.id, marker: m.id)
+            }
+        }
+        for m in lane.markers where m.isRegion {
+            if t >= m.time && t <= m.endTime {
+                return .laneMarker(lane: lane.id, marker: m.id)
+            }
+        }
+        return nil
+    }
+
+    /// The marker CARRIED BY AN OBJECT that a point lands on. Only the top strip of a block takes
+    /// them: the rest of its surface belongs to the object itself, and a marker must not make a
+    /// block harder to grab.
+    func objectMarkerHit(at point: CGPoint) -> AnnotationSel? {
+        guard pixelsPerSecond > 0 else { return nil }
+        let grab = MarkerBandGeometry.grabPx / pixelsPerSecond
+        for e in viewModel.laneEntries {
+            let by = rulerHeight + Double(e.displayLane) * laneStep
+            guard point.y >= by, point.y <= by + ObjectMarkersOverlay.grabStripHeight else { continue }
+            for m in e.item.markers {
+                // Only what is INSIDE the window: a marker pushed behind an edge is kept but not
+                // drawn, so it must not be clickable either (@see Array where Element == Marker).
+                guard m.time >= 0, m.time <= e.item.duration else { continue }
+                let t = e.absStart + m.time
+                let labelSpan = MarkerBandGeometry.labelWidth(m.name) / pixelsPerSecond
+                if point.x >= t - grab && point.x <= t + max(grab, labelSpan) {
+                    return .objectMarker(object: e.item.id, marker: m.id)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// The comment a point lands on. Comments sit OVER the lanes, so this is asked before the
+    /// blocks — a comment one cannot click is a comment one cannot delete.
+    func commentHit(at point: CGPoint) -> AnnotationSel? {
+        guard pixelsPerSecond > 0 else { return nil }
+        for c in viewModel.comments.reversed() {     // the last laid is the one on top
+            let x0 = c.startTime * pixelsPerSecond
+            let x1 = c.endTime * pixelsPerSecond
+            let y0 = rulerHeight + Double(c.lane) * laneStep
+            if point.x >= x0 && point.x <= x1 && point.y >= y0 && point.y <= y0 + blockHeight {
+                return .comment(c.id)
+            }
+        }
+        return nil
     }
 
     /// A click / drag in the ruler: ONLY the cursor moves. No object selection, no time range, no
@@ -2176,6 +2333,27 @@ struct TimelineView: View {
         }
         .frame(width: drawnW, height: drawnH, alignment: .topLeading)
         .frame(width: 56, height: 22)
+    }
+
+    // MARK: - Marker band headers
+
+    private var markerLaneHeaders: some View {
+        MarkerLaneHeaderView(
+            lanes: viewModel.visibleMarkerLanes,
+            allLanes: viewModel.markerLanes,
+            renamingID: viewModel.renamingID,
+            onToggle: { id in
+                guard let lane = viewModel.markerLane(id: id) else { return }
+                viewModel.setMarkerLaneVisible(id: id, !lane.isVisible)
+            },
+            onCreate: { viewModel.addMarkerLane() },
+            onDelete: { viewModel.removeMarkerLane(id: $0) },
+            onBeginRename: { viewModel.renamingID = $0 },
+            onRename: { id, name in
+                viewModel.renamingID = nil
+                if let name, !name.isEmpty { viewModel.renameMarkerLane(id: id, to: name) }
+            }
+        )
     }
 
     // MARK: - Tool indicator

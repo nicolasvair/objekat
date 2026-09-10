@@ -146,6 +146,7 @@ enum ShortcutCheatsheet {
             return [ShortcutSection(title: "⌘", rows: [
                 ShortcutRow(keys: "⌘G", label: L("cheatsheet.group")),
                 ShortcutRow(keys: "⌘L", label: L("cheatsheet.loopSelection")),
+                ShortcutRow(keys: "⌘R", label: L("cheatsheet.rename")),
                 ShortcutRow(keys: L("cheatsheet.keys.cmdHeld"), label: L("cheatsheet.invertSnap")),
             ])]
         }

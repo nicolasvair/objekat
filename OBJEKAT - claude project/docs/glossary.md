@@ -28,6 +28,10 @@ source, not a translation.
 | envoi | send | envío | goes up towards an aux, never down |
 | aux | aux | aux | the object that only receives sends |
 | zone temporelle | time selection | selección temporal | the selection in time, independent of the objects |
+| marqueur | marker | marcador | a named INSTANT; on a marker lane, or carried by an object |
+| région | region | región | a named SPAN; the same thing as a marker, with a length |
+| ligne de marqueurs | marker lane | línea de marcadores | one row of the band under the ruler; shown or hidden one by one |
+| commentaire | comment | comentario | a text laid on the timeline; no sound, no engine object |
 | repères IN / OUT | IN / OUT markers | marcas IN / OUT |  |
 | bande (d'automation) | (automation) lane | lane (de automatización) | `lane` is already the model's word |
 | lane (rangée du modèle) | lane | lane | a row index, NOT the displayed row |

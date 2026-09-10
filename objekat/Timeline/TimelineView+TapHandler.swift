@@ -11,6 +11,14 @@ extension TimelineView {
             return
         }
 
+        // The marker band, under the ruler. It has its own gestures and none of the canvas's: no
+        // caret, no time selection, no tool. Even the Cut tool leaves it alone — a marker names an
+        // instant, and there is nothing there to cut.
+        if markerBandContains(point) {
+            handleMarkerBandTap(at: point)
+            return
+        }
+
         // With 's' held: the click no longer selects, it composes what is heard — each object aimed at
         // (a clip, a group, an aux, a child of an open group) goes into or out of the solo. Neither the
         // selection nor the transport moves: we stay on what we were listening to, and s + ⏎ then
@@ -90,6 +98,20 @@ extension TimelineView {
                 viewModel.cancelObjectEdit()
                 return
             }
+        }
+
+        // The annotations laid over the lanes: a comment, then a marker carried by an object. They
+        // are asked BEFORE the fades and the blocks, because they are drawn ON TOP of them and a
+        // mark one can see but not click is a mark one can never delete. Neither costs the block
+        // much: a marker only takes the top strip of it, and a comment is a thing one puts where
+        // there is room to read it.
+        //
+        // Double click = rename here as everywhere: the same gesture on a marker's name, on a
+        // comment's text and on an object's name.
+        if let hit = commentHit(at: point) ?? objectMarkerHit(at: point) {
+            viewModel.selectAnnotation(hit)
+            if isDoubleTap { viewModel.renamingID = hit.markerID }
+            return
         }
 
         // A double click inside a CROSSFADE zone resets the zone, before the fade below can claim
@@ -632,5 +654,30 @@ extension TimelineView {
                 viewModel.edit { viewModel.setSendEnabled(from: hit.clipID, to: hit.auxID, enabled: !on) }
             }
         }
+    }
+}
+
+// MARK: - The marker band
+
+extension TimelineView {
+
+    /// A click in the band: it selects a mark, and that is all it does. Nothing here moves the
+    /// cursor, lays a caret or traces a range — the band is a margin, not a surface one edits.
+    ///
+    /// Creation is the right click's (@see markerBandMenu): a click that merely LANDS somewhere has
+    /// asked for nothing, and a band that laid a marker at every click would fill with marks nobody
+    /// meant. Double click renames, as everywhere else.
+    func handleMarkerBandTap(at point: CGPoint) {
+        let now = Date()
+        let isDoubleTap = now.timeIntervalSince(lastTapInfo.time) < 0.35
+            && hypot(point.x - lastTapInfo.location.x, point.y - lastTapInfo.location.y) < 20
+        lastTapInfo = (now, point)
+
+        guard let hit = markerBandHit(at: point) else {
+            viewModel.selectedAnnotation = nil
+            return
+        }
+        viewModel.selectAnnotation(hit)
+        if isDoubleTap { viewModel.renamingID = hit.markerID }
     }
 }

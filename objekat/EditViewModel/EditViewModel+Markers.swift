@@ -19,6 +19,11 @@ extension EditViewModel {
     /// (@see MarkerLane.isVisible) — the band's height follows this list.
     var visibleMarkerLanes: [MarkerLane] { markerLanes.filter(\.isVisible) }
 
+    /// The same count, without building the array. The two AppKit event monitors read it on every
+    /// scroll notch and every right click to work out where the lanes begin, and an allocation per
+    /// notch is a poor way to answer "how many rows".
+    var visibleMarkerLaneCount: Int { markerLanes.reduce(0) { $0 + ($1.isVisible ? 1 : 0) } }
+
     func markerLane(id: UUID) -> MarkerLane? { markerLanes.first { $0.id == id } }
 
     /// The row a creation with no row named lands on: the first VISIBLE one, else the first one,
