@@ -32,14 +32,23 @@ extension EditViewModel {
         return lo
     }
 
-    /// The container a ripple laid on these DISPLAY lanes acts in — `nil` = the whole timeline.
-    /// The SHALLOWEST entry touched decides (@see the header): its parent is the scope.
-    func rippleContainerID(forLanes lanes: Set<Int>) -> UUID? {
+    /// The container a ripple acts in — `nil` = the whole timeline. The SHALLOWEST entry it
+    /// touches decides (@see the header): that entry's parent is the scope.
+    ///
+    /// ONE reading for the two ways of aiming a ripple. A time selection names display LANES and
+    /// an object selection names OBJECTS, but the rule that turns either into a scope is the same
+    /// sentence, and a rule a destructive gesture rests on is one to write once.
+    private func rippleScope(touching: (LaneEntry) -> Bool) -> UUID? {
         var best: (depth: Int, parent: UUID?)? = nil
-        for e in laneEntries where lanes.contains(e.displayLane) {
+        for e in laneEntries where touching(e) {
             if best == nil || e.depth < best!.depth { best = (e.depth, e.parentID) }
         }
         return best?.parent
+    }
+
+    /// The scope of a ripple laid on these DISPLAY lanes.
+    func rippleContainerID(forLanes lanes: Set<Int>) -> UUID? {
+        rippleScope { lanes.contains($0.displayLane) }
     }
 
     /// Every display lane belonging to `container`'s sub-tree — `nil` = every lane there is.
@@ -147,8 +156,11 @@ extension EditViewModel {
             if let b = o.loopRangeEnd   { o.loopRangeEnd   = Self.rippleMap(s + b, removing: lo, hi) - ns }
             o.startTime = ns
             o.duration  = dur
-            o.fadeIn    = min(o.fadeIn, dur)
-            o.fadeOut   = min(o.fadeOut, dur - o.fadeIn)
+            // The window has shrunk, so the fades have to come back inside it — through the same
+            // `clampFades` every other window-shortening path uses (the carve just above, the
+            // overlap policy). Written by hand here, it clamped in the other order, and the two
+            // disagreed about which fade gives way when they no longer both fit.
+            EditViewModel.clampFades(&o)
         }
         if let updated = find(id: id) { syncPosition(updated) }
     }
@@ -171,18 +183,13 @@ extension EditViewModel {
         isDirty       = true
     }
 
-    /// The container a ripple laid on OBJECTS acts in — the SHALLOWEST one selected decides, the
-    /// same rule as for a time selection (@see the header). `nil` = the whole timeline.
+    /// The scope of a ripple laid on OBJECTS.
     ///
     /// Read off `laneEntries`, hence off what is ON SCREEN, and that is why the callers filter
     /// their ids through `rippleVisibleIDs` first: an object with no display row would answer
     /// `nil` here — the whole timeline — for something that plainly lives inside a group.
     func rippleContainerID(forObjects ids: Set<UUID>) -> UUID? {
-        var best: (depth: Int, parent: UUID?)? = nil
-        for e in laneEntries where ids.contains(e.item.id) {
-            if best == nil || e.depth < best!.depth { best = (e.depth, e.parentID) }
-        }
-        return best?.parent
+        rippleScope { ids.contains($0.item.id) }
     }
 
     /// The ones of `ids` that have a display row. A ripple is a DISPLAYED gesture from end to end:
