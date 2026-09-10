@@ -222,19 +222,35 @@ extension TimelineView {
     /// now read the plan `openCrossfade` will apply, so the drag shows the result and not a
     /// rehearsal of it.
     func spillPlan(for id: UUID) -> (plan: EditViewModel.CrossfadePlan, isLeft: Bool)? {
-        guard let fd = fadeDrag, fd.dEdge != 0 else { return nil }
+        guard let fd = fadeDrag else { return nil }
         for held in fd.ids {
-            guard let neighbour = fd.seamNeighbours[held],
-                  held == id || neighbour == id else { continue }
-            let pair = fd.side == .out ? (held, neighbour) : (neighbour, held)
-            let width = (fd.zoneAnchors[held] ?? 0) + abs(fd.dEdge)
+            guard let sp = seamSpill(fd, for: held),
+                  held == id || sp.neighbour == id else { continue }
+            let pair = fd.side == .out ? (held, sp.neighbour) : (sp.neighbour, held)
             guard case .success(let plan) = viewModel.plannedCrossfade(leftID: pair.0,
                                                                       rightID: pair.1,
-                                                                      width: width)
+                                                                      width: sp.width,
+                                                                      approach: sp.approach)
             else { return nil }
             return (plan, plan.leftID == id)
         }
         return nil
+    }
+
+    /// What a fade pulled outwards is asking of its seam, for one of the objects the gesture
+    /// holds: the neighbour, the width of the zone it would open, and the gap it is crossing to
+    /// get there. `nil` while the edge has not REACHED the neighbour — it is then a plain
+    /// extension and nothing else, which is the whole difference between closing a gap and making
+    /// a crossfade. One reading, so the preview and the commit cannot disagree about which of the
+    /// two is happening.
+    func seamSpill(_ fd: FadeDragState, for id: UUID)
+        -> (neighbour: UUID, width: Double, approach: EditViewModel.SeamApproach)? {
+        guard fd.dEdge != 0, let n = fd.seamNeighbours[id] else { return nil }
+        let gap  = fd.seamGaps[id] ?? 0
+        let over = abs(fd.dEdge) - gap
+        guard over > EditViewModel.seamEpsilon else { return nil }
+        return (n, (fd.zoneAnchors[id] ?? 0) + over,
+                gap > 0 ? (fd.side == .out ? .leftGrows(gap) : .rightGrows(gap)) : .none)
     }
 
     /// The curve a spill is about to lay on BOTH sides: the hand's if it bent anything, straight
@@ -253,14 +269,14 @@ extension TimelineView {
     /// release.
     var spillingCrossfadePreview: (x: Double, y: Double, width: Double,
                                    outCurve: FadeCurve, inCurve: FadeCurve)? {
-        guard let fd = fadeDrag, fd.dEdge != 0,
-              let neighbour = fd.seamNeighbours[fd.grabbedID],
+        guard let fd = fadeDrag,
+              let sp = seamSpill(fd, for: fd.grabbedID),
               let entry = viewModel.laneEntries.first(where: { $0.item.id == fd.grabbedID })
         else { return nil }
-        let pair = fd.side == .out ? (fd.grabbedID, neighbour) : (neighbour, fd.grabbedID)
-        let width = (fd.zoneAnchors[fd.grabbedID] ?? 0) + abs(fd.dEdge)
+        let pair = fd.side == .out ? (fd.grabbedID, sp.neighbour) : (sp.neighbour, fd.grabbedID)
         guard case .success(let plan) = viewModel.plannedCrossfade(leftID: pair.0, rightID: pair.1,
-                                                                  width: width),
+                                                                  width: sp.width,
+                                                                  approach: sp.approach),
               plan.width * pixelsPerSecond >= 1
         else { return nil }
         // The plan speaks in the container's time; the canvas in absolute time. One offset, read

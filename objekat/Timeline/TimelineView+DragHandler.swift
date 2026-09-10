@@ -166,6 +166,12 @@ struct FadeDragState {
     /// than restarting from nothing.
     var zoneAnchors: [UUID: Double] = [:]
 
+    /// The gap still to be CROSSED to reach that neighbour — 0 when they already touch. A crop can
+    /// push an object out of its own crossfade and leave a gap behind it; the edge then travels
+    /// across that gap as an ordinary extension, and only what is left over opens a zone
+    /// (@see EditViewModel.SeamApproach).
+    var seamGaps: [UUID: Double] = [:]
+
     /// What the hand has ADDED along the signed bend axis: + bulges (upwards), − hollows. Nothing
     /// eases it — the bend one sees is proportional to the travel one makes, and an easing curve on
     /// top would only make the same amount cost a different distance depending on where one already
@@ -518,25 +524,36 @@ extension TimelineView {
                 // spills it onto that neighbour and makes a crossfade of the overlap.
                 var neighbours: [UUID: UUID] = [:]
                 var zones: [UUID: Double] = [:]
+                var gaps:  [UUID: Double] = [:]
+                /// How far this edge can travel at all: its own file, which is also how far it can
+                /// REACH for a neighbour that is no longer touching.
+                func ownRoom(_ obj: SoundObject) -> Double {
+                    side == .in ? min(obj.startTime, obj.contentRoomBefore) : obj.contentRoomAfter
+                }
                 for obj in objs {
-                    guard let n = viewModel.seamNeighbour(of: obj.id, onRight: side == .out)
+                    guard let n = viewModel.seamNeighbourAndGap(of: obj.id, onRight: side == .out,
+                                                                within: ownRoom(obj))
                     else { continue }
-                    neighbours[obj.id] = n
-                    let pair = side == .out ? (obj.id, n) : (n, obj.id)
+                    neighbours[obj.id] = n.id
+                    gaps[obj.id] = n.gap
+                    let pair = side == .out ? (obj.id, n.id) : (n.id, obj.id)
                     zones[obj.id] = viewModel.crossfadeZone(leftID: pair.0, rightID: pair.1)?.width ?? 0
                 }
-                // The outward travel available. Where the edge touches a NEIGHBOUR the limit is
-                // not this object's own file but what the crossfade can hold: a side with nothing
-                // left would otherwise forbid a zone the other side could perfectly well give —
-                // which is the whole "if the matter is missing on one side, open on the other".
+                // The outward travel available. Where the edge can reach a NEIGHBOUR the limit is
+                // not this object's own file but the gap plus what the crossfade can hold: a side
+                // with nothing left would otherwise forbid a zone the other side could perfectly
+                // well give — which is the whole "if the matter is missing on one side, open on
+                // the other".
                 let room = objs.map { obj -> Double in
-                    if let n = neighbours[obj.id] {
-                        let pair = side == .out ? (obj.id, n) : (n, obj.id)
-                        return max(0, viewModel.maxCrossfadeWidth(leftID: pair.0, rightID: pair.1)
-                                      - (zones[obj.id] ?? 0))
-                    }
-                    return side == .in ? min(obj.startTime, obj.contentRoomBefore)
-                                       : obj.contentRoomAfter
+                    guard let n = neighbours[obj.id] else { return ownRoom(obj) }
+                    let g = gaps[obj.id] ?? 0
+                    let pair = side == .out ? (obj.id, n) : (n, obj.id)
+                    let approach: EditViewModel.SeamApproach =
+                        g > 0 ? (side == .out ? .leftGrows(g) : .rightGrows(g)) : .none
+                    guard case .success(let hem) = viewModel.seamHem(leftID: pair.0, rightID: pair.1,
+                                                                     approach: approach)
+                    else { return ownRoom(obj) }
+                    return g + max(0, hem.maxWidth - (zones[obj.id] ?? 0))
                 }.min() ?? 0
                 fadeDrag = FadeDragState(
                     ids: ids, grabbedID: item.id, side: side,
@@ -551,7 +568,8 @@ extension TimelineView {
                     curveAnchors: Dictionary(uniqueKeysWithValues:
                         objs.map { ($0.id, side == .in ? $0.fadeInCurve : $0.fadeOutCurve) }),
                     seamNeighbours: neighbours,
-                    zoneAnchors: zones
+                    zoneAnchors: zones,
+                    seamGaps: gaps
                 )
 
             case .trimLeft:
@@ -700,14 +718,16 @@ extension TimelineView {
                 viewModel.pushUndo()
                 let final = state.finalFade
                 for id in state.ids {
-                    // The fade has SPILLED past its edge onto the neighbour it touches: what the
-                    // hand made is a crossfade, not a longer window. Opening it sets both fades to
-                    // the zone's width, so the fade commit below is skipped for this object — the
-                    // zone commands the edge engaged in it (@see EditViewModel+Crossfade).
-                    if state.dEdge != 0, let neighbour = state.seamNeighbours[id] {
-                        let pair = state.side == .out ? (id, neighbour) : (neighbour, id)
-                        let width = (state.zoneAnchors[id] ?? 0) + abs(state.dEdge)
-                        viewModel.openCrossfade(leftID: pair.0, rightID: pair.1, width: width)
+                    // The fade has SPILLED past its edge onto the neighbour: what the hand made is
+                    // a crossfade, not a longer window. Opening it sets both fades to the zone's
+                    // width, so the fade commit below is skipped for this object — the zone
+                    // commands the edge engaged in it (@see EditViewModel+Crossfade). An edge that
+                    // has NOT reached its neighbour yet falls through to the plain extension: it
+                    // is crossing a gap, and crossing a gap is not making a crossfade.
+                    if let sp = seamSpill(state, for: id) {
+                        let pair = state.side == .out ? (id, sp.neighbour) : (sp.neighbour, id)
+                        viewModel.openCrossfade(leftID: pair.0, rightID: pair.1,
+                                                width: sp.width, approach: sp.approach)
                         // A crossfade is SYMMETRIC or it is not one, and the shape is half of that:
                         // a bent fade spilling onto a flat neighbour used to make a lopsided X, one
                         // side bulged and the other straight. So the pair takes ONE curve — the

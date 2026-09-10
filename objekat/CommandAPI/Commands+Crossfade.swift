@@ -94,6 +94,11 @@ extension CommandRegistry {
                                   + "new start = moving the seam; a new width with one edge kept "
                                   + "= widening from the other. A wish, not an order: it is "
                                   + "clamped like the width."),
+                          ParamSpec("cross_gap", "string", required: false,
+                                    "'left' or 'right': the two objects no longer touch, and THAT "
+                                  + "one's facing edge travels across the gap to reach the other "
+                                  + "before any zone opens — one movement, as under the hand. "
+                                  + "Without it a gap is refused: there is no seam to open."),
                           ParamSpec("pin", "string", required: false,
                                     "'start' or 'end': that edge of the zone described by `start` "
                                   + "and `width` is HELD, and the width is clamped rather than the "
@@ -108,6 +113,20 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'width' cannot be negative")
             }
             let idealStart = p.raw["start"] != nil ? try p.double("start") : nil
+            var approach: EditViewModel.SeamApproach = .none
+            if p.raw["cross_gap"] != nil {
+                guard let l = vm.find(id: pair.left), let r = vm.find(id: pair.right) else {
+                    throw CommandError(code: .not_found, message: "object lost")
+                }
+                let (a, b) = l.startTime <= r.startTime ? (l, r) : (r, l)
+                let gap = max(0, b.startTime - (a.startTime + a.duration))
+                switch try p.string("cross_gap") {
+                case "left":  approach = .leftGrows(gap)
+                case "right": approach = .rightGrows(gap)
+                default:
+                    throw CommandError(code: .bad_params, message: "'cross_gap' is 'left' or 'right'")
+                }
+            }
             var pin: EditViewModel.ZonePin? = nil
             if p.raw["pin"] != nil {
                 guard let s = idealStart else {
@@ -120,8 +139,8 @@ extension CommandRegistry {
                     throw CommandError(code: .bad_params, message: "'pin' is 'start' or 'end'")
                 }
             }
-            switch vm.openCrossfade(leftID: pair.left, rightID: pair.right,
-                                    width: width, idealStart: idealStart, pin: pin) {
+            switch vm.openCrossfade(leftID: pair.left, rightID: pair.right, width: width,
+                                    idealStart: idealStart, pin: pin, approach: approach) {
             case .failure(let reason):
                 throw refuse(reason)
             case .success(let zone):

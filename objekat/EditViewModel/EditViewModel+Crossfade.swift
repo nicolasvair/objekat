@@ -197,25 +197,40 @@ extension EditViewModel {
     /// The sibling this object BUTTS against on one side — the one a fade pulled out past that
     /// edge would spill onto, which is how a crossfade is created. An already-crossfaded
     /// neighbour counts: pulling further simply widens the zone that is there.
-    func seamNeighbour(of id: UUID, onRight: Bool) -> UUID? {
+    func seamNeighbour(of id: UUID, onRight: Bool, within reach: Double = 0) -> UUID? {
+        seamNeighbourAndGap(of: id, onRight: onRight, within: reach)?.id
+    }
+
+    /// The same neighbour, with the GAP still to be crossed to reach it — 0 when they already
+    /// touch or already share a zone.
+    ///
+    /// `reach` is how far the edge in question can travel at all. Zero — the default — is the
+    /// strict reading: only a butt joint or an existing zone. Given a hand's reach, the NEAREST
+    /// object within it counts too, because a gap one gesture can close is a seam one gesture can
+    /// open, and an edge pulled towards a neighbour it cannot see would simply run over it and
+    /// have `resolveOverlaps` eat it.
+    func seamNeighbourAndGap(of id: UUID, onRight: Bool,
+                             within reach: Double = 0) -> (id: UUID, gap: Double)? {
         guard let me = find(id: id) else { return nil }
         let myEnd = me.startTime + me.duration
+        var best: (id: UUID, gap: Double)? = nil
         for other in crossfadeSiblings(of: id) where other.id != id && other.lane == me.lane {
             let otherEnd = other.startTime + other.duration
+            let gap: Double
             if onRight {
-                // It starts where I finish (a butt joint), or we already share a zone.
                 guard other.startTime > me.startTime, otherEnd > myEnd else { continue }
-                if abs(other.startTime - myEnd) <= Self.seamEpsilon || isCrossfadePair(me, other) {
-                    return other.id
-                }
+                if isCrossfadePair(me, other) { return (other.id, 0) }
+                gap = other.startTime - myEnd
             } else {
                 guard other.startTime < me.startTime, otherEnd < myEnd else { continue }
-                if abs(me.startTime - otherEnd) <= Self.seamEpsilon || isCrossfadePair(other, me) {
-                    return other.id
-                }
+                if isCrossfadePair(other, me) { return (other.id, 0) }
+                gap = me.startTime - otherEnd
             }
+            guard gap >= -Self.seamEpsilon, gap <= reach + Self.seamEpsilon else { continue }
+            // The NEAREST one: an edge reaches what is in front of it, not what is behind that.
+            if best == nil || gap < best!.gap { best = (other.id, max(0, gap)) }
         }
-        return nil
+        return best
     }
 
     /// The crossfade these two form, if they form one.
@@ -297,9 +312,10 @@ extension EditViewModel {
     @discardableResult
     func openCrossfade(leftID: UUID, rightID: UUID, width: Double,
                        idealStart: Double? = nil,
-                       pin: ZonePin? = nil) -> Result<CrossfadeZone?, SeamRefusal> {
-        switch plannedCrossfade(leftID: leftID, rightID: rightID,
-                                width: width, idealStart: idealStart, pin: pin) {
+                       pin: ZonePin? = nil,
+                       approach: SeamApproach = .none) -> Result<CrossfadeZone?, SeamRefusal> {
+        switch plannedCrossfade(leftID: leftID, rightID: rightID, width: width,
+                                idealStart: idealStart, pin: pin, approach: approach) {
         case .failure(let reason):
             return .failure(reason)
         case .success(let plan):
@@ -391,7 +407,24 @@ extension EditViewModel {
         case end(Double)
     }
 
-    func seamHem(leftID: UUID, rightID: UUID) -> Result<SeamHem, SeamRefusal> {
+    /// A gesture that closes a GAP on its way to the seam. Two objects that no longer touch have
+    /// no seam, and a crossfade cannot open on nothing — but a hand pulling one object's edge
+    /// across the gap towards its neighbour is closing that gap AND asking for a zone in ONE
+    /// movement, which is what it looks like on screen. The seam is then read as if the edge had
+    /// already travelled: the window that much longer, the file that much shorter behind it.
+    ///
+    /// It exists because a crop can now push an object out of its own crossfade, leaving exactly
+    /// such a gap. Coming back had to be possible, and it had to be possible in one gesture.
+    enum SeamApproach {
+        case none
+        /// The LEFT object's right edge travels this far to reach the right one.
+        case leftGrows(Double)
+        /// The RIGHT object's left edge travels this far to reach the left one.
+        case rightGrows(Double)
+    }
+
+    func seamHem(leftID: UUID, rightID: UUID,
+                 approach: SeamApproach = .none) -> Result<SeamHem, SeamRefusal> {
         guard var left = find(id: leftID), var right = find(id: rightID),
               left.lane == right.lane,
               parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id
@@ -405,14 +438,23 @@ extension EditViewModel {
         // touched. The same refusal as the ripple's, for the same reason.
         if isLoopedGroupPorthole(left) || isLoopedGroupPorthole(right) { return .failure(.porthole) }
 
-        let leftEnd  = left.startTime + left.duration
-        let rightEnd = right.startTime + right.duration
-        guard leftEnd >= right.startTime - Self.seamEpsilon else { return .failure(.gap) }
+        // The geometry the seam is read on: the model's, plus the travel the gesture has already
+        // made across the gap (@see SeamApproach). Nothing is written — this is the hypothesis the
+        // whole plan is then built on, and `openCrossfade` lays the edges down where it says.
+        var leftEnd    = left.startTime + left.duration
+        var rightStart = right.startTime
+        let rightEnd   = right.startTime + right.duration
+        var headL = windowHeadroom(left)
+        var headR = windowHeadroom(right)
+        switch approach {
+        case .leftGrows(let g)  where g > 0: leftEnd    += g; headL.right -= g
+        case .rightGrows(let g) where g > 0: rightStart -= g; headR.left  -= g
+        default: break
+        }
+        guard leftEnd >= rightStart - Self.seamEpsilon else { return .failure(.gap) }
 
         let minDur = Self.crossfadeMinDuration
-        let headL = windowHeadroom(left)
-        let headR = windowHeadroom(right)
-        let currentOverlap = max(0, leftEnd - right.startTime)
+        let currentOverlap = max(0, leftEnd - rightStart)
 
         // What each object must keep for ITSELF, outside the zone: its own other fade, and never
         // less than the floor. A zone that swallowed a whole object would not be a crossfade any
@@ -435,14 +477,14 @@ extension EditViewModel {
         return .success(SeamHem(
             leftID: left.id, rightID: right.id,
             leftStart: left.startTime, leftEnd: leftEnd,
-            rightStart: right.startTime, rightEnd: rightEnd,
+            rightStart: rightStart, rightEnd: rightEnd,
             lane: left.lane, containerID: parentGroup(for: left.id)?.id,
-            startFloor: max(right.startTime - headR.left,   // the right object's file
+            startFloor: max(rightStart - headR.left,        // the right object's file
                             left.startTime + keepLeft),     // what the left object keeps for itself
             startCeilingBase: min(leftEnd + headL.right,    // the left object's file
                                   rightEnd - keepRight),    // what the right object keeps
             maxWidth: Self.crossfadeCeiling(leftStart: left.startTime, leftEnd: leftEnd,
-                                            rightStart: right.startTime, rightEnd: rightEnd,
+                                            rightStart: rightStart, rightEnd: rightEnd,
                                             headLRight: headL.right, headRLeft: headR.left,
                                             keepLeft: keepLeft, keepRight: keepRight),
             byMaterial: currentOverlap + headL.right + headR.left))
@@ -450,9 +492,10 @@ extension EditViewModel {
 
     func plannedCrossfade(leftID: UUID, rightID: UUID, width: Double,
                           idealStart: Double? = nil,
-                          pin: ZonePin? = nil) -> Result<CrossfadePlan, SeamRefusal> {
+                          pin: ZonePin? = nil,
+                          approach: SeamApproach = .none) -> Result<CrossfadePlan, SeamRefusal> {
         let hem: SeamHem
-        switch seamHem(leftID: leftID, rightID: rightID) {
+        switch seamHem(leftID: leftID, rightID: rightID, approach: approach) {
         case .failure(let reason): return .failure(reason)
         case .success(let h):      hem = h
         }

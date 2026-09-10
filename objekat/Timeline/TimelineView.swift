@@ -1123,18 +1123,18 @@ struct TimelineView: View {
 
     /// The 'the edge cannot move any more' tolerance: half a pixel at the current scale, with a
     /// floor in seconds so as to stay stable at extreme zooms.
-    private var edgeEpsilon: Double { max(0.001, 0.5 / max(pixelsPerSecond, 1)) }
+    var edgeEpsilon: Double { max(0.001, 0.5 / max(pixelsPerSecond, 1)) }
 
     /// The content margin available BEFORE the clip's start, in timeline seconds. It bounds the
     /// left trim, exactly like `handleCanvasDrag` (the minimum of timeline 0 and the source content
     /// left, which swaps in reverse — @see SoundObject.contentRoomBefore). An object with no file
     /// (a group, an aux, a MIDI clip) has no stop other than timeline 0.
-    private func headroomBefore(_ item: SoundObject) -> Double {
+    func headroomBefore(_ item: SoundObject) -> Double {
         min(item.startTime, item.contentRoomBefore)
     }
 
     /// The content margin available AFTER the clip's end (the same convention as `headroomBefore`).
-    private func headroomAfter(_ item: SoundObject) -> Double {
+    func headroomAfter(_ item: SoundObject) -> Double {
         item.contentRoomAfter
     }
 

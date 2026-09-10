@@ -351,6 +351,14 @@ cropping, and opens the gap a crop opens. Both wear a block's own edge cursor th
 included, and an arrow goes out when the file — or the object's own length — has nothing more to
 give.
 
+A crop can push an object clean out of its own crossfade, and coming BACK had to be possible in the
+same movement. So a fade pulled outwards looks for a neighbour within its own file's REACH and not
+only one it already touches: the travel crosses the gap as an ordinary extension, and only what is
+left over opens a zone. `cross_gap: "left"` / `"right"` says the same thing to a script — that
+object's facing edge travels across the gap first — and without it a gap is still refused, since two
+objects that do not meet have no seam. It is what stopped an edge pulled towards a neighbour it
+could not see from simply running over it and having `resolveOverlaps` eat it.
+
 Either way the OPPOSITE edge is **pinned**, and `pin` is what says so. Given only a width, the seam
 gives what it can and takes the rest out of whichever side still has it: that is right for opening a
 seam — it is what lets a side with no file left still get a crossfade — and wrong under a hand
