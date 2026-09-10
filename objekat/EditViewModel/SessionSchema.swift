@@ -16,7 +16,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 10
+    static let formatVersion = 11
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -69,6 +69,17 @@ enum SessionSchema {
         "  Changing a definition updates every one of its instances.",
         "",
         "viewport — timeline zoom and framing. Purely visual, with no effect on the sound.",
+        "",
+        "markerLanes — the rows of the marker band: named layers one can show or hide, each holding",
+        "  markers AND regions in one list. A marker is a region with no end: `duration` 0 = a point,",
+        "  > 0 = a span. Times in SECONDS, ABSOLUTE on the timeline.",
+        "  An object can carry markers of its own (items[].markers, same shape) — but THOSE times are",
+        "  RELATIVE to the start of the object, exactly like its automation points. Same type, two",
+        "  frames of reference: that is this section's trap.",
+        "comments — free texts laid over a span of the timeline: { startTime, duration, lane, text }.",
+        "  The text is markdown (inline: bold, italic, code, links). They live BESIDE items and not",
+        "  inside: a comment carries no sound.",
+        "  Markers, regions and comments are purely visual — nothing here changes what is heard.",
         "",
         "TO ACT ON THIS PROJECT — prefer the app's command API (UNIX socket, JSON-lines, `help`",
         "  describes itself): it keeps the invariants this file does not state. Editing the JSON",
