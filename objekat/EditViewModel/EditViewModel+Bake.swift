@@ -173,6 +173,7 @@ extension EditViewModel {
             // The baked one may have been varispeeded: the materialised content lasts `spd` times longer, and
             // the instance's own curves stretch by as much to stay in front of it.
             restored.automation = restored.automation.timeScaled(by: spd)
+            restored.markers    = restored.markers.timeScaled(by: spd)
             if dStart != 0 { EditViewModel.shiftStartTimes(&children, by: dStart) }
             func propagateStem(_ kids: inout [SoundObject]) {
                 for i in kids.indices {
@@ -193,6 +194,7 @@ extension EditViewModel {
                 restored.fadeIn   = wrapper.fadeIn  * spd
                 restored.fadeOut  = wrapper.fadeOut * spd
                 restored.automation = restored.automation.timeScaled(by: spd)   // see the group case
+                restored.markers    = restored.markers.timeScaled(by: spd)
                 restored.kind = .clip(filePath: fp, sourceOffset: so + wrapper.sourceOffset * sr,
                                       fileDuration: fd, speedRatio: sr, isReversed: rev)
             } else if case .midiClip = restored.kind {

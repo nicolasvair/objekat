@@ -159,6 +159,7 @@ extension EditViewModel {
             // and comes back if the edge is reopened (@see AutomationLane.shifted). Without this, a
             // curve followed the edge instead of staying in front of the matter it modulates.
             obj.automation = obj.automation.shiftedInTime(by: -delta)
+            obj.markers    = obj.markers.shiftedInTime(by: -delta)
             if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind {
                 // The left edge moves by `delta` on the timeline → the source advances by delta×speed.
                 // In reverse it is the right edge that commands the source range: trimming the entry

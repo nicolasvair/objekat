@@ -930,6 +930,8 @@ final class EditViewModel {
             // AutomationLane.mirrored) — otherwise a fade drawn on the end of a sound would
             // end up on its attack.
             obj.automation = obj.automation.mirroredInTime(over: obj.duration)
+            // The markers name places IN that matter: they turn round with it.
+            obj.markers = obj.markers.mirroredInTime(over: obj.duration)
         }
         engine?.updateIsReversed(reversed, forID: id.uuidString)
         // Turning the playback round changes the offset CONVENTION on the engine side (Tracktion then reads a
@@ -1062,6 +1064,7 @@ final class EditViewModel {
             // (D is bounded above), and a curve must not compress for that
             // reason — the points that overrun stay stored, as after a trim.
             obj.automation = obj.automation.timeScaled(by: oldSpeed / newSpeed)
+            obj.markers    = obj.markers.timeScaled(by: oldSpeed / newSpeed)
         }
         engine?.updateSpeedRatio(newSpeed, forID: id.uuidString)
         if let obj = find(id: id) {

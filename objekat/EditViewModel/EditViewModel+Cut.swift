@@ -193,6 +193,9 @@ extension EditViewModel {
         // The curves are cut at the same instant as the matter, in time RELATIVE to the object, with
         // an interpolated point on each side (@see AutomationLane.split).
         let (autoL, autoR) = child.automation.splitInTime(at: splitTime - childStart)
+        // The markers are cut at the same instant and in the same frame — a region straddling the
+        // cut goes to both halves, like the object's own label (@see Array where Element == Marker).
+        let (markL, markR) = child.markers.splitInTime(at: splitTime - childStart)
 
         switch child.kind {
         case .clip(let fp, _, let fd, let sr, let rev):
@@ -201,6 +204,7 @@ extension EditViewModel {
             lc.duration = splitTime - childStart
             lc.fadeOut  = 0
             lc.automation = autoL
+            lc.markers    = markL
             lc.sourceOffset = offsets.left
             // derivedCopy: sends/chain gains/sound-object link inherited.
             let rc = child.derivedCopy(
@@ -208,6 +212,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: child.fadeOut,
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
+                markers: markR,
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev))
             rightIDMap[child.id] = rc.id
@@ -220,6 +225,7 @@ extension EditViewModel {
             lc.duration = splitTime - childStart
             lc.fadeOut  = 0
             lc.automation = autoL
+            lc.markers    = markL
             lc.kind = .midiClip(notes: leftNotes,
                                 lengthBeats: max(0.01, min(lengthBeats, splitBeat)))
             let rc = child.derivedCopy(
@@ -228,6 +234,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: child),
                 instruments: copiedInstruments(of: child),
                 automation: autoR,
+                markers: markR,
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
             rightIDMap[child.id] = rc.id
@@ -246,11 +253,13 @@ extension EditViewModel {
                 lg.fadeIn   = min(child.fadeIn, lg.duration)
                 lg.fadeOut  = 0
                 lg.automation = autoL
+                lg.markers    = markL
                 var rg = child.derivedCopy(
                     startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                     fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                     plugins: copiedPlugins(of: child),
                     automation: autoR,
+                    markers: markR,
                     kind: .group(children: looped.children, isExpanded: isExpanded))
                 rg.loopRangeStart = looped.loopStart
                 rg.loopRangeEnd   = looped.loopEnd
@@ -272,12 +281,14 @@ extension EditViewModel {
             lg.fadeIn   = min(child.fadeIn, lg.duration)
             lg.fadeOut  = 0
             lg.automation = autoL
+            lg.markers    = markL
             lg.kind     = .group(children: innerLeft, isExpanded: isExpanded)
             let rg = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
+                markers: markR,
                 kind: .group(children: innerRight, isExpanded: isExpanded))
             rightIDMap[child.id] = rg.id
             return (lg, rg)
@@ -384,9 +395,11 @@ extension EditViewModel {
             // Cutting the curves: the left half keeps its frame of reference, the right is rebased on
             // the cut, each with an interpolated point at the bound (@see AutomationLane.split).
             let (autoL, autoR) = original.automation.splitInTime(at: splitRel)
+            let (markL, markR) = original.markers.splitInTime(at: splitRel)
 
             items[i].duration = splitRel
             items[i].automation = autoL
+            items[i].markers = markL
             items[i].sourceOffset = offsets.left
             let leftFadeIn  = min(items[i].fadeIn, splitRel)
             let leftFadeOut = 0.0
@@ -408,6 +421,7 @@ extension EditViewModel {
                 fadeOut: rightFadeOut,
                 plugins: copiedPlugins(of: original),
                 automation: autoR,
+                markers: markR,
                 kind: .clip(
                     filePath: filePath,
                     // sourceOffset in source seconds: the edge advances by splitRel on the timeline →
@@ -450,12 +464,14 @@ extension EditViewModel {
             let captured = withCapturedPluginStates(child)
 
             let (autoL, autoR) = child.automation.splitInTime(at: splitRelChild)
+            let (markL, markR) = child.markers.splitInTime(at: splitRelChild)
 
             var leftChild = captured
             leftChild.duration = splitRelChild
             leftChild.fadeIn   = min(child.fadeIn, splitRelChild)
             leftChild.fadeOut  = 0
             leftChild.automation = autoL
+            leftChild.markers    = markL
             leftChild.sourceOffset = offsets.left
 
             let rightID = UUID()
@@ -468,6 +484,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(child.fadeOut, child.startTime + child.duration - splitTime),
                 plugins: copiedPlugins(of: captured),
                 automation: autoR,
+                markers: markR,
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev)
             )
@@ -513,10 +530,12 @@ extension EditViewModel {
             // otherwise that backfill would be crushed.
             let rightPlugins = copiedPlugins(of: original)
             let (autoL, autoR) = original.automation.splitInTime(at: splitRel)
+            let (markL, markR) = original.markers.splitInTime(at: splitRel)
             guard var left = find(id: id) else { return nil }   // the FRESHLY linked original
             left.duration = splitRel
             left.fadeOut  = 0
             left.automation = autoL
+            left.markers    = markL
 
             let rightID = UUID()
             let right = original.derivedCopy(
@@ -525,6 +544,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: original.fadeOut,
                 plugins: rightPlugins,
                 automation: autoR,
+                markers: markR,
                 kind: .aux
             )
 
@@ -575,11 +595,13 @@ extension EditViewModel {
             let rightPlugins     = copiedPlugins(of: original)
             let rightInstruments = copiedInstruments(of: original)
             let (autoL, autoR)   = original.automation.splitInTime(at: splitRel)
+            let (markL, markR)   = original.markers.splitInTime(at: splitRel)
             guard var left = find(id: id) else { return nil }
             left.duration = splitRel
             left.fadeIn   = min(left.fadeIn, splitRel)
             left.fadeOut  = 0
             left.automation = autoL
+            left.markers    = markL
             left.kind     = .midiClip(notes: leftNotes,
                                       lengthBeats: max(0.01, min(lengthBeats, splitBeat)))
 
@@ -590,6 +612,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
                 plugins: rightPlugins, instruments: rightInstruments,
                 automation: autoR,
+                markers: markR,
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
 
@@ -687,12 +710,14 @@ extension EditViewModel {
             // The GROUP's curves are cut like a clip's; those of its children
             // have already been cut by `splitSubtree`, each in its own child's frame of reference.
             let (autoL, autoR) = original.automation.splitInTime(at: splitRel)
+            let (markL, markR) = original.markers.splitInTime(at: splitRel)
             let left = original.derivedCopy(
                 id: original.id, startTime: original.startTime, duration: splitRel,
                 lane: original.lane,
                 fadeIn: min(original.fadeIn, splitRel), fadeOut: 0,
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoL,
+                markers: markL,
                 kind: .group(children: leftChildren, isExpanded: isExpanded)
             )
             var right = original.derivedCopy(
@@ -701,6 +726,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoR,
+                markers: markR,
                 kind: .group(children: rightChildren, isExpanded: isExpanded)
             )
             // IN/OUT bounds rebased on the new start: the loop resumes in phase
