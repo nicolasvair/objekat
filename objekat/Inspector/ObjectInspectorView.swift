@@ -21,6 +21,12 @@ struct ObjectInspectorView: View {
     @State private var panRelative: Bool = false
     @State private var speedRelative: Bool = false
 
+    // Pan, and pan alone, anchors its gesture: the range being ±1, the selection saturates in one
+    // flick, and a delta compounded on the stored value would leave the objects stuck at the edge
+    // with their spread lost. Taken at each `onBegin` — the start of a drag, or one arrow press.
+    @State private var panAnchors: [UUID: Float] = [:]
+    @State private var panOrigin: Double = 0
+
     // Sends in a multiple selection: the slider's current position and the 'relative' flag
     // per aux (the key being the auxID), the same logic as relVolume/volRelative.
     @State private var relSend: [UUID: Double] = [:]
@@ -280,9 +286,13 @@ struct ObjectInspectorView: View {
                     parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                     help: L("help.drag.pan"),
                     onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
-                    onBegin: { viewModel.pushUndo() },
+                    onBegin: {
+                        viewModel.pushUndo()
+                        panAnchors = viewModel.panSnapshot()
+                        panOrigin = relPan
+                    },
                     onChange: { new in
-                        viewModel.adjustPanSelected(Float(new - relPan))
+                        viewModel.applyPanDelta(Float(new - panOrigin), from: panAnchors)
                         relPan = new
                     },
                     onReset: {
