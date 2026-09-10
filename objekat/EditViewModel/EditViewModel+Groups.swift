@@ -570,40 +570,46 @@ extension EditViewModel {
         anchors: [UUID: (start: Double, lane: Int)],
         grabbedID: UUID, grabbedChildLane: Int, dt: Double
     ) {
-        guard let group = find(id: groupID), case .group = group.kind else { return }
-        guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
+        // Entering a container ENDS every crossfade the movers were in: a zone lives
+        // between siblings of one lane, and these stop being siblings of what they
+        // leave behind. Nothing put the zone's fades away, and each object went on
+        // wearing the one the zone had given it (@see withCrossfadeRefit).
+        withCrossfadeRefit(around: clipIDs) {
+            guard let group = find(id: groupID), case .group = group.kind else { return }
+            guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
 
-        var moved: [SoundObject] = []
-        for clipID in clipIDs {
-            guard let obj = find(id: clipID), let anchor = anchors[clipID] else { continue }
-            if isSelfOrDescendant(groupID, of: clipID) { continue }   // anti-cycle
-            var child = withCapturedPluginStates(obj)   // freezes the state before the engine round trip
-            let newStart = max(0, anchor.start + dt)
-            let dStart   = newStart - obj.startTime
-            child.startTime = newStart
-            child.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
-            child.stemID = group.stemID
-            if case .group(var gch, let e) = child.kind, dStart != 0 {
-                EditViewModel.shiftStartTimes(&gch, by: dStart)
-                child.kind = .group(children: gch, isExpanded: e)
+            var moved: [SoundObject] = []
+            for clipID in clipIDs {
+                guard let obj = find(id: clipID), let anchor = anchors[clipID] else { continue }
+                if isSelfOrDescendant(groupID, of: clipID) { continue }   // anti-cycle
+                var child = withCapturedPluginStates(obj)   // freezes the state before the engine round trip
+                let newStart = max(0, anchor.start + dt)
+                let dStart   = newStart - obj.startTime
+                child.startTime = newStart
+                child.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
+                child.stemID = group.stemID
+                if case .group(var gch, let e) = child.kind, dStart != 0 {
+                    EditViewModel.shiftStartTimes(&gch, by: dStart)
+                    child.kind = .group(children: gch, isExpanded: e)
+                }
+                moved.append(child)
             }
-            moved.append(child)
-        }
-        guard !moved.isEmpty else { return }
+            guard !moved.isEmpty else { return }
 
-        let movedIDs = Set(moved.map(\.id))
-        for id in movedIDs {
-            if let obj = find(id: id) { removeFromEngine(obj) }   // the original top level
-            removeFromItems(id: id)
-        }
-        selectedIDs.subtract(movedIDs)
+            let movedIDs = Set(moved.map(\.id))
+            for id in movedIDs {
+                if let obj = find(id: id) { removeFromEngine(obj) }   // the original top level
+                removeFromItems(id: id)
+            }
+            selectedIDs.subtract(movedIDs)
 
-        for child in moved { addChild(child, toGroupID: groupID) }
-        for child in moved { resolveOverlaps(for: child.id) }
-        // The membership has changed: a send between siblings can become routable or stop
-        // being so. resyncAllSends reconciles both ways.
-        resyncAllSends()
-        isDirty = true
+            for child in moved { addChild(child, toGroupID: groupID) }
+            for child in moved { resolveOverlaps(for: child.id) }
+            // The membership has changed: a send between siblings can become routable or stop
+            // being so. resyncAllSends reconciles both ways.
+            resyncAllSends()
+            isDirty = true
+        }
     }
 
     func ejectFromGroup(
@@ -611,46 +617,50 @@ extension EditViewModel {
         anchors: [UUID: (start: Double, lane: Int)],
         grabbedID: UUID, dt: Double, baseLane: Int
     ) {
-        guard let group = find(id: groupID),
-              case .group(let children, let isExpanded) = group.kind else { return }
-        guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
+        // Leaving a container ENDS every crossfade the ejected were in, for the same
+        // reason as entering one: a zone lives between siblings (@see withCrossfadeRefit).
+        withCrossfadeRefit(around: childIDs) {
+            guard let group = find(id: groupID),
+                  case .group(let children, let isExpanded) = group.kind else { return }
+            guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
 
-        var ejected: [SoundObject] = []
-        for childID in childIDs {
-            guard let child = children.first(where: { $0.id == childID }),
-                  let anchor = anchors[childID] else { continue }
-            var top = withCapturedPluginStates(child)   // freezes the state before the engine round trip
-            let newStart = max(0, anchor.start + dt)
-            let dStart   = newStart - child.startTime
-            top.startTime = newStart
-            top.lane = max(0, baseLane + (anchor.lane - grabbedBaseLane))
-            if case .group(var gch, let e) = top.kind, dStart != 0 {
-                EditViewModel.shiftStartTimes(&gch, by: dStart)
-                top.kind = .group(children: gch, isExpanded: e)
+            var ejected: [SoundObject] = []
+            for childID in childIDs {
+                guard let child = children.first(where: { $0.id == childID }),
+                      let anchor = anchors[childID] else { continue }
+                var top = withCapturedPluginStates(child)   // freezes the state before the engine round trip
+                let newStart = max(0, anchor.start + dt)
+                let dStart   = newStart - child.startTime
+                top.startTime = newStart
+                top.lane = max(0, baseLane + (anchor.lane - grabbedBaseLane))
+                if case .group(var gch, let e) = top.kind, dStart != 0 {
+                    EditViewModel.shiftStartTimes(&gch, by: dStart)
+                    top.kind = .group(children: gch, isExpanded: e)
+                }
+                ejected.append(top)
             }
-            ejected.append(top)
-        }
 
-        // Engine removal of the sub-tree BEFORE mutating the model (removeFromEngine: the track for
-        // a clip, descendants + folder for a group).
-        for childID in childIDs {
-            if let obj = find(id: childID) { removeFromEngine(obj) }
-        }
-        update(id: groupID) { obj in
-            obj.kind = .group(children: children.filter { !childIDs.contains($0.id) },
-                              isExpanded: isExpanded)
-        }
-        for obj in ejected {
-            items.append(obj)
-            syncAdd(obj)
-            if obj.isClip || obj.isMIDI {
-                engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: obj.id.uuidString)
+            // Engine removal of the sub-tree BEFORE mutating the model (removeFromEngine: the track for
+            // a clip, descendants + folder for a group).
+            for childID in childIDs {
+                if let obj = find(id: childID) { removeFromEngine(obj) }
             }
+            update(id: groupID) { obj in
+                obj.kind = .group(children: children.filter { !childIDs.contains($0.id) },
+                                  isExpanded: isExpanded)
+            }
+            for obj in ejected {
+                items.append(obj)
+                syncAdd(obj)
+                if obj.isClip || obj.isMIDI {
+                    engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: obj.id.uuidString)
+                }
+            }
+            // The membership has changed: a send between siblings can become routable or stop
+            // being so. resyncAllSends reconciles both ways.
+            resyncAllSends()
+            isDirty = true
         }
-        // The membership has changed: a send between siblings can become routable or stop
-        // being so. resyncAllSends reconciles both ways.
-        resyncAllSends()
-        isDirty = true
     }
 
     func reparentChildBetweenGroups(
@@ -658,46 +668,50 @@ extension EditViewModel {
         anchors: [UUID: (start: Double, lane: Int)],
         grabbedID: UUID, grabbedChildLane: Int, dt: Double
     ) {
-        guard let source = find(id: sourceGroupID),
-              case .group(let srcChildren, _) = source.kind,
-              let target = find(id: targetGroupID), case .group = target.kind else { return }
-        guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
+        // Changing container ENDS every crossfade the movers were in, both with what
+        // they leave and with what they join (@see withCrossfadeRefit).
+        withCrossfadeRefit(around: childIDs) {
+            guard let source = find(id: sourceGroupID),
+                  case .group(let srcChildren, _) = source.kind,
+                  let target = find(id: targetGroupID), case .group = target.kind else { return }
+            guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return }
 
-        var moved: [SoundObject] = []
-        for childID in childIDs {
-            guard let child = srcChildren.first(where: { $0.id == childID }),
-                  let anchor = anchors[childID] else { continue }
-            if isSelfOrDescendant(targetGroupID, of: childID) { continue }   // anti-cycle
-            var c = withCapturedPluginStates(child)   // freezes the state before the engine round trip
-            let newStart = max(0, anchor.start + dt)
-            let dStart   = newStart - child.startTime
-            c.startTime = newStart
-            c.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
-            c.stemID = target.stemID
-            if case .group(var gch, let e) = c.kind, dStart != 0 {
-                EditViewModel.shiftStartTimes(&gch, by: dStart)
-                c.kind = .group(children: gch, isExpanded: e)
+            var moved: [SoundObject] = []
+            for childID in childIDs {
+                guard let child = srcChildren.first(where: { $0.id == childID }),
+                      let anchor = anchors[childID] else { continue }
+                if isSelfOrDescendant(targetGroupID, of: childID) { continue }   // anti-cycle
+                var c = withCapturedPluginStates(child)   // freezes the state before the engine round trip
+                let newStart = max(0, anchor.start + dt)
+                let dStart   = newStart - child.startTime
+                c.startTime = newStart
+                c.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
+                c.stemID = target.stemID
+                if case .group(var gch, let e) = c.kind, dStart != 0 {
+                    EditViewModel.shiftStartTimes(&gch, by: dStart)
+                    c.kind = .group(children: gch, isExpanded: e)
+                }
+                moved.append(c)
             }
-            moved.append(c)
-        }
-        guard !moved.isEmpty else { return }
-        let movedIDs = Set(moved.map(\.id))
+            guard !moved.isEmpty else { return }
+            let movedIDs = Set(moved.map(\.id))
 
-        // Engine removal of the sub-tree BEFORE mutating the model (still in the source).
-        for id in movedIDs {
-            if let obj = find(id: id) { removeFromEngine(obj) }
+            // Engine removal of the sub-tree BEFORE mutating the model (still in the source).
+            for id in movedIDs {
+                if let obj = find(id: id) { removeFromEngine(obj) }
+            }
+            update(id: sourceGroupID) { obj in
+                guard case .group(let children, let isExpanded) = obj.kind else { return }
+                obj.kind = .group(children: children.filter { !movedIDs.contains($0.id) },
+                                  isExpanded: isExpanded)
+            }
+            for child in moved { addChild(child, toGroupID: targetGroupID) }
+            for child in moved { resolveOverlaps(for: child.id) }
+            // The membership has changed: a send between siblings can become routable or stop
+            // being so. resyncAllSends reconciles both ways.
+            resyncAllSends()
+            isDirty = true
         }
-        update(id: sourceGroupID) { obj in
-            guard case .group(let children, let isExpanded) = obj.kind else { return }
-            obj.kind = .group(children: children.filter { !movedIDs.contains($0.id) },
-                              isExpanded: isExpanded)
-        }
-        for child in moved { addChild(child, toGroupID: targetGroupID) }
-        for child in moved { resolveOverlaps(for: child.id) }
-        // The membership has changed: a send between siblings can become routable or stop
-        // being so. resyncAllSends reconciles both ways.
-        resyncAllSends()
-        isDirty = true
     }
 
     // MARK: - Alt-copy from a group

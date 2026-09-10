@@ -829,55 +829,60 @@ extension EditViewModel {
     /// lane, enter a group or leave one freely.
     func moveTranslatedItems(_ anchors: [UUID: (start: Double, lane: Int)],
                              dt: Double, dl: Int) {
-        let snapshot = laneEntries
+        // A translate lifts each object out and puts it back somewhere else — another
+        // lane, inside a group, out of one. Every one of those ENDS a crossfade, and
+        // the fades have to go with it (@see withCrossfadeRefit).
+        withCrossfadeRefit(around: Set(anchors.keys)) {
+            let snapshot = laneEntries
 
-        // Anti-cycle: a moved item (or a descendant of a moved group) cannot
-        // serve as the target group.
-        var excluded = Set(anchors.keys)
-        func collectDescendants(_ objs: [SoundObject]) {
-            for o in objs {
-                excluded.insert(o.id)
-                if case .group(let ch, _) = o.kind { collectDescendants(ch) }
-            }
-        }
-        for id in anchors.keys {
-            if let obj = find(id: id), case .group(let ch, _) = obj.kind {
-                collectDescendants(ch)
-            }
-        }
-
-        var placed: [SoundObject] = []
-        for (id, anchor) in anchors {
-            guard var obj = find(id: id) else { continue }
-
-            // Removal from the current position (the engine first — removeFromEngine
-            // leans on parentGroup, so the item must still be in the model).
-            removeFromEngine(obj)
-            if let parent = parentGroup(for: id) {
-                update(id: parent.id) { p in
-                    guard case .group(let ch, let e) = p.kind else { return }
-                    p.kind = .group(children: ch.filter { $0.id != id }, isExpanded: e)
+            // Anti-cycle: a moved item (or a descendant of a moved group) cannot
+            // serve as the target group.
+            var excluded = Set(anchors.keys)
+            func collectDescendants(_ objs: [SoundObject]) {
+                for o in objs {
+                    excluded.insert(o.id)
+                    if case .group(let ch, _) = o.kind { collectDescendants(ch) }
                 }
-            } else {
-                removeFromItems(id: id)
+            }
+            for id in anchors.keys {
+                if let obj = find(id: id), case .group(let ch, _) = obj.kind {
+                    collectDescendants(ch)
+                }
             }
 
-            // The new position (a group's descendants shifted by the same delta).
-            let newStart = max(0, anchor.start + dt)
-            let dStart   = newStart - obj.startTime
-            obj.startTime = newStart
-            if case .group(var ch, let e) = obj.kind, dStart != 0 {
-                EditViewModel.shiftStartTimes(&ch, by: dStart)
-                obj.kind = .group(children: ch, isExpanded: e)
-            }
-            obj.lane = max(0, anchor.lane + dl)
+            var placed: [SoundObject] = []
+            for (id, anchor) in anchors {
+                guard var obj = find(id: id) else { continue }
 
-            placed.append(placeClip(obj, snapshot: snapshot, excludingGroups: excluded))
+                // Removal from the current position (the engine first — removeFromEngine
+                // leans on parentGroup, so the item must still be in the model).
+                removeFromEngine(obj)
+                if let parent = parentGroup(for: id) {
+                    update(id: parent.id) { p in
+                        guard case .group(let ch, let e) = p.kind else { return }
+                        p.kind = .group(children: ch.filter { $0.id != id }, isExpanded: e)
+                    }
+                } else {
+                    removeFromItems(id: id)
+                }
+
+                // The new position (a group's descendants shifted by the same delta).
+                let newStart = max(0, anchor.start + dt)
+                let dStart   = newStart - obj.startTime
+                obj.startTime = newStart
+                if case .group(var ch, let e) = obj.kind, dStart != 0 {
+                    EditViewModel.shiftStartTimes(&ch, by: dStart)
+                    obj.kind = .group(children: ch, isExpanded: e)
+                }
+                obj.lane = max(0, anchor.lane + dl)
+
+                placed.append(placeClip(obj, snapshot: snapshot, excludingGroups: excluded))
+            }
+
+            for obj in placed { resolveOverlaps(for: obj.id) }
+            selectedIDs = Set(placed.map(\.id))
+            isDirty = true
         }
-
-        for obj in placed { resolveOverlaps(for: obj.id) }
-        selectedIDs = Set(placed.map(\.id))
-        isDirty = true
     }
 
     /// Places the fragments of an alt-translate of a time selection (a copy):
