@@ -257,6 +257,9 @@ That is end-of-process noise, with no effect on the result.
 | `definition.*` | reusable sound objects: creation, editing, detaching |
 | `export.*` | render the mix into a file, follow the progress, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
+| `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
+| `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
+| `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
@@ -400,6 +403,40 @@ that looks as though it had grown, the object's edge having come to meet it.
 `resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
 merely LANDS on an object, having no matching fades, still overwrites.
 
+### Markers, regions and comments
+
+Purely visual, all of it: not one command in these families changes a sample of what is heard. A
+script that has just moved a region and hears no difference has not found a bug.
+
+A **region is a marker that has an end**. One type, one set of commands: `duration` 0 = a point,
+greater than zero = a span (`is_region` says which in the answers). There is no `region.*` family,
+and that is a decision rather than an omission.
+
+They live on **rows** (`marker_lane.*`) one can show or hide, because a project passes through
+several hands and each pass wants to leave its own marks without erasing the previous ones.
+`marker_lane.set_visible` gives a row's pixels back while keeping everything on it — it is
+`marker_lane.remove` that deletes.
+
+**Two frames of reference, and this is the trap.** A marker on a ROW carries an ABSOLUTE time. A
+marker carried by an OBJECT (`object.add_marker`) carries a time RELATIVE to that object's start,
+exactly like an automation point and for the same reason: the object is then free to move, change
+lane or have its right edge trimmed at no cost. `object.list_markers` returns both readings —
+`time` (stored, in the object's frame) and `absolute_time` (the same instant on the timeline,
+container nesting included) — so that no caller has to do the sum itself.
+
+An object's markers **follow its matter** through the editing gestures, through the same five
+transformations as its curves: a cut distributes them and rebases the right-hand ones on the cut
+(a region straddling it is divided, both halves keeping the name), a trim of the left edge rebases
+them, a reverse mirrors them, a varispeed scales them, a ripple takes out those whose passage has
+gone. A marker pushed BEHIND an edge is not lost: it keeps a negative time and comes back if the
+edge is reopened, which is what `audible: false` reports.
+
+A **comment** (`comment.*`) is a free text laid over a span. It is not a sound object: it has no
+engine object at all, and the price of that is that it inherits nothing — it does not move with a
+ripple, a cut or a dragged object. Its text is markdown, inline only (bold, italic, code, links).
+
+`tools/scenario_markers.py` asserts all of the above against a running instance.
+
 ### Ripple
 
 `timesel.ripple_delete` and `object.ripple_cut` do not merely remove matter: they **close the gap
@@ -509,6 +546,7 @@ A few points of vocabulary that save mistakes:
 | `tools/objekat_mcp.py` | a stdio MCP server, **its tools generated from `help`** |
 | `tools/smoke.jsonl` | an `--exec` scenario (with no identifiers reused) |
 | `tools/scenario_families.py` | a non-regression scenario, 64 steps over the eight families |
+| `tools/scenario_markers.py` | markers / regions / comments: 39 assertions, including a cut, a reverse, an undo and a reload |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
