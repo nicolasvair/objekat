@@ -14,6 +14,20 @@ extension EditViewModel {
 
     // MARK: - Unified placement helpers
 
+    /// The visual row a BASE lane is drawn on: every zone unfolded inline above it — an open
+    /// group's children, an open piano roll, the automation bands — pushes it down by its
+    /// `expandedSpan`.
+    ///
+    /// It lives HERE, in the view-model, rather than in the view that draws with it, for two
+    /// reasons. It is the exact inverse of `baseLaneForDisplay` just below, and two inverses that
+    /// do not count the same amount is this project's oldest recurring bug — side by side they
+    /// cannot drift. And the command API answers with it (`comment.list`'s `display_lane`), which
+    /// is what lets a script with no screen check that a comment follows its lane when a group
+    /// opens.
+    func displayLane(forBase baseLane: Int) -> Int {
+        baseLane + items.reduce(0) { $0 + ($1.lane < baseLane ? $1.expandedSpan : 0) }
+    }
+
     /// Converts a display lane into a base lane by counting the extra lanes reserved above it.
     ///
     /// This is the INVERSE of `displayLane(for:)` (display = base + Σ expandedSpan of the lanes < base).

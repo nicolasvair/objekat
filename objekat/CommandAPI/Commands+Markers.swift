@@ -40,12 +40,17 @@ extension CommandRegistry {
                      "markers": .array(l.sortedMarkers.map(markerPayload))])
         }
 
-        func commentPayload(_ c: TimelineComment) -> JSONValue {
+        func commentPayload(_ c: TimelineComment, _ vm: EditViewModel) -> JSONValue {
             .object(["id": .string(c.id.uuidString),
                      "start": .number(c.startTime),
                      "duration": .number(c.duration),
                      "end": .number(c.endTime),
                      "lane": .int(c.lane),
+                     // The BASE row is what is stored; `display_lane` is where it is actually drawn
+                     // once the open groups and piano rolls above it have taken their rows. The two
+                     // differ as soon as something is unfolded above — and a comment that did not
+                     // follow would be a note left beside the wrong lane.
+                     "display_lane": .int(vm.displayLane(forBase: c.lane)),
                      "text": .string(c.text),
                      "color_index": c.colorIndex.map(JSONValue.int) ?? .null])
         }
@@ -370,7 +375,11 @@ extension CommandRegistry {
                         + "has no engine object, and it does not move with a ripple or a cut.",
                  params: [ParamSpec("from", "number", "Start, in seconds."),
                           ParamSpec("to", "number", "End, in seconds."),
-                          ParamSpec("lane", "int", required: false, "The display row (default 0)."),
+                          ParamSpec("lane", "int", required: false,
+                                    "Its row (default 0), in the same frame as `object.add`'s — the "
+                                  + "BASE row, not the visual one: opening a group above it pushes "
+                                  + "the comment down with everything else instead of leaving it "
+                                  + "beside somebody else's lane."),
                           ParamSpec("text", "string", required: false, "Its content.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -386,7 +395,7 @@ extension CommandRegistry {
                  summary: "Every comment laid on the timeline.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             return .object(["count": .int(vm.comments.count),
-                            "comments": .array(vm.comments.map(commentPayload))])
+                            "comments": .array(vm.comments.map { commentPayload($0, vm) })])
         }
 
         register("comment.set_text",
@@ -407,7 +416,7 @@ extension CommandRegistry {
                  params: [ParamSpec("comment", "uuid", "The comment."),
                           ParamSpec("at", "number", "Its new start, in seconds."),
                           ParamSpec("duration", "number", required: false, "Its new length."),
-                          ParamSpec("lane", "int", required: false, "Its new display row.")],
+                          ParamSpec("lane", "int", required: false, "Its new row (the BASE one).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("comment")

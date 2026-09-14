@@ -435,6 +435,12 @@ A **comment** (`comment.*`) is a free text laid over a span. It is not a sound o
 engine object at all, and the price of that is that it inherits nothing — it does not move with a
 ripple, a cut or a dragged object. Its text is markdown, inline only (bold, italic, code, links).
 
+Its `lane` is a **base row**, the same frame as `object.add`'s and not the visual row index, so
+that opening a group above it pushes the comment down with everything else instead of leaving the
+note beside somebody else's lane. `comment.list` answers with both: `lane` as stored, and
+`display_lane` as it is actually drawn once every unfolded zone above it — an open group's
+children, an open piano roll, the automation bands — has taken its rows.
+
 **Colour is INHERITED until it is asked for**, and `color_index: null` in an answer says so —
 null is not "no colour", it is "the one I take from what carries me": its ROW for a mark of the
 band (`marker_lane.set_color` therefore recolours a whole layer at once), and WHITE for a comment

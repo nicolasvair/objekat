@@ -228,6 +228,18 @@ What has landed since mid-August, in order:
   hand, the row change, the comment's crop handles and their cursors — and every colour they lay
   down, the white of a comment included.
 
+- **A comment follows its lane** (14 September 2026) — it stored the DISPLAY row it was drawn on,
+  so opening a group, a piano roll or an automation band above it pushed every lane down and left
+  the note behind, beside somebody else's material. It stores a BASE row now — `SoundObject.lane`'s
+  own frame — and the conversion happens at the three places that need it: the drawing, the
+  hit-testing and the vertical half of its drag (where the hand travels in DISPLAY rows and the
+  result is converted back, otherwise the note jumps over as many rows as an open group has
+  children). It is one more case of the project's oldest recurring bug, so the forward conversion
+  moved into the view-model beside its own inverse — `displayLane(forBase:)` next to
+  `baseLaneForDisplay` — where the two cannot drift apart. Verified with no screen, which it can now
+  be: `comment.list` answers with `display_lane` beside `lane`, and three assertions of
+  `scenario_markers.py` open a group and watch the comment move down and come back.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -264,8 +264,10 @@ extension EditViewModel {
 
     // MARK: Comments
 
-    /// Lays a comment over a span of the timeline. `lane` is a DISPLAY row, the same frame the
-    /// time selection speaks in.
+    /// Lays a comment over a span of the timeline. `lane` is a BASE row — `SoundObject.lane`'s own
+    /// frame, not the visual row index: a caller holding a display row converts it first
+    /// (@see EditViewModel.baseLaneForDisplay), which is what keeps a comment beside the lane it
+    /// talks about when a group above it opens.
     @discardableResult
     func addComment(from: Double, to: Double, lane: Int, text: String = "") -> UUID? {
         let lo = min(from, to), hi = max(from, to)

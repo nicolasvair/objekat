@@ -421,6 +421,7 @@ struct TimelineView: View {
                         rulerHeight: rulerHeight,
                         laneStep: laneStep,
                         blockHeight: blockHeight,
+                        displayLane: { displayLane(for: $0) },
                         selected: viewModel.selectedAnnotation,
                         editingID: viewModel.renamingID,
                         onCommit: { id, text in
@@ -1692,7 +1693,10 @@ struct TimelineView: View {
         for c in viewModel.comments.reversed() {     // the last laid is the one on top
             let x0 = c.startTime * pixelsPerSecond
             let x1 = c.endTime * pixelsPerSecond
-            let y0 = rulerHeight + Double(c.lane) * laneStep
+            // `laneY` and not `c.lane * laneStep`: a comment stores a BASE row and is drawn at the
+            // DISPLAY one. Reading it raw here would leave it clickable where it no longer is as
+            // soon as a group above it opened.
+            let y0 = laneY(for: c.lane)
             if point.x >= x0 && point.x <= x1 && point.y >= y0 && point.y <= y0 + blockHeight {
                 return .comment(c.id)
             }
@@ -2660,12 +2664,10 @@ struct TimelineView: View {
 
     // MARK: - Virtual lane layout
 
-    func displayLane(for baseLane: Int) -> Int {
-        let extra = viewModel.items.reduce(0) { acc, item in
-            item.lane < baseLane ? acc + item.expandedSpan : acc
-        }
-        return baseLane + extra
-    }
+    /// The view's reading of a base lane. ONE definition, held in the view-model beside its own
+    /// inverse (@see EditViewModel.displayLane(forBase:)): the two must count the same amount, and
+    /// they cannot when they live in two files.
+    func displayLane(for baseLane: Int) -> Int { viewModel.displayLane(forBase: baseLane) }
 
     func laneY(for baseLane: Int) -> Double {
         rulerHeight + Double(displayLane(for: baseLane)) * laneStep

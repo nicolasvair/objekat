@@ -82,6 +82,8 @@ enum SessionSchema {
         "  The text is markdown (inline: bold, italic, code, links). They live BESIDE items and not",
         "  inside: a comment carries no sound. No colorIndex = WHITE, which is not a hue of the",
         "  object palette: a note must never read as one more object laid on the lane.",
+        "  lane is a BASE row, like items[].lane and not the visual row index: what is unfolded",
+        "  above it (an open group, a piano roll, an automation band) pushes it down on screen.",
         "  Markers, regions and comments are purely visual — nothing here changes what is heard.",
         "",
         "TO ACT ON THIS PROJECT — prefer the app's command API (UNIX socket, JSON-lines, `help`",

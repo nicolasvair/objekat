@@ -249,5 +249,34 @@ with ObjekatClient(SOCK) as c:
     check("the object's markers come back",
           cmd("object.list_markers", object=rid)["count"] == 3)
 
+    # ── a comment follows its lane when a group opens ──────────────────────
+    # The bug this asserts against: a comment used to store the DISPLAY row it was drawn on.
+    # Opening a group inserts its children's rows and pushes everything below DOWN — the
+    # comment stayed put while the lane it was talking about slid away, and the note ended up
+    # beside somebody else's material. It stores a BASE row now, and `display_lane` is where
+    # that lands on screen.
+    cmd("project.new")
+    a1 = cmd("object.add", path=FIXTURE, lane=0, start=0.0)["id"]
+    a2 = cmd("object.add", path=FIXTURE, lane=1, start=1.0)["id"]
+    cmd("object.add", path=FIXTURE, lane=3, start=0.5)
+    cmd("wait_idle", timeout_ms=5000)
+    note = cmd("comment.create", **{"from": 0.0, "to": 2.0, "lane": 3, "text": "sur la 3"})["comment"]
+    got = cmd("comment.list")["comments"][0]
+    check("a closed timeline draws a comment on its own row",
+          got["lane"] == 3 and got["display_lane"] == 3,
+          "%s / %s" % (got["lane"], got["display_lane"]))
+
+    grp = cmd("group.create", ids=[a1, a2])["id"]
+    cmd("group.expand", id=grp, expanded=True)
+    got = cmd("comment.list")["comments"][0]
+    check("opening a group pushes the comment down with the lanes",
+          got["display_lane"] > 3, "display_lane %s" % got["display_lane"])
+    check("and what is STORED has not moved — it is a base row", got["lane"] == 3)
+
+    cmd("group.expand", id=grp, expanded=False)
+    got = cmd("comment.list")["comments"][0]
+    check("closing it brings the comment back", got["display_lane"] == 3)
+    cmd("comment.remove", comment=note)
+
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)

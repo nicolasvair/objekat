@@ -21,6 +21,9 @@ struct CommentsOverlay: View {
     let rulerHeight: Double
     let laneStep: Double
     let blockHeight: Double
+    /// The comment's BASE row turned into the visual one — an open group above it pushes it down,
+    /// like everything else on the lanes (@see TimelineComment.lane).
+    let displayLane: (Int) -> Int
     var selected: AnnotationSel? = nil
     /// The comment being edited, if any (compared against `EditViewModel.renamingID`).
     var editingID: UUID? = nil
@@ -53,7 +56,7 @@ struct CommentsOverlay: View {
                 // (@see TimelineView.commentHit), like everything else here.
                 .allowsHitTesting(editingID == c.id)
                 .offset(x: c.startTime * pixelsPerSecond,
-                        y: rulerHeight + Double(c.lane) * laneStep)
+                        y: rulerHeight + Double(displayLane(c.lane)) * laneStep)
             }
         }
     }

@@ -124,7 +124,10 @@ func addCommentItem(menu: NSMenu, proxies: inout [MenuActionProxy],
                     vm: EditViewModel, selection: TimeSelection) {
     let lo = selection.timeRange.lowerBound
     let hi = selection.timeRange.upperBound
-    let lane = selection.lanes.min() ?? 0
+    // A time selection speaks in DISPLAY rows; a comment stores a BASE one
+    // (@see TimelineComment.lane). A range traced over the children of an open group comes back as
+    // that group's own row — a comment nests in nothing.
+    let lane = vm.baseLaneForDisplay(selection.lanes.min() ?? 0)
     addItem(menu, &proxies, L("menu.context.comment.create")) {
         if let id = vm.addComment(from: lo, to: hi, lane: lane) {
             vm.selectAnnotation(.comment(id))

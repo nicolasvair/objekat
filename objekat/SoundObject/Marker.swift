@@ -134,8 +134,17 @@ struct TimelineComment: Codable, Equatable, Identifiable {
     var id: UUID = UUID()
     var startTime: Double
     var duration: Double
-    /// The DISPLAY row it is laid on, in the same frame as `SoundObject.lane`. A comment has no
-    /// content to nest, so it never belongs to a container: it is always read at the top level.
+    /// The row it is laid on, in the BASE frame — `SoundObject.lane`'s own, not the visual row
+    /// index. A comment has no content to nest, so it never belongs to a container: it is always a
+    /// top-level row.
+    ///
+    /// BASE and not DISPLAY, and this is the whole point: opening a group inserts its children's
+    /// rows into the display and pushes everything below DOWN. A display row stored here would stay
+    /// put while the lane it was talking about slid away, so a note left beside a clip would end up
+    /// beside somebody else's. Stored in the base frame it moves with the rest, and the conversion
+    /// is done at the one place it is needed — the drawing and the hit-testing
+    /// (@see TimelineView.displayLane(for:), and the recurring trap it belongs to:
+    /// every conversion counts `expandedSpan`, groups AND open piano rolls AND automation bands).
     var lane: Int
     /// The text, in markdown. Inline only (bold, italic, code, links) — that is what SwiftUI's
     /// `AttributedString(markdown:)` renders in a `Text`, and it is what a note needs.

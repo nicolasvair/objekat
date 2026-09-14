@@ -1734,7 +1734,7 @@ extension TimelineView {
         for c in viewModel.comments.reversed() {         // the last laid is the one on top
             let x0 = c.startTime * pixelsPerSecond
             let x1 = c.endTime * pixelsPerSecond
-            let y0 = rulerHeight + Double(c.lane) * laneStep
+            let y0 = laneY(for: c.lane)          // BASE row → the one on screen (@see commentHit)
             guard point.x >= x0, point.x <= x1, point.y >= y0, point.y <= y0 + blockHeight
             else { continue }
             let handle = min(10, (x1 - x0) / 4)
@@ -1771,9 +1771,13 @@ extension TimelineView {
         switch st.part {
         case .move:
             start = viewModel.snapTime(max(0, st.originStart + dt))
-            // The row: the same lane step as an object's, so a comment lands on the lane it looks
-            // as though it is on. Never above the first.
-            lane = max(0, st.originLane + Int((Double(value.translation.height) / laneStep).rounded()))
+            // The row. The hand travels in DISPLAY rows — that is what one sees — while a comment
+            // stores a BASE one, so the delta is applied on screen and converted back. Going
+            // straight to `originLane + delta` would have it jump over as many rows as an open
+            // group holds children.
+            let travelled = Int((Double(value.translation.height) / laneStep).rounded())
+            let targetDL = max(0, displayLane(for: st.originLane) + travelled)
+            lane = viewModel.baseLaneForDisplay(targetDL)
         case .resizeLeft:
             // The right edge is the anchor: cropping from the left moves the start AND shortens by
             // as much, exactly like a clip's left handle.
