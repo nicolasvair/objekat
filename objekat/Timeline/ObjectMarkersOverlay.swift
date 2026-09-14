@@ -69,7 +69,11 @@ struct ObjectMarkersOverlay: View {
                     let x = (e.absStart + m.time) * pixelsPerSecond
                     if x < visX0 || x > visX1 { continue }
                     let sel = selected == .objectMarker(object: e.item.id, marker: m.id)
-                    let tint = sel ? Color.accentColor : Color.white
+                    // White by default here rather than a row's hue — a mark laid ON matter has no
+                    // row to take one from, and white is what reads against any waveform under it.
+                    // A hue asked for outright is honoured (@see Marker.colorIndex).
+                    let own = m.colorIndex.map(ObjectColorPalette.color(at:)) ?? Color.white
+                    let tint = sel ? Color.accentColor : own
                     let alpha = sel ? 1.0 : 0.75
 
                     // A hairline through the whole block, so the marker names an instant in the

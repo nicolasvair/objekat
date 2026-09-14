@@ -67,7 +67,18 @@ final class EditViewModel {
     /// The selected marker / region / comment, if any. Its own slot rather than a place in
     /// `selectedIDs`, exactly like `selectedCrossfade` and for the same reason. Exclusive with the
     /// two others (@see selectAnnotation).
-    var selectedAnnotation: AnnotationSel? = nil
+    ///
+    /// The `didSet` ends the inline EDIT when the selection leaves, and it lives here for the same
+    /// reason the one above does: deselecting is written a dozen ways (a click in the void, ⌫, an
+    /// object selected, a row deleted, an undo), and a field left open over something nothing points
+    /// at any more would go on taking the keyboard from the timeline. Leaving is not cancelling:
+    /// what was typed is committed on the way out (@see MarkerRenameField).
+    var selectedAnnotation: AnnotationSel? = nil {
+        didSet {
+            guard let old = oldValue, old != selectedAnnotation else { return }
+            if renamingID == old.markerID { renamingID = nil }
+        }
+    }
     /// The MIDI notes selected in the open piano rolls (ids of `MidiNote`, unique across every
     /// clip). Independent of `selectedIDs` (which carries the clips/groups).
     var selectedMidiNoteIDs: Set<UUID> = []

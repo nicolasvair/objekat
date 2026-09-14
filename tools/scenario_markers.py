@@ -164,6 +164,58 @@ with ObjekatClient(SOCK) as c:
     cmd("comment.set_text", comment=cid, text="ok")
     check("text rewritten", cmd("comment.list")["comments"][0]["text"] == "ok")
 
+    # ── colours: what is inherited, and what is asked for ──────────────────
+    # A mark takes the colour of what carries it until it asks for its own — the ROW for a
+    # mark of the band, WHITE for a comment and for a mark on an object. That is why every
+    # `color_index` here reads null until somebody sets one: null is not 'no colour'.
+    def band_marker(mid, lane_id=None):
+        for l in cmd("marker_lane.list")["lanes"]:
+            if lane_id and l["id"] != lane_id:
+                continue
+            for m in l["markers"]:
+                if m["id"] == mid:
+                    return m
+        return None
+
+    check("a mark is born inheriting", band_marker(m1)["color_index"] is None)
+    cmd("marker_lane.set_color", lane=lane, color_index=5)
+    check("the row's own hue is set",
+          cmd("marker_lane.list")["lanes"][0]["color_index"] == 5)
+    check("recolouring the row leaves the marks inheriting", band_marker(m1)["color_index"] is None)
+
+    cmd("marker.set_color", lane=lane, marker=m1, color_index=7)
+    check("a mark can ask for its own", band_marker(m1)["color_index"] == 7)
+    check("and its neighbour still inherits", band_marker(r1)["color_index"] is None)
+    cmd("marker.set_color", lane=lane, marker=r1, color_index=2)
+    cmd("marker.set_color", lane=lane, marker=r1)          # no color_index = inherit again
+    check("asking for none gives the row's back", band_marker(r1)["color_index"] is None)
+
+    cmd("object.set_marker_color", object=oid, marker=
+        cmd("object.list_markers", object=oid)["markers"][0]["id"], color_index=9)
+    check("a mark on an object takes a hue too",
+          cmd("object.list_markers", object=oid)["markers"][0]["color_index"] == 9)
+
+    check("a comment is born WHITE, not a palette hue", cl[0]["color_index"] is None)
+    cmd("comment.set_color", comment=cid, color_index=3)
+    check("a comment can be sorted by colour",
+          cmd("comment.list")["comments"][0]["color_index"] == 3)
+    cmd("comment.set_color", comment=cid)
+    check("and go back to white", cmd("comment.list")["comments"][0]["color_index"] is None)
+    cmd("comment.set_color", comment=cid, color_index=3)
+
+    # ── changing row keeps the mark's identity ─────────────────────────────
+    lane2 = cmd("marker_lane.create", name="Relecture")["lane"]
+    cmd("marker.set_lane", lane=lane, marker=r1, to=lane2)
+    lanes_now = {l["id"]: l for l in cmd("marker_lane.list")["lanes"]}
+    check("it left its row", all(m["id"] != r1 for m in lanes_now[lane]["markers"]))
+    moved = [m for m in lanes_now[lane2]["markers"] if m["id"] == r1]
+    check("and arrived on the other WITH THE SAME ID", len(moved) == 1)
+    check("its time did not change — a row is a layer, not a place",
+          moved and approx(moved[0]["time"], 4.0), str(moved))
+    cmd("marker.set_lane", lane=lane2, marker=r1, to=lane)
+    cmd("marker_lane.remove", lane=lane2)
+    check("back where it was", len(cmd("marker_lane.list")["lanes"][0]["markers"]) == 2)
+
     # ── it survives a save and a reload ────────────────────────────────────
     folder = tempfile.mkdtemp(prefix="objekat-markers-")
     path = os.path.join(folder, "test.objekat.json")
@@ -186,6 +238,13 @@ with ObjekatClient(SOCK) as c:
     check("the rows come back", reread["count"] == 1 and reread["lanes"][0]["name"] == "Nicolas")
     check("with their two entries", reread["lanes"][0]["count"] == 2)
     check("the comment comes back", cmd("comment.list")["count"] == 1)
+    check("the row keeps its hue", reread["lanes"][0]["color_index"] == 5)
+    kept = {m["id"]: m for m in reread["lanes"][0]["markers"]}
+    check("a hue asked for is written down", kept[m1]["color_index"] == 7)
+    check("an inherited one is NOT — it is an absent key, not a value",
+          kept[r1]["color_index"] is None)
+    check("the comment keeps its hue",
+          cmd("comment.list")["comments"][0]["color_index"] == 3)
     rid = cmd("object.list")["objects"][0]["id"]
     check("the object's markers come back",
           cmd("object.list_markers", object=rid)["count"] == 3)

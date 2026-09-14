@@ -848,12 +848,43 @@ extension TimelineView {
             // created. A click that merely lands somewhere has asked for nothing.
             if pos.y <= rulerH {
                 let menu: NSMenu = MainActor.assumeIsolated {
+                    // The row's COLOUR DOT, pinned at the left of the viewport: the palette that
+                    // sets what the WHOLE row is by default. Asked first — the dot lies over the
+                    // band, and the band's own menu would otherwise swallow the click.
+                    if let laneID = self.markerLaneDotHit(at: pos),
+                       let lane = vm.markerLane(id: laneID) {
+                        let m = NSMenu(title: "")
+                        let item = NSMenuItem()
+                        item.view = ColorSwatchGridView(currentColorIndex: lane.colorIndex) { picked in
+                            Task { @MainActor in vm.setMarkerLaneColor(id: laneID, colorIndex: picked) }
+                        }
+                        m.addItem(item)
+                        return m
+                    }
                     let row = self.markerBandRow(at: pos)
                     let lanes = vm.visibleMarkerLanes
                     let laneID = row.flatMap { $0 < lanes.count ? lanes[$0].id : nil }
                     let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
                     return buildMarkerBandMenu(vm: vm, proxies: &proxies, laneID: laneID,
                                                time: t, hit: self.markerBandHit(at: pos))
+                }
+                if let window = NSApp.keyWindow {
+                    let screenPt = window.convertPoint(toScreen: event.locationInWindow)
+                    menu.popUp(positioning: nil, at: screenPt, in: nil)
+                }
+                return nil
+            }
+
+            // An annotation laid over the LANES: a comment, or a marker carried by an object.
+            // Asked BEFORE the object's menu, exactly as the left click is (@see handleCanvasTap),
+            // and for the same reason: these are drawn ON TOP of the blocks, and a mark one can see
+            // but not right-click is a mark one can neither recolour nor delete by menu.
+            let annotation: AnnotationSel? = MainActor.assumeIsolated {
+                self.commentHit(at: pos) ?? self.objectMarkerHit(at: pos)
+            }
+            if let annotation {
+                let menu: NSMenu = MainActor.assumeIsolated {
+                    buildAnnotationMenu(vm: vm, proxies: &proxies, sel: annotation)
                 }
                 if let window = NSApp.keyWindow {
                     let screenPt = window.convertPoint(toScreen: event.locationInWindow)

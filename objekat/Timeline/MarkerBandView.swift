@@ -59,6 +59,12 @@ struct MarkerBandView: View {
 
     private func color(_ lane: MarkerLane) -> Color { ObjectColorPalette.color(at: lane.colorIndex) }
 
+    /// A mark's hue: its own if it asked for one, otherwise the row's. The fallback is what makes
+    /// recolouring a row recolour everything on it (@see Marker.colorIndex).
+    private func color(_ m: Marker, on lane: MarkerLane) -> Color {
+        m.colorIndex.map(ObjectColorPalette.color(at:)) ?? color(lane)
+    }
+
     private func isSelected(_ lane: MarkerLane, _ m: Marker) -> Bool {
         selected == .laneMarker(lane: lane.id, marker: m.id)
     }
@@ -76,7 +82,7 @@ struct MarkerBandView: View {
 
                 for (row, lane) in lanes.enumerated() {
                     let y = Double(row) * rowHeight
-                    let tint = color(lane)
+                    let tint = color(lane)      // the ROW's hue: its ground, and the marks' default
 
                     // The row's own ground: enough for the eye to separate two rows, not enough to
                     // compete with the markers laid on it.
@@ -94,12 +100,13 @@ struct MarkerBandView: View {
                         let x1 = m.endTime * pixelsPerSecond
                         if x1 < visX0 || x0 > visX1 { continue }
                         draw(region: m, lane: lane, x0: x0, x1: x1, y: y,
-                             tint: tint, context: &context)
+                             tint: color(m, on: lane), context: &context)
                     }
                     for m in lane.sortedMarkers where !m.isRegion {
                         let x = m.time * pixelsPerSecond
                         if x < visX0 || x > visX1 { continue }
-                        draw(marker: m, lane: lane, x: x, y: y, tint: tint, context: &context)
+                        draw(marker: m, lane: lane, x: x, y: y,
+                             tint: color(m, on: lane), context: &context)
                     }
                 }
             }
@@ -177,6 +184,10 @@ struct MarkerRenameField: View {
     let onCommit: (String?) -> Void
 
     @State private var text: String = ""
+    /// One way out, once. Esc, Return and the field's DISAPPEARANCE all end the edit, and the
+    /// last of the three fires on its way out of every other: without the latch, a Return would
+    /// commit, take the field off screen and commit a second time.
+    @State private var done = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -187,8 +198,12 @@ struct MarkerRenameField: View {
             .background(RoundedRectangle(cornerRadius: 3).fill(.regularMaterial))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1))
             .focused($focused)
-            .onSubmit { onCommit(text) }
-            .onExitCommand { onCommit(nil) }
+            .onSubmit { finish(text) }
+            .onExitCommand { finish(nil) }
+            // Deselecting takes the field away (@see EditViewModel.selectedAnnotation): what was
+            // typed is KEPT rather than dropped. Clicking elsewhere is how one normally leaves a
+            // field, and a click that silently threw the name away would be a trap.
+            .onDisappear { finish(text) }
             .onAppear {
                 text = initial
                 // One turn later: the field has to EXIST before the focus reaches it, exactly as in
@@ -196,6 +211,12 @@ struct MarkerRenameField: View {
                 // never takes the keyboard.
                 DispatchQueue.main.async { focused = true }
             }
+    }
+
+    private func finish(_ value: String?) {
+        guard !done else { return }
+        done = true
+        onCommit(value)
     }
 }
 
@@ -215,8 +236,18 @@ struct MarkerLaneHeaderView: View {
     var onDelete: (UUID) -> Void = { _ in }
     var onBeginRename: (UUID) -> Void = { _ in }
     var onRename: (UUID, String?) -> Void = { _, _ in }
+    var onRecolor: (UUID, Int) -> Void = { _, _ in }
 
     private var rowHeight: Double { MarkerBandGeometry.rowHeight }
+
+    static let dotSize: Double = 10
+    /// Where a row's colour dot sits, measured from the LEFT EDGE OF THE VIEWPORT — these headers
+    /// are PINNED there, not laid on the content. It is what the right-click monitor turns a click
+    /// into a row with (@see TimelineView.markerLaneDotHit); a couple of pixels of slack either
+    /// side, because one aims at a 10 px disc with a mouse.
+    ///
+    /// 3 (the row's leading padding) + 5 (the pill's own) = the dot's left edge at 8.
+    static let dotXRange: ClosedRange<Double> = 1...22
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -236,9 +267,19 @@ struct MarkerLaneHeaderView: View {
     @ViewBuilder
     private func row(_ lane: MarkerLane) -> some View {
         HStack(spacing: 4) {
+            // The dot IS the row's colour, so it is where one goes to change it: a RIGHT CLICK on
+            // it opens the palette, and what that sets is the row's DEFAULT — every mark on the row
+            // follows, except those given a hue of their own.
+            //
+            // The click itself is not taken here. It is resolved geometrically by the right-click
+            // monitor (@see TimelineView.markerLaneDotHit), like everything else in the timeline,
+            // and for a reason that is not style: an AppKit LOCAL monitor sees the event before the
+            // view hierarchy does, so an `NSView` overlay laid here would never be reached. Hence
+            // `dotXRange` below — the one thing the two places have to agree on.
             Circle()
                 .fill(ObjectColorPalette.color(at: lane.colorIndex))
-                .frame(width: 6, height: 6)
+                .frame(width: Self.dotSize, height: Self.dotSize)
+                .help(L("markers.lane.color.help"))
             if renamingID == lane.id {
                 MarkerRenameField(initial: lane.name) { onRename(lane.id, $0) }
                     .frame(width: 110)
@@ -281,8 +322,10 @@ struct MarkerLaneHeaderView: View {
                 }
             }
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 10, weight: .medium))
+            // A flag: the band's own sign, the shape already drawn on every point marker in it.
+            // The filter glyph it replaced said 'narrow a list down', which is not what this does.
+            Image(systemName: "flag.square.fill")
+                .font(.system(size: 12, weight: .medium))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

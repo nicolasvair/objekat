@@ -4256,6 +4256,29 @@
         }
       }
     },
+    "markers.lane.color.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right click: the lane's default colour"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic droit : la couleur par défaut de la ligne"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic derecho: el color por defecto de la línea"
+          }
+        }
+      }
+    },
     "markers.lane.default": {
       "extractionState": "manual",
       "localizations": {
@@ -4371,6 +4394,29 @@
         }
       }
     },
+    "menu.context.annotation.whiteColor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "White (default)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blanc (par défaut)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blanco (por defecto)"
+          }
+        }
+      }
+    },
     "menu.context.baking": {
       "extractionState": "manual",
       "localizations": {
@@ -4413,6 +4459,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Créer un commentaire"
+          }
+        }
+      }
+    },
+    "menu.context.comment.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the comment"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer le commentaire"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar el comentario"
+          }
+        }
+      }
+    },
+    "menu.context.comment.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit the comment"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifier le commentaire"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editar el comentario"
           }
         }
       }
@@ -4689,6 +4781,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Supprimer le marqueur"
+          }
+        }
+      }
+    },
+    "menu.context.marker.laneColor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lane colour (default)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couleur de la ligne (par défaut)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color de la línea (por defecto)"
           }
         }
       }

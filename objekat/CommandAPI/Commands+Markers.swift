@@ -19,12 +19,16 @@ extension CommandRegistry {
 
     func registerMarkerCommands() {
 
+        /// `color_index` is null when the mark takes the colour of what carries it — the ROW for a
+        /// mark of the band, white for one carried by an object. Null is not 'no colour': it is
+        /// 'the one I inherit', which is what nearly every mark wants (@see Marker.colorIndex).
         func markerPayload(_ m: Marker) -> JSONValue {
             .object(["id": .string(m.id.uuidString),
                      "time": .number(m.time),
                      "duration": .number(m.duration),
                      "is_region": .bool(m.isRegion),
-                     "name": .string(m.name)])
+                     "name": .string(m.name),
+                     "color_index": m.colorIndex.map(JSONValue.int) ?? .null])
         }
 
         func lanePayload(_ l: MarkerLane) -> JSONValue {
@@ -42,7 +46,8 @@ extension CommandRegistry {
                      "duration": .number(c.duration),
                      "end": .number(c.endTime),
                      "lane": .int(c.lane),
-                     "text": .string(c.text)])
+                     "text": .string(c.text),
+                     "color_index": c.colorIndex.map(JSONValue.int) ?? .null])
         }
 
         /// A row named outright, or the one a creation with no row lands on. Refusing an unknown id
@@ -110,6 +115,21 @@ extension CommandRegistry {
                             "visible": .bool(vm.markerLane(id: id)?.isVisible ?? false)])
         }
 
+        register("marker_lane.set_color",
+                 summary: "The row's hue — and therefore the DEFAULT of every mark on it. A mark "
+                        + "given a colour of its own keeps it: that is what asking for one means.",
+                 params: [ParamSpec("lane", "uuid", "The row."),
+                          ParamSpec("color_index", "int", "A hue from the object palette (0…15).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("lane")
+            guard vm.setMarkerLaneColor(id: id, colorIndex: try p.int("color_index")) else {
+                throw CommandError(code: .not_found, message: "unknown marker lane: \(id.uuidString)")
+            }
+            return .object(["lane": .string(id.uuidString),
+                            "color_index": .int(vm.markerLane(id: id)?.colorIndex ?? 0)])
+        }
+
         register("marker_lane.remove",
                  summary: "Deletes a row AND everything on it. To give its pixels back without "
                         + "losing its content, `marker_lane.set_visible` is the one.",
@@ -163,6 +183,45 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "no such marker on that row")
             }
             return .object(["lane": .string(lane.uuidString), "marker": .string(marker.uuidString)])
+        }
+
+        register("marker.set_color",
+                 summary: "A marker's or a region's own hue. WITHOUT `color_index` it goes back to "
+                        + "taking its row's, which is the default — an absent parameter is the way "
+                        + "to say 'inherit again', since null and absent are one thing here.",
+                 params: [ParamSpec("lane", "uuid", "Its row."),
+                          ParamSpec("marker", "uuid", "The marker."),
+                          ParamSpec("color_index", "int", required: false,
+                                    "A hue from the object palette (0…15). Absent = the row's.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let lane = try p.uuid("lane"), marker = try p.uuid("marker")
+            let color = p.raw["color_index"] != nil ? try p.int("color_index") : nil
+            guard vm.setMarkerColor(laneID: lane, markerID: marker, colorIndex: color) else {
+                throw CommandError(code: .not_found, message: "no such marker on that row")
+            }
+            return .object(["lane": .string(lane.uuidString), "marker": .string(marker.uuidString),
+                            "color_index": color.map(JSONValue.int) ?? .null])
+        }
+
+        register("marker.set_lane",
+                 summary: "Moves a marker or a region to another row of the band, KEEPING ITS "
+                        + "IDENTITY — the same id, hence the same selection and the same handle for "
+                        + "a script holding it. Its time does not change: a row is a layer of "
+                        + "reading, not a place on the timeline.",
+                 params: [ParamSpec("lane", "uuid", "Its row now."),
+                          ParamSpec("marker", "uuid", "The marker."),
+                          ParamSpec("to", "uuid", "The row it goes to.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let lane = try p.uuid("lane"), marker = try p.uuid("marker"), target = try p.uuid("to")
+            guard vm.markerLane(id: target) != nil else {
+                throw CommandError(code: .not_found, message: "unknown marker lane: \(target.uuidString)")
+            }
+            guard vm.moveMarkerToLane(from: lane, markerID: marker, to: target) else {
+                throw CommandError(code: .not_found, message: "no such marker on that row")
+            }
+            return .object(["lane": .string(target.uuidString), "marker": .string(marker.uuidString)])
         }
 
         register("marker.rename",
@@ -271,6 +330,25 @@ extension CommandRegistry {
             return .object(["object": .string(objectID.uuidString), "marker": .string(marker.uuidString)])
         }
 
+        register("object.set_marker_color",
+                 summary: "The hue of a marker carried by an object. WITHOUT `color_index` it goes "
+                        + "back to white, which is the default here: a mark laid on matter has no "
+                        + "row to take a colour from, and white reads against any waveform.",
+                 params: [ParamSpec("object", "uuid", "The object."),
+                          ParamSpec("marker", "uuid", "The marker."),
+                          ParamSpec("color_index", "int", required: false,
+                                    "A hue from the object palette (0…15). Absent = white.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let objectID = try p.uuid("object"), marker = try p.uuid("marker")
+            let color = p.raw["color_index"] != nil ? try p.int("color_index") : nil
+            guard vm.setObjectMarkerColor(objectID: objectID, markerID: marker, colorIndex: color) else {
+                throw CommandError(code: .not_found, message: "no such marker on that object")
+            }
+            return .object(["object": .string(objectID.uuidString), "marker": .string(marker.uuidString),
+                            "color_index": color.map(JSONValue.int) ?? .null])
+        }
+
         register("object.remove_marker",
                  summary: "Deletes a marker carried by an object.",
                  params: [ParamSpec("object", "uuid", "The object."),
@@ -339,6 +417,24 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown comment: \(id.uuidString)")
             }
             return .object(["comment": .string(id.uuidString)])
+        }
+
+        register("comment.set_color",
+                 summary: "A comment's hue. WITHOUT `color_index` it goes back to WHITE, which is "
+                        + "what a comment is born: white is not in the object palette, so a note "
+                        + "never reads as one more object laid on the lane.",
+                 params: [ParamSpec("comment", "uuid", "The comment."),
+                          ParamSpec("color_index", "int", required: false,
+                                    "A hue from the object palette (0…15). Absent = white.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("comment")
+            let color = p.raw["color_index"] != nil ? try p.int("color_index") : nil
+            guard vm.setCommentColor(id: id, colorIndex: color) else {
+                throw CommandError(code: .not_found, message: "unknown comment: \(id.uuidString)")
+            }
+            return .object(["comment": .string(id.uuidString),
+                            "color_index": color.map(JSONValue.int) ?? .null])
         }
 
         register("comment.remove",

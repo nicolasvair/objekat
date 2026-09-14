@@ -25,12 +25,22 @@ struct Marker: Codable, Equatable, Identifiable {
     /// 0 = a point (a marker). > 0 = a span (a region).
     var duration: Double = 0
     var name: String = ""
+    /// Its own hue, an index into `ObjectColorPalette`. nil = it takes the colour of whatever
+    /// carries it — the ROW for a mark of the band, white for one carried by an object.
+    ///
+    /// Inheritance is the default on purpose: a colour is laid on a mark to say what KIND of mark
+    /// it is (a cue, a question, a thing to redo), and a row recoloured must recolour everything on
+    /// it that has not asked for otherwise. A hue set here is a deliberate exception, and it
+    /// outlives a recolouring of the row.
+    var colorIndex: Int? = nil
 
-    init(id: UUID = UUID(), time: Double, duration: Double = 0, name: String = "") {
+    init(id: UUID = UUID(), time: Double, duration: Double = 0, name: String = "",
+         colorIndex: Int? = nil) {
         self.id = id
         self.time = time
         self.duration = duration
         self.name = name
+        self.colorIndex = colorIndex
     }
 
     /// A tolerance rather than `> 0`: a region dragged down to nothing by a splice, or one whose
@@ -38,14 +48,15 @@ struct Marker: Codable, Equatable, Identifiable {
     var isRegion: Bool { duration > 1e-9 }
     var endTime: Double { time + duration }
 
-    enum CodingKeys: String, CodingKey { case id, time, duration, name }
+    enum CodingKeys: String, CodingKey { case id, time, duration, name, colorIndex }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id       = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        time     = try c.decode(Double.self, forKey: .time)
-        duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
-        name     = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        id         = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        time       = try c.decode(Double.self, forKey: .time)
+        duration   = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        name       = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -54,6 +65,9 @@ struct Marker: Codable, Equatable, Identifiable {
         try c.encode(time, forKey: .time)
         if duration != 0 { try c.encode(duration, forKey: .duration) }
         if !name.isEmpty { try c.encode(name, forKey: .name) }
+        // Written only when it IS an exception: an absent key reads as 'the colour of what carries
+        // me', which is what nearly every mark wants.
+        if let colorIndex { try c.encode(colorIndex, forKey: .colorIndex) }
     }
 }
 
@@ -126,10 +140,14 @@ struct TimelineComment: Codable, Equatable, Identifiable {
     /// The text, in markdown. Inline only (bold, italic, code, links) — that is what SwiftUI's
     /// `AttributedString(markdown:)` renders in a `Text`, and it is what a note needs.
     var text: String = ""
-    var colorIndex: Int = 0
+    /// A hue from `ObjectColorPalette`, or nil — and nil is WHITE rather than a hue of the palette.
+    /// A comment is not matter: it must not read as one more object laid on the lane, and white is
+    /// the one value the object palette does not hold. A hue is then something one CHOOSES, to sort
+    /// the notes among themselves.
+    var colorIndex: Int? = nil
 
     init(id: UUID = UUID(), startTime: Double, duration: Double, lane: Int,
-         text: String = "", colorIndex: Int = 0) {
+         text: String = "", colorIndex: Int? = nil) {
         self.id = id
         self.startTime = startTime
         self.duration = duration
@@ -149,7 +167,7 @@ struct TimelineComment: Codable, Equatable, Identifiable {
         duration   = try c.decode(Double.self, forKey: .duration)
         lane       = try c.decodeIfPresent(Int.self, forKey: .lane) ?? 0
         text       = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
-        colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex) ?? 0
+        colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
     }
 }
 

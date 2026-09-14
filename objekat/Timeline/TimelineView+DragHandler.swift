@@ -246,6 +246,49 @@ struct SendDragState {
     var anchors: [UUID: Float]     // objectID → the send level at the start of the drag
 }
 
+/// A mark of the band being dragged. ONE AXIS AT A TIME, and that is the whole shape of the
+/// gesture: left/right moves it IN TIME, up/down moves it to another ROW, and never both at once.
+///
+/// WHY THE LOCK. A row of the band is 17 px tall and a marker is a hairline: a hand aiming at a
+/// name a second later would cross two rows on its way, and a mark that changed layer while one
+/// was only nudging its time would be a mark one had to go and find again. The axis is decided once
+/// — by whichever of the two travels further in the first few pixels — and it does not change for
+/// the rest of the gesture, which is what makes both halves aimable with the same hand.
+///
+/// A mark NEVER leaves the band: the vertical is a change of row, not a drop onto the timeline.
+struct MarkerBandDragState {
+    enum Axis { case time, lane }
+    let markerID: UUID
+    /// The row it set off from, and the one it is on NOW — the vertical half moves it for real,
+    /// live, so that what one sees under the hand is the model and not a preview of it.
+    let originLaneID: UUID
+    var laneID: UUID
+    let originTime: Double
+    var axis: Axis? = nil
+    /// Pushed at the first movement that changes anything, and once: a drag is ONE undo.
+    var didPushUndo = false
+}
+
+/// A comment being dragged — moved, or taken by one of its edges.
+///
+/// The same three parts as a clip and in the same places (@see ClipEditZone): the body moves, the
+/// two ends crop. A comment is not matter and inherits no gesture (@see TimelineComment), so the
+/// gesture is written here — but it is written to FEEL like the clips', because the hand that
+/// reaches for it has just come off one.
+struct CommentDragState {
+    enum Part { case move, resizeLeft, resizeRight }
+    let id: UUID
+    let part: Part
+    let originStart: Double
+    let originDuration: Double
+    let originLane: Int
+    var didPushUndo = false
+
+    /// Below this a comment could no longer be grabbed at all — its two edge handles would cover
+    /// the whole of it. A floor, not a snap: nothing rounds to it.
+    static let minDuration: Double = 0.05
+}
+
 enum DragPhase { case changed, ended }
 
 extension TimelineView {
@@ -267,6 +310,14 @@ extension TimelineView {
         // gesture goes on scrubbing even if the mouse comes down into the lanes.
         if rulerBandContains(value.startLocation) {
             moveCursorFromRuler(atX: value.location.x)
+            return
+        }
+
+        // The marker band, under the ruler: its own gesture and none of the canvas's, exactly as
+        // for the click (@see handleCanvasTap). Before the tools, and deliberately: even the Cut
+        // tool leaves the band alone, so a mark stays draggable whatever is armed.
+        if markerBandDrag != nil || markerBandContains(value.startLocation) {
+            handleMarkerBandDrag(value, phase: phase)
             return
         }
 
@@ -296,6 +347,7 @@ extension TimelineView {
         // ── Initialising a new drag ───────────────────────────────────────────────
         // A crossfade drag already running takes the frame before anything else.
         if crossfadeDrag != nil { handleCrossfadeDrag(value, phase: phase); return }
+        if commentDrag != nil { handleCommentDrag(value, phase: phase); return }
 
         if moveDrag == nil && resizeDrag == nil && trimDrag == nil
             && fadeDrag == nil && timeSelectionDrag == nil && slipDrag == nil && loopRangeDrag == nil {
@@ -311,6 +363,15 @@ extension TimelineView {
             // The hem sits in the LOWER half of the block, which is otherwise the `.move` zone:
             // without this guard, aiming at the selector would move the object.
             if automationBezelHit(at: p) != nil { return }
+
+            // A COMMENT: it is drawn OVER the lanes, so it is grabbed before the block it covers —
+            // the same order as the click (@see handleCanvasTap), and for the same reason. Nothing
+            // under it is reachable while the hand is on it, which is the price of laying a note on
+            // top of the matter it talks about.
+            if commentZone(at: p) != nil {
+                handleCommentDrag(value, phase: phase)
+                return
+            }
 
             // A CROSSFADE ZONE first: it is made of the two fade triangles that face each other,
             // and the per-block carve-up below would hand the pixel to one of them and bend that
@@ -1596,5 +1657,134 @@ extension TimelineView {
             if unchanged { _ = viewModel.undoStack.popLast() }
             sendDrag = nil
         }
+    }
+}
+
+
+// MARK: - The band's drag, and the comments'
+
+extension TimelineView {
+
+    /// Moving a mark of the band: in time, or to another row, one axis at a time
+    /// (@see MarkerBandDragState for why the lock).
+    ///
+    /// Everything is applied LIVE to the model, with ONE undo pushed at the first movement that
+    /// changes something. No preview state: a marker is a hairline and a row is 17 px, so there is
+    /// nothing here worth the second geometry a preview would mean keeping in step.
+    func handleMarkerBandDrag(_ value: DragGesture.Value, phase: DragPhase) {
+        if markerBandDrag == nil {
+            guard phase == .changed, pixelsPerSecond > 0,
+                  case .laneMarker(let laneID, let markerID)? = markerBandHit(at: value.startLocation),
+                  let m = viewModel.markerLane(id: laneID)?.markers.first(where: { $0.id == markerID })
+            else { return }
+            // Grabbing selects, as it does on a block: one sees what the hand has.
+            viewModel.selectAnnotation(.laneMarker(lane: laneID, marker: markerID))
+            markerBandDrag = MarkerBandDragState(markerID: markerID, originLaneID: laneID,
+                                                 laneID: laneID, originTime: m.time)
+        }
+        guard var st = markerBandDrag else { return }
+        defer {
+            markerBandDrag = phase == .ended ? nil : st
+        }
+
+        // The axis, decided once and for the whole gesture. Under the threshold nothing has been
+        // said yet, and nothing moves: a click that trembles is still a click.
+        if st.axis == nil {
+            let dx = abs(value.translation.width), dy = abs(value.translation.height)
+            guard max(dx, dy) >= 4 else { return }
+            st.axis = dx >= dy ? .time : .lane
+        }
+
+        switch st.axis {
+        case .time:
+            // The snap is the timeline's own: the grid when it is armed, nothing when it is not —
+            // a mark is placed against the music, and the music's grid is already defined.
+            let t = viewModel.snapTime(max(0, st.originTime + value.translation.width / pixelsPerSecond))
+            if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+            viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: t, pushesUndo: false)
+
+        case .lane:
+            let lanes = viewModel.visibleMarkerLanes
+            guard !lanes.isEmpty else { return }
+            // Clamped rather than wrapped: dragging past the last row leaves the mark on the last
+            // row. The band is a stack of rows, not a carousel.
+            let top = Double(scrollOffsetY) + MarkerBandGeometry.rulerCoreHeight
+            let row = Int((Double(value.location.y) - top) / MarkerBandGeometry.rowHeight)
+                .clamped(to: 0...(lanes.count - 1))
+            let target = lanes[row].id
+            guard target != st.laneID else { return }
+            if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+            viewModel.moveMarkerToLane(from: st.laneID, markerID: st.markerID, to: target,
+                                       pushesUndo: false)
+            st.laneID = target
+
+        case nil:
+            break
+        }
+    }
+
+    /// The part of a comment a point lands on: its body, or one of its two ends.
+    ///
+    /// The handles are proportional and capped, the same rule as a clip's (@see handleWidth), with
+    /// one difference that matters: a comment can be made very short, and a handle taking a quarter
+    /// of a narrow one would leave no body to grab. Hence the cap at 10 px, under which the two
+    /// ends give way to the move.
+    func commentZone(at point: CGPoint) -> (id: UUID, part: CommentDragState.Part)? {
+        guard pixelsPerSecond > 0 else { return nil }
+        for c in viewModel.comments.reversed() {         // the last laid is the one on top
+            let x0 = c.startTime * pixelsPerSecond
+            let x1 = c.endTime * pixelsPerSecond
+            let y0 = rulerHeight + Double(c.lane) * laneStep
+            guard point.x >= x0, point.x <= x1, point.y >= y0, point.y <= y0 + blockHeight
+            else { continue }
+            let handle = min(10, (x1 - x0) / 4)
+            if point.x <= x0 + handle { return (c.id, .resizeLeft) }
+            if point.x >= x1 - handle { return (c.id, .resizeRight) }
+            return (c.id, .move)
+        }
+        return nil
+    }
+
+    /// Moving a comment, or cropping it by one of its ends. Live, one undo for the gesture — the
+    /// same shape as the band's drag above.
+    func handleCommentDrag(_ value: DragGesture.Value, phase: DragPhase) {
+        if commentDrag == nil {
+            guard phase == .changed, pixelsPerSecond > 0,
+                  let z = commentZone(at: value.startLocation),
+                  let c = viewModel.comments.first(where: { $0.id == z.id })
+            else { return }
+            viewModel.selectAnnotation(.comment(c.id))
+            commentDrag = CommentDragState(id: c.id, part: z.part, originStart: c.startTime,
+                                           originDuration: c.duration, originLane: c.lane)
+        }
+        guard var st = commentDrag else { return }
+        defer { commentDrag = phase == .ended ? nil : st }
+
+        let dt = Double(value.translation.width) / pixelsPerSecond
+        let originEnd = st.originStart + st.originDuration
+        let minD = CommentDragState.minDuration
+
+        var start = st.originStart
+        var duration: Double? = nil
+        var lane: Int? = nil
+
+        switch st.part {
+        case .move:
+            start = viewModel.snapTime(max(0, st.originStart + dt))
+            // The row: the same lane step as an object's, so a comment lands on the lane it looks
+            // as though it is on. Never above the first.
+            lane = max(0, st.originLane + Int((Double(value.translation.height) / laneStep).rounded()))
+        case .resizeLeft:
+            // The right edge is the anchor: cropping from the left moves the start AND shortens by
+            // as much, exactly like a clip's left handle.
+            start = min(viewModel.snapTime(max(0, st.originStart + dt)), originEnd - minD)
+            duration = originEnd - start
+        case .resizeRight:
+            duration = max(minD, viewModel.snapTime(max(0, originEnd + dt)) - st.originStart)
+        }
+
+        if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+        viewModel.moveComment(id: st.id, to: start, duration: duration, lane: lane,
+                              pushesUndo: false)
     }
 }

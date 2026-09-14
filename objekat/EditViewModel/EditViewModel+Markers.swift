@@ -67,6 +67,18 @@ extension EditViewModel {
         return true
     }
 
+    /// The row's own hue — and therefore the DEFAULT of every mark on it that has not asked for
+    /// another (@see Marker.colorIndex). Recolouring a row recolours its marks; the ones given a
+    /// hue of their own keep it, which is the whole point of having asked.
+    @discardableResult
+    func setMarkerLaneColor(id: UUID, colorIndex: Int) -> Bool {
+        guard let idx = markerLanes.firstIndex(where: { $0.id == id }) else { return false }
+        pushUndo()
+        markerLanes[idx].colorIndex = colorIndex
+        isDirty = true
+        return true
+    }
+
     /// Shows / hides a row. It is not a deletion: the content stays, only the 16 px come back.
     @discardableResult
     func setMarkerLaneVisible(id: UUID, _ visible: Bool) -> Bool {
@@ -134,6 +146,44 @@ extension EditViewModel {
         return true
     }
 
+    /// A marker's own hue. nil = it goes back to taking the row's (@see Marker.colorIndex).
+    @discardableResult
+    func setMarkerColor(laneID: UUID, markerID: UUID, colorIndex: Int?) -> Bool {
+        guard let li = markerLanes.firstIndex(where: { $0.id == laneID }),
+              let mi = markerLanes[li].markers.firstIndex(where: { $0.id == markerID })
+        else { return false }
+        pushUndo()
+        markerLanes[li].markers[mi].colorIndex = colorIndex
+        isDirty = true
+        return true
+    }
+
+    /// Moves a marker from one row of the band to another, KEEPING ITS IDENTITY — the same `id`,
+    /// hence the same selection, the same inline field and the same undo.
+    ///
+    /// A move rather than a copy-and-delete, because a marker changing row has not become another
+    /// marker: it is the same mark read on another layer. The vertical half of the band's drag
+    /// (@see TimelineView.handleMarkerBandDrag), and the reason the selection is re-aimed here —
+    /// `.laneMarker` carries the row, so a selection left pointing at the old one would arm ⌫
+    /// against nothing.
+    @discardableResult
+    func moveMarkerToLane(from source: UUID, markerID: UUID, to target: UUID,
+                          pushesUndo: Bool = true) -> Bool {
+        guard source != target else { return true }
+        guard let si = markerLanes.firstIndex(where: { $0.id == source }),
+              let mi = markerLanes[si].markers.firstIndex(where: { $0.id == markerID }),
+              let ti = markerLanes.firstIndex(where: { $0.id == target })
+        else { return false }
+        if pushesUndo { pushUndo() }
+        let m = markerLanes[si].markers.remove(at: mi)
+        markerLanes[ti].markers.append(m)
+        if selectedAnnotation == .laneMarker(lane: source, marker: markerID) {
+            selectedAnnotation = .laneMarker(lane: target, marker: markerID)
+        }
+        isDirty = true
+        return true
+    }
+
     // MARK: Markers carried by an object
 
     /// Lays a marker on an object, at an ABSOLUTE time — the one the hand pointed at. It is stored
@@ -191,6 +241,22 @@ extension EditViewModel {
         return true
     }
 
+    /// The hue of a marker carried by an object. nil = white, which is what a mark laid on matter
+    /// wants by default: it has to read against any waveform under it.
+    @discardableResult
+    func setObjectMarkerColor(objectID: UUID, markerID: UUID, colorIndex: Int?) -> Bool {
+        guard let object = find(id: objectID),
+              object.markers.contains(where: { $0.id == markerID }) else { return false }
+        pushUndo()
+        update(id: objectID) { obj in
+            if let i = obj.markers.firstIndex(where: { $0.id == markerID }) {
+                obj.markers[i].colorIndex = colorIndex
+            }
+        }
+        isDirty = true
+        return true
+    }
+
     /// The absolute start of an object, container nesting included. nil if it is not in the tree.
     func absoluteStart(of id: UUID) -> Double? {
         laneEntries.first { $0.item.id == id }?.absStart
@@ -205,9 +271,11 @@ extension EditViewModel {
         let lo = min(from, to), hi = max(from, to)
         guard hi - lo > 1e-9 else { return nil }
         pushUndo()
+        // No hue drawn from the palette: a comment is born WHITE, so that it never reads as one
+        // more object laid on the lane (@see TimelineComment.colorIndex). A colour is something one
+        // then CHOOSES, to sort the notes among themselves.
         let c = TimelineComment(startTime: max(0, lo), duration: hi - max(0, lo),
-                                lane: max(0, lane), text: text,
-                                colorIndex: comments.count % ObjectColorPalette.count)
+                                lane: max(0, lane), text: text)
         comments.append(c)
         isDirty = true
         return c.id
@@ -229,6 +297,16 @@ extension EditViewModel {
         guard comments[idx].text != text else { return true }
         if pushesUndo { pushUndo() }
         comments[idx].text = text
+        isDirty = true
+        return true
+    }
+
+    /// A comment's hue. nil = back to white, the colour that says 'this is not matter'.
+    @discardableResult
+    func setCommentColor(id: UUID, colorIndex: Int?) -> Bool {
+        guard let idx = comments.firstIndex(where: { $0.id == id }) else { return false }
+        pushUndo()
+        comments[idx].colorIndex = colorIndex
         isDirty = true
         return true
     }
@@ -288,6 +366,24 @@ extension EditViewModel {
         case .comment(let c): return comments.first { $0.id == c }?.text ?? ""
         default:              return marker(for: sel)?.name ?? ""
         }
+    }
+
+    /// The hue of whichever of the three kinds the selection names — the strict counterpart of
+    /// `setAnnotationName`, and for the same reason: the right click has ONE colour item to build,
+    /// not three.
+    @discardableResult
+    func setAnnotationColor(_ sel: AnnotationSel, colorIndex: Int?) -> Bool {
+        switch sel {
+        case .laneMarker(let l, let m):   return setMarkerColor(laneID: l, markerID: m, colorIndex: colorIndex)
+        case .objectMarker(let o, let m): return setObjectMarkerColor(objectID: o, markerID: m, colorIndex: colorIndex)
+        case .comment(let c):             return setCommentColor(id: c, colorIndex: colorIndex)
+        }
+    }
+
+    /// The hue that selection currently carries, nil when it inherits one.
+    func annotationColor(_ sel: AnnotationSel) -> Int? {
+        if case .comment(let c) = sel { return comments.first { $0.id == c }?.colorIndex }
+        return marker(for: sel)?.colorIndex
     }
 
     @discardableResult

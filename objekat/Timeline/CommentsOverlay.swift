@@ -31,7 +31,9 @@ struct CommentsOverlay: View {
         ZStack(alignment: .topLeading) {
             ForEach(comments) { c in
                 let w = max(24, c.duration * pixelsPerSecond)
-                let tint = ObjectColorPalette.color(at: c.colorIndex)
+                // White unless it asked for a hue: a comment is not matter, and the palette it
+                // would otherwise borrow from is the OBJECTS' (@see TimelineComment.colorIndex).
+                let tint = c.colorIndex.map(ObjectColorPalette.color(at:)) ?? Color.white
                 Group {
                     if editingID == c.id {
                         CommentEditor(initial: c.text) { onCommit(c.id, $0) }
@@ -86,6 +88,8 @@ private struct CommentEditor: View {
     let onCommit: (String?) -> Void
 
     @State private var text: String = ""
+    /// One way out, once — @see MarkerRenameField, same latch and same reason.
+    @State private var done = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -97,19 +101,29 @@ private struct CommentEditor: View {
             .focused($focused)
             // A TextEditor takes Return for itself — a comment has lines — so the commit is on ⌘Return
             // and on losing the focus, and Esc gives up. Same three ways out as anywhere else.
-            .onExitCommand { onCommit(nil) }
-            .onChange(of: focused) { _, now in if !now { onCommit(text) } }
+            .onExitCommand { finish(nil) }
+            .onChange(of: focused) { _, now in if !now { finish(text) } }
+            // Deselecting takes the editor away (@see EditViewModel.selectedAnnotation) and the
+            // focus change above never arrives: the text is committed here instead, rather than
+            // lost. The latch is what keeps the two from committing twice.
+            .onDisappear { finish(text) }
             .onAppear {
                 text = initial
                 DispatchQueue.main.async { focused = true }
             }
             .overlay(alignment: .bottomTrailing) {
-                Button { onCommit(text) } label: {
+                Button { finish(text) } label: {
                     Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
                 .padding(2)
             }
+    }
+
+    private func finish(_ value: String?) {
+        guard !done else { return }
+        done = true
+        onCommit(value)
     }
 }

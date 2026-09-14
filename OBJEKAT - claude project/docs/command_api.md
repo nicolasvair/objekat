@@ -435,6 +435,18 @@ A **comment** (`comment.*`) is a free text laid over a span. It is not a sound o
 engine object at all, and the price of that is that it inherits nothing — it does not move with a
 ripple, a cut or a dragged object. Its text is markdown, inline only (bold, italic, code, links).
 
+**Colour is INHERITED until it is asked for**, and `color_index: null` in an answer says so —
+null is not "no colour", it is "the one I take from what carries me": its ROW for a mark of the
+band (`marker_lane.set_color` therefore recolours a whole layer at once), and WHITE for a comment
+and for a mark carried by an object. White is the point, for a comment: it is not in the object
+palette, so a note never reads as one more object laid on the lane. To go back to inheriting, send
+`marker.set_color` / `object.set_marker_color` / `comment.set_color` **with no `color_index`** —
+absent and null are one thing here.
+
+`marker.set_lane` moves a mark to another row **keeping its identity**: the same id, hence the same
+handle for a script holding it, and the same time — a row is a layer of reading, not a place on the
+timeline.
+
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 
 ### Ripple

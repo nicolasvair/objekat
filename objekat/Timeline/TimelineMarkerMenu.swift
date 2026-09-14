@@ -17,14 +17,7 @@ func buildMarkerBandMenu(vm: EditViewModel,
     let menu = NSMenu()
 
     if let hit {
-        addItem(menu, &proxies, L("menu.context.marker.rename")) {
-            vm.selectAnnotation(hit)
-            vm.renamingID = hit.markerID
-        }
-        addItem(menu, &proxies, L("menu.context.marker.delete")) {
-            vm.selectAnnotation(hit)
-            vm.deleteSelectedAnnotation()
-        }
+        addAnnotationItems(menu, &proxies, vm: vm, sel: hit)
         menu.addItem(.separator())
     }
 
@@ -47,11 +40,65 @@ func buildMarkerBandMenu(vm: EditViewModel,
         }
     }
 
-    menu.addItem(.separator())
-    addItem(menu, &proxies, L("markers.lane.new")) {
-        let id = vm.addMarkerLane()
-        vm.renamingID = id
+    // NO 'new marker lane' here. Creating a ROW is the lanes' button's alone (@see
+    // MarkerLaneHeaderView.clampButton): it is where one goes to show, hide and delete them, so it
+    // is where one goes to make one. Repeated in this menu, it stood beside two items that lay a
+    // MARK and read as a third way of doing the same thing.
+    return menu
+}
+
+// MARK: - What every annotation shares
+
+/// Rename, delete, recolour — the three items a marker, a region and a comment all have, built
+/// once for the three menus that show them (the band's, an object's, a comment's).
+///
+/// The COLOUR is the reason this exists as a function rather than three copies. It is a grid, not a
+/// list: sixteen hues read at a glance, in one AppKit view (@see ColorSwatchGridView), and above it
+/// the one item that gives the hue BACK — a mark of the band inherits its row's colour, a mark on
+/// an object and a comment are white. Inheriting is not 'no colour': it is what makes recolouring
+/// a row recolour everything on it.
+@MainActor
+func addAnnotationItems(_ menu: NSMenu, _ proxies: inout [MenuActionProxy],
+                        vm: EditViewModel, sel: AnnotationSel) {
+    let isComment: Bool = { if case .comment = sel { return true }; return false }()
+
+    addItem(menu, &proxies, isComment ? L("menu.context.comment.edit")
+                                      : L("menu.context.marker.rename")) {
+        vm.selectAnnotation(sel)
+        vm.renamingID = sel.markerID
     }
+    addItem(menu, &proxies, isComment ? L("menu.context.comment.delete")
+                                      : L("menu.context.marker.delete")) {
+        vm.selectAnnotation(sel)
+        vm.deleteSelectedAnnotation()
+    }
+
+    menu.addItem(.separator())
+    let current = vm.annotationColor(sel)
+    let inheritTitle: String = { if case .laneMarker = sel { return L("menu.context.marker.laneColor") }
+                                 return L("menu.context.annotation.whiteColor") }()
+    let pReset = MenuActionProxy { Task { @MainActor in vm.setAnnotationColor(sel, colorIndex: nil) } }
+    proxies.append(pReset)
+    let reset = NSMenuItem(title: inheritTitle, action: #selector(MenuActionProxy.run), keyEquivalent: "")
+    reset.target = pReset
+    reset.state = current == nil ? .on : .off
+    menu.addItem(reset)
+
+    let swatch = NSMenuItem()
+    swatch.view = ColorSwatchGridView(currentColorIndex: current) { picked in
+        Task { @MainActor in vm.setAnnotationColor(sel, colorIndex: picked) }
+    }
+    menu.addItem(swatch)
+}
+
+/// The menu of an annotation laid over the LANES — a comment, or a marker carried by an object.
+/// Nothing but the three shared items: there is no row to create here and no time to lay a mark at
+/// that the object's own menu does not already offer.
+@MainActor
+func buildAnnotationMenu(vm: EditViewModel, proxies: inout [MenuActionProxy],
+                         sel: AnnotationSel) -> NSMenu {
+    let menu = NSMenu()
+    addAnnotationItems(menu, &proxies, vm: vm, sel: sel)
     return menu
 }
 

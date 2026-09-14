@@ -159,6 +159,11 @@ struct TimelineView: View {
     @State var slipDrag: SlipDragState? = nil
     @State var loopRangeDrag: LoopRangeDragState? = nil
     @State var crossfadeDrag: CrossfadeDragState? = nil
+    /// A mark of the band being dragged, and a comment being dragged or cropped. Two slots of their
+    /// own rather than a place among the drags above: neither moves an OBJECT, so neither has any
+    /// business in the guards that ask whether the content is being edited.
+    @State var markerBandDrag: MarkerBandDragState? = nil
+    @State var commentDrag: CommentDragState? = nil
     @State var keyMonitor: Any? = nil
     @State var scrollMonitor: Any? = nil
     @State var magnifyMonitor: Any? = nil
@@ -1091,6 +1096,23 @@ struct TimelineView: View {
             if cutHover != nil { cutHover = nil }
             return
         }
+        // The marker band: it has its own gestures, and nothing under it is reachable (it is a
+        // sticky header laid over the lanes). Without this the blocks HIDDEN beneath it would light
+        // their editing zones up under a hand that can never reach them.
+        if markerBandContains(pos) {
+            TimelineCursorKeeper.set(markerBandHit(at: pos) != nil ? NSCursor.openHand : NSCursor.arrow)
+            if editZoneHover != nil { editZoneHover = nil }
+            if cutHover != nil { cutHover = nil }
+            return
+        }
+        // A COMMENT: the ends crop, the body moves — the cursor says which, exactly as it does on a
+        // clip. Asked before the blocks, like the click and the drag.
+        if viewModel.activeTool == .toolSelection, let z = commentZone(at: pos) {
+            TimelineCursorKeeper.set(z.part == .move ? NSCursor.openHand : NSCursor.resizeLeftRight)
+            if editZoneHover != nil { editZoneHover = nil }
+            if cutHover != nil { cutHover = nil }
+            return
+        }
         // A CROSSFADE zone: the same priority as in the drag, and for the same reason — the
         // surfaces the per-block carve-up would name here are the two fade triangles the zone is
         // made of, and naming one of them would promise a gesture on one side alone. The cursor
@@ -1595,6 +1617,22 @@ struct TimelineView: View {
     }
 
     func markerBandContains(_ point: CGPoint) -> Bool { markerBandRow(at: point) != nil }
+
+    /// The row whose COLOUR DOT a point lands on, or nil. The headers are pinned to the viewport,
+    /// so the point is read relative to its left edge — `point.x - scrollOffsetX` — and never to the
+    /// content, which slides under them.
+    ///
+    /// It exists because an AppKit local monitor sees a right click before the view hierarchy does:
+    /// the dot cannot take its own click, so the monitor resolves it here, the way the canvas
+    /// resolves every other click in this project (@see MarkerLaneHeaderView.dotXRange).
+    func markerLaneDotHit(at point: CGPoint) -> UUID? {
+        guard let row = markerBandRow(at: point) else { return nil }
+        let lanes = viewModel.visibleMarkerLanes
+        guard row < lanes.count else { return nil }
+        let x = Double(point.x - scrollOffsetX)
+        guard MarkerLaneHeaderView.dotXRange.contains(x) else { return nil }
+        return lanes[row].id
+    }
 
     /// The marker or region a point in the band lands on. A REGION is taken anywhere along its
     /// span; a point marker is taken within `grabPx` of its tick, or anywhere along the name that
@@ -2352,7 +2390,8 @@ struct TimelineView: View {
             onRename: { id, name in
                 viewModel.renamingID = nil
                 if let name, !name.isEmpty { viewModel.renameMarkerLane(id: id, to: name) }
-            }
+            },
+            onRecolor: { id, index in viewModel.setMarkerLaneColor(id: id, colorIndex: index) }
         )
     }
 
