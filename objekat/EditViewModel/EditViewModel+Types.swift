@@ -25,11 +25,17 @@ struct ProjectDocument: Codable {
     /// height, scroll position). All optional: an earlier project leaves them at nil and the
     /// view keeps its default values. See `ViewportState`.
     var viewport: ViewportState?
+    /// The rows of the marker band — named points and regions, laid on showable/hideable layers.
+    /// Purely visual: nothing here reaches the engine. nil/absent ⇒ none. See `MarkerLane`.
+    var markerLanes: [MarkerLane]?
+    /// The free texts laid on the timeline. Beside `items` and not inside it: a comment carries no
+    /// sound and has no engine object. nil/absent ⇒ none. See `TimelineComment`.
+    var comments: [TimelineComment]?
 
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, objectDefinitions, viewport
+        case gridMode, objectDefinitions, viewport, markerLanes, comments
     }
 
     init(items: [SoundObject], stems: [Stem]?,
@@ -38,7 +44,9 @@ struct ProjectDocument: Codable {
          timeSigDenominator: Int? = nil,
          gridMode: GridMode? = nil,
          objectDefinitions: [ObjectDefinition]? = nil,
-         viewport: ViewportState? = nil) {
+         viewport: ViewportState? = nil,
+         markerLanes: [MarkerLane]? = nil,
+         comments: [TimelineComment]? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -48,6 +56,8 @@ struct ProjectDocument: Codable {
         self.gridMode = gridMode
         self.objectDefinitions = objectDefinitions
         self.viewport = viewport
+        self.markerLanes = markerLanes
+        self.comments = comments
     }
 }
 
@@ -77,6 +87,12 @@ struct EditSnapshot {
     var tempo: Double? = nil
     var timeSigNumerator: Int? = nil
     var timeSigDenominator: Int? = nil
+    // The marker rows and the comments: they live beside `items`, so nothing else in the snapshot
+    // carries them. Restoring them costs nothing on the engine's side — they have no engine object
+    // — but leaving them out would make undo silently drop a marker created just before an
+    // unrelated gesture. Optional = the snapshots from before this field (in-memory only).
+    var markerLanes: [MarkerLane]? = nil
+    var comments: [TimelineComment]? = nil
 }
 
 // MARK: - Common types
@@ -166,6 +182,34 @@ enum TimeLadder {
     /// floor — never a fallback onto a fixed value, which would tighten the grid when zooming out.
     static func interval(pixelsPerSecond pps: Double, minPx: Double) -> Double {
         intervals.first { $0 * pps >= minPx } ?? intervals.last!
+    }
+}
+
+// MARK: - Annotation selection
+
+/// What is selected among the things that are NOT sound objects: a marker or a region on a row of
+/// the band, a marker carried by an object, a comment.
+///
+/// ONE slot for the three, on the model of `selectedCrossfade` and for the same reason: putting
+/// them in `selectedIDs` would arm every command that acts on objects (move, delete, bake, group)
+/// against something that has no sound. Exclusive with `selectedIDs` AND with `selectedCrossfade`
+/// — selecting one clears the others (@see selectAnnotation) — which is what lets ⌫ and ⌘R gain
+/// exactly ONE branch each instead of three.
+enum AnnotationSel: Equatable {
+    /// A marker/region of the band: the row it lives on, then the marker.
+    case laneMarker(lane: UUID, marker: UUID)
+    /// A marker carried by an object: the object, then the marker.
+    case objectMarker(object: UUID, marker: UUID)
+    case comment(UUID)
+
+    /// The identity of the annotation itself — what `renamingID` is compared against, so that
+    /// renaming needs no second slot of its own.
+    var markerID: UUID {
+        switch self {
+        case .laneMarker(_, let m):   return m
+        case .objectMarker(_, let m): return m
+        case .comment(let c):         return c
+        }
     }
 }
 

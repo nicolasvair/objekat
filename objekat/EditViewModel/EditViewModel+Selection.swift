@@ -58,12 +58,24 @@ extension EditViewModel {
 
     func selectIDs(_ ids: Set<UUID>) { selectedCrossfade = nil; selectedIDs = ids }
 
+    /// Selects a marker, a region or a comment — exclusive with the objects, the crossfade, the
+    /// time range and the notes, so that ⌫ and ⌘R have exactly one thing in front of them.
+    /// @see AnnotationSel, which says why this is a slot of its own.
+    func selectAnnotation(_ sel: AnnotationSel?) {
+        selectedIDs = []
+        selectedCrossfade = nil
+        timeSelection = nil
+        selectedMidiNoteIDs = []
+        selectedAnnotation = sel
+    }
+
     /// Selects a crossfade — the zone, not its two objects. Exclusive with the object selection,
     /// so ⌫ can mean "this crossfade" without ever meaning "these two objects" as well.
     func selectCrossfade(left: UUID, right: UUID) {
         selectedIDs = []
         timeSelection = nil
         selectedMidiNoteIDs = []
+        selectedAnnotation = nil
         selectedCrossfade = (left, right)
     }
 
@@ -71,6 +83,7 @@ extension EditViewModel {
         selectedCrossfade = nil
         selectedIDs = []
         timeSelection = nil
+        selectedAnnotation = nil
     }
 
     /// The effective IDs for multi-item operations: excludes any item one of whose direct

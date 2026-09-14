@@ -182,6 +182,7 @@ extension EditViewModel {
                         plugins: copiedPlugins(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
+                        markers: ex.markers.shiftedInTime(by: -(ne - es)),
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))
@@ -204,6 +205,7 @@ extension EditViewModel {
             // moved (the same rule as `updateTrim`). A trim on the right → a null delta, a no-op.
             let delta = t.startTime - items[i].startTime
             items[i].automation   = items[i].automation.shiftedInTime(by: -delta)
+            items[i].markers      = items[i].markers.shiftedInTime(by: -delta)
             items[i].startTime    = t.startTime
             items[i].sourceOffset = t.sourceOffset
             items[i].duration     = t.duration
@@ -279,6 +281,7 @@ extension EditViewModel {
                         plugins: copiedPlugins(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
+                        markers: ex.markers.shiftedInTime(by: -(ne - es)),
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))
@@ -328,6 +331,8 @@ extension EditViewModel {
             for t in toTrim {
                 guard let i = current.firstIndex(where: { $0.id == t.old.id }) else { continue }
                 current[i].automation   = current[i].automation
+                    .shiftedInTime(by: -(t.startTime - current[i].startTime))
+                current[i].markers      = current[i].markers
                     .shiftedInTime(by: -(t.startTime - current[i].startTime))
                 current[i].startTime    = t.startTime
                 current[i].sourceOffset = t.sourceOffset

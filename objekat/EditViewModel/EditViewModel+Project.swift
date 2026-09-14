@@ -164,7 +164,9 @@ extension EditViewModel {
                                   timeSigDenominator: timeSigDenominator,
                                   gridMode: gridMode,
                                   objectDefinitions: objectDefinitions.isEmpty ? nil : Array(objectDefinitions.values),
-                                  viewport: currentViewport)
+                                  viewport: currentViewport,
+                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
+                                  comments: comments.isEmpty ? nil : comments)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(doc)
@@ -217,6 +219,8 @@ extension EditViewModel {
         undoStack = []
         redoStack = []
         objectDefinitions = [:]
+        markerLanes = []
+        comments = []
         objectEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil
@@ -278,6 +282,7 @@ extension EditViewModel {
     /// completions find the object gone and give up cleanly) and the UI states of the
     /// piano rolls (keys = UUIDs of the old project).
     private func resetTransientSessionState() {
+        selectedAnnotation = nil
         clipboard = nil
         midiNotesClipboard = nil
         selectedMidiNoteIDs = []
@@ -394,6 +399,10 @@ extension EditViewModel {
         undoStack = []
         redoStack = []
         objectDefinitions = Dictionary(uniqueKeysWithValues: (doc.objectDefinitions ?? []).map { ($0.id, $0) })
+        // The annotations: restored as they are, with nothing to reconcile — no engine object
+        // stands behind a marker or a comment.
+        markerLanes = doc.markerLanes ?? []
+        comments = doc.comments ?? []
         objectEditStack.removeAll()
         resetTransientSessionState()
 

@@ -50,7 +50,9 @@ extension EditViewModel {
                                     objectDefinitions: objectDefinitions,
                                     tempo: tempo,
                                     timeSigNumerator: timeSigNumerator,
-                                    timeSigDenominator: timeSigDenominator)
+                                    timeSigDenominator: timeSigDenominator,
+                                    markerLanes: markerLanes,
+                                    comments: comments)
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         if ms >= 1 {
             NSLog("[PERF] snapshot: %d plugin state(s) re-read in %.0f ms",
@@ -135,6 +137,13 @@ extension EditViewModel {
         for item in items where !intact.contains(item.id) {
             if patched.contains(item.id) { pushPatch(item) } else { syncAdd(item) }
         }
+
+        // The annotations: restored flat, with no engine reconciliation to do — a marker and a
+        // comment have no engine object. Restored even when equal: comparing them would cost more
+        // than assigning them.
+        if let lanes = snapshot.markerLanes { markerLanes = lanes }
+        if let cs = snapshot.comments { comments = cs }
+        if let sel = selectedAnnotation, !annotationExists(sel) { selectedAnnotation = nil }
 
         if let snapDefs = snapshot.objectDefinitions {
             objectDefinitions = snapDefs

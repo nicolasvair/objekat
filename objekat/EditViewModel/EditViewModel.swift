@@ -43,13 +43,31 @@ final class EditViewModel {
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
         }
     }
-    var selectedIDs: Set<UUID> = []
+    /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
+    /// because selecting objects is written some twenty different ways across the drag and tap
+    /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
+    /// forgetting the rule would leave a marker selected under an object selection — and ⌫, which
+    /// reads the annotation first, would then delete the marker while the hand was pointing at a clip.
+    var selectedIDs: Set<UUID> = [] {
+        didSet { if !selectedIDs.isEmpty { selectedAnnotation = nil } }
+    }
     /// The crossfade selected, if any: the pair whose shared zone the click landed in. Its own
     /// slot rather than a place in `selectedIDs`, because a crossfade is not an object — it is
     /// the zone two objects have in common, and putting either of them in the selection would
     /// arm every command that acts on objects (move, delete, bake) against the wrong thing.
     /// Exclusive with `selectedIDs`: selecting one clears the other (@see selectCrossfade).
     var selectedCrossfade: (left: UUID, right: UUID)? = nil
+    /// The rows of the marker band: named points and regions, on showable/hideable layers. Purely
+    /// visual — nothing here reaches the engine, and no gesture on them touches what is heard.
+    /// See EditViewModel+Markers and `MarkerLane`.
+    var markerLanes: [MarkerLane] = []
+    /// The free texts laid over the timeline. Beside `items`, not inside it: a comment carries no
+    /// sound and has no engine object (@see TimelineComment).
+    var comments: [TimelineComment] = []
+    /// The selected marker / region / comment, if any. Its own slot rather than a place in
+    /// `selectedIDs`, exactly like `selectedCrossfade` and for the same reason. Exclusive with the
+    /// two others (@see selectAnnotation).
+    var selectedAnnotation: AnnotationSel? = nil
     /// The MIDI notes selected in the open piano rolls (ids of `MidiNote`, unique across every
     /// clip). Independent of `selectedIDs` (which carries the clips/groups).
     var selectedMidiNoteIDs: Set<UUID> = []
@@ -912,6 +930,8 @@ final class EditViewModel {
             // AutomationLane.mirrored) — otherwise a fade drawn on the end of a sound would
             // end up on its attack.
             obj.automation = obj.automation.mirroredInTime(over: obj.duration)
+            // The markers name places IN that matter: they turn round with it.
+            obj.markers = obj.markers.mirroredInTime(over: obj.duration)
         }
         engine?.updateIsReversed(reversed, forID: id.uuidString)
         // Turning the playback round changes the offset CONVENTION on the engine side (Tracktion then reads a
@@ -1044,6 +1064,7 @@ final class EditViewModel {
             // (D is bounded above), and a curve must not compress for that
             // reason — the points that overrun stay stored, as after a trim.
             obj.automation = obj.automation.timeScaled(by: oldSpeed / newSpeed)
+            obj.markers    = obj.markers.timeScaled(by: oldSpeed / newSpeed)
         }
         engine?.updateSpeedRatio(newSpeed, forID: id.uuidString)
         if let obj = find(id: id) {

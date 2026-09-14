@@ -313,6 +313,7 @@ extension EditViewModel {
             // just below (@see AutomationLane.shifted). A fragment starting at the object's
             // edge → a null shift.
             let fragAutomation = entry.item.automation.shiftedInTime(by: -(fragStart - s))
+            let fragMarkers    = entry.item.markers.shiftedInTime(by: -(fragStart - s))
 
             switch entry.item.kind {
 
@@ -326,6 +327,7 @@ extension EditViewModel {
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
+                    markers: fragMarkers,
                     kind: .clip(filePath: fp, sourceOffset: so + (fragStart - s) * sr,
                                 fileDuration: fd, speedRatio: sr, isReversed: rev)
                 ))
@@ -347,6 +349,7 @@ extension EditViewModel {
                     plugins: copiedPlugins(of: entry.item),
                     instruments: copiedInstruments(of: entry.item),
                     automation: fragAutomation,
+                    markers: fragMarkers,
                     kind: .midiClip(notes: subNotes, lengthBeats: max(0.01, lenBeat))
                 ))
 
@@ -358,6 +361,7 @@ extension EditViewModel {
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
+                    markers: fragMarkers,
                     kind: .aux
                 ))
 
@@ -394,6 +398,7 @@ extension EditViewModel {
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
+                    markers: fragMarkers,
                     kind: .group(children: fragChildren, isExpanded: isExpanded)
                 )
                 if let looped {
@@ -515,6 +520,7 @@ extension EditViewModel {
                     // The start has advanced, the matter has not: the curves realign on it
                     // (the same rule as `updateTrim`).
                     obj.automation    = obj.automation.shiftedInTime(by: -delta)
+                    obj.markers       = obj.markers.shiftedInTime(by: -delta)
                     // A porthole: the IN/OUT bounds are LOCAL to the block, yet the block has just
                     // advanced without the pattern moving — rebasing them by the same delta leaves the
                     // IN point at its ABSOLUTE place, hence the loop in phase. They become
@@ -614,6 +620,7 @@ extension EditViewModel {
                     c.duration      = absEnd - cutHi
                     c.fadeIn        = 0
                     c.automation    = child.automation.shiftedInTime(by: -delta)
+                    c.markers       = child.markers.shiftedInTime(by: -delta)
                     let loopBounds = clipLoopFileBounds(c)
                     engine?.updatePosition(c.startTime, duration: c.duration,
                                            sourceOffset: so + delta * sr, loopEnabled: c.loopEnabled,
@@ -626,10 +633,12 @@ extension EditViewModel {
                 } else {
                     // covers the whole range: a left + right split
                     let (autoL, autoR) = child.automation.splitInTime(at: cutLo - absStart)
+                    let (markL, markR) = child.markers.splitInTime(at: cutLo - absStart)
                     var left = child
                     left.duration   = cutLo - absStart
                     left.fadeOut    = 0
                     left.automation = autoL
+                    left.markers    = markL
                     let loopBounds = clipLoopFileBounds(left)
                     engine?.updatePosition(left.startTime, duration: left.duration,
                                            sourceOffset: so, loopEnabled: left.loopEnabled,
@@ -648,6 +657,7 @@ extension EditViewModel {
                         fadeIn: 0, fadeOut: child.fadeOut,
                         plugins: copiedPlugins(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
+                        markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
                         kind: .clip(filePath: fp, sourceOffset: so + (cutHi - absStart) * sr,
                                     fileDuration: fd, speedRatio: sr, isReversed: rev)
                     )
@@ -686,6 +696,7 @@ extension EditViewModel {
                     c.duration   = absEnd - cutHi
                     c.fadeIn     = 0
                     c.automation = child.automation.shiftedInTime(by: -(cutHi - absStart))
+                    c.markers    = child.markers.shiftedInTime(by: -(cutHi - absStart))
                     c.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: dropBeat).right,
                                        lengthBeats: max(0.01, lengthBeats - dropBeat))
                     needsPosResync.append(c.id)
@@ -697,10 +708,12 @@ extension EditViewModel {
                     let loBeat = beatsFromSeconds(cutLo - absStart)
                     let hiBeat = beatsFromSeconds(cutHi - absStart)
                     let (autoL, autoR) = child.automation.splitInTime(at: cutLo - absStart)
+                    let (markL, markR) = child.markers.splitInTime(at: cutLo - absStart)
                     var left = child
                     left.duration   = cutLo - absStart
                     left.fadeOut    = 0
                     left.automation = autoL
+                    left.markers    = markL
                     left.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: loBeat).left,
                                           lengthBeats: max(0.01, min(lengthBeats, loBeat)))
                     needsPosResync.append(left.id)
@@ -713,6 +726,7 @@ extension EditViewModel {
                         plugins: copiedPlugins(of: child),
                         instruments: copiedInstruments(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
+                        markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
                         kind: .midiClip(notes: Self.splitMidiNotes(notes, atBeat: hiBeat).right,
                                         lengthBeats: max(0.01, lengthBeats - hiBeat)))
                     engineAddMidiClip(right)
@@ -736,6 +750,7 @@ extension EditViewModel {
                         c.startTime  = cutHi
                         c.duration   = absEnd - cutHi
                         c.automation = child.automation.shiftedInTime(by: -(cutHi - absStart))
+                        c.markers    = child.markers.shiftedInTime(by: -(cutHi - absStart))
                     }
                     needsPosResync.append(c.id)   // syncPosition → window
                     updated.append(c)
@@ -757,6 +772,7 @@ extension EditViewModel {
                         c.startTime  = cutHi
                         c.duration   = absEnd - cutHi
                         c.automation = c.automation.shiftedInTime(by: -(cutHi - absStart))
+                        c.markers    = c.markers.shiftedInTime(by: -(cutHi - absStart))
                     }
                     // covers the whole range → bounds unchanged (a silent internal hole)
                     needsPosResync.append(c.id)

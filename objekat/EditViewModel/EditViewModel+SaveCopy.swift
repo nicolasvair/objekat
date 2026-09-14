@@ -195,7 +195,12 @@ extension EditViewModel {
                                   timeSigNumerator: timeSigNumerator,
                                   timeSigDenominator: timeSigDenominator,
                                   gridMode: gridMode,
-                                  objectDefinitions: closureDefs.isEmpty ? nil : closureDefs)
+                                  objectDefinitions: closureDefs.isEmpty ? nil : closureDefs,
+                                  // The annotations travel with the copy: they name nothing outside
+                                  // the project, so there is nothing to rewrite in them — but a
+                                  // capsule that lost the notes written on it would be a poor copy.
+                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
+                                  comments: comments.isEmpty ? nil : comments)
         let projectData: Data
         do {
             projectData = try encoder.encode(doc)

@@ -372,6 +372,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// at both tangled together. Pure UI (no engine effect) but persisted so as to reopen the
     /// project in the same state.
     var automationOpen: Bool = false
+    /// THIS object's markers — named points, and named spans when `duration > 0` (@see Marker).
+    /// Their times are RELATIVE to the start of the object, exactly like an automation point and
+    /// for the same reason: moving the object, changing its lane or trimming its right edge then
+    /// costs nothing. The gestures that DO move the origin of that frame, or the material itself
+    /// (a left trim, the right half of a cut, a reverse, a varispeed, a ripple), rebase them
+    /// through the same five transformations as the curves (@see Array where Element == Marker).
+    var markers: [Marker] = []
     var kind: Kind
     /// Non-nil ⇒ this placement is an INSTANCE of a sound object: its `kind` reads the current wave
     /// of the definition `EditViewModel.objectDefinitions[definitionID]`. Everything else (position,
@@ -869,6 +876,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
          loopEnabled: Bool = false,
          loopRangeStart: Double? = nil,
          loopRangeEnd: Double? = nil,
+         markers: [Marker] = [],
          kind: Kind) {
         self.id         = id
         self.startTime  = startTime
@@ -899,6 +907,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.loopEnabled    = loopEnabled
         self.loopRangeStart = loopRangeStart
         self.loopRangeEnd   = loopRangeEnd
+        self.markers    = markers
         self.kind       = kind
     }
 
@@ -933,10 +942,14 @@ struct SoundObject: Identifiable, Codable, Equatable {
                      fadeIn: Double, fadeOut: Double,
                      plugins: [ObjectPlugin], instruments: [ObjectPlugin] = [],
                      automation: [AutomationLane]? = nil,
+                     markers: [Marker]? = nil,
                      kind: Kind) -> SoundObject {
         var remap = Self.pluginIDRemap(from: self.plugins,     to: plugins)
         remap.merge(Self.pluginIDRemap(from: self.instruments, to: instruments)) { a, _ in a }
         let inherited = automation ?? self.automation
+        // Markers travel exactly like the curves: inherited as they are unless the caller, which
+        // has just cut or fragmented, hands over the half that belongs to this copy.
+        let inheritedMarkers = markers ?? self.markers
         return SoundObject(id: id, startTime: startTime, duration: duration, lane: lane,
                     volume: volume, pan: pan, fadeIn: fadeIn, fadeOut: fadeOut,
                     // The LENGTHS are the caller's business (it cuts, trims, fragments); the
@@ -960,6 +973,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     loopEnabled: loopEnabled,
                     loopRangeStart: loopRangeStart,
                     loopRangeEnd: loopRangeEnd,
+                    markers: inheritedMarkers,
                     kind: kind)
     }
 
@@ -997,7 +1011,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, definitionID, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd
+        case loopRangeStart, loopRangeEnd, markers
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1040,6 +1054,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if loopEnabled { try c.encode(true, forKey: .loopEnabled) }
         try c.encodeIfPresent(loopRangeStart, forKey: .loopRangeStart)
         try c.encodeIfPresent(loopRangeEnd,   forKey: .loopRangeEnd)
+        if !markers.isEmpty { try c.encode(markers, forKey: .markers) }
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1075,6 +1090,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         loopEnabled    = try c.decodeIfPresent(Bool.self, forKey: .loopEnabled) ?? false
         loopRangeStart = try c.decodeIfPresent(Double.self, forKey: .loopRangeStart)
         loopRangeEnd   = try c.decodeIfPresent(Double.self, forKey: .loopRangeEnd)
+        markers        = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }

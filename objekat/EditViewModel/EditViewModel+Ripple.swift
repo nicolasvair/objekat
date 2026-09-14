@@ -149,6 +149,9 @@ extension EditViewModel {
             // automation has to lose the same slice as its content (@see splicedInTime). In time
             // relative to the object, hence the two bounds rebased on its OLD start.
             o.automation = o.automation.splicedInTime(removing: lo - s, to: hi - s)
+            // The markers lose the same slice: one that named the removed passage named material
+            // that has gone, and is dropped rather than slid onto its neighbour.
+            o.markers    = o.markers.splicedInTime(removing: lo - s, to: hi - s)
             // A LOOPING container is refused upstream; a group whose loop is merely armed keeps
             // bounds expressed locally — remapped in ABSOLUTE terms, they stay opposite the same
             // material.

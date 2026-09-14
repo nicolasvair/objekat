@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Markers, regions and comments — a scenario that ASSERTS rather than replaying.
+
+Same shape as `scenario_families.py`, and for the same reason: a JSON-lines scenario
+cannot reuse an identifier an earlier command returned, and everything here does.
+
+    # 1. launch the app with the API, on a SHORT socket (a system limit: 103 bytes).
+    #    `--no-recent`: the throwaway project below does not enter "Recent projects".
+    objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
+
+    # 2. replay
+    ./scenario_markers.py /tmp/o.sock
+
+What it is really out to prove, beyond the commands answering: that the markers an
+object carries FOLLOW ITS MATTER through the editing gestures. A cut distributes them
+between the two halves and rebases the right-hand ones on the cut; a reverse mirrors
+them; an undo gives them back; a save and a reload keep them. That is the part no
+build can check, and the part the eye alone would otherwise have to catch.
+
+Exit: 0 if every assertion passes, 1 otherwise.
+"""
+
+import json, os, sys, tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from objekat_cli import ObjekatClient, ObjekatError
+
+if len(sys.argv) != 2:
+    print(__doc__)
+    sys.exit(2)
+
+SOCK = sys.argv[1]
+FIXTURE = os.path.join(HERE, "fixtures", "bip.wav")
+
+fails = []
+
+
+def check(label, ok, detail=""):
+    if ok:
+        print("ok    " + label)
+    else:
+        fails.append(label)
+        print("FAIL  %s  %s" % (label, detail))
+
+
+def approx(a, b, eps=1e-6):
+    return abs(a - b) < eps
+
+
+with ObjekatClient(SOCK) as c:
+    def cmd(_cmd_name, **params):
+        return c.send(_cmd_name, params or None)
+
+    info = cmd("app.info")
+    check("--no-recent honoured", info.get("records_recent_projects") is False,
+          str(info.get("records_recent_projects")))
+    cmd("project.new")
+
+    # ── the band ───────────────────────────────────────────────────────────
+    lane = cmd("marker_lane.create", name="Nicolas")["lane"]
+    m1 = cmd("marker.add", lane=lane, at=1.5, name="attaque")["marker"]
+    r1 = cmd("marker.add", lane=lane, at=4.0, duration=3.0, name="refrain")["marker"]
+    lanes = cmd("marker_lane.list")["lanes"]
+    check("one row, two entries", len(lanes) == 1 and lanes[0]["count"] == 2)
+    entries = {m["id"]: m for m in lanes[0]["markers"]}
+    check("a marker is not a region", entries[m1]["is_region"] is False)
+    check("a region is one", entries[r1]["is_region"] is True and approx(entries[r1]["duration"], 3.0))
+    check("read back in order", [m["name"] for m in lanes[0]["markers"]] == ["attaque", "refrain"])
+
+    cmd("marker.move", lane=lane, marker=m1, at=2.25)
+    cmd("marker.rename", lane=lane, marker=m1, name="attaque 2")
+    got = [m for m in cmd("marker_lane.list")["lanes"][0]["markers"] if m["id"] == m1][0]
+    check("moved and renamed", approx(got["time"], 2.25) and got["name"] == "attaque 2")
+
+    cmd("marker_lane.set_visible", lane=lane, visible=False)
+    check("hiding is not deleting",
+          cmd("marker_lane.list")["lanes"][0]["visible"] is False
+          and cmd("marker_lane.list")["lanes"][0]["count"] == 2)
+    cmd("marker_lane.set_visible", lane=lane, visible=True)
+
+    # an unknown row is refused rather than quietly served the default one
+    try:
+        cmd("marker.add", lane="00000000-0000-0000-0000-000000000000", at=1)
+        check("an unknown row is refused", False, "it went through")
+    except ObjekatError as e:
+        check("an unknown row is refused", e.code == "not_found", e.code)
+
+    # ── an object's markers ────────────────────────────────────────────────
+    obj = cmd("object.add", path=FIXTURE, lane=0, start=2.0)
+    oid = obj.get("id") or obj.get("object") or obj["objects"][0]["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    dur = [o for o in cmd("object.list")["objects"] if o["id"] == oid][0]["duration"]
+    print("      (object %.3f s long, starting at 2.0)" % dur)
+
+    # The object runs [2.0, 2.4]. Laid at an ABSOLUTE time, stored RELATIVE.
+    cmd("object.add_marker", object=oid, at=2.20, name="dedans")
+    got = cmd("object.list_markers", object=oid)
+    check("stored in the object's frame", approx(got["markers"][0]["time"], 0.20),
+          str(got["markers"][0]["time"]))
+    check("read back absolute too", approx(got["markers"][0]["absolute_time"], 2.20))
+    check("origin reported", approx(got["origin"], 2.0))
+    check("and it is inside the window", got["markers"][0]["audible"] is True)
+
+    # moving the object leaves the marker on the same material
+    cmd("object.move", id=oid, start=5.0)
+    got = cmd("object.list_markers", object=oid)
+    check("a move costs nothing", approx(got["markers"][0]["time"], 0.20))
+    check("and the absolute reading follows", approx(got["markers"][0]["absolute_time"], 5.20))
+    cmd("object.move", id=oid, start=2.0)
+
+    # a marker pushed outside the window is kept, not lost
+    out = cmd("object.add_marker", object=oid, rel=-0.1, name="derriere")["marker"]
+    outm = [m for m in cmd("object.list_markers", object=oid)["markers"] if m["id"] == out][0]
+    check("a marker behind the edge is kept but silent", outm["audible"] is False)
+    cmd("object.remove_marker", object=oid, marker=out)
+
+    # ── the real test: a cut through a marked object ───────────────────────
+    cmd("object.add_marker", object=oid, at=2.05, name="tot")
+    cmd("object.add_marker", object=oid, at=2.30, name="tard")
+    cmd("object.split_at", ids=[oid], seconds=2.20)
+    objs = sorted(cmd("object.list")["objects"], key=lambda o: o["start"])
+    check("the cut made two halves", len(objs) == 2, str(len(objs)))
+    left, right = objs[0], objs[1]
+    lm = {m["name"]: m for m in cmd("object.list_markers", object=left["id"])["markers"]}
+    rm = {m["name"]: m for m in cmd("object.list_markers", object=right["id"])["markers"]}
+    check("the early marker stayed left", "tot" in lm and "tot" not in rm,
+          "%s / %s" % (list(lm), list(rm)))
+    check("the late one went right", "tard" in rm and "tard" not in lm,
+          "%s / %s" % (list(lm), list(rm)))
+    check("the one exactly on the cut went right", "dedans" in rm and "dedans" not in lm)
+    check("rebased on the cut, not on the old origin",
+          approx(rm["tard"]["time"], 0.10) and approx(rm["tard"]["absolute_time"], 2.30),
+          "rel %s abs %s" % (rm["tard"]["time"], rm["tard"]["absolute_time"]))
+    check("the one on the cut sits at the new origin", approx(rm["dedans"]["time"], 0.0),
+          str(rm["dedans"]["time"]))
+    check("and the left one did not move",
+          approx(lm["tot"]["absolute_time"], 2.05), str(lm["tot"]["absolute_time"]))
+
+    # undo puts the two halves back into one, markers included
+    cmd("edit.undo")
+    objs = cmd("object.list")["objects"]
+    check("undo gives one object back", len(objs) == 1, str(len(objs)))
+    names = sorted(m["name"] for m in cmd("object.list_markers", object=objs[0]["id"])["markers"])
+    check("with its three markers", names == ["dedans", "tard", "tot"], str(names))
+
+    # ── a reverse turns the markers round ──────────────────────────────────
+    oid = objs[0]["id"]
+    before = {m["name"]: m["time"] for m in cmd("object.list_markers", object=oid)["markers"]}
+    odur = [o for o in cmd("object.list")["objects"] if o["id"] == oid][0]["duration"]
+    cmd("object.set_reversed", id=oid, reversed=True)
+    after = {m["name"]: m["time"] for m in cmd("object.list_markers", object=oid)["markers"]}
+    check("reverse mirrors every marker",
+          all(approx(after[n], odur - before[n]) for n in before), "%s -> %s" % (before, after))
+    cmd("object.set_reversed", id=oid, reversed=False)
+
+    # ── comments ───────────────────────────────────────────────────────────
+    cid = cmd("comment.create", **{"from": 1.0, "to": 4.0, "lane": 2,
+                                   "text": "à **revoir** : trop sec"})["comment"]
+    cl = cmd("comment.list")["comments"]
+    check("one comment", len(cl) == 1 and approx(cl[0]["duration"], 3.0))
+    check("markdown kept verbatim", "**revoir**" in cl[0]["text"])
+    cmd("comment.set_text", comment=cid, text="ok")
+    check("text rewritten", cmd("comment.list")["comments"][0]["text"] == "ok")
+
+    # ── it survives a save and a reload ────────────────────────────────────
+    folder = tempfile.mkdtemp(prefix="objekat-markers-")
+    path = os.path.join(folder, "test.objekat.json")
+    cmd("project.save_as", path=path)
+    with open(path) as f:
+        doc = json.load(f)
+    check("session format bumped", doc.get("version") == 11, str(doc.get("version")))
+    check("the rows are written", len(doc.get("markerLanes", [])) == 1)
+    check("the comments are written", len(doc.get("comments", [])) == 1)
+    check("the object's markers are written",
+          len(doc["items"][0].get("markers", [])) == 3, str(doc["items"][0].get("markers")))
+    check("the notice mentions the two frames",
+          any("RELATIVE to the start of the object" in l for l in doc.get("_readme", [])))
+
+    cmd("project.new")
+    check("a new project empties the band", cmd("marker_lane.list")["count"] == 0)
+    cmd("project.open", path=path)
+    cmd("wait_idle", timeout_ms=5000)
+    reread = cmd("marker_lane.list")
+    check("the rows come back", reread["count"] == 1 and reread["lanes"][0]["name"] == "Nicolas")
+    check("with their two entries", reread["lanes"][0]["count"] == 2)
+    check("the comment comes back", cmd("comment.list")["count"] == 1)
+    rid = cmd("object.list")["objects"][0]["id"]
+    check("the object's markers come back",
+          cmd("object.list_markers", object=rid)["count"] == 3)
+
+print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
+sys.exit(0 if not fails else 1)
