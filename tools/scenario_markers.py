@@ -222,7 +222,7 @@ with ObjekatClient(SOCK) as c:
     cmd("project.save_as", path=path)
     with open(path) as f:
         doc = json.load(f)
-    check("session format bumped", doc.get("version") == 11, str(doc.get("version")))
+    check("session format bumped", doc.get("version") == 12, str(doc.get("version")))
     check("the rows are written", len(doc.get("markerLanes", [])) == 1)
     check("the comments are written", len(doc.get("comments", [])) == 1)
     check("the object's markers are written",

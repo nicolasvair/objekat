@@ -32,7 +32,8 @@ import AppKit
 //
 //  • the UPPER half is carved by the two veils, which already draw the regions: under BOTH of them
 //    (the top triangle) the crossfade AS a thing — widened and narrowed symmetrically about its
-//    own centre, both curves bent at once, cursor ✕; under ONE of them, that side alone — its edge
+//    own centre, RIGHT WIDENS AND LEFT NARROWS wherever one took hold, both curves bent at once,
+//    cursor ✕; under ONE of them, that side alone — its edge
 //    travels and the opposite one stays put, cursor ╱ or ╲; under neither, the body again, since
 //    two bulged curves cross high and carry the bare region up with them.
 //
@@ -81,11 +82,6 @@ struct CrossfadeDragState {
 
     /// The display lane the zone sits on: the origin of the vertical travel.
     let lane: Int
-
-    /// Which way the top triangle's horizontal reads. Grabbed left of the centre, pulling LEFT
-    /// widens; grabbed right of it, pulling RIGHT does. The hand pushes the nearer edge outwards
-    /// in both cases, which is what "symmetric" feels like from wherever one took hold.
-    var widenSign: Double = 1
 
     /// The curves the two edges had at the start — the bend ADDS to them, so a crossfade already
     /// bent stays bent when one merely moves or widens it.
@@ -140,9 +136,6 @@ struct CrossfadeHit {
     let zone: EditViewModel.CrossfadeZone
     let part: CrossfadeDragState.Part
     let viaEdgeBand: Bool
-    /// Where the hand came down inside the zone, 0…1 across its width. The top triangle reads it
-    /// to know which way widening goes.
-    let alpha: Double
 }
 
 extension TimelineView {
@@ -183,12 +176,12 @@ extension TimelineView {
         if ly > blockHeight / 2 {
             let band = handleWidth(blockWidth: w)
             if band > 0, lx < band {
-                return CrossfadeHit(zone: zone, part: .sideStart, viaEdgeBand: true, alpha: a)
+                return CrossfadeHit(zone: zone, part: .sideStart, viaEdgeBand: true)
             }
             if band > 0, lx > w - band {
-                return CrossfadeHit(zone: zone, part: .sideEnd, viaEdgeBand: true, alpha: a)
+                return CrossfadeHit(zone: zone, part: .sideEnd, viaEdgeBand: true)
             }
-            return CrossfadeHit(zone: zone, part: .move, viaEdgeBand: false, alpha: a)
+            return CrossfadeHit(zone: zone, part: .move, viaEdgeBand: false)
         }
 
         // ── The UPPER half: the two curves ──────────────────────────────────────────────────
@@ -207,7 +200,7 @@ extension TimelineView {
         else if ly > max(yIn, yOut) { part = .move }
         else if yOut < yIn          { part = .sideStart }   // left of the crossing
         else                        { part = .sideEnd }
-        return CrossfadeHit(zone: zone, part: part, viaEdgeBand: false, alpha: a)
+        return CrossfadeHit(zone: zone, part: part, viaEdgeBand: false)
     }
 
     /// The cursor a point inside a zone deserves. `nil` = not in a zone.
@@ -262,7 +255,6 @@ extension TimelineView {
             viaEdgeBand: hit.viaEdgeBand,
             anchorStart: z.start, anchorEnd: z.end,
             lane: Int((p.y - rulerHeight) / laneStep),
-            widenSign: hit.alpha < 0.5 ? -1 : 1,
             leftCurveAnchor:  viewModel.find(id: z.leftID)?.fadeOutCurve ?? .linear,
             rightCurveAnchor: viewModel.find(id: z.rightID)?.fadeInCurve ?? .linear)
         // Only the crop band can push an object out of its own zone, so only it needs the way back.
@@ -325,7 +317,14 @@ extension TimelineView {
         case .both:
             // Symmetric about the centre the zone had when the hand came down, so widening and
             // narrowing are the same travel seen from either side of it.
-            rawWidth   = state.anchorWidth + 2 * state.widenSign * dx
+            //
+            // RIGHT WIDENS, LEFT NARROWS — always, wherever inside the triangle the hand came down.
+            // It used to push the NEARER EDGE outwards, so the sign flipped at the zone's midline:
+            // the same travel widened or narrowed depending on which half one had grabbed, and a
+            // crossfade is symmetric, so there is nothing on screen that says which half that was.
+            // A gesture whose meaning one cannot SEE is a gesture one has to try. One direction,
+            // one meaning: more to the right is more, as everywhere else on a timeline.
+            rawWidth   = state.anchorWidth + 2 * dx
             idealStart = state.anchorCentre - max(0, rawWidth) / 2
         case .sideStart:
             rawWidth   = state.anchorEnd - viewModel.snapTime(state.anchorStart + dx, excluding: excl)

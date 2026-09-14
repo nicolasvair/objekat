@@ -58,6 +58,65 @@ extension EditViewModel {
 
     func selectIDs(_ ids: Set<UUID>) { selectedCrossfade = nil; selectedIDs = ids }
 
+    /// Moves the SELECTION one displayed row up (`-1`) or down (`+1`). The selection alone: not one
+    /// object moves, nothing sounds different, and no undo is pushed — this is the eye walking down
+    /// the timeline, not the hand editing it. (Moving the MATTER between lanes is the drag, and ⌥⌫
+    /// and the rest; nothing here touches it.)
+    ///
+    /// Three rules, all of them about what "the row above" means when the timeline is not a grid:
+    ///
+    ///   - it walks DISPLAY rows, so an open group's children are rows like any other — the eye
+    ///     sees them, the arrow visits them;
+    ///   - an EMPTY row is stepped over rather than stopping the walk. A row with nothing on it
+    ///     cannot hold a selection, and stopping there would mean pressing the key twice for a gap
+    ///     one can see is empty;
+    ///   - on arriving, the object taken is the one that SHARES TIME with the one left behind, and
+    ///     failing that the nearest in time. Anything else would send the selection to the start of
+    ///     the row, miles from what one was looking at.
+    ///
+    /// With several objects selected, the row one leaves from is the FAR EDGE of the selection in
+    /// the direction asked — so a second press goes on in the same direction rather than coming
+    /// back inside the block one has just left.
+    ///
+    /// Returns the object now selected, nil when the walk found nothing (the edge of the content).
+    @discardableResult
+    func stepSelectionLane(by delta: Int) -> UUID? {
+        guard delta != 0 else { return nil }
+        let held = laneEntries.filter { selectedIDs.contains($0.item.id) }
+        guard let from = delta < 0 ? held.min(by: { $0.displayLane < $1.displayLane })
+                                   : held.max(by: { $0.displayLane < $1.displayLane })
+        else { return nil }
+
+        let anchorStart = from.absStart
+        let anchorEnd   = from.absStart + from.item.duration
+        // 0 = they share time, otherwise the gap between them. An infinite bus spans everything,
+        // so it always shares.
+        func gap(_ e: LaneEntry) -> Double {
+            if e.item.isInfiniteBus { return 0 }
+            let s = e.absStart, t = e.absStart + e.item.duration
+            if t >= anchorStart && s <= anchorEnd { return 0 }
+            return s > anchorEnd ? s - anchorEnd : anchorStart - t
+        }
+
+        guard let lastRow = laneEntries.map(\.displayLane).max() else { return nil }
+        var row = from.displayLane + delta
+        while row >= 0 && row <= lastRow {
+            let onRow = laneEntries.filter { $0.displayLane == row }
+            if let best = onRow.min(by: { a, b in
+                let ga = gap(a), gb = gap(b)
+                if ga != gb { return ga < gb }
+                // Both share the time: the one whose start is nearest, so the eye lands where it
+                // was looking rather than at the row's first object.
+                return abs(a.absStart - anchorStart) < abs(b.absStart - anchorStart)
+            }) {
+                selectIDs([best.item.id])
+                return best.item.id
+            }
+            row += delta
+        }
+        return nil
+    }
+
     /// Selects a marker, a region or a comment — exclusive with the objects, the crossfade, the
     /// time range and the notes, so that ⌫ and ⌘R have exactly one thing in front of them.
     /// @see AnnotationSel, which says why this is a slot of its own.

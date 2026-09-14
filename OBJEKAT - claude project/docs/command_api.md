@@ -247,7 +247,7 @@ That is end-of-process noise, with no effect on the result.
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, serialised state, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
-| `selection.*` | all, clear, set, read |
+| `selection.*` | all, clear, set, read, **walk a row up or down** |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
@@ -454,6 +454,22 @@ handle for a script holding it, and the same time — a row is a layer of readin
 timeline.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
+
+### Walking the selection
+
+`selection.step_lane` (`by`: -1 one row up, +1 one row down, any step) moves **THE SELECTION and
+not the matter**: nothing on the timeline changes place, no undo step is pushed. It is the ↑ / ↓
+arrows of the interface, and it reads the timeline the way an eye does rather than the way the
+model stores it:
+
+- it walks **displayed** rows, so a group's open children and a piano roll's band are rows one
+  passes through, and an empty row is skipped rather than landing the selection on nothing;
+- among the objects of the row it reaches, it prefers one that **overlaps the selection in time**,
+  and failing that the one whose start is nearest — so going down a column stays in the column;
+- at the last row it stops and **keeps the selection where it is** (`moved: false` in the answer)
+  rather than clearing it.
+
+The answer is the selection payload, plus `moved`.
 
 ### Ripple
 

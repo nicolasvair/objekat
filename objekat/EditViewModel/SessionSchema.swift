@@ -16,7 +16,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 11
+    static let formatVersion = 12
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -70,13 +70,18 @@ enum SessionSchema {
         "",
         "viewport — timeline zoom and framing. Purely visual, with no effect on the sound.",
         "",
-        "markerLanes — the rows of the marker band: named layers one can show or hide, each holding",
-        "  markers AND regions in one list. A marker is a region with no end: `duration` 0 = a point,",
-        "  > 0 = a span. Times in SECONDS, ABSOLUTE on the timeline.",
-        "  An object can carry markers of its own (items[].markers, same shape) — but THOSE times are",
-        "  RELATIVE to the start of the object, exactly like its automation points. Same type, two",
-        "  frames of reference: that is this section's trap.",
-        "  A colorIndex on a mark is an EXCEPTION, and it is written only when there is one: with no",
+        "markerLanes — the rows of the marker band: { name, colorIndex, isVisible, markers }. A row",
+        "  is a named layer one can show or hide; hiding it keeps everything on it, it is not a",
+        "  deletion. Several rows let several readings of one project coexist.",
+        "  A mark: { time, duration, name }. A REGION IS A MARKER THAT HAS AN END — duration 0 = a",
+        "  point, > 0 = a span; there is no separate region type. Times in SECONDS, ABSOLUTE on the",
+        "  timeline here.",
+        "  An object can carry marks of its own (items[].markers, the same shape) — but THOSE times",
+        "  are RELATIVE to the start of the object, exactly like its automation points, and they",
+        "  follow its matter through a cut, a trim, a reverse, a varispeed and a ripple (a mark",
+        "  pushed behind an edge keeps a NEGATIVE time and comes back if the edge is reopened).",
+        "  Same type, two frames of reference: that is this section's trap.",
+        "  colorIndex on a mark is an EXCEPTION, and it is written only when there is one: with no",
         "  key, a mark takes the colour of what carries it — its row here, white inside an object.",
         "comments — free texts laid over a span of the timeline: { startTime, duration, lane, text }.",
         "  The text is markdown (inline: bold, italic, code, links). They live BESIDE items and not",

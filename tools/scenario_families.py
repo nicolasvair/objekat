@@ -45,6 +45,16 @@ def step(label, fn):
         print("  FAIL %-28s %s" % (label, e.args[0]))
         return None
 
+def check(label, cond, detail=""):
+    """An assertion on what a command ANSWERED, not merely on its answering."""
+    global ok, ko
+    if cond:
+        ok += 1
+        print("  OK   %-28s" % label)
+    else:
+        ko += 1
+        print("  FAIL %-28s %s" % (label, detail))
+
 with ObjekatClient(SOCK) as c:
     n = len(c.send("help")["commands"])
     print("commands registered:", n)
@@ -68,6 +78,21 @@ with ObjekatClient(SOCK) as c:
     step("object.set_duration", lambda: c.send("object.set_duration", {"id": idb, "duration": 0.3}))
     step("object.trim",       lambda: c.send("object.trim", {"id": idb, "start": 0.1, "duration": 0.2}))
     step("object.set_source_offset", lambda: c.send("object.set_source_offset", {"id": idb, "offset": 0.01}))
+
+    # --- the selection walks the rows (the bare arrows), without moving anything
+    c.send("selection.set", {"ids": [ida]})
+    before = c.send("object.get", {"id": ida})
+    r = step("selection.step_lane ↓", lambda: c.send("selection.step_lane", {"by": 1}))
+    check("↓ lands on the object one row down", r and r["ids"] == [idb], str(r and r["ids"]))
+    r = step("selection.step_lane ↓ again", lambda: c.send("selection.step_lane", {"by": 1}))
+    check("at the last row it stops, keeping the selection",
+          r and r["moved"] is False and r["ids"] == [idb], str(r))
+    r = step("selection.step_lane ↑", lambda: c.send("selection.step_lane", {"by": -1}))
+    check("↑ comes back up", r and r["ids"] == [ida], str(r and r["ids"]))
+    after = c.send("object.get", {"id": ida})
+    check("and NOT ONE object moved — it is the selection that walks",
+          after["lane"] == before["lane"] and after["start"] == before["start"],
+          "%s → %s" % (before, after))
 
     # --- stems
     s = step("stem.add",      lambda: c.send("stem.add", {"name": "Voice", "format": "mono"}))

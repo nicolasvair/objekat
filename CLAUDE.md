@@ -240,6 +240,32 @@ What has landed since mid-August, in order:
   be: `comment.list` answers with `display_lane` beside `lane`, and three assertions of
   `scenario_markers.py` open a group and watch the comment move down and come back.
 
+- **Right widens, and the selection walks** (14 September 2026) — three small things read off the
+  same day's use. **A crossfade's top triangle now has ONE meaning**: to the right widens the fade,
+  to the left narrows it, wherever inside the zone the hand came down. It used to push the NEARER
+  EDGE outwards, so the gesture's meaning flipped at the zone's midline and the same travel
+  widened or narrowed depending on where one had taken hold — a gesture whose direction one has to
+  work out is a gesture one does not trust. The symmetric widening is what it always was, both
+  edges moving by `dx` each, so only the sign changed: `rawWidth = anchorWidth + 2 * dx`, and
+  `widenSign` (with the `alpha` that fed it) is gone from the drag state.
+  **↑ / ↓ move the SELECTION and not the matter** — the keys were free, and picking the object one
+  row up or down is what a hand reaches for before the mouse. It walks DISPLAYED rows, skips an
+  empty one rather than landing on nothing, and among the objects of the row it reaches prefers one
+  that overlaps the selection in time (failing that, the nearest start) — so going down a column
+  stays in the column. At the last row it stops and keeps the selection rather than clearing it.
+  No undo step: nothing moved.
+  **And the marks entered the notice the session file carries**, which is the whole point of that
+  notice — the format was writing `markerLanes` and `comments` that nothing described. Format 11 →
+  12, the rows and the marks with their field lists, the two frames of reference (the band's times
+  are ABSOLUTE, an object's are RELATIVE to it and can go negative behind an edge), and the two
+  exceptions worth a line each: a mark's `colorIndex` is written ONLY when it was asked for
+  (no key = inherited), and a comment's `lane` is a BASE row.
+  Verified with no screen: a build, `scenario_markers.py` (60 assertions, all pass, the format one
+  now reading 12), `smoke.jsonl` clean, `scenario_families.py` 81 OK with five new assertions on
+  the arrows — including that **not one object moved** while the selection walked.
+  New command: `selection.step_lane`.
+  **Not felt**: the crossfade gesture under the hand, and the arrows on a real timeline.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -463,6 +463,14 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(-0.1) } }
                     return nil
                 }
+                // Bare ↓ with objects selected: the SELECTION walks one row down — it moves, the
+                // matter does not (@see stepSelectionLane). Last of the branches, so the tools and
+                // the piano roll keep the key they already had; with a modifier it is left alone,
+                // since ⇧ and ⌥ are where extending and the other readings will go.
+                if !vm.selectedIDs.isEmpty, flags.isEmpty {
+                    DispatchQueue.main.async { vm.stepSelectionLane(by: 1) }
+                    return nil
+                }
             case 126:  // ↑
                 if !vm.selectedMidiNoteIDs.isEmpty, !flags.contains(.command) {
                     DispatchQueue.main.async {
@@ -477,6 +485,10 @@ extension TimelineView {
                 }
                 if vm.activeTool == .toolPan {   // ↑ = to the right
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(0.1) } }
+                    return nil
+                }
+                if !vm.selectedIDs.isEmpty, flags.isEmpty {     // the selection walks one row up
+                    DispatchQueue.main.async { vm.stepSelectionLane(by: -1) }
                     return nil
                 }
             case 18, 19, 20, 21, 22, 23, 25, 26, 28,   // the digit row (the top of the keyboard)
