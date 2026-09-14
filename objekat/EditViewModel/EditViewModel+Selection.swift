@@ -80,8 +80,12 @@ extension EditViewModel {
 
         // The last row the canvas draws: one row past the lowest object, plus everything unfolded
         // above it. @see TimelineView.visibleLanes, of which this is the model-side half.
+        // A selection can legitimately sit BELOW it — one traces a range on the empty lanes the
+        // canvas still covers down to the viewport's foot — so the room left underneath is clamped
+        // at zero. Without that `lastRow - hi` goes negative and ↓ TELEPORTS the range upwards,
+        // which is exactly what a bare `min(delta, …)` did.
         let lastRow = displayLane(forBase: (items.map(\.lane).max() ?? 0) + 1)
-        let step = delta < 0 ? max(delta, -lo) : min(delta, lastRow - hi)
+        let step = delta < 0 ? max(delta, -lo) : min(delta, max(0, lastRow - hi))
         guard step != 0 else { return false }
 
         timeSelection = TimeSelection(timeRange: sel.timeRange,

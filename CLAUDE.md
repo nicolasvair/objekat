@@ -250,11 +250,11 @@ What has landed since mid-August, in order:
   `widenSign` (with the `alpha` that fed it) is gone from the drag state.
   **↑ / ↓ move the TIME SELECTION and not the matter** — the traced passage slides onto the lane
   above or below, keeping its span of time and its height, and not one object changes lane. No undo
-  step: nothing moved. (It was written for the OBJECT selection first, on a misreading, and the
-  arrows then beeped for the very gesture they were meant for — with only a range traced and no
-  object held, the branch never fired and the key went back to AppKit unconsumed. The lesson is the
-  older one about beeps: a key that beeps has fallen THROUGH every branch, so look at the branch's
-  condition before its body.) An EMPTY row is a row like any other here, unlike an object selection:
+  step: nothing moved. (Written for the OBJECT selection first, on a misreading; and then, once
+  re-aimed, the arrows still beeped because their condition was `flags.isEmpty` — see the permanent
+  point below, an arrow is never bare. Both times the symptom was the same beep, and both times it
+  said the same thing: the key had fallen THROUGH every branch, so what to read was the condition,
+  not the body.) An EMPTY row is a row like any other here, unlike an object selection:
   a range on an empty lane means something, it is where a paste lands and where a comment is laid.
   At row 0 and at the last row the timeline draws it stops, keeping the selection whole rather than
   clipping it.
@@ -268,7 +268,11 @@ What has landed since mid-August, in order:
   now reading 12), `smoke.jsonl` clean, `scenario_families.py` 81 OK with five new assertions on
   the arrows — including that **not one object moved** while the passage travelled.
   New command: `timesel.step_lane`.
-  **Not felt**: the crossfade gesture under the hand, and the arrows on a real timeline.
+  The arrows were FELT on 15 September and they work — the one thing still unseen there is the
+  bottom stop, whose ceiling `displayLane(forBase: maxLane + 1)` is the model's half of
+  `TimelineView.visibleLanes`, two calculations nothing compares (and a range traced BELOW the
+  lowest object used to send ↓ upwards, the ceiling having gone negative — clamped at zero since).
+  **Not felt**: the crossfade gesture under the hand.
 
 ### What is owed
 
@@ -408,6 +412,14 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   its modifiers, **punctuation** with them. Same family of trap as the digits, which are identified
   by their PHYSICAL keyCode because AZERTY needs ⇧ for them — other remedy, same lesson: what a key
   MEANS and what it TYPES are two different questions.
+- **An arrow key is NEVER "bare": macOS stamps it `.function` + `.numericPad`** (`0xA00000`), and
+  caps lock leaves its own flag on besides. So `flags.isEmpty` as the test for "no modifier held" is
+  false for ↑ ↓ ← → whatever the hand does — the branch never fires, the key goes back to AppKit
+  unconsumed, and it BEEPS (found 15 September 2026, on the ↑ / ↓ that slide the time selection; and
+  the beep is the same one the ⌥+letter trap makes, one family of bug up). The test is an EMPTY
+  INTERSECTION with the modifiers a hand actually holds: `flags.intersection(heldModifiers).isEmpty`
+  (`TimelineKeyHandler.heldModifiers` = ⌘⇧⌥⌃). Lesson shared with the ⌥+letter trap: a key that
+  beeps has been consumed by nobody — read the condition before the body.
 - **Never lay a cursor with `NSCursor.set()` / `push()` / `pop()`** — go through
   `objekat/Shared/CursorClaim.swift`. It does not hold otherwise.
 - `toRawUTF8()`: always on a local `juce::String` variable, never on a temporary.

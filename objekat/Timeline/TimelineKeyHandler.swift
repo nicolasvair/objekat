@@ -467,7 +467,12 @@ extension TimelineView {
                 // travels, the matter does not (@see stepTimeSelectionLanes). Last of the branches,
                 // so the tools and the piano roll keep the key they already had; with a modifier it
                 // is left alone, since ⇧ and ⌥ are where extending and the other readings will go.
-                if vm.timeSelection != nil, flags.isEmpty {
+                //
+                // "BARE" IS NOT `flags.isEmpty` FOR AN ARROW. macOS stamps every arrow key with
+                // .function AND .numericPad (0xA00000), so `isEmpty` is never true and the key fell
+                // through every branch — AppKit then BEEPS, the same symptom as the ⌥+letter trap.
+                // What is asked here is that no modifier one HOLDS is down.
+                if vm.timeSelection != nil, flags.intersection(Self.heldModifiers).isEmpty {
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: 1) }
                     return nil
                 }
@@ -487,7 +492,8 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(0.1) } }
                     return nil
                 }
-                if vm.timeSelection != nil, flags.isEmpty {   // the traced passage slides one row up
+                // @see the ↓ branch: an arrow always carries .function + .numericPad.
+                if vm.timeSelection != nil, flags.intersection(Self.heldModifiers).isEmpty {  // one row up
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: -1) }
                     return nil
                 }
@@ -810,6 +816,11 @@ extension TimelineView {
             handleKeyDown(event) == nil
         }
     }
+
+    /// The modifiers a hand actually HOLDS. It exists because `NSEvent.modifierFlags` carries more
+    /// than that: an arrow key is stamped `.function` and `.numericPad` by macOS itself, a caps lock
+    /// stays on — so "no modifier held" is this intersection being empty, never `flags.isEmpty`.
+    static let heldModifiers: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
 
     /// The physical keyCode of a digit key → the digit 1…9 (0 unmapped: there is no stem 0).
     /// It covers the top row (layout-independent) and the numeric keypad.
