@@ -1573,9 +1573,10 @@ extension TimelineView {
         // since pan is shown as a knob, it is set everywhere by the same movement. The travel stays
         // set on the block's visible width — a wide block keeps a fine adjustment.
         let dPan = Float(-value.translation.height / state.trackWidth * 2.0)
-        for (id, anchorPan) in state.anchors {
-            viewModel.updatePan(id: id, pan: (anchorPan + dPan).clamped(to: -1...1))
-        }
+        // Through `applyPanDelta` and not a loop of its own: that is where the anchors, the tenth
+        // detent of a SINGLE object and the two-pass propagation live, and a second implementation
+        // here is how the tool and the inspector's box came to disagree.
+        viewModel.applyPanDelta(dPan, from: state.anchors)
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy { viewModel.find(id: $0.key)?.pan == $0.value }
             if unchanged { _ = viewModel.undoStack.popLast() }

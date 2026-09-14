@@ -245,7 +245,7 @@ That is end-of-process noise, with no effect on the result.
 | family | what it covers |
 |---|---|
 | `app.*` | version, current project, engine state, dialogue policy, journal |
-| `project.*` | new, open, save, save as, serialised state, the format notice |
+| `project.*` | new, open, save, save as, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
@@ -454,6 +454,20 @@ handle for a script holding it, and the same time — a row is a layer of readin
 timeline.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
+
+### The snap belongs to the project
+
+`project.set_snap` turns it on or off, and it is **saved with the file**: a session built off the
+grid reopens off the grid, without anyone having to turn the snap off again on every open. A file
+with no `snapEnabled` key — anything written before format 13 — opens WITH the snap, which is also
+where the app and a fresh project start. Read it back from `project.get_state`, field `snapEnabled`.
+
+It also decides the PAN's detent: `object.adjust_pan` moves the pan BY a delta (the path the
+continuous gestures take — the Pan tool, the inspector's box, the ±0.1 arrows) and, for ONE object
+with the snap on, the result clicks onto the nearest tenth. A multiple selection stays continuous:
+the gesture works from anchors precisely to keep the spread between the objects, and each of them
+landing on its own tenth is what eats it. `object.set_pan` sets an absolute value and never
+quantises.
 
 ### Sliding the time selection
 

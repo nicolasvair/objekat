@@ -4,13 +4,19 @@ extension EditViewModel {
 
     // MARK: - Pan
 
-    // Pan is CONTINUOUS over −1…+1. It was quantised to a tenth for as long as the only way to
-    // move it was the ±0.1 arrow keys; every control added since is continuous (the inspector's
-    // box, the timeline's Pan tool, the synoptic's knob, an automation's static value), and the
-    // quantum silently ate them. Worst of all on a multiple selection, where the box works by
-    // DELTAS: a drag hands over ~0.0125 at a time, each object landed back on its own tenth, and
-    // the whole gesture moved nothing at all. The steps that ARE wanted are the callers' business
-    // — the arrows still pass 0.1 or 0.05 — and no longer the model's.
+    // Pan is CONTINUOUS over −1…+1 in the MODEL. It was quantised to a tenth there for as long as
+    // the only way to move it was the ±0.1 arrow keys; every control added since is continuous (the
+    // inspector's box, the timeline's Pan tool, the synoptic's knob, an automation's static value),
+    // and the quantum silently ate them. Worst of all on a multiple selection, where the box works
+    // by DELTAS: a drag hands over ~0.0125 at a time, each object landed back on its own tenth, and
+    // the whole gesture moved nothing at all.
+    //
+    // The DETENT a single object had is not the same thing, and taking the quantum out of the model
+    // took it away with it (reported 15 September 2026). It comes back where it belongs — in the
+    // GESTURE, `applyPanDelta` below — for one object at a time, and it answers to the snap like
+    // everything else that clicks into place: ⌘, or the snap turned off, gives the fine adjustment
+    // back. A MULTIPLE selection stays continuous: the anchors exist to keep the spread between the
+    // objects, and each of them landing on its own tenth is what eats it.
 
     func updatePan(id: UUID, pan: Float) {
         update(id: id) { $0.pan = pan.clamped(to: -1...1) }
@@ -39,10 +45,15 @@ extension EditViewModel {
     /// spread it started with.
     func applyPanDelta(_ delta: Float, from anchors: [UUID: Float]) {
         guard !anchors.isEmpty else { return }
+        // ONE object and the snap on: the tenths click back in (@see the note at the top of the
+        // file). The centre and the two edges are what one aims at, and a continuous pan slid past
+        // them. On a multiple selection the spread wins, so nothing is quantised there.
+        let detent = anchors.count == 1 && effectiveSnapEnabled
         // Two passes (see adjustVolumeDB): apply the delta everywhere BEFORE propagating, otherwise a
         // linked instance still to come in the loop would see its delta doubled.
         for (id, anchor) in anchors {
-            update(id: id) { $0.pan = (anchor + delta).clamped(to: -1...1) }
+            let raw = (anchor + delta).clamped(to: -1...1)
+            update(id: id) { $0.pan = detent ? (raw * 10).rounded() / 10 : raw }
             recordAutomationTouch(id, .pan)
             pushMix(id)
         }

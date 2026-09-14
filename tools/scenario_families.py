@@ -79,6 +79,25 @@ with ObjekatClient(SOCK) as c:
     step("object.trim",       lambda: c.send("object.trim", {"id": idb, "start": 0.1, "duration": 0.2}))
     step("object.set_source_offset", lambda: c.send("object.set_source_offset", {"id": idb, "offset": 0.01}))
 
+    # --- pan: ONE object clicks onto the tenths, several keep their spread
+    c.send("project.set_snap", {"enabled": True})
+    c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
+    r = step("object.adjust_pan one object", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida]}))
+    check("one object, snap on: it lands on the tenth",
+          r and abs(r["pans"][0] - 0.1) < 1e-6, str(r and r["pans"]))
+    c.send("project.set_snap", {"enabled": False})
+    c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
+    r = step("object.adjust_pan, snap off", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida]}))
+    check("snap off gives the fine adjustment back",
+          r and abs(r["pans"][0] - 0.13) < 1e-6, str(r and r["pans"]))
+    c.send("project.set_snap", {"enabled": True})
+    c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
+    c.send("object.set_pan", {"ids": [idb], "pan": 0.5})
+    r = step("object.adjust_pan two objects", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida, idb]}))
+    check("several objects: continuous, the spread untouched",
+          r and sorted(round(v, 4) for v in r["pans"]) == [0.13, 0.63], str(r and r["pans"]))
+    c.send("object.set_pan", {"ids": [ida, idb], "pan": 0.0})
+
     # --- the time selection slides across the rows (the bare arrows), moving nothing
     c.send("timesel.set", {"start": 0, "end": 1, "lane": 0, "lane_count": 2})
     before = c.send("object.get", {"id": ida})

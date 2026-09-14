@@ -219,25 +219,33 @@ with ObjekatClient(SOCK) as c:
     # ── it survives a save and a reload ────────────────────────────────────
     folder = tempfile.mkdtemp(prefix="objekat-markers-")
     path = os.path.join(folder, "test.objekat.json")
+    cmd("project.set_snap", enabled=False)   # a session built OFF the grid must reopen off it
     cmd("project.save_as", path=path)
     with open(path) as f:
         doc = json.load(f)
-    check("session format bumped", doc.get("version") == 12, str(doc.get("version")))
+    check("session format bumped", doc.get("version") == 13, str(doc.get("version")))
     check("the rows are written", len(doc.get("markerLanes", [])) == 1)
     check("the comments are written", len(doc.get("comments", [])) == 1)
     check("the object's markers are written",
           len(doc["items"][0].get("markers", [])) == 3, str(doc["items"][0].get("markers")))
     check("the notice mentions the two frames",
           any("RELATIVE to the start of the object" in l for l in doc.get("_readme", [])))
+    check("the snap is written with the project", doc.get("snapEnabled") is False,
+          str(doc.get("snapEnabled")))
 
     cmd("project.new")
     check("a new project empties the band", cmd("marker_lane.list")["count"] == 0)
+    check("and starts back ON the grid",
+          cmd("project.get_state").get("snapEnabled") is not False)
     cmd("project.open", path=path)
     cmd("wait_idle", timeout_ms=5000)
     reread = cmd("marker_lane.list")
     check("the rows come back", reread["count"] == 1 and reread["lanes"][0]["name"] == "Nicolas")
     check("with their two entries", reread["lanes"][0]["count"] == 2)
     check("the comment comes back", cmd("comment.list")["count"] == 1)
+    check("and the project reopens OFF the grid, as it was left",
+          cmd("project.get_state").get("snapEnabled") is False)
+    cmd("project.set_snap", enabled=True)
     check("the row keeps its hue", reread["lanes"][0]["color_index"] == 5)
     kept = {m["id"]: m for m in reread["lanes"][0]["markers"]}
     check("a hue asked for is written down", kept[m1]["color_index"] == 7)

@@ -244,6 +244,26 @@ extension CommandRegistry {
             return .object(["count": .int(ids.count), "pan": .number(Double(pan))])
         }
 
+        register("object.adjust_pan",
+                 summary: "Moves the pan BY a delta rather than setting it — the path the "
+                        + "continuous gestures take (the Pan tool, the inspector's box, the ±0.1 "
+                        + "arrows). One object at a time, and with the snap on, the result clicks "
+                        + "onto the nearest tenth; a multiple selection stays continuous so as to "
+                        + "keep the spread between the objects. Absolute setting: object.set_pan.",
+                 params: [ParamSpec("by", "number", "Travel, added to the current pan."),
+                          ParamSpec("ids", "array<uuid>", required: false,
+                                    "Target objects; default = current selection.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let delta = Float(try p.double("by"))
+            let ids = try CommandAdapters.targetIDs(p, in: vm)
+            let anchors = Dictionary(uniqueKeysWithValues:
+                ids.compactMap { vm.find(id: $0) }.map { ($0.id, $0.pan) })
+            vm.applyPanDelta(delta, from: anchors)
+            let pans = ids.compactMap { vm.find(id: $0) }.map { JSONValue.number(Double($0.pan)) }
+            return .object(["count": .int(ids.count), "pans": .array(pans)])
+        }
+
         register("object.set_mute",
                  summary: "Mutes or unmutes objects.",
                  params: [ParamSpec("muted", "bool", required: false, "Wanted state; absent = toggle."),

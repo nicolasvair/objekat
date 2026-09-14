@@ -163,6 +163,7 @@ extension EditViewModel {
                                   timeSigNumerator: timeSigNumerator,
                                   timeSigDenominator: timeSigDenominator,
                                   gridMode: gridMode,
+                                  snapEnabled: snapEnabled,
                                   objectDefinitions: objectDefinitions.isEmpty ? nil : Array(objectDefinitions.values),
                                   viewport: currentViewport,
                                   markerLanes: markerLanes.isEmpty ? nil : markerLanes,
@@ -234,6 +235,7 @@ extension EditViewModel {
         timeSigDenominator = 4
         isRestoringTransport = false
         gridMode = .time
+        snapEnabled = true          // a fresh project is on the grid — @see ProjectDocument.snapEnabled
         projectURL = nil
         projectName = L("project.untitled")
         isDirty = false
@@ -414,6 +416,9 @@ extension EditViewModel {
         if let d = doc.timeSigDenominator { timeSigDenominator = d }
         isRestoringTransport = false
         if let g = doc.gridMode { gridMode = g }
+        // The snap as the project was left. An older file has no key and opens WITH the snap, which
+        // is also where the app starts: the default is 'on', what is restored is a deliberate 'off'.
+        snapEnabled = doc.snapEnabled ?? true
 
         // The view (H/V zoom + visible area): applied as saved. The scroll cannot
         // be set here (it belongs to the ScrollView) → dropped into `pendingViewRestore`,

@@ -18,6 +18,11 @@ struct ProjectDocument: Codable {
     var timeSigNumerator: Int?
     var timeSigDenominator: Int?
     var gridMode: GridMode?
+    /// Whether the snap is on, as the project was left. It is a PROJECT's setting and not a
+    /// preference of the app: a session built off the grid is meant to reopen off the grid, and
+    /// nobody should have to turn the snap off again on every open. nil/absent (an older file, and
+    /// the app's own start) ⇒ ON, which is where a fresh project begins.
+    var snapEnabled: Bool?
     /// The registry of the sound objects referenced by `SoundObject.definitionID` in
     /// `items`. nil/absent ⇒ none.
     var objectDefinitions: [ObjectDefinition]?
@@ -35,7 +40,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, objectDefinitions, viewport, markerLanes, comments
+        case gridMode, snapEnabled, objectDefinitions, viewport, markerLanes, comments
     }
 
     init(items: [SoundObject], stems: [Stem]?,
@@ -43,6 +48,7 @@ struct ProjectDocument: Codable {
          timeSigNumerator: Int? = nil,
          timeSigDenominator: Int? = nil,
          gridMode: GridMode? = nil,
+         snapEnabled: Bool? = nil,
          objectDefinitions: [ObjectDefinition]? = nil,
          viewport: ViewportState? = nil,
          markerLanes: [MarkerLane]? = nil,
@@ -54,6 +60,7 @@ struct ProjectDocument: Codable {
         self.timeSigNumerator = timeSigNumerator
         self.timeSigDenominator = timeSigDenominator
         self.gridMode = gridMode
+        self.snapEnabled = snapEnabled
         self.objectDefinitions = objectDefinitions
         self.viewport = viewport
         self.markerLanes = markerLanes

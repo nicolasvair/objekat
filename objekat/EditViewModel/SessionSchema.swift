@@ -16,7 +16,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 12
+    static let formatVersion = 13
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -69,6 +69,9 @@ enum SessionSchema {
         "  Changing a definition updates every one of its instances.",
         "",
         "viewport — timeline zoom and framing. Purely visual, with no effect on the sound.",
+        "snapEnabled — whether the snap was on when the project was saved. It belongs to the",
+        "  PROJECT and not to the app: a session built off the grid reopens off the grid. Absent =",
+        "  on, which is where the app and a fresh project start.",
         "",
         "markerLanes — the rows of the marker band: { name, colorIndex, isVisible, markers }. A row",
         "  is a named layer one can show or hide; hiding it keeps everything on it, it is not a",

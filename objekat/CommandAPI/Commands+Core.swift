@@ -157,6 +157,20 @@ extension CommandRegistry {
             return try JSONValue.decode(line: data)
         }
 
+        register("project.set_snap",
+                 summary: "Turns the snap on or off. It is the PROJECT's setting: it is saved with "
+                        + "the file and restored on opening, so a session built off the grid "
+                        + "reopens off the grid (a fresh project starts with it on). Read it back "
+                        + "through project.get_state, field 'snapEnabled'.",
+                 params: [ParamSpec("enabled", "bool", "true = on the grid.")],
+                 // Not undoable: no more than the interface's toggle is.
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.snapEnabled = try p.bool("enabled")
+            vm.isDirty = true
+            return .object(["snap": .bool(vm.snapEnabled)])
+        }
+
         register("project.schema",
                  summary: "The session format's notice: what each field of a .objekat.json "
                         + "file stands for.") { _ in

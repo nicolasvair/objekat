@@ -274,6 +274,30 @@ What has landed since mid-August, in order:
   lowest object used to send ↓ upwards, the ceiling having gone negative — clamped at zero since).
   **Not felt**: the crossfade gesture under the hand.
 
+- **The snap belongs to the project, and the pan gets its detent back** (15 September 2026) — two
+  things read off the same session's use. **The snap is saved with the file**: it starts ON (the
+  app's start and a fresh project both), but a session built OFF the grid reopens off it, instead of
+  asking for the same toggle at every open. It is a PROJECT's setting and not a preference of the
+  app, which is why it went into the document (`snapEnabled`, format 12 → 13) rather than into
+  `UserDefaults` — and a file written before that has no key, so it opens with the snap, the default
+  and not a decision.
+  **The pan clicks onto the tenths again for a SINGLE object.** Taking the quantum out of the model
+  on 12 September was right — it was eating the continuous controls, and on a multiple selection it
+  cancelled the gesture outright — but it took the DETENT away with it, and the detent is what one
+  aims the centre and the two edges with. So it comes back in the GESTURE and not in the model:
+  `applyPanDelta` rounds when it has ONE anchor and the snap is on, ⌘ (or the snap off) giving the
+  fine adjustment back. A multiple selection stays continuous — the anchors exist to keep the spread
+  between the objects, and each of them landing on its own tenth is exactly what eats it. The Pan
+  TOOL's drag was running its own loop beside all that: it goes through `applyPanDelta` now, which
+  is how the tool and the inspector's box came to disagree in the first place.
+  Verified with no screen: a build, `scenario_markers.py` (63 assertions — the snap written into
+  the file, a new project back on the grid, the project reopening off it),
+  `scenario_families.py` 89 OK (the tenth, ⌘ giving the fine adjustment, and two objects keeping
+  their spread), `smoke.jsonl` clean, i18n 393 keys.
+  New commands: `project.set_snap`, `object.adjust_pan`.
+  **Not felt**: the detent under the hand — whether a tenth is the right step for a pan one drags,
+  and whether ⌘ is the modifier one reaches for to slip between two of them.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
