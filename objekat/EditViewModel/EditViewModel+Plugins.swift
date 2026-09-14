@@ -502,7 +502,7 @@ extension EditViewModel {
     }
 
     func openPluginEditor(objectID: UUID, pluginID: UUID) {
-        guard let engine else { return }
+        guard hasInterface, let engine else { return }
         let colorIndex = leafPlugins(objectID: objectID).first(where: { $0.id == pluginID })?.colorIndex ?? 0
         engine.openPluginEditor(pluginID.uuidString, colorHex: ObjekatPalette.pluginHex(colorIndex))
         // The opening is ASYNCHRONOUS (the engine waits for the instance to be loaded); arming
@@ -511,6 +511,15 @@ extension EditViewModel {
         // exists. The closing, for its part, goes through `onEditorVisibilityChanged`.
         beginPluginParamTouchWatch(pluginID)
     }
+
+    /// False with `--headless`: there is no window, no graphics context and nobody to look.
+    ///
+    /// It is read by the TWO functions that open an editor, and there rather than at their callers,
+    /// because opening one is a SIDE EFFECT of gestures that are about something else — adding a
+    /// plugin opens its editor, and `plugin.add` is a perfectly ordinary command for a script to
+    /// send. A guard at each caller is a guard the next caller forgets; the API's contract already
+    /// says no command opens an editor (@see Commands+Plugins), and this is what makes that true.
+    var hasInterface: Bool { !LaunchArguments.process.headless }
 
     /// Closes a plugin's editor, native or built-in, if it is open.
     func closePluginEditor(plug: ObjectPlugin) {
@@ -560,6 +569,7 @@ extension EditViewModel {
     /// (`openEditorPluginID`), but with a window managed on the Swift side rather than by the JUCE engine
     /// since the built-in UI is already 100% SwiftUI (@see BuiltInPluginEditorWindowController).
     func openBuiltInPluginEditor(plug: ObjectPlugin) {
+        guard hasInterface else { return }
         if let existing = builtInEditorWindows[plug.id] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
