@@ -170,6 +170,34 @@ What has landed since mid-August, in order:
   **Not seen on screen**: the veil bent to the curve, the drag HUD naming the shape and its
   percentage, the cheat-sheet row.
 
+- **Markers, regions and comments** (14 September 2026) — three levels of mark, and one type behind
+  two of them: a marker and a region are the SAME `Marker`, `duration == 0` making it a point. That
+  is what keeps the drawing, the hit-testing, the renaming, the deletion, the persistence and the
+  API surface single instead of doubled. A band under the ruler holds the lane marks, one row per
+  MARKER LANE, shown and hidden one by one from the clamp at its right — so each person passing
+  through a project can have their own row without hiding anyone else's. An object carries its own
+  markers, and they are stored in the object's frame like automation points, so they go through the
+  same five primitives (`shiftedInTime`, `timeScaled`, `mirroredInTime`, `splitInTime`,
+  `splicedInTime`) and survive a cut, a reverse, a varispeed, a copy and a bake. A comment is a text
+  laid on the timeline with NO engine object at all — the first item in OBJEKAT with none, which is
+  why it went into a separate annotation layer rather than becoming a `SoundObject.Kind` (measured:
+  `case .aux` reaches 22 files / 62 sites, and an aux still has an engine object). The accepted cost
+  is written above `TimelineComment`: a comment inherits nothing from the gestures.
+  Three rules worth knowing. Creation is the RIGHT CLICK's alone — a band that laid a marker at every
+  click would fill with marks nobody meant; a region and a comment take their span from the TIME
+  SELECTION, because the timeline already has a way of saying "this passage" and no second gesture
+  was invented for it; and the selection is ONE slot (`AnnotationSel`), held exclusive by a `didSet`
+  on `selectedIDs`, so ⌫ and ⌘R gain one branch each rather than three.
+  The trap it had to fix, which will come back for anything else laid in the header: both AppKit
+  monitors captured `rulerHeight` ONCE at registration, and that height now GROWS with the rows
+  shown. They read it live, through an allocation-free `visibleMarkerLaneCount`.
+  Verified with no screen: a build, 21 assertions on `Marker.swift` compiled standalone, and the 39
+  assertions of `tools/scenario_markers.py` against a headless instance. Session format 10 → 11.
+  Commands: `marker_lane.*`, `marker.*`, `object.*_marker*`, `comment.*`.
+  **Not seen on screen**: the band itself and every pixel of it — the rows, the clamp menu, the
+  markers on the blocks, the comments and their markdown, and the eleven new labels in three
+  languages.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
