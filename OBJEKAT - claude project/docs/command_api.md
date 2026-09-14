@@ -463,10 +463,14 @@ with no `snapEnabled` key — anything written before format 13 — opens WITH t
 where the app and a fresh project start. Read it back from `project.get_state`, field `snapEnabled`.
 
 It also decides the PAN's detent: `object.adjust_pan` moves the pan BY a delta (the path the
-continuous gestures take — the Pan tool, the inspector's box, the ±0.1 arrows) and, for ONE object
-with the snap on, the result clicks onto the nearest tenth. A multiple selection stays continuous:
-the gesture works from anchors precisely to keep the spread between the objects, and each of them
-landing on its own tenth is what eats it. `object.set_pan` sets an absolute value and never
+continuous gestures take — the Pan tool, the inspector's box, the ±0.1 arrows) and, with the snap
+on, each object's result clicks onto the nearest tenth, however many are held. What this is NOT is
+the quantum that used to live in the model and cancelled a multiple drag outright: that one
+compounded, rounding each ~0.0125 delta back onto the tenth it came from until nothing moved at
+all. Here the gesture works from ANCHORS and hands over its TOTAL travel, so the rounding lands on
+the result and never feeds the next frame — a slow drag simply waits until the total crosses the
+half-step. Accepted cost: an object whose pan was not on a tenth is brought onto one, so the spread
+between objects can shift by up to half a step. `object.set_pan` sets an absolute value and never
 quantises.
 
 ### Sliding the time selection

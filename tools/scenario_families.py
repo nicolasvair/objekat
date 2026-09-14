@@ -94,8 +94,19 @@ with ObjekatClient(SOCK) as c:
     c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
     c.send("object.set_pan", {"ids": [idb], "pan": 0.5})
     r = step("object.adjust_pan two objects", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida, idb]}))
-    check("several objects: continuous, the spread untouched",
-          r and sorted(round(v, 4) for v in r["pans"]) == [0.13, 0.63], str(r and r["pans"]))
+    check("several objects click onto the tenths too",
+          r and sorted(round(v, 4) for v in r["pans"]) == [0.1, 0.6], str(r and r["pans"]))
+    # The ±0.1 arrows go down the same path, and they are what the detent must not disturb: ten
+    # presses walk the whole half-range and land on 1, with none of the float dust a chain of
+    # additions leaves behind. (What CANNOT be asserted from here is the drag itself: a gesture
+    # holds ONE anchor for its whole length and hands over its total travel, whereas each call of
+    # this command takes a fresh anchor — that invariant lives in the gesture, and only the hand
+    # can see it.)
+    c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
+    for _ in range(10):
+        r = c.send("object.adjust_pan", {"by": 0.1, "ids": [ida]})
+    check("ten steps of a tenth land exactly on the edge, with no float dust",
+          abs(r["pans"][0] - 1.0) < 1e-6, str(r["pans"]))
     c.send("object.set_pan", {"ids": [ida, idb], "pan": 0.0})
 
     # --- the time selection slides across the rows (the bare arrows), moving nothing
