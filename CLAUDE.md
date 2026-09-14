@@ -198,6 +198,36 @@ What has landed since mid-August, in order:
   markers on the blocks, the comments and their markdown, and the eleven new labels in three
   languages.
 
+- **The marks answer to the hand** (14 September 2026, the same day, after a first reading on
+  screen) — six things the band was missing once one had actually used it. **Deselecting leaves the
+  inline field**: it hangs off a `didSet` on `selectedAnnotation` rather than off the dozen places
+  that deselect, and leaving COMMITS what was typed rather than dropping it (a latch in the two
+  field views, since Esc, Return and the field's disappearance all end the edit and the last fires
+  on the way out of the other two). **A mark of the band is dragged**, on ONE AXIS at a time — the
+  first few pixels say which, and it does not change for the rest of the gesture: a row is 17 px
+  tall and a marker is a hairline, so a hand aiming sideways would cross two rows on its way.
+  Left/right moves it in time (on the timeline's own snap), up/down changes ROW — a real move,
+  `moveMarkerToLane`, keeping the id so the selection and the undo follow. **Colour**: a mark, a
+  region and a comment each take a hue by right click, and the hue is INHERITED until it is asked
+  for — a mark of the band takes its ROW's (so a right click on the row's colour DOT recolours the
+  whole layer), a comment and a mark on an object are WHITE. White for a comment is the point of
+  it: it is not in the object palette, so a note never reads as one more object on the lane.
+  **A comment is dragged and cropped** like a clip — body moves, the two ends crop, the same
+  cursors. **Creating a row left the band's menu**: it belongs to the lanes' button and there only.
+  And that button is now a flag (`flag.square.fill`) rather than a filter glyph that said 'narrow a
+  list down'.
+  The trap, and it is general: an AppKit LOCAL monitor sees a right click BEFORE the view hierarchy
+  does, so an `NSView` overlay laid on the lane's colour dot would never be reached — the dot is
+  hit-tested geometrically like everything else in the canvas (`markerLaneDotHit`), against a
+  `dotXRange` the header view declares and both places read.
+  Verified with no screen: a build, and the API suites — `scenario_markers.py` grown to 57
+  assertions (all pass), `smoke.jsonl` and `scenario_families.py` (74 OK) clean. New commands:
+  `marker_lane.set_color`, `marker.set_color`, `marker.set_lane`, `object.set_marker_color`,
+  `comment.set_color`; `color_index: null` in an answer means 'inherited'.
+  **Not seen on screen, nor felt**: every one of the gestures — the axis lock, the snap under the
+  hand, the row change, the comment's crop handles and their cursors — and every colour they lay
+  down, the white of a comment included.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
@@ -309,6 +339,18 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   Xcode writes one back in (it does as soon as you touch Signing & Capabilities), **do not commit
   it**. The entitlements are hardened-runtime exceptions for hosting plugins, and need no
   provisioning profile — verified, they survive the ad-hoc signature.
+- **With `--headless`, NOTHING may open a window** — and the trap is that opening one is a SIDE
+  EFFECT of a gesture that is about something else: adding a plugin opens its editor, so a plain
+  `plugin.add` from a script put a plugin's UI on the screen of whoever was working (found and
+  fixed 14 September 2026, a built-in `4bandEq` added by `scenario_families.py`; the API's own
+  contract had said "no command opens a plugin editor" since day one, which is exactly how nobody
+  noticed). The guard is at the TWO functions that open an editor — `openPluginEditor` and
+  `openBuiltInPluginEditor`, through `EditViewModel.hasInterface` — and not at their callers: a
+  guard at each caller is a guard the next caller forgets. Anything else that shows a window has to
+  do the same.
+  It can be VERIFIED with no screen: `CGWindowListCopyWindowInfo` filtered on the headless process's
+  pid must return an empty list (`python3 -c "import Quartz; …"`, no permission needed, unlike
+  System Events).
 - **Launch arguments as `--key=value`** only — an orphan argument starts the
   app with NO window, silently.
 - **Visual and aural verification belongs to the user.** I verify what can be verified with no
