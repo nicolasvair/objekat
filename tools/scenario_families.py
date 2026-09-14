@@ -79,20 +79,27 @@ with ObjekatClient(SOCK) as c:
     step("object.trim",       lambda: c.send("object.trim", {"id": idb, "start": 0.1, "duration": 0.2}))
     step("object.set_source_offset", lambda: c.send("object.set_source_offset", {"id": idb, "offset": 0.01}))
 
-    # --- the selection walks the rows (the bare arrows), without moving anything
-    c.send("selection.set", {"ids": [ida]})
+    # --- the time selection slides across the rows (the bare arrows), moving nothing
+    c.send("timesel.set", {"start": 0, "end": 1, "lane": 0, "lane_count": 2})
     before = c.send("object.get", {"id": ida})
-    r = step("selection.step_lane ↓", lambda: c.send("selection.step_lane", {"by": 1}))
-    check("↓ lands on the object one row down", r and r["ids"] == [idb], str(r and r["ids"]))
-    r = step("selection.step_lane ↓ again", lambda: c.send("selection.step_lane", {"by": 1}))
-    check("at the last row it stops, keeping the selection",
-          r and r["moved"] is False and r["ids"] == [idb], str(r))
-    r = step("selection.step_lane ↑", lambda: c.send("selection.step_lane", {"by": -1}))
-    check("↑ comes back up", r and r["ids"] == [ida], str(r and r["ids"]))
+    r = step("timesel.step_lane \u2193", lambda: c.send("timesel.step_lane", {"by": 1}))
+    ts = r and r["time_selection"]
+    check("\u2193 slides the passage one row down, its height and its span kept",
+          ts and ts["lanes"] == [1, 2] and ts["start"] == 0 and ts["end"] == 1, str(ts))
+    r = step("timesel.step_lane \u2193 again", lambda: c.send("timesel.step_lane", {"by": 1}))
+    check("at the last row the timeline draws it stops, keeping the selection",
+          r and r["moved"] is False and r["time_selection"]["lanes"] == [1, 2], str(r))
+    r = step("timesel.step_lane \u2191", lambda: c.send("timesel.step_lane", {"by": -1}))
+    check("\u2191 brings it back up", r and r["time_selection"]["lanes"] == [0, 1],
+          str(r and r["time_selection"]))
+    r = step("timesel.step_lane \u2191 at the top", lambda: c.send("timesel.step_lane", {"by": -1}))
+    check("row 0 stops it too, and does not clip the selection",
+          r and r["moved"] is False and r["time_selection"]["lanes"] == [0, 1], str(r))
     after = c.send("object.get", {"id": ida})
-    check("and NOT ONE object moved — it is the selection that walks",
+    check("and NOT ONE object moved — it is the frame that travels",
           after["lane"] == before["lane"] and after["start"] == before["start"],
           "%s → %s" % (before, after))
+    c.send("timesel.clear")
 
     # --- stems
     s = step("stem.add",      lambda: c.send("stem.add", {"name": "Voice", "format": "mono"}))

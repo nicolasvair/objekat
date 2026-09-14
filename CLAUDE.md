@@ -248,12 +248,16 @@ What has landed since mid-August, in order:
   work out is a gesture one does not trust. The symmetric widening is what it always was, both
   edges moving by `dx` each, so only the sign changed: `rawWidth = anchorWidth + 2 * dx`, and
   `widenSign` (with the `alpha` that fed it) is gone from the drag state.
-  **↑ / ↓ move the SELECTION and not the matter** — the keys were free, and picking the object one
-  row up or down is what a hand reaches for before the mouse. It walks DISPLAYED rows, skips an
-  empty one rather than landing on nothing, and among the objects of the row it reaches prefers one
-  that overlaps the selection in time (failing that, the nearest start) — so going down a column
-  stays in the column. At the last row it stops and keeps the selection rather than clearing it.
-  No undo step: nothing moved.
+  **↑ / ↓ move the TIME SELECTION and not the matter** — the traced passage slides onto the lane
+  above or below, keeping its span of time and its height, and not one object changes lane. No undo
+  step: nothing moved. (It was written for the OBJECT selection first, on a misreading, and the
+  arrows then beeped for the very gesture they were meant for — with only a range traced and no
+  object held, the branch never fired and the key went back to AppKit unconsumed. The lesson is the
+  older one about beeps: a key that beeps has fallen THROUGH every branch, so look at the branch's
+  condition before its body.) An EMPTY row is a row like any other here, unlike an object selection:
+  a range on an empty lane means something, it is where a paste lands and where a comment is laid.
+  At row 0 and at the last row the timeline draws it stops, keeping the selection whole rather than
+  clipping it.
   **And the marks entered the notice the session file carries**, which is the whole point of that
   notice — the format was writing `markerLanes` and `comments` that nothing described. Format 11 →
   12, the rows and the marks with their field lists, the two frames of reference (the band's times
@@ -262,8 +266,8 @@ What has landed since mid-August, in order:
   (no key = inherited), and a comment's `lane` is a BASE row.
   Verified with no screen: a build, `scenario_markers.py` (60 assertions, all pass, the format one
   now reading 12), `smoke.jsonl` clean, `scenario_families.py` 81 OK with five new assertions on
-  the arrows — including that **not one object moved** while the selection walked.
-  New command: `selection.step_lane`.
+  the arrows — including that **not one object moved** while the passage travelled.
+  New command: `timesel.step_lane`.
   **Not felt**: the crossfade gesture under the hand, and the arrows on a real timeline.
 
 ### What is owed

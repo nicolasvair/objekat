@@ -256,26 +256,6 @@ extension CommandRegistry {
             return CommandAdapters.selectionPayload(vm)
         }
 
-        register("selection.step_lane",
-                 summary: "Walks the SELECTION one displayed row up or down — the selection alone, "
-                        + "not the matter: nothing moves and nothing sounds different (it is what "
-                        + "the bare ↑ / ↓ arrows do). Empty rows are stepped over, and on arriving "
-                        + "the object taken is the one that SHARES TIME with the one left behind, "
-                        + "failing that the nearest in time. With several objects held, it sets off "
-                        + "from the far edge of the selection in the direction asked.",
-                 params: [ParamSpec("by", "int", "-1 = one row up, +1 = one row down.")],
-                 undo: .none) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let moved = vm.stepSelectionLane(by: try p.int("by"))
-            guard case .object(var payload) = CommandAdapters.selectionPayload(vm) else {
-                return CommandAdapters.selectionPayload(vm)
-            }
-            // False at the edge of the content: the walk found no row with anything on it, and the
-            // selection is left exactly where it was rather than emptied.
-            payload["moved"] = .bool(moved != nil)
-            return .object(payload)
-        }
-
         register("selection.get", summary: "Current selection.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             return CommandAdapters.selectionPayload(vm)

@@ -58,63 +58,36 @@ extension EditViewModel {
 
     func selectIDs(_ ids: Set<UUID>) { selectedCrossfade = nil; selectedIDs = ids }
 
-    /// Moves the SELECTION one displayed row up (`-1`) or down (`+1`). The selection alone: not one
-    /// object moves, nothing sounds different, and no undo is pushed — this is the eye walking down
-    /// the timeline, not the hand editing it. (Moving the MATTER between lanes is the drag, and ⌥⌫
-    /// and the rest; nothing here touches it.)
+    /// Moves the TIME SELECTION one displayed row up (`-1`) or down (`+1`) — the passage travels
+    /// across the lanes while keeping the same span of time, and NOTHING moves with it: no object
+    /// changes lane, nothing sounds different, no undo is pushed. This is the frame one has traced
+    /// being slid onto another lane, not an edit. (Moving the MATTER is the drag, ⌥⌫ and the rest.)
     ///
-    /// Three rules, all of them about what "the row above" means when the timeline is not a grid:
+    /// The selection keeps its HEIGHT: a range traced across three rows stays three rows tall.
     ///
-    ///   - it walks DISPLAY rows, so an open group's children are rows like any other — the eye
-    ///     sees them, the arrow visits them;
-    ///   - an EMPTY row is stepped over rather than stopping the walk. A row with nothing on it
-    ///     cannot hold a selection, and stopping there would mean pressing the key twice for a gap
-    ///     one can see is empty;
-    ///   - on arriving, the object taken is the one that SHARES TIME with the one left behind, and
-    ///     failing that the nearest in time. Anything else would send the selection to the start of
-    ///     the row, miles from what one was looking at.
+    /// It travels over DISPLAY rows, and EMPTY ones are rows like any other — unlike an object
+    /// selection, a time range on an empty lane means something (it is where a paste lands, where a
+    /// comment is laid). So the walk does not skip anything, and it stops at the two ends: row 0 at
+    /// the top, and at the bottom the last row the timeline actually draws — one free row under the
+    /// lowest object, the group children and the open bands counted in. At the edge nothing moves
+    /// and the selection is kept.
     ///
-    /// With several objects selected, the row one leaves from is the FAR EDGE of the selection in
-    /// the direction asked — so a second press goes on in the same direction rather than coming
-    /// back inside the block one has just left.
-    ///
-    /// Returns the object now selected, nil when the walk found nothing (the edge of the content).
+    /// Returns true when it did travel.
     @discardableResult
-    func stepSelectionLane(by delta: Int) -> UUID? {
-        guard delta != 0 else { return nil }
-        let held = laneEntries.filter { selectedIDs.contains($0.item.id) }
-        guard let from = delta < 0 ? held.min(by: { $0.displayLane < $1.displayLane })
-                                   : held.max(by: { $0.displayLane < $1.displayLane })
-        else { return nil }
+    func stepTimeSelectionLanes(by delta: Int) -> Bool {
+        guard delta != 0, let sel = timeSelection,
+              let lo = sel.lanes.min(), let hi = sel.lanes.max() else { return false }
 
-        let anchorStart = from.absStart
-        let anchorEnd   = from.absStart + from.item.duration
-        // 0 = they share time, otherwise the gap between them. An infinite bus spans everything,
-        // so it always shares.
-        func gap(_ e: LaneEntry) -> Double {
-            if e.item.isInfiniteBus { return 0 }
-            let s = e.absStart, t = e.absStart + e.item.duration
-            if t >= anchorStart && s <= anchorEnd { return 0 }
-            return s > anchorEnd ? s - anchorEnd : anchorStart - t
-        }
+        // The last row the canvas draws: one row past the lowest object, plus everything unfolded
+        // above it. @see TimelineView.visibleLanes, of which this is the model-side half.
+        let lastRow = displayLane(forBase: (items.map(\.lane).max() ?? 0) + 1)
+        let step = delta < 0 ? max(delta, -lo) : min(delta, lastRow - hi)
+        guard step != 0 else { return false }
 
-        guard let lastRow = laneEntries.map(\.displayLane).max() else { return nil }
-        var row = from.displayLane + delta
-        while row >= 0 && row <= lastRow {
-            let onRow = laneEntries.filter { $0.displayLane == row }
-            if let best = onRow.min(by: { a, b in
-                let ga = gap(a), gb = gap(b)
-                if ga != gb { return ga < gb }
-                // Both share the time: the one whose start is nearest, so the eye lands where it
-                // was looking rather than at the row's first object.
-                return abs(a.absStart - anchorStart) < abs(b.absStart - anchorStart)
-            }) {
-                selectIDs([best.item.id])
-                return best.item.id
-            }
-            row += delta
-        }
-        return nil
+        timeSelection = TimeSelection(timeRange: sel.timeRange,
+                                      lanes: Set(sel.lanes.map { $0 + step }))
+        caretLane = lo + step
+        return true
     }
 
     /// Selects a marker, a region or a comment — exclusive with the objects, the crossfade, the

@@ -54,6 +54,28 @@ extension CommandRegistry {
             return CommandAdapters.selectionPayload(vm)
         }
 
+        register("timesel.step_lane",
+                 summary: "Slides the TIME SELECTION one displayed row up or down, keeping its span "
+                        + "of time and its height — the traced passage travels, the matter does not: "
+                        + "nothing changes lane and nothing sounds different (it is what the bare "
+                        + "↑ / ↓ arrows do). An empty row is a row like any other here. At the two "
+                        + "ends — row 0, and the last row the timeline draws — nothing moves and the "
+                        + "selection is kept.",
+                 params: [ParamSpec("by", "int", "-1 = one row up, +1 = one row down.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard vm.timeSelection != nil else {
+                throw CommandError(code: .invalid_state, message: "no time selection")
+            }
+            let moved = vm.stepTimeSelectionLanes(by: try p.int("by"))
+            guard case .object(var payload) = CommandAdapters.selectionPayload(vm) else {
+                return CommandAdapters.selectionPayload(vm)
+            }
+            // False at an end: the selection stays exactly where it was rather than being clipped.
+            payload["moved"] = .bool(moved)
+            return .object(payload)
+        }
+
         register("timesel.copy",
                  summary: "Copies the content of the time selection to the clipboard.") { _ in
             let vm = try CommandContext.shared.requireViewModel()

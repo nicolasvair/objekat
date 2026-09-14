@@ -247,7 +247,7 @@ That is end-of-process noise, with no effect on the result.
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, serialised state, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
-| `selection.*` | all, clear, set, read, **walk a row up or down** |
+| `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
@@ -455,21 +455,21 @@ timeline.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 
-### Walking the selection
+### Sliding the time selection
 
-`selection.step_lane` (`by`: -1 one row up, +1 one row down, any step) moves **THE SELECTION and
-not the matter**: nothing on the timeline changes place, no undo step is pushed. It is the ↑ / ↓
-arrows of the interface, and it reads the timeline the way an eye does rather than the way the
-model stores it:
+`timesel.step_lane` (`by`: -1 one row up, +1 one row down, any step) moves **THE TRACED PASSAGE and
+nothing else**: the range keeps its span of time and its height — three rows stay three rows — it
+simply lands on other lanes. Not one object changes lane, nothing sounds different, and no undo is
+pushed. It is the bare ↑ / ↓ arrows of the interface.
 
-- it walks **displayed** rows, so a group's open children and a piano roll's band are rows one
-  passes through, and an empty row is skipped rather than landing the selection on nothing;
-- among the objects of the row it reaches, it prefers one that **overlaps the selection in time**,
-  and failing that the one whose start is nearest — so going down a column stays in the column;
-- at the last row it stops and **keeps the selection where it is** (`moved: false` in the answer)
-  rather than clearing it.
+It travels over **displayed** rows, and an EMPTY row is a row like any other here — unlike an object
+selection, a time range on an empty lane means something: it is where a paste lands and where a
+comment is laid. At the two ends — row 0, and the last row the timeline draws (one free row under
+the lowest object, the open groups' children and the unfolded bands counted in) — nothing moves and
+the selection is kept whole rather than clipped.
 
-The answer is the selection payload, plus `moved`.
+With no time selection it answers `invalid_state`. The answer is the selection payload, plus
+`moved`.
 
 ### Ripple
 
