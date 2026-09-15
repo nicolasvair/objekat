@@ -390,6 +390,18 @@ What has landed since mid-August, in order:
   dropped on a strip does nothing, and needs no guard of its own: `transferInstrument` already asks
   for a MIDI object. `plugin.drop` is the same door for a script, which is what makes any of this
   assertable with no screen — `plugin.move|copy|link` reach the transfer directly and never touch it.
+  Read off the hand straight after, and it is the general lesson of the whole thing: **a drop
+  target carries its own feedback, in its own layer.** The strip first used SwiftUI's convenience
+  `.onDrop(of:isTargeted:perform:)`, which proposes `.copy` to everything — so it badged a '+' on a
+  MOVE, where the timeline shows none, and the same gesture read differently depending on where the
+  hand was taking it. Only a `DropDelegate`'s `dropUpdated`, called again on every movement, can
+  say what the cursor shows; the rule itself is now one function both doors read
+  (`PluginDrop.operation`). And the ⌘ maillon is drawn BY THE STRIP rather than by the timeline's
+  canvas: the timeline's `pluginLinkDropLocation` badge lives in the main window, and a popover is
+  another WINDOW above it — nothing drawn down there can come in front, which is exactly what the
+  stem's own FX popover was hiding it behind. Same glyph, same `LinkColor.plugin`, laid inside the
+  strip (over the VU dot, which is not what one reads mid-drag) so nothing can clip it, and the
+  border turns that yellow with it.
   **And the marquee takes what it TOUCHES**, not what it contains. Containment was the clips' rule
   carried over, and the reasoning for it (a rectangle down one branch would sweep up the neighbour
   it grazes) lost to the hand on the first day: a card is 124 pt wide in a narrow column, so asking

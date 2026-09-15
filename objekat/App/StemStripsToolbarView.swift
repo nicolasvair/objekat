@@ -23,6 +23,9 @@ struct StemStripsToolbarView: View {
     @State private var clippedStems: Set<UUID> = []
     // The strip a plugin drag is hovering over. One id and not a Set: a drop has one target.
     @State private var dropTargetStemID: UUID? = nil
+    // ⌘ held over that strip → the drop will LINK. Refreshed on every movement by the delegate,
+    // like the timeline's own link hint.
+    @State private var dropLinksStemID: UUID? = nil
     // A tick counter for the poll → the blink rate (independent of playback).
     @State private var pollTick: Int = 0
     // @State (and not `let`): the toolbar is rebuilt ~20 times a second by the playhead; a `let`
@@ -52,6 +55,7 @@ struct StemStripsToolbarView: View {
                     isClipping: clippedStems.contains(stem.id),
                     blinkOn: blinkOn,
                     isDropTarget: dropTargetStemID == stem.id,
+                    dropWillLink: dropLinksStemID == stem.id,
                     onClearClip: { clippedStems.remove(stem.id) }
                 ) {
                     openStemID = (openStemID == stem.id) ? nil : stem.id
@@ -64,14 +68,16 @@ struct StemStripsToolbarView: View {
                 // (nothing = move, ⌥ = an independent copy, ⌘ = a copy that stays linked) stopped
                 // at the objects, and a chain built on an object could not be carried up onto a
                 // bus. What happens on arrival is `acceptPluginDrop`, the timeline's own door.
-                .onDrop(of: [.plainText], isTargeted: Binding(
-                    get: { dropTargetStemID == stem.id },
-                    set: { dropTargetStemID = $0 ? stem.id : (dropTargetStemID == stem.id ? nil : dropTargetStemID) }
-                )) { providers in
-                    guard let provider = providers.first(where: PluginDrop.carries) else { return false }
-                    PluginDrop.receive(provider, in: viewModel) { stem.id }
-                    return true
-                }
+                .onDrop(of: [.plainText], delegate: StemStripDropDelegate(
+                    stemID: stem.id, viewModel: viewModel,
+                    onHover: { hovered, links in
+                        // Written unconditionally rather than cleared on leaving: the strips are
+                        // side by side, and macOS sends the new strip's `dropEntered` BEFORE the
+                        // old one's `dropExited` — a blind clear would then wipe the strip the
+                        // hand had just reached.
+                        if hovered { dropTargetStemID = stem.id; dropLinksStemID = links ? stem.id : nil }
+                        else if dropTargetStemID == stem.id { dropTargetStemID = nil; dropLinksStemID = nil }
+                    }))
                 .popover(isPresented: Binding(
                     get: { openStemID == stem.id },
                     set: { if !$0 && openStemID == stem.id { openStemID = nil } }
@@ -126,6 +132,56 @@ struct StemStripsToolbarView: View {
     }
 }
 
+// MARK: - Dropping a plugin card on a bus's strip
+//
+// A `DropDelegate` and not the convenience `.onDrop(of:isTargeted:perform:)`, for the one reason
+// that convenience cannot do: it is `dropUpdated` — called again on every movement — that says
+// what the CURSOR shows, and the convenience form answers `.copy` to everything. So a strip
+// badged a '+' on a move, where the timeline shows none, and the same gesture read differently
+// depending on where the hand was taking it. The rule itself is shared, not copied:
+// `PluginDrop.operation`.
+//
+// What it refuses is as important as what it takes: a Finder drag also carries text beside its
+// file URL, and a toolbar that lit up under a WAV would promise something it cannot do.
+
+private struct StemStripDropDelegate: DropDelegate {
+    let stemID: UUID
+    let viewModel: EditViewModel
+    /// (hovered, the drop will link). One callback and not two: they always change together, and
+    /// two would let the strip hold a maillon after the drag had left it.
+    let onHover: (Bool, Bool) -> Void
+
+    private func carriesPlugin(_ info: DropInfo) -> Bool {
+        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
+
+    func dropEntered(info: DropInfo) {
+        onHover(true, NSEvent.modifierFlags.contains(.command))
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard carriesPlugin(info) else {
+            onHover(false, false)
+            return DropProposal(operation: .forbidden)
+        }
+        let flags = NSEvent.modifierFlags
+        onHover(true, flags.contains(.command))
+        return DropProposal(operation: PluginDrop.operation(for: flags))
+    }
+
+    func dropExited(info: DropInfo) { onHover(false, false) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        onHover(false, false)
+        guard let provider = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries)
+        else { return false }
+        PluginDrop.receive(provider, in: viewModel) { stemID }
+        return true
+    }
+}
+
 // MARK: - A bus's strip (button)
 
 private struct StemStripButton: View {
@@ -139,9 +195,16 @@ private struct StemStripButton: View {
     var isClipping: Bool = false
     var blinkOn: Bool = true
     /// A plugin drag is hovering over this strip: it says WHERE the card will land, before the
-    /// hand lets go. The border alone carries it (it is already the strip's 'open' signal), so a
-    /// bus reads the same whether one is opening it or dropping onto it.
+    /// hand lets go. The border carries it (it is already the strip's 'open' signal), so a bus
+    /// reads the same whether one is opening it or dropping onto it.
     var isDropTarget: Bool = false
+    /// ⌘ held over it: the card will be COPIED AND LINKED. The timeline says this with a yellow
+    /// maillon at the cursor, drawn in its own canvas — which is exactly why it cannot serve here:
+    /// the toolbar is another region and a popover is another WINDOW, above the main one, so a
+    /// badge drawn down there is hidden by anything open over it. A target carries its own
+    /// feedback, in its own layer. Same glyph and same colour (`LinkColor.plugin`), laid INSIDE
+    /// the strip so nothing can clip it.
+    var dropWillLink: Bool = false
     var onClearClip: () -> Void = {}
     let action: () -> Void
 
@@ -191,8 +254,8 @@ private struct StemStripButton: View {
                 // black and stays recognisable as the same hue as in the timeline.
                 .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
             .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isDropTarget ? Color.accentColor
-                                : (isOpen ? Color.accentColor : tint.opacity(0.55)),
+                .strokeBorder(dropWillLink ? LinkColor.plugin
+                                : (isDropTarget || isOpen ? Color.accentColor : tint.opacity(0.55)),
                               lineWidth: isDropTarget ? 2 : (isOpen ? 1.5 : 1)))
         }
         .buttonStyle(.plain)
@@ -200,6 +263,16 @@ private struct StemStripButton: View {
         .help(L("stem.strip.help", isMain ? L("stem.main.name") : stem.name)
               + (number.map { " \($0)" } ?? "")
               + (stem.muted ? " " + L("stem.strip.mutedSuffix") : ""))
+        // The link maillon, while ⌘ is held over the strip. Laid over the VU dot, the strip's
+        // 'something is happening here' corner — a level being read is not what one is looking at
+        // in the middle of a drag — and deaf to the mouse, so it cannot take the drop itself.
+        .overlay(alignment: .trailing) {
+            if dropWillLink {
+                LinkBadge(color: LinkColor.plugin, size: 9)
+                    .padding(.trailing, 2)
+                    .allowsHitTesting(false)
+            }
+        }
         // A latched clip LED, laid over the VU dot (the strip's right edge).
         // A dedicated button → it catches the acknowledging click without opening the FX popover underneath.
         .overlay(alignment: .trailing) {

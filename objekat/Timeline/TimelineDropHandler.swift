@@ -64,7 +64,7 @@ struct TimelineDropDelegate: DropDelegate {
         if providers.contains(where: dragCarriesPlugin) {
             let f = NSEvent.modifierFlags
             onLinkIndicator(f.contains(.command) ? info.location : nil)
-            return DropProposal(operation: (f.contains(.option) || f.contains(.command)) ? .copy : .move)
+            return DropProposal(operation: PluginDrop.operation(for: f))
         }
         onLinkIndicator(nil)
         // The files the band really concerns (empty = an internal drag: a plugin).

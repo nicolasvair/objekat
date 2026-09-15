@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Receiving a dragged plugin, wherever it is let go of
@@ -20,6 +21,18 @@ enum PluginDrop {
     static func carries(_ p: NSItemProvider) -> Bool {
         p.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
             && !p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+    }
+
+    /// What the CURSOR must say while a plugin drag hovers a target that accepts it: a bare drag
+    /// MOVES, so no badge, and ⌥ as well as ⌘ COPY, so a '+'. One definition because the two
+    /// doors must not drift — a gesture that reads '+' over a timeline object and nothing over a
+    /// bus's strip is a gesture one stops trusting, and the convenience `.onDrop` answers `.copy`
+    /// to everything, which is how the strip came to badge a move.
+    ///
+    /// ⌘ is a COPY here as it is on the timeline: what makes it a LINK is said by the badge the
+    /// target draws, not by the operation — AppKit's `.link` draws an arrow that means an alias.
+    static func operation(for flags: NSEvent.ModifierFlags) -> DropOperation {
+        (flags.contains(.option) || flags.contains(.command)) ? .copy : .move
     }
 
     /// Reads the payload and lays it down on the host `host()` names.
