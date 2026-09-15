@@ -4,6 +4,13 @@ import AppKit
 extension TimelineView {
 
     func handleCanvasTap(at point: CGPoint) {
+        // A hand back in the timeline takes the keyboard back from the signal view: ⌫ ⌘C ⌘V ⌘D
+        // stop aiming at plugin cards and aim at objects again. It is the OTHER half of the claim
+        // made in `setPluginSelection`, and it lives at the door of the gesture rather than in the
+        // dozen branches below — a single one of them forgetting it would leave ⌫ deleting a
+        // plugin while the hand was pointing at a clip.
+        viewModel.clearPluginSelection()
+
         // The time ruler: it moves the cursor and changes nothing else. It takes priority over
         // everything — whatever the active tool, the ruler does not edit the content.
         if rulerBandContains(point) {

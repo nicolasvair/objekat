@@ -125,56 +125,67 @@ extension CommandRegistry {
         register("plugin.move",
                  summary: "Moves a plugin from one host to another (the plugin's state follows).",
                  params: [ParamSpec("from", "uuid", "Source host."),
-                          ParamSpec("plugin", "uuid", "Plugin to move."),
+                          ParamSpec("plugin", "uuid", required: false, "Plugin to move."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Several plugins at once (one undo step, the source chain's "
+                                  + "order kept). Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Receiving host.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
             let to = try p.uuid("to")
-            let pluginID = try p.uuid("plugin")
-            try CommandAdapters.requirePlugin(pluginID, on: from, in: vm)
+            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
-            vm.movePlugin(sourceObjectID: from, pluginID: pluginID, targetObjectID: to)
-            return .object(["from": .string(from.uuidString), "to": .string(to.uuidString)])
+            let placed = vm.transferPlugins(ids, from: from, to: to, mode: .move)
+            return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
+                            "plugins": .array(placed.map { .string($0.uuidString) }),
+                            "count": .int(placed.count)])
         }
 
         register("plugin.copy",
                  summary: "Copies a plugin to another host (an independent instance).",
                  params: [ParamSpec("from", "uuid", "Source host."),
-                          ParamSpec("plugin", "uuid", "Plugin to copy."),
+                          ParamSpec("plugin", "uuid", required: false, "Plugin to copy."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Several plugins at once. Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Receiving host.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
             let to = try p.uuid("to")
-            let pluginID = try p.uuid("plugin")
-            try CommandAdapters.requirePlugin(pluginID, on: from, in: vm)
+            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
-            vm.copyPlugin(sourceObjectID: from, pluginID: pluginID, targetObjectID: to)
-            return .object(["from": .string(from.uuidString), "to": .string(to.uuidString)])
+            let placed = vm.transferPlugins(ids, from: from, to: to, mode: .copy)
+            return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
+                            "plugins": .array(placed.map { .string($0.uuidString) }),
+                            "count": .int(placed.count)])
         }
 
         register("plugin.link",
                  summary: "Copies a plugin to another host AND LINKS IT: from then on the two "
                         + "instances share their parameters.",
                  params: [ParamSpec("from", "uuid", "Source host."),
-                          ParamSpec("plugin", "uuid", "Source plugin."),
+                          ParamSpec("plugin", "uuid", required: false, "Source plugin."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Several plugins at once, each linked to its own copy. "
+                                  + "Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Receiving host.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
             let to = try p.uuid("to")
-            let pluginID = try p.uuid("plugin")
-            try CommandAdapters.requirePlugin(pluginID, on: from, in: vm)
+            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
-            vm.linkAcrossObjects(sourceObjectID: from, sourcePluginID: pluginID, targetObjectID: to)
-            return .object(["links": .int(vm.linkSiblings(of: pluginID).count)])
+            let placed = vm.transferPlugins(ids, from: from, to: to, mode: .link)
+            return .object(["links": .int(vm.linkSiblings(of: ids[0]).count),
+                            "plugins": .array(placed.map { .string($0.uuidString) }),
+                            "count": .int(placed.count)])
         }
 
         register("plugin.unlink",
@@ -191,6 +202,140 @@ extension CommandRegistry {
             }
             vm.unlinkPlugin(objectID: host, pluginID: pluginID)
             return .object(["plugin": .string(pluginID.uuidString), "linked": .bool(false)])
+        }
+
+        // MARK: a selection of cards
+        //
+        // The signal view selects several cards at a time — a rectangle drawn on the canvas, ⇧ for
+        // the box that holds them, ⌘ one by one. What the mouse does there is geometry and stays in
+        // the view; what it RESULTS IN is this selection, which lives in the view-model, and that is
+        // what these commands drive. Everything below acts on it in ONE undo step.
+        //
+        // The selection also carries the keyboard: as long as a host is named, ⌫ ⌘C ⌘V ⌘D aim at
+        // the cards rather than at the timeline's objects (@see EditViewModel.setPluginSelection).
+        // `plugin.select` with an empty list therefore means something precise — claim the keyboard
+        // for that chain, choose nothing — and `plugin.deselect` gives it back.
+
+        register("plugin.select",
+                 summary: "Selects cards in a host's chain (and gives that chain the keyboard).",
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the chain."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Cards to select. Absent or empty: selects nothing, but the "
+                                  + "chain still takes the keyboard."),
+                          ParamSpec("mode", "string", required: false,
+                                    "replace (default) · add · toggle. 'add' and 'toggle' only "
+                                  + "build on a selection already on THIS host.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard vm.chainPlugins(host) != nil else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let ids = p.raw["plugins"] == nil ? [] : try p.uuids("plugins")
+            for id in ids { try CommandAdapters.requirePlugin(id, on: host, in: vm) }
+            let mode = try p.string("mode", or: "replace")
+            let base = vm.selectedPluginHostID == host ? vm.selectedPluginIDs : []
+            switch mode {
+            case "replace": vm.setPluginSelection(Set(ids), host: host)
+            case "add":     vm.setPluginSelection(base.union(ids), host: host)
+            case "toggle":  vm.setPluginSelection(base.symmetricDifference(ids), host: host)
+            default:
+                throw CommandError(code: .bad_params,
+                                   message: "unknown mode '\(mode)' (replace · add · toggle)")
+            }
+            return .object(["host": .string(host.uuidString),
+                            "plugins": .array(vm.orderedSelectedPluginIDs().map { .string($0.uuidString) }),
+                            "count": .int(vm.selectedPluginIDs.count)])
+        }
+
+        register("plugin.selection",
+                 summary: "The cards selected, in the chain's reading order.",
+                 params: []) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            var payload: [String: JSONValue] = [
+                "plugins": .array(vm.orderedSelectedPlugins().map(CommandAdapters.pluginPayload)),
+                "count": .int(vm.orderedSelectedPlugins().count),
+                "has_keyboard": .bool(vm.pluginSurfaceHasKeyboard),
+                "clipboard": .int(vm.pluginClipboard.count),
+            ]
+            payload["host"] = vm.selectedPluginHostID.map { .string($0.uuidString) } ?? .null
+            return .object(payload)
+        }
+
+        register("plugin.deselect",
+                 summary: "Clears the card selection and gives the keyboard back to the timeline.",
+                 params: [], undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.clearPluginSelection()
+            return .object(["host": .null, "count": .int(0)])
+        }
+
+        register("plugin.remove_selected",
+                 summary: "Removes every selected card (one undo step for the whole batch).",
+                 params: [], undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = vm.selectedPluginHostID
+            let removed = vm.removeSelectedPlugins()
+            return .object(["removed": .int(removed),
+                            "remaining": .int(host.flatMap { vm.chainPlugins($0) }?.count ?? 0)])
+        }
+
+        register("plugin.toggle_selected",
+                 summary: "Bypasses or re-enables every selected card. Mixed states go to OFF: "
+                        + "if a single one is still on, they all go off.",
+                 params: [], undo: .bus) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let enabled = vm.toggleSelectedPluginsEnabled() else {
+                throw CommandError(code: .invalid_state, message: "no card selected")
+            }
+            return .object(["enabled": .bool(enabled),
+                            "count": .int(vm.selectedPluginIDs.count)])
+        }
+
+        register("plugin.duplicate_selected",
+                 summary: "Duplicates the selection in place, just after the LAST selected card "
+                        + "and in its own series. The copies become the selection.",
+                 params: [], undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let made = vm.duplicateSelectedPlugins()
+            guard !made.isEmpty else {
+                throw CommandError(code: .invalid_state, message: "no card selected")
+            }
+            return .object(["plugins": .array(made.map { .string($0.uuidString) }),
+                            "count": .int(made.count)])
+        }
+
+        register("plugin.copy_selected",
+                 summary: "Puts the selection on the plugin clipboard (with its live state).",
+                 params: [], undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let n = vm.copySelectedPluginsToClipboard()
+            guard n > 0 else {
+                throw CommandError(code: .invalid_state, message: "no card selected")
+            }
+            return .object(["clipboard": .int(n)])
+        }
+
+        register("plugin.paste",
+                 summary: "Pastes the plugin clipboard into a chain, after the last selected card "
+                        + "of that chain or at its end.",
+                 params: [ParamSpec("host", "uuid", required: false,
+                                    "Receiving chain. Default: the selection's host.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let host = try p.optionalUUID("host") ?? vm.selectedPluginHostID else {
+                throw CommandError(code: .bad_params, message: "no host: name 'host'")
+            }
+            guard vm.chainPlugins(host) != nil else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            guard !vm.pluginClipboard.isEmpty else {
+                throw CommandError(code: .invalid_state, message: "plugin clipboard empty")
+            }
+            let made = vm.pastePlugins(into: host)
+            return .object(["host": .string(host.uuidString),
+                            "plugins": .array(made.map { .string($0.uuidString) }),
+                            "count": .int(made.count)])
         }
 
         register("plugin.get_params",

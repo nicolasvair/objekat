@@ -91,6 +91,20 @@ extension CommandAdapters {
         return plugin
     }
 
+    /// The cards a transfer command aims at: the list `plugins` when it is given, and the single
+    /// `plugin` otherwise — one card or a whole selection taking exactly the same three gestures
+    /// (@see EditViewModel.transferPlugins). Every one of them is checked against the source host,
+    /// so a command naming a card of some OTHER chain fails instead of silently doing half a job.
+    static func transferTargets(_ p: CommandParams, on hostID: UUID,
+                                in vm: EditViewModel) throws -> [UUID] {
+        let ids = p.raw["plugins"] != nil ? try p.uuids("plugins") : [try p.uuid("plugin")]
+        guard !ids.isEmpty else {
+            throw CommandError(code: .bad_params, message: "'plugins' is empty")
+        }
+        for id in ids { try requirePlugin(id, on: hostID, in: vm) }
+        return ids
+    }
+
     /// Names a catalogue entry by `identifier` (exact) or, failing that, by `name` (first
     /// match, case-insensitive), with `format` settling ties between namesakes.
     static func resolvePlugin(_ p: CommandParams, in vm: EditViewModel) throws -> AvailablePlugin {

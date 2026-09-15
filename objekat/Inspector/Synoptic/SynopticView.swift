@@ -10,7 +10,6 @@ import UniformTypeIdentifiers
 // or onto `EditViewModel`/the engine (phase B — step 1: a real series).
 
 struct SynopticActions {
-    var onSelect: (UUID) -> Void = { _ in }
     var onOpenEditor: ((UUID) -> Void)? = nil
     var onToggleBypass: (UUID) -> Void = { _ in }
     var onRemove: (UUID) -> Void = { _ in }
@@ -51,7 +50,6 @@ struct SynopticActions {
     var onAddInstrument: (() -> Void)? = nil           // the '+' of an empty MIDI zone
     var onRemoveInstrument: (() -> Void)? = nil
     var onOpenInstrumentEditor: (() -> Void)? = nil
-    var onSelectInstrument: (() -> Void)? = nil
     // Bypassing the instrument — an action separate from `onToggleBypass`: the instrument does
     // not live in the model's FX chain but in `instruments` (@see toggleInstrumentEnabled).
     var onToggleInstrumentBypass: (() -> Void)? = nil
@@ -227,7 +225,15 @@ extension View {
 
 struct SynopticView: View {
     let root: SynopticNode
-    @Binding var selectedID: UUID?
+    /// The selected cards. A SET, and held by the view-model rather than by a `@State` of this
+    /// view: every batch gesture (⌫ ⌘C ⌘V ⌘D, a drag onto another object) needs the chain's
+    /// reading order, which only the model knows. @see EditViewModel.selectedPluginIDs
+    @Binding var selection: Set<UUID>
+    /// The instrument card's highlight — its own slot, exclusive with `selection`. An instrument
+    /// is not in the FX chain (it lives in `SoundObject.instruments`), so not one of the batch
+    /// gestures can act on it; letting it into the set would arm them all over something they
+    /// cannot touch, and ⌫ would then eat the key to do nothing.
+    @Binding var selectedInstrumentID: UUID?
     var scrolls = true              // false = embedded (the parent handles the scrolling)
     var chainInDb: Float = 0
     var chainOutDb: Float = 0
@@ -262,6 +268,14 @@ struct SynopticView: View {
     var fxReadOnly: Bool = false
     var actions = SynopticActions()
 
+    // The marquee's state, all of it torn down at the end of the gesture. @see marqueeGesture
+    @State private var marqueeOrigin: CGPoint? = nil
+    @State private var marqueeCurrent: CGPoint? = nil
+    /// What was selected when the rectangle started: ⇧ and ⌘ recompute from it at every frame.
+    @State private var marqueeBase: Set<UUID> = []
+    @State private var marqueeAdds = false
+    @State private var marqueeFlips = false
+
     var body: some View {
         let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
                                        midi: isMIDI, audioFile: audioFile != nil, mix: mix != nil,
@@ -277,7 +291,7 @@ struct SynopticView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { selectedID = nil }   // a click in empty space → deselect
+        .onTapGesture { selection = []; selectedInstrumentID = nil }   // a click in empty space → deselect
     }
 
     @ViewBuilder
@@ -329,8 +343,8 @@ struct SynopticView: View {
             ForEach(d.placement.cards) { c in
                 SynopticCardView(
                     plugin: c.plugin,
-                    isSelected: selectedID == c.plugin.id,
-                    onSelect: { actions.onSelect(c.plugin.id) },
+                    isSelected: selection.contains(c.plugin.id),
+                    onSelect: { clickCard(c.plugin.id, cards: d.placement.cards) },
                     onOpenEditor: actions.onOpenEditor.map { f in { f(c.plugin.id) } },
                     onToggleBypass: { actions.onToggleBypass(c.plugin.id) },
                     onRemove: { actions.onRemove(c.plugin.id) },
@@ -415,8 +429,100 @@ struct SynopticView: View {
             }
             }   // Group FX
             .fxReadOnlyLocked(fxReadOnly)
+
+            // The marquee under the hand. Drawn last and deaf to the mouse: it is a report of
+            // what the gesture is taking, never a surface one can catch.
+            if let r = marqueeRect {
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.10))
+                    .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.75), lineWidth: 1))
+                    .frame(width: r.width, height: r.height)
+                    .position(x: r.midX, y: r.midY)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards))
+    }
+
+    // MARK: - Choosing cards
+
+    /// A click on a card, modifiers resolved. It happens HERE and not in the view-model because
+    /// ⇧ is GEOMETRIC (@see SynopticMarquee.boundingBox) and the frames only exist in this
+    /// build's layout. The flags are read off `NSEvent` at the moment of the click, the same way
+    /// the timeline's tap handler reads them — SwiftUI's tap carries none.
+    private func clickCard(_ id: UUID, cards: [SynopticLayout.CardPlacement]) {
+        let flags = NSEvent.modifierFlags
+        selectedInstrumentID = nil
+        if flags.contains(.command) {
+            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+        } else if flags.contains(.shift) {
+            selection = Set(SynopticMarquee.boundingBox(of: selection, extendedTo: id,
+                                                        cards: marqueeCards(cards)))
+        } else {
+            selection = [id]
+        }
+    }
+
+    /// The rectangle being drawn, in the canvas's own coordinates (the cards' frames live there
+    /// too). nil = no marquee under way.
+    private var marqueeRect: CGRect? {
+        guard let o = marqueeOrigin, let c = marqueeCurrent else { return nil }
+        return CGRect(x: min(o.x, c.x), y: min(o.y, c.y),
+                      width: abs(c.x - o.x), height: abs(c.y - o.y))
+    }
+
+    /// The marquee. Three things are decided ONCE, at the first pixel, and never again for the
+    /// rest of the gesture:
+    ///
+    ///  • whether there is a marquee at all — a drag that STARTS on a card is that card's own
+    ///    (reorder, move, copy), and a container gesture that stole it would make the chain
+    ///    unorderable. The test is the card frames, which this view has and AppKit has not;
+    ///  • what the modifiers mean — ⇧ adds to what was already taken, ⌘ flips it, neither
+    ///    replaces it. Read at the start, because a hand that lets go of ⇧ mid-drag is resting a
+    ///    finger, not changing its mind;
+    ///  • what was already selected (`marqueeBase`), so that widening AND narrowing the rectangle
+    ///    both recompute from the same ground instead of piling up.
+    private func marqueeGesture(cards: [SynopticLayout.CardPlacement]) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { g in
+                if marqueeOrigin == nil {
+                    guard !cards.contains(where: { $0.frame.contains(g.startLocation) }) else { return }
+                    let flags = NSEvent.modifierFlags
+                    marqueeAdds = flags.contains(.shift)
+                    marqueeFlips = flags.contains(.command)
+                    marqueeBase = (marqueeAdds || marqueeFlips) ? selection : []
+                    marqueeOrigin = g.startLocation
+                }
+                marqueeCurrent = g.location
+                applyMarquee(cards: cards)
+            }
+            .onEnded { _ in
+                if marqueeOrigin != nil { applyMarquee(cards: cards) }
+                marqueeOrigin = nil
+                marqueeCurrent = nil
+                marqueeBase = []
+            }
+    }
+
+    /// The placements stripped down to what the geometry needs — an id and a rectangle. It is
+    /// what lets `SynopticMarquee` know nothing of views, plugins or layout.
+    private func marqueeCards(_ cards: [SynopticLayout.CardPlacement]) -> [SynopticMarquee.Card] {
+        cards.map { SynopticMarquee.Card(id: $0.plugin.id, frame: $0.frame) }
+    }
+
+    private func applyMarquee(cards: [SynopticLayout.CardPlacement]) {
+        guard let r = marqueeRect else { return }
+        let caught = Set(SynopticMarquee.fullyInside(r, cards: marqueeCards(cards)))
+        if marqueeFlips {
+            selection = marqueeBase.symmetricDifference(caught)
+        } else if marqueeAdds {
+            selection = marqueeBase.union(caught)
+        } else {
+            selection = caught
+        }
+        if !selection.isEmpty { selectedInstrumentID = nil }
     }
 
     // MARK: Source / Out pills
@@ -466,8 +572,8 @@ struct SynopticView: View {
                 if let inst = midiInstrument {
                     SynopticCardView(
                         plugin: inst,
-                        isSelected: selectedID == inst.id,
-                        onSelect: { actions.onSelectInstrument?() },
+                        isSelected: selectedInstrumentID == inst.id,
+                        onSelect: { selectedInstrumentID = inst.id; selection = [] },
                         onOpenEditor: actions.onOpenInstrumentEditor,
                         onToggleBypass: { actions.onToggleInstrumentBypass?() },
                         onRemove: { actions.onRemoveInstrument?() },
@@ -1645,7 +1751,9 @@ struct SynopticBoundView: View {
     let objectID: UUID
     var scrolls: Bool = true
 
-    @State private var selectedID: UUID? = nil
+    /// The instrument card's highlight only — the FX selection lives in the view-model, since
+    /// every gesture that acts on several cards needs the chain (@see pluginSelection).
+    @State private var selectedInstrumentID: UUID? = nil
     @State private var activeSheet: SynopticSheetKind? = nil
     @State private var pickerSearch: String = ""
     // The live state of the external instances (loading/ready/error), refreshed by a timer.
@@ -1750,7 +1858,8 @@ struct SynopticBoundView: View {
             (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
         }
 
-        return SynopticView(root: root, selectedID: $selectedID, scrolls: scrolls,
+        return SynopticView(root: root, selection: pluginSelection,
+                            selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
                             chainInDb: gains.inDb, chainOutDb: gains.outDb,
                             chainInAutomated:  viewModel.isAutomated(.chainInGain, on: objectID),
                             chainOutAutomated: viewModel.isAutomated(.chainOutGain, on: objectID),
@@ -1763,12 +1872,11 @@ struct SynopticBoundView: View {
                             // interactive again.
                             fxReadOnly: (obj?.isObjectInstance ?? false),
                             actions: SynopticActions(
-            onSelect: { selectedID = $0 },
             onOpenEditor: { openEditor($0) },
             onToggleBypass: { viewModel.togglePluginEnabled(objectID: objectID, pluginID: $0) },
             onRemove: {
                 viewModel.removePlugin(objectID: objectID, pluginID: $0)
-                if selectedID == $0 { selectedID = nil }
+                pluginSelection.wrappedValue.remove($0)
             },
             onInsertSeries: { seriesID, index in
                 if let loc = locations[seriesID] { activeSheet = .insert(location: loc, index: index) }
@@ -1814,10 +1922,9 @@ struct SynopticBoundView: View {
             onRemoveInstrument: {
                 let instID = obj?.instruments.first?.id
                 viewModel.removeInstrument(objectID: objectID)
-                if let instID, selectedID == instID { selectedID = nil }
+                if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
             },
             onOpenInstrumentEditor: { if let id = obj?.instruments.first?.id { openEditor(id) } },
-            onSelectInstrument: { selectedID = obj?.instruments.first?.id },
             onToggleInstrumentBypass: {
                 if let id = obj?.instruments.first?.id {
                     viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
@@ -1944,10 +2051,28 @@ struct SynopticBoundView: View {
         viewModel.togglePluginEditor(objectID: objectID, plug: plug)
     }
 
+    /// The FX selection of THIS chain, seen as a `Set`. It reads EMPTY as soon as the view-model's
+    /// selection belongs to another host — which is what makes changing object in the inspector
+    /// drop the highlight with no `onChange` anywhere: the question "is this selection mine?" is
+    /// asked at every read rather than answered once and left to go stale.
+    private var pluginSelection: Binding<Set<UUID>> {
+        Binding(get: { viewModel.selectedPluginHostID == objectID ? viewModel.selectedPluginIDs : [] },
+                set: { viewModel.setPluginSelection($0, host: objectID) })
+    }
+
     /// A card's drag payload (the same format as the chips → it reuses the timeline drop to
     /// move/copy/link to another object, and the '+'s to reorder).
+    ///
+    /// A card taken WHILE IT IS IN THE SELECTION carries the whole selection with it; a card taken
+    /// from outside carries itself alone. The clips' rule word for word (@see the timeline's drag
+    /// handler): what you GRAB is what decides, and grabbing something you had not chosen is a new
+    /// choice rather than a mistake to be punished by losing the old one.
     private func dragProvider(_ pluginID: UUID) -> NSItemProvider {
-        let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID)
+        let all = pluginSelection.wrappedValue.contains(pluginID)
+            ? viewModel.orderedSelectedPluginIDs()
+            : [pluginID]
+        let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID,
+                                        pluginIDs: all)
         let data = (try? JSONEncoder().encode(payload)) ?? Data()
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
@@ -2043,7 +2168,8 @@ struct SynopticSheet: View {
     let title: String
 
     @State private var root: SynopticNode = .demo
-    @State private var selectedID: UUID? = nil
+    @State private var selection: Set<UUID> = []
+    @State private var selectedInstrumentID: UUID? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2056,12 +2182,13 @@ struct SynopticSheet: View {
 
             Divider()
 
-            SynopticView(root: root, selectedID: $selectedID, actions: SynopticActions(
-                onSelect: { selectedID = $0 },
+            SynopticView(root: root, selection: $selection,
+                         selectedInstrumentID: $selectedInstrumentID,
+                         actions: SynopticActions(
                 onToggleBypass: { root = root.togglingBypass($0) },
                 onRemove: {
                     root = root.removingPluginAtRoot($0)
-                    if selectedID == $0 { selectedID = nil }
+                    selection.remove($0)
                 },
                 onInsertSeries: { sid, idx in root = root.insertingPlaceholder(intoSeries: sid, atIndex: idx) },
                 onBranch: { root = root.branching($0) }
@@ -2076,7 +2203,7 @@ struct SynopticSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(L("common.reset")) { root = .demo; selectedID = nil }
+                Button(L("common.reset")) { root = .demo; selection = [] }
                     .controlSize(.small)
             }
             .padding(8)

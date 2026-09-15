@@ -306,6 +306,57 @@ What has landed since mid-August, in order:
   **Not felt**: the detent under the hand — whether a tenth is the right step for a pan one drags,
   and whether ⌘ is the modifier one reaches for to slip between two of them.
 
+- **Several plugin cards at once** (15 September 2026) — the signal view held ONE selected card, in
+  a `@State` of its own view. It holds a SET now, and that set lives in the VIEW-MODEL
+  (`selectedPluginIDs` + `selectedPluginHostID`), for two reasons that are the whole design: every
+  batch gesture needs the chain's READING ORDER, which only the model knows — a `Set` has none, and
+  plugins laid down in the wrong order are a different sound — and a selection nothing can drive is
+  a selection nothing can verify with no screen. On the lot: ⌫, on/off, ⌘D, ⌘C/⌘V, and the drag
+  onto another object speaking the same three gestures it always did (nothing = move, ⌥ = an
+  independent copy, ⌘ = a copy that stays linked). An object and a STEM are the same host
+  throughout — free, everything going through `chainPlugins`/`updateChainPlugins`.
+  **One undo per gesture, not per card**, which is what forced the shape: `transferPlugins` is the
+  real implementation and `movePlugin` / `copyPlugin` / `linkAcrossObjects` are now three one-line
+  doors onto it, rather than two places for the link, the colour and the live state to be got
+  subtly wrong. A link of several ties each card to its OWN group (an EQ and a reverb dragged
+  together must not come to share their parameters).
+  Picking cards is GEOMETRY, and it went into a unit that knows nothing else —
+  `SynopticMarquee`, an id and a rectangle, no view, no model, no layout — precisely so that the
+  half of the feature with nothing behind it can be compiled alone and asserted:
+  `tools/test_synoptic_marquee.swift`. Two rules, and they deliberately DIFFER: a marquee takes
+  what it contains ENTIRELY (the clips' rubber band, word for word — on a canvas where branches sit
+  side by side, taking what one merely brushed sweeps up the neighbouring branch), while ⇧ takes
+  what its box INTERSECTS (the clips' `extendSelectionTo`, word for word too — a box deduced from
+  cards has its edges ON them, never around them). ⇧ adds during a drag, ⌘ flips, and the three
+  things a marquee decides — whether there is one at all, what the modifiers mean, and what was
+  already held — are decided at the FIRST pixel and never again.
+  The trap, and it is the one this whole feature had to answer: **the keyboard**. ⌫ ⌘C ⌘V ⌘D
+  were the timeline's, and the objects' selection is what SHOWS the signal view — so the usual
+  exclusivity (`selectedAnnotation`) was not available, clearing it would have taken the chain off
+  the screen under the hand. The rule is the SELECTION ITSELF as the claim, with no separate focus
+  flag: a host recorded (a card clicked, or merely the view's empty space) takes the four keys, and
+  the FIRST click back in the timeline gives them all back — `clearPluginSelection`, called at the
+  door of the tap and drag handlers rather than in their dozen branches. The host is kept EVEN FOR
+  AN EMPTY SET, so ⌘V can land in a chain that has no card yet to click on; the price is a handful
+  of keys that do nothing while the view holds them with no card chosen, which is the harmless half
+  of the alternative — the other half was ⌫ deleting the OBJECT with the hand plainly elsewhere.
+  An INSTRUMENT is not in this selection: it lives in `SoundObject.instruments`, not one batch
+  gesture can touch it, and letting it into the set would arm them all over something they cannot
+  reach. It keeps a highlight slot of its own.
+  Verified with no screen: a build, 18 standalone assertions on the geometry, 48 on
+  `tools/scenario_plugin_selection.py` against a headless instance (order, one undo per batch,
+  stems, move/copy/link, what a batch refuses), `smoke.jsonl` clean, `scenario_families.py` 90 OK,
+  `scenario_markers.py` ALL PASS, i18n 393 keys, and `CGWindowListCopyWindowInfo` on the headless
+  pid: no window.
+  Commands: `plugin.select` / `selection` / `deselect` / `remove_selected` / `toggle_selected` /
+  `duplicate_selected` / `copy_selected` / `paste`; `plugin.move|copy|link` take `plugins` (a list)
+  in place of `plugin`.
+  **Not seen on screen, nor felt**: every pixel and every gesture of it — the rectangle drawn under
+  the hand and its veil, several cards highlighted at once, ⇧'s box and whether what it sweeps up
+  across two branches is what one meant, ⌘ one by one, the drag of a whole selection onto a
+  timeline object, and above all the hand-over of the keyboard between the two surfaces: whether a
+  click in the timeline really does feel like giving it back.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

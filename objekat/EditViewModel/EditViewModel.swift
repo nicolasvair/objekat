@@ -86,6 +86,24 @@ final class EditViewModel {
     /// Lets ⌘A select every note of that clip even with no note selection
     /// active. Reset to nil as soon as a click lands elsewhere in the timeline. Pure UI.
     var focusedMidiClipID: UUID? = nil
+    /// The plugin cards selected in the signal view (ids of `ObjectPlugin` LEAVES, at any depth
+    /// of parallel branch). Its own slot rather than a place in `selectedIDs`, and for once NOT
+    /// exclusive with it: the object selection is what SHOWS the signal view, so clearing it on
+    /// selecting a card would take the chain off the screen under the hand.
+    ///
+    /// What it IS exclusive with is the KEYBOARD: while it is non-empty, ⌫ ⌘C ⌘V ⌘D act on the
+    /// cards and not on the objects. That claim needs no separate focus flag — the selection IS
+    /// the claim — and it is given back the moment a click lands in the timeline
+    /// (@see clearPluginSelection).
+    var selectedPluginIDs: Set<UUID> = []
+    /// The chain the plugin selection belongs to — a sound object OR a stem/master bus. A
+    /// selection never spans two hosts: the signal view shows ONE chain at a time, and every
+    /// batch operation reads its order from that chain.
+    var selectedPluginHostID: UUID? = nil
+    /// What ⌘C put aside from a chain: plugins deep-copied WITH the state read back off their
+    /// live instances. Beside the objects' clipboard, not inside it — a chain fragment is not an
+    /// object, and ⌘V has to know which of the two it is pasting.
+    var pluginClipboard: [ObjectPlugin] = []
     /// The objects whose BAKE (a background render) is UNDER WAY: a soft lock. The sub-tree
     /// stays live and playable, but creating/opening/detaching/dissolving is blocked while
     /// the render runs. Emptied in the render's completion. See EditViewModel+Bake.

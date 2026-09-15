@@ -251,7 +251,7 @@ That is end-of-process noise, with no effect on the result.
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
-| `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters |
+| `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
@@ -262,6 +262,39 @@ That is end-of-process noise, with no effect on the result.
 | `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
+
+### A selection of plugin cards
+
+The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that
+holds them, ⌘ one by one — and then acts on the lot. What the mouse does there is geometry and
+stays in the view; what it RESULTS IN is a selection that lives in the model, which is what these
+commands drive.
+
+| | |
+|---|---|
+| `plugin.select` | `host` + `plugins` (a list) + `mode`: `replace` (default) · `add` · `toggle` |
+| `plugin.selection` | what is selected, IN THE CHAIN'S ORDER, plus `host`, `has_keyboard`, `clipboard` |
+| `plugin.deselect` | clears it, and gives the keyboard back to the timeline |
+| `plugin.remove_selected` | ⌫ — every selected card, in one undo step |
+| `plugin.toggle_selected` | on/off over the lot. Mixed states go to OFF: one still on turns them all off |
+| `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
+| `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
+
+Three things are worth knowing before driving them:
+
+- **The order of a batch is the CHAIN's, never the caller's.** A selection has no order of its own,
+  and plugins laid down in the wrong one are a different sound. `plugin.selection` therefore answers
+  in reading order, parallel branches walked in place — not in the order they were named.
+- **One undo step per gesture, not one per card.** `plugin.move` with three plugins is one `edit.undo`
+  away from being back.
+- **The selection carries the KEYBOARD.** As long as it names a host, ⌫ ⌘C ⌘V ⌘D aim at the cards
+  rather than at the timeline's objects. `plugin.select` with an empty list therefore means something
+  precise — claim the keyboard for that chain, choose nothing — which is what lets `plugin.paste`
+  land in a chain that has no card yet to click on. `has_keyboard` reports it.
+
+`plugin.move`, `plugin.copy` and `plugin.link` take **`plugins`** (a list) in place of `plugin`: one
+card or a whole selection, the same three gestures either way. A link of several ties each card to
+its OWN copy — an EQ and a reverb dragged together do not end up sharing their parameters.
 
 ### Fade shapes
 
@@ -599,6 +632,8 @@ A few points of vocabulary that save mistakes:
 | `tools/smoke.jsonl` | an `--exec` scenario (with no identifiers reused) |
 | `tools/scenario_families.py` | a non-regression scenario, 64 steps over the eight families |
 | `tools/scenario_markers.py` | markers / regions / comments: 39 assertions, including a cut, a reverse, an undo and a reload |
+| `tools/scenario_plugin_selection.py` | several plugin cards at once: 48 assertions (order, one undo per batch, stems, move/copy/link) |
+| `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 18 assertions, no app needed |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:

@@ -353,9 +353,18 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.clearAllSolo() }
                     return nil
                 }
+                // The SIGNAL VIEW holds the keyboard as soon as a card, or even its empty space,
+                // has been clicked — and it keeps it until a click lands back in the timeline
+                // (@see setPluginSelection). It comes first among the surfaces for that reason:
+                // the claim is the most recent gesture, and nothing else can be true at the same
+                // time. With the view holding it and no card chosen, ⌫ does NOTHING: a dead key
+                // is the price of never deleting an OBJECT while the hand is plainly elsewhere.
+                if vm.pluginSurfaceHasKeyboard {
+                    DispatchQueue.main.async { vm.removeSelectedPlugins() }   // internal undo push
+                }
                 // The piano roll: if notes are selected, we delete them (NOT the clip).
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
-                if !vm.selectedMidiNoteIDs.isEmpty {
+                else if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
                 } else if vm.selectedAnnotation != nil {
                     // A marker, a region or a comment: ⌫ takes the ANNOTATION and nothing else. It
@@ -583,7 +592,9 @@ extension TimelineView {
                 case "d":
                     if flags.contains(.command) {
                         DispatchQueue.main.async {
-                            if !vm.selectedMidiNoteIDs.isEmpty {
+                            if vm.pluginSurfaceHasKeyboard {
+                                vm.duplicateSelectedPlugins()     // the signal view (internal undo push)
+                            } else if !vm.selectedMidiNoteIDs.isEmpty {
                                 vm.duplicateSelectedMidiNotes()   // the piano-roll context (internal undo push)
                             } else {
                                 vm.edit { vm.duplicateSelected() }
@@ -635,7 +646,9 @@ extension TimelineView {
                 case "c":
                     if flags.contains(.command) {
                         DispatchQueue.main.async {
-                            if !vm.selectedMidiNoteIDs.isEmpty {
+                            if vm.pluginSurfaceHasKeyboard {
+                                vm.copySelectedPluginsToClipboard()   // the signal view
+                            } else if !vm.selectedMidiNoteIDs.isEmpty {
                                 vm.copySelectedMidiNotes()       // the piano-roll context
                             } else if vm.timeSelection != nil {
                                 vm.copyTimeSelection()
@@ -685,8 +698,13 @@ extension TimelineView {
                     }
                 case "v":
                     if flags.contains(.command) {
+                        // The signal view holds the keyboard ⇒ the chain fragment goes into ITS
+                        // chain, after the last selected card or at the end when none is chosen.
+                        if let host = vm.selectedPluginHostID, !vm.pluginClipboard.isEmpty {
+                            DispatchQueue.main.async { vm.pastePlugins(into: host) }  // internal undo push
+                        }
                         // The notes take priority if we are in the piano-roll context (notes selected).
-                        if !vm.selectedMidiNoteIDs.isEmpty, vm.canPasteMidiNotes {
+                        else if !vm.selectedMidiNoteIDs.isEmpty, vm.canPasteMidiNotes {
                             DispatchQueue.main.async { vm.pasteMidiNotes() }   // internal undo push
                         } else {
                             DispatchQueue.main.async { vm.edit { vm.paste() } }

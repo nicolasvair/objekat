@@ -294,6 +294,14 @@ enum DragPhase { case changed, ended }
 extension TimelineView {
 
     func handleCanvasDrag(_ value: DragGesture.Value, phase: DragPhase) {
+        // A drag does not always start with a tap, so the keyboard is given back here too
+        // (@see handleCanvasTap). Called on every frame and not just the first, there being no
+        // 'began' phase here: it costs nothing, the function returning at once when there is
+        // nothing left to give back. A card dropped ONTO an object does not come through here —
+        // that is AppKit's drag and drop (@see TimelineDropHandler) — so the selection it lands
+        // with is safe.
+        viewModel.clearPluginSelection()
+
         // End of gesture: the block has moved, been trimmed, cut or ungrouped — the remembered hover
         // points at the place it was BEFORE. `defer` so as to cover this function's many early
         // returns, and `async` so as to let the gesture finish writing the model before rereading

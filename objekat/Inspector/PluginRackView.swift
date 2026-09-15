@@ -13,7 +13,16 @@ import SwiftUI
 /// `.onDrop`, identified by decoding successfully. Modifiers: nothing=move ⌥=copy ⌘=copy+link.
 struct PluginDragPayload: Codable {
     let sourceObjectID: UUID
+    /// The card actually taken in the hand — the one the reorder gestures aim with, and the
+    /// anchor of the whole payload.
     let pluginID: UUID
+    /// Every card the drag carries, in the source chain's reading ORDER. `[pluginID]` for a single
+    /// card; a whole selection when the card taken was part of one. Optional so that a payload
+    /// written before it existed still decodes — read it through `ids`, never directly.
+    var pluginIDs: [UUID]? = nil
+
+    /// What the drop must act on: the list when there is one, and the single card otherwise.
+    var ids: [UUID] { (pluginIDs?.isEmpty == false) ? pluginIDs! : [pluginID] }
 }
 
 // MARK: - Plugin browser

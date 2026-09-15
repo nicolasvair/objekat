@@ -814,84 +814,28 @@ extension EditViewModel {
         setLinkGroups(objectID: objectID, pluginID: pluginID, link: nil, detached: group)
     }
 
+    // The three gestures a dragged card speaks when it lands on ANOTHER object — nothing = move,
+    // ⌥ = an independent copy, ⌘ = a copy that stays linked. They are the one-card doors onto
+    // `transferPlugins`, which is where the rules really live: a selection of several cards takes
+    // exactly the same three, and two implementations of "carry a plugin across" would be two
+    // places for the link, the colour and the live state to be got subtly wrong.
+    // @see EditViewModel+PluginSelection
+
     /// An alt-drop: instantiates the SAME plugin on the target object (with the source's current
     /// state) and links it to the source. Creates the group if the source was not linked yet.
     func linkAcrossObjects(sourceObjectID: UUID, sourcePluginID: UUID, targetObjectID: UUID) {
-        // Hosts, not objects: the source as well as the target can be a stem BUS, whose
-        // chain does not live in `items` (@see chainPlugins/updateChainPlugins). Going through
-        // `find`/`update` here left the stem's chain intact — a move from a
-        // stem behaved like a copy.
-        guard let engine,
-              let src = leafPlugins(objectID: sourceObjectID).first(where: { $0.id == sourcePluginID }),
-              chainPlugins(targetObjectID) != nil else { return }
-        let live = engine.getPluginStateXML(sourcePluginID.uuidString)
-        let stateXML = (live?.isEmpty == false) ? live : src.stateXML
-        // A DETACHED source: it is put back into ITS group rather than opening another — otherwise
-        // it would drag a dormant group around while an active link holds it elsewhere.
-        let gid = src.effectiveLinkGroupID ?? UUID()
-        let newID = UUID()
-        pushUndo()
-        if src.linkGroupID == nil {
-            updateChainPlugins(sourceObjectID) { p in
-                p = Self.settingDetachedLinkGroup(sourcePluginID, nil, in: p)
-                p = Self.settingLinkGroup(sourcePluginID, gid, in: p)
-            }
-        }
-        let copy = ObjectPlugin(id: newID, name: src.name, manufacturer: src.manufacturer,
-                                identifier: src.identifier, formatName: src.formatName,
-                                isEnabled: src.isEnabled, stateXML: stateXML, linkGroupID: gid,
-                                colorIndex: src.colorIndex)
-        updateChainPlugins(targetObjectID) { $0.append(copy) }
-        compileRack(objectID: targetObjectID)   // creates the target instance (its state restored from the stateXML)
-        engine.setPluginLinkGroup(sourcePluginID.uuidString, groupID: gid.uuidString)
-        engine.setPluginLinkGroup(newID.uuidString, groupID: gid.uuidString)
-        isDirty = true
+        transferPlugins([sourcePluginID], from: sourceObjectID, to: targetObjectID, mode: .link)
     }
 
     /// A drag with NO modifier: moves the plugin from one clip to another (removed from the source).
     /// Keeps `linkGroupID` (the same logical plugin, another clip).
     func movePlugin(sourceObjectID: UUID, pluginID: UUID, targetObjectID: UUID) {
-        // The source AND the target are chain HOSTS: a sound object or a stem bus (@see
-        // linkAcrossObjects, for the same reason).
-        guard let engine,
-              let plug = leafPlugins(objectID: sourceObjectID).first(where: { $0.id == pluginID }),
-              chainPlugins(targetObjectID) != nil,
-              sourceObjectID != targetObjectID else { return }
-        let live = engine.getPluginStateXML(pluginID.uuidString)
-        let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
-        let newID = UUID()
-        let moved = ObjectPlugin(id: newID, name: plug.name, manufacturer: plug.manufacturer,
-                                 identifier: plug.identifier, formatName: plug.formatName,
-                                 isEnabled: plug.isEnabled, stateXML: stateXML,
-                                 linkGroupID: plug.linkGroupID,
-                                 // A detached plugin stays reattachable after a move.
-                                 detachedLinkGroupID: plug.detachedLinkGroupID,
-                                 colorIndex: plug.colorIndex)
-        pushUndo()
-        // Removes it from the source (folding the branch back if it empties) then adds it at the end of the target chain.
-        updateChainPlugins(sourceObjectID) { p in p = Self.simplifyTree(Self.removingPlugins([pluginID], from: p)) }
-        updateChainPlugins(targetObjectID) { $0.append(moved) }
-        compileRack(objectID: sourceObjectID)   // removes the source instance from the rack
-        compileRack(objectID: targetObjectID)   // creates the target instance (its state restored)
-        if moved.linkGroupID != nil { rewireLinkGroups() }
-        isDirty = true
+        transferPlugins([pluginID], from: sourceObjectID, to: targetObjectID, mode: .move)
     }
 
     /// A drag with ⌥: an INDEPENDENT copy of the plugin onto the target (a new UUID, no link).
     func copyPlugin(sourceObjectID: UUID, pluginID: UUID, targetObjectID: UUID) {
-        guard let engine,
-              let plug = leafPlugins(objectID: sourceObjectID).first(where: { $0.id == pluginID }),
-              chainPlugins(targetObjectID) != nil else { return }
-        let live = engine.getPluginStateXML(pluginID.uuidString)
-        let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
-        let newID = UUID()
-        pushUndo()
-        let copy = ObjectPlugin(id: newID, name: plug.name, manufacturer: plug.manufacturer,
-                                identifier: plug.identifier, formatName: plug.formatName,
-                                isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil)
-        updateChainPlugins(targetObjectID) { $0.append(copy) }
-        compileRack(objectID: targetObjectID)
-        isDirty = true
+        transferPlugins([pluginID], from: sourceObjectID, to: targetObjectID, mode: .copy)
     }
 
     func syncPlugins(_ object: SoundObject) {

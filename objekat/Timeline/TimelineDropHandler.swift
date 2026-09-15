@@ -196,17 +196,28 @@ extension TimelineView {
                                 linked: flags.contains(.command))
                             return
                         }
-                        if flags.contains(.command) {
-                            guard payload.sourceObjectID != targetID else { return }
-                            viewModel.linkAcrossObjects(sourceObjectID: payload.sourceObjectID,
-                                                        sourcePluginID: payload.pluginID, targetObjectID: targetID)
-                        } else if flags.contains(.option) {
-                            viewModel.copyPlugin(sourceObjectID: payload.sourceObjectID,
-                                                 pluginID: payload.pluginID, targetObjectID: targetID)
-                        } else {
-                            guard payload.sourceObjectID != targetID else { return }
-                            viewModel.movePlugin(sourceObjectID: payload.sourceObjectID,
-                                                 pluginID: payload.pluginID, targetObjectID: targetID)
+                        // ONE card or a whole SELECTION, the same three gestures either way and
+                        // the same single undo point: the payload says what it carries
+                        // (@see PluginDragPayload.ids), the transfer says what it does.
+                        let mode: PluginTransferMode = flags.contains(.command) ? .link
+                                                     : (flags.contains(.option) ? .copy : .move)
+                        // Was it the selection itself that was taken? Asked BEFORE the transfer,
+                        // which is about to move the ids it names.
+                        let wasSelection = viewModel.selectedPluginHostID == payload.sourceObjectID
+                            && viewModel.selectedPluginIDs == Set(payload.ids)
+                        let placed = viewModel.transferPlugins(payload.ids,
+                                                               from: payload.sourceObjectID,
+                                                               to: targetID, mode: mode)
+                        // A MOVE hands the cards new identities. The selection follows them into
+                        // the target chain when it WAS the thing dragged; otherwise it named cards
+                        // that have just left, so it is given up rather than left pointing at
+                        // nothing — and with it the keyboard goes back to the timeline.
+                        if mode == .move, !placed.isEmpty {
+                            if wasSelection {
+                                viewModel.setPluginSelection(Set(placed), host: targetID)
+                            } else if viewModel.selectedPluginHostID == payload.sourceObjectID {
+                                viewModel.clearPluginSelection()
+                            }
                         }
                     }
                 }
