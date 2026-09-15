@@ -297,14 +297,39 @@ What has landed since mid-August, in order:
   tool and the inspector's box came to disagree in the first place.
   Verified with no screen: a build, `scenario_markers.py` (63 assertions — the snap written into
   the file, a new project back on the grid, the project reopening off it),
-  `scenario_families.py` 90 OK (the tenth for one object and for two, ⌘ giving the fine
-  adjustment back, and ten steps of a tenth landing exactly on the edge with no float dust),
-  `smoke.jsonl` clean, i18n 393 keys. What no suite can reach is the drag's own invariant — one
-  anchor held for the whole gesture, the total travel handed over each frame — since every call of
-  `object.adjust_pan` takes a fresh anchor. Only the hand sees that one.
+  `scenario_families.py` 90 OK, `smoke.jsonl` clean, i18n 393 keys. What no suite can reach is the
+  drag's own invariant — one anchor held for the whole gesture, the total travel handed over each
+  frame — since every call of `object.adjust_pan` takes a fresh anchor. Only the hand sees that one.
   New commands: `project.set_snap`, `object.adjust_pan`.
-  **Not felt**: the detent under the hand — whether a tenth is the right step for a pan one drags,
-  and whether ⌘ is the modifier one reaches for to slip between two of them.
+
+- **And the pan's detent is UNCONDITIONAL** (15 September 2026, the same day, read off the hand) —
+  hanging it on the grid's snap was wrong twice over. A session built OFF the grid — which the same
+  day's other change made persistent — had no detent at all; and the snap never reached the control
+  one actually pans a SINGLE object with, the synoptic's box, which SETS an absolute value through
+  `updatePan` instead of adding a delta. So a lone object slid continuously, 13 %, 17 %, and its
+  ↑ / ↓ arrows walked in HALF-tenths (`keyStep: 0.05`) besides. The rule now: **a pan a hand lays
+  down is on a tenth, always** — no snap, no ⌘ escape, since a modifier that leaves 13 % behind in
+  the file is the intermediate value under another name. It lives at the two doors a hand comes in
+  by, both of them going through one definition (`EditViewModel.detentedPan`): `applyPanDelta` for
+  everything that ADDS (the Pan tool, the inspector's box, the ±0.1 arrows, the wheel) and
+  `setPanFromHand` for what SETS (the synoptic's box). `updatePan` stays exact, because it is the
+  machine's door (`object.set_pan`) and the automation's — a script asking for 0.37 gets 0.37, a
+  curve plays what it draws. The inspector's box quantises its own displayed value too: `relPan` is
+  a local accumulator nothing reads back from the objects, so a display left continuous would read
+  13 % over a model sitting on 10 %.
+  Two things the inspector's box was reading wrong, found on the same reading. In RELATIVE mode (a
+  selection whose pans differ, so the box shows a travel and not a position) it dropped the unit and
+  printed `-0.50` — where the row above it says `+3 dB`, and where the direct entry parses a
+  PERCENTAGE, one typing 50 for a half. It reads `-50%` now. And the absolute label TRUNCATED
+  instead of rounding (`Int(-p*100)`): a tenth held as a `Float` is 0.69999…, so a pan set to 70 %
+  displayed `R 69%` — the synoptic's own label had been rounding all along, which is why only one of
+  the two lied.
+  Verified with no screen: a build, `scenario_families.py` 92 OK (the tenth with the snap ON and the
+  snap OFF, `object.set_pan` still exact, several objects, and ten steps landing on the edge),
+  `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 48 assertions, `smoke.jsonl` clean,
+  i18n 393 keys.
+  **Not felt**: the detent under the hand in the synoptic's box and under the Pan tool, and whether
+  losing the fine adjustment is ever missed.
 
 - **Several plugin cards at once** (15 September 2026) — the signal view held ONE selected card, in
   a `@State` of its own view. It holds a SET now, and that set lives in the VIEW-MODEL

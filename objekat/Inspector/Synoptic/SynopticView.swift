@@ -1338,10 +1338,13 @@ struct ClipMixZoneView: View {
                 Spacer(minLength: 0)
                 // Each attribute: the value, then (tight to the right) its link icon.
                 HStack(spacing: 3) {
+                    // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
+                    // tenths, they do not halve them. The drag stays continuous here and is brought
+                    // onto the detent on the way in, by `setPanFromHand`.
                     DragValueBox(value: Double(mix.pan),
                                  format: { panLabel(Float($0)) },
                                  range: -1...1, pointsPerStep: 80, snap: false, width: 52,
-                                 keyStep: 0.05,
+                                 keyStep: 0.1,
                                  parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                                  help: L("help.drag.pan"),
                                  onTouch: { actions.onTouchParam?(.pan) },
@@ -1969,7 +1972,8 @@ struct SynopticBoundView: View {
                 }
             },
             onSetVolume: { viewModel.updateVolume(id: objectID, volume: $0) },
-            onSetPan: { viewModel.updatePan(id: objectID, pan: $0) },
+            // A HAND's door, not `updatePan`: the pan lands on its tenth (@see EditViewModel+Pan).
+            onSetPan: { viewModel.setPanFromHand(id: objectID, pan: $0) },
             onToggleMute: { viewModel.edit { viewModel.toggleMute(id: objectID) } },
             // Solo is a session listening state, outside the model and outside undo (@see
             // EditViewModel+Solo): no `edit {}`, no undo point, like a stem's mute — otherwise ⌘Z

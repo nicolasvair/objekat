@@ -495,16 +495,25 @@ grid reopens off the grid, without anyone having to turn the snap off again on e
 with no `snapEnabled` key — anything written before format 13 — opens WITH the snap, which is also
 where the app and a fresh project start. Read it back from `project.get_state`, field `snapEnabled`.
 
-It also decides the PAN's detent: `object.adjust_pan` moves the pan BY a delta (the path the
-continuous gestures take — the Pan tool, the inspector's box, the ±0.1 arrows) and, with the snap
-on, each object's result clicks onto the nearest tenth, however many are held. What this is NOT is
-the quantum that used to live in the model and cancelled a multiple drag outright: that one
-compounded, rounding each ~0.0125 delta back onto the tenth it came from until nothing moved at
-all. Here the gesture works from ANCHORS and hands over its TOTAL travel, so the rounding lands on
-the result and never feeds the next frame — a slow drag simply waits until the total crosses the
-half-step. Accepted cost: an object whose pan was not on a tenth is brought onto one, so the spread
-between objects can shift by up to half a step. `object.set_pan` sets an absolute value and never
-quantises.
+It does NOT decide the pan's detent — see below. The grid is about TIME, and a pan has nothing to
+place itself against.
+
+### The pan clicks onto the tenths, always
+
+`object.adjust_pan` moves the pan BY a delta — the path every hand gesture takes (the Pan tool, the
+inspector's box, the ±0.1 arrows, the wheel) — and each held object's result lands on the nearest
+TENTH, however many are held. The detent is **unconditional**: it answers neither to `project.set_snap`
+nor to ⌘, because the values between the tenths are not wanted at all. What this is NOT is the
+quantum that used to live in the model and cancelled a multiple drag outright: that one compounded,
+rounding each ~0.0125 delta back onto the tenth it came from until nothing moved at all. Here the
+gesture works from ANCHORS and hands over its TOTAL travel, so the rounding lands on the result and
+never feeds the next frame — a slow drag simply waits until the total crosses the half-step.
+Accepted cost: an object whose pan was not on a tenth is brought onto one, so the spread between
+objects can shift by up to half a step.
+
+`object.set_pan` is the other door, and it stays EXACT: it sets an absolute value, writes it as
+given, and never quantises — a script asking for 0.37 gets 0.37, as does a pan automation curve. The
+detent belongs to the hand.
 
 ### Sliding the time selection
 

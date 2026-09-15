@@ -279,10 +279,20 @@ struct ObjectInspectorView: View {
                 DragValueBox(
                     value: relPan,
                     format: { p in
-                        if panRelative { return abs(p) < 0.01 ? "0" : String(format: "%+.2f", p) }
-                        return abs(p) < 0.01 ? "C" : (p < 0 ? "L \(Int(-p*100))%" : "R \(Int(p*100))%")
+                        // The RELATIVE mode shows a travel, not a position — but in the SAME unit as
+                        // the absolute one, and as the direct entry, which parses a percentage
+                        // (`parse` below divides by 100). It read `-0.50` where one types 50 and
+                        // where the row above says `+3 dB`: a unit shown in one place and hidden in
+                        // the other is a number one has to translate before trusting it.
+                        if panRelative {
+                            let pct = Int((p * 100).rounded())
+                            return pct == 0 ? "0%" : String(format: "%+d%%", pct)
+                        }
+                        return abs(p) < 0.01 ? "C" : (p < 0 ? "L \(Int((-p*100).rounded()))%" : "R \(Int((p*100).rounded()))%")
                     },
-                    range: -1...1, pointsPerStep: 80, snap: false, width: 56, keyStep: 0.05,
+                    // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
+                    // tenths rather than halving them.
+                    range: -1...1, pointsPerStep: 80, snap: false, width: 56, keyStep: 0.1,
                     parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                     help: L("help.drag.pan"),
                     onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
@@ -292,8 +302,14 @@ struct ObjectInspectorView: View {
                         panOrigin = relPan
                     },
                     onChange: { new in
-                        viewModel.applyPanDelta(Float(new - panOrigin), from: panAnchors)
-                        relPan = new
+                        // The box's own value is brought onto the detent BEFORE it is shown, or the
+                        // display would read 13 % over a model that the gesture has put on 10 %:
+                        // `relPan` is a local accumulator, nothing reads the objects back into it
+                        // during a drag. Quantising it does not compound — DragValueBox works from
+                        // the travel since the gesture's start, never from the value it last wrote.
+                        let stepped = Double(EditViewModel.detentedPan(Float(new)))
+                        viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
+                        relPan = stepped
                     },
                     onReset: {
                         viewModel.edit { viewModel.resetPanSelected() }

@@ -233,7 +233,7 @@ extension CommandRegistry {
 
         register("object.set_pan",
                  summary: "Pan (-1 left … +1 right).",
-                 params: [ParamSpec("pan", "number", "Position -1…1."),
+                 params: [ParamSpec("pan", "number", "Position -1…1, written as given (no detent)."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Target objects; default = current selection.")],
                  undo: .bus) { p in
@@ -247,9 +247,9 @@ extension CommandRegistry {
         register("object.adjust_pan",
                  summary: "Moves the pan BY a delta rather than setting it — the path the "
                         + "continuous gestures take (the Pan tool, the inspector's box, the ±0.1 "
-                        + "arrows). One object at a time, and with the snap on, the result clicks "
-                        + "onto the nearest tenth; a multiple selection stays continuous so as to "
-                        + "keep the spread between the objects. Absolute setting: object.set_pan.",
+                        + "arrows, the wheel). Every object's result clicks onto the nearest tenth, "
+                        + "however many are held: the detent is unconditional and answers neither "
+                        + "to the snap nor to ⌘. Absolute setting, and exact: object.set_pan.",
                  params: [ParamSpec("by", "number", "Travel, added to the current pan."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Target objects; default = current selection.")],

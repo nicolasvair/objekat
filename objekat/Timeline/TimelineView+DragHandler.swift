@@ -1582,8 +1582,8 @@ extension TimelineView {
         // set on the block's visible width — a wide block keeps a fine adjustment.
         let dPan = Float(-value.translation.height / state.trackWidth * 2.0)
         // Through `applyPanDelta` and not a loop of its own: that is where the anchors, the tenth
-        // detent of a SINGLE object and the two-pass propagation live, and a second implementation
-        // here is how the tool and the inspector's box came to disagree.
+        // detent and the two-pass propagation live, and a second implementation here is how the
+        // tool and the inspector's box came to disagree.
         viewModel.applyPanDelta(dPan, from: state.anchors)
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy { viewModel.find(id: $0.key)?.pan == $0.value }

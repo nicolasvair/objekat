@@ -79,17 +79,23 @@ with ObjekatClient(SOCK) as c:
     step("object.trim",       lambda: c.send("object.trim", {"id": idb, "start": 0.1, "duration": 0.2}))
     step("object.set_source_offset", lambda: c.send("object.set_source_offset", {"id": idb, "offset": 0.01}))
 
-    # --- pan: ONE object clicks onto the tenths, several keep their spread
+    # --- pan: every gesture clicks onto the tenths, for one object and for several
     c.send("project.set_snap", {"enabled": True})
     c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
     r = step("object.adjust_pan one object", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida]}))
-    check("one object, snap on: it lands on the tenth",
+    check("one object: it lands on the tenth",
           r and abs(r["pans"][0] - 0.1) < 1e-6, str(r and r["pans"]))
+    # The detent is UNCONDITIONAL: the grid's snap is about time, and turning it off must not leave
+    # the pan continuous (which is exactly the regression reported on 15 September 2026).
     c.send("project.set_snap", {"enabled": False})
     c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
     r = step("object.adjust_pan, snap off", lambda: c.send("object.adjust_pan", {"by": 0.13, "ids": [ida]}))
-    check("snap off gives the fine adjustment back",
-          r and abs(r["pans"][0] - 0.13) < 1e-6, str(r and r["pans"]))
+    check("the snap off changes nothing: still the tenth",
+          r and abs(r["pans"][0] - 0.1) < 1e-6, str(r and r["pans"]))
+    # object.set_pan is the machine's door and stays exact — the detent belongs to the hand.
+    r = step("object.set_pan is exact", lambda: c.send("object.set_pan", {"ids": [ida], "pan": 0.37}))
+    check("object.set_pan writes the value as given",
+          abs(c.send("object.get", {"id": ida})["pan"] - 0.37) < 1e-6)
     c.send("project.set_snap", {"enabled": True})
     c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
     c.send("object.set_pan", {"ids": [idb], "pan": 0.5})
