@@ -1,27 +1,31 @@
 import SwiftUI
 
-/// The width of a send knob column on a clip, shared between the display (ToolSendLayer)
-/// and the gestures' hit-testing (handleSendDrag / handleSendTap) so that they stay
-/// aligned. The columns are laid out left to right: with many auxes they get thin — it is
-/// enough to zoom in horizontally to make them bigger.
-func sendColWidth(blockWidth: Double, count: Int) -> Double {
-    guard count > 0 else { return blockWidth }
-    return min(blockWidth / Double(count), 60)
-}
-
-/// The height of the on/off button's clickable area (at the BOTTOM of each column).
-let sendToggleZoneHeight: Double = 22
+// The columns' geometry — `sendColWidth`, `sendToggleZoneHeight`, `sendColumnIndex` — lives in
+// SendColumns.swift, where it depends on nothing and can be asserted with no screen.
 
 /// The Send tool's overlay: one send knob per aux overlapping the clip, in columns side by
 /// side (left → right, in lane order). Inside each column, the content is aligned to the
 /// BOTTOM (the knob, the name plus the level, then on/off right at the bottom) for better
 /// readability. Purely visual (no hit-testing) — the gestures are handled at canvas level.
+///
+/// The columns set off from the block's left edge EXCEPT where a crossfade holds it: a zone is
+/// the span two objects SHARE (@see EditViewModel+Crossfade), so the knobs of the right-hand one
+/// were drawn over pixels its neighbour occupies too — one saw them, and the click landed on
+/// whichever of the pair the hit-test reached first. They start after the shared span instead,
+/// which is the first pixel that belongs to this object alone.
 struct ToolSendLayer: View {
     let rows: [SendRow]
     let blockWidth: Double
     let blockHeight: Double
+    /// The block's leading span shared with a crossfaded neighbour, in px (0 = no crossfade
+    /// there). The SAME value the hit-testing offsets by (@see sendRowHit): two readings of one
+    /// geometry, so a knob one can see is a knob one can turn.
+    var leadingInset: Double = 0
 
-    private var colW: Double { sendColWidth(blockWidth: blockWidth, count: rows.count) }
+    /// What is left of the block once the shared span is taken off it. The columns are laid out
+    /// in there, so a heavily crossfaded edge makes them thinner rather than pushing them out.
+    private var usableWidth: Double { max(0, blockWidth - leadingInset) }
+    private var colW: Double { sendColWidth(blockWidth: usableWidth, count: rows.count) }
 
     var body: some View {
         Color.clear
@@ -35,6 +39,7 @@ struct ToolSendLayer: View {
                         }
                         Spacer(minLength: 0)
                     }
+                    .padding(.leading, leadingInset)
                     .allowsHitTesting(false)
                 }
             }

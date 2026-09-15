@@ -472,16 +472,18 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(-0.1) } }
                     return nil
                 }
-                // Bare ↓ with a TIME SELECTION: the traced passage slides one row down — the frame
-                // travels, the matter does not (@see stepTimeSelectionLanes). Last of the branches,
-                // so the tools and the piano roll keep the key they already had; with a modifier it
-                // is left alone, since ⇧ and ⌥ are where extending and the other readings will go.
+                // Bare ↓ with a TIME SELECTION — or with OBJECTS selected, whose frame is then
+                // adopted: the passage slides one row down, the frame travels and the matter does
+                // not (@see stepTimeSelectionLanes). Last of the branches, so the tools and the
+                // piano roll keep the key they already had; with a modifier it is left alone,
+                // since ⇧ and ⌥ are where extending and the other readings will go.
                 //
                 // "BARE" IS NOT `flags.isEmpty` FOR AN ARROW. macOS stamps every arrow key with
                 // .function AND .numericPad (0xA00000), so `isEmpty` is never true and the key fell
                 // through every branch — AppKit then BEEPS, the same symptom as the ⌥+letter trap.
                 // What is asked here is that no modifier one HOLDS is down.
-                if vm.timeSelection != nil, flags.intersection(Self.heldModifiers).isEmpty {
+                if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
+                   flags.intersection(Self.heldModifiers).isEmpty {
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: 1) }
                     return nil
                 }
@@ -501,8 +503,10 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(0.1) } }
                     return nil
                 }
-                // @see the ↓ branch: an arrow always carries .function + .numericPad.
-                if vm.timeSelection != nil, flags.intersection(Self.heldModifiers).isEmpty {  // one row up
+                // @see the ↓ branch: an arrow always carries .function + .numericPad, and an object
+                // selection is read as the frame it fills.
+                if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
+                   flags.intersection(Self.heldModifiers).isEmpty {  // one row up
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: -1) }
                     return nil
                 }

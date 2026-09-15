@@ -269,6 +269,29 @@ struct MarkerBandDragState {
     var didPushUndo = false
 }
 
+/// An infinite bus being carried to another row.
+///
+/// A bus has neither a start nor an end (@see EditViewModel+Infinite): its band fills the width of
+/// its row, so the only thing a drag on it CAN mean is a change of row. The horizontal travel is
+/// read by nobody — there is nowhere for it to go — and that is why this is a state of its own
+/// rather than a `MoveDragState`, which snaps a start time, enters groups and resolves overlaps:
+/// not one of those has anything to say about a band.
+///
+/// The row under the hand is the DISPLAY row, like every other vertical gesture in the canvas, and
+/// it is converted back to a base lane at the drop. `accepted` is recomputed on every frame from
+/// the model's own rule (@see EditViewModel.infiniteBusLanding) so that the preview shows the
+/// refusal while the hand can still do something about it.
+struct InfiniteBusDragState {
+    let id: UUID
+    let originDisplayLane: Int
+    var targetDisplayLane: Int
+    var accepted: Bool = false
+
+    /// True once the hand has really left the row it set off from — under that, a drag is a click
+    /// that trembled and nothing moves.
+    var travelled: Bool { targetDisplayLane != originDisplayLane }
+}
+
 /// A comment being dragged — moved, or taken by one of its edges.
 ///
 /// The same three parts as a clip and in the same places (@see ClipEditZone): the body moves, the
@@ -356,6 +379,7 @@ extension TimelineView {
         // A crossfade drag already running takes the frame before anything else.
         if crossfadeDrag != nil { handleCrossfadeDrag(value, phase: phase); return }
         if commentDrag != nil { handleCommentDrag(value, phase: phase); return }
+        if infiniteBusDrag != nil { handleInfiniteBusDrag(value, phase: phase); return }
 
         if moveDrag == nil && resizeDrag == nil && trimDrag == nil
             && fadeDrag == nil && timeSelectionDrag == nil && slipDrag == nil && loopRangeDrag == nil {
@@ -404,16 +428,23 @@ extension TimelineView {
             }
             let hitItem = hitEntry?.item
 
-            // An infinite bus: clicking the band = selection only (no move or resize — it has neither
-            // a start nor an end). ⇧ = adding to the selection, like a clip.
+            // An infinite bus: the band has neither a start nor an end, so there is nothing to move
+            // it ALONG and nothing to resize. What is left is the one thing it does have, its ROW —
+            // hence a vertical drag of its own (@see InfiniteBusDragState), and the horizontal
+            // travel deliberately ignored. ⇧ = adding to the selection, like a clip; with it held
+            // one is composing a selection, not carrying a band, so no drag opens.
             if let inf = hitItem, inf.isInfiniteBus {
                 let additive = NSEvent.modifierFlags.contains(.shift)
                 if additive {
                     if viewModel.selectedIDs.contains(inf.id) { viewModel.selectedIDs.remove(inf.id) }
                     else { viewModel.selectedIDs.insert(inf.id) }
-                } else if !viewModel.selectedIDs.contains(inf.id) {
-                    viewModel.selectIDs([inf.id])
+                    return
                 }
+                if !viewModel.selectedIDs.contains(inf.id) { viewModel.selectIDs([inf.id]) }
+                let dl = hitEntry?.displayLane ?? displayLane(for: inf.lane)
+                infiniteBusDrag = InfiniteBusDragState(id: inf.id, originDisplayLane: dl,
+                                                       targetDisplayLane: dl)
+                handleInfiniteBusDrag(value, phase: phase)
                 return
             }
             let hitAbsStart: Double = hitEntry?.absStart ?? 0
@@ -1594,45 +1625,58 @@ extension TimelineView {
 
     // MARK: - Send drag
 
-    /// The clip (a leaf, not an aux) under a point, in canvas coordinates. It also returns its
-    /// geometry for the hit-testing of the knob rows. Top level AND a child of a group.
-    func sendClipHit(at p: CGPoint) -> (id: UUID, bx: Double, by: Double, bw: Double)? {
+    /// EVERY clip (a leaf or a group, never an aux) under a point, in canvas coordinates, with the
+    /// geometry the knob rows are hit-tested against. Top level AND children of expanded groups.
+    ///
+    /// A LIST and no longer a single answer, because a crossfade zone belongs to TWO objects at
+    /// once: on those pixels `first(where:)` handed back whichever of the pair the model happened
+    /// to hold first, so the neighbour's knobs were unreachable there. The caller asks each
+    /// candidate in turn and keeps the one whose columns really contain the point.
+    func sendClipHits(at p: CGPoint) -> [(id: UUID, bx: Double, by: Double, bw: Double)] {
         // Clips AND groups (a group can feed an aux), top level…
-        if let obj = viewModel.items.first(where: { o in
-            guard !o.isAux else { return false }
+        var hits = viewModel.items.compactMap { o -> (id: UUID, bx: Double, by: Double, bw: Double)? in
+            guard !o.isAux else { return nil }
             let bx = o.startTime * pixelsPerSecond
             let bw = max(o.duration * pixelsPerSecond, 2)
             let by = laneY(for: o.lane)
-            return p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight
-        }) {
-            return (obj.id, obj.startTime * pixelsPerSecond,
-                    laneY(for: obj.lane), max(obj.duration * pixelsPerSecond, 2))
+            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { return nil }
+            return (o.id, bx, by, bw)
         }
         // …and descendants of expanded groups (clips AND subgroups).
-        if let e = viewModel.laneEntries.first(where: { e in
-            guard e.depth > 0, !e.item.isAux else { return false }
+        hits += viewModel.laneEntries.compactMap { e -> (id: UUID, bx: Double, by: Double, bw: Double)? in
+            guard e.depth > 0, !e.item.isAux else { return nil }
             let bx = e.absStart * pixelsPerSecond
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
-            return p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight
-        }) {
-            return (e.item.id, e.absStart * pixelsPerSecond,
-                    rulerHeight + Double(e.displayLane) * laneStep,
-                    max(e.item.duration * pixelsPerSecond, 2))
+            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { return nil }
+            return (e.item.id, bx, by, bw)
         }
-        return nil
+        return hits
+    }
+
+    /// The span of a block's LEFT edge that a crossfade holds, in px — the offset the send columns
+    /// set off from. One reading for the display and for the gesture (@see ToolSendLayer), which is
+    /// the whole point: the knobs are drawn there and clicked there.
+    func sendLeadingInset(for id: UUID) -> Double {
+        guard let obj = viewModel.find(id: id) else { return 0 }
+        return crossfadeSharedPx(for: obj).leading
     }
 
     /// The knob column (aux) under a point: it resolves the clip then the column by its width.
+    /// The columns start AFTER the crossfade holding the left edge, so the shared span belongs to
+    /// neither object's knobs — and the object whose columns are really aimed at is the one that
+    /// answers, whichever of an overlapping pair the hit-test met first.
     func sendRowHit(at p: CGPoint) -> (clipID: UUID, auxID: UUID, bx: Double, by: Double, bw: Double)? {
-        guard let hit = sendClipHit(at: p) else { return nil }
-        let rows = viewModel.sendRows(for: hit.id)
-        guard !rows.isEmpty else { return nil }
-        let colW = sendColWidth(blockWidth: hit.bw, count: rows.count)
-        let localX = p.x - hit.bx
-        let idx = Int(localX / colW)
-        guard idx >= 0 && idx < rows.count else { return nil }
-        return (hit.id, rows[idx].auxID, hit.bx, hit.by, hit.bw)
+        for hit in sendClipHits(at: p) {
+            let rows = viewModel.sendRows(for: hit.id)
+            guard !rows.isEmpty,
+                  let idx = sendColumnIndex(localX: p.x - hit.bx, blockWidth: hit.bw,
+                                            leadingInset: sendLeadingInset(for: hit.id),
+                                            count: rows.count)
+            else { continue }
+            return (hit.id, rows[idx].auxID, hit.bx, hit.by, hit.bw)
+        }
+        return nil
     }
 
     func handleSendDrag(_ value: DragGesture.Value, phase: DragPhase) {
@@ -1752,6 +1796,41 @@ extension TimelineView {
             return (c.id, .move)
         }
         return nil
+    }
+
+    /// The infinite bus whose BAND a point falls on, or nil. A bus has no start and no end: its
+    /// surface is the whole width of its row, exactly as the click and the drag read it.
+    func infiniteBusBandHit(at p: CGPoint) -> SoundObject? {
+        guard p.x >= 0, p.x <= contentWidth else { return nil }
+        return viewModel.laneEntries.first { e in
+            guard e.item.isInfiniteBus else { return false }
+            let by = rulerHeight + Double(e.displayLane) * laneStep
+            return p.y >= by && p.y <= by + blockHeight
+        }?.item
+    }
+
+    /// Carrying an infinite bus onto another row (@see InfiniteBusDragState).
+    ///
+    /// Nothing is applied until the hand lets go, unlike the band's marks: a row change here can
+    /// SWAP two buses, and a swap replayed on every frame would have the pair flickering past each
+    /// other all the way down the timeline. So the gesture previews and the drop commits — one
+    /// undo point, pushed only for a move that really happens.
+    func handleInfiniteBusDrag(_ value: DragGesture.Value, phase: DragPhase) {
+        guard var state = infiniteBusDrag else { return }
+        let dl = Int((Double(value.translation.height) / laneStep).rounded())
+        state.targetDisplayLane = max(0, state.originDisplayLane + dl)
+        let targetLane = viewModel.baseLaneForDisplay(state.targetDisplayLane)
+        state.accepted = viewModel.infiniteBusLanding(id: state.id, toLane: targetLane) != nil
+
+        guard phase == .ended else { infiniteBusDrag = state; return }
+        infiniteBusDrag = nil
+        guard state.travelled, state.accepted else { return }
+        viewModel.pushUndo()
+        // Refused after all (the model is the authority, not the preview): the point just pushed
+        // would be an undo that undoes nothing.
+        if viewModel.moveInfiniteBus(id: state.id, toLane: targetLane) == nil {
+            _ = viewModel.undoStack.popLast()
+        }
     }
 
     /// Moving a comment, or cropping it by one of its ends. Live, one undo for the gesture — the

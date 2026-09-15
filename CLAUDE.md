@@ -427,6 +427,58 @@ What has landed since mid-August, in order:
   branches is what one meant; ⌘ one by one; and above all the hand-over of the keyboard between
   the two surfaces — whether a click in the timeline really does feel like giving it back.
 
+- **Five things read off one session's use** (15 September 2026) — four gestures and a label, each
+  small, and each one a place where what was drawn and what answered the hand had come apart.
+  **A crossfade no longer hides the send knobs.** The Send tool lays its columns at the block's
+  LEFT EDGE, and a crossfade zone is the span two objects SHARE — so the right-hand one's knobs
+  were drawn over pixels its neighbour occupies too, and the click went to whichever of the pair
+  the hit-test met first. They start after the shared span now, on the first pixel that belongs to
+  this object alone. The geometry moved out into a unit of its own (`SendColumns.swift`,
+  `sendColumnIndex`) so the display and the hit-testing read ONE definition — a knob one can see
+  and cannot turn is what happens the day those two drift — and it can be asserted with no screen:
+  `tools/test_send_columns.swift`, 22 assertions (written, never run — see below). The hit-test also asks EVERY candidate under the
+  point instead of the first: over a zone there are two, and `first(where:)` was picking by the
+  model's own order.
+  **An infinite bus is carried to another row.** Its band has neither start nor end, so a drag on
+  it did nothing but select; what it does have is a ROW, and that is the gesture — vertical only,
+  the horizontal travel read by nobody. The rule is the band's own, and it is ONE definition
+  (`infiniteBusLanding`) that the drag and `object.move` both go through: an empty row takes it, a
+  row holding ONE other infinite bus SWAPS with it (reordering a stack of buses needs no free row
+  to shuffle through), any other occupied row refuses it — a full-width band set down on a clip
+  would cover it whole, which is what `moveInfiniteBusToOwnLane` exists to avoid at creation. The
+  preview band says the refusal while the hand can still go elsewhere, and the ↕ cursor over a bus
+  replaces the trim/fade/move zones `selectionZoneHover` was carving its stored window into —
+  three gestures the drag never performed. New command: `object.set_infinite` (there was no door
+  onto the infinite at all, so none of this could be verified with no screen).
+  **The view goes past the last object, by 40 %.** Downwards: empty ROWS and not a padding, so
+  many that the lowest row can be scrolled up to 40 % of the lane area — they take their
+  alternating band, they can be aimed at, a range traced on them means something. Rightwards: the
+  canvas keeps 60 % of the window empty after the last object, and the same number bounds the zoom
+  out — `minZoom = viewportWidth / totalDuration` has a fixed point at `0.4 · viewportWidth /
+  contentEnd`, the scale at which the project fills the first 40 % of the screen, which is the rule
+  asked for falling out of the arithmetic rather than being clamped on top of it. The headroom is
+  added to `totalDuration` and NOT to `contentDuration`: the sticky length goes on answering to the
+  objects alone, otherwise it would grow and shrink at every wheel notch. The 60 s floor keeps its
+  say for a short project.
+  **↑ / ↓ read an object selection too.** They moved the traced passage and nothing else; with
+  objects selected and no range traced the key fell through every branch unconsumed, which is the
+  arrow that beeps, one family of bug up. The frame the objects FILL is
+  adopted now — an object is a passage one can SEE, so one selects it rather than tracing over it,
+  the same reading ⌥⌫ makes — and that first press materialises the frame AND moves it in one
+  step, the objects being let go of as it leaves them (objects still selected under a range lying
+  elsewhere would give ⌫ two answers). At an end it still touches NOTHING, the object selection
+  included. An infinite bus is left out of the frame: its stored window is not a passage anybody
+  traced.
+  And the export's **"Reveal" became "Show in Finder"** in the three languages.
+  Verified with no screen: **nothing was built or run** — this machine has no compiler and no
+  macOS. `tools/i18n/xcstrings.py check` answers `393 keys, 3 languages, nothing missing` and
+  `orphans` is empty; that is the whole of it.
+  **Not seen, not heard, not felt, not compiled**: every line above. The send columns under a real
+  crossfade; the bus's vertical drag, its preview band and its refusal; the swap; whether 40 % of
+  empty room below and 60 % to the right is the right amount under the hand; the arrows on an
+  object selection; and "Montrer dans le Finder" in a `.controlSize(.small)` button of the export
+  bar, which is a long label for a narrow row.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

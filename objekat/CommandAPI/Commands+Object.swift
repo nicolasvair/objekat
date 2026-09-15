@@ -27,6 +27,7 @@ extension CommandRegistry {
             payload["fade_out_curve"] = .string(item.fadeOutCurve.shape.rawValue)
             payload["fade_in_bend"] = .number(item.fadeInCurve.amount)
             payload["fade_out_bend"] = .number(item.fadeOutCurve.amount)
+            payload["infinite"] = .bool(item.isInfiniteBus)
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)
@@ -282,6 +283,42 @@ extension CommandRegistry {
             var states: [String: JSONValue] = [:]
             for id in ids { states[id.uuidString] = .bool(vm.find(id: id)?.isMuted ?? false) }
             return .object(["count": .int(ids.count), "muted": .object(states)])
+        }
+
+        register("object.set_infinite",
+                 summary: "Turns the INFINITE on or off for an aux or a group: a bus with no start "
+                        + "and no end, running the length of the project. Top level only. Turning "
+                        + "it on gives the bus a row of ITS OWN, inserted just below — a "
+                        + "full-width band would cover whatever shared its row — so the lane in "
+                        + "the answer is not always the one it set off from.",
+                 params: [ParamSpec("id", "uuid", "Target object (an aux or a group)."),
+                          ParamSpec("on", "bool", required: false, "Wanted state; absent = toggle.")],
+                 // `setObjectInfinite` pushes its own undo, and pushes none when nothing changes.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            guard object.canBeInfinite else {
+                throw CommandError(code: .invalid_state,
+                                   message: "only an aux or a group can be infinite")
+            }
+            // Asked HERE rather than left to the model: `setObjectInfinite` answers a child of a
+            // group with an alert, and an alert is a window — which is precisely what a headless
+            // instance must never open (@see the windowless mode).
+            guard vm.items.contains(where: { $0.id == id }) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "an infinite bus is top level only")
+            }
+            let wanted = try p.optionalBool("on") ?? !object.isInfinite
+            vm.setObjectInfinite(id: id, on: wanted)
+            guard let after = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "object lost")
+            }
+            return .object(["id": .string(id.uuidString),
+                            "infinite": .bool(after.isInfiniteBus),
+                            "lane": .int(after.lane)])
         }
 
         register("object.set_duration",

@@ -248,7 +248,7 @@ That is end-of-process noise, with no effect on the result.
 | `project.*` | new, open, save, save as, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
 | `selection.*` | all, clear, set, read |
-| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, detail |
+| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
@@ -496,6 +496,30 @@ timeline.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 
+### An infinite bus changes row
+
+`object.set_infinite` turns an aux's or a group's infinite on or off — top level only, a child of a
+group is refused (`invalid_state`) rather than answered with the interface's alert, an alert being a
+window. Turning it on gives the bus a row of ITS OWN, inserted just below, so the lane in the answer
+is not always the one it set off from. `object.get` reports the state as `infinite`.
+
+An infinite bus has neither a start nor an end: its band takes the whole width of its row, so the
+only thing a move can mean for it is a change of ROW. `object.move` with a `lane` is that move, and
+it answers by the band's own rule rather than writing the lane as given:
+
+- an **empty** row takes it;
+- a row holding **one other infinite bus and nothing else** SWAPS with it — the two full-width
+  bands trade rows, which is what reordering a stack of buses needs and what would otherwise
+  require a free row to shuffle through;
+- any other occupied row **refuses** it (`invalid_state`), and nothing moves at all. A bus set down
+  on a clip would cover it whole, which is exactly what `moveInfiniteBusToOwnLane` exists to avoid
+  when one is created.
+
+Asking for the row it already sits on is a no-op and answers its current lane. A `start` sent
+ALONGSIDE a `lane` is left alone — a band has nowhere to start — while a `start` on its own still
+writes the stored window, which is the one a bus goes back to when its infinite is turned off. The
+same rule is what the hand's vertical drag on the band obeys, and it is one definition, not two.
+
 ### The snap belongs to the project
 
 `project.set_snap` turns it on or off, and it is **saved with the file**: a session built off the
@@ -536,8 +560,18 @@ comment is laid. At the two ends — row 0, and the last row the timeline draws 
 the lowest object, the open groups' children and the unfolded bands counted in) — nothing moves and
 the selection is kept whole rather than clipped.
 
-With no time selection it answers `invalid_state`. The answer is the selection payload, plus
-`moved`.
+With **objects selected and no range traced**, the frame they FILL is adopted and travels instead:
+from the first one's start to the last one's end, over the display rows they sit on. An object is a
+passage one can see, so one selects it rather than tracing over it — the same reading `ripple_delete`
+makes of an object selection. That first call materialises the frame AND moves it, in one step, and
+the objects are **deselected**: the frame has left them, and objects still selected under a range
+lying elsewhere would give `⌫` two answers. Not one of them changes lane for all that. An INFINITE
+BUS is left out of the frame — its band has neither start nor end, and the window it still stores is
+not a passage anybody traced.
+
+With neither a time selection nor a usable object selection it answers `invalid_state`. At an end it
+returns having touched NOTHING, the object selection included. The answer is the selection payload,
+plus `moved`.
 
 ### Ripple
 

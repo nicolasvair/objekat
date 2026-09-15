@@ -2422,19 +2422,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reveal"
+            "value": "Show in Finder"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mostrar"
+            "value": "Mostrar en el Finder"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Révéler"
+            "value": "Montrer dans le Finder"
           }
         }
       }

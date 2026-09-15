@@ -137,6 +137,57 @@ with ObjekatClient(SOCK) as c:
           "%s → %s" % (before, after))
     c.send("timesel.clear")
 
+    # --- the same arrows with OBJECTS selected and no range traced: the frame they FILL is
+    #     adopted and travels, and the objects are let go of as it leaves them.
+    c.send("selection.set", {"ids": [ida]})
+    ga = c.send("object.get", {"id": ida})       # A is on row 0: ↑ has nowhere to go
+    r = step("timesel.step_lane ↑ object", lambda: c.send("timesel.step_lane", {"by": -1}))
+    check("at row 0 a press changes NOTHING, the object selection included",
+          r and r["moved"] is False and r["count"] == 1 and "time_selection" not in r, str(r))
+    r = step("timesel.step_lane ↓ object", lambda: c.send("timesel.step_lane", {"by": 1}))
+    ts = r and r.get("time_selection")
+    check("an object selection is read as the frame it fills, one row lower",
+          ts and ts["lanes"] == [ga["display_lane"] + 1]
+          and abs(ts["start"] - ga["start"]) < 1e-9
+          and abs(ts["end"] - (ga["start"] + ga["duration"])) < 1e-9,
+          "%s from %s" % (ts, ga))
+    check("and the objects are let go of — the frame has left them", r and r["count"] == 0, str(r))
+    moved = c.send("object.get", {"id": ida})
+    check("the object itself has not budged",
+          moved["lane"] == ga["lane"] and abs(moved["start"] - ga["start"]) < 1e-9,
+          "%s → %s" % (ga, moved))
+    c.send("timesel.clear")
+    c.send("selection.clear")
+
+    # --- an infinite bus changes row: an empty one takes it, another bus swaps with it, a row
+    #     holding matter refuses it (a full-width band would cover whatever is there).
+    x1 = step("aux.create bus 1",  lambda: c.send("aux.create", {"start": 0, "end": 1, "lane": 4}))
+    x2 = step("aux.create bus 2",  lambda: c.send("aux.create", {"start": 0, "end": 1, "lane": 6}))
+    id1, id2 = x1["id"], x2["id"]
+    step("object.set_infinite 1",  lambda: c.send("object.set_infinite", {"id": id1, "on": True}))
+    r = step("object.set_infinite 2", lambda: c.send("object.set_infinite", {"id": id2, "on": True}))
+    check("object.get reports the infinite", c.send("object.get", {"id": id1})["infinite"] is True)
+    l2 = c.send("object.get", {"id": id2})["lane"]
+
+    r = step("object.move bus, empty row", lambda: c.send("object.move", {"id": id1, "lane": 12}))
+    check("an empty row simply takes it", r and r["lane"] == 12, str(r))
+    r = step("object.move bus onto bus",  lambda: c.send("object.move", {"id": id1, "lane": l2}))
+    check("a row holding ONE other infinite bus swaps with it",
+          r and r["lane"] == l2 and c.send("object.get", {"id": id2})["lane"] == 12,
+          "%s / bus 2 on %s" % (r, c.send("object.get", {"id": id2})["lane"]))
+    try:
+        c.send("object.move", {"id": id1, "lane": 0})   # row 0 carries object A
+        check("a row holding matter refuses the band", False, "it went through")
+    except ObjekatError as e:
+        check("a row holding matter refuses the band", e.code == "invalid_state", e.code)
+    check("and the refusal moved NOTHING",
+          c.send("object.get", {"id": id1})["lane"] == l2
+          and c.send("object.get", {"id": ida})["lane"] == 0)
+    # The two buses go away again: the rest of the scenario lays its own auxes on these rows, and
+    # a band left lying about would be one more sender in every `aux.list` below.
+    step("object.remove buses", lambda: c.send("object.remove", {"ids": [id1, id2]}))
+    c.send("selection.clear")
+
     # --- stems
     s = step("stem.add",      lambda: c.send("stem.add", {"name": "Voice", "format": "mono"}))
     sid = s["id"]

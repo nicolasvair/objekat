@@ -127,10 +127,31 @@ struct TimelineView: View {
     }
     private let minLanes: Int = 2
 
-    /// The length the content really takes (plus some room to manoeuvre).
-    private var contentDuration: Double {
-        let maxObj = viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0
-        return max(60, maxObj + 10)
+    /// Where the project's matter really ends: the right edge of its last object.
+    private var contentEnd: Double {
+        viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0
+    }
+
+    /// The length the content really takes (plus some room to manoeuvre). Deliberately free of the
+    /// zoom: it is what `stickyTotalDuration` is measured against, and a length that changed with
+    /// every wheel notch would have the canvas growing and shrinking under the hand.
+    private var contentDuration: Double { max(60, contentEnd + 10) }
+
+    /// Empty room kept to the RIGHT of the last object, as a fraction of the window: one goes on
+    /// scrolling and zooming out until that object's end sits 40 % of the way across, with the
+    /// remaining 60 % empty. Working at the end of a project one is always laying sound down AFTER
+    /// what is there, and a timeline that stops dead at its last object gives the hand nowhere to
+    /// put it.
+    private static let rightHeadroomFraction: Double = 0.60
+
+    /// Empty rows kept BELOW the last one, as a fraction of the visible lanes: one goes on
+    /// scrolling down until the lowest row sits 40 % of the way up from the foot. Measured on the
+    /// LANE area and not on the window, the ruler being a sticky header that never shows content.
+    private static let bottomHeadroomFraction: Double = 0.40
+
+    /// That room, in seconds at the current scale.
+    private var rightHeadroom: Double {
+        pixelsPerSecond > 0 ? Self.rightHeadroomFraction * Double(viewportWidth) / pixelsPerSecond : 0
     }
 
     /// The length of the DISPLAYED timeline. It grows at once when the content does, but never
@@ -138,7 +159,16 @@ struct TimelineView: View {
     /// would make the scroll jump and the zoom move under one's fingers. Shrinking is deferred
     /// until a moment when it moves nothing on screen (see `syncStickyDuration`) — only the zoom
     /// BOUNDS follow, never the current zoom.
-    private var totalDuration: Double { max(contentDuration, stickyTotalDuration) }
+    ///
+    /// The headroom is added HERE and not to `contentDuration`, so that the sticky length goes on
+    /// answering to the objects alone. It is also what bounds the zoom out, and the fixed point is
+    /// exactly the rule asked for: `minZoom = viewportWidth / totalDuration` cannot be satisfied
+    /// below `0.4 · viewportWidth / contentEnd`, i.e. the scale at which the project fills the
+    /// first 40 % of the window. The 60 s floor keeps its say for a short project — one still
+    /// zooms out to a minute of timeline rather than to a minute taking 40 % of the screen.
+    private var totalDuration: Double {
+        max(max(contentDuration, stickyTotalDuration), contentEnd + rightHeadroom)
+    }
     @State private var stickyTotalDuration: Double = 60
 
     /// The total width of the timeline's content (px). It serves as the width of an infinite bus,
@@ -164,6 +194,10 @@ struct TimelineView: View {
     /// business in the guards that ask whether the content is being edited.
     @State var markerBandDrag: MarkerBandDragState? = nil
     @State var commentDrag: CommentDragState? = nil
+    /// An infinite bus being carried to another row. A slot of its own for the same reason as the
+    /// two above: it moves no matter in TIME, so it has no business in the guards that ask whether
+    /// the content is being edited (@see relaxStickyDuration).
+    @State var infiniteBusDrag: InfiniteBusDragState? = nil
     @State var keyMonitor: Any? = nil
     @State var scrollMonitor: Any? = nil
     @State var magnifyMonitor: Any? = nil
@@ -211,7 +245,25 @@ struct TimelineView: View {
         viewModel.items.reduce(0) { acc, item in acc + item.expandedSpan }
     }
 
-    private var visibleLanes: Int { max(maxOccupiedLane + 2, minLanes) + totalExtraLanes }
+    /// The empty rows that carry the bottom headroom, for a GIVEN row height. Real rows and not a
+    /// bare padding: they get their alternating band, they can be aimed at, a range traced on them
+    /// means something (@see stepTimeSelectionLanes) and a paste lands there — a strip of nothing
+    /// below the last band would read as the end of the timeline rather than as room in it.
+    ///
+    /// Parametrised by the row height for the same reason `canvasHeight(forBlockHeight:)` is: the
+    /// vertical zoom needs the canvas as it will be AFTER the change so as to bound the scroll, and
+    /// a headroom counted at the old height would put that stop in the wrong place for a frame.
+    private func headroomLanes(forLaneStep step: Double) -> Int {
+        guard step > 0 else { return 0 }
+        let room = Self.bottomHeadroomFraction * max(0, Double(viewportHeight) - rulerHeight)
+        return max(0, Int((room / step).rounded(.up)))
+    }
+
+    private func visibleLanes(forLaneStep step: Double) -> Int {
+        max(maxOccupiedLane + 2, minLanes) + totalExtraLanes + headroomLanes(forLaneStep: step)
+    }
+
+    private var visibleLanes: Int { visibleLanes(forLaneStep: laneStep) }
 
     /// The display lanes where the editing point is: the time selection, the insertion caret, and
     /// the lanes of the selected objects. It serves to know WHICH group one is working in (a lane
@@ -233,7 +285,9 @@ struct TimelineView: View {
     /// The canvas's height for a GIVEN block height — the vertical zoom needs the height AFTER
     /// the change so as to bound the scroll (@see applyVerticalZoom).
     private func canvasHeight(forBlockHeight h: Double) -> Double {
-        max(rulerHeight + Double(visibleLanes) * (h + laneGap) + 8, Double(viewportHeight))
+        let step = h + laneGap
+        return max(rulerHeight + Double(visibleLanes(forLaneStep: step)) * step + 8,
+                   Double(viewportHeight))
     }
 
     var body: some View {
@@ -831,7 +885,12 @@ struct TimelineView: View {
                         for clipID in clipIDs {
                             guard let cr = clipRect(for: clipID) else { continue }
                             let auxes = viewModel.sendToolAuxes(for: clipID)
-                            let colW = sendColWidth(blockWidth: cr.width, count: auxes.count)
+                            // The same offset as the knobs themselves: a crossfade holds the left
+                            // edge, the columns start after it (@see ToolSendLayer), and a link
+                            // setting off from the old origin would leave its knob behind.
+                            let inset = sendLeadingInset(for: clipID)
+                            let colW = sendColWidth(blockWidth: max(0, cr.width - inset),
+                                                    count: auxes.count)
                             for (idx, aux) in auxes.enumerated() {
                                 let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
                                 let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
@@ -840,7 +899,7 @@ struct TimelineView: View {
                                 let ar = at.rect
                                 // The link sets off from the centre of that aux's on/off button (the
                                 // bottom of its column), horizontally aligned on the knob.
-                                let src = CGPoint(x: cr.minX + (Double(idx) + 0.5) * colW,
+                                let src = CGPoint(x: cr.minX + inset + (Double(idx) + 0.5) * colW,
                                                   y: cr.maxY - 2 - sendToggleZoneHeight / 2)
                                 let dst = CGPoint(x: ar.midX, y: ar.midY)
                                 var path = Path()
@@ -862,6 +921,25 @@ struct TimelineView: View {
                     .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
                     .allowsHitTesting(false)
                     .zIndex(2.7)
+                }
+
+                // The row an infinite bus is being carried to. It is the WHOLE feedback of that
+                // gesture — a band is drawn at its own row and nothing of it follows the pointer —
+                // and it says the refusal as well as the landing: a row that already holds matter
+                // will not take a full-width band, and one sees that while the hand can still go
+                // elsewhere (@see EditViewModel.infiniteBusLanding).
+                if let bd = infiniteBusDrag, bd.travelled {
+                    let ok = bd.accepted
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill((ok ? Color.accentColor : Color.red).opacity(0.18))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(ok ? Color.accentColor : Color.red, lineWidth: 2)
+                        )
+                        .frame(width: contentWidth, height: blockHeight)
+                        .offset(x: 0, y: rulerHeight + Double(bd.targetDisplayLane) * laneStep)
+                        .allowsHitTesting(false)
+                        .zIndex(2.96)
                 }
 
                 // A preview of the file drop: the blocks about to be born, at their lane and their
@@ -1157,6 +1235,16 @@ struct TimelineView: View {
                 TimelineCursorKeeper.set(NSCursor.arrow)
             }
         case .toolSelection:
+            // An INFINITE BUS first, and unconditionally: its band has no edge to take hold of and
+            // no start to slide, only a row to change (@see InfiniteBusDragState). Asked before
+            // `selectionZoneHover`, which knows nothing of infinites and was carving the bus's
+            // stored window up into trim / fade / move zones — promising, over that stretch of the
+            // band, three gestures the drag never performs. The ↕ says the one axis there is.
+            if infiniteBusBandHit(at: pos) != nil {
+                TimelineCursorKeeper.set(NSCursor.resizeUpDown)
+                if editZoneHover != nil { editZoneHover = nil }
+                return
+            }
             let zoneHover = selectionZoneHover(at: pos)
             // ⌥ on an object's upper band (or on a time selection): the drag will not move, it will
             // SLIP THE CONTENT inside the window. Nothing said so on screen — the gesture changed
@@ -2705,7 +2793,11 @@ struct TimelineView: View {
     private func resetStickyDuration() {
         let content = contentDuration
         stickyTotalDuration = content
-        let maxScrollX = max(0, content * pixelsPerSecond - Double(viewportWidth))
+        // The canvas's real width, headroom included (@see totalDuration): clamping on the content
+        // alone would drag the scroll back out of room that does exist. Recomputed here rather than
+        // read off `totalDuration`, which would want the @State written just above.
+        let width = max(content, contentEnd + rightHeadroom)
+        let maxScrollX = max(0, width * pixelsPerSecond - Double(viewportWidth))
         if Double(scrollOffsetX) > maxScrollX {
             scrollTo(x: CGFloat(maxScrollX), y: scrollOffsetY)
         }

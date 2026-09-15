@@ -72,10 +72,20 @@ extension EditViewModel {
     /// lowest object, the group children and the open bands counted in. At the edge nothing moves
     /// and the selection is kept.
     ///
-    /// Returns true when it did travel.
+    /// With OBJECTS selected and no range traced, the frame is the one the objects FILL (@see
+    /// `selectedObjectsFrame`): an object is a passage one can see, so one selects it rather than
+    /// tracing over it — the same reading ⌥⌫ makes of an object selection. That first press
+    /// materialises the frame AND moves it, in one step, and the objects are let go of: the frame
+    /// has left them, and objects still selected under a range lying elsewhere would give ⌫ two
+    /// answers. Nothing moves on the row they were on — this stays a gesture that edits nothing.
+    ///
+    /// Returns true when it did travel. At an end it returns false having touched NOTHING, the
+    /// object selection included: a press that goes nowhere is a press that changes nothing.
     @discardableResult
     func stepTimeSelectionLanes(by delta: Int) -> Bool {
-        guard delta != 0, let sel = timeSelection,
+        guard delta != 0 else { return false }
+        let adopting = timeSelection == nil
+        guard let sel = timeSelection ?? selectedObjectsFrame(),
               let lo = sel.lanes.min(), let hi = sel.lanes.max() else { return false }
 
         // The last row the canvas draws: one row past the lowest object, plus everything unfolded
@@ -88,10 +98,28 @@ extension EditViewModel {
         let step = delta < 0 ? max(delta, -lo) : min(delta, max(0, lastRow - hi))
         guard step != 0 else { return false }
 
+        // Adopted from an object selection: the objects are let go of as the frame leaves them.
+        if adopting { selectedIDs = [] }
         timeSelection = TimeSelection(timeRange: sel.timeRange,
                                       lanes: Set(sel.lanes.map { $0 + step }))
         caretLane = lo + step
         return true
+    }
+
+    /// The frame a set of selected OBJECTS fills: from the first one's start to the last one's end,
+    /// over the DISPLAY rows they sit on — the rows, because that is the space the range travels
+    /// in, and a child of an open group has no row of its own in the model's lanes.
+    ///
+    /// An INFINITE BUS is left out of it: its band has neither start nor end, and the window it
+    /// still stores is not a passage anybody traced. A selection holding nothing else answers nil,
+    /// and the arrows then do nothing rather than moving a frame nobody could see the sense of.
+    func selectedObjectsFrame() -> TimeSelection? {
+        let rows = laneEntries.filter { selectedIDs.contains($0.item.id) && !$0.item.isInfiniteBus }
+        guard let t0 = rows.map(\.absStart).min(),
+              let t1 = rows.map({ $0.absStart + $0.item.duration }).max(),
+              let lo = rows.map(\.displayLane).min(),
+              let hi = rows.map(\.displayLane).max() else { return nil }
+        return TimeSelection(timeRange: t0...t1, lanes: Set(lo...hi))
     }
 
     /// Selects a marker, a region or a comment — exclusive with the objects, the crossfade, the

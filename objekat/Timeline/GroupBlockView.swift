@@ -200,7 +200,8 @@ struct GroupBlockView: View {
 
             // Send overlay — one send knob per aux overlapping the group.
             if activeTool == .toolAux && !sendRows.isEmpty {
-                ToolSendLayer(rows: sendRows, blockWidth: blockWidth, blockHeight: blockHeight)
+                ToolSendLayer(rows: sendRows, blockWidth: blockWidth, blockHeight: blockHeight,
+                              leadingInset: sharedLeadingPx)
             }
 
             // The cut line is rendered at canvas level (TimelineView).

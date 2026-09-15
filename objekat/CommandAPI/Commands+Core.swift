@@ -344,7 +344,11 @@ extension CommandRegistry {
         }
 
         register("object.move",
-                 summary: "Moves an object: a new lane and/or a new start.",
+                 summary: "Moves an object: a new lane and/or a new start. An INFINITE BUS has "
+                        + "neither start nor end, so only its lane moves, and it moves by the "
+                        + "band's own rule: an empty row takes it, a row holding one other "
+                        + "infinite bus SWAPS with it, and any other occupied row refuses it "
+                        + "(invalid_state) — the same answer the drag gives.",
                  params: [ParamSpec("id", "uuid", "Object to move."),
                           ParamSpec("lane", "int", required: false, "New lane."),
                           ParamSpec("start", "number", required: false, "New start, in seconds."),
@@ -362,6 +366,24 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'lane' or 'start' required")
             }
             let snap = try p.bool("snap", or: false)
+            // An infinite bus goes through ONE definition, the same the hand's drag reaches
+            // (@see EditViewModel.moveInfiniteBus): a full-width band cannot simply be set down
+            // on a row that already holds matter, and the API has no business creating the state
+            // the interface refuses to.
+            if current.isInfiniteBus, let lane {
+                guard let landed = vm.moveInfiniteBus(id: id, toLane: lane) else {
+                    if max(0, lane) == current.lane {
+                        return .object(["id": .string(id.uuidString),
+                                        "lane": .int(current.lane),
+                                        "start": .number(current.startTime)])
+                    }
+                    throw CommandError(code: .invalid_state,
+                                       message: "lane \(lane) is not free for an infinite bus")
+                }
+                return .object(["id": .string(id.uuidString),
+                                "lane": .int(landed),
+                                "start": .number(vm.find(id: id)?.startTime ?? current.startTime)])
+            }
             // The crossfade FOLLOWS, exactly as it does under the hand: the zone is the span the
             // two share, and moving one of them changes that span and nothing else. This command
             // still does not overwrite — that is the interface's policy, not the API's — so a

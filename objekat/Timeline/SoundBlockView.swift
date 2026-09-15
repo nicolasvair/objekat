@@ -281,7 +281,8 @@ struct SoundBlockView: View {
 
             // Send overlay — one send knob per aux overlapping the clip.
             if activeTool == .toolAux && !sendRows.isEmpty {
-                ToolSendLayer(rows: sendRows, blockWidth: blockWidth, blockHeight: blockHeight)
+                ToolSendLayer(rows: sendRows, blockWidth: blockWidth, blockHeight: blockHeight,
+                              leadingInset: sharedLeadingPx)
             }
 
             // Mute overlay — a semi-transparent grey, visible when the item OR its stem is muted.
