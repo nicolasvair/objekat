@@ -368,9 +368,21 @@ What has landed since mid-August, in order:
   An INSTRUMENT is not in this selection: it lives in `SoundObject.instruments`, not one batch
   gesture can touch it, and letting it into the set would arm them all over something they cannot
   reach. It keeps a highlight slot of its own.
-  Verified with no screen: a build, 18 standalone assertions on the geometry, 48 on
+  Two things came out of USING it, the same day. The power button and the ✕ of a card that is IN
+  the selection now speak for the WHOLE selection (a card outside it still speaks for itself — the
+  drag's rule, and the clips' before it): without that the batch on/off existed in the model and in
+  the API and was **unreachable from the hand**, which is its own lesson — a model function with no
+  door onto it reads as finished and is not. And **a bypass became undoable**, all three of them:
+  one card, the instrument, a whole selection (ONE point for the batch). None of them pushed one,
+  on the reasoning that a realtime flag honoured by `PluginNode` is not an edit — nothing is
+  recompiled, the graph keeps its shape. Wrong reasoning, and the test is the ear: a bypass CHANGES
+  WHAT IS HEARD, which is the only thing that qualifies a gesture for ⌘Z. `plugin.toggle` and
+  `plugin.toggle_selected` moved from `undo: .bus` to `.handled` with it — the bus used to push the
+  point the method lacked, so the API path had a ⌘Z the BUTTON never had.
+  Verified with no screen: a build, 18 standalone assertions on the geometry, 50 on
   `tools/scenario_plugin_selection.py` against a headless instance (order, one undo per batch,
-  stems, move/copy/link, what a batch refuses), `smoke.jsonl` clean, `scenario_families.py` 90 OK,
+  stems, move/copy/link, what a batch refuses, the ⌘Z of a bypass), `smoke.jsonl` clean,
+  `scenario_families.py` 92 OK,
   `scenario_markers.py` ALL PASS, i18n 393 keys, and `CGWindowListCopyWindowInfo` on the headless
   pid: no window.
   Commands: `plugin.select` / `selection` / `deselect` / `remove_selected` / `toggle_selected` /

@@ -276,7 +276,7 @@ commands drive.
 | `plugin.selection` | what is selected, IN THE CHAIN'S ORDER, plus `host`, `has_keyboard`, `clipboard` |
 | `plugin.deselect` | clears it, and gives the keyboard back to the timeline |
 | `plugin.remove_selected` | ⌫ — every selected card, in one undo step |
-| `plugin.toggle_selected` | on/off over the lot. Mixed states go to OFF: one still on turns them all off |
+| `plugin.toggle_selected` | on/off over the lot, in one undo step. Mixed states go to OFF: one still on turns them all off |
 | `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
 
@@ -286,7 +286,10 @@ Three things are worth knowing before driving them:
   and plugins laid down in the wrong one are a different sound. `plugin.selection` therefore answers
   in reading order, parallel branches walked in place — not in the order they were named.
 - **One undo step per gesture, not one per card.** `plugin.move` with three plugins is one `edit.undo`
-  away from being back.
+  away from being back — and so is a bypass over five, which since 15 September 2026 pushes a point
+  where it used to push none. A realtime flag is not an edit on the graph, but it changes what is
+  HEARD, and that is what qualifies a gesture for ⌘Z (`plugin.toggle` likewise, and it moved from
+  `undo: .bus` to `.handled` because the method now pushes its own).
 - **The selection carries the KEYBOARD.** As long as it names a host, ⌫ ⌘C ⌘V ⌘D aim at the cards
   rather than at the timeline's objects. `plugin.select` with an empty list therefore means something
   precise — claim the keyboard for that chain, choose nothing — which is what lets `plugin.paste`
