@@ -514,7 +514,7 @@ struct SynopticView: View {
 
     private func applyMarquee(cards: [SynopticLayout.CardPlacement]) {
         guard let r = marqueeRect else { return }
-        let caught = Set(SynopticMarquee.fullyInside(r, cards: marqueeCards(cards)))
+        let caught = Set(SynopticMarquee.touching(r, cards: marqueeCards(cards)))
         if marqueeFlips {
             selection = marqueeBase.symmetricDifference(caught)
         } else if marqueeAdds {

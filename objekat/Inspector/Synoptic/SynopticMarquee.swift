@@ -17,19 +17,23 @@ enum SynopticMarquee {
         init(id: UUID, frame: CGRect) { self.id = id; self.frame = frame }
     }
 
-    /// A MARQUEE takes the cards it contains ENTIRELY — the same rule the timeline's rubber band
-    /// applies to clips (@see TimelineView.selectInDisplayLanes), and deliberately not an
-    /// intersection. On a canvas where parallel branches sit side by side, a rectangle drawn down
-    /// one branch grazes its neighbour's cards on the way past, and taking what one merely brushed
-    /// is how a selection stops being something one can aim.
+    /// A MARQUEE takes every card it TOUCHES — a card half caught is caught. Containment was the
+    /// first rule here (the clips' rubber band applies it, and on a canvas where parallel branches
+    /// sit side by side it was meant to keep a rectangle drawn down one branch from sweeping up its
+    /// neighbour); the hand said otherwise on the first day of use. A card is 124 pt wide in a
+    /// narrow column, so asking for the whole of it means aiming AROUND it, and a rectangle one has
+    /// to draw wider than the thing one wants is not a rectangle one aims — while what a brushed
+    /// neighbour costs is one ⌘+click. So the two rules of this file agree now, and the only
+    /// difference left between them is where the rectangle comes from.
     ///
     /// `rect` is taken standardised, so a rectangle drawn upwards or leftwards reads the same; a
     /// flat one (no width or no height) takes nothing, which is what a click that never travelled
-    /// should do.
-    static func fullyInside(_ rect: CGRect, cards: [Card]) -> [UUID] {
+    /// should do — and it is stated rather than left to `intersects`, which answers false for an
+    /// empty rectangle by its own rule and not by ours.
+    static func touching(_ rect: CGRect, cards: [Card]) -> [UUID] {
         let r = rect.standardized
         guard r.width > 0, r.height > 0 else { return [] }
-        return cards.filter { r.contains($0.frame) }.map(\.id)
+        return cards.filter { r.intersects($0.frame) }.map(\.id)
     }
 
     /// ⇧+click GROWS the selection to the box that holds what was already taken plus the card
@@ -38,9 +42,9 @@ enum SynopticMarquee {
     /// range along the chain: the signal view is a canvas, branches run side by side on it, and a
     /// hand that draws a diagonal across two branches means the two.
     ///
-    /// INTERSECTION here, where the marquee above asks for containment — and the difference is the
-    /// gesture, not an oversight: a marquee is drawn where one wants it, whereas this box is
-    /// DEDUCED from cards, so its edges fall ON them and never around them.
+    /// Intersection here as in the marquee above, and for this one it was never in doubt: the box
+    /// is DEDUCED from cards, so its edges fall ON them and never around them — containment would
+    /// have dropped the two cards it is drawn FROM.
     ///
     /// An empty selection ⇒ the target alone, which is what ⇧ on a fresh canvas should do.
     static func boundingBox(of selected: Set<UUID>, extendedTo targetID: UUID,

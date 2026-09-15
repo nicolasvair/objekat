@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // MARK: - Plugins
@@ -188,6 +189,44 @@ extension CommandRegistry {
             return .object(["links": .int(vm.linkSiblings(of: ids[0]).count),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
                             "count": .int(placed.count)])
+        }
+
+        // The DROP itself, and not merely what it ends up calling. `plugin.move|copy|link` reach
+        // `transferPlugins` directly; a hand reaches it through `acceptPluginDrop`, which is the
+        // one door both places the hand can let go of share — a timeline object, and a bus's strip
+        // in the toolbar. What only this command can assert is what that door adds on top of the
+        // transfer: an instrument going to its SLOT rather than into the chain, and the selection
+        // following its cards into the target when it was the selection that was dragged.
+        register("plugin.drop",
+                 summary: "Drops a plugin (or the whole selection) onto a host, exactly as a drag "
+                        + "released over a timeline object or a bus's strip does.",
+                 params: [ParamSpec("from", "uuid", "Source host."),
+                          ParamSpec("plugin", "uuid", required: false, "Dragged plugin."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Several plugins at once. Replaces 'plugin'."),
+                          ParamSpec("to", "uuid", "Host the drag is released over."),
+                          ParamSpec("mode", "string", required: false,
+                                    "move (default, no modifier) | copy (⌥) | link (⌘).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let from = try p.uuid("from")
+            let to = try p.uuid("to")
+            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
+            let mode = try p.string("mode", or: "move")
+            let flags: NSEvent.ModifierFlags
+            switch mode {
+            case "move": flags = []
+            case "copy": flags = .option
+            case "link": flags = .command
+            default: throw CommandError(code: .bad_params,
+                                        message: "mode must be move, copy or link")
+            }
+            let payload = PluginDragPayload(sourceObjectID: from, pluginID: ids[0], pluginIDs: ids)
+            let placed = vm.acceptPluginDrop(payload, on: to, modifiers: flags)
+            return .object(["placed": .bool(placed),
+                            "to": .string(to.uuidString),
+                            "selection": .array(vm.orderedSelectedPluginIDs().map { .string($0.uuidString) }),
+                            "selection_host": vm.selectedPluginHostID.map { .string($0.uuidString) } ?? .null])
         }
 
         register("plugin.unlink",

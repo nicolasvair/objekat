@@ -20,11 +20,9 @@ fileprivate func dragCarriesFile(_ p: NSItemProvider) -> Bool {
     p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
 }
 
-/// True if this provider carries a plugin payload (JSON under `public.plain-text`).
-fileprivate func dragCarriesPlugin(_ p: NSItemProvider) -> Bool {
-    p.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
-        && !p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-}
+// Text and not a file = an internal plugin payload. One definition for every door it can come
+// in by (@see PluginDrop.carries); this name is what the band's delegate reads it under.
+fileprivate func dragCarriesPlugin(_ p: NSItemProvider) -> Bool { PluginDrop.carries(p) }
 
 // The timeline's drop delegate: it drives the cursor's badge live (a plugin drag with no
 // modifier = .move (no badge); with ⌥ or ⌘ = .copy (a '+' badge).
@@ -175,52 +173,11 @@ extension TimelineView {
             // text IS a plugin payload — we let the following branches try their luck on the
             // same provider (they will disqualify themselves if there is no fileURL).
             if dragCarriesPlugin(provider) {
-                let flags = NSEvent.modifierFlags
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
-                    guard let data,
-                          let payload = try? JSONDecoder().decode(PluginDragPayload.self, from: data)
-                    else { return }
-                    Task { @MainActor in
-                        guard let targetID = objectID(at: location) else { return }
-                        // AN INSTRUMENT (the MIDI zone): it does not join the target's FX chain —
-                        // it needs MIDI at its input — but its instrument SLOT. The same three
-                        // gestures as for an FX: nothing = move, ⌥ = copy, ⌘ = copy AND
-                        // LINK (the two instances are set together).
-                        // @see EditViewModel.transferInstrument
-                        if viewModel.isInstrument(payload.pluginID, of: payload.sourceObjectID) {
-                            viewModel.transferInstrument(
-                                sourceObjectID: payload.sourceObjectID,
-                                pluginID: payload.pluginID,
-                                targetObjectID: targetID,
-                                copy: flags.contains(.option) || flags.contains(.command),
-                                linked: flags.contains(.command))
-                            return
-                        }
-                        // ONE card or a whole SELECTION, the same three gestures either way and
-                        // the same single undo point: the payload says what it carries
-                        // (@see PluginDragPayload.ids), the transfer says what it does.
-                        let mode: PluginTransferMode = flags.contains(.command) ? .link
-                                                     : (flags.contains(.option) ? .copy : .move)
-                        // Was it the selection itself that was taken? Asked BEFORE the transfer,
-                        // which is about to move the ids it names.
-                        let wasSelection = viewModel.selectedPluginHostID == payload.sourceObjectID
-                            && viewModel.selectedPluginIDs == Set(payload.ids)
-                        let placed = viewModel.transferPlugins(payload.ids,
-                                                               from: payload.sourceObjectID,
-                                                               to: targetID, mode: mode)
-                        // A MOVE hands the cards new identities. The selection follows them into
-                        // the target chain when it WAS the thing dragged; otherwise it named cards
-                        // that have just left, so it is given up rather than left pointing at
-                        // nothing — and with it the keyboard goes back to the timeline.
-                        if mode == .move, !placed.isEmpty {
-                            if wasSelection {
-                                viewModel.setPluginSelection(Set(placed), host: targetID)
-                            } else if viewModel.selectedPluginHostID == payload.sourceObjectID {
-                                viewModel.clearPluginSelection()
-                            }
-                        }
-                    }
-                }
+                // What a dropped payload DOES is the same wherever it is let go of — a timeline
+                // object here, a bus's strip in the toolbar — so the timeline only says WHERE:
+                // the host under the cursor, resolved at the drop and not before.
+                // @see PluginDrop.receive
+                PluginDrop.receive(provider, in: viewModel) { objectID(at: location) }
             }
             // Files: the Finder's and the browser's alike, the same path from end to end.
             guard dragCarriesFile(provider) else { continue }

@@ -46,42 +46,55 @@ let cards = [
 @main
 enum MarqueeTest {
   static func main() {
-    // MARK: - The marquee: ENTIRELY inside, never merely brushed
+    // MARK: - The marquee: every card it TOUCHES, a card half caught being caught
 
     check("a rectangle round nothing takes nothing",
-          SynopticMarquee.fullyInside(CGRect(x: 0, y: 220, width: 400, height: 40), cards: cards).isEmpty)
+          SynopticMarquee.touching(CGRect(x: 0, y: 220, width: 400, height: 40), cards: cards).isEmpty)
 
     check("a rectangle round one card takes it",
-          names(SynopticMarquee.fullyInside(CGRect(x: 90, y: -10, width: 150, height: 50), cards: cards)) == ["a"])
+          names(SynopticMarquee.touching(CGRect(x: 90, y: -10, width: 150, height: 50), cards: cards)) == ["a"])
 
-    check("a card merely brushed is NOT taken",
-          SynopticMarquee.fullyInside(CGRect(x: 90, y: -10, width: 150, height: 20), cards: cards).isEmpty,
-          "the rectangle stops at y=10, a runs to y=30")
+    check("a card merely brushed IS taken",
+          names(SynopticMarquee.touching(CGRect(x: 90, y: -10, width: 150, height: 20), cards: cards)) == ["a"],
+          "the rectangle stops at y=10 and a runs to y=30: 10 pt of it is enough")
 
-    check("one branch taken, its neighbour left alone",
-          names(SynopticMarquee.fullyInside(CGRect(x: 10, y: 50, width: 150, height: 50), cards: cards)) == ["b"],
-          "this is the whole reason for containment rather than intersection")
+    check("one point of a card is enough",
+          names(SynopticMarquee.touching(CGRect(x: 223, y: 29, width: 40, height: 20), cards: cards)) == ["a"],
+          "the corner alone: 1 pt × 1 pt of a, which is exactly what containment used to refuse")
+
+    check("a rectangle down one branch takes the neighbour it crosses",
+          names(SynopticMarquee.touching(CGRect(x: 10, y: 50, width: 210, height: 90), cards: cards))
+            == ["b", "c", "d"],
+          "the accepted cost of touching: c is brushed at x=200, and ⌘+click is what undoes it")
+
+    check("a branch reached and its neighbour untouched",
+          names(SynopticMarquee.touching(CGRect(x: 10, y: 50, width: 150, height: 50), cards: cards)) == ["b"],
+          "b runs to x=144 and c starts at x=200: nothing is brushed, so nothing else is taken")
 
     check("a wide rectangle takes both branches",
-          names(SynopticMarquee.fullyInside(CGRect(x: 0, y: 50, width: 400, height: 50), cards: cards)) == ["b", "c"])
+          names(SynopticMarquee.touching(CGRect(x: 0, y: 50, width: 400, height: 50), cards: cards)) == ["b", "c"])
 
     check("a rectangle over the whole canvas takes everything",
-          names(SynopticMarquee.fullyInside(CGRect(x: -10, y: -10, width: 500, height: 300), cards: cards))
+          names(SynopticMarquee.touching(CGRect(x: -10, y: -10, width: 500, height: 300), cards: cards))
             == ["a", "b", "c", "d", "e"])
 
     // Drawn the other way: upwards and leftwards, the same rectangle.
-    let downRight = SynopticMarquee.fullyInside(CGRect(x: 0, y: 50, width: 400, height: 50), cards: cards)
-    let upLeft    = SynopticMarquee.fullyInside(CGRect(x: 400, y: 100, width: -400, height: -50), cards: cards)
+    let downRight = SynopticMarquee.touching(CGRect(x: 0, y: 50, width: 400, height: 50), cards: cards)
+    let upLeft    = SynopticMarquee.touching(CGRect(x: 400, y: 100, width: -400, height: -50), cards: cards)
     check("drawn upwards and leftwards reads the same", names(downRight) == names(upLeft))
 
     check("a rectangle with no width takes nothing",
-          SynopticMarquee.fullyInside(CGRect(x: 100, y: 0, width: 0, height: 300), cards: cards).isEmpty)
+          SynopticMarquee.touching(CGRect(x: 100, y: 0, width: 0, height: 300), cards: cards).isEmpty,
+          "a click that never travelled chooses nothing, however many cards that line crosses")
     check("a rectangle with no height takes nothing",
-          SynopticMarquee.fullyInside(CGRect(x: 0, y: 15, width: 400, height: 0), cards: cards).isEmpty)
+          SynopticMarquee.touching(CGRect(x: 0, y: 15, width: 400, height: 0), cards: cards).isEmpty)
 
     check("a card exactly the rectangle's size is taken",
-          names(SynopticMarquee.fullyInside(CGRect(x: 100, y: 0, width: 124, height: 30), cards: cards)) == ["a"],
-          "the edges touching is containment, not a brush")
+          names(SynopticMarquee.touching(CGRect(x: 100, y: 0, width: 124, height: 30), cards: cards)) == ["a"])
+
+    check("a rectangle INSIDE a card takes it",
+          names(SynopticMarquee.touching(CGRect(x: 140, y: 10, width: 20, height: 10), cards: cards)) == ["a"],
+          "the short drag one makes over a single card, which containment answered with nothing")
 
     // MARK: - ⇧: the bounding box, and what it sweeps up on the way
 

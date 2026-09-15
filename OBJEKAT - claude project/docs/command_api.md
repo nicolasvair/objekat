@@ -279,6 +279,7 @@ commands drive.
 | `plugin.toggle_selected` | on/off over the lot, in one undo step. Mixed states go to OFF: one still on turns them all off |
 | `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
+| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip |
 
 Three things are worth knowing before driving them:
 
@@ -290,6 +291,10 @@ Three things are worth knowing before driving them:
   where it used to push none. A realtime flag is not an edit on the graph, but it changes what is
   HEARD, and that is what qualifies a gesture for ⌘Z (`plugin.toggle` likewise, and it moved from
   `undo: .bus` to `.handled` because the method now pushes its own).
+- **A bus is aimed at by its STRIP.** A stem has no block of its own in the timeline, so the strip
+  in the toolbar is the only thing a hand can drop a card on; `plugin.drop` is that door for both
+  targets, and what it adds over `plugin.move|copy|link` is the modifier reading and the selection
+  following its cards into the chain it landed in.
 - **The selection carries the KEYBOARD.** As long as it names a host, ⌫ ⌘C ⌘V ⌘D aim at the cards
   rather than at the timeline's objects. `plugin.select` with an empty list therefore means something
   precise — claim the keyboard for that chain, choose nothing — which is what lets `plugin.paste`

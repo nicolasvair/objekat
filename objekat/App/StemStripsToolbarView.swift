@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Stem mixer in the toolbar (INC 1 VU + INC 2 FX)
 //
@@ -20,6 +21,8 @@ struct StemStripsToolbarView: View {
     // red LED) until acknowledged by clicking the LED. Latched here (it survives the bar being
     // rebuilt).
     @State private var clippedStems: Set<UUID> = []
+    // The strip a plugin drag is hovering over. One id and not a Set: a drop has one target.
+    @State private var dropTargetStemID: UUID? = nil
     // A tick counter for the poll → the blink rate (independent of playback).
     @State private var pollTick: Int = 0
     // @State (and not `let`): the toolbar is rebuilt ~20 times a second by the playhead; a `let`
@@ -48,11 +51,27 @@ struct StemStripsToolbarView: View {
                     isOpen: openStemID == stem.id,
                     isClipping: clippedStems.contains(stem.id),
                     blinkOn: blinkOn,
+                    isDropTarget: dropTargetStemID == stem.id,
                     onClearClip: { clippedStems.remove(stem.id) }
                 ) {
                     openStemID = (openStemID == stem.id) ? nil : stem.id
                 }
                 .overlay(StemColorMenuOverlay(viewModel: viewModel, stemID: stem.id))
+                // A plugin card dragged onto the STRIP joins that bus's chain. The strip is the
+                // only place a bus can be aimed at with the hand: a stem has no block of its own
+                // in the timeline — its band is INFINITE and belongs to a group or an aux, and
+                // the Main has nothing drawn at all — so without this the whole drag vocabulary
+                // (nothing = move, ⌥ = an independent copy, ⌘ = a copy that stays linked) stopped
+                // at the objects, and a chain built on an object could not be carried up onto a
+                // bus. What happens on arrival is `acceptPluginDrop`, the timeline's own door.
+                .onDrop(of: [.plainText], isTargeted: Binding(
+                    get: { dropTargetStemID == stem.id },
+                    set: { dropTargetStemID = $0 ? stem.id : (dropTargetStemID == stem.id ? nil : dropTargetStemID) }
+                )) { providers in
+                    guard let provider = providers.first(where: PluginDrop.carries) else { return false }
+                    PluginDrop.receive(provider, in: viewModel) { stem.id }
+                    return true
+                }
                 .popover(isPresented: Binding(
                     get: { openStemID == stem.id },
                     set: { if !$0 && openStemID == stem.id { openStemID = nil } }
@@ -119,6 +138,10 @@ private struct StemStripButton: View {
     /// A stem detached from the Main that has clipped (latched) → a blinking red LED until acknowledged.
     var isClipping: Bool = false
     var blinkOn: Bool = true
+    /// A plugin drag is hovering over this strip: it says WHERE the card will land, before the
+    /// hand lets go. The border alone carries it (it is already the strip's 'open' signal), so a
+    /// bus reads the same whether one is opening it or dropping onto it.
+    var isDropTarget: Bool = false
     var onClearClip: () -> Void = {}
     let action: () -> Void
 
@@ -168,8 +191,9 @@ private struct StemStripButton: View {
                 // black and stays recognisable as the same hue as in the timeline.
                 .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
             .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isOpen ? Color.accentColor : tint.opacity(0.55),
-                              lineWidth: isOpen ? 1.5 : 1))
+                .strokeBorder(isDropTarget ? Color.accentColor
+                                : (isOpen ? Color.accentColor : tint.opacity(0.55)),
+                              lineWidth: isDropTarget ? 2 : (isOpen ? 1.5 : 1)))
         }
         .buttonStyle(.plain)
         // The number is the keyboard shortcut's; it is missing beyond 9, where there is none left.

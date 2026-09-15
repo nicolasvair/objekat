@@ -19,7 +19,9 @@ What it is really out to prove, beyond the commands answering:
   • ONE undo step per gesture, not one per card;
   • an object and a STEM are the same host, in every one of these gestures;
   • ⌘D and ⌘V land just after the LAST selected card, in ITS series, and not at the chain's end;
-  • a MOVE really empties the source, where a copy and a link leave it whole.
+  • a MOVE really empties the source, where a copy and a link leave it whole;
+  • a DROP lands on a BUS's strip — the only place a stem can be aimed at with the hand — and
+    the selection follows its cards there.
 
 The half this file cannot reach is the mouse: the rectangle, ⇧ and ⌘ on the canvas are geometry,
 and they are asserted on their own in `test_synoptic_marquee.swift`.
@@ -283,6 +285,57 @@ with ObjekatClient(SOCK) as c:
     check("a card really LEAVES a stem's chain (it does not live in `items`)",
           idents(STEM) == [] and idents(A) == ["delay", "reverb"],
           "%s / %s" % (idents(STEM), idents(A)))
+
+    # ── the DROP, and a bus's strip as a target ─────────────────────────────
+    # `plugin.drop` is the door a HAND comes in by — a timeline object, or a bus's strip in the
+    # toolbar, which is the only place a stem can be aimed at (a stem has no block of its own).
+    # It reaches the same transfer as `plugin.move`, and what is asserted here is what it adds:
+    # the mode read off the modifiers, and the selection following its cards.
+    eq, rev, comp, cho = fill(A)
+    fill(STEM, [])
+    cmd("plugin.select", host=A, plugins=[eq, rev])
+    r = cmd("plugin.drop", **{"from": A, "plugins": [eq, rev], "to": STEM})
+    check("a drop with no modifier MOVES onto the bus",
+          idents(STEM) == ["4bandEq", "reverb"] and idents(A) == ["compressor", "chorus"],
+          "%s / %s" % (idents(STEM), idents(A)))
+    check("the selection follows its cards into the bus it was dropped on",
+          r["selection_host"] == STEM and len(r["selection"]) == 2, str(r))
+    check("and one ⌘Z gives the bus's chain back",
+          (cmd("edit.undo"), idents(STEM) == [] and idents(A) == BUILTINS)[1],
+          "%s / %s" % (idents(STEM), idents(A)))
+
+    fill(A)
+    fill(STEM, [])
+    eq = chain(A)[0][0]
+    cmd("plugin.deselect")
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "copy"})
+    check("⌥ over a strip leaves the source whole",
+          idents(A) == BUILTINS and idents(STEM) == ["4bandEq"],
+          "%s / %s" % (idents(A), idents(STEM)))
+    check("a copy dropped on a bus is INDEPENDENT",
+          cmd("plugin.list", host=STEM)["plugins"][0]["linked"] is False)
+
+    fill(STEM, [])
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "link"})
+    src = cmd("plugin.list", host=A)["plugins"][0]
+    dst = cmd("plugin.list", host=STEM)["plugins"][0]
+    check("⌘ over a strip links the bus's copy to the card dragged",
+          src["link_group"] is not None and src["link_group"] == dst["link_group"], str(dst))
+
+    # The other way round: a bus's card carried back down onto an object.
+    fill(STEM, ["reverb"])
+    srev = chain(STEM)[0][0]
+    fill(B, [])
+    cmd("plugin.drop", **{"from": STEM, "plugin": srev, "to": B})
+    check("a card is dragged OFF a bus as well as onto one",
+          idents(STEM) == [] and idents(B) == ["reverb"],
+          "%s / %s" % (idents(STEM), idents(B)))
+
+    try:
+        cmd("plugin.drop", **{"from": A, "plugin": eq, "to": B, "mode": "sideways"})
+        check("a drop with an unknown mode is refused", False, "no error raised")
+    except ObjekatError as e:
+        check("a drop with an unknown mode is refused", "bad_params" in str(e), str(e))
 
     # ── what a batch refuses ────────────────────────────────────────────────
     eq, rev, comp, cho = fill(A)

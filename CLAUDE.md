@@ -368,7 +368,7 @@ What has landed since mid-August, in order:
   An INSTRUMENT is not in this selection: it lives in `SoundObject.instruments`, not one batch
   gesture can touch it, and letting it into the set would arm them all over something they cannot
   reach. It keeps a highlight slot of its own.
-  Two things came out of USING it, the same day. The power button and the ✕ of a card that is IN
+  Three things came out of USING it, the same day. The power button and the ✕ of a card that is IN
   the selection now speak for the WHOLE selection (a card outside it still speaks for itself — the
   drag's rule, and the clips' before it): without that the batch on/off existed in the model and in
   the API and was **unreachable from the hand**, which is its own lesson — a model function with no
@@ -379,20 +379,36 @@ What has landed since mid-August, in order:
   WHAT IS HEARD, which is the only thing that qualifies a gesture for ⌘Z. `plugin.toggle` and
   `plugin.toggle_selected` moved from `undo: .bus` to `.handled` with it — the bus used to push the
   point the method lacked, so the API path had a ⌘Z the BUTTON never had.
-  Verified with no screen: a build, 18 standalone assertions on the geometry, 50 on
+  And **a card is dropped on a BUS's strip** in the toolbar. A stem has no block of its own in the
+  timeline — its band is infinite and belongs to a group or an aux, the Main has nothing drawn at
+  all — so the strip is the only thing a hand can aim a bus with, and without it the whole drag
+  vocabulary stopped at the objects: a chain built on an object could not be carried up onto a bus,
+  which is half of what one builds stems FOR. What a drop DOES is now one function,
+  `acceptPluginDrop` (+ `PluginDrop.receive` for the pasteboard half), the timeline's own branch
+  having moved into it rather than being copied — the modifiers are read at the drop and carried
+  into the async load, because a payload arrives after the hand has let go of ⌥. An instrument
+  dropped on a strip does nothing, and needs no guard of its own: `transferInstrument` already asks
+  for a MIDI object. `plugin.drop` is the same door for a script, which is what makes any of this
+  assertable with no screen — `plugin.move|copy|link` reach the transfer directly and never touch it.
+  **And the marquee takes what it TOUCHES**, not what it contains. Containment was the clips' rule
+  carried over, and the reasoning for it (a rectangle down one branch would sweep up the neighbour
+  it grazes) lost to the hand on the first day: a card is 124 pt wide in a narrow column, so asking
+  for the whole of it means drawing AROUND it, and a short drag over one card chose nothing at all.
+  A brushed neighbour costs one ⌘+click. The two rules of `SynopticMarquee` agree now, and the only
+  difference left between them is where the rectangle comes from.
+  Verified with no screen: a build, 21 standalone assertions on the geometry, 58 on
   `tools/scenario_plugin_selection.py` against a headless instance (order, one undo per batch,
-  stems, move/copy/link, what a batch refuses, the ⌘Z of a bypass), `smoke.jsonl` clean,
-  `scenario_families.py` 92 OK,
+  stems, move/copy/link, the drop onto a bus and back off it, what a batch refuses, the ⌘Z of a
+  bypass), `smoke.jsonl` clean, `scenario_families.py` 92 OK,
   `scenario_markers.py` ALL PASS, i18n 393 keys, and `CGWindowListCopyWindowInfo` on the headless
   pid: no window.
   Commands: `plugin.select` / `selection` / `deselect` / `remove_selected` / `toggle_selected` /
-  `duplicate_selected` / `copy_selected` / `paste`; `plugin.move|copy|link` take `plugins` (a list)
-  in place of `plugin`.
-  **Not seen on screen, nor felt**: every pixel and every gesture of it — the rectangle drawn under
-  the hand and its veil, several cards highlighted at once, ⇧'s box and whether what it sweeps up
-  across two branches is what one meant, ⌘ one by one, the drag of a whole selection onto a
-  timeline object, and above all the hand-over of the keyboard between the two surfaces: whether a
-  click in the timeline really does feel like giving it back.
+  `duplicate_selected` / `copy_selected` / `paste` / `drop`; `plugin.move|copy|link` take `plugins`
+  (a list) in place of `plugin`.
+  **Not seen on screen, nor felt**: the rectangle's veil under the hand and the accent border a
+  strip takes while a card hovers over it; ⇧'s box and whether what it sweeps up across two
+  branches is what one meant; ⌘ one by one; and above all the hand-over of the keyboard between
+  the two surfaces — whether a click in the timeline really does feel like giving it back.
 
 ### What is owed
 
