@@ -1873,10 +1873,25 @@ struct SynopticBoundView: View {
                             fxReadOnly: (obj?.isObjectInstance ?? false),
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
-            onToggleBypass: { viewModel.togglePluginEnabled(objectID: objectID, pluginID: $0) },
-            onRemove: {
-                viewModel.removePlugin(objectID: objectID, pluginID: $0)
-                pluginSelection.wrappedValue.remove($0)
+            // The power button of a card that is IN the selection speaks for the WHOLE selection;
+            // one outside it speaks for itself alone. The same rule as the drag just below and as
+            // the clips before it: what you GRAB is what decides. Without this the batch on/off
+            // existed in the model and in the API and was unreachable from the hand.
+            onToggleBypass: { id in
+                if pluginSelection.wrappedValue.contains(id) {
+                    viewModel.toggleSelectedPluginsEnabled()
+                } else {
+                    viewModel.togglePluginEnabled(objectID: objectID, pluginID: id)
+                }
+            },
+            // Same rule for the ✕: it takes the selection when the card clicked is part of it,
+            // in ONE undo step, and that card alone otherwise.
+            onRemove: { id in
+                if pluginSelection.wrappedValue.contains(id) {
+                    viewModel.removeSelectedPlugins()
+                } else {
+                    viewModel.removePlugin(objectID: objectID, pluginID: id)
+                }
             },
             onInsertSeries: { seriesID, index in
                 if let loc = locations[seriesID] { activeSheet = .insert(location: loc, index: index) }
