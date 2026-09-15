@@ -399,9 +399,14 @@ What has landed since mid-August, in order:
   (`PluginDrop.operation`). And the ⌘ maillon is drawn BY THE STRIP rather than by the timeline's
   canvas: the timeline's `pluginLinkDropLocation` badge lives in the main window, and a popover is
   another WINDOW above it — nothing drawn down there can come in front, which is exactly what the
-  stem's own FX popover was hiding it behind. Same glyph, same `LinkColor.plugin`, laid inside the
-  strip (over the VU dot, which is not what one reads mid-drag) so nothing can clip it, and the
-  border turns that yellow with it.
+  stem's own FX popover was hiding it behind. Same glyph, same `LinkColor.plugin`, and it FOLLOWS
+  THE CURSOR as the timeline's does: `DropInfo.location` is already in the drop view's own
+  coordinates, so the strip draws it with nothing converted — which is the whole reason it is the
+  strip that draws it and not the bar. The one difference is a clamp, and it comes from the size of
+  the thing: a strip is some 23 pt tall, so the timeline's (+18, −18) would put the maillon over
+  the window's chrome instead of beside the pointer. Inside those bounds it still tracks the
+  horizontal, which is the axis one travels along a bar of buses, and the clamp lets go by itself
+  if a strip ever grows. The border turns that yellow with it.
   **And the marquee takes what it TOUCHES**, not what it contains. Containment was the clips' rule
   carried over, and the reasoning for it (a rectangle down one branch would sweep up the neighbour
   it grazes) lost to the hand on the first day: a card is 124 pt wide in a narrow column, so asking
