@@ -367,11 +367,14 @@ extension EditViewModel {
     /// did not find it and its on/off button stayed inert. On the engine side, on the other hand, it is
     /// an instance like the others, registered in the same `_pluginMap` (@see setInstrument:) —
     /// so the realtime bypass applies to it in exactly the same way, with no recompile.
+    /// The instrument's bypass. Undoable for the same reason as an FX's, and it is the SAME
+    /// button on the same card — one of the two without ⌘Z would be the odd one out.
     func toggleInstrumentEnabled(objectID: UUID, pluginID: UUID) {
         guard let engine,
               let inst = find(id: objectID)?.instruments.first(where: { $0.id == pluginID })
         else { return }
         let newEnabled = !inst.isEnabled
+        pushUndo()
         engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: objectID.uuidString)
         update(id: objectID) { o in
             o.instruments = o.instruments.map { p in
@@ -464,13 +467,19 @@ extension EditViewModel {
         isDirty = true
     }
 
+    /// Bypasses or re-enables a plugin. A realtime bypass — honoured in the rack by `PluginNode`,
+    /// so nothing is recompiled — but an UNDOABLE one: it went without an undo point until
+    /// 15 September 2026, on the reasoning that a mere flag is not an edit. That reasoning was
+    /// wrong, and the test is the ear: bypassing a plugin CHANGES WHAT IS HEARD, which is the only
+    /// thing that qualifies a gesture for ⌘Z. Nothing else in this chain is silently irreversible.
+    /// The snapshot carries `isEnabled`, and `compileRack` reapplies it leaf by leaf on the way back.
     func togglePluginEnabled(objectID: UUID, pluginID: UUID) {
         // Recursive reads/writes: the plugin may live in a branch of a parallel block.
         guard let plugins = chainPlugins(objectID),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }),
               let engine else { return }
         let newEnabled = !plug.isEnabled
-        // A realtime bypass (honoured in the rack by PluginNode) — no need to recompile.
+        pushUndo()
         engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: objectID.uuidString)
         updateChainPlugins(objectID) { p in p = Self.settingEnabled(pluginID, newEnabled, in: p) }
         isDirty = true

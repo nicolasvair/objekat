@@ -171,6 +171,16 @@ with ObjekatClient(SOCK) as c:
           r["enabled"] is False and not st["4bandEq"] and not st["reverb"] and not st["compressor"],
           str(st))
 
+    # A bypass is UNDOABLE — it changes what is heard, which is the only test that qualifies a
+    # gesture for ⌘Z. One point for the whole batch, and one for a single card.
+    cmd("edit.undo")
+    st = {p[1]: p[2] for p in chain(A)}
+    check("ONE ⌘Z gives back every card the batch bypass took down",
+          st["4bandEq"] and st["compressor"] and not st["reverb"], str(st))
+    cmd("edit.undo")
+    st = {p[1]: p[2] for p in chain(A)}
+    check("and the single bypass before it is undoable too", st["reverb"] is True, str(st))
+
     # ── ⌘D : duplicating just after the last selected card ──────────────────
     eq, rev, comp, cho = fill(A)
     cmd("plugin.select", host=A, plugins=[eq])

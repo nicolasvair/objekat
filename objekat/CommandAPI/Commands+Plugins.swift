@@ -112,7 +112,9 @@ extension CommandRegistry {
                  summary: "Enables or bypasses a plugin (a toggle, without recompiling the chain).",
                  params: [ParamSpec("host", "uuid", "Carrying object or stem."),
                           ParamSpec("plugin", "uuid", "Target plugin.")],
-                 undo: .bus) { p in
+                 // `.handled` since 15 September 2026: the method pushes its own point now, and
+                 // the bus wrapping it a second time would cost two ⌘Z for one bypass.
+                 undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let host = try p.uuid("host")
             let pluginID = try p.uuid("plugin")
@@ -282,8 +284,8 @@ extension CommandRegistry {
 
         register("plugin.toggle_selected",
                  summary: "Bypasses or re-enables every selected card. Mixed states go to OFF: "
-                        + "if a single one is still on, they all go off.",
-                 params: [], undo: .bus) { _ in
+                        + "if a single one is still on, they all go off. ONE undo step.",
+                 params: [], undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let enabled = vm.toggleSelectedPluginsEnabled() else {
                 throw CommandError(code: .invalid_state, message: "no card selected")

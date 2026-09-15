@@ -118,13 +118,19 @@ extension EditViewModel {
     /// Bypasses or re-enables every selected card AT ONCE. Mixed states resolve one way: if a
     /// single one of them is still on, the gesture turns them ALL off — "off" is what a hand asks
     /// for when it reaches for a bypass over several plugins, and a second press brings them all
-    /// back. Like the single toggle, it is a realtime bypass: no recompilation, and no undo point.
+    /// back.
+    ///
+    /// Like the single toggle, it is a realtime bypass: nothing is recompiled. Unlike what both of
+    /// them did until 15 September 2026, it pushes an undo point — ONE for the whole batch, so
+    /// ⌘Z gives back the five cards the gesture took down and not the last of them
+    /// (@see togglePluginEnabled, where the reasoning is written out).
     @discardableResult
     func toggleSelectedPluginsEnabled() -> Bool? {
         guard let host = selectedPluginHostID, let engine else { return nil }
         let selected = orderedSelectedPlugins()
         guard !selected.isEmpty else { return nil }
         let newEnabled = !selected.contains { $0.isEnabled }
+        pushUndo()
         for p in selected {
             engine.setPlugin(p.id.uuidString, enabled: newEnabled, forObjectID: host.uuidString)
         }
