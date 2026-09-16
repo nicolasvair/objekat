@@ -502,9 +502,10 @@ final class EditViewModel {
 
     // MARK: - Export (the File ▸ Export… window)
     //
-    // The render runs in the background in the engine: the window closes as soon as it starts
-    // and the app stays usable. What follows is only the visible state — the settings being
-    // edited, the live job, the progress timer. The machinery is in EditViewModel+Export.
+    // The render runs on the engine's own thread and the app stays usable. What follows is only
+    // the visible state — the settings being edited, the live job, the progress timer, the peaks
+    // of what is being made and the listening laid over them. The machinery is in
+    // EditViewModel+Export.
 
     /// The export window open (a modal sheet of ContentView).
     var exportPanelPresented: Bool = false
@@ -514,6 +515,12 @@ final class EditViewModel {
     /// The export under way, or finished a short while ago (the progress banner shows it for a few
     /// seconds before it disappears). nil = nothing to show.
     var exportJob: ExportJob? = nil
+    /// The peaks of the render in progress, min/max interleaved, one pair per bucket already
+    /// filled — so its LENGTH says how far the render has got. Read from the engine's tap by the
+    /// same timer that reads the progress. @see OBJEngineCore `exportPeaks`, ExportWaveformView.
+    var exportPeaks: [Float] = []
+    /// Listening to the file while it is being written. @see ExportAudition.
+    let exportAudition = ExportAudition()
     /// The timer reading the engine's progress during the render phase.
     @ObservationIgnored var exportProgressTimer: Timer? = nil
     /// The cancel flag consulted by the MP3 encoder, which runs on a background queue: it cannot

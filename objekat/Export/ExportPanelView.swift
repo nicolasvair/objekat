@@ -8,6 +8,12 @@ import AppKit
 // The IN/OUT fields take seconds or bar:beat:tick, as you like: the setting does NOT touch the
 // timeline's grid mode, it concerns this panel alone (and it is kept from one export to the
 // next).
+//
+// AND IT IS WHERE A DIRECT RENDER HAPPENS. It used to close on the Export button and hand
+// everything to a one-line strip: a percentage, and nothing of what was coming out. It stays now
+// — the settings go grey, the waveform grows at the bottom as the engine makes it, and a play
+// button hears the file while it is still being written. A render one only has a percentage of is
+// a render one cannot judge. Ticking "in the background" is what gives the strip its turn.
 
 struct ExportPanelView: View {
     @Bindable var viewModel: EditViewModel
@@ -41,30 +47,36 @@ struct ExportPanelView: View {
         return String(format: bars < 10 ? L("export.duration.barsFine") : L("export.duration.bars"), bars)
     }
 
+    /// The render this panel is showing — its own, since a direct render no longer closes it.
+    private var job: ExportJob? { viewModel.exportJob }
+    private var isRendering: Bool { job?.isRunning == true }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L("export.panel.title"))
                 .font(.system(size: 15, weight: .semibold))
 
-            timeRangeSection
-            Divider()
-            formatSection
-            Divider()
-            destinationSection
-            Divider()
-            renderModeSection
-
-            HStack {
-                Text(estimatedSizeLabel)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                Button(L("common.cancel")) { viewModel.exportPanelPresented = false }
-                    .keyboardShortcut(.cancelAction)
-                Button(L("export.panel.run")) { viewModel.runExport(viewModel.exportSettings) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(range == nil)
+            // The settings go on being READ while a render runs — one wants to see at what rate
+            // this is being made — but not edited: they were handed to the engine at the start,
+            // and a field answering the hand over a render it no longer describes would be a lie.
+            VStack(alignment: .leading, spacing: 16) {
+                timeRangeSection
+                Divider()
+                formatSection
+                Divider()
+                destinationSection
+                Divider()
+                renderModeSection
             }
+            .disabled(isRendering)
+            .opacity(isRendering ? 0.5 : 1)
+
+            if job != nil {
+                Divider()
+                renderSection
+            }
+
+            footer
         }
         .padding(20)
         .frame(width: 460)
@@ -72,6 +84,124 @@ struct ExportPanelView: View {
         .onChange(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
         // Changing unit does not touch the bounds: we show the same instants differently.
         .onChange(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
+        // The listening belongs to this panel: closing it stops the sound. The render, itself,
+        // goes on — and the strip under the transport takes it over.
+        .onDisappear { viewModel.exportAudition.stop() }
+    }
+
+    // MARK: - The render, at the bottom
+
+    /// What a render shows of itself: the waveform as it is made, a play button to hear what has
+    /// come out, and the numbered progress on the last line. It is the whole point of keeping the
+    /// panel open — a render one only has a percentage of is a render one cannot judge.
+    @ViewBuilder
+    private var renderSection: some View {
+        if let job {
+            VStack(alignment: .leading, spacing: 8) {
+                ExportWaveformView(peaks: viewModel.exportPeaks,
+                                   resolution: EditViewModel.exportPeakResolution,
+                                   playhead: auditionFraction,
+                                   audible: audibleFraction,
+                                   onSeek: { viewModel.seekExportAudition(toFraction: $0) })
+
+                HStack(spacing: 10) {
+                    Button { viewModel.toggleExportAudition() } label: {
+                        Image(systemName: viewModel.exportAudition.isPlaying
+                                          ? "pause.fill" : "play.fill")
+                            .font(.system(size: 9))
+                            .frame(width: 12)
+                    }
+                    .controlSize(.small)
+                    .disabled(!canAudition)
+                    .help(L("export.audition.help"))
+
+                    Text(job.statusLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .fixedSize()
+
+                    if job.isRunning {
+                        if job.isIndeterminate {
+                            ProgressView().progressViewStyle(.linear)
+                        } else {
+                            ProgressView(value: job.progress).progressViewStyle(.linear)
+                        }
+                        if !job.isIndeterminate {
+                            Text(verbatim: "\(Int(job.progress * 100)) %")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                    } else {
+                        Spacer()
+                    }
+                }
+
+                // The play head has caught the render up. Not a fault — the render is slower than
+                // real time just here — and saying it is what stops a silence reading as a bug.
+                if viewModel.exportAudition.isPlaying && viewModel.exportAudition.starved
+                    && job.isRunning {
+                    Text(L("export.audition.waiting"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    /// Where the listening is, in 0…1 of the range being rendered. nil = nobody is listening.
+    private var auditionFraction: Double? {
+        let total = viewModel.exportAuditionDuration
+        guard viewModel.exportAudition.isPlaying, total > 0 else { return nil }
+        return min(1, max(0, viewModel.exportAudition.position / total))
+    }
+
+    /// How far the listening COULD reach: what has been flushed to disk. Deliberately not the
+    /// progress — the render runs ahead of the writer.
+    private var audibleFraction: Double? {
+        let total = viewModel.exportAuditionDuration
+        guard total > 0 else { return nil }
+        return min(1, max(0, viewModel.exportAudition.availableDuration / total))
+    }
+
+    private var canAudition: Bool { viewModel.exportAudition.availableDuration > 0.05 }
+
+    // MARK: - The buttons
+
+    @ViewBuilder
+    private var footer: some View {
+        HStack {
+            if let job, !job.isRunning {
+                Text(job.resultDetail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text(estimatedSizeLabel)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+
+            if isRendering {
+                Button(L("export.panel.cancelRender")) { viewModel.cancelExport() }
+                    // While preparing, the engine has no render to interrupt yet.
+                    .disabled(job?.isIndeterminate == true)
+                // Closing does NOT cancel: the render goes on and the strip takes it over.
+                Button(L("common.close")) { viewModel.exportPanelPresented = false }
+                    .keyboardShortcut(.cancelAction)
+            } else {
+                if job?.phase == .finished {
+                    Button(L("export.reveal")) { viewModel.revealExportedFileInFinder() }
+                        .controlSize(.regular)
+                }
+                Button(L("common.close")) { viewModel.exportPanelPresented = false }
+                    .keyboardShortcut(.cancelAction)
+                Button(L("export.panel.run")) { viewModel.runExport(viewModel.exportSettings) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(range == nil)
+            }
+        }
     }
 
     // MARK: - Time selection

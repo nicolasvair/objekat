@@ -249,6 +249,23 @@
 // « Cancelled » ; le fichier partiellement écrit est à effacer par l'appelant.
 - (void)cancelExport;
 
+// CRÊTES DU RENDU EN COURS — de quoi dessiner la waveform pendant qu'elle se fabrique.
+//
+// Tracktion offre déjà l'accroche : EditRenderer::render prend un IncomingDataReceiver et lui
+// passe CHAQUE bloc rendu, après dithering et juste avant l'écriture. On voit donc exactement ce
+// qui part sur le disque, sans patch de moteur et sans relire le fichier.
+//
+// La résolution est FIXE (`exportPeakResolution` seaux pour tout le rendu, quelle qu'en soit la
+// durée) : la mémoire ne dépend pas de la longueur, et la waveform pousse de gauche à droite sur
+// une largeur connue d'avance — ce qui est précisément ce qu'on montre.
+//
+// `exportPeaks` rend des `float` par paires (min, max), UNIQUEMENT pour les seaux déjà remplis :
+// la longueur de la donnée dit donc jusqu'où le rendu est allé. Les crêtes du dernier export
+// SURVIVENT à sa fin (c'est le lancement du suivant qui les efface), pour que la fenêtre garde
+// sous les yeux ce qu'elle vient de produire.
++ (NSInteger)exportPeakResolution;
+- (NSData* _Nullable)exportPeaks;
+
 // Plugins VST3/AU — rack par objet sonore
 // availablePlugins : liste des plugins connus (scan préalable ou cache)
 // Chaque dict : @{@"name":…, @"manufacturer":…, @"identifier":…, @"format":…}

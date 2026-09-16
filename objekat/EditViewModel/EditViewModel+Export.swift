@@ -3,15 +3,21 @@ import UniformTypeIdentifiers
 
 // EXPORT — rendering the full mix into a file (File ▸ Export…, ⌘E).
 //
-// The window closes as soon as the render starts and a full-width banner under the transport
-// shows the progress and allows cancelling. Two regimes, chosen in the window:
+// Two regimes, chosen in the window — and they now differ in WHERE the render shows itself as
+// much as in how it is made:
 //
 //   • DIRECT (the default) — the engine renders the live project, with its plugins already loaded: the
 //     render starts straight away. Playback is suspended for the length of the render and the project
-//     must not be modified during that time.
+//     must not be modified during that time. The window STAYS: it grows the waveform as the render
+//     makes it, runs the progress along its bottom edge, and lets you listen to the file while it
+//     is written. A render one watches is one one can judge.
 //   • BACKGROUND — the engine renders a COPY: you can go on playing and editing, but the
 //     copy instantiates every AU in the project BEFORE starting, with the main thread blocked (the
 //     banner's "Preparing" phase, [PERF] milestones on the engine side). That is what can take time.
+//     The window closes and the full-width strip under the transport takes over.
+//
+// The strip is the fallback and not a second display: it shows whenever a job exists with no
+// window to show it in — so closing the window by hand during a direct render hands it over too.
 //
 // Two output paths:
 //   • WAV  — the engine writes directly at the depth asked for (16/24 bits, dithering below 32);
@@ -50,6 +56,10 @@ extension EditViewModel {
             exportAlert(L("export.error.nothing.title"), L("export.error.noObjects.info"))
             return
         }
+        // A finished export left on screen belongs to the one before: the panel opens on the
+        // settings, not on yesterday's result. (It also releases the deferred clear, which the
+        // panel being open holds back — @see scheduleExportStatusClear.)
+        dismissExportStatus()
         var s = makeExportSettings()
         s.clampToFormat()
         exportSettings = s
@@ -209,7 +219,18 @@ extension EditViewModel {
         let renderTarget = settings.folder.appendingPathComponent(stem + ".wav")
 
         if persistingPreferences { persistExportPreferences(settings) }
-        exportPanelPresented = false
+        // The panel stays open for a DIRECT render, and that is the whole point of the setting's
+        // two sides: a direct render is one you WATCH — the waveform grows in the panel, the
+        // progress runs along its bottom edge and you can listen to what has come out. A
+        // background render is one you leave to itself: the panel closes and the strip under the
+        // transport takes over. Closing the panel by hand during a direct render falls back to
+        // the strip too — the rule is one and the same, the strip shows whenever a job exists
+        // with no panel to show it in. @see ExportProgressBar, ContentView
+        //
+        // It KEEPS the panel, it never opens one: an export driven by the API would otherwise put
+        // a window on the screen of whoever was working. The same doctrine as `hasInterface`
+        // guarding the plugin editors.
+        exportPanelPresented = exportPanelPresented && !settings.renderInBackground
         // A direct render: the engine is going to suspend playback (it renders the live project). It is
         // asked of the view BEFORE, so that the interface's transport agrees with what
         // the engine is about to do.
@@ -217,8 +238,12 @@ extension EditViewModel {
         exportCancelFlag = ExportCancelFlag()
         exportStatusClearWork?.cancel()
         exportStatusClearWork = nil
+        exportAudition.forget()
+        exportPeaks = []
         exportJob = ExportJob(phase: .preparing, progress: 0,
-                              destination: destination, settings: settings)
+                              destination: destination, previewSource: renderTarget,
+                              renderedDuration: range.upperBound - range.lowerBound,
+                              settings: settings)
         startExportProgressPolling()
 
         // MP3 goes through a FLOATING-POINT wave (32 bits): it is an intermediate, no reason
@@ -243,6 +268,9 @@ extension EditViewModel {
                              onEditCopy: settings.renderInBackground) { [weak self] ok, errorMessage in
                 guard let self else { return }
                 self.stopExportProgressPolling()
+                // One last reading: the poll runs at 10 Hz and the render's last buckets land
+                // between two beats. Without this the waveform would stop a hair short of its end.
+                self.readExportPeaks()
                 guard ok else {
                     try? FileManager.default.removeItem(at: renderTarget)
                     self.finishExportWithFailure(errorMessage ?? L("export.error.renderFailed"))
@@ -329,6 +357,12 @@ extension EditViewModel {
         }
         exportJob?.phase = .finished
         exportJob?.progress = 1
+        // The temporary wave has just become the file that was asked for: the listening follows
+        // it there rather than being cut off in mid-phrase. For a WAV it is the same bytes; for
+        // an MP3 it is the same sound re-encoded, so the instant is kept and not the sample.
+        exportJob?.previewSource = destination
+        exportAudition.switchSource(to: destination)
+        exportAudition.probe(source: destination, force: true)
         exportCancelFlag = nil
         scheduleExportStatusClear(after: 20)
     }
@@ -336,6 +370,8 @@ extension EditViewModel {
     private func finishExportWithFailure(_ message: String) {
         let wasCancelled = exportCancelFlag?.isCancelled == true || message == "Cancelled"
         exportCancelFlag = nil
+        // The partial wave is about to be deleted: nothing left to listen to.
+        exportAudition.forget()
         exportJob?.phase = .failed(wasCancelled ? L("export.error.cancelledShort") : message)
         exportJob?.progress = 0
         scheduleExportStatusClear(after: wasCancelled ? 4 : 12)
@@ -349,7 +385,13 @@ extension EditViewModel {
         exportStatusClearWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.exportJob?.isRunning != true else { return }
+            // The panel is a place one STAYS: the result, its waveform and the file one is
+            // listening to must not vanish from under the eyes after a delay. The strip is the
+            // transient one — it is there that a few seconds is the right lifetime.
+            guard !self.exportPanelPresented else { return }
+            self.exportAudition.forget()
             self.exportJob = nil
+            self.exportPeaks = []
         }
         exportStatusClearWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
@@ -360,7 +402,9 @@ extension EditViewModel {
         guard exportJob?.isRunning != true else { return }
         exportStatusClearWork?.cancel()
         exportStatusClearWork = nil
+        exportAudition.forget()
         exportJob = nil
+        exportPeaks = []
     }
 
     func revealExportedFileInFinder() {
@@ -379,6 +423,12 @@ extension EditViewModel {
                 let p = Double(engine.exportProgress())
                 let share = self.exportJob?.settings.format == .mp3 ? Self.renderShareOfMp3Export : 1
                 self.exportJob?.progress = min(1, max(0, p)) * share
+                self.readExportPeaks()
+                // What could be heard right now. Not the same number as the progress: the render
+                // runs ahead of the writer's flush, and only what has been flushed can be opened.
+                if let source = self.exportJob?.previewSource {
+                    self.exportAudition.probe(source: source)
+                }
             }
         }
         exportProgressTimer = timer
@@ -389,6 +439,52 @@ extension EditViewModel {
         exportProgressTimer?.invalidate()
         exportProgressTimer = nil
     }
+
+    /// How many buckets the engine's tap cuts a render into — the waveform's full width, whatever
+    /// the length of what is being rendered. @see OBJEngineCore `exportPeakResolution`.
+    static let exportPeakResolution = Int(OBJEngineCore.exportPeakResolution())
+
+    /// Reads the tap. The data's LENGTH is the progress of the drawing: the engine only hands
+    /// over the buckets it has filled, so nothing here has to be kept in step with a second
+    /// number. @see ExportWaveformView
+    func readExportPeaks() {
+        // WHILE PREPARING, THE TAP IS STILL THE PREVIOUS EXPORT'S. The engine makes a fresh one
+        // when the render is actually launched — which is one deferred frame later, plus however
+        // long the graph takes to build — and the tap is only zeroed by its `reset`, at the end of
+        // that construction. Read in between, it answers the LAST render's shape, whole and
+        // complete: a second export would flash the first one's waveform before its own began.
+        // The phase is what knows there is nothing of this render yet, so it is what says so.
+        guard exportJob?.phase != .preparing else { exportPeaks = []; return }
+        guard let engine, let data = engine.exportPeaks() else { return }
+        let count = data.count / MemoryLayout<Float>.size
+        guard count > 0 else { return }
+        var values = [Float](repeating: 0, count: count)
+        _ = values.withUnsafeMutableBytes { data.copyBytes(to: $0) }
+        exportPeaks = values
+    }
+
+    // MARK: - Listening while it renders
+
+    /// Play / stop the listening. It reads the file BEING WRITTEN — valid the whole way through,
+    /// Tracktion's writer rewriting its header every six seconds of audio. @see ExportAudition
+    func toggleExportAudition() {
+        if exportAudition.isPlaying { exportAudition.stop(); return }
+        guard let job = exportJob else { return }
+        let from = exportAudition.position < exportAuditionDuration - 0.05 ? exportAudition.position : 0
+        exportAudition.start(source: job.previewSource, from: from)
+    }
+
+    /// Seeks the listening, in 0…1 of the rendered range (a click in the waveform).
+    func seekExportAudition(toFraction f: Double) {
+        guard let job = exportJob else { return }
+        exportAudition.start(source: job.previewSource,
+                             from: min(max(0, f), 1) * exportAuditionDuration)
+    }
+
+    /// The length the waveform's width stands for: the range asked for. The audition can only
+    /// reach what has been flushed — that is `exportAudition.availableDuration`, and the two are
+    /// deliberately different numbers.
+    var exportAuditionDuration: Double { exportJob?.renderedDuration ?? 0 }
 
     // MARK: - Dialogues
 

@@ -117,12 +117,31 @@ struct ExportJob: Equatable {
     /// a single bar for two steps, with no going backwards.
     var progress: Double = 0
     var destination: URL
+    /// The file to LISTEN to while the render runs: the engine's temporary wave, which is a
+    /// VALID wave the whole way through — Tracktion's writer rewrites its header every six
+    /// seconds of audio (`numSamplesPerFlush`) and seeks back, so what is on disk can always be
+    /// opened and read. Once the export has finished it becomes the final file, which is the
+    /// same sound and outlives the temporary. @see ExportAudition
+    var previewSource: URL
+    /// The length of the range being rendered, in seconds. Frozen here rather than recomputed:
+    /// the panel's IN/OUT fields go on being editable under a running export, and the waveform's
+    /// width must stand for what is BEING rendered, not for what would be rendered now.
+    var renderedDuration: Double = 0
     var settings: ExportSettings
 
     var isRunning: Bool { phase == .preparing || phase == .rendering || phase == .encoding }
 
     /// True while no numbered progress exists: the bar spins instead of filling.
     var isIndeterminate: Bool { phase == .preparing }
+
+    /// What the result line says once the work is done: the file produced, or the reason for the
+    /// failure. ONE definition — the panel keeps a direct render under its own eye and the strip
+    /// takes over the rest, so the same sentence is written in two places or in none.
+    var resultDetail: String {
+        if case .failed(let message) = phase { return message }
+        return destination.path.replacingOccurrences(
+            of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+    }
 
     var statusLabel: String {
         switch phase {

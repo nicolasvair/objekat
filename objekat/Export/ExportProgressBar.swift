@@ -7,6 +7,12 @@ import SwiftUI
 // worrying phase — the one where the interface really is frozen. A strip that pushes the rest
 // down can be neither clipped nor missed.
 //
+// IT IS THE FALLBACK, not the main show. A render one WATCHES stays in the export panel, which
+// keeps its settings, grows its waveform and lets you listen to what has come out. The strip
+// takes over whenever a job exists with NO panel to show it in — a background render (the panel
+// closes by itself) or a direct one whose panel was closed by hand. Hence its one line: it says
+// WHICH render is running and how far it has got, and nothing else.
+//
 // Three states, and the first one counts as much as the others:
 //   • Preparing — an indeterminate bar: the engine clones the Edit and instantiates the plugins
 //     on the main thread, and the app DOES NOT RESPOND during that time. The bar is shown before
@@ -18,14 +24,23 @@ struct ExportProgressBar: View {
     @Bindable var viewModel: EditViewModel
 
     var body: some View {
-        if let job = viewModel.exportJob {
+        if let job = viewModel.exportJob, !viewModel.exportPanelPresented {
             VStack(spacing: 0) {
                 Divider()
                 HStack(spacing: 10) {
                     icon(for: job)
 
+                    // WHICH render. With the panel closed, nothing else on screen says what is
+                    // being made — and a session is exported several times over an afternoon.
+                    Text(L("export.strip.title", viewModel.projectName))
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
+
                     Text(job.statusLabel)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                         .fixedSize()
 
                     // A direct render: playback is suspended for the length of the export. Saying so here
@@ -46,7 +61,7 @@ struct ExportProgressBar: View {
                                 .frame(width: 42, alignment: .trailing)
                         }
                     } else {
-                        Text(detail(for: job))
+                        Text(job.resultDetail)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -101,7 +116,11 @@ struct ExportProgressBar: View {
     private func icon(for job: ExportJob) -> some View {
         switch job.phase {
         case .preparing, .rendering, .encoding:
-            Image(systemName: "square.and.arrow.up")
+            // `waveform` and not the Share glyph that was here: `square.and.arrow.up` is macOS's
+            // word for 'hand this over to another app', which is not what a render is. The three
+            // bars say the one thing that is true — sound is being made — and they are the same
+            // family as the waveform growing in the export panel.
+            Image(systemName: "waveform")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         case .finished:
@@ -113,13 +132,6 @@ struct ExportProgressBar: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.orange)
         }
-    }
-
-    /// What is shown once the work is done: the file produced, or the reason for the failure.
-    private func detail(for job: ExportJob) -> String {
-        if case .failed(let message) = job.phase { return message }
-        return job.destination.path.replacingOccurrences(
-            of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
     }
 
     private func background(for job: ExportJob) -> Color {

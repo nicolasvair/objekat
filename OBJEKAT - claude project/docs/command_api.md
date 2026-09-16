@@ -255,7 +255,7 @@ That is end-of-process noise, with no effect on the result.
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `definition.*` | reusable sound objects: creation, editing, detaching |
-| `export.*` | render the mix into a file, follow the progress, cancel |
+| `export.*` | render the mix into a file, follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
 | `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
@@ -682,6 +682,38 @@ the path.
 Format constraints, refused with a message that names the values allowed: MP3 knows
 only 44 100 and 48 000 Hz and its bitrate is fixed at 320 kbit/s (the window does not set it either);
 depth (16/24) and dithering exist in WAV only.
+
+#### Where a render shows itself, and what it shows
+
+`export.panel` opens or closes the export window, and that decides where a render is WATCHED: with
+the window open, a **direct** render stays in it — the waveform grows there, the progress runs
+along its bottom edge, and one can listen to the file while it is written. A **background** render
+closes it and the strip under the transport takes over. Closing the window by hand during a direct
+render falls back to the strip too: the rule is one and the same, the strip shows whenever a job
+exists with no window to show it in. `export.status` answers `panel_open` for that.
+
+`export.run` **keeps** a window, it never opens one — same doctrine as the plugin editors: an
+export driven by a script must not put a window on the screen of whoever is working.
+
+`export.preview` reports what the window draws, read from the engine and from the file rather than
+from the display's own cache:
+
+| field | what it says |
+|---|---|
+| `peaks_filled` / `peaks_total` | how far the waveform has grown. The engine taps every rendered block (`OBJEngineCore.exportPeaks`); the buckets are a fixed resolution over the whole range, so the memory does not depend on the length. |
+| `peak_amplitude` | the loudest sample seen so far, 0…1. It is the FILE's own peak — that is what makes the drawing checkable. |
+| `audible_seconds` | how much can be listened to right now. |
+| `rendered_duration` | the range being rendered, frozen at the start. |
+| `source` | the file being listened to: the render's temporary wave, then the final file. |
+
+`audible_seconds` is deliberately **not** the progress: the render runs ahead of the writer, which
+flushes its header every six seconds of audio (`numSamplesPerFlush`). That flush is what makes the
+file in progress a VALID wave one can open and play — no engine patch, no partial-header parsing.
+
+Nothing of a render exists while it **prepares**: the engine's tap is only remade when the render
+is really launched, and only zeroed when its graph is built, so it still answers the previous
+export's shape in between. `peaks_filled` is 0 throughout that phase rather than the last render's
+count.
 
 ### Reading a project without the app
 

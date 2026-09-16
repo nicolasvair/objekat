@@ -1381,6 +1381,52 @@
         }
       }
     },
+    "export.audition.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listen to the file while it is being made"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escuchar el archivo mientras se fabrica"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écouter le fichier pendant qu'il se fabrique"
+          }
+        }
+      }
+    },
+    "export.audition.waiting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for the render"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "esperando el renderizado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en attente du rendu"
+          }
+        }
+      }
+    },
     "export.bitDepth.16": {
       "extractionState": "manual",
       "localizations": {
@@ -2117,6 +2163,29 @@
         }
       }
     },
+    "export.panel.cancelRender": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel render"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelar el renderizado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler le rendu"
+          }
+        }
+      }
+    },
     "export.panel.run": {
       "extractionState": "manual",
       "localizations": {
@@ -2399,19 +2468,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The project stays playable and editable during the export, but preparing it reloads every plugin: on a large project the app freezes for several seconds before the render starts."
+            "value": "The project stays playable and editable during the export, but preparing it reloads every plugin: on a large project the app freezes for several seconds before the render starts. The window closes, and a strip under the transport takes over."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El proyecto sigue siendo reproducible y editable durante la exportación, pero la preparación recarga todos los plugins: en un proyecto grande la app se congela varios segundos antes de que arranque el render."
+            "value": "El proyecto sigue siendo reproducible y editable durante la exportación, pero la preparación recarga todos los plugins: en un proyecto grande la app se congela varios segundos antes de que arranque el render. La ventana se cierra y una banda bajo el transporte toma el relevo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le projet reste jouable et modifiable pendant l'export, mais la préparation recharge tous les plugins : sur un gros projet, l'app se fige plusieurs secondes avant que le rendu démarre."
+            "value": "Le projet reste jouable et modifiable pendant l'export, mais la préparation recharge tous les plugins : sur un gros projet, l'app se fige plusieurs secondes avant que le rendu démarre. La fenêtre se ferme, et un bandeau sous le transport prend le relais."
           }
         }
       }
@@ -2504,6 +2573,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "≈ %.1f Mo"
+          }
+        }
+      }
+    },
+    "export.strip.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rendering “%@”"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renderizado de «%@»"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rendu de « %@ »"
           }
         }
       }

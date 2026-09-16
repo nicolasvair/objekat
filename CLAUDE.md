@@ -633,6 +633,57 @@ What has landed since mid-August, in order:
   swallows a click; the names cut with an ellipsis; and whether a click in the canvas really does
   read as leaving a rename rather than as losing what one typed.
 
+- **A render one can watch, and hear while it is being made** (16 September 2026) — four things
+  asked of the export, and one fact that made three of them cheap. **A DIRECT render stays in the
+  window that launched it**: it used to close on the Export button and hand everything to a
+  one-line strip — a percentage, and nothing of what was coming out. The settings grey out, the
+  waveform grows at the bottom, the progress runs along the bottom edge. The strip becomes the
+  FALLBACK and not a second display: it shows whenever a job exists with no window to show it in —
+  a background render (which closes the window, as the setting says) or a direct one whose window
+  was closed by hand. And `export.run` KEEPS a window, it never OPENS one: same doctrine as
+  `hasInterface` guarding the plugin editors, an export driven by a script must not put a window on
+  the screen of whoever is working.
+  **The waveform grows as it is made**, at no cost to the engine: `EditRenderer::render` already
+  takes an `IncomingDataReceiver` and `NodeRenderContext` hands it EVERY rendered block, after
+  dithering and just before the write. `OBJExportTap` takes min/max from it into a FIXED number of
+  buckets (1024, whatever the length — the memory does not depend on the duration), through relaxed
+  atomics and no lock: a lock would make the render wait for a drawing. It is the data's LENGTH
+  that says how far the drawing has got, so nothing has to be kept in step with a second number.
+  **And the file is LISTENED to while it is written** — the fact that makes this cheap, and worth
+  knowing before touching a render anywhere: the engine's temporary wave is a VALID wave from end
+  to end. Tracktion's `AudioFileWriter` rewrites its header with the current length every six
+  seconds of audio (`numSamplesPerFlush = 48000 * 6`) and seeks back to go on writing, so an
+  `AVAudioFile` opened on the file in progress reads exactly what has been flushed, and opening it
+  again later sees more. No engine patch, no partial-header parsing, no second copy of the audio in
+  memory: **the file IS the buffer**. The price is granularity (nothing before the first flush) and
+  starving (a render slower than real time lets the play head catch the writer up — said on screen
+  rather than hidden). A separate `AVAudioEngine`, never the project's own. `audible_seconds` is
+  deliberately NOT the progress: the render runs ahead of the flush.
+  **The trap it turned up, and it is general**: the engine's tap is only remade when the render is
+  really launched, and only zeroed by its `reset`, at the end of the graph's construction. Read in
+  between, it answers the PREVIOUS render's shape, whole — a second export flashed the first one's
+  waveform for some 600 ms. The PHASE is what knows there is nothing of this render yet, so it is
+  what says so: `readExportPeaks` answers empty throughout `.preparing`.
+  The strip's icon is `waveform` rather than `square.and.arrow.up`, which is macOS's word for 'hand
+  this to another app' and not for 'make a sound', and it now names what is being made — "Rendering
+  “session”" — since with the window closed nothing else on screen says so.
+  Verified with no screen: a build, and `tools/scenario_export_preview.py`, 35 assertions all
+  passing — the window kept by a direct render and given up by a background one, a script opening
+  none, the waveform caught IN FLIGHT (strictly between nothing and all of it) and never going
+  back, nothing shown while preparing, something audible before the end and never past the render,
+  the flush lagging the render, a silent render drawing flat, and **the peaks checked against the
+  FILE re-read** (the tap's peak against the 24-bit WAV's, under 0.01 apart). Plus
+  `scenario_families.py` 131 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 58,
+  the two standalone Swift suites 22 and 21, `smoke.jsonl` clean, i18n 397 keys with no orphans,
+  and no window on the headless pid. New commands: `export.panel`, `export.preview`;
+  `export.status` answers `panel_open`.
+  **Not seen, not heard, not felt**: every pixel and every second of it — the waveform growing and
+  whether 1024 buckets read well across 420 px, the veil over what is not yet audible, the play
+  head, the click and drag that go and listen elsewhere; and above all THE LISTENING itself —
+  whether the sound comes out, whether the first flush is long enough to annoy, whether the
+  hand-over from the temporary wave to the final file can be heard (in MP3 above all, where it is
+  not the same file), and whether "waiting for the render" reads as an explanation or as a fault.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

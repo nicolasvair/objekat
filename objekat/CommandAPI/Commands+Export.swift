@@ -148,11 +148,60 @@ extension CommandRegistry {
                             "destination": .string(destination.path)])
         }
 
-        register("export.status",
-                 summary: "State of the running export, or of the last one to finish.") { _ in
+        register("export.panel",
+                 summary: "Opens or closes the export panel. It is what decides where a render "
+                        + "SHOWS itself: with the panel open, a direct render stays in it "
+                        + "(waveform, progress, listening); closed, the strip under the "
+                        + "transport takes over. `export.run` never OPENS one by itself.",
+                 params: [ParamSpec("open", "bool", required: true,
+                                    "true = open on the settings, false = close.")],
+                 undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            guard let job = vm.exportJob else { return .object(["running": .bool(false)]) }
-            return CommandAdapters.exportPayload(job)
+            if try p.bool("open") { vm.openExportPanel() } else { vm.exportPanelPresented = false }
+            return .object(["open": .bool(vm.exportPanelPresented)])
+        }
+
+        register("export.status",
+                 summary: "State of the running export, or of the last one to finish. "
+                        + "`panel_open` says whether the export panel is showing it: a DIRECT "
+                        + "render keeps the panel, a background one closes it.") { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let job = vm.exportJob else {
+                return .object(["running": .bool(false),
+                                "panel_open": .bool(vm.exportPanelPresented)])
+            }
+            guard case .object(var payload) = CommandAdapters.exportPayload(job) else {
+                return CommandAdapters.exportPayload(job)
+            }
+            payload["panel_open"] = .bool(vm.exportPanelPresented)
+            return .object(payload)
+        }
+
+        register("export.preview",
+                 summary: "What the panel shows OF a render while it runs: how far the waveform "
+                        + "has grown (the engine's tap) and how much of the file can already be "
+                        + "listened to (what the writer has flushed to disk). The two are "
+                        + "different numbers — the render runs ahead of the flush.") { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let job = vm.exportJob else {
+                throw CommandError(code: .invalid_state, message: "no export to show")
+            }
+            // Read from the ENGINE and from the FILE, not from what the panel's timer last
+            // cached: a command that only echoed the display could not prove the display right.
+            vm.readExportPeaks()
+            vm.exportAudition.probe(source: job.previewSource, force: true)
+            let peaks = vm.exportPeaks
+            let filled = peaks.count / 2
+            let loudest = peaks.map { abs($0) }.max() ?? 0
+            return .object([
+                "peaks_filled": .number(Double(filled)),
+                "peaks_total": .number(Double(EditViewModel.exportPeakResolution)),
+                "peak_amplitude": .number(Double(loudest)),
+                "audible_seconds": .number(vm.exportAudition.availableDuration),
+                "rendered_duration": .number(job.renderedDuration),
+                "source": .string(job.previewSource.path),
+                "listening": .bool(vm.exportAudition.isPlaying),
+            ])
         }
 
         register("export.cancel",

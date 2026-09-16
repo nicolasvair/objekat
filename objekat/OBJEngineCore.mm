@@ -571,6 +571,79 @@ struct OBJRenderJob {
     std::shared_ptr<te::EditRenderer::Handle>       handle;
 };
 
+// Sonde du rendu d'export : les crêtes de ce qui vient d'être rendu, pendant qu'on rend.
+//
+// C'est l'accroche que Tracktion offre déjà — NodeRenderContext passe chaque bloc à son
+// IncomingDataReceiver après dithering et juste avant l'écriture. Les échantillons sont donc déjà
+// là : la sonde ne coûte qu'un min/max, sans patch de moteur et sans relire le fichier.
+//
+// Deux contraintes expliquent la forme. addBlock arrive sur le THREAD DE RENDU et le sondage vient
+// du thread principal : d'où des atomiques relâchées et pas un verrou — un verrou ferait attendre
+// le rendu pour un dessin, et une crête lue à moitié écrite ne coûte qu'un pixel d'un seau, le
+// temps d'une image. Et le nombre de seaux est FIXE : la mémoire ne dépend pas de la durée.
+struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDataReceiver {
+    static constexpr int kBuckets = 1024;
+
+    std::atomic<float>      lo[kBuckets];
+    std::atomic<float>      hi[kBuckets];
+    std::atomic<int>        filled { 0 };          // seaux déjà touchés, donc avancement visible
+    std::atomic<long long>  totalSamples { 0 };
+
+    OBJExportTap() { clear(); }
+
+    void clear() {
+        for (int i = 0; i < kBuckets; ++i) {
+            lo[i].store(0.0f, std::memory_order_relaxed);
+            hi[i].store(0.0f, std::memory_order_relaxed);
+        }
+        filled.store(0, std::memory_order_relaxed);
+    }
+
+    void reset(int, double, juce::int64 totalSamplesInSource) override {
+        totalSamples.store((long long) juce::jmax((juce::int64) 1, totalSamplesInSource),
+                           std::memory_order_relaxed);
+        clear();
+    }
+
+    void addBlock(juce::int64 startSample, const juce::AudioBuffer<float>& buffer,
+                  int startOffsetInBuffer, int numSamples) override {
+        const long long total = totalSamples.load(std::memory_order_relaxed);
+        if (numSamples <= 0 || total <= 0 || buffer.getNumChannels() <= 0) return;
+
+        // Un bloc peut chevaucher deux seaux (il tombe presque toujours dans un seul) : on le
+        // découpe sur les frontières plutôt que de l'attribuer en bloc au seau de son début.
+        int pos = 0;
+        while (pos < numSamples) {
+            const long long sample = (long long) startSample + pos;
+            if (sample < 0) break;
+            int bucket = (int) ((sample * (long long) kBuckets) / total);
+            if (bucket < 0) break;
+            if (bucket >= kBuckets) bucket = kBuckets - 1;
+
+            // Premier échantillon du seau suivant — d'où la fin de celui-ci, bornée par le bloc.
+            const long long bucketEnd = ((long long) (bucket + 1) * total + kBuckets - 1) / kBuckets;
+            int n = (int) juce::jmin((long long) (numSamples - pos), bucketEnd - sample);
+            if (n <= 0) n = numSamples - pos;
+
+            float mn = 0.0f, mx = 0.0f;
+            for (int ch = buffer.getNumChannels(); --ch >= 0;) {
+                const auto r = juce::FloatVectorOperations::findMinAndMax(
+                                   buffer.getReadPointer(ch, startOffsetInBuffer + pos), n);
+                mn = juce::jmin(mn, r.getStart());
+                mx = juce::jmax(mx, r.getEnd());
+            }
+            if (mn < lo[bucket].load(std::memory_order_relaxed))
+                lo[bucket].store(mn, std::memory_order_relaxed);
+            if (mx > hi[bucket].load(std::memory_order_relaxed))
+                hi[bucket].store(mx, std::memory_order_relaxed);
+            if (bucket + 1 > filled.load(std::memory_order_relaxed))
+                filled.store(bucket + 1, std::memory_order_relaxed);
+
+            pos += n;
+        }
+    }
+};
+
 // MARK: - OBJEngineCore
 
 // INC 2 — veilleur de latence (PDC à chaud). Un te::Plugin peut changer la latence qu'il rapporte
@@ -980,6 +1053,9 @@ struct OBJRenderChain {
     // leur signature porte un message d'erreur. @see exportMixToFileAsync:.
     std::string                                            _exportJobID;
     NSMutableDictionary<NSString*, id>*                    _exportCompletions;
+    // Crêtes du rendu d'export. Survit à la fin du job — c'est le lancement du suivant qui
+    // l'efface, pour que la fenêtre garde sous les yeux ce qu'elle vient de produire.
+    std::shared_ptr<OBJExportTap>                          _exportTap;
 }
 
 /// Drapeau global posé par main.swift AVANT toute construction du moteur (c'est `init` qui ouvre
@@ -2951,6 +3027,10 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     juce::File outFile = r.destFile;
     __unsafe_unretained OBJEngineCore* weakSelf = self;
 
+    // La sonde est refaite à chaque export : celle du précédent a fini son office au moment où
+    // celui-ci commence. @see OBJExportTap
+    _exportTap = std::make_shared<OBJExportTap>();
+
     const bool direct = !onEditCopy;
     auto handle = te::EditRenderer::render(r,
         [weakSelf, jobID, outFile, direct](tl::expected<juce::File, std::string> res) {
@@ -2985,7 +3065,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                 if (cb) cb(ok ? YES : NO,
                            ok ? nil : [NSString stringWithUTF8String:err.c_str()]);
             });
-        });
+        }, _exportTap);
 
     if (!handle) {
         NSLog(@"[OBJ] exportMixToFileAsync: EditRenderer::render a échoué");
@@ -3014,6 +3094,21 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
 }
 
 - (BOOL)isExporting { return !_exportJobID.empty(); }
+
++ (NSInteger)exportPeakResolution { return OBJExportTap::kBuckets; }
+
+- (NSData*)exportPeaks {
+    if (!_exportTap) return nil;
+    const int n = juce::jlimit(0, OBJExportTap::kBuckets,
+                               _exportTap->filled.load(std::memory_order_relaxed));
+    if (n <= 0) return [NSData data];
+    std::vector<float> out((size_t) n * 2);
+    for (int i = 0; i < n; ++i) {
+        out[(size_t) i * 2]     = _exportTap->lo[i].load(std::memory_order_relaxed);
+        out[(size_t) i * 2 + 1] = _exportTap->hi[i].load(std::memory_order_relaxed);
+    }
+    return [NSData dataWithBytes:out.data() length:out.size() * sizeof(float)];
+}
 
 - (void)cancelExport {
     if (_exportJobID.empty()) return;
