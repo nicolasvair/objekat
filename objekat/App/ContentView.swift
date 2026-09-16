@@ -21,6 +21,9 @@ struct ContentView: View {
     // launch (the draggable separator updates it in place).
     @AppStorage("inspectorHeight") private var inspectorHeight: Double = 190
     @State private var resizeStartHeight: Double? = nil
+    /// The monitor that gives back the click coming home from a plugin's window
+    /// (@see FirstClickThrough). A token in a `@State`, removed in `.onDisappear`.
+    @State private var firstClickMonitor: Any? = nil
 
     private let inspectorMinHeight: Double = 120
     // The minimum height guaranteed to the list / sound library above the docked inspector
@@ -136,9 +139,14 @@ struct ContentView: View {
         .onChange(of: viewModel.loopModeEnabled) { _, enabled in
             session.loopModeChanged(enabled)
         }
+        .onDisappear {
+            FirstClickThrough.remove(&firstClickMonitor)
+        }
         .onAppear {
             // Wires the engine to the document and arms the playhead tracking (idempotent).
             session.start()
+            // A click coming back from a plugin's window must not be spent on the window itself.
+            if firstClickMonitor == nil { firstClickMonitor = FirstClickThrough.install() }
             outputDevices = (engine.availableOutputDevices() as? [String]) ?? []
             // Output device: reapplies the persisted choice if it still exists, otherwise
             // aligns on the engine's CURRENT device (the picker used to show the first of

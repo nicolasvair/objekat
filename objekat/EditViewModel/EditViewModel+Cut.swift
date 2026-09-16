@@ -80,14 +80,23 @@ extension EditViewModel {
         var result: Set<UUID> = []
         for id in ids {
             // An object already carried off by the cut of an ancestor no longer exists: it is skipped.
-            guard find(id: id) != nil else { continue }
+            guard let before = find(id: id) else { continue }
+            // The fade-out the left half is OWED if the right one is about to be thrown away.
+            // A split gives the fade to the right piece and leaves the left with none, which is
+            // right for a division — but 'keep the left' is not a division, it is the END being
+            // deleted, and there the fade stays, ending earlier (@see fadeOutAnchoredAtStart).
+            let keptFadeOut = EditViewModel.fadeOutAnchoredAtStart(
+                oldDuration: before.duration, oldFadeOut: before.fadeOut,
+                newDuration: splitTime - before.startTime)
             guard let newID = _splitInternal(id: id, atTime: splitTime) else { continue }
             pairs = pairs.map {
                 $0.left == id ? CrossfadePair(left: newID, right: $0.right) : $0
             }
             switch keeping {
             case nil:      result.formUnion([id, newID])
-            case .left?:   remove(id: newID); result.insert(id)
+            case .left?:   remove(id: newID)
+                           if keptFadeOut > 0 { updateFadeOut(id: id, fadeOut: keptFadeOut) }
+                           result.insert(id)
             case .right?:  remove(id: id);    result.insert(newID)
             }
         }

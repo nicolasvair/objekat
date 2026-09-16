@@ -479,6 +479,69 @@ What has landed since mid-August, in order:
   object selection; and "Montrer dans le Finder" in a `.controlSize(.small)` button of the export
   bar, which is a long label for a narrow row.
 
+- **Four things read off the hand** (16 September 2026) — three gestures that answered late or not
+  at all, and one click that was being spent on nothing.
+  **An infinite bus is carried like everything else.** Its band stayed at its row while an empty
+  rectangle was drawn at the target one: the only gesture of the canvas one had to READ rather than
+  recognise. The band travels under the hand now (`infiniteBusPreviewDY`, the counterpart of
+  `previewOffset`), and `clipRect` follows it — everything hung off that rect, the send links first
+  of all, was staying at the row the bus had just left. What a block has NO equivalent of is the
+  refusal (an overlap is resolved at the drop, whereas a full-width band set down on somebody's
+  matter would cover it whole), so the refusal is said ON the band, in red, where the eye already is.
+  And the cursor over a bus is the OPEN HAND, a block's own, in place of the ↕ put there the day
+  before: the ↕ named the one axis the gesture has, which is true and is not what a hand arriving
+  asks — it asks whether this can be taken hold of at all, and a resize cursor on a full-width band
+  reads as an edge one could pull. Never `dragCopy` under ⌥ though: there is no copy of a bus at the
+  end of that gesture.
+  **The click that comes home from a plugin's window.** Touching a plugin's UI takes the key away
+  from the main window — an AU/VST editor is JUCE's own window, a built-in one is an NSWindow of
+  ours — and AppKit then treats the next click down here as a FIRST MOUSE: it makes the window key
+  and THROWS THE EVENT AWAY unless the view under the point accepts it, which no SwiftUI view does.
+  Every gesture had to be made twice, all day, for anyone working with a plugin open. The fix is one
+  local monitor (`Shared/FirstClickThrough.swift`): monitors run inside `NSApp.sendEvent`, ahead of
+  the window's own `sendEvent:`, so making the clicked window key THERE means the first-mouse
+  question no longer has anything to ask by the time it is put — and the event is returned, not
+  consumed, so it goes on to whoever was going to get it. Bounded on purpose: only while this app is
+  ACTIVE (the click that activates an app from another one is a system convention, not our
+  business), never a panel (popovers, menus and tool windows choose their own key policy) and never
+  under a modal. Worth knowing generally — ANY window of ours opened beside the main one puts this
+  trap back, and it is not the window's fault but the hit view's.
+  **A fade is HEARD while it is being made.** The drag drew the curve on every frame and pushed it
+  to the engine only at the drop, so one was adjusting a fade from the memory of what the last
+  attempt sounded like. It previews live now, and it costs almost nothing for the reason that makes
+  everything about fades cheap here: they all live in ONE plugin at the tail of the chain, so a
+  preview is two doubles written into it (`setFades`, `previewFadesIn:out:forID:`) — no clip moved,
+  no window reposed, no graph recompiled, where the committing path re-reads the clip's position
+  and, for a group, lays the whole window down again. The MODEL is not touched (@see
+  `EditViewModel.previewFade`): no undo point, no dirty flag, the gesture still commits once at the
+  end. And the preview is bounded by the object's CURRENT window — a fade pulled out past its edge
+  will grow the object at the drop, but until then that matter does not exist and a fade longer than
+  the window would open part-way down its own curve.
+  **Deleting the end no longer deletes the fade.** ONE rule — `fadeOutAnchoredAtStart` — at the
+  three doors where an end goes: the crop (`updateDuration`), a time selection deleted off the tail
+  (`carveTimeRange`) and the Cut tool's keep-the-left. A fade-out starts at a point IN the sound,
+  not at a distance from the edge: its start stays put and the fade ends earlier with the edge,
+  still reaching silence. A crop PAST that start leaves no fade at all (the whole curve was in the
+  piece that went), and pulling the end back OUT leaves the fade alone — what is revealed is matter
+  the fade never covered, and a fade that grew with it would be a shape nobody drew. A plain SPLIT
+  keeps the old rule and must: the fade goes with the RIGHT-hand half, the one that still ends where
+  it ended.
+  Verified with no screen: a build; `scenario_families.py` 127 OK, with nine new assertions on the
+  four doors (crop, lengthen, crop past the start, tail deleted, cut keeping the left, plain split);
+  `scenario_markers.py` ALL PASS; `scenario_plugin_selection.py` 58; `smoke.jsonl` clean; i18n 393
+  keys; no window on the headless pid. And an export re-read at RMS, which is what proves the ENGINE
+  followed and not just the model: an object cropped so that its fade-out is halved renders a tail
+  8.6 × quieter than the same render with that fade cleared by hand.
+  Three debts of 15 September were paid along the way, that day's machine having had no compiler:
+  everything written then COMPILES, `test_send_columns.swift` (22 assertions) was RUN for the first
+  time and passes, and so was the infinite-bus block of `scenario_families.py` — the empty row, the
+  swap, and the refusal that moves nothing.
+  **Not seen, not heard, not felt**: the band travelling under the hand and its red refusal; the
+  click that comes home (AppKit's rule is certain, the feel of it is not); and above all the fade
+  heard while it is being drawn, which is the whole point of that change — including whether the
+  preview stopping at the object's edge, while the block itself grows past it, reads as a limit or
+  as a fault.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
@@ -635,6 +698,14 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   CANNOT be instantiated off the main thread: it is a JUCE constraint, measured.
 - Timeline performance: ZStack+offset is fine up to ~100 objects, a Canvas is required beyond that.
 - `NSEvent.addLocalMonitorForEvents`: a `@State` token, removed in `.onDisappear`.
+- **A click that makes a window key is THROWN AWAY unless the view under it accepts it** — and no
+  SwiftUI view does (`acceptsFirstMouse` is false by default). So any window of ours opened beside
+  the main one — a plugin editor above all, JUCE's or our own — costs the next click made back in
+  the main window, spent on nothing. The remedy is laid once and app-wide in
+  `Shared/FirstClickThrough.swift`: a local monitor makes the clicked window key BEFORE the event
+  is dispatched (a monitor runs inside `NSApp.sendEvent`, ahead of the window's `sendEvent:`) and
+  returns the event untouched. It holds only while the app is ACTIVE, and leaves panels and modals
+  alone. Nothing to do when adding a window — but everything to know the day a click is lost again.
 - The sources in `objekat/` + the Xcode project `objekat.xcodeproj`; the documentation in `OBJEKAT - claude project/`.
 - SourceKit's "Cannot find type … in scope" diagnostics = false positives (isolated indexing);
   only `xcodebuild` is the authority.

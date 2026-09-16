@@ -38,6 +38,12 @@
 // Codes miroir de `FadeShape.engineCode` côté Swift ; les deux `amount` (0…1) disent de COMBIEN
 // la courbe s'écarte de la droite, la forme disant de quel côté.
 - (void)updateFadeCurvesIn:(int)curveIn amountIn:(float)amountIn out:(int)curveOut amountOut:(float)amountOut forID:(NSString*)uuid;
+// Les LONGUEURS seules, posées sur le plugin de fin de chaîne sans toucher à la fenêtre : c'est
+// l'aperçu SONORE d'un fondu pendant qu'une main le tire (@see EditViewModel.previewFade). Deux
+// doubles écrits, rien de reposé, rien de recompilé — d'où son coût, qui autorise l'appel à
+// chaque image du geste, là où updateFadeIn:fadeOut: relit la position du clip et, pour un
+// groupe, repose toute la fenêtre.
+- (void)previewFadesIn:(double)fadeIn out:(double)fadeOut forID:(NSString*)uuid;
 - (void)updateIsReversed:(BOOL)reversed forID:(NSString*)uuid;
 - (void)updateSpeedRatio:(double)ratio forID:(NSString*)uuid;
 // Change la lane d'un objet top-level : son clip passe sur la piste porteuse de la lane cible

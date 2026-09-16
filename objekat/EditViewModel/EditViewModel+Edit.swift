@@ -113,7 +113,12 @@ extension EditViewModel {
         update(id: id) { obj in
             let D = max(0.01, duration)
             var fi = obj.fadeIn
-            var fo = obj.fadeOut
+            // The end comes in: the fade-out keeps its START and ends earlier, rather than
+            // travelling back with the edge (@see fadeOutAnchoredAtStart). Pulling the end back out
+            // leaves it alone, and the two clamps below stay the last word on both fades.
+            var fo = EditViewModel.fadeOutAnchoredAtStart(oldDuration: obj.duration,
+                                                          oldFadeOut: obj.fadeOut,
+                                                          newDuration: D)
             if D < fi { fi = D; fo = 0 }
             else if D < fi + fo { fo = D - fi }
             // The RIGHT edge moves: played forwards the source range does not move, but in reverse

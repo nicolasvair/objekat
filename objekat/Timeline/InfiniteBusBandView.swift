@@ -21,6 +21,9 @@ struct InfiniteBusBandView: View {
     let blockHeight: Double
     /// The y of the band's top in the canvas.
     let yPos: Double
+    /// Being carried onto a row that will not take it (@see EditViewModel.infiniteBusLanding):
+    /// the band says so itself, since it is the band that travels under the hand.
+    var dragRefused: Bool = false
     /// EXACT horizontal scrolling. The band being set on the visible window, it has to follow to
     /// the pixel: so it goes through the observable object rather than through the parent's notched
     /// culling window, which would make it lag by half a screen. Read here and not in the timeline's
@@ -102,6 +105,17 @@ struct InfiniteBusBandView: View {
             if isMuted {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.black.opacity(0.38))
+                    .allowsHitTesting(false)
+            }
+
+            // The refusal, laid over everything: letting go here leaves the bus where it was.
+            if dragRefused {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.red.opacity(0.22))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .strokeBorder(Color.red, lineWidth: 2)
+                    )
                     .allowsHitTesting(false)
             }
 

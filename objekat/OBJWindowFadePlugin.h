@@ -118,6 +118,16 @@ public:
         fadeOut     = juce::jmax (0.0, fadeOutSecs);
     }
 
+    /// Les LONGUEURS seules, la fenêtre laissée intacte : l'aperçu d'un fondu pendant qu'une main
+    /// le tire (@see previewFadesIn:out:forID:). Le geste ne touche pas encore au modèle, donc
+    /// les bornes n'ont pas bougé — les reposer ici demanderait de les relire sur le clip pour
+    /// rien, à chaque image.
+    void setFades (double fadeInSecs, double fadeOutSecs)
+    {
+        fadeIn  = juce::jmax (0.0, fadeInSecs);
+        fadeOut = juce::jmax (0.0, fadeOutSecs);
+    }
+
     /// Les FORMES, posées à part des longueurs : tous les sites qui déplacent ou redimensionnent
     /// un objet reposent la fenêtre (@see setWindowForKey:), et n'ont rien à dire de la forme —
     /// la laisser à `setWindow` l'aurait remise à zéro à chaque geste.

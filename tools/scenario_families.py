@@ -115,6 +115,58 @@ with ObjekatClient(SOCK) as c:
           abs(r["pans"][0] - 1.0) < 1e-6, str(r["pans"]))
     c.send("object.set_pan", {"ids": [ida, idb], "pan": 0.0})
 
+    # --- the END goes, the fade-out stays: its START is anchored and it simply ends earlier
+    #     (16 September 2026). Three doors, one rule — the crop, a time selection deleted off the
+    #     tail, and the cut that keeps the left. Lengths are taken as fractions of the fixture's
+    #     own duration, so the assertions hold whatever bip.wav lasts.
+    fo = step("object.add fade", lambda: c.send("object.add", {"path": BIP, "lane": 10, "start": 0}))
+    idf = fo["id"]
+    D = c.send("object.get", {"id": idf})["duration"]
+    c.send("object.set_fade", {"id": idf, "in": 0, "out": 0.4 * D})
+    step("object.set_duration crops", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.8 * D}))
+    g = c.send("object.get", {"id": idf})
+    # The fade began at 0.6·D and still does: 0.8·D − 0.6·D is left of it.
+    check("cropping the end keeps the fade, ending earlier",
+          abs(g["fade_out"] - 0.2 * D) < 1e-6, "fade_out=%s, expected %s" % (g["fade_out"], 0.2 * D))
+    step("object.set_duration lengthens", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.9 * D}))
+    check("pulling the end back OUT leaves the fade alone — it follows the edge",
+          abs(c.send("object.get", {"id": idf})["fade_out"] - 0.2 * D) < 1e-6)
+    step("object.set_duration past the fade", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.5 * D}))
+    check("a crop PAST the fade's own start leaves no fade at all",
+          abs(c.send("object.get", {"id": idf})["fade_out"]) < 1e-9)
+
+    ft = step("object.add fade tail", lambda: c.send("object.add", {"path": BIP, "lane": 11, "start": 0}))
+    idt = ft["id"]
+    c.send("object.set_fade", {"id": idt, "in": 0, "out": 0.4 * D})
+    c.send("timesel.set", {"start": 0.8 * D, "end": 2 * D, "lane": 11})
+    step("timesel.delete the tail", lambda: c.send("timesel.delete"))
+    g = c.send("object.get", {"id": idt})
+    check("a selection deleted off the tail keeps the fade too",
+          abs(g["duration"] - 0.8 * D) < 1e-6 and abs(g["fade_out"] - 0.2 * D) < 1e-6, str(g))
+    c.send("timesel.clear")
+
+    fc = step("object.add fade cut", lambda: c.send("object.add", {"path": BIP, "lane": 12, "start": 0}))
+    idc = fc["id"]
+    c.send("object.set_fade", {"id": idc, "in": 0, "out": 0.4 * D})
+    step("ripple_cut keeping the left", lambda: c.send("object.ripple_cut",
+         {"id": idc, "seconds": 0.8 * D, "keep": "left"}))
+    g = c.send("object.get", {"id": idc})
+    check("keeping the left half is deleting the end, so the fade stays",
+          abs(g["fade_out"] - 0.2 * D) < 1e-6, str(g))
+    # A plain SPLIT is not that: there the fade goes with the right-hand piece, which is the half
+    # that still ends where it ended.
+    fs = step("object.add split", lambda: c.send("object.add", {"path": BIP, "lane": 13, "start": 0}))
+    ids_ = fs["id"]
+    c.send("object.set_fade", {"id": ids_, "in": 0, "out": 0.4 * D})
+    halves = step("object.split_at", lambda: c.send("object.split_at", {"ids": [ids_], "seconds": 0.8 * D}))
+    check("a split leaves the left half without a fade-out",
+          abs(c.send("object.get", {"id": ids_})["fade_out"]) < 1e-9)
+    # Every fixture goes, the split's right-hand half included: the rows they occupy are the
+    # timeline's LAST, and one left behind would move the floor the arrow assertions below stop at.
+    step("remove the fade fixtures",
+         lambda: c.send("object.remove", {"ids": [idf, idt, idc] + (halves["ids"] if halves else [ids_])}))
+    c.send("selection.clear")
+
     # --- the time selection slides across the rows (the bare arrows), moving nothing
     c.send("timesel.set", {"start": 0, "end": 1, "lane": 0, "lane_count": 2})
     before = c.send("object.get", {"id": ida})

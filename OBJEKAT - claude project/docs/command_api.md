@@ -344,6 +344,15 @@ Every object wears them, clip and group alike: in this engine ALL fades live in
 `ObjWindowFadePlugin` at the tail of the object's chain, and Tracktion's own clip fades are held at
 zero on purpose (@see OBJEngineCore.mm) — so there is one shape implementation and not two.
 
+**Taking the END away keeps the fade-out**, which is worth knowing before asserting on one. Its
+START stays where it is and the fade ends earlier with the edge, still reaching silence:
+`object.set_duration` shortening an object, `timesel.delete` over its tail and `object.ripple_cut
+--keep left` all leave it that way. A crop PAST the fade's own start leaves no fade at all — the
+whole of the curve was inside the piece that went. Pulling the end back OUT does not touch it: the
+fade keeps its length and follows the edge, since what is revealed is matter the fade never covered.
+A plain `object.split_at` is NOT that case: there the fade goes with the right-hand half, the one
+that still ends where it ended, and the left half is born with none.
+
 ### Crossfades
 
 A crossfade is **the zone two neighbours share**, and nothing else. There is no crossfade object and

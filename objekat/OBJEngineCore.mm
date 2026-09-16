@@ -2222,6 +2222,14 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
                    fadeIn:fadeIn fadeOut:fadeOut];
 }
 
+- (void)previewFadesIn:(double)fadeIn out:(double)fadeOut forID:(NSString*)uuid {
+    std::string key([uuid UTF8String]);
+    auto it = _windowFadeMap.find(key);
+    if (it == _windowFadeMap.end()) return;
+    if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
+        w->setFades(fadeIn, fadeOut);
+}
+
 - (void)updateFadeCurvesIn:(int)curveIn amountIn:(float)amountIn out:(int)curveOut amountOut:(float)amountOut forID:(NSString*)uuid {
     std::string key([uuid UTF8String]);
     auto it = _windowFadeMap.find(key);

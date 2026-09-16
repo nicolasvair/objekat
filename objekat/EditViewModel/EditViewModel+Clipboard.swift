@@ -511,13 +511,23 @@ extension EditViewModel {
                 remove(id: id)
 
             } else if s < lo && e <= hi {
-                // The window shrinks: the fade at the FAR edge has to come back inside it, or the
-                // piece opens part-way down a curve longer than itself (@see `clampFades`).
-                update(id: id) { $0.duration = lo - s; $0.fadeOut = 0; EditViewModel.clampFades(&$0) }
+                // The END goes, and the object keeps its fade-out: the curve's START stays where
+                // it is and the fade ends earlier with the edge (@see fadeOutAnchoredAtStart).
+                // Clearing it, which is what this did, made the passage after the selection stop
+                // dead. `clampFades` stays the last word — the piece must never open part-way down
+                // a curve longer than itself.
+                update(id: id) { o in
+                    let fo = EditViewModel.fadeOutAnchoredAtStart(oldDuration: o.duration,
+                                                                  oldFadeOut: o.fadeOut,
+                                                                  newDuration: lo - s)
+                    o.duration = lo - s
+                    o.fadeOut  = fo
+                    EditViewModel.clampFades(&o)
+                }
                 if let obj = find(id: id) {
                     syncPosition(obj)
                     if obj.isClip || obj.isMIDI {
-                        engine?.updateFade(in: obj.fadeIn, fadeOut: 0, forID: id.uuidString)
+                        engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: id.uuidString)
                     } else if case .group = obj.kind, !porthole {
                         _cutGroupChildren(groupID: id, cutLo: lo, cutHi: e)
                     }
@@ -556,11 +566,20 @@ extension EditViewModel {
             } else {
                 if _splitInternal(id: id, atTime: hi) == nil {
                     // A safety net (split refused: degenerate bounds…): truncate at the
-                    // selection's left edge rather than do nothing.
-                    update(id: id) { $0.duration = lo - s; $0.fadeOut = 0; EditViewModel.clampFades(&$0) }
+                    // selection's left edge rather than do nothing. What is left is an object whose
+                    // END has gone, so it keeps its fade-out like the branch above — the net is a
+                    // truncation, not a hole.
+                    update(id: id) { o in
+                        let fo = EditViewModel.fadeOutAnchoredAtStart(oldDuration: o.duration,
+                                                                      oldFadeOut: o.fadeOut,
+                                                                      newDuration: lo - s)
+                        o.duration = lo - s
+                        o.fadeOut  = fo
+                        EditViewModel.clampFades(&o)
+                    }
                     if let obj = find(id: id) {
                         syncPosition(obj)
-                        engine?.updateFade(in: obj.fadeIn, fadeOut: 0, forID: id.uuidString)
+                        engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: id.uuidString)
                     }
                     continue
                 }

@@ -923,24 +923,10 @@ struct TimelineView: View {
                     .zIndex(2.7)
                 }
 
-                // The row an infinite bus is being carried to. It is the WHOLE feedback of that
-                // gesture — a band is drawn at its own row and nothing of it follows the pointer —
-                // and it says the refusal as well as the landing: a row that already holds matter
-                // will not take a full-width band, and one sees that while the hand can still go
-                // elsewhere (@see EditViewModel.infiniteBusLanding).
-                if let bd = infiniteBusDrag, bd.travelled {
-                    let ok = bd.accepted
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill((ok ? Color.accentColor : Color.red).opacity(0.18))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(ok ? Color.accentColor : Color.red, lineWidth: 2)
-                        )
-                        .frame(width: contentWidth, height: blockHeight)
-                        .offset(x: 0, y: rulerHeight + Double(bd.targetDisplayLane) * laneStep)
-                        .allowsHitTesting(false)
-                        .zIndex(2.96)
-                }
+                // The row an infinite bus is being carried to used to be drawn HERE, as an empty
+                // rectangle, while the band itself stayed behind at its own row. It is the band
+                // that travels now — the gesture reads like every other move of the canvas
+                // (@see infiniteBusPreviewDY), and the refusal is said on the band itself.
 
                 // A preview of the file drop: the blocks about to be born, at their lane and their
                 // instant. A separate view (and not a piece of this body) because its position
@@ -1239,9 +1225,17 @@ struct TimelineView: View {
             // no start to slide, only a row to change (@see InfiniteBusDragState). Asked before
             // `selectionZoneHover`, which knows nothing of infinites and was carving the bus's
             // stored window up into trim / fade / move zones — promising, over that stretch of the
-            // band, three gestures the drag never performs. The ↕ says the one axis there is.
+            // band, three gestures the drag never performs.
+            //
+            // The OPEN HAND, the same one a block's body gets, and not the ↕ that was here first.
+            // The ↕ named the one axis the gesture has, which is true and is not what the hand asks
+            // when it arrives: it asks whether this can be taken hold of at all. A band that
+            // answered with a resize cursor read as an edge one could pull. The axis needs no
+            // announcing — the band only ever goes up and down, and one pixel of travel says so.
+            // Never `dragCopy` under ⌥, unlike a block: there is no copy of a bus at the end of
+            // that gesture, and a cursor promising one would be lying.
             if infiniteBusBandHit(at: pos) != nil {
-                TimelineCursorKeeper.set(NSCursor.resizeUpDown)
+                TimelineCursorKeeper.set(NSCursor.openHand)
                 if editZoneHover != nil { editZoneHover = nil }
                 return
             }
@@ -1449,7 +1443,9 @@ struct TimelineView: View {
             isSelected: viewModel.isSelected(item.id),
             isMuted: viewModel.isMutedInMix(item),
             blockHeight: blockHeight,
-            yPos: rulerHeight + Double(dl) * laneStep,
+            // Being carried: the band follows the hand, like any block (@see infiniteBusPreviewDY).
+            yPos: rulerHeight + Double(dl) * laneStep + infiniteBusPreviewDY(for: item.id),
+            dragRefused: infiniteBusDragRefused(item.id),
             scrollAnchor: scrollAnchor,
             viewportWidth: viewportWidth,
             waveformCache: waveformCache,
@@ -1500,8 +1496,12 @@ struct TimelineView: View {
         let dy = previewOffset(for: e.item)?.dy ?? 0
         let y = rulerHeight + Double(e.displayLane) * laneStep + dy
         // An infinite bus: its clickable 'surface' is its whole lane (0 → the content's width).
+        // Being carried, that surface follows the band — the same reason the rect follows a
+        // block's move: everything hung off it (the send links first of all) would otherwise
+        // stay at the row the bus has just left.
         if e.item.isInfiniteBus {
-            return CGRect(x: 0, y: y, width: contentWidth, height: blockHeight)
+            return CGRect(x: 0, y: y + infiniteBusPreviewDY(for: e.item.id),
+                          width: contentWidth, height: blockHeight)
         }
         let dx    = previewOffset(for: e.item)?.dx ?? 0
         let trim  = previewTrimDX(for: e.item)

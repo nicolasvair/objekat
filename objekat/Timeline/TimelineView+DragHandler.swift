@@ -814,6 +814,24 @@ extension TimelineView {
                 state.dEdge = state.side == .in ? -overshoot : overshoot
             }
 
+            if phase == .changed {
+                // HEARD while it is being made, and not only once the hand has let go. The block
+                // showed the new curve on every frame and the ear got it at the drop: one was
+                // adjusting a fade by memory of what the last attempt sounded like.
+                //
+                // Nothing of the model moves here (@see EditViewModel.previewFade) — the gesture
+                // goes on owning the value and commits it below, once, with its undo point. What
+                // is pushed is what the veil draws: the same length, the same shape, per object.
+                let previewed = state.finalFade
+                for id in state.ids {
+                    let curve = state.curve(for: id)
+                    switch state.side {
+                    case .in:  viewModel.previewFade(id: id, fadeIn:  previewed, curve: curve)
+                    case .out: viewModel.previewFade(id: id, fadeOut: previewed, curve: curve)
+                    }
+                }
+            }
+
             if phase == .ended {
                 viewModel.pushUndo()
                 let final = state.finalFade
@@ -1277,6 +1295,27 @@ extension TimelineView {
     }
 
     // MARK: - Preview helpers (clips and groups unified)
+
+    /// The vertical travel of an infinite bus being carried, in px — the counterpart of
+    /// `previewOffset` for a band (@see InfiniteBusDragState).
+    ///
+    /// The band itself moves under the hand, exactly as a block does: what one sees IS the thing
+    /// one is carrying, at the row where letting go will leave it. It used to stay put while an
+    /// empty rectangle was drawn at the target row — a preview one had to read rather than
+    /// recognise, and the only gesture of the canvas that worked that way.
+    func infiniteBusPreviewDY(for id: UUID) -> Double {
+        guard let bd = infiniteBusDrag, bd.id == id else { return 0 }
+        return Double(bd.targetDisplayLane - bd.originDisplayLane) * laneStep
+    }
+
+    /// True while the row under the hand will NOT take this bus (@see infiniteBusLanding). A block
+    /// has nothing of the sort — an overlap is resolved at the drop — but a full-width band set
+    /// down on somebody's matter would cover it whole, so the refusal has to be visible while the
+    /// hand can still go elsewhere. It is said ON the band, which is where the eye already is.
+    func infiniteBusDragRefused(_ id: UUID) -> Bool {
+        guard let bd = infiniteBusDrag, bd.id == id else { return false }
+        return bd.travelled && !bd.accepted
+    }
 
     func previewOffset(for object: SoundObject) -> (dx: Double, dy: Double)? {
         guard let md = moveDrag, md.ids.contains(object.id) else { return nil }
