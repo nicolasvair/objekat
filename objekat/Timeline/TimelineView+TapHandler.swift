@@ -179,17 +179,16 @@ extension TimelineView {
             return
         }
 
-        // A plain click on a FADE — its handle or its triangle — has asked for nothing. It falls in
-        // the block's upper half, where a bare click moves the cursor and deselects, and that is
-        // exactly what one does NOT want here: one comes to a fade handle to PULL it, and a
-        // gesture begun a pixel short of moving sent the cursor away from where one was listening.
-        // The same reading the crossfade's three gesture parts already get just above: a click
-        // that merely lands on a gesture is not an order. The double click (erase the fade) has
-        // already been answered further up.
-        if let (hover, _) = selectionZoneHover(at: point),
-           hover.zone == .fadeIn || hover.zone == .fadeOut {
-            return
-        }
+        // A plain click on a FADE falls THROUGH, deliberately, and it took a wrong turn to learn
+        // why. A fade handle sits in the block's upper half, which is time like any other: a click
+        // there is a click on the timeline, and it lays the cursor where it was aimed. Swallowing
+        // it (16 September, on the reading that "a click landing on a gesture is not an order")
+        // took away the one thing a click means everywhere else on the canvas, over a strip of
+        // pixels nothing announces as special. The gesture is safe without that: the fade drag is
+        // a `DragGesture(minimumDistance: 3)` and `onTapGesture` fires only when the hand did NOT
+        // travel that far — so PULLING a fade never moves the cursor, and only a hand that
+        // changed nothing gets the plain click's answer. The crossfade's parts above are a
+        // different case and keep their return: they carry a SELECTION of their own.
 
         let cmd     = NSEvent.modifierFlags.contains(.command)
         let shift   = NSEvent.modifierFlags.contains(.shift)

@@ -684,6 +684,67 @@ What has landed since mid-August, in order:
   hand-over from the temporary wave to the final file can be heard (in MP3 above all, where it is
   not the same file), and whether "waiting for the render" reads as an explanation or as a fault.
 
+- **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had
+  been used) — each one a place where the answer given that morning was right about the problem and
+  wrong about the remedy.
+  **A click on a FADE goes back to moving the cursor.** Swallowing it was the morning's reading, and
+  it took one session to see the cost: a fade handle sits in the block's upper half, which is TIME
+  like every other pixel of the canvas, and a click there had always meant "listen from here". Over
+  a strip nothing announces as special, the one gesture the whole timeline shares stopped answering.
+  What made the swallowing unnecessary is already in the wiring: the tap is an `onTapGesture` beside
+  a `DragGesture(minimumDistance: 3)`, so a hand that TRAVELS never fires the tap at all — pulling a
+  fade has never moved the cursor, and only a hand that changed nothing was being punished. The
+  crossfade's three parts keep their return, and for a reason of their own: they carry a SELECTION.
+  **A piano roll opens on a C.** The framing added that morning showed the notes and put the bottom
+  row wherever the arithmetic landed — G♯2, D4 — so the octave labels named no octave, the black
+  keys fell in a pattern nobody recognises, and oct +/- carried the offset for the rest of the
+  session. The reference beats the perfect centring: the ideal window is snapped onto one of the two
+  C's framing it, and **the one showing more of the notes wins** (a tie to the lower, one reads a
+  keyboard upwards from the bass). The ceiling is the subtle half and it rounds UPWARDS — the lowest
+  C from which the window still reaches 127, not the highest whose window fits underneath, which
+  looks tidier and puts the last eight semitones out of reach for ever; the keyboard simply ENDS, and
+  `normalRowPitches` draws no row past 127. It went into a unit of its own, `PianoRollFraming`, for
+  the reason `SendColumns` and `SynopticMarquee` are units: it is the half of the feature with
+  nothing behind it, so it can be compiled alone and asserted — `tools/test_piano_roll_framing.swift`,
+  31 assertions. `EditViewModel.basePitchOnC` is the door the octave buttons and the display's own
+  clamp go through, which is what keeps the reference once it has been found.
+  **The dashed guide follows a MARK too, and a region crops.** The guide was lit for a move, a crop
+  and a trim, and not for the band's own drag — yet a marker and a region are placed against the
+  same material an object's edge is placed against. `dragActive` takes `markerBandDrag` and
+  `commentDrag` now. The half of it that only shows once a mark is DRAGGED: the band's drag writes
+  into the model on every frame, so the mark stands where the hand last put it, and left in its own
+  target list it was its own magnet — inside the eight pixels of tolerance, winning every time, the
+  mark refusing to move until the hand tore it away. `snapTargets(excluding:)` takes a mark's id as
+  readily as an object's since. And a REGION can be cropped at last, by either end, the far one
+  anchoring: it is a passage, and a passage whose bounds can only be set at the moment it is created
+  is a passage one re-creates rather than adjusts. No vertical for it — cropping is an edge
+  travelling in time, and a hand that changed row mid-crop would be answering two questions at once.
+  The floor of 0.05 s is not cosmetic: `duration == 0` is what MAKES a point marker, so a region
+  cropped to nothing would silently become another kind of mark. `marker.move` gained `snap`, which
+  is what makes any of this assertable with no screen.
+  **And a row's NAME gives way to the marks.** Capping each mark's own label at the next mark
+  (that morning's fix) left the collision that actually shows: the row names are PINNED to the
+  viewport while the band scrolls under them, so zooming out piles every mark against the left edge
+  under the name that says whose row it is. The name gives way — it is the one thing there that can
+  be read from a fragment — and progressively: the room there is, then an ellipsis, then nothing at
+  all. The dot stays whatever happens, being the row's colour and the target of the right click that
+  changes it. The trap worth knowing: the header needs the LIVE scroll, which no view body may read
+  (`cullScrollX` moves in notches of 512 px, far too coarse here). It takes the `TimelineScrollAnchor`
+  as an OBJECT and touches `.x` inside its own body — exactly what `StickyToViewportTop` does with
+  the vertical — so a scrolling frame invalidates those few rows and not the timeline.
+  Verified with no screen: a build; `scenario_markers.py` 78 assertions all pass, seven of them new
+  (a marker that does not catch on itself, that still catches on somebody else's mark, a region's
+  two ends pulled, both bounds snapped, and the crop as ONE undo); `test_piano_roll_framing.swift`
+  31; `scenario_families.py` 131 OK; `scenario_export_preview.py` 35; `scenario_plugin_selection.py`
+  58; `test_send_columns.swift` 22 and `test_synoptic_marquee.swift` 21; `smoke.jsonl` clean; i18n
+  397 keys, no orphans; and no window on the headless pid.
+  **Not seen on screen, nor felt**: every pixel of it — the fade click that gives the cursor back and
+  the drag that still leaves it alone; the roll opening on a C, and whether losing the exact centring
+  is ever noticed; the dashed line under a mark being dragged and the moment it turns yellow; the
+  region's two crop handles, their cursor and the floor they stop at; and the row name shrinking,
+  ellipsising and disappearing as one zooms out — including whether a name that vanishes reads as
+  making room or as a row that has lost its label.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

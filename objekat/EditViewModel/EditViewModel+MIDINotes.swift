@@ -11,6 +11,13 @@ extension EditViewModel {
     /// The highest possible bottom pitch: 24 semitones are shown above it, capped at 127.
     static let pianoRollMaxBasePitch = 127 - 24
 
+    /// **A piano roll's window always starts on a C.** One door onto the rule, which lives with the
+    /// rest of the framing's arithmetic — where it can be compiled alone and asserted with no
+    /// screen. @see `pianoRollBaseOnC`.
+    static func basePitchOnC(_ pitch: Int, rows: Int) -> Int {
+        pianoRollBaseOnC(pitch, rows: rows)
+    }
+
     // MARK: - The note clipboard
 
     /// The copied notes, normalised so that the earliest starts at beat 0 (the pitches
@@ -133,8 +140,13 @@ extension EditViewModel {
             if let obj = find(id: clipID) { syncMidiNotes(obj) }
             if followWindow {
                 let base = pianoRollBasePitchByClip[clipID] ?? Self.pianoRollDefaultBasePitch
+                // The bound only has to keep the value sane — `basePitchOnC` is what keeps it on
+                // an octave. A transpose of anything but a whole octave therefore moves the notes
+                // WITHIN the window rather than dragging the reference along with them, which is
+                // the right reading: the keyboard did not move.
                 pianoRollBasePitchByClip[clipID] =
-                    (base + delta).clamped(to: 0...Self.pianoRollMaxBasePitch)
+                    Self.basePitchOnC((base + delta).clamped(to: 0...Self.pianoRollMaxBasePitch),
+                                      rows: 24)
             }
         }
         isDirty = true
@@ -170,7 +182,16 @@ extension EditViewModel {
             pianoRollCropOffsetByClip[clipID] = max(0, cur + direction)
         } else {
             let base = pianoRollBasePitchByClip[clipID] ?? Self.pianoRollDefaultBasePitch
-            pianoRollBasePitchByClip[clipID] = (base + direction * 12).clamped(to: 0...127)
+            // Clamped at 127 this used to stop on a pitch that is no C at the top of its travel,
+            // and the window never found one again for the rest of the session — one press of a
+            // button whose whole promise is a whole octave. @see `pianoRollBaseOnC`.
+            //
+            // 24 rows is the default window, and the model has no way of knowing the real one (it
+            // depends on the band's height and on the note zoom): the display re-reads the same
+            // rule against the height it actually has, so a value a little high is brought back
+            // onto a C there rather than being wrong here. @see `PianoRollView.basePitch`.
+            pianoRollBasePitchByClip[clipID] =
+                Self.basePitchOnC(base + direction * 12, rows: 24)
         }
     }
 

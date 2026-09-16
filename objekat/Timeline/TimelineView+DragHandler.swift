@@ -256,17 +256,35 @@ struct SendDragState {
 /// the rest of the gesture, which is what makes both halves aimable with the same hand.
 ///
 /// A mark NEVER leaves the band: the vertical is a change of row, not a drop onto the timeline.
+///
+/// A REGION also crops, by either of its two ends — the gesture a clip and a comment have always
+/// had, and the one the band was missing: a region is a passage, and a passage whose bounds can
+/// only be set at the moment it is created is a passage one re-creates rather than adjusts. It has
+/// NO vertical: cropping is an edge travelling along the time axis, and a hand that changed row
+/// mid-crop would be answering two questions at once. Hence the axis being forced for it below
+/// rather than read off the first few pixels.
 struct MarkerBandDragState {
     enum Axis { case time, lane }
+    /// What the hand took hold of. A point marker is all body — a point has no length to pull.
+    enum Part { case move, resizeLeft, resizeRight }
     let markerID: UUID
     /// The row it set off from, and the one it is on NOW — the vertical half moves it for real,
     /// live, so that what one sees under the hand is the model and not a preview of it.
     let originLaneID: UUID
     var laneID: UUID
     let originTime: Double
+    /// 0 for a point marker. @see `Marker.duration`, which is what tells the two kinds apart.
+    let originDuration: Double
+    let part: Part
     var axis: Axis? = nil
     /// Pushed at the first movement that changes anything, and once: a drag is ONE undo.
     var didPushUndo = false
+
+    /// The floor a crop stops at, and it is not cosmetic: `duration == 0` is what MAKES a point
+    /// marker, so a region cropped to nothing would silently become another kind of mark — one
+    /// with different drawing, different hit-testing and no way back but ⌘Z. The comment's own
+    /// floor, for the same reason one row up (@see CommentDragState.minDuration).
+    static let minDuration: Double = 0.05
 }
 
 /// An infinite bus being carried to another row.
@@ -1762,8 +1780,8 @@ extension TimelineView {
 
 extension TimelineView {
 
-    /// Moving a mark of the band: in time, or to another row, one axis at a time
-    /// (@see MarkerBandDragState for why the lock).
+    /// Moving a mark of the band — in time, or to another row, one axis at a time
+    /// (@see MarkerBandDragState for why the lock) — and CROPPING a region by either of its ends.
     ///
     /// Everything is applied LIVE to the model, with ONE undo pushed at the first movement that
     /// changes something. No preview state: a marker is a hairline and a row is 17 px, so there is
@@ -1771,32 +1789,66 @@ extension TimelineView {
     func handleMarkerBandDrag(_ value: DragGesture.Value, phase: DragPhase) {
         if markerBandDrag == nil {
             guard phase == .changed, pixelsPerSecond > 0,
-                  case .laneMarker(let laneID, let markerID)? = markerBandHit(at: value.startLocation),
-                  let m = viewModel.markerLane(id: laneID)?.markers.first(where: { $0.id == markerID })
+                  let z = markerBandZone(at: value.startLocation),
+                  let m = viewModel.markerLane(id: z.lane)?.markers.first(where: { $0.id == z.marker })
             else { return }
             // Grabbing selects, as it does on a block: one sees what the hand has.
-            viewModel.selectAnnotation(.laneMarker(lane: laneID, marker: markerID))
-            markerBandDrag = MarkerBandDragState(markerID: markerID, originLaneID: laneID,
-                                                 laneID: laneID, originTime: m.time)
+            viewModel.selectAnnotation(.laneMarker(lane: z.lane, marker: z.marker))
+            // Whatever the last gesture left behind: the guide belongs to the gesture running, and
+            // a stale line would show the moment `dragActive` turned true again.
+            viewModel.snapGuide = nil
+            markerBandDrag = MarkerBandDragState(markerID: z.marker, originLaneID: z.lane,
+                                                 laneID: z.lane, originTime: m.time,
+                                                 originDuration: m.duration, part: z.part)
         }
         guard var st = markerBandDrag else { return }
         defer {
             markerBandDrag = phase == .ended ? nil : st
+            if phase == .ended { viewModel.snapGuide = nil }
         }
 
         // The axis, decided once and for the whole gesture. Under the threshold nothing has been
-        // said yet, and nothing moves: a click that trembles is still a click.
+        // said yet, and nothing moves: a click that trembles is still a click. A CROP has no
+        // choice to make — an edge travels in time and nowhere else.
         if st.axis == nil {
-            let dx = abs(value.translation.width), dy = abs(value.translation.height)
-            guard max(dx, dy) >= 4 else { return }
-            st.axis = dx >= dy ? .time : .lane
+            if st.part != .move { st.axis = .time }
+            else {
+                let dx = abs(value.translation.width), dy = abs(value.translation.height)
+                guard max(dx, dy) >= 4 else { return }
+                st.axis = dx >= dy ? .time : .lane
+            }
         }
 
+        // The mark is left OUT of its own targets. The model is written on every frame, so it
+        // stands where the hand last put it: kept in the list it would be its own magnet, within
+        // the tolerance and therefore winning every time (@see EditViewModel.snapTargets).
+        let mine: Set<UUID> = [st.markerID]
+        let dt = value.translation.width / pixelsPerSecond
+
         switch st.axis {
+        case .time where st.part != .move:
+            // Cropping. The OTHER end is the anchor, exactly as on a clip and on a comment: pulling
+            // the left one moves the start and shortens by as much, pulling the right one only
+            // changes the length.
+            let originEnd = st.originTime + st.originDuration
+            let minD = MarkerBandDragState.minDuration
+            if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+            if st.part == .resizeLeft {
+                let t = min(viewModel.snapTime(max(0, st.originTime + dt), excluding: mine),
+                            originEnd - minD)
+                viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: t,
+                                     duration: originEnd - t, pushesUndo: false)
+            } else {
+                let t = max(viewModel.snapTime(max(0, originEnd + dt), excluding: mine),
+                            st.originTime + minD)
+                viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: st.originTime,
+                                     duration: t - st.originTime, pushesUndo: false)
+            }
+
         case .time:
             // The snap is the timeline's own: the grid when it is armed, nothing when it is not —
             // a mark is placed against the music, and the music's grid is already defined.
-            let t = viewModel.snapTime(max(0, st.originTime + value.translation.width / pixelsPerSecond))
+            let t = viewModel.snapTime(max(0, st.originTime + dt), excluding: mine)
             if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
             viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: t, pushesUndo: false)
 
@@ -1886,11 +1938,15 @@ extension TimelineView {
                   let c = viewModel.comments.first(where: { $0.id == z.id })
             else { return }
             viewModel.selectAnnotation(.comment(c.id))
+            viewModel.snapGuide = nil       // the last gesture's line is not this one's
             commentDrag = CommentDragState(id: c.id, part: z.part, originStart: c.startTime,
                                            originDuration: c.duration, originLane: c.lane)
         }
         guard var st = commentDrag else { return }
-        defer { commentDrag = phase == .ended ? nil : st }
+        defer {
+            commentDrag = phase == .ended ? nil : st
+            if phase == .ended { viewModel.snapGuide = nil }
+        }
 
         let dt = Double(value.translation.width) / pixelsPerSecond
         let originEnd = st.originStart + st.originDuration

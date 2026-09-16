@@ -538,7 +538,15 @@ struct TimelineView: View {
                 // answer is yes cannot be asked the question. The colour carries the answer —
                 // YELLOW when the edge has landed on a mark (another object's edge, a marker, a
                 // region's bound), GREY while it is merely following the hand or the grid.
+                //
+                // A MARK is in that list too, and it took a reading on screen to see why it had to
+                // be: a marker and a region are placed against the same material an object's edge
+                // is placed against, and a guide one gets for pulling an edge but not for pulling
+                // the mark that names the same instant is a guide with a hole in it. The band's
+                // drag and the comments' therefore light it exactly as a move does — and a mark
+                // dragged is left OUT of its own targets, @see `EditViewModel.snapTargets`.
                 let dragActive = moveDrag != nil || resizeDrag != nil || trimDrag != nil
+                             || markerBandDrag != nil || commentDrag != nil
                 //
                 // Dashed while it is grey, solid once it is yellow. The width alone would not have
                 // been enough to tell it from the selection cursor, which is grey too and sits one
@@ -1189,7 +1197,12 @@ struct TimelineView: View {
         // sticky header laid over the lanes). Without this the blocks HIDDEN beneath it would light
         // their editing zones up under a hand that can never reach them.
         if markerBandContains(pos) {
-            TimelineCursorKeeper.set(markerBandHit(at: pos) != nil ? NSCursor.openHand : NSCursor.arrow)
+            // A region's two ends crop and its body moves, so the cursor says which — the same
+            // vocabulary a clip and a comment already speak. A point marker has only a body.
+            let zone = markerBandZone(at: pos)
+            TimelineCursorKeeper.set(zone == nil ? NSCursor.arrow
+                                     : zone!.part == .move ? NSCursor.openHand
+                                                           : NSCursor.resizeLeftRight)
             if editZoneHover != nil { editZoneHover = nil }
             if cutHover != nil { cutHover = nil }
             return
@@ -1747,13 +1760,20 @@ struct TimelineView: View {
         return lanes[row].id
     }
 
-    /// The marker or region a point in the band lands on. A REGION is taken anywhere along its
-    /// span; a point marker is taken within `grabPx` of its tick, or anywhere along the name that
-    /// hangs off it — one aims at the word one reads.
+    /// The marker or region a point in the band lands on, and WHAT PART of it. A REGION is taken
+    /// anywhere along its span, its two ends cropping and its body moving; a point marker is taken
+    /// within `grabPx` of its tick, or anywhere along the name that hangs off it — one aims at the
+    /// word one reads — and has only a body, a point having no length to pull.
     ///
     /// Point markers are tried FIRST: one sitting inside a region has to stay reachable, and it is
     /// the finer mark of the two.
-    func markerBandHit(at point: CGPoint) -> AnnotationSel? {
+    ///
+    /// The handles are the comment's own rule (@see `commentZone`), capped so that a short region
+    /// keeps a body to grab — with a cap of `grabPx`, which is what the band already calls 'near
+    /// enough to a hairline'. Under four times that, a region is all body: one moves it, and crops
+    /// it after zooming in, rather than having the two gestures fight over five pixels.
+    func markerBandZone(at point: CGPoint)
+        -> (lane: UUID, marker: UUID, part: MarkerBandDragState.Part)? {
         guard let row = markerBandRow(at: point) else { return nil }
         let lanes = viewModel.visibleMarkerLanes
         guard row < lanes.count, pixelsPerSecond > 0 else { return nil }
@@ -1764,15 +1784,23 @@ struct TimelineView: View {
         for m in lane.markers where !m.isRegion {
             let labelSpan = MarkerBandGeometry.labelWidth(m.name) / pixelsPerSecond
             if t >= m.time - grab && t <= m.time + max(grab, labelSpan) {
-                return .laneMarker(lane: lane.id, marker: m.id)
+                return (lane.id, m.id, .move)
             }
         }
         for m in lane.markers where m.isRegion {
-            if t >= m.time && t <= m.endTime {
-                return .laneMarker(lane: lane.id, marker: m.id)
-            }
+            guard t >= m.time, t <= m.endTime else { continue }
+            let handle = min(grab, (m.endTime - m.time) / 4)
+            if t <= m.time + handle    { return (lane.id, m.id, .resizeLeft) }
+            if t >= m.endTime - handle { return (lane.id, m.id, .resizeRight) }
+            return (lane.id, m.id, .move)
         }
         return nil
+    }
+
+    /// The mark a point in the band lands on, its part left aside — what a CLICK needs, a click
+    /// selecting the whole mark wherever on it the hand came down. @see `markerBandZone`.
+    func markerBandHit(at point: CGPoint) -> AnnotationSel? {
+        markerBandZone(at: point).map { .laneMarker(lane: $0.lane, marker: $0.marker) }
     }
 
     /// The marker CARRIED BY AN OBJECT that a point lands on. Only the top strip of a block takes
@@ -2495,6 +2523,11 @@ struct TimelineView: View {
         MarkerLaneHeaderView(
             lanes: viewModel.visibleMarkerLanes,
             allLanes: viewModel.markerLanes,
+            // The scale and the LIVE scroll: a pinned name has to know what is under it. The
+            // anchor is handed over as the object and read inside the header, so a scrolling
+            // frame invalidates those few rows and not the timeline. @see TimelineScrollAnchor
+            pixelsPerSecond: pixelsPerSecond,
+            anchor: scrollAnchor,
             renamingID: viewModel.renamingID,
             onToggle: { id in
                 guard let lane = viewModel.markerLane(id: id) else { return }

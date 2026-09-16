@@ -342,5 +342,52 @@ with ObjekatClient(SOCK) as c:
     got = move_to(9.06)
     check("a mark carried by an object pulls at its EDIT time", abs(got - 9.07) < 1e-9, str(got))
 
+    # ── and a MARK is snapped too, without catching on itself ──────────────
+    # A marker and a region are placed against the same material an object's edge is placed
+    # against, so the band's drag goes through the same snap and lights the same dashed guide.
+    # What only shows once a mark is dragged: the drag writes into the model on every frame, so
+    # the mark stands where the hand last put it — and left in its own target list it would be
+    # its own magnet, winning every time within the eight pixels of tolerance and refusing to
+    # move at all. `marker.move` with `snap` is that door, which is what makes it assertable.
+    cmd("project.new")
+    cmd("project.set_snap", enabled=True)
+    obj = cmd("object.add", path=FIXTURE, lane=0, start=0.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    cmd("object.move", id=obj, start=20.0)              # the object's own edges out of the way
+    lane = cmd("marker_lane.create", name="drag")["lane"]
+
+    mk = cmd("marker.add", lane=lane, at=4.03)["marker"]
+    got = cmd("marker.move", lane=lane, marker=mk, at=4.06, snap=True)["at"]
+    check("a dragged marker does NOT catch on itself", abs(got - 4.0) < 1e-9, str(got))
+    got = cmd("marker.move", lane=lane, marker=mk, at=4.20, snap=True)["at"]
+    check("and it goes on moving with the hand", abs(got - 4.0) < 1e-9, str(got))
+
+    # Another mark on the row is a target like any other — that is what marks are FOR.
+    ref = cmd("marker.add", lane=lane, at=7.13)["marker"]
+    got = cmd("marker.move", lane=lane, marker=mk, at=7.12, snap=True)["at"]
+    check("but it does catch on somebody ELSE's mark", abs(got - 7.13) < 1e-9, str(got))
+    cmd("marker.remove", lane=lane, marker=ref)
+
+    # ── cropping a REGION ─────────────────────────────────────────────────
+    # A region is a passage, and until now its bounds could only be set when it was created: one
+    # re-created a region rather than adjusting it. Its two ends crop, the other end anchoring,
+    # exactly as on a clip and on a comment.
+    reg = cmd("marker.add", lane=lane, at=10.0, duration=2.0)["marker"]
+    r = cmd("marker.move", lane=lane, marker=reg, at=10.0, duration=3.4)
+    check("a region's END can be pulled out",
+          abs(r["at"] - 10.0) < 1e-9 and abs(r["duration"] - 3.4) < 1e-9, json.dumps(r))
+    r = cmd("marker.move", lane=lane, marker=reg, at=11.2, duration=2.2)
+    check("and its START, the far end staying put",
+          abs(r["at"] - 11.2) < 1e-9 and abs(r["at"] + r["duration"] - 13.4) < 1e-9, json.dumps(r))
+    # BOTH bounds go through the snap: a region is two instants, not one.
+    r = cmd("marker.move", lane=lane, marker=reg, at=11.02, duration=2.46, snap=True)
+    check("both of a region's bounds snap",
+          abs(r["at"] - 11.0) < 1e-9 and abs(r["at"] + r["duration"] - 13.5) < 1e-9, json.dumps(r))
+    check("and neither of them caught on the other", r["duration"] > 0.5, json.dumps(r))
+    cmd("edit.undo")
+    row = [l for l in cmd("marker_lane.list")["lanes"] if l["id"] == lane][0]
+    r = [m for m in row["markers"] if m["id"] == reg][0]
+    check("a crop is one undo", abs(r["time"] - 11.2) < 1e-9, json.dumps(r))
+
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)

@@ -69,24 +69,17 @@ struct PianoRollView: View {
     /// wanted to open. @see `autoBasePitch`.
     private var basePitch: Int {
         let stored = viewModel.pianoRollBasePitchByClip[object.id] ?? autoBasePitch
-        return stored.clamped(to: 0...max(0, 127 - (visibleRowCount - 1)))
+        // The bound is `pianoRollBaseOnC`'s own, so a window pushed against the ceiling by a zoom
+        // out comes back onto a C rather than onto 127 - rows + 1, which is a B as often as not.
+        return EditViewModel.basePitchOnC(stored, rows: visibleRowCount)
     }
 
-    /// The window a roll opens on when nobody has moved it yet: the notes CENTRED when they fit in
-    /// the height available, and otherwise the lowest of them a semitone from the floor — a span
-    /// taller than the window has to be read from somewhere, and reading up from the bass is how
-    /// one reads a keyboard.
-    ///
-    /// An empty clip keeps C3: there is nothing to frame, and a note about to be drawn there will
-    /// be drawn where the middle of the keyboard is.
+    /// The window a roll opens on when nobody has moved it yet: the notes framed, and the bottom
+    /// row ON A C. The rule and the reasons for it live with the arithmetic, where they can be
+    /// asserted with no screen — @see `pianoRollAutoBase`.
     private var autoBasePitch: Int {
-        let pitches = visibleNotes.map(\.pitch)
-        guard let lo = pitches.min(), let hi = pitches.max() else {
-            return EditViewModel.pianoRollDefaultBasePitch
-        }
-        let rows = visibleRowCount
-        guard hi - lo + 1 <= rows else { return max(0, lo - 1) }
-        return (lo + hi) / 2 - (rows - 1) / 2
+        pianoRollAutoBase(pitches: visibleNotes.map(\.pitch), rows: visibleRowCount,
+                          fallback: EditViewModel.pianoRollDefaultBasePitch)
     }
 
     /// The pitches shown from TOP to BOTTOM (rowPitches[0] = the top row). In crop mode it holds
@@ -104,7 +97,11 @@ struct PianoRollView: View {
     }
     private func normalRowPitches() -> [Int] {
         let base = basePitch
-        let top  = base + visibleRowCount - 1
+        // The keyboard ENDS at 127, and the window is allowed to sit against that end: it starts
+        // on a C (@see `pianoRollBaseOnC`) and the rows that would fall past the top simply are not
+        // drawn. Without the clamp the band would offer rows for pitches that do not exist, and a
+        // note laid on one of them would be a note no MIDI file can carry.
+        let top = min(127, base + visibleRowCount - 1)
         return (base...top).reversed().map { $0 }
     }
 

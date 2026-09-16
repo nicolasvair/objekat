@@ -278,6 +278,13 @@ struct MarkerRenameField: View {
 struct MarkerLaneHeaderView: View {
     let lanes: [MarkerLane]
     let allLanes: [MarkerLane]
+    /// The band's scale and the scroll, which together say where a row's first mark stands under
+    /// these pinned names. @see `nameWidth`.
+    var pixelsPerSecond: Double = 1
+    /// The LIVE scroll, read here and nowhere else in a body: passed as the object, its `x` is
+    /// touched inside this view, so a scrolling frame invalidates these few rows and not the
+    /// timeline. Exactly what `StickyToViewportTop` does with the vertical. @see TimelineScrollAnchor
+    var anchor: TimelineScrollAnchor? = nil
     var renamingID: UUID? = nil
     var onToggle: (UUID) -> Void = { _ in }
     var onCreate: () -> Void = {}
@@ -297,11 +304,50 @@ struct MarkerLaneHeaderView: View {
     /// 3 (the row's leading padding) + 5 (the pill's own) = the dot's left edge at 8.
     static let dotXRange: ClosedRange<Double> = 1...22
 
+    /// Where a row's NAME begins, from the viewport's left edge: the row's own leading padding (3),
+    /// the pill's (5), the dot (10) and the gap after it (4). The same arithmetic `dotXRange` is
+    /// built on, one step further along.
+    private static let nameX: Double = 3 + 5 + dotSize + 4
+    /// The widest a name is ever drawn, whatever room it has.
+    private static let nameMaxWidth: Double = 110
+    /// Under this there is not even room for an ellipsis: the name gives up its place entirely.
+    private static let nameMinWidth: Double = 12
+
+    /// The room a row's name has: from where it starts to the first mark of that row standing to
+    /// the right of it.
+    ///
+    /// A PINNED name and a SCROLLING band eventually collide, and zooming out is what brings it on
+    /// — every mark of a project piles up towards the left edge, under the names that say whose
+    /// rows they are. The name is what gives way. It is the one thing here that can still be read
+    /// from a fragment, where a mark cut in half is a mark one can no longer aim at; and it gives
+    /// way PROGRESSIVELY — the room there is, then an ellipsis, then nothing — rather than
+    /// vanishing at a threshold.
+    ///
+    /// The dot stays whatever happens: it carries the row's colour and it is the target of the
+    /// right click that changes it (@see `dotXRange`). A mark that ends up beneath it is the price,
+    /// and it is 10 px wide against a name three times that.
+    ///
+    /// Marks standing to the LEFT of the name pull nothing: they are behind the dot, or scrolled
+    /// past, and there is no width that would avoid them.
+    private func nameWidth(_ lane: MarkerLane) -> Double {
+        guard !lane.markers.isEmpty else { return Self.nameMaxWidth }
+        let scroll = Double(anchor?.x ?? 0)
+        var wall = Double.greatestFiniteMagnitude
+        for m in lane.markers {
+            let x = m.time * pixelsPerSecond - scroll
+            if x > Self.nameX, x < wall { wall = x }
+        }
+        guard wall < .greatestFiniteMagnitude else { return Self.nameMaxWidth }
+        // The pill's trailing padding, then the 3 px of air a mark's own name already keeps ahead
+        // of the next mark (@see `draw(marker:)`).
+        return min(Self.nameMaxWidth, max(0, wall - Self.nameX - 5 - 3))
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(lanes) { lane in
-                    row(lane)
+                    row(lane, width: nameWidth(lane))
                         .frame(height: rowHeight, alignment: .leading)
                 }
             }
@@ -313,7 +359,7 @@ struct MarkerLaneHeaderView: View {
     }
 
     @ViewBuilder
-    private func row(_ lane: MarkerLane) -> some View {
+    private func row(_ lane: MarkerLane, width: Double) -> some View {
         HStack(spacing: 4) {
             // The dot IS the row's colour, so it is where one goes to change it: a RIGHT CLICK on
             // it opens the palette, and what that sets is the row's DEFAULT — every mark on the row
@@ -329,15 +375,18 @@ struct MarkerLaneHeaderView: View {
                 .frame(width: Self.dotSize, height: Self.dotSize)
                 .help(L("markers.lane.color.help"))
             if renamingID == lane.id {
+                // A field keeps its full width whatever is under it: one is TYPING, and a box that
+                // shrank to nothing would leave the keyboard with nowhere to go. It is transient,
+                // and the mark it covers comes back the moment the name is committed.
                 MarkerRenameField(initial: lane.name) { onRename(lane.id, $0) }
-                    .frame(width: 110)
-            } else {
+                    .frame(width: Self.nameMaxWidth)
+            } else if width >= Self.nameMinWidth {
                 Text(lane.name)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 110, alignment: .leading)
+                    .frame(maxWidth: width, alignment: .leading)
             }
         }
         .padding(.horizontal, 5)

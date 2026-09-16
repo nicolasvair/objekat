@@ -503,6 +503,14 @@ absent and null are one thing here.
 handle for a script holding it, and the same time — a row is a layer of reading, not a place on the
 timeline.
 
+`marker.move` carries both bounds: `at` alone moves a mark, `at` + `duration` **crops** a region,
+which is also the hand's gesture since 16 September (its two ends pull, the far one anchoring, the
+same vocabulary a clip and a comment speak). It answers with the mark's real `at` and `duration`
+after the move. With `snap: true` both bounds go through the timeline's own snap, and the mark is
+left **out of its own targets** — the door the band's drag uses, and the reason the flag exists:
+the drag writes into the model on every frame, so a mark left in its own list would be its own
+magnet and would refuse to move at all.
+
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 
 ### An infinite bus changes row
@@ -543,8 +551,9 @@ its job. Only VISIBLE rows count (a hidden row keeps its content but has stopped
 and a mark pushed behind an edge by a trim does not count either — it is not drawn, so it must not
 pull. The tolerance is 8 px, so it follows the zoom.
 
-`object.move` takes a `snap` flag, **false** by default: the API positions exactly unless asked
-otherwise.
+`object.move` and `marker.move` take a `snap` flag, **false** by default: the API positions exactly
+unless asked otherwise. A mark asking for the snap excludes ITSELF from the targets — see
+`marker.move` above.
 
 It does NOT decide the pan's detent — see below. The grid is about TIME, and a pan has nothing to
 place itself against.
@@ -755,10 +764,11 @@ A few points of vocabulary that save mistakes:
 | `tools/objekat_mcp.py` | a stdio MCP server, **its tools generated from `help`** |
 | `tools/smoke.jsonl` | an `--exec` scenario (with no identifiers reused) |
 | `tools/scenario_families.py` | a non-regression scenario, 131 steps and assertions over the eight families |
-| `tools/scenario_markers.py` | markers / regions / comments: 70 assertions, including a cut, a reverse, an undo, a reload, and the marks as snap targets |
+| `tools/scenario_markers.py` | markers / regions / comments: 78 assertions, including a cut, a reverse, an undo, a reload, the marks as snap targets, a region cropped and a mark that does not catch on itself |
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
+| `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:

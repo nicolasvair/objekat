@@ -173,21 +173,39 @@ extension CommandRegistry {
         }
 
         register("marker.move",
-                 summary: "Moves a marker, and resizes it when it is a region. Time ABSOLUTE.",
+                 summary: "Moves a marker, and resizes it when it is a region. Time ABSOLUTE. "
+                        + "With `snap`, both bounds go through the timeline's own snap — the "
+                        + "door the band's drag uses, the mark left out of its own targets.",
                  params: [ParamSpec("lane", "uuid", "Its row."),
                           ParamSpec("marker", "uuid", "The marker."),
                           ParamSpec("at", "number", "Its new time, in seconds."),
                           ParamSpec("duration", "number", required: false,
                                     "Its new length. Absent = left alone. 0 turns a region back "
-                                  + "into a point.")],
+                                  + "into a point."),
+                          ParamSpec("snap", "bool", required: false,
+                                    "Apply snapping (default false: exact positioning).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let lane = try p.uuid("lane"), marker = try p.uuid("marker")
-            let d = p.raw["duration"] != nil ? try p.double("duration") : nil
-            guard vm.moveMarker(laneID: lane, markerID: marker, to: try p.double("at"), duration: d) else {
+            var at = try p.double("at")
+            var d = p.raw["duration"] != nil ? try p.double("duration") : nil
+            // The hand's own door, and the reason this parameter exists: a mark that is dragged
+            // must not catch on ITSELF, and nothing headless could say whether it did until the
+            // snap could be asked for here. A region snaps at BOTH ends — it is two instants.
+            if try p.bool("snap", or: false) {
+                CommandAdapters.withSnapping(true, vm) {
+                    let end = d.map { at + $0 }
+                    at = vm.snapTime(at, excluding: [marker])
+                    if let end { d = max(0, vm.snapTime(end, excluding: [marker]) - at) }
+                }
+            }
+            guard vm.moveMarker(laneID: lane, markerID: marker, to: at, duration: d) else {
                 throw CommandError(code: .not_found, message: "no such marker on that row")
             }
-            return .object(["lane": .string(lane.uuidString), "marker": .string(marker.uuidString)])
+            let moved = vm.markerLane(id: lane)?.markers.first { $0.id == marker }
+            return .object(["lane": .string(lane.uuidString), "marker": .string(marker.uuidString),
+                            "at": .number(moved?.time ?? at),
+                            "duration": .number(moved?.duration ?? d ?? 0)])
         }
 
         register("marker.set_color",

@@ -876,6 +876,15 @@ final class EditViewModel {
     ///
     /// The scope of the objects is deliberately the top level, exactly as it was: a child's edges
     /// live inside its group's window, and the group's own two edges already stand for them.
+    ///
+    /// `excluding` holds ids, and they may be an OBJECT's or a MARK's — the ids are unique across
+    /// both. A mark has to be able to exclude itself for one reason that only shows once a mark is
+    /// dragged: the band's drag writes into the model on every frame, so the mark stands where the
+    /// hand last put it, and left in this list it would be its own target. Well within the eight
+    /// pixels of tolerance, it would win every time, and the mark would stick to its own previous
+    /// position until the hand tore it eight pixels away — a magnet with nothing on the other end.
+    /// The same reason objects are excluded, and it went unnoticed only because a mark had no
+    /// gesture that snapped it.
     func snapTargets(excluding: Set<UUID> = []) -> [Double] {
         var out: [Double] = []
         for item in items where !excluding.contains(item.id) {
@@ -883,7 +892,7 @@ final class EditViewModel {
             out.append(item.startTime + item.duration)
         }
         for lane in markerLanes where lane.isVisible {
-            for m in lane.markers {
+            for m in lane.markers where !excluding.contains(m.id) {
                 out.append(m.time)
                 if m.isRegion { out.append(m.endTime) }
             }
@@ -892,7 +901,8 @@ final class EditViewModel {
             // Behind an edge: kept in the model, not drawn, hence not a target either — the same
             // bound `ObjectMarkersOverlay` draws by. A mark waiting for a trim to be reopened
             // must not pull an edge onto a place nothing shows (@see Array where Element == Marker).
-            for m in e.item.markers where m.time >= -1e-9 && m.time <= e.item.duration + 1e-9 {
+            for m in e.item.markers where !excluding.contains(m.id)
+                                       && m.time >= -1e-9 && m.time <= e.item.duration + 1e-9 {
                 out.append(e.absStart + m.time)
                 if m.isRegion { out.append(e.absStart + m.endTime) }
             }
