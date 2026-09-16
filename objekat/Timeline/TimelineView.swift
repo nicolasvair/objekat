@@ -532,12 +532,26 @@ struct TimelineView: View {
                 }
                 .zIndex(4)
 
+                // The snap guide. Drawn for the WHOLE of a move / crop / trim and not only when
+                // it has something to say: what one wants to know while pulling an edge is
+                // precisely whether one is aligned yet, and a line that only appears once the
+                // answer is yes cannot be asked the question. The colour carries the answer —
+                // YELLOW when the edge has landed on a mark (another object's edge, a marker, a
+                // region's bound), GREY while it is merely following the hand or the grid.
                 let dragActive = moveDrag != nil || resizeDrag != nil || trimDrag != nil
-                if let guide = viewModel.objectSnapGuide, dragActive {
-                    Rectangle()
-                        .fill(Color.yellow.opacity(0.55))
+                //
+                // Dashed while it is grey, solid once it is yellow. The width alone would not have
+                // been enough to tell it from the selection cursor, which is grey too and sits one
+                // pixel wider: two grey hairlines on the same canvas, one of them moving under the
+                // hand, is a reading nobody should have to make.
+                if let guide = viewModel.snapGuide, dragActive {
+                    SnapGuideRule()
+                        .stroke(guide.onTarget ? Color.yellow.opacity(0.75)
+                                               : Color.gray.opacity(0.55),
+                                style: StrokeStyle(lineWidth: 1,
+                                                   dash: guide.onTarget ? [] : [3, 3]))
                         .frame(width: 1, height: canvasHeight - rulerHeight)
-                        .offset(x: guide * pixelsPerSecond - 0.5, y: rulerHeight)
+                        .offset(x: guide.time * pixelsPerSecond - 0.5, y: rulerHeight)
                         .allowsHitTesting(false)
                         .zIndex(3)
                 }
@@ -630,8 +644,8 @@ struct TimelineView: View {
                 }
 
                 // AUTOMATION bands unfolded inline under the open objects. The same overlay mechanism
-                // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan.
-                // Passive at this stage: the canvas simply ignores the clicks that fall in it
+                // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan,
+                // and like them they own their clicks: the canvas steps aside over them
                 // (@see openAutomationBandContains).
                 ForEach(viewModel.laneEntries) { entry in
                     if let r = automationBandRect(for: entry), isEntryVisible(entry) {
@@ -641,7 +655,17 @@ struct TimelineView: View {
                             pixelsPerSecond: pixelsPerSecond,
                             bandWidth: r.width,
                             laneStep: laneStep,
-                            rowHeight: blockHeight
+                            rowHeight: blockHeight,
+                            bandStartTime: r.minX / pixelsPerSecond,
+                            onSeekToTime: { t in
+                                // The ruler's own contract, word for word (@see moveCursorFromRuler):
+                                // the grey line over its whole height, no caret on a lane — the
+                                // click was aimed at a curve, not at a row of the timeline.
+                                let st = viewModel.snapTime(max(0, t))
+                                viewModel.caretLane = nil
+                                if !isPlaying { viewModel.engine?.seek(to: st) }
+                                onMoveCursor(st)
+                            }
                         )
                         .offset(x: r.minX, y: r.minY)
                         .zIndex(2.56)
@@ -2978,5 +3002,17 @@ private struct HUDButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The snap guide's hairline — a bare vertical stroke, so that it can be DASHED. A
+/// `Rectangle().fill()` cannot be, and the dash is what tells the grey guide from the grey
+/// selection cursor (@see the guide's own comment in the canvas).
+private struct SnapGuideRule: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return p
     }
 }

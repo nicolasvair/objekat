@@ -268,7 +268,25 @@ with ObjekatClient(SOCK) as c:
     if aux:
         step("send.set_level", lambda: c.send("send.set_level", {"id": ida, "aux": aux["id"], "db": -6}))
         step("send.enable",   lambda: c.send("send.enable", {"id": ida, "aux": aux["id"], "enabled": False}))
-        step("send.list",     lambda: c.send("send.list", {"id": ida}))
+        sl = step("send.list", lambda: c.send("send.list", {"id": ida}))
+        # `automated` says whether a CURVE drives the level. Nothing has laid one here, so it
+        # answers false — what this asserts is that the key EXISTS and that a free send is not
+        # reported locked. The lock itself is NOT reachable from a script: the command API has no
+        # door onto the automations at all (no `automation.*` family), so nothing headless can lay
+        # the point that would close it. @see CLAUDE.md, the debt of 16 September 2026.
+        send0 = sl and sl["sends"][0]
+        check("send.list says whether a curve holds the level",
+              send0 is not None and send0.get("automated") is False, str(send0))
+        # The hand's own door: relative, over the SELECTION, and it names what it left alone.
+        c.send("send.enable", {"id": ida, "aux": aux["id"], "enabled": True})
+        c.send("send.set_level", {"id": ida, "aux": aux["id"], "db": -6})
+        r = step("send.adjust_level", lambda: c.send("send.adjust_level",
+                 {"aux": aux["id"], "db": 3, "ids": [ida]}))
+        check("a free send follows the hand, and is not among the locked",
+              r and r["count"] == 1 and r["locked"] == [], str(r))
+        check("and the level really moved",
+              abs(c.send("send.list", {"id": ida})["sends"][0]["level_db"] + 3) < 1e-4,
+              str(c.send("send.list", {"id": ida})["sends"][0]["level_db"]))
 
     # --- MIDI
     m = step("midi.create_clip", lambda: c.send("midi.create_clip", {"start": 4, "end": 6, "lane": 6}))

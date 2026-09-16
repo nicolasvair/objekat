@@ -60,6 +60,13 @@ struct ObjectMarkersOverlay: View {
             for e in entries {
                 guard !e.item.markers.isEmpty else { continue }
                 let by = rulerHeight + Double(e.displayLane) * laneStep
+                // The wall each name stops at, in canvas px: the next mark of THIS object, or the
+                // object's own right edge. The same rule as the band's (@see fittedMarkerLabel) —
+                // a name laid over the mark that follows it names the wrong instant, and on a
+                // block it would also run out over the neighbouring clip.
+                let edgesPx = e.item.markers
+                    .map { (e.absStart + $0.time) * pixelsPerSecond }.sorted()
+                let blockEndPx = (e.absStart + e.item.duration) * pixelsPerSecond
                 for m in e.item.markers {
                     // Behind an edge: kept in the model, not drawn. A left trim or the right half of
                     // a cut pushes a marker out of the window, where it waits for the edge to be
@@ -91,9 +98,14 @@ struct ObjectMarkersOverlay: View {
                     tab.closeSubpath()
                     context.fill(tab, with: .color(tint.opacity(alpha)))
 
-                    guard !m.name.isEmpty, renamingID != m.id else { continue }
-                    context.draw(Text(m.name)
-                                    .font(.system(size: 8, weight: sel ? .bold : .medium))
+                    guard renamingID != m.id else { continue }
+                    let wall = min(edgesPx.first { $0 > x + 0.5 } ?? blockEndPx, blockEndPx)
+                    guard let label = fittedMarkerLabel(m.name, size: 8,
+                                                        weight: sel ? .bold : .medium,
+                                                        maxWidth: wall - (x + 7) - 2,
+                                                        context: context)
+                    else { continue }
+                    context.draw(label
                                     .foregroundStyle(sel ? Color.accentColor : Color.black.opacity(0.65)),
                                  at: CGPoint(x: x + 7, y: by + 5), anchor: .leading)
                 }

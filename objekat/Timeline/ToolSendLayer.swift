@@ -66,9 +66,24 @@ struct ToolSendLayer: View {
             VStack(spacing: 2) {
                 Spacer(minLength: 0)
 
-                // The knob.
-                knob(level: row.level, enabled: routed, focused: row.focused)
-                    .frame(width: knobD, height: knobD)
+                // The knob. A level driven by a CURVE is shown faded and carries the automation
+                // glyph: it still SAYS what the send is doing — the value it shows is the static
+                // one the curve has taken over from — but it no longer answers the hand
+                // (@see EditViewModel.selectedSendersWithFreeLevel). The same reading as the signal
+                // view's `automationLocked`, on the other surface one reaches a send from.
+                ZStack {
+                    knob(level: row.level, enabled: routed, focused: row.focused)
+                        .opacity(row.automated ? 0.35 : 1)
+                    // The glyph stays BRIGHT over the faded knob: the fading says 'this does not
+                    // answer', the glyph says why, and a reason as dim as the thing it explains
+                    // explains nothing.
+                    if row.automated {
+                        Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                            .font(.system(size: max(7, knobD * 0.5), weight: .bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                }
+                .frame(width: knobD, height: knobD)
 
                 // The name plus the level.
                 if showText {
@@ -80,6 +95,7 @@ struct ToolSendLayer: View {
                     Text(levelString(row.level))
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundStyle(routed ? Color.red.opacity(0.95) : .white.opacity(0.6))
+                        .opacity(row.automated ? 0.35 : 1)
                 }
 
                 // The on/off button (right at the bottom — its clickable area goes through the canvas).

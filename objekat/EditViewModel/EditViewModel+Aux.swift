@@ -109,7 +109,8 @@ extension EditViewModel {
                 label:   aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded())),
                 level:   e?.levelDb ?? sendMinDb,
                 enabled: e?.enabled ?? false,
-                focused: sendToolFocus == SendFocus(objectID: objectID, auxID: aux.id)
+                focused: sendToolFocus == SendFocus(objectID: objectID, auxID: aux.id),
+                automated: isAutomated(.send(auxID: aux.id), on: objectID)
             )
         }
     }
@@ -146,9 +147,26 @@ extension EditViewModel {
             .map(\.id)
     }
 
+    /// The same list, minus those whose send towards that aux carries a CURVE.
+    ///
+    /// A curve is the authority and the static value is no longer heard (@see
+    /// EditViewModel+AutomationEngine, the whole doctrine): a hand that went on lowering a send
+    /// under automation would be turning a knob that changes nothing — the exact fault
+    /// `automationLocked` greys the signal view out to avoid, and which the timeline's own doors
+    /// were not applying. It belongs HERE, at the selection-level setters, because those are the
+    /// hand's doors and nothing else calls them; `setSendLevel(from:to:)` stays exact, being the
+    /// machine's door (`object.set_send_level`) and the one the automation writes its own static
+    /// value through. Same split as `updatePan` / `setPanFromHand`.
+    ///
+    /// The on/off SWITCH is deliberately left alone: cutting a send is an explicit intention of
+    /// silence and keeps the last word over any curve (@see syncSendEngine).
+    func selectedSendersWithFreeLevel(toAux auxID: UUID) -> [UUID] {
+        selectedSenders(toAux: auxID).filter { !isAutomated(.send(auxID: auxID), on: $0) }
+    }
+
     /// A relative nudge of the send level towards `auxID` over the whole selection (preserves the gaps).
     func adjustSendLevelSelected(toAux auxID: UUID, deltaDb: Float) {
-        for id in selectedSenders(toAux: auxID) {
+        for id in selectedSendersWithFreeLevel(toAux: auxID) {
             setSendLevel(from: id, to: auxID, levelDb: sendLevel(from: id, to: auxID) + deltaDb)
         }
         isDirty = true
@@ -156,7 +174,7 @@ extension EditViewModel {
 
     /// Sets one identical absolute level towards `auxID` over the whole selection.
     func setSendLevelSelected(toAux auxID: UUID, levelDb: Float) {
-        for id in selectedSenders(toAux: auxID) {
+        for id in selectedSendersWithFreeLevel(toAux: auxID) {
             setSendLevel(from: id, to: auxID, levelDb: levelDb)
         }
         isDirty = true

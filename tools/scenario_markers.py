@@ -286,5 +286,61 @@ with ObjekatClient(SOCK) as c:
     check("closing it brings the comment back", got["display_lane"] == 3)
     cmd("comment.remove", comment=note)
 
+    # ── the marks are SNAP TARGETS ────────────────────────────────────────
+    # The point of putting a mark somewhere is to be able to land on it. Until now the snap knew
+    # the grid and the objects' edges and nothing else, so an edge had to be eyeballed onto a
+    # marker — which is a mark doing half its job. A region counts TWICE (both its bounds), and a
+    # HIDDEN row counts for nothing: it keeps its content but has stopped saying anything, and an
+    # edge jumping onto something nobody can see reads as a fault.
+    #
+    # The numbers are chosen OFF the grid, which is 0.5 s at the default zoom (100 px/s): 3.43
+    # could only ever have been reached by the marker. Mind the object's OWN edges, which are
+    # targets as well and move with it — hence a fresh position asked for at each step rather
+    # than a loop over one.
+    cmd("project.new")
+    cmd("project.set_snap", enabled=True)
+    obj = cmd("object.add", path=FIXTURE, lane=0, start=0.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+
+    def move_to(t):
+        cmd("object.move", id=obj, start=t, snap=True)
+        return cmd("object.get", id=obj)["start"]
+
+    got = move_to(3.42)
+    check("with nothing there, the grid still has the last word", abs(got - 3.5) < 1e-9, str(got))
+
+    lane = cmd("marker_lane.create", name="snap")["lane"]
+    mk = cmd("marker.add", lane=lane, at=3.43)["marker"]
+    got = move_to(3.42)
+    check("a MARKER catches the edge, over the grid line beside it",
+          abs(got - 3.43) < 1e-9, str(got))
+    got = move_to(3.20)
+    check("out of reach it does not pull — 8 px and no more", abs(got - 3.0) < 1e-9, str(got))
+
+    reg = cmd("marker.add", lane=lane, at=6.03, duration=0.90)["marker"]
+    got = move_to(6.02)
+    check("a REGION's start catches it", abs(got - 6.03) < 1e-9, str(got))
+    got = move_to(6.92)
+    check("and its END too — a region is two targets, not one",
+          abs(got - 6.93) < 1e-9, str(got))
+
+    move_to(1.0)                                    # out of its own way first
+    cmd("marker_lane.set_visible", lane=lane, visible=False)
+    got = move_to(6.92)
+    check("a HIDDEN row catches nothing: what one cannot see must not pull",
+          abs(got - 7.0) < 1e-9, str(got))
+    cmd("marker_lane.set_visible", lane=lane, visible=True)
+    cmd("marker.remove", lane=lane, marker=mk)
+    cmd("marker.remove", lane=lane, marker=reg)
+
+    # A mark carried by an OBJECT is a target too, and in EDIT time: it is stored RELATIVE to its
+    # object, so what the snap has to offer is `start + time`. 9.07 rather than 0.07, and it must
+    # also beat the neighbour's own left edge at 9.0, which is further away.
+    other = cmd("object.add", path=FIXTURE, lane=2, start=9.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    cmd("object.add_marker", object=other, at=9.07)      # absolute; stored as 0.07 relative
+    got = move_to(9.06)
+    check("a mark carried by an object pulls at its EDIT time", abs(got - 9.07) < 1e-9, str(got))
+
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)

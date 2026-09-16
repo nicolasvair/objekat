@@ -134,6 +134,10 @@ struct SendRow: Identifiable {
     let level: Float       // dB; -∞ = sendMinDb
     let enabled: Bool
     let focused: Bool
+    /// A CURVE drives this send's level: the static value is no longer heard, so the knob is shown
+    /// greyed and answers no gesture. The same rule, and the same reading, as the signal view's
+    /// `automationLocked` (@see SynopticSend.isAutomated).
+    var automated: Bool = false
     var id: UUID { auxID }
 }
 

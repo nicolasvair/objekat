@@ -11,6 +11,15 @@ extension TimelineView {
         // plugin while the hand was pointing at a clip.
         viewModel.clearPluginSelection()
 
+        // ... and it leaves any inline rename open elsewhere. Clicking away is how one normally
+        // leaves a field, and the ONE rename nothing else closes is a marker ROW's name: the
+        // annotation selection carries the others out with it (@see EditViewModel.selectedAnnotation),
+        // but a row is not an annotation and its field stayed open under every later click. Here
+        // rather than in the dozen branches below, and BEFORE them: the marker band's own double
+        // click sets it again a few lines down. Leaving is not cancelling — what was typed is
+        // committed on the way out (@see MarkerRenameField).
+        viewModel.renamingID = nil
+
         // The time ruler: it moves the cursor and changes nothing else. It takes priority over
         // everything — whatever the active tool, the ruler does not edit the content.
         if rulerBandContains(point) {
@@ -67,7 +76,8 @@ extension TimelineView {
         // there or move the cursor through the canvas.
         if openPianoRollBandContains(point) { return }
         // The automation bands are owned by AutomationBandView: the canvas lays neither a caret nor a
-        // selection there. Step 1: they have no gesture, and a click there is simply inert.
+        // selection there. It answers the click itself — it selects its object and moves the
+        // cursor (@see AutomationBandView.handleTap) — which is why nothing here has to.
         if openAutomationBandContains(point) { return }
         // A real click in the timeline → we leave the piano-roll context (⌘A goes back to selecting
         // clips).
@@ -166,6 +176,18 @@ extension TimelineView {
         // has asked for nothing.
         if let hit = crossfadeHit(at: point), hit.part == .move {
             viewModel.selectCrossfade(left: hit.zone.leftID, right: hit.zone.rightID)
+            return
+        }
+
+        // A plain click on a FADE — its handle or its triangle — has asked for nothing. It falls in
+        // the block's upper half, where a bare click moves the cursor and deselects, and that is
+        // exactly what one does NOT want here: one comes to a fade handle to PULL it, and a
+        // gesture begun a pixel short of moving sent the cursor away from where one was listening.
+        // The same reading the crossfade's three gesture parts already get just above: a click
+        // that merely lands on a gesture is not an order. The double click (erase the fade) has
+        // already been answered further up.
+        if let (hover, _) = selectionZoneHover(at: point),
+           hover.zone == .fadeIn || hover.zone == .fadeOut {
             return
         }
 

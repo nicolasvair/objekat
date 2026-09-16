@@ -62,9 +62,31 @@ struct PianoRollView: View {
     private var usedPitches: [Int] { Array(Set(visibleNotes.map(\.pitch))).sorted() }
 
     /// The pitch at the bottom of the window (normal mode), bounded to stay within 0...127.
+    ///
+    /// With nothing stored it FRAMES THE NOTES rather than falling back on C3. A roll that opens
+    /// on an empty stretch of keyboard is a roll that looks empty, and the first thing one then
+    /// does is hunt for one's own material with oct +/- — which is the clip telling us where it
+    /// wanted to open. @see `autoBasePitch`.
     private var basePitch: Int {
-        let stored = viewModel.pianoRollBasePitchByClip[object.id] ?? EditViewModel.pianoRollDefaultBasePitch
+        let stored = viewModel.pianoRollBasePitchByClip[object.id] ?? autoBasePitch
         return stored.clamped(to: 0...max(0, 127 - (visibleRowCount - 1)))
+    }
+
+    /// The window a roll opens on when nobody has moved it yet: the notes CENTRED when they fit in
+    /// the height available, and otherwise the lowest of them a semitone from the floor — a span
+    /// taller than the window has to be read from somewhere, and reading up from the bass is how
+    /// one reads a keyboard.
+    ///
+    /// An empty clip keeps C3: there is nothing to frame, and a note about to be drawn there will
+    /// be drawn where the middle of the keyboard is.
+    private var autoBasePitch: Int {
+        let pitches = visibleNotes.map(\.pitch)
+        guard let lo = pitches.min(), let hi = pitches.max() else {
+            return EditViewModel.pianoRollDefaultBasePitch
+        }
+        let rows = visibleRowCount
+        guard hi - lo + 1 <= rows else { return max(0, lo - 1) }
+        return (lo + hi) / 2 - (rows - 1) / 2
     }
 
     /// The pitches shown from TOP to BOTTOM (rowPitches[0] = the top row). In crop mode it holds
@@ -132,6 +154,15 @@ struct PianoRollView: View {
                 .frame(width: width, height: controlStripHeight)
         }
         .frame(width: width, height: bandHeight, alignment: .topLeading)
+        // The framing worked out above is WRITTEN DOWN the moment the roll appears, and for one
+        // reason: oct +/- adds an octave to the STORED value, so a window that was only ever
+        // computed would have sent the first press back to C3 — a jump away from what one is
+        // looking at, made by a button whose whole promise is one octave.
+        .onAppear {
+            if viewModel.pianoRollBasePitchByClip[object.id] == nil {
+                viewModel.pianoRollBasePitchByClip[object.id] = autoBasePitch
+            }
+        }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.85))
         .overlay(
             RoundedRectangle(cornerRadius: 3)

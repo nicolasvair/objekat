@@ -923,7 +923,7 @@ extension TimelineView {
             TimelineCursorKeeper.set(NSCursor.resizeLeftRight)
 
             if phase == .ended {
-                viewModel.objectSnapGuide = nil
+                viewModel.snapGuide = nil
                 viewModel.pushUndo()
                 let (s, e) = (state.finalStart, state.finalEnd)
                 if e > s, let obj = viewModel.find(id: state.id) {
@@ -961,7 +961,7 @@ extension TimelineView {
             }
 
             if phase == .ended {
-                viewModel.objectSnapGuide = nil
+                viewModel.snapGuide = nil
                 viewModel.pushUndo()
                 // A crop moves an edge, and the zone is made of edges (@see refitCrossfade).
                 viewModel.withCrossfadeRefit(around: state.ids) {
@@ -993,7 +993,7 @@ extension TimelineView {
             setEdgeCursor(open: true, room: (dStart - minDStart, maxDStart - dStart))
 
             if phase == .ended {
-                viewModel.objectSnapGuide = nil
+                viewModel.snapGuide = nil
                 viewModel.pushUndo()
                 viewModel.withCrossfadeRefit(around: state.ids) {
                     for (id, anchor) in state.anchors {
@@ -1030,13 +1030,13 @@ extension TimelineView {
         let excl       = Set(state.anchors.keys)
 
         let candStart  = viewModel.snapTime(rawStart,   excluding: excl)
-        let guideStart = viewModel.objectSnapGuide
+        let guideStart = viewModel.snapGuide
         let candEnd    = viewModel.snapTime(clipEndRaw, excluding: excl)
-        let guideEnd   = viewModel.objectSnapGuide
+        let guideEnd   = viewModel.snapGuide
 
         let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
         let snappedStart = useEnd ? candEnd - grabbedDur : candStart
-        viewModel.objectSnapGuide = useEnd ? guideEnd : guideStart
+        viewModel.snapGuide = useEnd ? guideEnd : guideStart
 
         var dt = snappedStart - grabbedAnchor.start
         var dl = rawDl
@@ -1069,7 +1069,7 @@ extension TimelineView {
         }
 
         if phase == .ended {
-            viewModel.objectSnapGuide = nil
+            viewModel.snapGuide = nil
 
             let grabbedFinalAbsDL: Int
             if let sgID = state.sourceGroupID,
@@ -1112,7 +1112,7 @@ extension TimelineView {
                 return cl >= 0 && cl < e.item.childLaneCount
             }
             if droppedOnOwnSubtree {
-                viewModel.objectSnapGuide = nil
+                viewModel.snapGuide = nil
                 moveDrag = nil
                 return
             }
@@ -1727,8 +1727,13 @@ extension TimelineView {
             if !viewModel.selectedIDs.contains(hit.clipID) {
                 viewModel.select(hit.clipID, additive: false)
             }
+            // A send under a CURVE is not lowered by hand: the curve is what is heard, and a knob
+            // that answered would be changing nothing (@see selectedSendersWithFreeLevel). The one
+            // grabbed counts among the rest — grabbing a locked knob starts no gesture at all,
+            // rather than silently moving its neighbours.
+            guard !viewModel.isAutomated(.send(auxID: hit.auxID), on: hit.clipID) else { return }
             let anchors = Dictionary(uniqueKeysWithValues:
-                viewModel.selectedSenders(toAux: hit.auxID).map {
+                viewModel.selectedSendersWithFreeLevel(toAux: hit.auxID).map {
                     ($0, viewModel.sendLevel(from: $0, to: hit.auxID))
                 })
             // The undo before the first change (see handleVolumeDrag).

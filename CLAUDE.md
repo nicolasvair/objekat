@@ -542,6 +542,97 @@ What has landed since mid-August, in order:
   preview stopping at the object's edge, while the block itself grows past it, reads as a limit or
   as a fault.
 
+- **Seven things read off one session's use, and one question answered** (16 September 2026) —
+  clicks that did the wrong thing, names that ran over their neighbours, and a rule that was written
+  down but only half applied.
+  **The marks became snap targets, and the guide always shows.** That one is two changes, and the
+  second is why the first was invisible: `snappedTimePure` knew the grid and the objects' edges and
+  nothing else, so an edge had to be eyeballed onto a marker — a mark naming an instant, with
+  nothing able to land on it, is a mark doing half its job. A marker's instant, a region's BOTH
+  bounds, and the marks an object carries (converted into edit time) are all targets now, through
+  one list, `snapTargets`. Two exclusions, and they say the same thing: a HIDDEN row pulls nothing
+  (it keeps its content but has stopped saying anything) and neither does a mark pushed behind an
+  edge by a trim (it is not drawn — the very bound `ObjectMarkersOverlay` draws by). And the guide
+  line, which existed already and only lit up when a snap landed on an object's edge, is now drawn
+  for the WHOLE of a move / crop / trim: what one wants to know while pulling an edge is precisely
+  whether one is aligned YET, and a line that appears only once the answer is yes cannot be asked
+  the question. The colour carries the answer — **dashed grey** while the edge merely follows the
+  hand or the grid, **solid yellow** the moment it lands on a mark. Dashed and not merely grey
+  because the selection cursor is grey too and one pixel wider: two grey hairlines on one canvas,
+  one of them moving under the hand, is a reading nobody should have to make. `snappedTime` returns
+  the pair (`time`, `onTarget`), a grid line that FALLS on a mark counting as landing on it —
+  the eye sees an alignment there and a guide staying grey over it would be lying.
+  **An automated send no longer answers the hand** — which was the question asked, "who wins?".
+  The answer was already written: as soon as a parameter carries a point the curve is the authority
+  and the static value is no longer heard, no offset and no composition. The signal view had been
+  applying it (`automationLocked` greys the knob), the TIMELINE had not: the Send tool's knob, the
+  wheel and the inspector's box all went on lowering a send that could not be heard to move. The
+  rule now lives at the hand's doors and only there — `selectedSendersWithFreeLevel`, which
+  `adjustSendLevelSelected` / `setSendLevelSelected` and the knob's drag read — while
+  `setSendLevel(from:to:)` stays exact, being the machine's door and the one an automation writes
+  its own static value through. The same split as `updatePan` / `setPanFromHand`. The on/off SWITCH
+  is deliberately left out: cutting a send is an explicit intention of silence and keeps the last
+  word over any curve (@see `syncSendEngine`). New in the API: `send.list` carries `automated`, and
+  `send.adjust_level` is the hand's own door, naming what it `moved` and what it left `locked`.
+  **The piano roll opens on its own notes.** It opened on C3 whatever the clip held, so a roll
+  written two octaves up looked EMPTY and the first thing one did was hunt for one's own material
+  with oct +/-. The notes are centred when they fit in the height available, and otherwise read
+  from a semitone under the lowest — a span taller than the window has to be read from somewhere,
+  and one reads a keyboard upwards from the bass. An empty clip keeps C3, there being nothing to
+  frame. The framing is WRITTEN DOWN on appearing, and that is not an optimisation: oct +/- adds an
+  octave to the STORED value, so a window only ever computed would have sent the first press back
+  to C3 — a jump away from what one is looking at, made by the one button whose whole promise is a
+  single octave.
+  **A click in an automation band moves the cursor**, as a click on a lane does. The band was inert
+  — a hole in the canvas, the same gesture one row lower doing nothing — and a curve is read against
+  the moment it plays at, so going to listen at that instant is the one thing a bare click there is
+  for. It follows the RULER's contract and not a lane's: the grey line over its whole height, no
+  caret (`caretLane = nil`), the click having been aimed at a curve and not at a row. Anywhere in
+  the band, the dead space between the rows included.
+  **And a click on a FADE moves nothing at all.** A fade handle falls in the block's upper half,
+  where a bare click deselects and sends the cursor away — so a gesture begun a pixel short of
+  moving took the cursor off what one was listening to. The same reading the crossfade's three
+  gesture parts already had: a click that merely lands on a gesture is not an order.
+  **A mark's name takes the room available and not one pixel more.** Zoomed out far enough two
+  marks come within a few pixels of each other, and the first name lay straight across the second
+  mark, its flag and its own name. Each name now stops at the next mark on its row (or the row's
+  end; on an object, at the block's own right edge) and is cut to fit with an ellipsis — measured
+  with `GraphicsContext.resolve(_:).measure(in:)` rather than guessed, `MarkerBandGeometry.labelWidth`
+  being an approximation that is fine for a grab zone and shows in a drawing. One function,
+  `fittedMarkerLabel`, shared by the band and by the marks carried on an object: the same drawing,
+  hence the same bug, hence one fix.
+  **And a click in the timeline leaves an inline rename.** The one rename nothing closed was a
+  marker ROW's name: the annotation selection carries the others out with it through
+  `selectedAnnotation`'s `didSet`, but a row is not an annotation and its field stayed open under
+  every later click. `renamingID = nil` at the DOOR of `handleCanvasTap`, beside
+  `clearPluginSelection` and for the same reason — a guard in the dozen branches below is a guard
+  the next branch forgets — and before them, the marker band's own double click setting it again a
+  few lines down. Leaving is not cancelling: what was typed is committed on the way out.
+  **The question about the Documents prompt, answered: it is per BUILD, not per launch, and it is
+  the ad-hoc signature.** `codesign -d -r-` on the built app prints `designated => cdhash H"…"` —
+  with no team, the designated requirement IS the hash of that exact binary, and TCC keys its grant
+  to the requirement. Every rebuild is therefore a different app as far as macOS is concerned, and
+  the same binary relaunched never asks twice. It is the price of `CODE_SIGN_IDENTITY = "-"` and an
+  empty `DEVELOPMENT_TEAM`, which are deliberate (see the permanent points) — so it is not a bug to
+  fix in the repository. Whoever is tired of the prompt signs locally with their own team ID and
+  **does not commit it**.
+  Verified with no screen: a build; `scenario_markers.py` 70 assertions all pass, with seven new
+  ones on the snap targets (the grid still winning with nothing there, a marker beating the grid
+  line beside it, out of reach pulling nothing, a region's start AND its end, a hidden row catching
+  nothing, an object's mark pulling at its EDIT time); `scenario_families.py` 131 OK with the send
+  block grown; `scenario_plugin_selection.py` 58; `test_send_columns.swift` 22 and
+  `test_synoptic_marquee.swift` 21; `smoke.jsonl` clean; i18n 393 keys, no orphans; and
+  `CGWindowListCopyWindowInfo` on the headless pid: no window.
+  **What no suite could reach, and it is worth knowing why**: the send LOCK itself. The command API
+  has no door onto the automations at all — there is no `automation.*` family — so nothing headless
+  can lay the point that would close the lock. `send.list`'s `automated` and `send.adjust_level`'s
+  `locked` are asserted in their FREE state only. An automation door is the debt that pays this one.
+  **Not seen, not heard, not felt**: every pixel of it — the dashed grey guide and the moment it
+  turns yellow on a marker; the greyed knob and its automation glyph under the Send tool; the roll
+  opening on its own octave; the cursor answering in an automation band; a fade handle that now
+  swallows a click; the names cut with an ellipsis; and whether a click in the canvas really does
+  read as leaving a rename rather than as losing what one typed.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

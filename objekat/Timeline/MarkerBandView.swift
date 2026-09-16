@@ -31,6 +31,35 @@ enum MarkerBandGeometry {
     }
 }
 
+/// A mark's name cut down to the room it has been given, with an ellipsis when it had to give
+/// ground — nil when there is not even room for that.
+///
+/// It exists because a mark's name is drawn FREE, beside its tick and not inside a box: zoomed out
+/// far enough, two marks come within a few pixels of each other and the first name lay straight
+/// across the second mark, its flag and its own name. A title takes the room available and not one
+/// pixel more. Shared by the band and by the marks carried on an object — the same drawing, hence
+/// the same bug, hence one fix.
+///
+/// Measured rather than guessed: `MarkerBandGeometry.labelWidth` approximates, which is all a grab
+/// zone needs, but a drawing that is a character out shows.
+func fittedMarkerLabel(_ name: String, size: Double, weight: Font.Weight,
+                       maxWidth: Double, context: GraphicsContext) -> Text? {
+    guard maxWidth >= 6, !name.isEmpty else { return nil }
+    let box = CGSize(width: .greatestFiniteMagnitude, height: size * 3)
+    func make(_ str: String) -> Text { Text(str).font(.system(size: size, weight: weight)) }
+    func fits(_ t: Text) -> Bool { context.resolve(t).measure(in: box).width <= maxWidth }
+
+    let whole = make(name)
+    if fits(whole) { return whole }
+    var chars = Array(name)
+    while !chars.isEmpty {
+        chars.removeLast()
+        let t = make(String(chars) + "…")
+        if fits(t) { return t }
+    }
+    return nil
+}
+
 // MARK: - The band
 
 /// The rows of markers, drawn under the ruler and sticky with it.
@@ -93,6 +122,12 @@ struct MarkerBandView: View {
                     sep.addLine(to: CGPoint(x: size.width, y: y))
                     context.stroke(sep, with: .color(.primary.opacity(0.10)), lineWidth: 0.5)
 
+                    // Every mark's LEADING edge on this row, in reading order: the wall each name
+                    // stops at. A name is drawn to the right of its tick, so what it may not reach
+                    // is the next mark along, whatever kind it is — and the row's own right edge
+                    // when there is no next one.
+                    let edgesPx = lane.markers.map { $0.time * pixelsPerSecond }.sorted()
+
                     // Regions FIRST, markers over them: a point that falls inside a span must stay
                     // readable, and it is the point that is the finer mark.
                     for m in lane.sortedMarkers where m.isRegion {
@@ -105,7 +140,8 @@ struct MarkerBandView: View {
                     for m in lane.sortedMarkers where !m.isRegion {
                         let x = m.time * pixelsPerSecond
                         if x < visX0 || x > visX1 { continue }
-                        draw(marker: m, lane: lane, x: x, y: y,
+                        let wall = edgesPx.first { $0 > x + 0.5 } ?? size.width
+                        draw(marker: m, lane: lane, x: x, y: y, limitX: wall,
                              tint: color(m, on: lane), context: &context)
                     }
                 }
@@ -137,18 +173,28 @@ struct MarkerBandView: View {
         context.stroke(shape,
                        with: .color(sel ? .accentColor : tint.opacity(0.85)),
                        lineWidth: sel ? 1.5 : 0.75)
-        guard rect.width > 16, !m.name.isEmpty else { return }
-        // Clipped to the region: a name must not run past the span it names, otherwise it would
-        // read as belonging to whatever follows.
+        guard rect.width > 16,
+              // A name must not run past the span it names, otherwise it would read as belonging
+              // to whatever follows. Cut to fit rather than clipped flat: the ellipsis says the
+              // name goes on, where a letter sliced down the middle says nothing.
+              let label = fitted(m.name, weight: .medium, maxWidth: rect.width - 8,
+                                 context: context)
+        else { return }
         context.drawLayer { inner in
             inner.clip(to: shape)
-            inner.draw(Text(m.name).font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Color.primary.opacity(0.85)),
+            inner.draw(label.foregroundStyle(Color.primary.opacity(0.85)),
                        at: CGPoint(x: rect.minX + 4, y: rect.midY), anchor: .leading)
         }
     }
 
+    private func fitted(_ name: String, weight: Font.Weight, maxWidth: Double,
+                        context: GraphicsContext) -> Text? {
+        fittedMarkerLabel(name, size: 9, weight: weight, maxWidth: maxWidth, context: context)
+    }
+
+    /// `limitX` — where this name has to stop: the next mark on the row, or the row's end.
     private func draw(marker m: Marker, lane: MarkerLane, x: Double, y: Double,
+                      limitX: Double = .greatestFiniteMagnitude,
                       tint: Color, context: inout GraphicsContext) {
         let sel = isSelected(lane, m)
         let stroke = sel ? Color.accentColor : tint
@@ -166,9 +212,11 @@ struct MarkerBandView: View {
         flag.closeSubpath()
         context.fill(flag, with: .color(stroke.opacity(sel ? 1.0 : 0.85)))
 
-        guard !m.name.isEmpty else { return }
-        context.draw(Text(m.name).font(.system(size: 9, weight: sel ? .semibold : .regular))
-                        .foregroundStyle(sel ? Color.accentColor : Color.primary.opacity(0.8)),
+        // 3 px of air before the next mark: a name that ran right into the following tick would
+        // read as belonging to it.
+        guard let label = fitted(m.name, weight: sel ? .semibold : .regular,
+                                 maxWidth: limitX - (x + 8) - 3, context: context) else { return }
+        context.draw(label.foregroundStyle(sel ? Color.accentColor : Color.primary.opacity(0.8)),
                      at: CGPoint(x: x + 8, y: y + rowHeight / 2 + 2), anchor: .leading)
     }
 }

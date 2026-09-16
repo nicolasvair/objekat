@@ -66,7 +66,12 @@ extension CommandRegistry {
                          // `routed` = what the engine ACTUALLY wires. Different from `enabled`: a send that is
                          // out of scope (another stem, another container) stays in the model and makes no
                          // sound.
-                         "routed": .bool(vm.isSendRouted(from: id, to: send.auxID))])
+                         "routed": .bool(vm.isSendRouted(from: id, to: send.auxID)),
+                         // A CURVE drives the level: `level_db` is still what is written, but it is
+                         // no longer what is heard, and no gesture of the hand may change it
+                         // (@see EditViewModel.selectedSendersWithFreeLevel). Here so that the lock
+                         // can be asserted with no screen.
+                         "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))])
             }
             return .object(["id": .string(id.uuidString),
                             "sends": .array(sends),
@@ -91,6 +96,41 @@ extension CommandRegistry {
                             "aux": .string(auxID.uuidString),
                             "level_db": .number(Double(vm.sendLevel(from: id, to: auxID))),
                             "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
+        }
+
+        register("send.adjust_level",
+                 summary: "Moves the send level BY a delta over the SELECTION — the path the "
+                        + "hand's gestures take (the Send tool's knob, the wheel, the inspector's "
+                        + "box). A send whose level carries an automation CURVE is left alone: "
+                        + "the curve is what is heard, and a knob that answered would be changing "
+                        + "nothing (see `automated` in send.list). Absolute setting, and exact "
+                        + "even under a curve, since it is the machine's door: send.set_level.",
+                 params: [ParamSpec("aux", "uuid", "Receiving aux."),
+                          ParamSpec("db", "number", "Travel in dB, added to each current level."),
+                          ParamSpec("ids", "array<uuid>", required: false,
+                                    "Sending objects; default = current selection.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let auxID = try p.uuid("aux")
+            guard let aux = vm.find(id: auxID), aux.isAux else {
+                throw CommandError(code: .bad_params,
+                                   message: "not an aux: \(auxID.uuidString)")
+            }
+            // The selection is what the selection-level setter reads, exactly as the hand leaves
+            // it: `ids` merely lays it down first.
+            if p.raw["ids"] != nil {
+                vm.selectIDs(Set(try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm)))
+            }
+            let touched = vm.selectedSendersWithFreeLevel(toAux: auxID)
+            vm.adjustSendLevelSelected(toAux: auxID, deltaDb: Float(try p.double("db")))
+            return .object(["aux": .string(auxID.uuidString),
+                            "count": .int(touched.count),
+                            "moved": .array(touched.map { .string($0.uuidString) }),
+                            // Those the curve holds: named rather than merely absent, so a script
+                            // can tell 'out of scope' from 'locked by an automation'.
+                            "locked": .array(vm.selectedSenders(toAux: auxID)
+                                               .filter { !touched.contains($0) }
+                                               .map { .string($0.uuidString) })])
         }
 
         register("send.enable",

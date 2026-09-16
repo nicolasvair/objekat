@@ -801,8 +801,20 @@ final class EditViewModel {
     var gridMode: GridMode = .time {
         didSet { if gridMode != oldValue { isDirty = true } }
     }
-    var objectSnapGuide: Double? = nil
- 
+    /// Where the guide line stands during a gesture, and whether the value LANDED on something.
+    ///
+    /// It exists because an alignment one cannot SEE is an alignment one does not trust: the line
+    /// is drawn for the whole of a move / crop / trim, not only when it has something to say. Its
+    /// COLOUR is what says which of the two happened — grey while the edge is merely following the
+    /// hand or the grid, yellow the moment it lands on a mark (an object's edge, a marker, a
+    /// region's bound). So one reads at a glance whether one is aligned, and with what.
+    struct SnapGuide: Equatable {
+        let time: Double
+        /// true = the value came from a MARK. false = from the grid, or from nothing (snap off).
+        let onTarget: Bool
+    }
+    var snapGuide: SnapGuide? = nil
+
     var gridLevels: [GridLevel] {
         if gridMode == .bpm {
             let spb      = 60.0 / max(1.0, tempo)
@@ -846,32 +858,76 @@ final class EditViewModel {
 
     var effectiveSnapGrid: Double { gridLevels.last?.interval ?? 1.0 }
 
-    /// A pure snap (the grid + object edges), with NO side effect. Usable on every
-    /// mouse move (a cut preview) without mutating `objectSnapGuide`.
-    func snappedTimePure(_ t: Double, excluding: Set<UUID> = []) -> Double {
-        guard effectiveSnapEnabled else { return t }
+    /// Every instant a gesture can LAND on, the grid aside: the two edges of each top-level
+    /// object, and the MARKS — a point marker's instant, a region's two bounds, and the marks an
+    /// object carries, converted into edit time.
+    ///
+    /// The marks are here because that is what one puts them there FOR: a mark names an instant in
+    /// the piece, and an edge one has to eyeball onto it is a mark doing half its job. Only the
+    /// VISIBLE rows count — a hidden row keeps its content but has stopped saying anything, and an
+    /// edge jumping onto something nobody can see reads as a fault.
+    ///
+    /// The scope of the objects is deliberately the top level, exactly as it was: a child's edges
+    /// live inside its group's window, and the group's own two edges already stand for them.
+    func snapTargets(excluding: Set<UUID> = []) -> [Double] {
+        var out: [Double] = []
+        for item in items where !excluding.contains(item.id) {
+            out.append(item.startTime)
+            out.append(item.startTime + item.duration)
+        }
+        for lane in markerLanes where lane.isVisible {
+            for m in lane.markers {
+                out.append(m.time)
+                if m.isRegion { out.append(m.endTime) }
+            }
+        }
+        for e in laneEntries where !excluding.contains(e.item.id) {
+            // Behind an edge: kept in the model, not drawn, hence not a target either — the same
+            // bound `ObjectMarkersOverlay` draws by. A mark waiting for a trim to be reopened
+            // must not pull an edge onto a place nothing shows (@see Array where Element == Marker).
+            for m in e.item.markers where m.time >= -1e-9 && m.time <= e.item.duration + 1e-9 {
+                out.append(e.absStart + m.time)
+                if m.isRegion { out.append(e.absStart + m.endTime) }
+            }
+        }
+        return out
+    }
+
+    /// A pure snap (the grid + the marks), with NO side effect. Usable on every
+    /// mouse move (a cut preview) without mutating `snapGuide`.
+    ///
+    /// `onTarget` is what the guide's colour reads: true when the value came from a mark rather
+    /// than from the grid. A grid line that happens to FALL on a mark counts as landing on it —
+    /// the eye sees an alignment there, and a guide that stayed grey over it would be lying.
+    func snappedTime(_ t: Double, excluding: Set<UUID> = []) -> (time: Double, onTarget: Bool) {
+        guard effectiveSnapEnabled else { return (t, false) }
         let g = effectiveSnapGrid
         let gridSnap = g > 0 ? (t / g).rounded() * g : t
         let threshold = 8.0 / pixelsPerSecond
-        var bestObject: Double? = nil
-        for item in items where !excluding.contains(item.id) {
-            for edge in [item.startTime, item.startTime + item.duration] {
-                guard abs(edge - t) <= threshold else { continue }
-                if bestObject == nil || abs(edge - t) < abs(bestObject! - t) {
-                    bestObject = edge
-                }
-            }
+        let targets = snapTargets(excluding: excluding)
+        var best: Double? = nil
+        for target in targets {
+            guard abs(target - t) <= threshold else { continue }
+            if best == nil || abs(target - t) < abs(best! - t) { best = target }
         }
-        if let obj = bestObject, abs(obj - t) < abs(gridSnap - t) { return obj }
-        return gridSnap
+        if let b = best, abs(b - t) < abs(gridSnap - t) { return (b, true) }
+        // The grid won — but it may have won ON a mark. Half a pixel of tolerance: the two are
+        // computed by different routes and an exact equality would almost never hold.
+        let eps = 0.5 / max(1, pixelsPerSecond)
+        return (gridSnap, targets.contains { abs($0 - gridSnap) <= eps })
     }
 
+    func snappedTimePure(_ t: Double, excluding: Set<UUID> = []) -> Double {
+        snappedTime(t, excluding: excluding).time
+    }
+
+    /// The snap, PLUS the guide line it leaves behind. The line stands wherever the value landed,
+    /// whether or not anything was there to catch it: with the snap off, or on a plain stretch of
+    /// grid, it simply follows the edge, in grey.
     func snapTime(_ t: Double, excluding: Set<UUID> = []) -> Double {
-        let snapped = snappedTimePure(t, excluding: excluding)
-        let g = effectiveSnapGrid
-        let gridSnap = g > 0 ? (t / g).rounded() * g : t
-        objectSnapGuide = (effectiveSnapEnabled && snapped != gridSnap) ? snapped : nil
-        return snapped
+        let r = snappedTime(t, excluding: excluding)
+        snapGuide = SnapGuide(time: r.time, onTarget: r.onTarget)
+        return r.time
     }
 
     var isDirty: Bool = false {

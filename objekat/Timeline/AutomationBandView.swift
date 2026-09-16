@@ -62,6 +62,13 @@ struct AutomationBandView: View {
     /// A row's DRAWN height (= `blockHeight`): `laneStep` minus the gutter, so that two neighbouring
     /// rows do not touch.
     let rowHeight: Double
+    /// The EDIT time of the band's left edge — the object's start, or 0 for an infinite bus, whose
+    /// band spans the whole timeline. The band's own geometry is relative (@see the note above), so
+    /// this is the one number needed to turn a click in it back into a moment of the piece.
+    var bandStartTime: Double = 0
+    /// Moves the cursor (a plain click), in EDIT time. The counterpart of `PianoRollView`'s
+    /// `onSeekToTime`: the parent owns the snap, the seek and the transport.
+    var onSeekToTime: (Double) -> Void = { _ in }
 
     private var rows: [ParamRef] { object.automationRows }
     private var pending: ParamRef? { object.pendingAutomationParam }
@@ -472,11 +479,9 @@ struct AutomationBandView: View {
             && hypot(p.x - lastTap.loc.x, p.y - lastTap.loc.y) < 18
         lastTap = (now, p)
 
-        guard let row = geo.rowIndex(atY: p.y) else { return }
-        let ref = rows[row]
-        let pts = points(ref)
-
-        if isDouble {
+        if isDouble, let row = geo.rowIndex(atY: p.y) {
+            let ref = rows[row]
+            let pts = points(ref)
             if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
                 viewModel.removeAutomationPoint(objectID: object.id, param: ref, at: i)
             } else {
@@ -502,6 +507,15 @@ struct AutomationBandView: View {
         // A plain click: it selects the carrying object (the inspector follows), and consumes the
         // click so that it does not fall through onto the timeline's canvas.
         viewModel.select(object.id, additive: false)
+        // ... and it moves the cursor, exactly as a click on a lane does. A curve is read against
+        // the moment it plays at, so the one thing one comes here to do with a bare click is to go
+        // and listen at that instant. The band being inert was a hole in the canvas: the same
+        // gesture, one row lower, did nothing.
+        //
+        // Below and between the rows too — a double click there creates nothing (there is no row
+        // to create it on) and falls through to here: the band is a stretch of the timeline all the
+        // way across, and one part of it answering while the next does not is the hole again.
+        onSeekToTime(bandStartTime + p.x / pixelsPerSecond)
     }
 
     // MARK: - Dragging

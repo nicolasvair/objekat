@@ -536,6 +536,16 @@ grid reopens off the grid, without anyone having to turn the snap off again on e
 with no `snapEnabled` key — anything written before format 13 — opens WITH the snap, which is also
 where the app and a fresh project start. Read it back from `project.get_state`, field `snapEnabled`.
 
+What the snap LANDS ON, besides the grid: the two edges of every top-level object, and the **marks**
+— a marker's instant, a region's two bounds, and the marks an object carries, converted into edit
+time. A mark names an instant in the piece; an edge one has to eyeball onto it is a mark doing half
+its job. Only VISIBLE rows count (a hidden row keeps its content but has stopped saying anything),
+and a mark pushed behind an edge by a trim does not count either — it is not drawn, so it must not
+pull. The tolerance is 8 px, so it follows the zoom.
+
+`object.move` takes a `snap` flag, **false** by default: the API positions exactly unless asked
+otherwise.
+
 It does NOT decide the pan's detent — see below. The grid is about TIME, and a pan has nothing to
 place itself against.
 
@@ -555,6 +565,27 @@ objects can shift by up to half a step.
 `object.set_pan` is the other door, and it stays EXACT: it sets an absolute value, writes it as
 given, and never quantises — a script asking for 0.37 gets 0.37, as does a pan automation curve. The
 detent belongs to the hand.
+
+### An automated send does not answer the hand
+
+The same split, one family along. As soon as a send's level carries an automation point, the CURVE
+is what is heard and the static value is no longer — that is the whole automation doctrine, no
+offset and no composition. So a hand that went on lowering that send would be turning a knob that
+changes nothing, which is the one thing an interface must never offer.
+
+`send.list` says so, per send: **`automated`** beside `level_db`, `enabled` and `routed`.
+
+`send.adjust_level` is the HAND's door — relative, over the current selection (or the `ids` given),
+the path the Send tool's knob, the wheel and the inspector's box all take. It leaves an automated
+send alone and names it: the answer carries `moved` and `locked` side by side, so a script can tell
+"out of scope" from "held by a curve".
+
+`send.set_level` is the machine's door and stays EXACT, under a curve as anywhere else: it writes
+the static value as given — which is also how an automation lays its own starting point down.
+
+The on/off SWITCH is deliberately outside all this. Cutting a send is an explicit intention of
+silence and keeps the last word over any curve, so `send.enable` answers under automation exactly
+as it does without.
 
 ### Sliding the time selection
 
@@ -674,7 +705,8 @@ A few points of vocabulary that save mistakes:
 - **An FX chain host is indifferently an object or a stem.** "A reverb on the Voice
   stem" and "on this clip" are the same gesture, with the same host identifier.
 - **A send can be laid out of scope**: the model keeps it, silent, until a
-  change of stem makes it routable. So `send.*` returns `routed` beside `enabled`.
+  change of stem makes it routable. So `send.*` returns `routed` beside `enabled` — and
+  `automated`, which says a curve holds the level and no hand may move it.
 - **MIDI notes are counted in beats**, never in seconds: it is the only unit that survives
   a change of tempo.
 - **No command opens a plugin editor.** With no graphics context allocated, that would
@@ -690,10 +722,11 @@ A few points of vocabulary that save mistakes:
 | `tools/objekat_cli.py` | a command-line client, stdlib only, which also serves as usage documentation |
 | `tools/objekat_mcp.py` | a stdio MCP server, **its tools generated from `help`** |
 | `tools/smoke.jsonl` | an `--exec` scenario (with no identifiers reused) |
-| `tools/scenario_families.py` | a non-regression scenario, 64 steps over the eight families |
-| `tools/scenario_markers.py` | markers / regions / comments: 39 assertions, including a cut, a reverse, an undo and a reload |
-| `tools/scenario_plugin_selection.py` | several plugin cards at once: 48 assertions (order, one undo per batch, stems, move/copy/link) |
-| `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 18 assertions, no app needed |
+| `tools/scenario_families.py` | a non-regression scenario, 131 steps and assertions over the eight families |
+| `tools/scenario_markers.py` | markers / regions / comments: 70 assertions, including a cut, a reverse, an undo, a reload, and the marks as snap targets |
+| `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
+| `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
+| `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
