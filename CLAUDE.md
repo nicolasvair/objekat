@@ -782,13 +782,56 @@ What has landed since mid-August, in order:
   API still has no `automation.*` door, which is the debt that would pay this one. In the app it
   reads in one line: after ⌘Z on a plugin curve, `[UNDO]` must say `1 patched` and no
   `[PERF] instrument … instantiated` may follow.
-  **Left standing on purpose**: undoing a plugin's parameter VALUE still rebuilds the object and
-  reloads the AU — there, the state really has to be restored. The next step is to stop that too:
-  `restorePluginStateFromValueTree` re-applies a state to a LIVE instance (the reassert timer
-  already uses it after every reload), so `isPatchable` could accept a difference confined to
-  `stateXML` and `pushPatch` push it. Two traps: the base method is `jassertfalse` — only external
-  plugins and a few internals override it, a built-in will want its properties copied — and an AU
-  that is not yet initialised refuses its state, which the reassert timer already absorbs.
+  **Left standing for an hour, then taken down too**: undoing a plugin's parameter VALUE still
+  rebuilt the object and reloaded the AU, the state there really having to be restored. That is
+  the entry below.
+
+- **A plugin's state is put back, the plugin is not put back together** (17 September 2026, the
+  same day) — the question that ended the entry above, asked as it should be: why rebuild an
+  object whose plugin nobody deleted, when all that has to travel is a value? Undoing any setting
+  of any plugin destroyed the object and reloaded its instance — 757 ms of AU for a knob — to end
+  up, at the end of that load, applying exactly the state one could have handed it on its own.
+  Three pieces. An engine door, `applyPluginStateXML:forPlugin:`, the counterpart of
+  `getPluginStateXML:`; `isPatchable` accepting a difference CONFINED to the states
+  (@see `adoptingPluginStates`, which refuses as soon as the chain's shape moves — a plugin
+  added, removed, reordered, a rack facing a plain plugin — so the strict equality by subtraction
+  closes on everything else as before); and `pushPatch` pushing the state of the leaves whose
+  chunk has actually moved, and of those only.
+  The two traps were where they were expected, and a third was not.
+  **An EXTERNAL plugin already knows how**: `restorePluginStateFromValueTree` on the live
+  instance, plus the reassert the reloading path already schedules, an AU not yet initialised
+  refusing `setStateInformation` in silence.
+  **A BUILT-IN wants its properties copied**, and copying them is not enough: it must be a
+  REPLACEMENT. A `CachedValue` with a default writes NOTHING until somebody sets it, so a
+  parameter still at its factory value is ABSENT from the saved tree — recopying what the tree
+  HAS would leave standing precisely the settings being undone. A property the saved state lacks
+  is therefore REMOVED, which drops the `CachedValue` back onto its default, which IS the value to
+  restore. Never the whole tree: that would carry the identity (`id`, the live instance's
+  EditItemID) and the children (the automation curves, which belong to the model).
+  **And writing the property does not move the parameter.** `AutomatableParameter::valueTreePropertyChanged`
+  refreshes the `CachedValue` and stops there on purpose, to avoid a loop with the reverse race —
+  so `currentValue`, the one the audio reads and `getPluginParams` reports, stayed where it was.
+  `updateFromAttachedValue()` on every automatable parameter is the door, and it is what every
+  internal `restorePluginStateFromValueTree` does after its own copy (@see `EqualiserPlugin`).
+  The one that cost the most to find has nothing to do with plugins: `automationTouchOrder`. It is
+  a UI memory the engine knows nothing about, persisted, and recorded WITHOUT an undo point on
+  purpose — touching a fader is not an edit. So it moves between two undo points, and left out of
+  the probe's whitelist it alone made every object unrecoverable: the object was rebuilt for the
+  MEMORY of having touched a parameter. Anything else recorded outside the undo stack will do the
+  same, and the symptom says nothing — it is a rebuild, not an error.
+  Verified with no screen: a build; `tools/scenario_plugin_state_undo.py`, 10 assertions, written
+  for this and passing for a built-in AND for a real AU (`--external=aumu,UI15,UADx`) — the value
+  comes back, the plugin answers straight away (a rebuilt object's does not, it reloads
+  asynchronously), the object is back where it was, and the undo takes **1 ms and 3 ms** where
+  every measurement of the old path sat between 590 and 760 ms. The engine log says the rest:
+  `0 rebuilt, 1 patched`, and not one `instantiated` after the first. Plus `scenario_families.py`
+  131 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 58,
+  `scenario_export_preview.py` 35 OK, the three standalone Swift suites 22 / 21 / 31,
+  `smoke.jsonl` clean, i18n 397 keys.
+  **Still not proven, and it is the same debt**: the GESTURE this was written for. The command API
+  has no `automation.*` door, so the scenario takes the same road by the other end — a parameter
+  set outside the snapshot's window moves exactly what a curve moves, the plugin's tree. In the
+  app it reads in one line, as above: `[UNDO] … 1 patched`, and no `[PERF] … instantiated` behind it.
 
 ### What is owed
 

@@ -766,6 +766,7 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_families.py` | a non-regression scenario, 131 steps and assertions over the eight families |
 | `tools/scenario_markers.py` | markers / regions / comments: 78 assertions, including a cut, a reverse, an undo, a reload, the marks as snap targets, a region cropped and a mark that does not catch on itself |
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
+| `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |

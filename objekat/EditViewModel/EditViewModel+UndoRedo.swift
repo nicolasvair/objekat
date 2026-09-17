@@ -135,7 +135,7 @@ extension EditViewModel {
         }
 
         for item in items where !intact.contains(item.id) {
-            if patched.contains(item.id) { pushPatch(item) } else { syncAdd(item) }
+            if patched.contains(item.id) { pushPatch(item, live: liveTop[item.id]) } else { syncAdd(item) }
         }
 
         // The annotations: restored flat, with no engine reconciliation to do — a marker and a
@@ -198,6 +198,15 @@ extension EditViewModel {
     static func isPatchable(_ old: SoundObject, _ new: SoundObject) -> Bool {
         guard old.id == new.id else { return false }
         var probe = old
+        // The plugins' STATE, on the other hand, is recoverable: `applyPluginStateXML` re-applies
+        // it to the live instance. Only the state — the chain's composition, its order, its ids,
+        // its racks and its links are compared as before, and any difference there rebuilds
+        // (@see adoptingPluginStates, which refuses as soon as the shape moves).
+        guard let plugins = adoptingPluginStates(old.plugins, new.plugins),
+              let instruments = adoptingPluginStates(old.instruments, new.instruments)
+        else { return false }
+        probe.plugins     = plugins
+        probe.instruments = instruments
         probe.startTime     = new.startTime
         probe.duration      = new.duration
         probe.lane          = new.lane
@@ -216,6 +225,13 @@ extension EditViewModel {
         // `pushPatch` takes care of it.
         probe.automationOpen = new.automationOpen
         probe.automation     = new.automation
+        // The TOUCH memory is of the same class as `automationOpen`, and its own comment says so:
+        // a trace of a gesture, persisted, that the engine knows nothing about. It is recorded
+        // WITHOUT an undo point on purpose (touching a fader is not an edit) — so it moves between
+        // two undo points and, left out of here, it alone made an object unrecoverable. Every
+        // parameter touched between two ⌘Z was rebuilding its object, for the memory of having
+        // touched it.
+        probe.automationTouchOrder = new.automationTouchOrder
 
         switch (old.kind, new.kind) {
         case let (.clip(f0, _, fd0, sr0, rev0), .clip(f1, _, fd1, sr1, rev1)):
@@ -239,6 +255,63 @@ extension EditViewModel {
         return probe == new
     }
 
+    /// `old`'s chain wearing `new`'s STATES — nil as soon as the two chains are not the same
+    /// chain: a different number of plugins, an id that has moved, a rack facing a plain plugin,
+    /// a rack with another number of branches. Everything else about a plugin (its name, its
+    /// format, its bypass, its links, its colour) is left as `old` has it, so the strict equality
+    /// `isPatchable` closes on still has to hold for all of it.
+    ///
+    /// Why the state deserves this, when it used to force a rebuild: a plugin's state is an
+    /// opaque chunk on the model's side, so the model cannot say "put that parameter back" — but
+    /// it does not have to, the engine can be handed the whole chunk for the LIVE instance
+    /// (@see OBJEngineCore.applyPluginStateXML:forPlugin:). Destroying the object to get a plugin
+    /// back to a former state was reloading an AU — 757 ms for a UADx Anthem Synth — to end up
+    /// doing, at the end of the load, exactly the call we now make on its own.
+    static func adoptingPluginStates(_ old: [ObjectPlugin],
+                                     _ new: [ObjectPlugin]) -> [ObjectPlugin]? {
+        guard old.count == new.count else { return nil }
+        var out = old
+        for i in old.indices {
+            guard old[i].id == new[i].id else { return nil }
+            switch (old[i].rack, new[i].rack) {
+            case (nil, nil):
+                out[i].stateXML = new[i].stateXML
+            case let (oldRack?, newRack?):
+                guard oldRack.voices.count == newRack.voices.count else { return nil }
+                var voices: [[ObjectPlugin]] = []
+                for (a, b) in zip(oldRack.voices, newRack.voices) {
+                    guard let voice = adoptingPluginStates(a, b) else { return nil }
+                    voices.append(voice)
+                }
+                out[i].rack?.voices = voices
+            default:
+                return nil   // a rack facing a plugin: another chain
+            }
+        }
+        return out
+    }
+
+    /// The leaves whose state has really moved between the live chain and the one to restore, with
+    /// the state to re-apply. Empty for every gesture that does not touch a plugin — which is most
+    /// of them, and the reason this is computed rather than pushing every state on every patch:
+    /// re-applying a state to an AU for nothing is a `setStateInformation` for nothing, and on
+    /// some plugins that is audible.
+    static func changedPluginStates(_ old: SoundObject, _ new: SoundObject) -> [(id: UUID, xml: String)] {
+        var out: [(id: UUID, xml: String)] = []
+        func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
+            for (x, y) in zip(a, b) {
+                if let rackA = x.rack, let rackB = y.rack {
+                    for (va, vb) in zip(rackA.voices, rackB.voices) { walk(va, vb) }
+                } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
+                    out.append((id: y.id, xml: xml))
+                }
+            }
+        }
+        walk(old.plugins, new.plugins)
+        walk(old.instruments, new.instruments)
+        return out
+    }
+
     /// Pushes to the engine the differences of an object declared recoverable by `isPatchable`.
     /// Volume / pan / mute are not there: `refreshAudibility()` already recomposes them for the
     /// WHOLE project higher up in `applySnapshot`.
@@ -247,8 +320,16 @@ extension EditViewModel {
     /// the undone gesture may be the editing of the curve itself. `syncPosition` already pushes
     /// some for the cases that go through it; the final call covers the others (a group, whose
     /// children are walked by hand) and costs nothing when it duplicates one.
-    func pushPatch(_ object: SoundObject) {
+    ///
+    /// `live` is what the engine is playing — the same object as `isPatchable` was given as `old`.
+    /// It is only there to say WHICH plugin states have moved; absent, none is re-applied.
+    func pushPatch(_ object: SoundObject, live: SoundObject? = nil) {
         defer { pushAutomationTree(object) }
+        if let live {
+            for change in Self.changedPluginStates(live, object) {
+                engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString)
+            }
+        }
         switch object.kind {
         case .clip, .midiClip:
             syncPosition(object)   // position + duration + source offset + lane
@@ -261,7 +342,15 @@ extension EditViewModel {
         case .group(let children, _):
             // Not `syncPosition`: it would reposition the descendants without touching their
             // fades or their notes. We walk down ourselves, then close on the group.
-            for child in children { pushPatch(child) }
+            // The live children are paired POSITIONALLY: `isPatchable` has already required the
+            // two groups to have the same composition, in the same order.
+            let liveChildren: [SoundObject] = {
+                if case .group(let c, _) = live?.kind { return c }
+                return []
+            }()
+            for (i, child) in children.enumerated() {
+                pushPatch(child, live: liveChildren.indices.contains(i) ? liveChildren[i] : nil)
+            }
             engine?.setLane(object.lane, forID: object.id.uuidString)
             syncGroupWindow(object)
         }

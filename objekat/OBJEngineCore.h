@@ -298,6 +298,15 @@
 // le projet et à repasser à addPlugin:toObjectID:stateXML: à l'ouverture.
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey;
 
+// applyPluginStateXML:forPlugin: — ré-applique un état à l'instance VIVANTE, sans la détruire
+// ni la recharger. C'est la contrepartie de getPluginStateXML: pour une annulation, et ce que
+// `restorePluginStateFromValueTree` sait faire depuis toujours (le timer de ré-affirmation s'en
+// sert déjà après chaque chargement). NO si le plugin est introuvable, si l'XML n'est pas un
+// arbre PLUGIN, ou si son format ne sait pas se faire ré-appliquer un état.
+// Ne touche NI les enfants de l'arbre vivant (donc pas ses courbes d'automation, que le modèle
+// repousse de son côté) NI l'identité du plugin.
+- (BOOL)applyPluginStateXML:(NSString*)stateXML forPlugin:(NSString*)pluginKey;
+
 // removePlugin:fromObjectID : retire le plugin (par pluginKey = ObjectPlugin.id.uuidString)
 - (void)removePlugin:(NSString*)pluginKey fromObjectID:(NSString*)uuid;
 

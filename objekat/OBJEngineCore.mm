@@ -5534,6 +5534,65 @@ static void objDumpPluginList(te::PluginList& pl,
     // AutomatableParameter::updateToFollowCurve).
 }
 
+- (BOOL)applyPluginStateXML:(NSString*)stateXML forPlugin:(NSString*)pluginKey {
+    if (!pluginKey || stateXML.length == 0) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end() || !it->second) return NO;
+
+    auto xml = juce::parseXML(juce::String::fromUTF8([stateXML UTF8String]));
+    if (!xml) return NO;
+    juce::ValueTree saved = juce::ValueTree::fromXml(*xml);
+    if (!saved.isValid() || !saved.hasType(juce::Identifier("PLUGIN"))) return NO;
+
+    // Un plugin EXTERNE sait se faire ré-appliquer un état : c'est exactement ce que fait
+    // `tickPluginStateReasserts` après un chargement. On programme la ré-affirmation derrière,
+    // pour la même raison qu'elle existe : un AU pas encore initialisé refuse `setStateInformation`
+    // EN SILENCE, et repartirait à ses réglages d'usine.
+    if (auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get())) {
+        ext->restorePluginStateFromValueTree(saved);
+        [self schedulePluginStateReassert:it->second fromTree:saved];
+        return YES;
+    }
+
+    // Un plugin INTERNE n'a pas de chunk : ses paramètres SONT les propriétés de son arbre, que
+    // des CachedValue suivent. On les recopie donc une à une — jamais l'arbre entier, qui
+    // emporterait l'identité (`id`, l'EditItemID de l'instance vivante) et les enfants (les
+    // courbes d'automation, qui appartiennent au modèle). `restorePluginStateFromValueTree` ne
+    // sert à rien ici : la méthode de base est un `jassertfalse`, seuls quelques internes la
+    // surchargent.
+    juce::ValueTree live = it->second->state;
+    if (!live.isValid()) return NO;
+    static const juce::Identifier kID("id"), kType("type");
+    auto isIdentity = [](const juce::Identifier& n) { return n == kID || n == kType; };
+
+    // REMPLACEMENT, pas recouvrement. Un `CachedValue` à valeur par défaut n'écrit rien tant que
+    // personne ne l'a réglé : un paramètre encore à sa valeur d'usine est donc ABSENT de l'arbre,
+    // et le seul fait de recopier les propriétés de l'état voulu laisserait en place celles qu'il
+    // n'a pas — c'est-à-dire précisément les réglages qu'on annule. Retirer la propriété fait
+    // retomber le CachedValue sur son défaut, ce qui EST la valeur à restaurer.
+    for (int i = live.getNumProperties(); --i >= 0;) {
+        const juce::Identifier name = live.getPropertyName(i);
+        if (!isIdentity(name) && !saved.hasProperty(name))
+            live.removeProperty(name, nullptr);
+    }
+    for (int i = 0; i < saved.getNumProperties(); ++i) {
+        const juce::Identifier name = saved.getPropertyName(i);
+        if (!isIdentity(name))
+            live.setProperty(name, saved.getProperty(name), nullptr);
+    }
+    // Et on pousse les paramètres derrière l'arbre. Écrire la propriété ne suffit PAS : le
+    // `CachedValue` se met bien à jour, mais `AutomatableParameter::valueTreePropertyChanged`
+    // s'arrête là exprès — il ne recopie pas la valeur dans le paramètre, sous peine de boucle
+    // avec la course inverse (@see AttachedValue::updateIfMatches). Le `currentValue` — celui que
+    // lit l'audio, et celui que `getPluginParams` rapporte — ne suivrait donc pas. C'est
+    // exactement ce que fait tout `restorePluginStateFromValueTree` d'interne (@see
+    // EqualiserPlugin) après sa recopie de propriétés.
+    for (auto* p : it->second->getAutomatableParameters())
+        p->updateFromAttachedValue();
+
+    return YES;
+}
+
 - (void)diagnosticScanPlugins {
     auto& pm   = _engine->getPluginManager();
     auto& fmgr = pm.pluginFormatManager;
