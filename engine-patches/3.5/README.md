@@ -277,6 +277,14 @@ Checked as still biting: `develop` still had the linear `std::find`.
   `ContainerClip::setLoopRange({})` again, and the container went on folding — in a
   loop until the app was restarted. An `else if (localPlayHead.isLooping())` restores the
   symmetry: what arms disarms.
+- `0032` — **the rebuild probe was corrupting the heap.** `prepareToPlay` runs on SEVERAL
+  threads at once — one Edit rebuilding its graph while another player rebuilds its own — and
+  the probe's own log has always said so: the indices come out in disorder, a heavy `#145`
+  finishing after the `#146`…`#162` that overtook it. Its state, though, lives in FUNCTION
+  statics, hence shared: `objPreviousCensus` is a `std::map` one thread assigns while another
+  reads it. A measuring probe that kills the process it measures — and worse, kills it anywhere,
+  long afterwards, poisoning the diagnosis of every other Debug crash. A mutex now covers the
+  statics AND the two writes. Debug only (`OBJ_GRAPH_PROFILE` follows `JUCE_DEBUG`).
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
@@ -319,7 +327,7 @@ does not go through the script. Patch `0031` settles it in the branch itself: ju
 HTTPS, same repository, same commit.
 
 Verification: `git -C tracktion_engine log --oneline 494e91d2ff5..HEAD | wc -l`
-must give as many as there are archives in the active series — today **29**. That number moves
+must give as many as there are archives in the active series — today **30**. That number moves
 with every patch added and with every one set aside; `ls engine-patches/3.5/0*.patch | wc -l`
 says it without getting it wrong.
 

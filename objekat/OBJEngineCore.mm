@@ -4264,6 +4264,18 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
         params[index]->setParameter(value, juce::sendNotification);
 }
 
+// Retire les courbes d'automation d'un arbre de plugin — sur une COPIE, jamais sur l'arbre vivant.
+// @see -getPluginStateXML:, qui dit pourquoi.
+static void objStripAutomationCurves(juce::ValueTree& tree) {
+    for (int i = tree.getNumChildren(); --i >= 0;) {
+        juce::ValueTree child = tree.getChild(i);
+        if (child.hasType(te::IDs::AUTOMATIONCURVE))
+            tree.removeChild(i, nullptr);
+        else
+            objStripAutomationCurves(child);
+    }
+}
+
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
     auto it = _pluginMap.find(pk);
@@ -4275,7 +4287,26 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
     // Dans ce cas on renvoie l'arbre tel quel : l'état déjà connu reste la meilleure réponse.
     if (objCanFlushPluginState(*it->second))
         it->second->flushPluginStateToValueTree();
-    juce::String xml = it->second->state.toXmlString();  // local nommé → toRawUTF8 sûr
+
+    // LES COURBES NE SORTENT PAS D'ICI. Une courbe de paramètre de plugin vit DANS l'arbre du
+    // plugin : `AutomationCurve::checkParenthoodStatus` l'y accroche dès le premier point et l'en
+    // détache au dernier retiré. Elle partait donc dans le `stateXML` que le modèle garde de
+    // chaque plugin — alors que le modèle est la SEULE autorité sur les courbes (@see
+    // EditViewModel+AutomationEngine : le moteur n'en porte qu'un reflet, repoussé en bloc).
+    //
+    // Ce que ça coûtait, et c'est la raison du retrait : l'instantané d'annulation compare les
+    // objets champ à champ pour ne reconstruire que ceux qui diffèrent (@see
+    // EditViewModel.isPatchable). Avec la courbe dans le `stateXML`, le moindre point posé,
+    // déplacé ou supprimé sur un paramètre de plugin rendait l'objet NON RÉCUPÉRABLE : annuler ce
+    // geste détruisait l'objet et rechargeait son plugin — 757 ms mesurées pour un UADx Anthem
+    // Synth, à chaque ⌘Z, pour une courbe que `pushAutomation` repose de toute façon derrière
+    // (`syncAdd` la repousse, `pushPatch` aussi).
+    // Deux effets de bord, tous deux voulus : une courbe n'est plus écrite deux fois dans le
+    // fichier de session, et un plugin copié n'emporte plus en douce une courbe que le modèle ne
+    // voit pas (donc ne pourrait ni montrer ni effacer).
+    juce::ValueTree tree = it->second->state.createCopy();
+    objStripAutomationCurves(tree);
+    juce::String xml = tree.toXmlString();  // local nommé → toRawUTF8 sûr
     if (xml.isEmpty()) return nil;
     return [NSString stringWithUTF8String:xml.toRawUTF8()];
 }

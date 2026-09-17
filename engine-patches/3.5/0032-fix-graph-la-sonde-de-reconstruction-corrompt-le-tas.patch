@@ -1,0 +1,78 @@
+From 5a6855565a9fafe280930589041466663e8a4a1e Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 17 Sep 2026 09:04:38 +0200
+Subject: [PATCH] =?UTF-8?q?fix(graph)=20:=20la=20sonde=20de=20reconstructi?=
+ =?UTF-8?q?on=20corrompt=20le=20tas,=20deux=20threads=20pour=20un=20=C3=A9?=
+ =?UTF-8?q?tat?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`prepareToPlay` tourne sur PLUSIEURS threads à la fois — un Edit qui rebâtit son
+graphe pendant qu'un autre player rebâtit le sien. Sa propre journalisation en
+porte la preuve depuis toujours : les index sortent dans le désordre, et un
+`#145` lourd termine après les `#146`…`#162` qui l'ont doublé.
+
+Or la sonde garde son état dans des statiques de FONCTION, donc partagées par
+ces threads : `objPreviousCensus` est une `std::map` qu'un thread assigne
+pendant qu'un autre la lit. C'est une corruption de tas pure et simple — une
+sonde de mesure qui tue le processus qu'elle mesure. Et le pire n'est pas le
+plantage : c'est qu'il tombe n'importe où, longtemps après, et empoisonne le
+diagnostic de tout autre plantage en Debug (vu le 15 septembre : SIGABRT dans
+`tiny_free_list_remove_ptr` à la sortie de l'app).
+
+Un mutex couvre les statiques ET les deux écritures : deux relevés peuvent
+sortir dans le désordre, jamais entrelacés au milieu d'une ligne.
+
+N'existe qu'en Debug (`OBJ_GRAPH_PROFILE` suit `JUCE_DEBUG`) : une Release n'a
+jamais été concernée.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../players/tracktion_NodePlayerUtilities.h      | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h b/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
+index d645e816c7d..34513edf5c2 100644
+--- a/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
++++ b/modules/tracktion_graph/tracktion_graph/players/tracktion_NodePlayerUtilities.h
+@@ -38,6 +38,7 @@
+  #include <chrono>
+  #include <cstdio>
+  #include <cstdlib>
++ #include <mutex>
+  #include <string>
+ #endif
+ 
+@@ -45,7 +46,7 @@
+  #include <algorithm>
+  #include <cstdlib>
+  #include <map>
+- #include <string>
++ #include <mutex>
+  #include <string>
+  #include <typeinfo>
+  #include <vector>
+@@ -306,6 +307,19 @@ namespace node_player_utils
+ 
+             std::string objText (objLine);
+ 
++            // VERROU DE LA SONDE. prepareToPlay tourne sur PLUSIEURS threads à la fois : un
++            // Edit qui rebâtit son graphe pendant qu'un autre player (audition, preview) rebâtit
++            // le sien. Le journal en porte la preuve — les index sortent dans le désordre, un
++            // #145 lourd terminant après les #146…#162 qui l'ont doublé. Les états ci-dessous
++            // sont des statiques de fonction, donc PARTAGÉS par ces threads : le recensement
++            // précédent est une std::map, et deux threads qui l'assignent et la lisent en même
++            // temps corrompent le tas — une sonde de mesure qui tue le processus qu'elle mesure,
++            // et qui empoisonne tout diagnostic de plantage en Debug puisque la faute tombe
++            // n'importe où, longtemps après. Le verrou couvre AUSSI les deux écritures : deux
++            // relevés peuvent sortir dans le désordre, jamais entrelacés au milieu d'une ligne.
++            static std::mutex objProbeMutex;
++            const std::lock_guard<std::mutex> objProbeLock (objProbeMutex);
++
+            #if OBJ_GRAPH_CENSUS
+             // Mesuré après objT4 : ce recensement ne compte dans aucune des durées.
+             {
+-- 
+2.50.1 (Apple Git-155)
+

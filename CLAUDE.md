@@ -32,11 +32,12 @@ Four local branches are published NOWHERE and must stay that way: `history`,
 `claude/multilingual-ui-translation-1x8d35` (the last two are stale, the first two are not).
 Engine base **tracktion 3.5**, in `tracktion_engine/` — the folder carried the version in its
 name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump); it no
-longer does, so it can no longer go stale. The fork's branch is at `f7fd2e9fd45` since its
-own history was rewritten on 4 September; `494e91d2ff5` is still its ancestor.
-An engine series of **29** patches in `engine-patches/3.5/`, numbered `0001`→`0031` with two
+longer does, so it can no longer go stale. The fork's branch is at `5a6855565a9` since
+17 September 2026 (`f7fd2e9fd45` before it, when its own history was rewritten on 4 September);
+`494e91d2ff5` is still its ancestor.
+An engine series of **30** patches in `engine-patches/3.5/`, numbered `0001`→`0032` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0032`. It is the ONLY series left: the four archives of
+(see its README). The next one will be `0033`. It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
 that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
@@ -744,6 +745,50 @@ What has landed since mid-August, in order:
   region's two crop handles, their cursor and the floor they stop at; and the row name shrinking,
   ellipsising and disappearing as one zooms out — including whether a name that vanishes reads as
   making room or as a row that has lost its label.
+
+- **Two faults behind one crash, on undoing an automation** (17 September 2026) — ⌘Z over a curve
+  drawn on a PLUGIN parameter was killing the app. Two independent defects came out of the log,
+  and only one of them is proven to be lethal.
+  **The graph probe was corrupting the heap** (engine patch `0032`). `prepareToPlay` runs on
+  SEVERAL threads at once — one Edit rebuilding its graph while another player rebuilds its own —
+  and the probe's own journal has always said so: the indices come out in disorder, a heavy `#145`
+  finishing after the `#146`…`#162` that overtook it. Its state, though, lives in FUNCTION
+  statics, hence shared: `objPreviousCensus` is a `std::map` one thread assigns while another
+  reads it. A measuring probe that kills the process it measures — and the plantage is not even
+  the worst of it, since it lands anywhere, long afterwards, and poisons the diagnosis of every
+  other Debug crash (the `SIGABRT` of 15 September, in `tiny_free_list_remove_ptr` on the way out,
+  has that signature). A mutex covers the statics AND the two writes. Debug only, so a Release was
+  never concerned — which is also how to test it: if a crash survives in Release, it is not this.
+  **And a curve was travelling inside its plugin's state.** A plugin-parameter curve lives IN the
+  plugin's tree (`AutomationCurve::checkParenthoodStatus` hangs it there at the first point), so it
+  went out in the `stateXML` the model keeps of every plugin — while the model is the SOLE
+  authority on curves. The cost was not tidiness: the undo snapshot compares field by field to
+  rebuild only what differs (@see `isPatchable`), so the least point laid, moved or deleted made
+  the object UNRECOVERABLE — the ⌘Z destroyed it and reloaded its plugin, 757 ms measured for a
+  UADx Anthem Synth, for a curve `pushAutomation` lays down again anyway. `getPluginStateXML` now
+  strips the `AUTOMATIONCURVE` children from a COPY. Two side effects, both wanted: a curve is no
+  longer written twice into the session file, and a copied plugin no longer smuggles a curve the
+  model cannot see.
+  Measured on the way, and it is what pins the cause: two hammers of 25 undos on the same AU, the
+  only difference being the ORDER. State changed INSIDE the snapshot's window → 25 patched, no
+  reload. State differing ACROSS it — a curve's own order — → 25 rebuilds, 26 instantiations. And
+  those 25 teardowns did NOT crash: headless, with no audio device and no interface, on a 22-node
+  graph where the crashing session had 111. So the AU's teardown is not suicidal by itself, and
+  what the crash owes to the probe's race cannot be settled from here.
+  Verified with no screen: a build; `scenario_families.py` 131 OK, `scenario_plugin_selection.py`
+  58, `scenario_markers.py` ALL PASS, `scenario_export_preview.py` 35 OK, `smoke.jsonl` clean; and
+  a plugin-state round trip written for the occasion (a param set, saved, reopened: identical).
+  **Not proven**: that the crash is gone. Neither fix can be asserted on the gesture itself — the
+  API still has no `automation.*` door, which is the debt that would pay this one. In the app it
+  reads in one line: after ⌘Z on a plugin curve, `[UNDO]` must say `1 patched` and no
+  `[PERF] instrument … instantiated` may follow.
+  **Left standing on purpose**: undoing a plugin's parameter VALUE still rebuilds the object and
+  reloads the AU — there, the state really has to be restored. The next step is to stop that too:
+  `restorePluginStateFromValueTree` re-applies a state to a LIVE instance (the reassert timer
+  already uses it after every reload), so `isPatchable` could accept a difference confined to
+  `stateXML` and `pushPatch` push it. Two traps: the base method is `jassertfalse` — only external
+  plugins and a few internals override it, a built-in will want its properties copied — and an AU
+  that is not yet initialised refuses its state, which the reassert timer already absorbs.
 
 ### What is owed
 
