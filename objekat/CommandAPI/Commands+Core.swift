@@ -350,7 +350,7 @@ extension CommandRegistry {
             let requestedLane = try p.int("lane", or: 0)
             let start = max(0, requestedStart)
             let lane = max(0, requestedLane)
-            let object = SoundObject(
+            var object = SoundObject(
                 id: UUID(),
                 startTime: start,
                 duration: duration,
@@ -358,6 +358,12 @@ extension CommandRegistry {
                 kind: .clip(filePath: path, sourceOffset: 0, fileDuration: fileDuration,
                             speedRatio: 1.0, isReversed: false)
             )
+            // The file's size, recorded at the moment it is laid down: it is what settles two
+            // homonyms the day this link breaks and a folder is swept for it (@see
+            // EditViewModel+Relink, SoundObject.fileSize). Read here and at the timeline's drop,
+            // the two doors an EXTERNAL file comes in by — the internal waves of a sound object
+            // are relinked by their relative path and never go missing.
+            object.fileSize = EditViewModel.fileSize(atPath: path)
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
             // target lane falls INSIDE an expanded group, and `resolveOverlaps` settles overlaps.
             let placed = vm.placeClip(object, snapshot: vm.laneEntries)

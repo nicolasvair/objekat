@@ -391,5 +391,171 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "source_offset": .number(vm.find(id: id)?.sourceOffset ?? 0)])
         }
+
+        // MARK: relink
+        //
+        // Repairing a broken link, driven with no screen. The family lives here rather than in a
+        // file of its own because it is the same subject as everything above: what a clip reads
+        // and where from. Two of the four are named `project.*` all the same, and deliberately —
+        // THE UNIT OF A REPAIR IS THE PATH, not the object (mending one path mends the N objects
+        // that name it, in one undo point), so a command that took an object id would be lying
+        // about what it does. @see EditViewModel+Relink, EditViewModel+MissingFiles.
+
+        register("object.replace_source",
+                 summary: "Points one clip at another audio file. The DELIBERATE gesture — 'I "
+                        + "have re-edited that sound outside' — so it never propagates to "
+                        + "anything else, and it works whether or not the current file is "
+                        + "missing. The clip is rebuilt whole on the new file (an object whose "
+                        + "file was missing has no engine clip at all), and its window is fitted "
+                        + "to it: the offset slides back if the new file is shorter, and the "
+                        + "length is cut only if the file is shorter than the window itself. "
+                        + "Refused on an instance of a sound object, which reads its "
+                        + "definition's wave and would be put back at the next bake.",
+                 params: [ParamSpec("id", "uuid", "Target audio clip."),
+                          ParamSpec("path", "string", "Path to the file to read from now on.")],
+                 // `replaceSource` pushes its own undo, and takes it back if nothing moved.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let path = try p.string("path")
+            guard let before = vm.find(id: id), before.isClip else {
+                throw CommandError(code: .not_found, message: "unknown audio clip: \(id.uuidString)")
+            }
+            guard FileManager.default.fileExists(atPath: path) else {
+                throw CommandError(code: .not_found, message: "file not found: \(path)")
+            }
+            // Asked here as well as in the model: the model answers `false` to everything, and a
+            // script deserves to know WHICH refusal it met.
+            guard before.definitionID == nil else {
+                throw CommandError(code: .invalid_state,
+                                   message: "an instance of a sound object reads its definition's wave")
+            }
+            guard vm.replaceSource(of: id, with: URL(fileURLWithPath: path)) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "nothing to replace: the clip already reads \(path)")
+            }
+            guard let after = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "object lost")
+            }
+            return .object(["id": .string(id.uuidString),
+                            "file": .string(after.filePath),
+                            "file_duration": .number(after.fileDuration),
+                            "duration": .number(after.duration),
+                            "source_offset": .number(after.sourceOffset),
+                            // True when the new file was too short to hold the window as it was.
+                            "clamped": .bool(after.duration != before.duration
+                                             || after.sourceOffset != before.sourceOffset),
+                            "missing": .bool(vm.isMissing(after))])
+        }
+
+        register("project.relink_path",
+                 summary: "Repairs a missing path: every object naming 'from' is rebuilt on "
+                        + "'to', in ONE undo point. With propagate=true, the prefix substitution "
+                        + "this pair teaches is applied to the other missing paths as well, and "
+                        + "ONLY to those it resolves onto a file that really exists — relinking "
+                        + "onto the wrong file is worse than leaving it missing, since a missing "
+                        + "file says so and a wrong one simply plays. Answers how many objects "
+                        + "and how many paths were mended, the substitution learned (null if the "
+                        + "pair teaches nothing generalisable), and what is still missing. See "
+                        + "project.relink_preview to read all that before changing anything.",
+                 params: [ParamSpec("from", "string", "The path as the session names it."),
+                          ParamSpec("to", "string", "The file to read it from now on."),
+                          ParamSpec("propagate", "bool", required: false,
+                                    "Also apply the learned substitution to the other missing "
+                                  + "paths it resolves (default false).")],
+                 // `repairPath` pushes ONE undo for the whole gesture, propagation included.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let from = try p.string("from")
+            let to = try p.string("to")
+            guard FileManager.default.fileExists(atPath: to) else {
+                throw CommandError(code: .not_found, message: "file not found: \(to)")
+            }
+            let propagate = try p.bool("propagate", or: false)
+            let report = vm.repairPath(from, to: URL(fileURLWithPath: to), propagate: propagate)
+            guard report.objects > 0 else {
+                throw CommandError(code: .not_found, message: "no object reads \(from)")
+            }
+            var payload: [String: JSONValue] = [
+                "objects": .int(report.objects),
+                "paths": .int(report.paths),
+                "substitution": .null,
+                "missing_paths": .int(vm.missingPaths.count),
+                "missing_objects": .int(vm.missingFileCount),
+            ]
+            if let sub = report.substitution {
+                payload["substitution"] = .object(["from": .string(sub.from),
+                                                   "to": .string(sub.to)])
+            }
+            return .object(payload)
+        }
+
+        register("project.relink_preview",
+                 summary: "What repairing 'from' with 'to' would teach, and what else that would "
+                        + "mend. Changes NOTHING and touches no undo: it returns the prefix "
+                        + "substitution the pair teaches (null when nothing generalisable comes "
+                        + "out of it) and the other MISSING paths it resolves onto a file that "
+                        + "exists, each with where it would go and how many objects it carries. "
+                        + "It is what the propagation prompt shows, and what makes the "
+                        + "propagation assertable with no screen.",
+                 params: [ParamSpec("from", "string", "The path as the session names it."),
+                          ParamSpec("to", "string", "The file it would be read from.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let from = try p.string("from")
+            let to = try p.string("to")
+            guard FileManager.default.fileExists(atPath: to) else {
+                throw CommandError(code: .not_found, message: "file not found: \(to)")
+            }
+            let empty = JSONValue.object(["substitution": .null, "resolves": .array([]),
+                                          "path_count": .int(0), "object_count": .int(0)])
+            guard let sub = PathRelink.learnedSubstitution(from: from, to: to) else { return empty }
+            // How many objects each missing path carries, read once: the rows below are a view of
+            // the same figures project.missing_files reports, and the two must not disagree.
+            var carried: [String: Int] = [:]
+            for entry in vm.missingPathsSorted { carried[entry.path] = entry.count }
+            let targets = vm.propagationTargets(sub, excluding: from)
+            let rows: [JSONValue] = targets.map { target in
+                .object(["path": .string(target.old),
+                         "new_path": .string(target.new),
+                         "object_count": .int(carried[target.old] ?? 0)])
+            }
+            return .object([
+                "substitution": .object(["from": .string(sub.from), "to": .string(sub.to)]),
+                "resolves": .array(rows),
+                "path_count": .int(targets.count),
+                "object_count": .int(targets.reduce(0) { $0 + (carried[$1.old] ?? 0) }),
+            ])
+        }
+
+        register("project.relink_folder",
+                 summary: "Sweeps a folder and repairs every missing path whose FILE NAME is "
+                        + "found in it, in ONE undo point. Homonyms are settled by the size "
+                        + "recorded when the clip was laid down, best candidate first, and a "
+                        + "path with no match is simply left missing. The walk is BOUNDED (eight "
+                        + "levels below the folder, four thousand directories at most) because "
+                        + "it runs on the main thread: pointing it at a whole drive would freeze "
+                        + "the app, so it stops instead. Finding nothing is a legitimate answer, "
+                        + "not an error.",
+                 params: [ParamSpec("folder", "string", "Folder to sweep.")],
+                 // `relinkFromFolder` pushes its own undo, and takes it back if nothing moved.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let folder = try p.string("folder")
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw CommandError(code: .not_found, message: "folder not found: \(folder)")
+            }
+            let pathsBefore = vm.missingPaths.count
+            let objects = vm.relinkFromFolder(URL(fileURLWithPath: folder))
+            return .object(["objects": .int(objects),
+                            // What LEFT the missing list. Read as a difference rather than counted
+                            // in the sweep: the scan that follows a repair is the only authority
+                            // on what is still broken.
+                            "paths": .int(max(0, pathsBefore - vm.missingPaths.count)),
+                            "missing_paths": .int(vm.missingPaths.count),
+                            "missing_objects": .int(vm.missingFileCount)])
+        }
     }
 }

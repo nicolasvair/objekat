@@ -323,6 +323,9 @@ extension TimelineView {
                     isReversed: false
                 )
             )
+            // The file's size, recorded as it is laid down: what settles two homonyms the day
+            // this link breaks and a folder is swept for it (@see EditViewModel+Relink).
+            obj.fileSize = EditViewModel.fileSize(atPath: file.url.path)
             if index == 0 {
                 obj = viewModel.placeClip(obj, snapshot: snapshot)
                 containerID   = viewModel.parentGroup(for: obj.id)?.id
