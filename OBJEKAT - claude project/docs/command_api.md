@@ -724,6 +724,98 @@ is really launched, and only zeroed when its graph is built, so it still answers
 export's shape in between. `peaks_filled` is 0 throughout that phase rather than the last render's
 count.
 
+### Missing files, and repairing a link
+
+A clip names a file on disk, and that file can go: a drive unplugged, a folder moved, a take
+renamed outside the project. The engine already draws its own conclusion — a file it cannot open
+makes the clip give up **before it is created**, so an object whose file went missing is a ghost
+down there: no clip, no chain, no fades, no sends, no plugins. Two consequences a script has to
+know about:
+
+- **a repair CREATES the object, it does not correct a path.** The whole clip is born again on the
+  new file and given back everything the birth does not carry, so a relink is never a cheap write;
+- **it is therefore visible** — `object.get` and `object.list` carry `missing` (a bool) and
+  `missing_reason` (`absent`, `volumeOffline`, or `null`) on every object, whether or not it names
+  a file at all. A script does not have to know which kinds can be missing.
+
+**`missing` is a lookup, never a disk access.** The predicate is read by the timeline's canvas once
+per block per frame, so the file system is asked in exactly ONE place: `project.rescan_missing`.
+Everything else — `project.missing_files`, the two fields above — reads what that scan found.
+
+| | |
+|---|---|
+| `project.rescan_missing` | asks the disk again about every path the project names; answers `path_count` and `object_count` |
+| `project.missing_files` | the detail of the LAST scan: `files` (`path`, `reason`, `object_count`), plus `path_count` and `object_count` |
+| `project.relink_preview` | `from` + `to`: what that pair would teach and what else it would mend. Changes nothing |
+| `project.relink_path` | `from` + `to` (+ `propagate`): repairs a missing path, and optionally the others it resolves |
+| `project.relink_folder` | `folder`: sweeps it and repairs every missing path whose FILE NAME is found there |
+| `object.replace_source` | `id` + `path`: points ONE clip at another file. The deliberate gesture |
+
+**The unit of a repair is the PATH, not the object**, which is why two of the four are named
+`project.*` although they mend clips: one file lost breaks the N objects that name it, and putting
+it back mends all N in **one undo point**. Hence the two figures every answer keeps apart —
+`path_count` is what a repair works in, `object_count` is what a human counts ("four sounds are
+broken"). A command taking an object id would be lying about what it does.
+
+**A group is never `missing`** — it owns no file, whatever its content. It answers the separate
+question instead: `object.get` carries `missing_descendant`, true when anything in its sub-tree is
+broken, so a group folded shut can say that something inside it needs attention. The two are kept
+apart on purpose: only the clips the first one counts can be relinked, never the group. A clip
+nested in a folded group is scanned, counted and repaired exactly like a top-level one.
+
+**Two gestures, and the line between them is the design.** `object.replace_source` is "I have
+re-edited that sound outside": one object, deliberate, **never propagated, never a question**, and
+available whether or not the current file is missing. `project.relink_path` is "that file is gone":
+an accident — and accidents come by packets, so a repair can propagate what it learned.
+
+**Propagation is a prefix substitution.** Repairing `/Volumes/SSD/sessions/x/bell.wav` onto
+`/Users/n/Sons/x/bell.wav` teaches `/Volumes/SSD/sessions` → `/Users/n/Sons`: the two paths are
+compared BY COMPONENTS and the longest common suffix — the part the move did not touch, and
+therefore the part that says nothing — is taken away. The substitution is reported as
+`{"from": …, "to": …}`, or `null` when the pair teaches nothing generalisable: two differently
+named files (that is a replacement, not a repair), or a suffix covering the whole of one of the
+two paths, which would give a rule matching every path in the session.
+
+`propagate: true` then applies it to the **other missing paths**, and only to those it resolves
+onto a file that **really exists** — relinking onto the wrong file is worse than leaving it
+missing, since a missing file says so and a wrong one simply plays. The match is on a component
+boundary, never on the raw characters: `Sons2` is not inside `Sons`. The whole thing, the
+propagated paths included, is **one `edit.undo` away** from what it was.
+
+`project.relink_preview` is that same computation with nothing written: the substitution, and each
+other missing path it would mend with `path`, `new_path` and `object_count`. It is what the
+interface's propagation prompt shows, and what makes the propagation assertable with no screen.
+
+**The sweep** (`project.relink_folder`) matches on the file NAME alone, and settles homonyms by the
+file's **size**, recorded when the clip was laid down (`fileSize`, **session format 14**; absent in
+anything written before it, and the sweep then falls back on the name). Best candidate first, and
+a path with no match is simply left missing — finding nothing is a legitimate answer and not an
+error. The walk is **bounded** (eight levels below the folder, four thousand directories) because
+it runs on the main thread: pointing it at a whole drive would freeze the app, so it stops instead.
+A package (`.app`, `.logicx`) is never entered.
+
+**The window is fitted to the new file, never past its end.** A repaired or replaced clip may come
+out SHORTER, in two steps and in this order: the window first **slides back** as far as it must —
+the length that was chosen is worth more than the exact place it was taken from — and only if the
+file is shorter than the window ITSELF is the **length cut**, the window then starting at the very
+beginning of the file. `object.replace_source` answers `clamped: true` when either happened, beside
+`duration`, `source_offset` and `file_duration`. The arithmetic reads the file range a clip
+consumes, `[source_offset, source_offset + duration × speed]`, so the speed counts and the playback
+direction does not. A length that cannot be read clamps nothing at all.
+
+Two refusals worth branching on: `object.replace_source` on an **instance of a sound object** is
+`invalid_state` (it reads its definition's wave, and the next re-bake would silently put that wave
+back), and so is pointing a clip at the file it already reads. Everything else missing — the object,
+the file, the folder — is `not_found`.
+
+**`volumeOffline` is not `absent`**: a path under a `/Volumes/<name>` that is not mounted says the
+file is on a disk in a drawer, not that it is lost. The app watches the mount notifications and
+rescans by itself when the drive comes back, so that state mends itself with nobody asking. The
+boot volume never reads as offline.
+
+`tools/scenario_relink.py` asserts all of the above against a running instance, making and moving
+its own wav files on disk.
+
 ### Reading a project without the app
 
 Every `.objekat.json` carries its own notice, under the `_readme` key, **at the head of the file**:
