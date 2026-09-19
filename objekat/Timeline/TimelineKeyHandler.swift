@@ -1130,6 +1130,15 @@ extension TimelineView {
                     if !menu.items.isEmpty { menu.addItem(.separator()) }
                     addCommentItem(menu: menu, proxies: &proxies, vm: vm, selection: sel)
                 }
+
+                // The relink block: replace this sound's file, repair a link that is broken, or
+                // sweep a folder for everything the project has lost. The SAME items the sound
+                // list's rows carry, built from ONE plan (@see RelinkDialogs.MenuPlan) — an entry
+                // offered in one window and withheld in the other would be two features. It adds
+                // nothing when there is nothing to offer, its own separator included.
+                if let target = hit.colorable {
+                    addRelinkItems(menu: menu, proxies: &proxies, vm: vm, object: target)
+                }
             }
 
             // An 'infinite' bus: a top-level aux or group can lose its start/end and run over the whole

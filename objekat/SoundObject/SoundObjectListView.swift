@@ -46,23 +46,20 @@ struct SoundObjectListView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
-                        SoundListRowView(
-                            row: row,
-                            isSelected: viewModel.isSelected(row.id),
-                            isMissing: viewModel.isMissing(row.object),
-                            isExpanded: row.object.isExpanded,
-                            stemColor: viewModel.stemColor(for: row.id),
-                            filterText: viewModel.filterText,
-                            onToggleExpand: { viewModel.toggleGroupExpansion(id: row.id) }
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            searchFocused = false
-                            viewModel.select(row.id, additive: false)
+                        // The relink menu is attached only when it has something to say. An
+                        // `.contextMenu` whose builder yields nothing still opens an empty box on
+                        // macOS, and a group row with nothing missing anywhere offers exactly
+                        // nothing — so the modifier itself is what branches. The condition moves
+                        // only when a file goes or comes back, which already rebuilds the row.
+                        let plan = RelinkUI.MenuPlan(vm: viewModel, object: row.object)
+                        if plan.isEmpty {
+                            listRow(row)
+                        } else {
+                            listRow(row)
+                                .contextMenu {
+                                    RelinkContextMenuItems(viewModel: viewModel, object: row.object)
+                                }
                         }
-                        .simultaneousGesture(
-                            TapGesture(count: 2).onEnded { activate(row) }
-                        )
                         Divider()
                     }
                 }
@@ -73,6 +70,30 @@ struct SoundObjectListView: View {
             })
         }
         .frame(minWidth: 240)
+    }
+
+    // MARK: - One row, with its gestures
+
+    /// The row and what a hand may do to it, pulled out of the `ForEach` so that the relink menu
+    /// can be attached or withheld without the two branches repeating the whole thing.
+    private func listRow(_ row: SoundListRow) -> some View {
+        SoundListRowView(
+            row: row,
+            isSelected: viewModel.isSelected(row.id),
+            isMissing: viewModel.isMissing(row.object),
+            isExpanded: row.object.isExpanded,
+            stemColor: viewModel.stemColor(for: row.id),
+            filterText: viewModel.filterText,
+            onToggleExpand: { viewModel.toggleGroupExpansion(id: row.id) }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            searchFocused = false
+            viewModel.select(row.id, additive: false)
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded { activate(row) }
+        )
     }
 
     // MARK: - Header
