@@ -149,8 +149,10 @@ struct InfiniteBusBandView: View {
                     // other three and not to this one would vanish the day a group became a bus
                     // (@see `MissingFileLabel`, whose red had to learn the same lesson).
                     Image(systemName: ObjectKindIcon.name(for: item))
+                        .font(.system(size: 10, weight: .medium))
                         .blockIconStyle(missingFile: containsMissingFile)
                         .layoutPriority(2)
+                    Spacer().frame(width: 4)
                     Text(item.displayName)
                         .blockNameStyle(missingFile: containsMissingFile)
                         .lineLimit(1)

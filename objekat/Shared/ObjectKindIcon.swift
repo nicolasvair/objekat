@@ -35,24 +35,23 @@ enum ObjectKindIcon {
         return "waveform"
     }
 
-    /// The size a block's name band can carry. The band is 20 % of a block's height and the name
-    /// beside it is 10 pt (@see `MissingFileLabel.size`), so the glyph matches the text rather
-    /// than leading it: an icon larger than the word it introduces reads as a button.
-    static let size: CGFloat = 9
-    /// The gap between the glyph and the name, in the timeline. Narrow on purpose — the two are
-    /// one statement, not two.
-    static let gap: CGFloat = 3
+    /// The size the `Canvas` draws it at — and ONLY the `Canvas`.
+    ///
+    /// The three rich views deliberately keep the size and the spacing their band was laid out
+    /// around (10 pt in `GroupBlockView`, 11 pt bold in `SoundBlockView`, each with its own
+    /// padding), because those were tuned against the band and not against each other. What is
+    /// shared between the five readers is the SYMBOL and the COLOUR — the two things that would
+    /// make an object read as one kind here and another kind there. A size is a matter of layout,
+    /// and layout is local; a glyph is a matter of meaning, and meaning is not.
+    static let canvasSize: CGFloat = 9
 }
 
 extension View {
-    /// The glyph as the three rich views draw it: the name's own colour, so that a missing file
-    /// takes the icon red with the word. The `Canvas` resolves its own image and reads the
-    /// constants above instead — same values, one definition.
+    /// The glyph's COLOUR, and nothing else — no font, so every site keeps the size its band was
+    /// built for. The name's own colour, so a missing file takes the icon red along with the word
+    /// and the white halo that makes red legible on a red stem band (@see `MissingFileLabel`).
     func blockIconStyle(missingFile: Bool) -> some View {
         self
-            .font(.system(size: ObjectKindIcon.size,
-                          weight: missingFile ? MissingFileLabel.weight
-                                              : MissingFileLabel.normalWeight))
             .foregroundStyle(missingFile ? MissingFileLabel.color : Color.black)
             .shadow(color: missingFile ? MissingFileLabel.haloColor : .clear,
                     radius: missingFile ? MissingFileLabel.haloRadius : 0)

@@ -2,7 +2,7 @@
 //
 // `ComposedName` depends on nothing at all, which is why it is a unit of its own: it is the half
 // of the feature with no model, no view and no engine behind it. What is pinned down below is the
-// budget — that the total never exceeds 50 characters WHATEVER the input, which is the one
+// budget — that the total never exceeds the budget WHATEVER the input, which is the one
 // property a name band and a 240 pt panel actually rely on — and the redistribution, which is the
 // thing that would silently degrade into a rigid 50/N without anybody noticing on screen.
 //
@@ -59,7 +59,7 @@ struct TestComposedName {
             }
         }
     }
-    check("the budget holds over every shape tried (worst \(worstSeen)/50)",
+    check("the budget holds over every shape tried (worst \(worstSeen)/\(ComposedName.totalBudget))",
           worstSeen <= ComposedName.totalBudget)
 
     // A single enormous name is cropped to the budget, ellipsis INCLUDED — not budget + 1.
@@ -68,15 +68,19 @@ struct TestComposedName {
     check("…and says it was cut", huge.hasSuffix("…"))
 
     // ── The redistribution, which is the whole point of the chosen rule ──────────────────────────
-    // Five items, budget 50 − 4×3 = 38, so an even share of 7. `Kick` (4) and `Hat` (3) are under
-    // their share and hand back 7 characters between them; the long one must therefore come out
-    // LONGER than the rigid share, which is exactly what the even split would never give it.
-    let mixed = ComposedName.from(["Kick", "Snare", "Hat", "Clap", "Contrabass_ambiance"])
+    // Five items whose total OVERRUNS the budget, so the sharing actually has to happen. The even
+    // share is (budget − 4×3)/5; `Kick` and `Hat` are far under theirs and hand the remainder
+    // back, so the long one must come out LONGER than that share — which is exactly what a rigid
+    // even split would never give it. Sized off the constant, so it keeps testing the rule and
+    // not the number of the day.
+    let evenShare = (ComposedName.totalBudget - 4 * ComposedName.separator.count) / 5
+    let longName = String(repeating: "L", count: ComposedName.totalBudget)
+    let mixed = ComposedName.from(["Kick", "Snare", "Hat", "Clap", longName])
     check("the short names are kept whole",
           mixed.contains("Kick") && mixed.contains("Hat") && mixed.contains("Clap"), mixed)
     let longPart = mixed.components(separatedBy: " + ").last ?? ""
     check("the long one is given the room the short ones did not use",
-          longPart.count > 7, "\(longPart.count): \(longPart)")
+          longPart.count > evenShare, "\(longPart.count) vs share \(evenShare): \(longPart)")
     check("and the whole still fits", mixed.count <= ComposedName.totalBudget, "\(mixed.count)")
 
     // Nobody is cropped when everybody fits, even at five items.

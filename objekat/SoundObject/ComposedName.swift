@@ -16,10 +16,12 @@ import Foundation
 // is a decision, and a decision is not recomputed. @see `SoundObject.displayName`, the one door.
 enum ComposedName {
 
-    /// The whole name never exceeds this. Fifty characters is about what a 240 pt panel shows at
-    /// 10 pt, and a name band in the timeline shows less — past this the tail is not read, it is
-    /// merely carried about.
-    static let totalBudget = 50
+    /// The whole name never exceeds this. A hundred characters is more than any one view shows at
+    /// once — the 240 pt panel and the name bands both crop long before it — and that is the
+    /// point: the budget is not a layout measure but a LIMIT, the length past which a name stops
+    /// being a name and becomes a list. The views crop what they cannot show, each by its own
+    /// width; this only stops the string growing without bound.
+    static let totalBudget = 100
     /// Beyond this many children the list stops and counts. Five names plus a count is a thing one
     /// reads at a glance; eight names of six characters each is a thing one deciphers.
     static let maxItems = 5

@@ -228,9 +228,17 @@ struct GroupBlockView: View {
             if blockWidth >= 30 {
                 VStack {
                     HStack(spacing: 0) {
-                        Image(systemName: "folder")
+                        // The glyph that was always here, now saying WHICH kind rather than
+                        // always "folder": an open sound object is drawn by this view (its `kind`
+                        // really does become `.group` while open) and must not read as a folder.
+                        // Its size and its spacing are left exactly as they were — they are what
+                        // the band was laid out around — and only the COLOUR changes: tinted with
+                        // the block's own colour it was decoration beside the name, and it says
+                        // the same kind of thing the name says, so it is coloured like the name
+                        // (black, red and haloed when the file is gone).
+                        Image(systemName: ObjectKindIcon.name(for: group, isOpenObject: isOpenObject))
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(effectiveColor.opacity(0.85))
+                            .blockIconStyle(missingFile: containsMissingFile)
                             .padding(.leading, 6)
 
                         Spacer().frame(width: 4)
@@ -245,10 +253,6 @@ struct GroupBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(group.label) }
                         } else {
-                            Image(systemName: ObjectKindIcon.name(for: group,
-                                                                  isOpenObject: isOpenObject))
-                                .blockIconStyle(missingFile: containsMissingFile)
-                                .layoutPriority(2)
                             Text(group.displayName)
                                 .blockNameStyle(missingFile: containsMissingFile)
                                 .lineLimit(1)

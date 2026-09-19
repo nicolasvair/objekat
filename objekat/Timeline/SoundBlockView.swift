@@ -399,14 +399,23 @@ struct SoundBlockView: View {
             if blockWidth >= 30 {
                 VStack {
                     HStack(spacing: 3) {
-                        if object.isObjectInstance {
-                            // The 'sound object' identity (purple = sound objects in the legend).
-                            // Linked instances are made explicit by lines (in the selection),
-                            // not by a badge — see LinkOverlay in TimelineView.
-                            Image(systemName: "waveform.circle")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(LinkColor.soundObject)
-                        }
+                        // The glyph that used to be drawn for a SOUND OBJECT only, and now says
+                        // the kind of every block — which is what ties this timeline to the list
+                        // on the left, where the same symbol names the same object.
+                        //
+                        // `waveform.circle` for a sound object is what was already here, so the
+                        // list adopted the timeline's word rather than the reverse. Its size and
+                        // weight are untouched, the band having been laid out around them. The
+                        // COLOUR is what changes: `LinkColor.soundObject` made it a purple badge
+                        // saying "this one is special", where the glyph now says what EVERY block
+                        // is and belongs with the name it introduces. The sound-object identity
+                        // has not been lost with the purple — the shape itself carries it, the
+                        // circle being exactly what tells it from a plain `waveform`, and the
+                        // links between instances are drawn as lines in the selection anyway
+                        // (@see LinkOverlay in TimelineView).
+                        Image(systemName: ObjectKindIcon.name(for: object))
+                            .font(.system(size: 11, weight: .bold))
+                            .blockIconStyle(missingFile: isMissingFile)
                         if isRenaming {
                             TextField(noLabel, text: $editLabel)
                                 .font(.system(size: 10, weight: .medium))
@@ -417,14 +426,6 @@ struct SoundBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(object.label) }
                         } else {
-                            // The same glyph the sound list draws for this object, which is the
-                            // whole point of it: one definition, read on both sides of the window
-                            // (@see `ObjectKindIcon`). `layoutPriority(2)`, above the name's own:
-                            // on a narrow block the NAME gives way and the kind survives, a name
-                            // being recoverable from the row below and the kind not.
-                            Image(systemName: ObjectKindIcon.name(for: object))
-                                .blockIconStyle(missingFile: isMissingFile)
-                                .layoutPriority(2)
                             Text(object.displayName)
                                 .blockNameStyle(missingFile: isMissingFile)
                                 .lineLimit(1)

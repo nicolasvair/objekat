@@ -10,9 +10,28 @@ import AppKit
 /// needs no explaining, the order in which things HAPPEN, and the one shape the project really
 /// has: the tree of its groups. Everything read here — the fold, the selection, the colours — is
 /// the timeline's own state, seen from the side. Two views, never two truths.
+/// WHO OWNS THE ARROW KEYS, for the sound list.
+///
+/// The exact counterpart of `ExplorerFocus` (@see `SoundLibraryView`), and it exists for the same
+/// reason: the timeline reads the arrows through an AppKit LOCAL monitor, which runs inside
+/// `NSApp.sendEvent` — ahead of the responder chain, hence ahead of any `.onKeyPress` in a
+/// focused SwiftUI view. So a panel that wants the arrows cannot simply take focus and wait; the
+/// monitor has to be told to let them through. `TimelineKeyHandler` asks both flags before
+/// consuming ↑ ↓ ← →.
+///
+/// A flag and not a `@FocusState` read from afar: the monitor is not a view and has no body to
+/// read one in.
+@MainActor
+final class SoundListFocus {
+    static let shared = SoundListFocus()
+    var active = false
+    private init() {}
+}
+
 struct SoundObjectListView: View {
     @Bindable var viewModel: EditViewModel
     @FocusState private var searchFocused: Bool
+    @FocusState private var listFocused: Bool
 
     /// "Show only what is missing". A state of the VIEW and not of the document: it is a way of
     /// LOOKING at the project, it changes nothing in it, and it has no business surviving a save
@@ -85,6 +104,15 @@ struct SoundObjectListView: View {
                 searchFocused = false
                 NSApp.keyWindow?.makeFirstResponder(nil)
             })
+            .focusable()
+            .focused($listFocused)
+            // The timeline's monitor must let the arrows through while this list holds them
+            // (@see `SoundListFocus`), and take them back the moment it does not.
+            .onChange(of: listFocused) { _, f in SoundListFocus.shared.active = f }
+            .onKeyPress(.upArrow)    { moveCursor(-1);    return .handled }
+            .onKeyPress(.downArrow)  { moveCursor(+1);    return .handled }
+            .onKeyPress(.leftArrow)  { collapseOrParent(); return .handled }
+            .onKeyPress(.rightArrow) { expandOrFirstChild(); return .handled }
             // SELECTING AN OBJECT ANYWHERE BRINGS IT INTO VIEW HERE. A table of contents that
             // does not follow the hand stops being one: with a project taller than the panel, a
             // click in the timeline highlighted a row nobody could see, and the list said less
@@ -107,6 +135,7 @@ struct SoundObjectListView: View {
             }
         }
         .frame(minWidth: 240)
+        .onDisappear { SoundListFocus.shared.active = false }
     }
 
     // MARK: - One row, with its gestures
@@ -127,6 +156,10 @@ struct SoundObjectListView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             searchFocused = false
+            // Clicking a row is the ordinary way of saying "I am working in this list now", so it
+            // is what claims the arrows — the same reading the plugin selection makes of a click
+            // in the signal view.
+            listFocused = true
             viewModel.select(row.id, additive: false)
         }
         .simultaneousGesture(
@@ -199,6 +232,76 @@ struct SoundObjectListView: View {
 
     /// A double click ACTIVATES a row, and what that means depends on what the row is. A single
     /// click only ever selects — as it does in the timeline.
+    // MARK: - Walking the list with the arrows
+    //
+    // Finder's four keys, and Finder's meanings: ↑ ↓ walk the rows one sees, → opens a group and
+    // then goes into it, ← closes it and then comes back out of it. They act on `rows` — what is
+    // VISIBLE after the filter and the folds — and never on the underlying tree, because a key
+    // that moved the selection onto a row nobody can see would be a key that loses the selection.
+    //
+    // Every one of them goes through `viewModel.select`, the same door a click uses: the rest of
+    // the app then follows for free (the timeline's own highlight, the inspector, the scroll that
+    // brings the row into view just above).
+
+    /// The index of the selected row in what is currently shown, or nil.
+    private var cursorIndex: Int? {
+        guard viewModel.selectedIDs.count == 1, let id = viewModel.selectedIDs.first else { return nil }
+        return rows.firstIndex { $0.id == id }
+    }
+
+    /// ↑ / ↓ — one visible row at a time.
+    ///
+    /// With nothing selected the first press takes the END the key points at (↓ the first row,
+    /// ↑ the last), which is what makes the keyboard usable without reaching for the mouse first.
+    /// At either end it STOPS rather than wrapping: a selection that jumps from the last row to
+    /// the first is a selection one then has to go looking for.
+    private func moveCursor(_ delta: Int) {
+        guard !rows.isEmpty else { return }
+        guard let i = cursorIndex else {
+            viewModel.select(delta > 0 ? rows[0].id : rows[rows.count - 1].id, additive: false)
+            return
+        }
+        let next = min(max(i + delta, 0), rows.count - 1)
+        if next != i { viewModel.select(rows[next].id, additive: false) }
+    }
+
+    /// → — open a folded group, then step into it.
+    ///
+    /// Two presses rather than one doing both: the first says "show me what is in there" and the
+    /// second "now let us go in". On anything that is not a group, or on an empty one, it does
+    /// nothing — there is nowhere to go, and moving to the next row instead would make → a second
+    /// ↓ that nobody asked for.
+    private func expandOrFirstChild() {
+        guard let i = cursorIndex else { return }
+        let row = rows[i]
+        guard row.hasChildren else { return }
+        if !row.object.isExpanded {
+            viewModel.toggleGroupExpansion(id: row.id)
+            return
+        }
+        // The first child is the row just below, the list being a flattened tree in order — but
+        // it is checked and not assumed: a filter can hide a child, and the row below would then
+        // belong to somebody else entirely.
+        if i + 1 < rows.count, rows[i + 1].parentID == row.id {
+            viewModel.select(rows[i + 1].id, additive: false)
+        }
+    }
+
+    /// ← — close an open group, then come back out to its parent.
+    ///
+    /// The mirror of →, and the same two steps in reverse. On a row that is not an open group it
+    /// goes UP to the parent, which is how one climbs out of a deep nest without aiming at the
+    /// chevrons.
+    private func collapseOrParent() {
+        guard let i = cursorIndex else { return }
+        let row = rows[i]
+        if row.hasChildren && row.object.isExpanded {
+            viewModel.toggleGroupExpansion(id: row.id)
+            return
+        }
+        if let parent = row.parentID { viewModel.select(parent, additive: false) }
+    }
+
     /// The file a row can show in the Finder, or nil.
     ///
     /// A GROUP, an aux and a MIDI clip own no file, so they are not offered the entry rather than
@@ -257,8 +360,8 @@ struct SoundObjectListView: View {
 /// right. @see SoundBlockView.effectiveColor — the reasoning and the opacities are its, to the
 /// digit, so that a sound reads the same in both views.
 private struct SoundListRowView: View {
-    /// @see `edgeColor` for why it is this wide.
-    static let edgeStripWidth: CGFloat = 16
+    /// @see `edgeColor` for why it is this wide, and why it is often empty.
+    static let edgeStripWidth: CGFloat = 5
 
     let row: SoundListRow
     let isSelected: Bool
@@ -274,12 +377,23 @@ private struct SoundListRowView: View {
     /// colour when it has been given one, the stem's otherwise. It replaces the 6 px dot, which
     /// said the stem and never the object.
     ///
-    /// SIXTEEN pixels and not the three it started at. A 3 px hairline is enough to tell two
-    /// adjacent rows apart, which is not what this is for: it has to name a colour one can
-    /// recognise against the ten stems and the object pastels, and a colour is not identified on
-    /// a hairline — least of all the pale ones, where 3 px of salmon and 3 px of pink are the
-    /// same stripe. It is the row's most-read mark, so it is given the width of one.
-    private var edgeColor: Color { row.object.customColor ?? stemColor }
+    /// FIVE pixels, and drawn ONLY when the object carries a colour of its own.
+    ///
+    /// The strip started at 3 px showing `customColor ?? stemColor`, which meant every row had
+    /// one — and a mark every row carries marks nothing. The row's ground is ALREADY the stem's
+    /// colour (@see the `.background` below), so a strip repeating it said a second time, in a
+    /// hairline, what the whole row was saying in full. What it is FOR is the exception: an object
+    /// deliberately given a colour of its own, which the ground cannot show because the ground
+    /// belongs to the stem. So it appears only there, and at a width that lets the colour be
+    /// recognised rather than merely detected.
+    ///
+    /// `nil` = nothing to say. The row keeps the 5 px anyway, as clear space: the names of every
+    /// row must line up, and an indentation that shifted with whether somebody had recoloured an
+    /// object would be an indentation saying something it does not mean.
+    private var edgeColor: Color? {
+        guard let own = row.object.customColor, own != stemColor else { return nil }
+        return own
+    }
 
     /// The kind, at a glance — ONE definition, shared with the four places the timeline draws a
     /// block's name (@see `ObjectKindIcon`), because tying this list to the timeline is the whole
@@ -292,7 +406,7 @@ private struct SoundListRowView: View {
     var body: some View {
         HStack(spacing: 0) {
             Rectangle()
-                .fill(edgeColor)
+                .fill(edgeColor ?? .clear)
                 .frame(width: SoundListRowView.edgeStripWidth)
 
             HStack(spacing: 4) {

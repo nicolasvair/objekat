@@ -319,8 +319,11 @@ extension TimelineView {
         //    for the keys the plugin did NOT consume.
         let handleKeyDown: (NSEvent) -> NSEvent? = { event in
             if isTextInput() { return event }
-            // Let the sound library browser handle the arrows when it has focus
-            if ExplorerFocus.shared.active,
+            // Let a LEFT-HAND PANEL handle the arrows when it has focus — the sound library
+            // browser, or the sound list. This monitor runs inside `NSApp.sendEvent`, ahead of
+            // the responder chain, so a focused SwiftUI view's `.onKeyPress` would never see an
+            // arrow unless it is let through here (@see `SoundListFocus`).
+            if ExplorerFocus.shared.active || SoundListFocus.shared.active,
                [123, 124, 125, 126].contains(event.keyCode) {
                 return event
             }

@@ -2130,7 +2130,7 @@ struct TimelineView: View {
                         let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
                         let colour = missing ? MissingFileLabel.color : Color.black
                         let glyph = Text(Image(systemName: icon))
-                            .font(.system(size: ObjectKindIcon.size, weight: weight))
+                            .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
                         return ctx.resolve((glyph + Text(verbatim: " ") + Text(s))
                             .font(.system(size: MissingFileLabel.size, weight: weight))
                             .foregroundColor(colour))
