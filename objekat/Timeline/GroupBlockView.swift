@@ -13,6 +13,12 @@ struct GroupBlockView: View {
     /// True if the group is muted in the mix — its own mute, or its stem's (the 'N + M'
     /// shortcut) — unless a direct solo. Composed by the view model, not here: @see isMutedInMix.
     var isMutedInMix: Bool = false
+    /// True if ANYTHING in this group's sub-tree has lost its file (@see
+    /// `EditViewModel.containsMissingDescendant`), in which case the group's own name goes red and
+    /// bold like a clip's. A group MUST be able to say it: folded shut it hides its own children,
+    /// and a red clip nobody can see is a red clip nobody reads. It is its own statement and not a
+    /// claim about itself — the group's file is not gone, a group names none.
+    var containsMissingFile: Bool = false
     let displayLane: Int         // a virtual lane (after expanded groups have shifted things)
     let scrollOffsetX: CGFloat
     let viewportWidth: CGFloat
@@ -234,8 +240,7 @@ struct GroupBlockView: View {
                                 .onAppear { beginRename(group.label) }
                         } else {
                             Text(group.displayName)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.black)
+                                .blockNameStyle(missingFile: containsMissingFile)
                                 .lineLimit(1)
                                 .layoutPriority(1)
                         }

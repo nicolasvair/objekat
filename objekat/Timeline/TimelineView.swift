@@ -1479,6 +1479,7 @@ struct TimelineView: View {
             color: item.customColor ?? viewModel.stemColor(for: item.id),
             isSelected: viewModel.isSelected(item.id),
             isMuted: viewModel.isMutedInMix(item),
+            containsMissingFile: viewModel.containsMissingDescendant(item),
             blockHeight: blockHeight,
             // Being carried: the band follows the hand, like any block (@see infiniteBusPreviewDY).
             yPos: rulerHeight + Double(dl) * laneStep + infiniteBusPreviewDY(for: item.id),
@@ -1885,6 +1886,7 @@ struct TimelineView: View {
             displayLane: dLane,
             stemColor: viewModel.stemColor(for: object.id),
             isMutedInMix:     viewModel.isMutedInMix(object),
+            isMissingFile:    viewModel.isMissing(object),
             previewOffset:    previewOffset(for: object),
             previewResizeDX:  previewResizeDX(for: object),
             previewTrimDX:    previewTrimDX(for: object),
@@ -2103,13 +2105,42 @@ struct TimelineView: View {
                 // ── Phase 3: FADES / MUTE / LABEL per block (over the waveform) ──────
                 // Skipped when the block is too narrow → when scrolling zoomed out, an empty loop.
                 var resolvedLabels: [String: GraphicsContext.ResolvedText] = [:]
-                func resolvedLabel(_ s: String) -> GraphicsContext.ResolvedText {
+                // TWO caches and not one keyed by the pair: the key is the STRING, and two clips
+                // can carry the same name while only one of them has lost its file — a single
+                // cache would hand the second one the first one's colour.
+                var resolvedMissingLabels: [String: GraphicsContext.ResolvedText] = [:]
+                func resolvedLabel(_ s: String, missing: Bool) -> GraphicsContext.ResolvedText {
+                    if missing {
+                        if let r = resolvedMissingLabels[s] { return r }
+                        // The values come from `MissingFileLabel`, which the three rich views read
+                        // too: this Canvas is the SECOND regime a clip can be drawn in, and a red
+                        // that only one of the two knows about is a red that appears or disappears
+                        // with the number of objects on screen.
+                        let r = ctx.resolve(Text(s)
+                            .font(.system(size: MissingFileLabel.size, weight: MissingFileLabel.weight))
+                            .foregroundColor(MissingFileLabel.color))
+                        resolvedMissingLabels[s] = r
+                        return r
+                    }
                     if let r = resolvedLabels[s] { return r }
                     let r = ctx.resolve(Text(s)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: MissingFileLabel.size, weight: MissingFileLabel.normalWeight))
                         .foregroundColor(.black))
                     resolvedLabels[s] = r
                     return r
+                }
+                // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
+                // dictionary lookup — that is exactly why it may be read from a drawing pass at
+                // all (@see EditViewModel+MissingFiles) — but the loop below is the one that runs
+                // per block per frame, and it has no business asking the view model anything.
+                // The emptiness test is the common case and it is worth its line: with nothing
+                // missing the whole pass collapses to one question per frame instead of one per
+                // block (the same early-out `missingFileCount` makes).
+                var missingIDs = Set<UUID>()
+                if !viewModel.missingPaths.isEmpty {
+                    for entry in entries where viewModel.isMissing(entry.item) {
+                        missingIDs.insert(entry.item.id)
+                    }
                 }
                 for entry in entries {
                     let item = entry.item
@@ -2156,7 +2187,17 @@ struct TimelineView: View {
                     if needsLabel {
                         var lc = c
                         lc.clip(to: Path(rect))
-                        lc.draw(resolvedLabel(item.displayName),
+                        let missing = missingIDs.contains(item.id)
+                        if missing {
+                            // The white glow the rich views lay with `.shadow`: the red alone does
+                            // not survive a band tinted red or salmon, and the band's base is white
+                            // whatever the tint (@see MissingFileLabel.haloColor). A filter forces
+                            // this one block offscreen, which is why it is armed for the missing
+                            // ones only — a project where that costs is a project already broken.
+                            lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
+                                                 radius: MissingFileLabel.haloRadius, x: 0, y: 0))
+                        }
+                        lc.draw(resolvedLabel(item.displayName, missing: missing),
                                 at: CGPoint(x: x + 6, y: y + 3), anchor: .topLeading)
                     }
                 }
@@ -2179,6 +2220,7 @@ struct TimelineView: View {
             activeTool: viewModel.activeTool,
             stemColor: viewModel.stemColor(for: group.id),
             isMutedInMix: viewModel.isMutedInMix(group),
+            containsMissingFile: viewModel.containsMissingDescendant(group),
             displayLane: dl,
             scrollOffsetX: cullScrollX,
             viewportWidth: cullViewportWidth,

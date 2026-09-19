@@ -18,6 +18,12 @@ struct InfiniteBusBandView: View {
     let color: Color
     let isSelected: Bool
     let isMuted: Bool
+    /// True if anything inside this bus has lost its file — the same statement, and the same look,
+    /// a `GroupBlockView` makes (@see `MissingFileLabel`). It is needed HERE and not only there
+    /// because an infinite GROUP has no ordinary block at all: this band REPLACES it, so without
+    /// this the red would simply vanish the day a group was declared infinite. An aux never
+    /// answers true: it has no children.
+    var containsMissingFile: Bool = false
     let blockHeight: Double
     /// The y of the band's top in the canvas.
     let yPos: Double
@@ -139,8 +145,7 @@ struct InfiniteBusBandView: View {
                         .onAppear { beginRename() }
                 } else {
                     Text(item.displayName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.black)
+                        .blockNameStyle(missingFile: containsMissingFile)
                         .lineLimit(1)
                         .layoutPriority(1)
                 }

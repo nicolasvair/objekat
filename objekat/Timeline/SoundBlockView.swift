@@ -21,6 +21,11 @@ struct SoundBlockView: View {
     /// True if the object is muted in the mix — its own mute, or its stem's — unless a direct solo.
     /// Composed by the view model, not here: @see isMutedInMix. It does not touch `object.isMuted`.
     var isMutedInMix: Bool = false
+    /// True if this object's source file could not be found at the last scan: the name goes red
+    /// and bold (@see MissingFileLabel). Composed by the parent out of `EditViewModel.isMissing`,
+    /// exactly like `isMutedInMix` — the block stays pure presentation and asks the view model
+    /// nothing itself.
+    var isMissingFile: Bool = false
     let previewOffset: (dx: Double, dy: Double)?
 
     let previewResizeDX: Double
@@ -413,8 +418,7 @@ struct SoundBlockView: View {
                                 .onAppear { beginRename(object.label) }
                         } else {
                             Text(object.displayName)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.black)
+                                .blockNameStyle(missingFile: isMissingFile)
                                 .lineLimit(1)
                                 .layoutPriority(1)
                         }

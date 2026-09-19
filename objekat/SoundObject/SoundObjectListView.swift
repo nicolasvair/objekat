@@ -125,11 +125,11 @@ struct SoundObjectListView: View {
                     .font(.system(size: 9))
                     .opacity(0.7)
             }
-            .foregroundStyle(Color.red)
+            .foregroundStyle(MissingFileLabel.color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.red.opacity(showOnlyMissing ? 0.22 : 0.10))
+            .background(MissingFileLabel.color.opacity(showOnlyMissing ? 0.22 : 0.10))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -163,6 +163,11 @@ struct SoundObjectListView: View {
 
 // MARK: - One row
 
+/// The red and the bold are NOT spelled here: they come from `MissingFileLabel`, the unit the
+/// timeline's four drawings of a name already read. The same object is called broken in two
+/// windows at once, so it is called broken in one voice — a red re-typed on this side is the
+/// drift that unit exists to prevent.
+///
 /// The colours are the BLOCK's rule turned through 90°: what the timeline says from top to bottom
 /// (the name band in the object's own colour, the body in the stem's) a row says from left to
 /// right. @see SoundBlockView.effectiveColor — the reasoning and the opacities are its, to the
@@ -204,7 +209,7 @@ private struct SoundListRowView: View {
                 Image(systemName: iconName)
                     .font(.system(size: 10))
                     .frame(width: 13, alignment: .center)
-                    .foregroundStyle(isMissing ? Color.red : Color.secondary)
+                    .foregroundStyle(isMissing ? MissingFileLabel.color : Color.secondary)
                 name
                 Spacer(minLength: 0)
             }
@@ -239,8 +244,8 @@ private struct SoundListRowView: View {
     /// matter of taste: the sound is not there, and it has to be seen without being looked for.
     private var name: some View {
         highlightedName
-            .font(.system(size: 10, weight: isMissing ? .bold : .regular))
-            .foregroundStyle(isMissing ? Color.red : Color.primary)
+            .font(.system(size: 10, weight: isMissing ? MissingFileLabel.weight : .regular))
+            .foregroundStyle(isMissing ? MissingFileLabel.color : Color.primary)
             .lineLimit(1)
             .truncationMode(.middle)
     }
@@ -250,7 +255,7 @@ private struct SoundListRowView: View {
         let text = row.object.displayName
         // The match is picked out in the accent colour — except on a missing file, where RED is
         // the message and a second colour inside the same word would blunt it.
-        let hit: Color = isMissing ? .red : .accentColor
+        let hit: Color = isMissing ? MissingFileLabel.color : .accentColor
         if filterText.isEmpty {
             Text(text)
         } else if let range = text.range(of: filterText, options: .caseInsensitive) {
