@@ -16,7 +16,7 @@ memo keeps only the state and the traps.
 
 ---
 
-## Current state (5 September 2026)
+## Current state (19 September 2026)
 
 Branch: `main`, and **the repository is open source** at `github.com/nicolasvair/objekat`.
 What the public sees is **ONE commit** (`c89bfb0`): on 4 September 2026 the history was
@@ -832,6 +832,83 @@ What has landed since mid-August, in order:
   has no `automation.*` door, so the scenario takes the same road by the other end — a parameter
   set outside the snapshot's window moves exactly what a curve moves, the plugin's tree. In the
   app it reads in one line, as above: `[UNDO] … 1 patched`, and no `[PERF] … instantiated` behind it.
+
+- **The sound list becomes a table of contents, and a lost file can be found again**
+  (19 September 2026, ON THE BRANCH `claude/sound-list-left-panel-tz0nww`, NOT on `main`,
+  NEVER COMPILED — see the last paragraph before believing any of it) — the left panel had columns saying in figures what the timeline says in
+  pixels one row further right, and the app had no word at all for the thing that actually breaks
+  a session: a wav that is no longer where it was.
+  **The list.** No more columns, no more sort headers — a sort one can change is a sort one has to
+  re-establish. What is left is the order things HAPPEN in and the shape the project really has:
+  the tree of its groups, sorted PER LEVEL OF SIBLINGS (earliest first, the higher row winning a
+  tie, the original index settling the last one — `sort` is not stable in Swift and two objects at
+  the same instant on the same lane would swap places from one recomputation to the next). The
+  chevron IS the timeline's fold: one state, two views. An icon per kind, a sound object being a
+  `.clip` that carries a `definitionID` and nothing else telling it from an ordinary sound.
+  Colours are the BLOCK's rule turned through 90° — a 3 px strip down the left edge in
+  `customColor ?? stemColor` where the block puts its name band, the row's ground in the stem at
+  the block's own opacities to the digit. `soundListRows` sits beside `buildLaneEntries` and the
+  head of the file names their divergence rather than hiding it: two walks of one tree drift
+  unless they are read together.
+  **A missing file is a GHOST, and that is the fact everything else follows from**: a file it
+  cannot open makes `addSoundObject` give up BEFORE the clip exists (`OBJEngineCore.mm:1634`), so
+  the object sits in the model with no clip, no chain, no fades, no sends and no plugins — and
+  until now, with nothing said about it anywhere. Hence a repair CREATES the object rather than
+  correcting a path: `rebuildClip` is `applyDefinitionWave`'s sequence word for word, plus
+  `pushFadeCurveTree`; the plugins come back on their own, `engineAddClip` ending by compiling the
+  chain of any object that has one.
+  **The trap the detection is built around**: the predicate is read by the canvas once per block
+  per frame, so a `FileManager` call in `isMissing` would put a stat() — on a network volume, a
+  stat() that BLOCKS for seconds — inside the drawing pass. The disk is read in ONE function,
+  `rescanMissingFiles()`, at the doors where the answer can have changed; everything that draws
+  reads a dictionary keyed by PATH, deduplicated before the stat and written back only if it
+  DIFFERS (the property is observed — an equal dictionary reassigned on every mount notification
+  would invalidate the timeline for nothing).
+  **An unmounted volume is not a lost file.** `/Volumes/<name>` missing as a directory answers
+  `volumeOffline`, the menu names the drive instead of offering a search, and a watch on
+  NSWorkspace's mount notifications makes the state mend itself.
+  **Accidents come by packets**, which is the whole of `PathRelink`: repairing one path teaches a
+  prefix, compared BY COMPONENTS with the longest common suffix taken away, and taken as far as it
+  goes so the rule holds for the file's siblings and not for that one file. Applied on a COMPONENT
+  BOUNDARY, never on the raw string — `hasPrefix` would match `/Users/n/Sons2` under
+  `/Users/n/Sons` and rewrite a folder nobody named. Only what resolves onto a file that EXISTS is
+  kept, so the count offered is a count of things that will work. **The question comes BEFORE the
+  repair** (`resolvableByPropagation` changes nothing), then ONE `repairPath(…, propagate:)`:
+  asking afterwards would put two undo points where the hand made one gesture.
+  **Repairing is not replacing**, and they are two menu entries because they are two intentions —
+  replacing is deliberate, acts on one object, propagates nothing, and is offered whether or not
+  anything is missing.
+  **The clamp**, when the new file is shorter: the window SLIDES BACK first (the length one chose
+  is worth more than the exact place it was taken from), and only a window longer than the whole
+  file has its LENGTH cut. Shorter beats reading emptiness, and one ⌘Z gives back what there was.
+  The file range a clip consumes is `[offset, offset + duration × speed]` whether it plays
+  forwards or in reverse — reversing decides where the material is heard, not how much there is.
+  **The red is drawn in FOUR places**, which is what the search for it turned up: the two rich
+  views, the batched `Canvas` past a hundred objects, and `InfiniteBusBandView`, which REPLACES a
+  group's block once the bus is infinite and would have dropped the red the day one was. Hence
+  `Shared/MissingFileLabel`, which the four read and the sound list makes a fifth reader of. And
+  the red alone was NOT legible: a name band is white plus a tint, one of the ten stems IS red
+  (≈1.3:1, which is not a poor contrast but none at all) and the object pastels include salmon —
+  so a white halo, the band's base being white whatever the tint, and the only remedy that costs
+  no layout.
+  Session format 13 → 14 (`fileSize` on a clip, read BY PATH because the sites that copy a clip
+  rebuild it field by field and would drop it). i18n 421 keys, three languages, no orphan.
+  New commands: `project.missing_files`, `project.rescan_missing`, `object.replace_source`,
+  `project.relink_path`, `project.relink_preview`, `project.relink_folder`; `object.get` /
+  `object.list` gain `missing` and `missing_reason`.
+  **NOT COMPILED, NOT RUN, NOT SEEN, NOT HEARD — and this one is worse than 15 September's.** That
+  day's machine had no compiler; this one has neither compiler nor macOS nor screen. The ONLY
+  thing executed anywhere is `python3 -m py_compile` on `tools/scenario_relink.py`, which is a
+  syntax check and proves nothing about what it asserts. Everything else was written and read.
+  What the first build must settle, in order: that it compiles at all; then
+  `tools/scenario_relink.py` (43 assertions) and `tools/test_path_relink.swift` (36), neither ever
+  run; then whether a relinked object actually SOUNDS, which is the whole design and which only
+  the ear settles; then every pixel — the strip and the indentation, the badge in three languages
+  in a 240 pt panel, the red on a red stem band and on a salmon pastel with its halo, the two
+  context menus, the three panels and the propagation alert.
+  One reading left open on purpose: in the list, a double click on a sound object OPENS it for
+  editing (the timeline's own gesture). It could instead mean "show me its N placements", which is
+  what the request literally said. Cheap to change, and the eye decides.
 
 ### What is owed
 
