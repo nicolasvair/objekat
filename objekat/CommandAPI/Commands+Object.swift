@@ -18,7 +18,7 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
             let item = entry.item
-            guard var payload = CommandAdapters.objectPayload(entry).objectValue else {
+            guard var payload = CommandAdapters.objectPayload(entry, in: vm).objectValue else {
                 throw CommandError(code: .internal_error, message: "object not serialisable")
             }
             payload["fade_in"] = .number(item.fadeIn)
@@ -28,6 +28,11 @@ extension CommandRegistry {
             payload["fade_in_bend"] = .number(item.fadeInCurve.amount)
             payload["fade_out_bend"] = .number(item.fadeOutCurve.amount)
             payload["infinite"] = .bool(item.isInfiniteBus)
+            // A group has no file of its own, so `missing` is false for it whatever its content —
+            // this is the separate question: is anything DOWN THERE broken? False for everything
+            // that is not a group. The two are kept apart on purpose: only the clips this counts
+            // can be relinked, never the group.
+            payload["missing_descendant"] = .bool(vm.containsMissingDescendant(item))
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)

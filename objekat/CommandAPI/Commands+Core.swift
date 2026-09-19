@@ -171,6 +171,46 @@ extension CommandRegistry {
             return .object(["snap": .bool(vm.snapEnabled)])
         }
 
+        register("project.missing_files",
+                 summary: "The source files the project names and cannot find, each with its "
+                        + "reason ('absent', or 'volumeOffline' when the /Volumes drive is not "
+                        + "mounted) and the number of objects referencing it. The PATH is the unit "
+                        + "of a repair: mending one mends all its objects. Reads what the last "
+                        + "scan found — it does NOT touch the disk; use project.rescan_missing "
+                        + "to look again.",
+                 // A pure read: nothing moves, so nothing to undo.
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let entries = vm.missingPathsSorted
+            let files: [JSONValue] = entries.map { entry in
+                .object(["path": .string(entry.path),
+                         "reason": .string(entry.reason.rawValue),
+                         "object_count": .int(entry.count)])
+            }
+            // Summed from the rows rather than read off `missingFileCount`: the same figure by
+            // construction, one walk of the project instead of two, and no way for the total and
+            // the detail to disagree in one answer.
+            let objectCount = entries.reduce(0) { $0 + $1.count }
+            return .object(["files": .array(files),
+                            "path_count": .int(entries.count),
+                            "object_count": .int(objectCount)])
+        }
+
+        register("project.rescan_missing",
+                 summary: "Asks the disk again about every source file the project names, and "
+                        + "returns the new totals (paths, and objects touched). This is the one "
+                        + "command that reads the file system for this: it is what lets a script "
+                        + "rename a wav and then watch the count change. Detail through "
+                        + "project.missing_files.",
+                 // It only rebuilds a derived reading of the disk: the document is untouched, so
+                 // there is nothing to put back and nothing to mark dirty.
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.rescanMissingFiles()
+            return .object(["path_count": .int(vm.missingPaths.count),
+                            "object_count": .int(vm.missingFileCount)])
+        }
+
         register("project.schema",
                  summary: "The session format's notice: what each field of a .objekat.json "
                         + "file stands for.") { _ in
@@ -282,7 +322,9 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             // `laneEntries` is the view-model's flattening cache: it already carries the display
             // lane, the absolute position, the depth and the parent.
-            return .object(["objects": .array(vm.laneEntries.map(CommandAdapters.objectPayload))])
+            return .object(["objects": .array(vm.laneEntries.map {
+                CommandAdapters.objectPayload($0, in: vm)
+            })])
         }
 
         register("object.add",
@@ -601,7 +643,10 @@ enum CommandAdapters {
         return .object(payload)
     }
 
-    static func objectPayload(_ entry: LaneEntry) -> JSONValue {
+    /// The view-model is passed in rather than fetched from `CommandContext`: the missing-file
+    /// state lives on it, and an adapter that reached for the global context would hide a
+    /// dependency the two call sites already have to hand.
+    static func objectPayload(_ entry: LaneEntry, in vm: EditViewModel) -> JSONValue {
         let item = entry.item
         var payload: [String: JSONValue] = [
             "id": .string(item.id.uuidString),
@@ -620,6 +665,13 @@ enum CommandAdapters {
         if let defID = item.definitionID { payload["definition"] = .string(defID.uuidString) }
         if let stemID = item.stemID { payload["stem"] = .string(stemID.uuidString) }
         if case .clip(let filePath, _, _, _, _) = item.kind { payload["file"] = .string(filePath) }
+        // Whether this object's source file was found at the last scan. A dictionary lookup, no
+        // disk: building this payload for every object of the project must not cost one stat per
+        // object (@see EditViewModel+MissingFiles). Always present, `false`/`null` for anything
+        // that names no file — a script should not have to know which kinds can be missing.
+        let reason = vm.missingReason(for: item)
+        payload["missing"] = .bool(reason != nil)
+        payload["missing_reason"] = .stringOrNull(reason?.rawValue)
         return .object(payload)
     }
 

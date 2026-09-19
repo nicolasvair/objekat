@@ -240,6 +240,11 @@ extension EditViewModel {
         projectName = L("project.untitled")
         isDirty = false
         projectLoadToken &+= 1   // the canvas rearmed on emptiness (@see projectLoadToken)
+        // Empties the missing-file verdict with the rest: the paths of the project just closed
+        // belong to nothing any more, and a stale entry would have `project.missing_files` report
+        // broken files in an empty project. Costs nothing here — there are no clips left to ask
+        // about. See EditViewModel+MissingFiles.
+        rescanMissingFiles()
     }
 
     /// Opens a version file: you navigate into the project folder and
@@ -472,6 +477,17 @@ extension EditViewModel {
         // The content is in place: the timeline can rearm the length of its canvas (@see
         // projectLoadToken). To be done AFTER `items`, otherwise it would rearm on the old content.
         projectLoadToken &+= 1
+
+        // The files the clips name are asked about ONCE, here: `items` is in place and the engine
+        // has been fed, so the answer is about the project that is actually open. It has to happen
+        // AFTER `resolvedItems` has made the internal paths absolute (@see loadProject(from:)),
+        // otherwise every sample living in the project folder would read as gone. From now on
+        // nothing touches the disk again until a relink or a volume moves — the drawing side reads
+        // `missingPaths` and nothing else. See EditViewModel+MissingFiles.
+        rescanMissingFiles()
+        // And the watch on the volumes, which is what makes `.volumeOffline` mend itself when the
+        // drive comes back. Idempotent: every later opening finds it already laid.
+        armMissingFileWatch()
 
         // End of loading: if plugins were missing, warn the user (once only).
         let missing = missingPluginCapture ?? []

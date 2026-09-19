@@ -64,6 +64,13 @@ final class EditViewModel {
     /// The free texts laid over the timeline. Beside `items`, not inside it: a comment carries no
     /// sound and has no engine object (@see TimelineComment).
     var comments: [TimelineComment] = []
+    /// The source paths whose file could not be found, with the reason. Keyed by PATH because that
+    /// is the unit of a repair (one file gone breaks the N objects naming it, and putting it back
+    /// mends all N). Written ONLY by `rescanMissingFiles()`, which is the only thing in the app
+    /// allowed to ask the disk — everything that DRAWS reads this dictionary, never the file
+    /// system. Stored here rather than in the extension for the usual reason: an extension cannot
+    /// carry stored state. See EditViewModel+MissingFiles.
+    var missingPaths: [String: MissingReason] = [:]
     /// The selected marker / region / comment, if any. Its own slot rather than a place in
     /// `selectedIDs`, exactly like `selectedCrossfade` and for the same reason. Exclusive with the
     /// two others (@see selectAnnotation).
