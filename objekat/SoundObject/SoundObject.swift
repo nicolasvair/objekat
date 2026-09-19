@@ -380,6 +380,16 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// through the same five transformations as the curves (@see Array where Element == Marker).
     var markers: [Marker] = []
     var kind: Kind
+    /// The SIZE in bytes of the source file, as it was when the clip was laid down. Only a `.clip`
+    /// has one; nil everywhere else, and nil for every session written before format 14.
+    ///
+    /// It exists for ONE job: departing two candidates that carry the same name when a broken link
+    /// is repaired from a folder. Relinking onto the WRONG file is worse than leaving it missing —
+    /// a missing file says so in red, a wrong one is silent — so the size is what lets a sweep
+    /// prefer the `bell.wav` that is really this one. It lives at the TOP LEVEL rather than inside
+    /// `.clip` on purpose: adding a parameter there would touch every construction site of the
+    /// case, about twenty of them, for a field only the relink reads.
+    var fileSize: Int64? = nil
     /// Non-nil ⇒ this placement is an INSTANCE of a sound object: its `kind` reads the current wave
     /// of the definition `EditViewModel.objectDefinitions[definitionID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -1011,7 +1021,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, definitionID, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers
+        case loopRangeStart, loopRangeEnd, markers, fileSize
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1055,6 +1065,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(loopRangeStart, forKey: .loopRangeStart)
         try c.encodeIfPresent(loopRangeEnd,   forKey: .loopRangeEnd)
         if !markers.isEmpty { try c.encode(markers, forKey: .markers) }
+        try c.encodeIfPresent(fileSize, forKey: .fileSize)
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1091,6 +1102,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         loopRangeStart = try c.decodeIfPresent(Double.self, forKey: .loopRangeStart)
         loopRangeEnd   = try c.decodeIfPresent(Double.self, forKey: .loopRangeEnd)
         markers        = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
+        fileSize       = try c.decodeIfPresent(Int64.self, forKey: .fileSize)
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }
