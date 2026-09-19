@@ -653,13 +653,6 @@ final class EditViewModel {
     @ObservationIgnored var beginVerticalZoomDrag: (() -> Void)?
     @ObservationIgnored var endVerticalZoomDrag: (() -> Void)?
 
-    enum SortKey: String, CaseIterable {
-        case startTime = "time"
-        case duration  = "duration"
-        case lane      = "lane"
-    }
-    var sortKey: SortKey = .startTime
-    var sortAscending: Bool = true
 
     var clipboard: ClipboardContent? = nil
     /// A clipboard dedicated to MIDI notes (independent of `clipboard`, which carries clips/groups).
@@ -784,21 +777,6 @@ final class EditViewModel {
             }
         }
         return result.sorted { $0.displayLane < $1.displayLane }
-    }
-
-    var filteredObjects: [SoundObject] {
-        let clips = allClips
-        let base = filterText.isEmpty ? clips
-            : clips.filter { $0.displayName.localizedCaseInsensitiveContains(filterText) }
-        return base.sorted { a, b in
-            let less: Bool
-            switch sortKey {
-            case .startTime: less = a.startTime < b.startTime
-            case .duration:  less = a.duration  < b.duration
-            case .lane:      less = a.lane       < b.lane
-            }
-            return sortAscending ? less : !less
-        }
     }
 
     var snapEnabled: Bool = true
