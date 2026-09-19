@@ -1,0 +1,25 @@
+// Signing — what the repository ships, and the door to a per-machine override.
+//
+// OBJEKAT signs AD HOC with NO development team on purpose, so that anyone can
+// build it with no Apple account: a team ID committed into project.pbxproj
+// would stop every contributor at the signing step (see CLAUDE.md).
+//
+// The cost of an ad-hoc signature is that the designated requirement IS the
+// cdhash of that exact binary, and TCC keys its grants to the requirement — so
+// macOS asks for Desktop / Documents access again after EVERY rebuild. Whoever
+// is tired of that signs locally with their own identity, in
+// Signing.local.xcconfig, which .gitignore keeps out of the repository. The
+// optional include below is silent when that file is absent, which is the
+// state every clone arrives in.
+//
+// These settings live here and NOT in project.pbxproj: a value set on the
+// target wins over an xcconfig, so the local override would never be read.
+// If Xcode writes them back into the target (it does as soon as you touch
+// Signing & Capabilities), take them out again rather than committing them.
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+PROVISIONING_PROFILE_SPECIFIER =
+
+#include? "Signing.local.xcconfig"

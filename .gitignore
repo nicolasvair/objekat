@@ -19,3 +19,6 @@ __pycache__/
 
 # Claude Code local settings (per machine)
 .claude/settings.local.json
+
+# Local signing identity (per machine, never committed)
+Signing.local.xcconfig
