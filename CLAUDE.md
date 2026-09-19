@@ -834,8 +834,8 @@ What has landed since mid-August, in order:
   app it reads in one line, as above: `[UNDO] … 1 patched`, and no `[PERF] … instantiated` behind it.
 
 - **The sound list becomes a table of contents, and a lost file can be found again**
-  (19 September 2026, ON THE BRANCH `claude/sound-list-left-panel-tz0nww`, NOT on `main`,
-  NEVER COMPILED — see the last paragraph before believing any of it) — the left panel had columns saying in figures what the timeline says in
+  (19 September 2026, ON THE BRANCH `claude/sound-list-left-panel-tz0nww`, NOT on `main`;
+  written blind, COMPILED AND RUN the same day — see the last paragraph) — the left panel had columns saying in figures what the timeline says in
   pixels one row further right, and the app had no word at all for the thing that actually breaks
   a session: a wav that is no longer where it was.
   **The list.** No more columns, no more sort headers — a sort one can change is a sort one has to
@@ -896,19 +896,92 @@ What has landed since mid-August, in order:
   New commands: `project.missing_files`, `project.rescan_missing`, `object.replace_source`,
   `project.relink_path`, `project.relink_preview`, `project.relink_folder`; `object.get` /
   `object.list` gain `missing` and `missing_reason`.
-  **NOT COMPILED, NOT RUN, NOT SEEN, NOT HEARD — and this one is worse than 15 September's.** That
-  day's machine had no compiler; this one has neither compiler nor macOS nor screen. The ONLY
-  thing executed anywhere is `python3 -m py_compile` on `tools/scenario_relink.py`, which is a
-  syntax check and proves nothing about what it asserts. Everything else was written and read.
-  What the first build must settle, in order: that it compiles at all; then
-  `tools/scenario_relink.py` (43 assertions) and `tools/test_path_relink.swift` (36), neither ever
-  run; then whether a relinked object actually SOUNDS, which is the whole design and which only
-  the ear settles; then every pixel — the strip and the indentation, the badge in three languages
-  in a 240 pt panel, the red on a red stem band and on a salmon pastel with its halo, the two
-  context menus, the three panels and the propagation alert.
+  **Written with no compiler, no macOS and no screen** — the only thing executed at the time was
+  `python3 -m py_compile` on `tools/scenario_relink.py`, a syntax check that proves nothing about
+  what it asserts. **Settled since, on a machine that has all three** (19 September, the entry
+  below): it COMPILES, in Debug and in Release, with no new warning; `tools/test_path_relink.swift`
+  passes its 36 assertions and `tools/scenario_relink.py` its 46, both run for the first time.
+  Two of those assertions could not pass as written, and both are worth knowing: the marker suite
+  still pinned session format 13 against the 14 this branch bumps to, and the relink suite compared
+  a path the app DISCOVERED (resolved by `FileManager`, `/private/var`) against its own `mkdtemp`
+  root (`/var`) — the macOS symlink, failing on a thing that says nothing about the relink. The app
+  was right in both cases; the suites were fixed.
+  **Still not settled, and it is the whole design**: whether a relinked object actually SOUNDS.
+  Nothing here proves the ENGINE followed rather than the model alone — the export re-read at RMS
+  is what would, and it has not been written. Then every pixel: the strip and the indentation, the
+  badge in three languages in a 240 pt panel, the red on a red stem band and on a salmon pastel
+  with its halo, the two context menus, the three panels and the propagation alert.
   One reading left open on purpose: in the list, a double click on a sound object OPENS it for
   editing (the timeline's own gesture). It could instead mean "show me its N placements", which is
   what the request literally said. Cheap to change, and the eye decides.
+
+- **The list and the timeline say the same thing, and a group says what it holds**
+  (19 September 2026, ON THE SAME BRANCH, after the entry above had been used for the first time)
+  — six things read off the hand, and one owed for a while.
+  **A glyph per kind, on BOTH sides of the window.** The list had icons and the timeline had none,
+  so nothing tied a row to the block it names. One definition for FIVE readers,
+  `Shared/ObjectKindIcon` — the four places a block's name is drawn (`SoundBlockView`,
+  `GroupBlockView`, `InfiniteBusBandView`, the batched `Canvas`) plus the list — for exactly the
+  reason `MissingFileLabel` sits beside it. In the `Canvas` the glyph travels INSIDE the resolved
+  text (`Text(Image(systemName:))` lays out as a character): one resolve, one cache entry, one
+  draw, cropped with the name, where a second image would need its own width and its own clip per
+  block per frame — in the regime that exists because there are too many blocks to afford that.
+  The cache key carries the icon AND the name, two clips being able to share a name and not a kind.
+  **A sound object is a waveform in a circle, and STAYS one while open.** That is the subtle half
+  and the trap worth keeping: opening one materialises its content, so its `kind` genuinely becomes
+  `.group` and `restoredSubtree` clears its `definitionID` ON PURPOSE. Nothing on the object can
+  tell it from a plain group, so the glyph turned into a folder on the double click and back on
+  closing. Only the view model knows (`isInObjectEditStack`), so it is passed in — a block is pure
+  presentation and is told.
+  **The colour strip is 16 px and not 3.** A hairline separates two rows, which is not the job: it
+  must name a colour one RECOGNISES against the ten stems and the object pastels, and 3 px of
+  salmon and 3 px of pink are the same stripe.
+  **Selecting an object brings it into view in the list** — a table of contents that does not
+  follow the hand stops being one. Anchored CENTRE (what one wants is what sits AROUND the thing
+  selected), and three deliberate silences: only when the object to look at CHANGES, so ⇧ and ⌘
+  leave the view where the eye is; never for a selection of several, there being no one row to show
+  and no right to choose one; never while one is typing in the search field.
+  **A group takes the name of what it holds** — `Kick + Snare + Hat`, read from the HIGHEST lane
+  downwards, which is the order the eye takes a stack of lanes in. "Group" says what a thing IS and
+  never which one; thirty groups were thirty rows carrying one word. A MIDI clip takes its
+  INSTRUMENT's name. A name somebody typed always wins, and clearing the label gives the composed
+  name back. The arithmetic is its own unit, `ComposedName` — the half with nothing behind it,
+  hence assertable with no screen (`tools/test_composed_name.swift`, 27). Fifty characters, at most
+  five names, then `+3` (how many are not shown, not merely that some are not). `50/N` is a FLOOR
+  and not a rule: a name shorter than its share hands the remainder back and the surplus goes round
+  again, so `Kick` pays for `Contrabass_ambiance` instead of spending ten characters on blanks —
+  repeated until nothing more can be given back, one pass leaving the second-longest cropped while
+  the shortest's budget sits unused. The ellipsis is counted INSIDE the limit, which is what makes
+  the budget honest. The sort is TOTAL — lane, then instant, then stored order — the same trap
+  `soundListRows` carries a comment about: `sort` is not stable in Swift, and a group that renamed
+  itself between two recomputations would be worse than one called "Group".
+  **And the list has a right click → Show in Finder**, reusing `export.reveal` — the same sentence
+  about the same gesture, already in three languages. Withheld where it would lie: a group, an aux
+  and a MIDI clip own no file, and a MISSING one would open the Finder on the folder that no longer
+  holds it, contradicting the relink entries just above it in the same menu.
+  Verified with no screen: Debug AND Release build, no new warning (the nine non-nullability ones
+  in touched files were blamed to their origin commits and all pre-date the branch);
+  `test_composed_name.swift` 27, including a sweep over 72 input shapes proving the 50-character
+  budget is never overrun (worst case exactly 50); the naming driven end to end through the API —
+  three sounds on lanes 2/0/1 grouped reading top-down with the long name absorbing what the short
+  ones returned, a manual name winning, a 57-character instrument cropped to exactly 50. Plus every
+  suite: relink 46, markers 78, families 131, plugin-selection 58, export-preview 35,
+  plugin-state-undo 5, the four other standalone Swift suites 36/22/21/31, `smoke.jsonl` clean,
+  i18n 421 keys, no window on the headless pid.
+  **The MIDI half could not be driven the ordinary way**, and it is a debt of the same shape the
+  repo already knows: `setInstrument` exists in the view model with NO API door onto it, so nothing
+  headless can put an instrument on a clip. It was verified through the door that does exist — a
+  session saved, an instrument injected into the file, the project reopened — which works and is
+  not the gesture. A `midi.set_instrument` would pay it.
+  **Not seen on screen**: every pixel — the 16 px strip against the pastels and the ten stems, the
+  glyphs at 9 pt in BOTH drawing regimes (the rich views and the `Canvas`, which is where a glyph
+  silently differing would show), the scroll that follows the selection, the composed names on real
+  material, and the Finder entry in a narrow menu in three languages.
+  **One cost measured nowhere**: `displayName` on a group now sorts its children and builds a
+  string on every read, and it is read while drawing. Groups are far fewer than the hundred-object
+  threshold so it is expected to be invisible, but no screen here could measure it. Left UNCACHED
+  deliberately — a second cache is above all a second cache to invalidate (@see the head of
+  `EditViewModel+ListRows`).
 
 ### What is owed
 
