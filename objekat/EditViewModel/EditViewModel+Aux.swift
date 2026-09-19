@@ -249,8 +249,26 @@ extension EditViewModel {
         isDirty = true
     }
 
+    /// The door a HAND comes in by when it drags a send level with no box to type in — the Send
+    /// tool's knob in the timeline. The level lands on the WHOLE dB, which is the step the
+    /// inspector's own box has always used and the one `ParamRef.valueStep` declares for a send
+    /// curve: the knob was the only one of the three laying down 3.47 dB. Unconditional, like the
+    /// pan's detent (@see EditViewModel+Pan) and for the same reason — the grid is about time, and
+    /// a level has nothing to place itself against.
+    ///
+    /// It may only be called by a gesture working from an ANCHOR and handing over its TOTAL
+    /// travel: rounding a value that is then read back and added to again throws the travel away
+    /// on every frame and the knob never moves (@see EditViewModel+Pan, which paid for that once).
+    /// Which is why `adjustSendLevelSelected` does NOT go through it — it reads the stored value
+    /// and adds, and its callers already hand over whole steps.
+    func setSendLevelFromHand(from objectID: UUID, to auxID: UUID, levelDb: Float) {
+        setSendLevel(from: objectID, to: auxID, levelDb: levelDb.rounded())
+    }
+
     /// Sets the send level (clamped -∞…+sendMaxDb) with auto enabling/disabling
     /// at the extremes. Creates the entry on the fly if it is raised above -∞.
+    /// EXACT, and it stays so: it is the machine's door (`object.set_send_level`) and the one an
+    /// automation writes its own static value through.
     func setSendLevel(from objectID: UUID, to auxID: UUID, levelDb: Float) {
         let lv = levelDb.clamped(to: sendMinDb...sendMaxDb)
         update(id: objectID) { obj in

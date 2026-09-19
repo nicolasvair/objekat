@@ -107,8 +107,13 @@ enum ParamRef: Codable, Equatable, Hashable {
     /// fader. nil for a plugin parameter: its normalised range has no unit, and a step there would
     /// be arbitrary.
     ///
-    /// Driven by the timeline's SNAP, like time: ⌘ frees both at once
-    /// (@see AutomationBandView).
+    /// It is a DETENT, not a snap, and the difference is the whole point: it answers neither to
+    /// the timeline's snap nor to ⌘. The grid is about TIME — where a point is PLACED — and a
+    /// value has nothing to place itself against; reducing the precision is about not having to
+    /// decide between -3.0 and -3.4 dB, and that is wanted whatever the grid is doing. Exactly the
+    /// same rule, for exactly the same reason, as the pan's (@see EditViewModel.detentedPan), and
+    /// it lives at the hand's door (@see AutomationBandView.detentedValue), never in the model:
+    /// a curve pushed to the engine and a script's own value stay exact.
     var valueStep: Float? {
         switch self {
         case .volume, .chainInGain, .chainOutGain, .send: return 1

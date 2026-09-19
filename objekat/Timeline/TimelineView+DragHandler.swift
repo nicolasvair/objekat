@@ -1762,8 +1762,10 @@ extension TimelineView {
         // Reasserted on every step: the hover must not put the accent out during the drag.
         viewModel.sendToolFocus = SendFocus(objectID: state.grabbedID, auxID: state.auxID)
         let dDB = Float(-value.translation.height / 10.0)   // 10 px ≈ 1 dB, upwards = +
+        // The whole dB, always: the hand's door (@see setSendLevelFromHand). The anchor plus the
+        // TOTAL travel, never a compounded delta — that is what lets the result be rounded.
         for (id, anchor) in state.anchors {
-            viewModel.setSendLevel(from: id, to: state.auxID, levelDb: anchor + dDB)
+            viewModel.setSendLevelFromHand(from: id, to: state.auxID, levelDb: anchor + dDB)
         }
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy {

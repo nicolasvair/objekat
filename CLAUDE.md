@@ -983,6 +983,44 @@ What has landed since mid-August, in order:
   deliberately — a second cache is above all a second cache to invalidate (@see the head of
   `EditViewModel+ListRows`).
 
+- **The snap is the grid's, the detent is the value's** (19 September 2026) — read off the hand: an
+  automation value landed on whole dB only when the SNAP was on, which was a misreading of what was
+  asked for. The two are not one switch. The snap is the GRID, hence TIME: it says where a thing is
+  PLACED — an object, a mark, an automation point — and turning it off is how one places something
+  between the lines. A DETENT says what a thing is WORTH, and it exists to lower the precision, so
+  that one does not have to decide between -3.0 and -3.4 dB. That is wanted whether or not one is
+  working on the grid, so it answers to nothing: not the snap button, not ⌘. Exactly the rule the
+  pan was given on 15 September, and it was already written down there — the automation band simply
+  had not read it. `snappedV` / `snappedStep` became `detentedValue` / `detentedDelta` and lost
+  their `snapOn` guard; `snappedT` keeps it, being the axis the grid is actually about. A plugin
+  parameter still has no detent at all, and that is not an oversight: its 0…1 is normalised, so
+  there is no unit to round to (@see ParamRef.valueStep).
+  **The sweep the correction asked for**: every reader of `snapEnabled` / `effectiveSnapEnabled` /
+  `effectiveSnapGrid` in the app was read, and the automation band's vertical axis was the ONLY
+  non-temporal one. The rest are the ruler, the timeline's drag and guide, the piano roll (its
+  PITCH never having been snapped), the paste position, and the persistence. The inspector's and
+  the synoptic's boxes have their own always-on rounding (`DragValueBox.snap`), which never was the
+  grid's.
+  One adjacent gap came out of it and is fixed here: the **Send tool's knob** was the only hand
+  laying down a dB with no step at all — `setSendLevel` being the machine's door — while the
+  inspector's box for the same send rounds and `ParamRef.valueStep` declares a whole dB for its
+  curve. One send, three controls, two answers. `setSendLevelFromHand` is the door now, and the
+  drag works from anchors, which is what makes rounding the result safe (@see EditViewModel+Pan for
+  the day compounding cost a whole gesture). `adjustSendLevelSelected` deliberately stays exact: it
+  READS the stored value and adds, so rounding there would throw away every delta smaller than half
+  a step and freeze the ⌘-fine of the inspector's box.
+  Verified with no screen: a build; `scenario_families.py` 131 OK, `scenario_markers.py` ALL PASS,
+  `scenario_plugin_selection.py` 58, `scenario_export_preview.py` 35 OK, `scenario_relink.py` ALL
+  PASS, `scenario_plugin_state_undo.py` 5, the three geometry suites 22 / 21 / 31, `smoke.jsonl`
+  clean, i18n 421 keys with no orphans, and no window on the headless pid.
+  **What no suite can reach, and it is the same debt as ever**: the command API has no
+  `automation.*` family, so nothing headless can lay a point and read back what it is worth. Nor
+  can it drive the Send tool's knob — `send.adjust_level` goes through the door that stays exact.
+  Both changes are the HAND's doors, and only the hand sees them.
+  **Not felt**: a curve dragged with the snap OFF and landing on whole dB all the same; the Send
+  tool's knob clicking from dB to dB; and whether the dB still left between the steps by ⌘ in the
+  inspector's and the synoptic's boxes is wanted or is one more value nobody meant to type.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

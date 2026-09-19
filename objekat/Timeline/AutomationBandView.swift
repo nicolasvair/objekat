@@ -80,7 +80,9 @@ struct AutomationBandView: View {
                                bandWidth: max(1, bandWidth))
     }
 
-    /// The effective snap, REREAD ON EVERY STEP of the gesture: ⌘ has to be able to invert the snap
+    /// The effective snap — of TIME, and of time alone: it decides where a point is PLACED, never
+    /// what it is WORTH (the value has a detent of its own, unconditional — @see detentedValue).
+    /// REREAD ON EVERY STEP of the gesture: ⌘ has to be able to invert the snap
     /// once the drag has begun, not only before engaging it. We ask the real keyboard rather than
     /// `viewModel.cmdKeyHeld` — the monitor feeding it does not see modifier changes that happen
     /// while a mouse button is held down, and the snap stayed frozen on its state at the start of
@@ -499,7 +501,7 @@ struct AutomationBandView: View {
                 let onLine = hitLine ? lineValue(atT: t, ref: ref, points: pts) : nil
                 viewModel.addAutomationPoint(
                     objectID: object.id, param: ref, t: t,
-                    v: onLine ?? snappedV(geo.value(atY: p.y, ref: ref, row: row), ref: ref))
+                    v: onLine ?? detentedValue(geo.value(atY: p.y, ref: ref, row: row), ref: ref))
             }
             return
         }
@@ -542,7 +544,7 @@ struct AutomationBandView: View {
             guard d.origPoints.indices.contains(i) else { return }
             let o = d.origPoints[i]
             let t = snappedT(atX: g.x(ofT: o.t) + dx)
-            let v = snappedV((o.v + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
+            let v = detentedValue((o.v + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 guard pts.indices.contains(i) else { return }
                 pts[i].t = t
@@ -558,7 +560,7 @@ struct AutomationBandView: View {
             let range = ref.valueRange
             // The DIFFERENCE is rounded, not each value: a segment sitting on round figures stays
             // there, and one that was not keeps its internal differences.
-            let dv = snappedStep(g.valueDelta(dy: dy, ref: ref), ref: ref)
+            let dv = detentedDelta(g.valueDelta(dy: dy, ref: ref), ref: ref)
                 .clamped(to: (range.lowerBound - lo)...(range.upperBound - hi))
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 for i in idxs where pts.indices.contains(i) && d.origPoints.indices.contains(i) {
@@ -579,7 +581,7 @@ struct AutomationBandView: View {
                        text: String(format: L("automation.curveReadout"), c))
 
         case .staticValue:
-            let v = snappedV((d.origStatic + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
+            let v = detentedValue((d.origStatic + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
             viewModel.setAutomationStaticValue(ref, on: object.id, to: v)
             setReadout(row: d.row, x: location.x, ref: ref, value: v)
         }
@@ -661,18 +663,28 @@ struct AutomationBandView: View {
 
     // MARK: - Time and grid
 
-    /// The value rounded to the parameter's step — a whole dB, pan by 10 % (@see
-    /// ParamRef.valueStep), the same steps as the inspector's boxes. Driven by the SAME switch as
-    /// time: when the snap is on, a curve lands on round figures; ⌘ frees both axes at once, for
-    /// fine adjustment.
-    private func snappedV(_ v: Float, ref: ParamRef) -> Float {
-        guard snapOn, let step = ref.valueStep, step > 0 else { return v }
+    /// The value brought onto the parameter's DETENT — a whole dB, pan by 10 % (@see
+    /// ParamRef.valueStep), the same steps as the inspector's boxes.
+    ///
+    /// UNCONDITIONAL, and that is the correction of 19 September 2026: it used to be driven by the
+    /// same switch as time, so turning the snap off gave -3.4 dB curves and ⌘ freed an axis nobody
+    /// had asked to free. The snap is about the GRID, hence about TIME — where a point is PLACED —
+    /// and a value has nothing to place itself against; the step is there to lower the precision,
+    /// which is wanted whether or not one is working on the grid. The same rule and the same
+    /// reasoning as the pan's detent (@see EditViewModel+Pan, which says why a modifier leaving
+    /// 13 % behind in the file is the intermediate value under another name).
+    ///
+    /// It lives HERE, at the hand's door, and never in the model: a plugin parameter has no step
+    /// (a normalised 0…1 has no unit to round to), `setAutomationStaticValue` goes on through the
+    /// exact doors, and what a curve pushes to the engine is untouched.
+    private func detentedValue(_ v: Float, ref: ParamRef) -> Float {
+        guard let step = ref.valueStep, step > 0 else { return v }
         return ((v / step).rounded() * step).clamped(to: ref.valueRange)
     }
 
-    /// The same rounding, for a DIFFERENCE: no bounding to the range, a difference is not a value.
-    private func snappedStep(_ dv: Float, ref: ParamRef) -> Float {
-        guard snapOn, let step = ref.valueStep, step > 0 else { return dv }
+    /// The same detent, for a DIFFERENCE: no bounding to the range, a difference is not a value.
+    private func detentedDelta(_ dv: Float, ref: ParamRef) -> Float {
+        guard let step = ref.valueStep, step > 0 else { return dv }
         return (dv / step).rounded() * step
     }
 

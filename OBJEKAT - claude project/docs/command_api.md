@@ -555,8 +555,22 @@ pull. The tolerance is 8 px, so it follows the zoom.
 unless asked otherwise. A mark asking for the snap excludes ITSELF from the targets — see
 `marker.move` above.
 
-It does NOT decide the pan's detent — see below. The grid is about TIME, and a pan has nothing to
-place itself against.
+It does NOT decide any VALUE, and that is a rule and not an exception for the pan. The snap is the
+GRID's, hence TIME's: it says where a thing is PLACED — an object, a mark, an automation point. What
+a thing is WORTH answers to a DETENT of its own, which is **unconditional**: the pan's tenth, the
+whole dB of a volume, of a send level and of an automation curve laid on either. A detent is there
+to lower the precision, which is wanted whether or not one is working on the grid, and ⌘ does not
+lift it — a modifier that leaves 13 % or -3.4 dB behind in the file is the intermediate value under
+another name. Until 19 September 2026 the automation band's VERTICAL axis was wired to
+`project.set_snap` along with its horizontal one: turning the snap off to place a point freely also
+took the dB off their round figures. It no longer is.
+
+The detent lives at the HAND's doors, and the machine's write what they are given: `object.set_pan`,
+`object.set_send_level`, and what a curve pushes to the engine. A plugin parameter has no detent at
+all — its 0…1 is normalised, so there is no unit to round to. The one exception is
+**`object.set_gain`**, whose whole dB lives in the model rather than at the door and therefore
+applies to a script too: `updateVolume` has rounded since long before this doctrine was written, and
+moving it would silently change what every existing scenario reads back.
 
 ### The pan clicks onto the tenths, always
 
