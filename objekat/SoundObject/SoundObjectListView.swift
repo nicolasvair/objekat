@@ -1,4 +1,6 @@
 import SwiftUI
+// `MemberImportVisibility` is on for this target: NSWorkspace is named here, so AppKit is imported here.
+import AppKit
 
 /// The left panel's sound list: the project's TABLE OF CONTENTS.
 ///
@@ -32,6 +34,18 @@ struct SoundObjectListView: View {
         return viewModel.soundListRows.filter { viewModel.subtreeHasMissingFile($0.object) }
     }
 
+    /// The ONE row the panel should bring into view, or nil to leave the scroll alone.
+    ///
+    /// Nil for an empty selection and nil for a MULTIPLE one: several objects have no single row
+    /// to show, and choosing one of them would be choosing for the user. Nil too when the object
+    /// is not currently listed — a child of a folded group is not a row, and `scrollTo` on an id
+    /// that is not there does nothing anyway; saying so here keeps the reason in writing rather
+    /// than leaving it to a silent no-op.
+    private var rowToReveal: UUID? {
+        guard viewModel.selectedIDs.count == 1, let id = viewModel.selectedIDs.first else { return nil }
+        return rows.contains(where: { $0.id == id }) ? id : nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.missingFileCount > 0 {
@@ -43,6 +57,7 @@ struct SoundObjectListView: View {
 
             Divider()
 
+            ScrollViewReader { scroller in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -52,12 +67,14 @@ struct SoundObjectListView: View {
                         // nothing — so the modifier itself is what branches. The condition moves
                         // only when a file goes or comes back, which already rebuilds the row.
                         let plan = RelinkUI.MenuPlan(vm: viewModel, object: row.object)
-                        if plan.isEmpty {
+                        let revealable = Self.revealablePath(row.object) != nil
+                        if plan.isEmpty && !revealable {
                             listRow(row)
                         } else {
                             listRow(row)
                                 .contextMenu {
                                     RelinkContextMenuItems(viewModel: viewModel, object: row.object)
+                                    revealItem(row.object, afterRelinkItems: !plan.isEmpty)
                                 }
                         }
                         Divider()
@@ -68,6 +85,26 @@ struct SoundObjectListView: View {
                 searchFocused = false
                 NSApp.keyWindow?.makeFirstResponder(nil)
             })
+            // SELECTING AN OBJECT ANYWHERE BRINGS IT INTO VIEW HERE. A table of contents that
+            // does not follow the hand stops being one: with a project taller than the panel, a
+            // click in the timeline highlighted a row nobody could see, and the list said less
+            // the more there was in it.
+            //
+            // Three things this deliberately does NOT do. It does not scroll on every change of
+            // `selectedIDs` but only when the object one should be looking at CHANGES
+            // (`rowToReveal`), so extending a selection with ⇧ or ⌘ leaves the view where the eye
+            // is. It does not scroll for a selection of SEVERAL objects — there is no one row to
+            // show, and picking one would be picking for the user. And it never steals the view
+            // while one is typing in the search field, where the rows under the hand are the
+            // result of the search and not of any selection.
+            .onChange(of: rowToReveal) { _, id in
+                guard let id, !searchFocused else { return }
+                // `.center` rather than the nearest edge: a row revealed flush against the top or
+                // the bottom of the panel is a row with no neighbours shown, and what one wants
+                // of a table of contents is precisely what sits around the thing one selected.
+                withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(id, anchor: .center) }
+            }
+            }
         }
         .frame(minWidth: 240)
     }
@@ -82,6 +119,7 @@ struct SoundObjectListView: View {
             isSelected: viewModel.isSelected(row.id),
             isMissing: viewModel.isMissing(row.object),
             isExpanded: row.object.isExpanded,
+            isOpenObject: viewModel.isInObjectEditStack(row.id),
             stemColor: viewModel.stemColor(for: row.id),
             filterText: viewModel.filterText,
             onToggleExpand: { viewModel.toggleGroupExpansion(id: row.id) }
@@ -161,6 +199,31 @@ struct SoundObjectListView: View {
 
     /// A double click ACTIVATES a row, and what that means depends on what the row is. A single
     /// click only ever selects — as it does in the timeline.
+    /// The file a row can show in the Finder, or nil.
+    ///
+    /// A GROUP, an aux and a MIDI clip own no file, so they are not offered the entry rather than
+    /// being offered one that does nothing. A file that is MISSING is not offered either, and
+    /// that is the case worth stating: the Finder would open on the folder that no longer holds
+    /// it, which reads as "it is there" at the exact moment the app is saying it is not — the
+    /// relink entries just above are the answer to a missing file, and this one would contradict
+    /// them.
+    static func revealablePath(_ object: SoundObject) -> String? {
+        guard case .clip(let fp, _, _, _, _) = object.kind, !fp.isEmpty else { return nil }
+        return FileManager.default.fileExists(atPath: fp) ? fp : nil
+    }
+
+    /// Reuses the export bar's own key: it is the same sentence about the same gesture, and the
+    /// three languages already carry it (@see `docs/glossary.md`).
+    @ViewBuilder
+    private func revealItem(_ object: SoundObject, afterRelinkItems: Bool) -> some View {
+        if let path = Self.revealablePath(object) {
+            if afterRelinkItems { Divider() }
+            Button(L("export.reveal")) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
+        }
+    }
+
     private func activate(_ row: SoundListRow) {
         let object = row.object
         if object.isGroup {
@@ -194,36 +257,43 @@ struct SoundObjectListView: View {
 /// right. @see SoundBlockView.effectiveColor — the reasoning and the opacities are its, to the
 /// digit, so that a sound reads the same in both views.
 private struct SoundListRowView: View {
+    /// @see `edgeColor` for why it is this wide.
+    static let edgeStripWidth: CGFloat = 16
+
     let row: SoundListRow
     let isSelected: Bool
     let isMissing: Bool
     let isExpanded: Bool
+    /// Open for editing — @see `ObjectKindIcon.name(for:isOpenObject:)`.
+    let isOpenObject: Bool
     let stemColor: Color
     let filterText: String
     let onToggleExpand: () -> Void
 
-    /// The 3 px strip down the left edge, the counterpart of the block's name band: the object's
-    /// own colour when it has been given one, the stem's otherwise. It replaces the 6 px dot,
-    /// which said the stem and never the object.
+    /// The strip down the left edge, the counterpart of the block's name band: the object's own
+    /// colour when it has been given one, the stem's otherwise. It replaces the 6 px dot, which
+    /// said the stem and never the object.
+    ///
+    /// SIXTEEN pixels and not the three it started at. A 3 px hairline is enough to tell two
+    /// adjacent rows apart, which is not what this is for: it has to name a colour one can
+    /// recognise against the ten stems and the object pastels, and a colour is not identified on
+    /// a hairline — least of all the pale ones, where 3 px of salmon and 3 px of pink are the
+    /// same stripe. It is the row's most-read mark, so it is given the width of one.
     private var edgeColor: Color { row.object.customColor ?? stemColor }
 
-    /// The kind, at a glance. A "sound object" is a `.clip` that carries a `definitionID` — that
-    /// is exactly what tells it from an ordinary sound, and nothing else does. A GROUP stays a
-    /// folder even when it is a live placement: what one sees of it here is its content.
+    /// The kind, at a glance — ONE definition, shared with the four places the timeline draws a
+    /// block's name (@see `ObjectKindIcon`), because tying this list to the timeline is the whole
+    /// point of the glyph. `isOpenObject` is what keeps a sound object reading as one while it is
+    /// open for editing, its `kind` having genuinely become `.group` for the duration.
     private var iconName: String {
-        let object = row.object
-        if object.isGroup { return "folder" }
-        if object.isAux   { return "arrow.down.right.circle" }   // the aux block's own glyph
-        if object.isMIDI  { return "pianokeys" }
-        if object.definitionID != nil { return "cube" }
-        return "waveform"
+        ObjectKindIcon.name(for: row.object, isOpenObject: isOpenObject)
     }
 
     var body: some View {
         HStack(spacing: 0) {
             Rectangle()
                 .fill(edgeColor)
-                .frame(width: 3)
+                .frame(width: SoundListRowView.edgeStripWidth)
 
             HStack(spacing: 4) {
                 chevron

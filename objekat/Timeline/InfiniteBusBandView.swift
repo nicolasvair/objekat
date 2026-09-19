@@ -144,6 +144,13 @@ struct InfiniteBusBandView: View {
                         .onExitCommand { onRename(nil) }
                         .onAppear { beginRename() }
                 } else {
+                    // The fourth drawing of a block's name, and the one most easily forgotten: it
+                    // REPLACES a group's block once the bus is infinite, so an icon added to the
+                    // other three and not to this one would vanish the day a group became a bus
+                    // (@see `MissingFileLabel`, whose red had to learn the same lesson).
+                    Image(systemName: ObjectKindIcon.name(for: item))
+                        .blockIconStyle(missingFile: containsMissingFile)
+                        .layoutPriority(2)
                     Text(item.displayName)
                         .blockNameStyle(missingFile: containsMissingFile)
                         .lineLimit(1)

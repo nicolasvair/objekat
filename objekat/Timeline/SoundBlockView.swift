@@ -417,6 +417,14 @@ struct SoundBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(object.label) }
                         } else {
+                            // The same glyph the sound list draws for this object, which is the
+                            // whole point of it: one definition, read on both sides of the window
+                            // (@see `ObjectKindIcon`). `layoutPriority(2)`, above the name's own:
+                            // on a narrow block the NAME gives way and the kind survives, a name
+                            // being recoverable from the row below and the kind not.
+                            Image(systemName: ObjectKindIcon.name(for: object))
+                                .blockIconStyle(missingFile: isMissingFile)
+                                .layoutPriority(2)
                             Text(object.displayName)
                                 .blockNameStyle(missingFile: isMissingFile)
                                 .lineLimit(1)

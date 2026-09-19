@@ -554,18 +554,59 @@ struct SoundObject: Identifiable, Codable, Equatable {
 
     // MARK: Computed
 
+    /// The name shown everywhere — the list, the four places a block's name is drawn, the menus.
+    ///
+    /// A NAME SOMEBODY TYPED ALWAYS WINS: `label` is checked first and nothing below is reached.
+    /// What follows is only ever the fallback for an object nobody has named, and the two that
+    /// used to answer with their own KIND ("Group", "MIDI") now answer with their CONTENT, which
+    /// is the only thing that tells one of them from the next in a project that has thirty.
     var displayName: String {
         if let l = label { return l }
         switch kind {
         case .clip(let fp, _, _, _, _):
             return URL(fileURLWithPath: fp).lastPathComponent
         case .group:
-            return L("object.kind.group")
+            let composed = composedGroupName
+            // An EMPTY group has nothing to be named after, and "" is not a name: it falls back
+            // on the word for the kind, which is exactly the case that word is right for.
+            return composed.isEmpty ? L("object.kind.group") : composed
         case .aux:
             return L("object.kind.aux")
         case .midiClip:
-            return L("object.kind.midi")
+            // A MIDI clip is named after the instrument that sounds it — which is what one calls
+            // it out loud anyway. Cropped by the same rule, so a long AU name cannot run over the
+            // band: one part, hence the whole budget for it.
+            guard let instrument = instruments.first?.name,
+                  !instrument.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return L("object.kind.midi")
+            }
+            return ComposedName.truncated(instrument, to: ComposedName.totalBudget)
         }
+    }
+
+    /// A group's name, built from what it holds: `Kick + Snare + Hat`.
+    ///
+    /// Read from the HIGHEST lane downwards — lane 0 is the top row — because that is the order
+    /// the eye takes a stack of lanes in, and a name that listed its children in storage order
+    /// would describe an arrangement nobody sees.
+    ///
+    /// The sort is TOTAL on purpose, and it is the same trap `soundListRows` carries a comment
+    /// about: `sort` is not stable in Swift, so two children on one lane at one instant would
+    /// swap places between two recomputations and the group would rename itself for nothing.
+    /// Lane, then instant, then the stored order settles it for good.
+    ///
+    /// Recursive by construction: a child group answers with its OWN composed name, so a nest of
+    /// groups reads from the inside out. The depth is bounded by the budget — a nested name is
+    /// cropped to its share like any other part, so the recursion cannot produce a long string by
+    /// going deep, only by going wide, and `maxItems` bounds the width.
+    var composedGroupName: String {
+        guard case .group(let children, _) = kind, !children.isEmpty else { return "" }
+        let ordered = children.enumerated().sorted { a, b in
+            if a.element.lane != b.element.lane { return a.element.lane < b.element.lane }
+            if a.element.startTime != b.element.startTime { return a.element.startTime < b.element.startTime }
+            return a.offset < b.offset
+        }
+        return ComposedName.from(ordered.map { $0.element.displayName })
     }
 
     var isAux: Bool { if case .aux = kind { return true }; return false }

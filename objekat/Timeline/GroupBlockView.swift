@@ -19,6 +19,12 @@ struct GroupBlockView: View {
     /// and a red clip nobody can see is a red clip nobody reads. It is its own statement and not a
     /// claim about itself — the group's file is not gone, a group names none.
     var containsMissingFile: Bool = false
+    /// True if this block is a SOUND OBJECT currently open for editing. Opening one materialises
+    /// its content, so its `kind` genuinely becomes `.group` for the duration and this view is
+    /// what draws it — but what one opened was a sound object and still is, so its glyph must not
+    /// turn into a folder and back. Only the view model knows (@see
+    /// `EditViewModel.isInObjectEditStack`); a block is pure presentation and is told.
+    var isOpenObject: Bool = false
     let displayLane: Int         // a virtual lane (after expanded groups have shifted things)
     let scrollOffsetX: CGFloat
     let viewportWidth: CGFloat
@@ -239,6 +245,10 @@ struct GroupBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(group.label) }
                         } else {
+                            Image(systemName: ObjectKindIcon.name(for: group,
+                                                                  isOpenObject: isOpenObject))
+                                .blockIconStyle(missingFile: containsMissingFile)
+                                .layoutPriority(2)
                             Text(group.displayName)
                                 .blockNameStyle(missingFile: containsMissingFile)
                                 .lineLimit(1)

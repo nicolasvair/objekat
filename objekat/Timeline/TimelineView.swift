@@ -2109,25 +2109,38 @@ struct TimelineView: View {
                 // can carry the same name while only one of them has lost its file — a single
                 // cache would hand the second one the first one's colour.
                 var resolvedMissingLabels: [String: GraphicsContext.ResolvedText] = [:]
-                func resolvedLabel(_ s: String, missing: Bool) -> GraphicsContext.ResolvedText {
-                    if missing {
-                        if let r = resolvedMissingLabels[s] { return r }
-                        // The values come from `MissingFileLabel`, which the three rich views read
-                        // too: this Canvas is the SECOND regime a clip can be drawn in, and a red
-                        // that only one of the two knows about is a red that appears or disappears
-                        // with the number of objects on screen.
-                        let r = ctx.resolve(Text(s)
-                            .font(.system(size: MissingFileLabel.size, weight: MissingFileLabel.weight))
-                            .foregroundColor(MissingFileLabel.color))
-                        resolvedMissingLabels[s] = r
-                        return r
+                // The GLYPH travels INSIDE the resolved text rather than being drawn as a second
+                // image beside it. `Text(Image(systemName:))` is an image that lays out and styles
+                // as a character, so the kind and the name are one run: one resolve, one cache
+                // entry, one `draw`, and the clip to the block's width crops the pair together —
+                // where a separately drawn icon would have needed its own width measured and its
+                // own clip, per block per frame, in the regime that exists precisely because
+                // there are too many blocks to afford that.
+                // The cache key must therefore carry the icon as well as the name: two clips can
+                // share a name and not a kind (a sound and the sound object made from it), and a
+                // key on the string alone would hand the second one the first one's glyph.
+                func resolvedLabel(_ s: String, icon: String, missing: Bool) -> GraphicsContext.ResolvedText {
+                    let key = icon + "\u{0}" + s
+                    func build() -> GraphicsContext.ResolvedText {
+                        // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the
+                        // three rich views read too: this Canvas is the SECOND regime a clip can
+                        // be drawn in, and a red — or a glyph — that only one of the two knows
+                        // about is one that appears or disappears with the number of objects on
+                        // screen.
+                        let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
+                        let colour = missing ? MissingFileLabel.color : Color.black
+                        let glyph = Text(Image(systemName: icon))
+                            .font(.system(size: ObjectKindIcon.size, weight: weight))
+                        return ctx.resolve((glyph + Text(verbatim: " ") + Text(s))
+                            .font(.system(size: MissingFileLabel.size, weight: weight))
+                            .foregroundColor(colour))
                     }
-                    if let r = resolvedLabels[s] { return r }
-                    let r = ctx.resolve(Text(s)
-                        .font(.system(size: MissingFileLabel.size, weight: MissingFileLabel.normalWeight))
-                        .foregroundColor(.black))
-                    resolvedLabels[s] = r
-                    return r
+                    if missing {
+                        if let r = resolvedMissingLabels[key] { return r }
+                        let r = build(); resolvedMissingLabels[key] = r; return r
+                    }
+                    if let r = resolvedLabels[key] { return r }
+                    let r = build(); resolvedLabels[key] = r; return r
                 }
                 // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
                 // dictionary lookup — that is exactly why it may be read from a drawing pass at
@@ -2197,7 +2210,9 @@ struct TimelineView: View {
                             lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
                                                  radius: MissingFileLabel.haloRadius, x: 0, y: 0))
                         }
-                        lc.draw(resolvedLabel(item.displayName, missing: missing),
+                        lc.draw(resolvedLabel(item.displayName,
+                                              icon: ObjectKindIcon.name(for: item),
+                                              missing: missing),
                                 at: CGPoint(x: x + 6, y: y + 3), anchor: .topLeading)
                     }
                 }
@@ -2221,6 +2236,7 @@ struct TimelineView: View {
             stemColor: viewModel.stemColor(for: group.id),
             isMutedInMix: viewModel.isMutedInMix(group),
             containsMissingFile: viewModel.containsMissingDescendant(group),
+            isOpenObject: viewModel.isInObjectEditStack(group.id),
             displayLane: dl,
             scrollOffsetX: cullScrollX,
             viewportWidth: cullViewportWidth,
