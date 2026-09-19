@@ -71,7 +71,12 @@ def tmproot(tag):
     """A temporary folder, remembered so the `finally` below can take it away again."""
     folder = tempfile.mkdtemp(prefix="objekat-relink-%s-" % tag)
     roots.append(folder)
-    return folder
+    # REALPATH, and it is not cosmetic. On macOS the temporary folder lives under `/var`, which
+    # is a symlink to `/private/var`. A path handed TO the app is stored verbatim, but a path the
+    # app DISCOVERS itself — the folder sweep, which walks the disk with `contentsOfDirectory` —
+    # comes back resolved. Comparing the two then fails on the symlink and says nothing about the
+    # relink. Resolving here makes both sides speak the same path, with no assertion weakened.
+    return os.path.realpath(folder)
 
 
 def make_wav(path, seconds, freq=440.0):
