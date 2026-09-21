@@ -1140,6 +1140,14 @@ struct TimelineView: View {
             revealTimeRange(range)
             DispatchQueue.main.async { viewModel.pendingRangeReveal = nil }
         }
+        // The row ↑ / ↓ has just walked the caret (or the time selection) onto: bring it back into
+        // the window. Same protocol again — applied, then set back to nil. No deferral here: the
+        // canvas keeps its size, only the scroll moves.
+        .onChange(of: viewModel.pendingLaneReveal) { _, lane in
+            guard let lane else { return }
+            revealDisplayLane(lane)
+            DispatchQueue.main.async { viewModel.pendingLaneReveal = nil }
+        }
         // The project folder changes (Save As, opening, a new version) → retarget the
         // disk cache; becoming non-nil flushes the peaks already computed.
         .onChange(of: viewModel.projectURL) {
@@ -3010,6 +3018,32 @@ struct TimelineView: View {
         let maxScrollY = max(0, newCanvasH - Double(viewportHeight))
         let newScrollY = min(CGFloat(maxScrollY), max(0, newContentY - viewportHeight / 2))
         scrollTo(x: vZoomLockedX, y: newScrollY)
+    }
+
+    /// Brings a DISPLAY row into view, scrolling the LEAST it takes: a row above the window comes
+    /// just under the header, a row below it just above the foot, and a row already in sight moves
+    /// nothing. It is what ↑ / ↓ owe the caret and the time selection (@see pendingLaneReveal) —
+    /// walking a point of insertion out of the window is walking it out of one's hands.
+    ///
+    /// The header is STICKY and its height GROWS with the marker rows shown, so the top of the
+    /// visible CONTENT is `scrollOffsetY + rulerHeight` and not `scrollOffsetY`: a row brought to
+    /// the latter would come to rest UNDER the band (@see rulerHeight).
+    func revealDisplayLane(_ lane: Int) {
+        let top = rulerHeight + Double(lane) * laneStep
+        let bottom = top + blockHeight
+        let y = Double(scrollOffsetY)
+        let target: Double
+        if top < y + rulerHeight {
+            target = top - rulerHeight
+        } else if bottom > y + Double(viewportHeight) {
+            target = bottom - Double(viewportHeight)
+        } else {
+            return                                   // already in sight: the eye is not moved
+        }
+        let maxScrollY = max(0, canvasHeight - Double(viewportHeight))
+        let clamped = min(maxScrollY, max(0, target))
+        guard clamped != y else { return }
+        scrollTo(x: scrollOffsetX, y: CGFloat(clamped))
     }
 
     /// Frames the view on a time range: it zooms so that it fits in the visible window (with a 6 %

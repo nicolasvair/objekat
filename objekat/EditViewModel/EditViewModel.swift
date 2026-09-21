@@ -541,6 +541,13 @@ final class EditViewModel {
     /// applies it then sets it back to nil — the same protocol as `pendingViewRestore`.
     var pendingRangeReveal: ClosedRange<Double>? = nil
 
+    /// The DISPLAY row the timeline must bring into view: the caret or the time selection has just
+    /// walked onto it under ↑ / ↓ (@see stepCaretLane, stepTimeSelectionLanes), and a point of
+    /// insertion pushed out of the window is a point one has lost sight of. The TimelineView
+    /// scrolls the LEAST it takes and sets it back to nil — the same protocol as
+    /// `pendingRangeReveal`.
+    var pendingLaneReveal: Int? = nil
+
     /// A request to STOP playback issued by the model: an export in direct render takes the Edit
     /// out of the device manager for the length of the render, and the view's transport state (which lives in
     /// ContentView) has to know, otherwise the button stays on "stop" and the playhead freezes

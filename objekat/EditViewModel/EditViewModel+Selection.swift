@@ -103,6 +103,9 @@ extension EditViewModel {
         timeSelection = TimeSelection(timeRange: sel.timeRange,
                                       lanes: Set(sel.lanes.map { $0 + step }))
         caretLane = lo + step
+        // The row the passage is travelling TOWARDS — its leading edge, and not the caret's: a
+        // range three rows tall pushed downwards is followed by its foot. @see pendingLaneReveal.
+        pendingLaneReveal = delta < 0 ? lo + step : hi + step
         return true
     }
 
@@ -131,6 +134,7 @@ extension EditViewModel {
         let step = delta < 0 ? max(delta, -lane) : min(delta, max(0, lastRow - lane))
         guard step != 0 else { return false }
         caretLane = lane + step
+        pendingLaneReveal = lane + step      // it must stay in sight. @see pendingLaneReveal
         if let origin = timeSelectionOrigin {
             timeSelectionOrigin = (lane: lane + step, time: origin.time)
         }

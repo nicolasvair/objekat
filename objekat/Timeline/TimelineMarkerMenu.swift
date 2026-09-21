@@ -16,9 +16,13 @@ func buildMarkerBandMenu(vm: EditViewModel,
                          hit: AnnotationSel?) -> NSMenu {
     let menu = NSMenu()
 
+    // Aimed at a MARK — a marker or a region, which are one type (@see Marker) — the menu is the
+    // mark's own and stops there. Creating belongs to the EMPTY part of a row: offered beside
+    // rename / delete / colour it laid a SECOND mark under a hand that was pointing at the first,
+    // and it is the one item there that never speaks about what was clicked.
     if let hit {
         addAnnotationItems(menu, &proxies, vm: vm, sel: hit)
-        menu.addItem(.separator())
+        return menu
     }
 
     addItem(menu, &proxies, L("menu.context.marker.create")) {
