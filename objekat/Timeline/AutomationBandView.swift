@@ -35,7 +35,8 @@ import AppKit
 ///
 /// A curve is grabbed WHERE IT IS: the segment and static-value gestures only start from a
 /// narrow band around the line (@see AutomationBandGeometry.curveGrabY), and a point lights up
-/// with a halo as soon as the cursor comes into its zone. The rest of the row answers to
+/// with a halo AND SAYS ITS VALUE as soon as the cursor comes into its zone — the same badge as
+/// the one a gesture shows, so that reading and moving speak alike. The rest of the row answers to
 /// nothing — one can hover it without fear of knocking it out.
 ///
 /// Gestures: A SINGLE (high-priority) `DragGesture` branching on the starting zone plus ⌥, plus
@@ -98,8 +99,10 @@ struct AutomationBandView: View {
 
     @State private var lastTap: (time: Date, loc: CGPoint) = (.distantPast, .zero)
     @State private var drag: BandDrag? = nil
-    /// The value shown during a gesture: on a row some fifteen pixels tall, the eye reads no
-    /// precision at all — that figure is the only usable feedback.
+    /// The value shown during a gesture — and, with no gesture, that of the point HOVERED (@see
+    /// showPointValue): on a row some fifteen pixels tall, the eye reads no precision at all, and
+    /// that figure is the only usable feedback. ONE state for the two, deliberately: the gesture
+    /// writes over it and has priority as long as it lasts.
     @State private var readout: (row: Int, x: Double, text: String)? = nil
     /// The HOVERED point (its row plus its storage index): the one that would answer the click. It
     /// carries a white halo, the same promise as the veil over an object's six zones (@see
@@ -408,7 +411,8 @@ struct AutomationBandView: View {
         return path
     }
 
-    /// The figure for the gesture under way, laid above the cursor and kept inside the band.
+    /// The figure for the gesture under way — or for the point hovered — laid above the cursor
+    /// (above the point, on a hover) and kept inside the band.
     private func drawReadout(row: Int, rect: CGRect, in ctx: inout GraphicsContext) {
         guard let r = readout, r.row == row else { return }
         let text = Text(r.text)
@@ -450,6 +454,7 @@ struct AutomationBandView: View {
         // overlap, and it alone should light up.
         if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
             setHover(point: (row: row, index: i), line: nil)
+            showPointValue(row: row, index: i, ref: ref, points: pts)
             TimelineCursorKeeper.set(.openHand)
             return
         }
@@ -471,7 +476,14 @@ struct AutomationBandView: View {
         if hoverLine?.row != line?.row || hoverLine?.x != line?.x { hoverLine = line }
     }
 
-    private func clearHover() { setHover(point: nil, line: nil) }
+    /// Leaving a point puts its halo out, and with it the figure it was showing — a value read
+    /// stays on screen no longer than the hand that asked for it. The gesture's own figure is out
+    /// of reach here: the hover is shut off for the whole of a drag (@see body), so this clears a
+    /// HOVER readout only; the guard says so.
+    private func clearHover() {
+        setHover(point: nil, line: nil)
+        if drag == nil, readout != nil { readout = nil }
+    }
 
     // MARK: - Taps (creating / deleting)
 
@@ -486,6 +498,9 @@ struct AutomationBandView: View {
             let pts = points(ref)
             if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
                 viewModel.removeAutomationPoint(objectID: object.id, param: ref, at: i)
+                // The point is gone: its halo and its figure name nothing any more, and no mouse
+                // movement will necessarily come to correct them (the hand may very well stay put).
+                clearHover()
             } else {
                 // A row's first point: the curve takes over from the static value at that precise
                 // instant (a curve with a single point is a plateau — that is what the engine will
@@ -701,5 +716,24 @@ struct AutomationBandView: View {
 
     private func setReadout(row: Int, x: Double, ref: ParamRef, value: Float) {
         readout = (row, x, viewModel.automationReadout(ref, value: value, on: object))
+    }
+
+    /// The figure a point shows ON PLAIN HOVER — the same badge as the gesture's, in the same
+    /// place and the same words (@see drawReadout, automationReadout): on a row some fifteen
+    /// pixels tall the eye reads no value at all, and reading one must not say something other
+    /// than moving it. It changes nothing and creates no undo: it only puts into words the point
+    /// the halo is already naming.
+    ///
+    /// Anchored on the POINT and not on the cursor: the badge does not shiver under the hand, and
+    /// the state is written once per point hovered instead of once per pixel travelled (the same
+    /// concern as `setHover`).
+    private func showPointValue(row: Int, index: Int, ref: ParamRef, points pts: [AutomationPoint]) {
+        guard pts.indices.contains(index) else { return }
+        let p = pts[index]
+        let x = geo.x(ofT: p.t)
+        let text = viewModel.automationReadout(ref, value: p.v, on: object)
+        if readout?.row != row || readout?.x != x || readout?.text != text {
+            readout = (row: row, x: x, text: text)
+        }
     }
 }
