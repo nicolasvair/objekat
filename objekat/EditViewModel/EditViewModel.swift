@@ -1199,9 +1199,17 @@ final class EditViewModel {
 
     // MARK: - Internal helpers
 
+    /// The window we last titled. `NSApp.mainWindow` is nil while a panel is on screen (a
+    /// "Save as…" above all): the document window has resigned main, the title went nowhere, and
+    /// the new name only landed at the NEXT save. Remembering the window makes the rename take
+    /// effect at once, without going hunting through `NSApp.windows` — where a plugin's editor
+    /// or the panel itself would answer first.
+    @ObservationIgnored weak var titledWindow: NSWindow? = nil
+
     func updateWindowTitle() {
         let title = isDirty ? "\(projectName) •" : projectName
-        NSApp.mainWindow?.title = title
+        if let main = NSApp.mainWindow { titledWindow = main }
+        titledWindow?.title = title
     }
 
     /// Adds a `.clip` object to the engine at its ABSOLUTE position, on its own track.

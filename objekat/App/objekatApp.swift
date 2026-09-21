@@ -115,7 +115,7 @@ struct objekatApp: App {
                             .disabled(true)
                     } else {
                         ForEach(viewModel.recentProjects, id: \.self) { url in
-                            Button(url.deletingPathExtension().lastPathComponent) {
+                            Button(EditViewModel.projectDisplayName(for: url)) {
                                 viewModel.openRecentProject(url)
                             }
                         }

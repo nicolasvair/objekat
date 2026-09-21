@@ -84,7 +84,22 @@ extension EditViewModel {
 
     /// The display name of a version file: strips ".objekat.json".
     private func displayName(for fileURL: URL) -> String {
-        fileURL.deletingPathExtension().deletingPathExtension().lastPathComponent
+        Self.projectDisplayName(for: fileURL)
+    }
+
+    /// The NAME of a project as it is shown and typed: with no ".objekat.json" and no
+    /// ".objekat" — the extension is an internal matter of the manifest, never something the
+    /// user names. Strips only the KNOWN suffixes, and never a path extension of its own
+    /// making: "Mix 1.2" is a name, not a file with a ".2" extension.
+    /// Shared by the window title, the panel and the "Recent projects" menu, so that one
+    /// project has one name everywhere.
+    static func projectDisplayName(for url: URL) -> String {
+        let name = url.lastPathComponent
+        for suffix in [".objekat.json", ".objekat", ".json"] where name.hasSuffix(suffix) {
+            let base = String(name.dropLast(suffix.count))
+            return base.isEmpty ? name : base
+        }
+        return name
     }
 
     /// Saves into the active version if there is one, otherwise "Save as".
@@ -96,20 +111,27 @@ extension EditViewModel {
         }
     }
 
-    /// Save as: the user chooses the name + location of the `.objekat.json` file.
+    /// Save as: the user chooses the NAME + the location of the project.
+    /// A project is a FOLDER, so what is typed here is a plain name — "My Project", never
+    /// "My Project.objekat": no content type is imposed on the panel, and the ".objekat.json"
+    /// of the manifest is laid by `saveAs(to:)`, which is the only one to know about it.
     /// If the destination is already an Objekat project folder → only the JSON is written there
     /// (several versions can live side by side, sharing samples/ and waveforms/).
-    /// Otherwise → a project folder named after the file is created and written into.
+    /// Otherwise → a project folder named after what was typed is created and written into.
     func saveAs() {
         let panel = NSSavePanel()
         panel.title = L("project.saveAs.title")
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = projectURL?.lastPathComponent
-            ?? "\(projectName == L("project.untitled") ? L("project.defaultName") : projectName).objekat.json"
+        panel.nameFieldStringValue = projectURL.map { Self.projectDisplayName(for: $0) }
+            ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
         panel.canCreateDirectories = true
         panel.begin { [weak self] response in
             guard let self, response == .OK, let chosen = panel.url else { return }
+            // The panel is sent away FIRST: as long as it is on screen the document window is not
+            // "main" any more, and the title the save lays would land nowhere (@see
+            // updateWindowTitle).
+            panel.orderOut(nil)
             saveAs(to: chosen)
+            updateWindowTitle()
         }
     }
 
@@ -119,13 +141,16 @@ extension EditViewModel {
     /// possible between what the interface does and what a script does.
     func saveAs(to chosen: URL) {
         let parent = chosen.deletingLastPathComponent()
+        // What was chosen is a NAME (the panel no longer imposes anything), but a path carrying
+        // the old ".objekat.json" still says the same thing: both come back to the same base.
+        let base = Self.projectDisplayName(for: chosen)
+        let fileName = "\(base).objekat.json"
         let fileURL: URL
         if isObjekatProjectFolder(parent) {
-            fileURL = chosen
+            fileURL = parent.appendingPathComponent(fileName)
         } else {
-            let base = chosen.deletingPathExtension().deletingPathExtension().lastPathComponent
             fileURL = parent.appendingPathComponent(base, isDirectory: true)
-                .appendingPathComponent(chosen.lastPathComponent)
+                .appendingPathComponent(fileName)
         }
         writeSession(to: fileURL)
     }

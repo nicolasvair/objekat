@@ -220,13 +220,13 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "last touched param · %@"
+            "value": "último parám tocado · %@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "last touched param · %@"
+            "value": "dernier param touché · %@"
           }
         }
       }

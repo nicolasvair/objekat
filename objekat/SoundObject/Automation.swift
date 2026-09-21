@@ -132,14 +132,27 @@ enum ParamRef: Codable, Equatable, Hashable {
         }
     }
 
+    /// A dB value → text: NO decimal when the value is round (`+3 dB`, `-12 dB`), one when it
+    /// carries something (`-12.5 dB`). The value is first brought onto the tenth it is read at, so
+    /// that a -11.97 coming out of a drag reads `-12 dB` and not `-12.0 dB`; the tenth of a
+    /// negative value that rounds to zero loses its sign (`0 dB`, never `-0 dB`).
+    /// The detent already lands the gesture on whole dB (@see `valueStep`): a decimal shown here
+    /// means the value really has one.
+    static func formatDb(_ value: Float) -> String {
+        let tenths = (value * 10).rounded()
+        let rounded = tenths == 0 ? 0 : tenths / 10
+        let hasDecimal = tenths.truncatingRemainder(dividingBy: 10) != 0
+        return String(format: hasDecimal ? "%+.1f dB" : "%+.0f dB", rounded)
+    }
+
     /// Value → short text, in the parameter's unit. Shown during an editing gesture, where a low
     /// line says nothing precise to the eye: it is the only figure one has.
     func format(_ value: Float) -> String {
         switch self {
         case .volume, .chainInGain, .chainOutGain:
-            return String(format: "%+.1f dB", value)
+            return Self.formatDb(value)
         case .send:
-            return value <= sendMinDb ? "-∞" : String(format: "%+.1f dB", value)
+            return value <= sendMinDb ? "-∞" : Self.formatDb(value)
         case .pan:
             if abs(value) < 0.005 { return "C" }
             return String(format: "%@%.0f", value < 0 ? "G" : "D", abs(value) * 100)
