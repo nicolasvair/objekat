@@ -1612,9 +1612,14 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 
     te::Plugin::Ptr wf = pl.insertPlugin(te::ObjWindowFadePlugin::create(), pl.size());
     if (wf) {
-        if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(wf.get()))
-            w->setWindow(window.getStart().inSeconds(), window.getEnd().inSeconds(), fadeIn, fadeOut);
-        _windowFadeMap[key] = wf;
+        _windowFadeMap[key] = wf;               // AVANT : setWindowForKey: cherche la clé ici
+        // Par setWindowForKey: plutôt qu'en direct, pour que la règle de tête (un objet qui
+        // commence sous le zéro) et la mémoire des fondus du modèle valent DÈS LA NAISSANCE de
+        // la chaîne — un projet se recharge avec ses objets déjà en place. @see _headCutMap
+        [self setWindowForKey:key
+                        start:window.getStart().inSeconds()
+                          end:window.getEnd().inSeconds()
+                       fadeIn:fadeIn fadeOut:fadeOut];
     }
 }
 
@@ -1649,6 +1654,7 @@ static te::Track* objOwningTrack(te::Clip& clip) {
     // qu'on relit ici (updateFadeIn:fadeOut:forID:). Jamais des deux : le clamp du début est
     // inconditionnel et ne dépend pas de la provenance.
     const double headCut = startSecs < 0.0 ? -startSecs : [self headCutForKey:key];
+    _modelFadeMap[key] = { fadeIn, fadeOut };   // AVANT de raccourcir : le modèle fait foi
     startSecs = juce::jmax(0.0, startSecs);
     fadeIn    = juce::jmax(0.0, fadeIn - headCut);
 
@@ -2048,6 +2054,8 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     _containerClipMap.erase(key);
     _groupBoundsMap.erase(key);
     _groupLoopRangeMap.erase(key);
+    _headCutMap.erase(key);
+    _modelFadeMap.erase(key);
     _faderGainMap.erase(key);
     _windowFadeMap.erase(key);
     _objectChainMap.erase(key);
@@ -2321,12 +2329,30 @@ static bool moveClipToOwner(te::Clip& clip, te::ClipOwner& dest) {
                 acb->setLoopRange(te::TimeRange());
             }
         }
+    } else {
+        // MIDI — pas de fichier source, mais le même problème de tête : les notes sont lues
+        // RELATIVEMENT au début du clip (LoopingMidiNode prend `getOffsetInBeats()`), donc un
+        // début clampé les décalerait toutes en avant de la coupe. L'offset joue ici le rôle que
+        // l'offset source joue pour l'audio ; il est en secondes, converti en beats par le tempo.
+        clip->setOffset(te::TimeDuration::fromSeconds(headCut));
     }
 
-    // La fenêtre de fade (post-plugins) suit la position/durée du clip ; on garde les fades.
-    if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end())
-        if (auto* wf = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
-            wf->setWindow(startTime, startTime + duration, wf->fadeIn, wf->fadeOut);
+    // La fenêtre de fade (post-plugins) suit la position/durée du clip, déjà ramenées au-dessus
+    // du zéro. Les fondus repassent par `setWindowForKey:` avec ceux du MODÈLE et non ceux du
+    // plugin : c'est lui qui applique la règle de tête, et la relecture du plugin la cumulerait.
+    {
+        double fi = 0.0, fo = 0.0;
+        if (auto it = _modelFadeMap.find(key); it != _modelFadeMap.end()) {
+            fi = it->second.first;
+            fo = it->second.second;
+        } else if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) {
+            if (auto* wf = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get())) {
+                fi = wf->fadeIn;                // jamais encore raccourci : rien n'est mémorisé
+                fo = wf->fadeOut;
+            }
+        }
+        [self setWindowForKey:key start:startTime end:startTime + duration fadeIn:fi fadeOut:fo];
+    }
 
     // Objet MIDI : le clip qu'on vient de bouger est l'enfant de SON PROPRE container, dont
     // l'étendue doit suivre (sans quoi le CombiningNode de la piste continuerait de l'activer
@@ -2380,8 +2406,11 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
     std::string key([uuid UTF8String]);
     auto it = _windowFadeMap.find(key);
     if (it == _windowFadeMap.end()) return;
+    // Même règle de tête que la fenêtre (@see setWindowForKey:) : l'aperçu doit sonner comme ce
+    // que le lâcher posera. Pas mémorisé, lui — c'est un aperçu, il n'engage pas le modèle.
+    const double headCut = [self headCutForKey:key];
     if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
-        w->setFades(fadeIn, fadeOut);
+        w->setFades(juce::jmax(0.0, fadeIn - headCut), fadeOut);
 }
 
 - (void)updateFadeCurvesIn:(int)curveIn amountIn:(float)amountIn out:(int)curveOut amountOut:(float)amountOut forID:(NSString*)uuid {
@@ -2589,6 +2618,12 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
                   loopEnd:(double)loopEndSecs {
     if (!_edit) return;
     std::string gKey([groupID UTF8String]);
+
+    // Un SOUS-groupe peut commencer sous le zéro comme n'importe quel enfant (position absolue).
+    // Son contenu est corrigé enfant par enfant ; ce qui reste à faire ici tient au FONDU d'entrée,
+    // que `setWindowForKey:` raccourcira de la coupe — l'étendue du container, elle, est déjà
+    // ramenée à 0 par refreshContainerSpanForKey:. @see _headCutMap
+    [self noteHeadCutForKey:gKey modelStart:startSecs];
 
     // Un groupe INFINI (fenêtre [0, 1e9] côté modèle, cf. EditViewModel.infiniteWindowEnd)
     // n'a pas de bornes à faire porter au container : on le laisse suivre ses enfants.
@@ -3316,6 +3351,10 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
     std::string key([auxID UTF8String]);
     if (!_containerClipMap.count(key)) return;
 
+    // Un aux vivant DANS un groupe suit son parent et peut donc passer sous le zéro : même règle
+    // de tête que partout, et ici elle ne porte que sur le fondu. @see _headCutMap
+    [self noteHeadCutForKey:key modelStart:startSecs];
+
     // Contrairement à un groupe, un aux BORNE TOUJOURS son étendue par sa fenêtre : il n'a pas
     // d'enfants sur qui retomber, et l'enveloppe vide l'écraserait à kEmptyContainerSpanSecs.
     // Ça ne coûte rien : un aux ne passe jamais par le CombiningNode d'une lane (sans enfants,
@@ -3879,10 +3918,14 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
 - (double)getClipStartTimeForID:(NSString*)uuid {
     if (!_edit) return -1.0;
     std::string key([uuid UTF8String]);
+    // Moins la tête passée sous le zéro : le moteur porte le clip ramené au-dessus, le MODÈLE
+    // porte le début vrai, et c'est lui qu'on rend — `resyncPositionsFromTracktion` réécrit le
+    // modèle avec cette valeur après un remap de tempo, et effacerait sinon le négatif.
+    // @see _headCutMap
     if (auto it = _clipMap.find(key); it != _clipMap.end())
-        return it->second->getPosition().time.getStart().inSeconds();
+        return it->second->getPosition().time.getStart().inSeconds() - [self headCutForKey:key];
     if (auto it = _midiClipMap.find(key); it != _midiClipMap.end())
-        return it->second->getPosition().time.getStart().inSeconds();
+        return it->second->getPosition().time.getStart().inSeconds() - [self headCutForKey:key];
     // Groupe/aux : pas de clip moteur → -1 (la position est un fait modèle).
     return -1.0;
 }

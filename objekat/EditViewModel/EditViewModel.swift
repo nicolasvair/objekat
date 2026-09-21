@@ -1260,7 +1260,13 @@ final class EditViewModel {
         // Loop: `addSoundObject` never lays the loop range — only `updatePosition`
         // does — so an object freshly created with the loop already active needs this
         // same corrective pass.
-        if isReversed || object.loopEnabled {
+        // A start BELOW ZERO: `addSoundObject` lays the position itself, and Tracktion clamps a
+        // negative start while keeping the offset — the clip then plays the head of its file at
+        // t=0 (@see OBJEngineCore `_headCutMap`). `updatePosition` is where that is translated
+        // into a source offset, and it runs here AFTER the speed and the reverse, which it needs.
+        // It is the ordinary state of a child whose group was cropped then brought back to 0,
+        // so it is also the state a project RELOADS in.
+        if isReversed || object.loopEnabled || object.startTime < 0 {
             let loopBounds = clipLoopFileBounds(object)
             engine.updatePosition(object.startTime, duration: object.duration,
                                   sourceOffset: sourceOffset, loopEnabled: object.loopEnabled,
@@ -1295,6 +1301,16 @@ final class EditViewModel {
         // never lays the loop range, only `updateLoopEnabled`/`updateLoopRange` normally
         // do. @see [[loop-item-plan]]
         syncMidiLoop(object)
+        // A start BELOW ZERO, exactly as in `engineAddClip`: `addMidiClip` lays the position
+        // itself and Tracktion clamps it, which would carry every note forward by the cut.
+        // `updatePosition` translates it into the clip's offset (the notes are read relative to
+        // its start). @see OBJEngineCore `_headCutMap`
+        if object.startTime < 0 {
+            engine.updatePosition(object.startTime, duration: object.duration,
+                                  sourceOffset: 0, loopEnabled: false,
+                                  loopRangeStart: 0, loopRangeEnd: 0,
+                                  forID: object.id.uuidString)
+        }
         if object.needsChainCompile { syncPlugins(object) }
     }
 
