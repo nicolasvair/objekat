@@ -883,7 +883,7 @@ its own wav files on disk.
 
 ### Reading a project without the app
 
-Every manifest (`<name>.json`, `<name>.objekat.json` before September 2026) carries its own notice, under the `_readme` key, **at the head of the file**:
+Every manifest (`<name>.json`) carries its own notice, under the `_readme` key, **at the head of the file**:
 the keys are sorted on writing and "_" comes before the lowercase letters, so it falls first
 under a reader's eye — human or model. It says the essential of what the file does not show:
 that `items` is a tree, that the times are in seconds **except MIDI, in musical time**,

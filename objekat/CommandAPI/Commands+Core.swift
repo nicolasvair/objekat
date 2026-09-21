@@ -107,7 +107,7 @@ extension CommandRegistry {
         }
 
         register("project.open",
-                 summary: "Opens a project manifest (`<name>.json`, or a legacy `<name>.objekat.json`).",
+                 summary: "Opens a project manifest (`<name>.json`).",
                  params: [ParamSpec("path", "string", "Path to the project file.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")

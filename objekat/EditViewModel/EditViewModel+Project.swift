@@ -87,27 +87,21 @@ extension EditViewModel {
         Self.projectDisplayName(for: fileURL)
     }
 
-    /// The NAME of a project as it is shown and typed: with no ".json", and no ".objekat.json"
-    /// / ".objekat" for a project written before September 2026 — the extension is an internal
-    /// matter of the manifest, never something the user names. Strips only the KNOWN suffixes,
-    /// and never a path extension of its own making: "Mix 1.2" is a name, not a file with a
-    /// ".2" extension.
+    /// The NAME of a project as it is shown and typed: with no ".json" — the extension is an
+    /// internal matter of the manifest, never something the user names. Strips THAT suffix and
+    /// no other, in particular never a path extension of its own making: "Mix 1.2" is a name,
+    /// not a file with a ".2" extension.
     /// Shared by the window title, the panel and the "Recent projects" menu, so that one
     /// project has one name everywhere.
     static func projectDisplayName(for url: URL) -> String {
         let name = url.lastPathComponent
-        for suffix in [".objekat.json", ".objekat", ".json"] where name.hasSuffix(suffix) {
-            let base = String(name.dropLast(suffix.count))
-            return base.isEmpty ? name : base
-        }
-        return name
+        guard name.hasSuffix(".json") else { return name }
+        let base = String(name.dropLast(".json".count))
+        return base.isEmpty ? name : base
     }
 
     /// Saves into the active version if there is one, otherwise "Save as".
-    /// A project opened under the old `<name>.objekat.json` KEEPS that file: a save writes where
-    /// it read, and does not rename a file under the user's feet (a script naming the path, a
-    /// backup, an alias would all lose it). "Save as" is what carries a project over to
-    /// `<name>.json`.
+    /// It writes where it read, and does not rename a file under the user's feet.
     func save() {
         if let url = projectURL {
             writeSession(to: url)
@@ -146,11 +140,8 @@ extension EditViewModel {
     /// possible between what the interface does and what a script does.
     func saveAs(to chosen: URL) {
         let parent = chosen.deletingLastPathComponent()
-        // What was chosen is a NAME (the panel no longer imposes anything), but a path carrying
-        // the old ".objekat.json" still says the same thing: both come back to the same base.
-        // A project called "test" gives `test/test.json` — the manifest bears the project's name
-        // and nothing else. The old `.objekat.json` is still READ (@see projectDisplayName,
-        // isObjekatProjectFolder); it is simply no longer WRITTEN.
+        // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
+        // `test/test.json`, the manifest bearing the project's name and nothing else.
         let base = Self.projectDisplayName(for: chosen)
         let fileName = "\(base).json"
         let fileURL: URL
@@ -163,18 +154,14 @@ extension EditViewModel {
         writeSession(to: fileURL)
     }
 
-    /// A folder is an Objekat project if it holds `waveforms/` — which `writeSession` lays for
-    /// every project, so the test catches them all — or a legacy `*.objekat.json`. A bare
-    /// `*.json` is deliberately NOT a sign: any folder holding some `package.json` would then
-    /// pass for a project, and "Save as" would write into it instead of making the folder.
+    /// A folder is an Objekat project if it holds `waveforms/`, which `writeSession` lays for
+    /// every project — so the test catches them all. A bare `*.json` is deliberately NOT a sign:
+    /// any folder holding some `package.json` would then pass for a project, and "Save as" would
+    /// write into it instead of making the folder.
     private func isObjekatProjectFolder(_ folder: URL) -> Bool {
-        let fm = FileManager.default
         var isDir: ObjCBool = false
-        if fm.fileExists(atPath: waveformsDir(in: folder).path, isDirectory: &isDir), isDir.boolValue {
-            return true
-        }
-        let contents = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return contents.contains { $0.lastPathComponent.hasSuffix(".objekat.json") }
+        return FileManager.default.fileExists(atPath: waveformsDir(in: folder).path,
+                                              isDirectory: &isDir) && isDir.boolValue
     }
 
     /// Serialises the current session, as it would be written into a version file
@@ -285,8 +272,7 @@ extension EditViewModel {
     }
 
     /// Opens a version file: you navigate into the project folder and
-    /// pick the "<project> V<n>.json" wanted (a `.objekat.json` written before
-    /// September 2026 opens just the same — the panel accepts every `.json`).
+    /// pick the "<project> V<n>.json" wanted.
     func loadProject() {
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
