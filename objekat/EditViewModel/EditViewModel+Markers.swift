@@ -11,6 +11,20 @@ import Foundation
 // convention as `deleteTimeSelection` / `rippleDeleteSelectedObjects`): these have two callers each
 // — a gesture and a command of the API — and leaving the push to the caller is how one of the two
 // ends up without it.
+
+/// A comment resolved for the SCREEN: where it really starts and which row it is really drawn on,
+/// its frame (the timeline, or the group holding it) already counted. The counterpart of
+/// `LaneEntry` for the annotation layer, and it exists for the same reason: the drawing, the
+/// hit-testing and the drag must not each do that arithmetic (@see EditViewModel.visibleComments).
+struct PlacedComment: Identifiable {
+    let comment: TimelineComment
+    var id: UUID { comment.id }
+    let absStart: Double
+    let displayLane: Int
+
+    var absEnd: Double { absStart + comment.duration }
+}
+
 extension EditViewModel {
 
     // MARK: Rows of the band
@@ -241,6 +255,29 @@ extension EditViewModel {
         return true
     }
 
+    /// Moves a marker carried by an object, and resizes it when it is a region. The time is the
+    /// object's OWN — relative to its start (@see SoundObject.markers) — which is the whole of what
+    /// a drag on such a mark can mean: it has no row of its own to change, the row is the object's.
+    ///
+    /// A NEGATIVE time is legal and is not clamped here: that is a mark pushed behind an edge by a
+    /// left trim, kept in the model and waiting for the edge to be reopened. The gesture that
+    /// clamps is the hand's (@see TimelineView.handleObjectMarkerDrag) — a mark dragged out of the
+    /// window would stop being drawn under the hand that was moving it.
+    @discardableResult
+    func moveObjectMarker(objectID: UUID, markerID: UUID, toRelativeTime t: Double,
+                          duration: Double? = nil, pushesUndo: Bool = true) -> Bool {
+        guard let object = find(id: objectID),
+              object.markers.contains(where: { $0.id == markerID }) else { return false }
+        if pushesUndo { pushUndo() }
+        update(id: objectID) { obj in
+            guard let i = obj.markers.firstIndex(where: { $0.id == markerID }) else { return }
+            obj.markers[i].time = t
+            if let d = duration { obj.markers[i].duration = max(0, d) }
+        }
+        isDirty = true
+        return true
+    }
+
     /// The hue of a marker carried by an object. nil = white, which is what a mark laid on matter
     /// wants by default: it has to read against any waveform under it.
     @discardableResult
@@ -262,22 +299,109 @@ extension EditViewModel {
         laneEntries.first { $0.item.id == id }?.absStart
     }
 
-    // MARK: Comments
+    // MARK: Comments — the frame a comment lives in
+    //
+    // A comment belongs to the TIMELINE (`parentID == nil`) or to a GROUP, recursively. The frame
+    // is not a detail of the drawing: inside a group its `startTime` is relative to the group's
+    // own start and its `lane` is a row of the group's band, exactly as a CHILD's lane is. That is
+    // what makes it follow a move, a copy or a fold of the group without a single gesture naming
+    // it — the same bargain an object's `markers` strike, one level up.
+    //
+    // The two conversions below are each other's inverse and they sit SIDE BY SIDE for the reason
+    // written above `displayLane(forBase:)` (@see EditViewModel+Clipboard): two inverses that do
+    // not count the same amount is this project's oldest recurring bug. With `parent == nil` they
+    // are the top-level pair, word for word.
 
-    /// Lays a comment over a span of the timeline. `lane` is a BASE row — `SoundObject.lane`'s own
-    /// frame, not the visual row index: a caller holding a display row converts it first
-    /// (@see EditViewModel.baseLaneForDisplay), which is what keeps a comment beside the lane it
-    /// talks about when a group above it opens.
+    /// The rows a frame is made of: the timeline's own items, or a group's children.
+    func commentFrameSiblings(parent: UUID?) -> [SoundObject] {
+        guard let parent, let g = find(id: parent),
+              case .group(let children, _) = g.kind else { return items }
+        return children
+    }
+
+    /// The display row a frame's row 0 sits on. nil = the frame is NOT on screen — a folded group,
+    /// one showing its automation band instead of its children, or one whose own ancestor is
+    /// folded (`laneEntries` only holds what is really drawn).
+    func commentFrameOrigin(parent: UUID?) -> Int? {
+        guard let parent else { return 0 }
+        guard let e = laneEntries.first(where: { $0.item.id == parent }),
+              e.item.showsChildrenInline else { return nil }
+        return e.displayLane + 1
+    }
+
+    /// A BASE row of `parent`'s frame turned into the row it is drawn on. nil = the frame is folded.
+    func displayLane(forBase baseLane: Int, inParent parent: UUID?) -> Int? {
+        guard let origin = commentFrameOrigin(parent: parent) else { return nil }
+        let siblings = commentFrameSiblings(parent: parent)
+        return origin + baseLane
+             + siblings.reduce(0) { $0 + ($1.lane < baseLane ? $1.expandedSpan : 0) }
+    }
+
+    /// The inverse: a row on screen brought back into `parent`'s frame.
+    func baseLaneForDisplay(_ target: Int, inParent parent: UUID?) -> Int {
+        guard parent != nil else { return baseLaneForDisplay(target) }
+        guard let origin = commentFrameOrigin(parent: parent) else { return 0 }
+        let siblings = commentFrameSiblings(parent: parent)
+        var b = 0
+        while b < 512 {
+            let extra = siblings.reduce(0) { $0 + ($1.lane < b ? $1.expandedSpan : 0) }
+            if origin + b + extra >= target { return b }
+            b += 1
+        }
+        return b
+    }
+
+    /// The frame a display row belongs to: the innermost open group whose band holds it, or the
+    /// timeline. The same rule a paste and a drop already follow (@see containerGroupEntry), so a
+    /// comment is created where the eye is and nowhere else.
+    func commentAnchor(forDisplayLane displayLane: Int) -> (parent: UUID?, lane: Int) {
+        if let e = containerGroupEntry(forDisplayLanes: [displayLane]) {
+            return (e.item.id, max(0, displayLane - (e.displayLane + 1)))
+        }
+        return (nil, baseLaneForDisplay(displayLane))
+    }
+
+    /// A comment's start in EDIT seconds, folded or not — the group's own start is already
+    /// absolute, children carrying absolute `startTime`s (@see EditViewModel+ListRows).
+    func commentAbsStart(_ c: TimelineComment) -> Double {
+        guard let p = c.parentID, let g = find(id: p) else { return c.startTime }
+        return g.startTime + c.startTime
+    }
+
+    /// The comments that are actually ON SCREEN, resolved once into the absolute time and the
+    /// display row the drawing, the hit-testing and the drag all read. Resolved HERE and not at
+    /// each of the three, which is exactly how the display row got stored in the model in the
+    /// first place.
+    var visibleComments: [PlacedComment] {
+        comments.compactMap { c in
+            guard let dl = displayLane(forBase: c.lane, inParent: c.parentID) else { return nil }
+            return PlacedComment(comment: c, absStart: commentAbsStart(c), displayLane: dl)
+        }
+    }
+
+    // MARK: Comments — laying them down and editing them
+
+    /// Lays a comment over a span of the timeline. `from` / `to` are ABSOLUTE edit seconds, always
+    /// — that is what a hand and a script both hold — and they are stored in `parentID`'s frame.
+    /// `lane` is a BASE row of that same frame, not the visual row index: a caller holding a
+    /// display row goes through `commentAnchor(forDisplayLane:)`, which answers both at once.
     @discardableResult
-    func addComment(from: Double, to: Double, lane: Int, text: String = "") -> UUID? {
+    func addComment(from: Double, to: Double, lane: Int, parentID: UUID? = nil,
+                    text: String = "") -> UUID? {
         let lo = min(from, to), hi = max(from, to)
         guard hi - lo > 1e-9 else { return nil }
+        // A parent that is not a group would leave the comment in a frame with no band to be drawn
+        // in: it goes to the timeline rather than disappearing.
+        var parent = parentID
+        if let p = parent, find(id: p)?.isGroup != true { parent = nil }
+        let origin = parent.flatMap { find(id: $0)?.startTime } ?? 0
         pushUndo()
         // No hue drawn from the palette: a comment is born WHITE, so that it never reads as one
         // more object laid on the lane (@see TimelineComment.colorIndex). A colour is something one
         // then CHOOSES, to sort the notes among themselves.
-        let c = TimelineComment(startTime: max(0, lo), duration: hi - max(0, lo),
-                                lane: max(0, lane), text: text)
+        let start = max(0, lo)
+        let c = TimelineComment(startTime: start - origin, duration: hi - start,
+                                lane: max(0, lane), text: text, parentID: parent)
         comments.append(c)
         isDirty = true
         return c.id
@@ -313,16 +437,81 @@ extension EditViewModel {
         return true
     }
 
+    /// Moves a comment, and resizes / re-rows / re-homes it if asked. `start` is an ABSOLUTE edit
+    /// time (the one the hand and the grid both speak) and is stored in the comment's own frame;
+    /// `lane` is a BASE row of that frame. `parent` is a DOUBLE optional on purpose: absent = leave
+    /// the frame alone, `.some(nil)` = back onto the timeline, `.some(id)` = into that group.
     @discardableResult
     func moveComment(id: UUID, to start: Double, duration: Double? = nil, lane: Int? = nil,
-                     pushesUndo: Bool = true) -> Bool {
+                     parent: UUID?? = nil, pushesUndo: Bool = true) -> Bool {
         guard let idx = comments.firstIndex(where: { $0.id == id }) else { return false }
         if pushesUndo { pushUndo() }
-        comments[idx].startTime = max(0, start)
+        if let newParent = parent {
+            comments[idx].parentID = (newParent.flatMap { find(id: $0)?.isGroup == true ? $0 : nil })
+        }
+        // The frame is settled FIRST: the absolute start has to be folded into the frame the
+        // comment ends up in, not the one it is leaving.
+        let origin = comments[idx].parentID.flatMap { find(id: $0)?.startTime } ?? 0
+        comments[idx].startTime = max(0, start) - origin
         if let d = duration { comments[idx].duration = max(1e-3, d) }
         if let l = lane     { comments[idx].lane = max(0, l) }
         isDirty = true
         return true
+    }
+
+    /// The comments a deletion leaves with no frame: a group has gone and taken its band with it,
+    /// so the notes laid in it go too. Called at the doors matter really disappears by, never in
+    /// the middle of a reparenting — a comment whose group is momentarily out of the tree is not
+    /// an orphan.
+    func pruneOrphanComments() {
+        guard comments.contains(where: { $0.parentID != nil }) else { return }
+        var alive: Set<UUID> = []
+        func walk(_ objs: [SoundObject]) {
+            for o in objs {
+                alive.insert(o.id)
+                if case .group(let ch, _) = o.kind { walk(ch) }
+            }
+        }
+        walk(items)
+        let kept = comments.filter { $0.parentID == nil || alive.contains($0.parentID!) }
+        guard kept.count != comments.count else { return }
+        if case .comment(let c)? = selectedAnnotation, !kept.contains(where: { $0.id == c }) {
+            selectedAnnotation = nil
+        }
+        comments = kept
+        isDirty = true
+    }
+
+    /// The comments of a copied sub-tree, copied onto the copies. `idMap` is the origin → copy
+    /// table `makeCopy` fills (@see EditViewModel+Clipboard): nothing to shift here, since a
+    /// comment's coordinates are already its group's own.
+    func copyComments(using idMap: [UUID: UUID], from source: [TimelineComment]? = nil) {
+        guard !idMap.isEmpty else { return }
+        let pool = source ?? comments
+        var made: [TimelineComment] = []
+        for c in pool {
+            guard let p = c.parentID, let np = idMap[p] else { continue }
+            var copy = c
+            copy.id = UUID()
+            copy.parentID = np
+            made.append(copy)
+        }
+        guard !made.isEmpty else { return }
+        comments += made
+        isDirty = true
+    }
+
+    /// The comments a group holds, its sub-groups' included — what a copy takes with it and what a
+    /// cut has to put aside before the group goes.
+    func commentsInSubtree(of rootID: UUID) -> [TimelineComment] {
+        guard let root = find(id: rootID) else { return [] }
+        var ids: Set<UUID> = [rootID]
+        func walk(_ o: SoundObject) {
+            guard case .group(let ch, _) = o.kind else { return }
+            for c in ch { ids.insert(c.id); walk(c) }
+        }
+        walk(root)
+        return comments.filter { $0.parentID.map(ids.contains) ?? false }
     }
 
     // MARK: What ⌫ and ⌘R are aimed at

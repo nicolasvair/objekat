@@ -23,6 +23,9 @@ extension EditViewModel {
             removeFromItems(id: id)
         }
         selectedIDs.remove(id)
+        // A group's comments go with the group: their frame has gone, and a note left behind would
+        // have no row to be drawn on (@see TimelineComment.parentID).
+        pruneOrphanComments()
         isDirty = true
     }
 
@@ -60,6 +63,7 @@ extension EditViewModel {
             removeFromItems(id: id)
         }
         selectedIDs = []
+        pruneOrphanComments()   // @see remove(id:) — a comment does not outlive its frame
         isDirty = true
     }
 

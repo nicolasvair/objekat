@@ -41,16 +41,25 @@ extension CommandRegistry {
         }
 
         func commentPayload(_ c: TimelineComment, _ vm: EditViewModel) -> JSONValue {
-            .object(["id": .string(c.id.uuidString),
+            let dl = vm.displayLane(forBase: c.lane, inParent: c.parentID)
+            return .object(["id": .string(c.id.uuidString),
+                     // `start` / `end` are the STORED values, in the comment's own frame: absolute
+                     // for a comment of the timeline, relative to its group when it has one.
+                     // `abs_start` / `abs_end` are always in edit seconds.
                      "start": .number(c.startTime),
                      "duration": .number(c.duration),
                      "end": .number(c.endTime),
+                     "abs_start": .number(vm.commentAbsStart(c)),
+                     "abs_end": .number(vm.commentAbsStart(c) + c.duration),
+                     // The group it lives in, null for the timeline (@see TimelineComment.parentID).
+                     "parent": c.parentID.map { JSONValue.string($0.uuidString) } ?? .null,
                      "lane": .int(c.lane),
                      // The BASE row is what is stored; `display_lane` is where it is actually drawn
                      // once the open groups and piano rolls above it have taken their rows. The two
                      // differ as soon as something is unfolded above — and a comment that did not
-                     // follow would be a note left beside the wrong lane.
-                     "display_lane": .int(vm.displayLane(forBase: c.lane)),
+                     // follow would be a note left beside the wrong lane. NULL when the comment is
+                     // not on screen at all: its group is folded, so it has no row.
+                     "display_lane": dl.map(JSONValue.int) ?? .null,
                      "text": .string(c.text),
                      "color_index": c.colorIndex.map(JSONValue.int) ?? .null])
         }
@@ -353,6 +362,57 @@ extension CommandRegistry {
             return .object(["object": .string(objectID.uuidString), "marker": .string(marker.uuidString)])
         }
 
+        register("object.move_marker",
+                 summary: "Moves a marker carried by an object, and resizes it when it is a "
+                        + "region. Give `at` for an ABSOLUTE time (the one a hand would point at) "
+                        + "or `rel` for a time in the object's own frame; it is stored relative "
+                        + "either way. With `snap` the instant goes through the timeline's own "
+                        + "snap — the door the drag uses, the mark left out of its own targets. "
+                        + "A negative `rel` is legal: that is a mark behind an edge, kept and not "
+                        + "drawn. The HAND clamps to the object's window, this door does not.",
+                 params: [ParamSpec("object", "uuid", "The object carrying it."),
+                          ParamSpec("marker", "uuid", "The marker."),
+                          ParamSpec("at", "number", required: false, "Absolute time, in seconds."),
+                          ParamSpec("rel", "number", required: false,
+                                    "Failing `at`: time from the start of the object."),
+                          ParamSpec("duration", "number", required: false,
+                                    "Its new length. Absent = left alone. 0 turns a region back "
+                                  + "into a point."),
+                          ParamSpec("snap", "bool", required: false,
+                                    "Apply snapping (default false: exact positioning).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let objectID = try p.uuid("object"), marker = try p.uuid("marker")
+            guard let object = vm.find(id: objectID) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(objectID.uuidString)")
+            }
+            let origin = vm.absoluteStart(of: objectID) ?? object.startTime
+            var absolute: Double
+            if p.raw["at"] != nil        { absolute = try p.double("at") }
+            else if p.raw["rel"] != nil  { absolute = origin + (try p.double("rel")) }
+            else {
+                throw CommandError(code: .bad_params, message: "give 'at' (absolute) or 'rel' (from the object's start)")
+            }
+            var d = p.raw["duration"] != nil ? try p.double("duration") : nil
+            if try p.bool("snap", or: false) {
+                CommandAdapters.withSnapping(true, vm) {
+                    let end = d.map { absolute + $0 }
+                    absolute = vm.snapTime(absolute, excluding: [marker])
+                    if let end { d = max(0, vm.snapTime(end, excluding: [marker]) - absolute) }
+                }
+            }
+            guard vm.moveObjectMarker(objectID: objectID, markerID: marker,
+                                      toRelativeTime: absolute - origin, duration: d) else {
+                throw CommandError(code: .not_found, message: "no such marker on that object")
+            }
+            let moved = vm.find(id: objectID)?.markers.first { $0.id == marker }
+            return .object(["object": .string(objectID.uuidString),
+                            "marker": .string(marker.uuidString),
+                            "rel": .number(moved?.time ?? absolute - origin),
+                            "absolute_time": .number(origin + (moved?.time ?? absolute - origin)),
+                            "duration": .number(moved?.duration ?? d ?? 0)])
+        }
+
         register("object.set_marker_color",
                  summary: "The hue of a marker carried by an object. WITHOUT `color_index` it goes "
                         + "back to white, which is the default here: a mark laid on matter has no "
@@ -391,18 +451,28 @@ extension CommandRegistry {
                  summary: "Lays a free text over a span of the timeline. The text is markdown, "
                         + "inline (bold, italic, code, links). A comment is not a sound object: it "
                         + "has no engine object, and it does not move with a ripple or a cut.",
-                 params: [ParamSpec("from", "number", "Start, in seconds."),
-                          ParamSpec("to", "number", "End, in seconds."),
+                 params: [ParamSpec("from", "number", "Start, in ABSOLUTE seconds."),
+                          ParamSpec("to", "number", "End, in ABSOLUTE seconds."),
                           ParamSpec("lane", "int", required: false,
                                     "Its row (default 0), in the same frame as `object.add`'s — the "
                                   + "BASE row, not the visual one: opening a group above it pushes "
                                   + "the comment down with everything else instead of leaving it "
-                                  + "beside somebody else's lane."),
+                                  + "beside somebody else's lane. WITH `parent`, it is a row of "
+                                  + "that group's band (0 = the first row under it)."),
+                          ParamSpec("parent", "uuid", required: false,
+                                    "The GROUP to lay it IN, recursively. Absent = the timeline. "
+                                  + "Inside a group the comment's time and row become the group's "
+                                  + "own, so it follows it when it is moved or copied, and it is "
+                                  + "not drawn while the group is folded. A parent that is not a "
+                                  + "group is ignored."),
                           ParamSpec("text", "string", required: false, "Its content.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            var parent: UUID? = nil
+            if let rawParent = p.raw["parent"], rawParent != .null { parent = try p.uuid("parent") }
             guard let id = vm.addComment(from: try p.double("from"), to: try p.double("to"),
                                          lane: try p.int("lane", or: 0),
+                                         parentID: parent,
                                          text: try p.string("text", or: "")) else {
                 throw CommandError(code: .bad_params, message: "'from' and 'to' must bound a real span")
             }
@@ -430,17 +500,29 @@ extension CommandRegistry {
         }
 
         register("comment.move",
-                 summary: "Moves a comment, and resizes or re-rows it if asked.",
+                 summary: "Moves a comment, and resizes, re-rows or re-homes it if asked.",
                  params: [ParamSpec("comment", "uuid", "The comment."),
-                          ParamSpec("at", "number", "Its new start, in seconds."),
+                          ParamSpec("at", "number", "Its new start, in ABSOLUTE seconds."),
                           ParamSpec("duration", "number", required: false, "Its new length."),
-                          ParamSpec("lane", "int", required: false, "Its new row (the BASE one).")],
+                          ParamSpec("lane", "int", required: false,
+                                    "Its new row (the BASE one, in its own frame)."),
+                          ParamSpec("parent", "uuid", required: false,
+                                    "The GROUP to move it into. Give it EXPLICITLY NULL to bring "
+                                  + "it back onto the timeline; absent leaves the frame alone. "
+                                  + "`at` and `lane` are then read in the frame it ends up in.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("comment")
             let d = p.raw["duration"] != nil ? try p.double("duration") : nil
             let l = p.raw["lane"] != nil ? try p.int("lane") : nil
-            guard vm.moveComment(id: id, to: try p.double("at"), duration: d, lane: l) else {
+            // A DOUBLE optional: absent = leave the frame alone, an explicit null = the timeline.
+            var parent: UUID?? = nil
+            if let raw = p.raw["parent"] {
+                if case .null = raw { parent = .some(nil) }
+                else { parent = .some(try p.uuid("parent")) }
+            }
+            guard vm.moveComment(id: id, to: try p.double("at"), duration: d, lane: l,
+                                 parent: parent) else {
                 throw CommandError(code: .not_found, message: "unknown comment: \(id.uuidString)")
             }
             return .object(["comment": .string(id.uuidString)])

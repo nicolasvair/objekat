@@ -175,4 +175,21 @@ extension EditViewModel {
               let lMax = selected.map(\.lane).max() else { return nil }
         return TimeSelection(timeRange: tMin...tMax, lanes: Set(lMin...lMax))
     }
+
+    /// The origin a ⇧-click extends the time selection FROM, or nil when there is none to trust.
+    ///
+    /// SELF-VALIDATING rather than book-kept, and that is the whole reason it is a function: the
+    /// anchor is good while nothing else has taken the selection over — either nothing at all is
+    /// selected (the caret alone, which is the case ⇧ was missing entirely), or the range traced
+    /// still hangs off this very point. A range made by a rubber band, or the bounding box read
+    /// off an object selection, therefore answers nil and the old extension takes it (@see
+    /// `TimelineView.handleCanvasTap`) — so no drag, no command and no undo has to remember to
+    /// clear anything, which is exactly how a second anchor would go stale.
+    func timeSelectionExtendOrigin() -> (lane: Int, time: Double)? {
+        guard let a = timeSelectionOrigin else { return nil }
+        guard let sel = timeSelection else { return baseTimeSelection() == nil ? a : nil }
+        let onBound = abs(sel.timeRange.lowerBound - a.time) < 1e-9
+                   || abs(sel.timeRange.upperBound - a.time) < 1e-9
+        return onBound && sel.lanes.contains(a.lane) ? a : nil
+    }
 }

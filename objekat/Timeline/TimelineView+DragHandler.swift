@@ -320,14 +320,41 @@ struct CommentDragState {
     enum Part { case move, resizeLeft, resizeRight }
     let id: UUID
     let part: Part
+    /// ABSOLUTE, like every other time a gesture handles: the snap and the guide line both speak
+    /// edit seconds, and a comment inside a group stores a relative one (@see TimelineComment).
     let originStart: Double
     let originDuration: Double
+    /// The stored row, in the comment's OWN frame — the group's band when it has a parent.
     let originLane: Int
+    /// The group the comment lives in, nil for the timeline. A drag never leaves its frame: the
+    /// row is clamped to the band, so a note does not fall out of the group it talks about.
+    let parent: UUID?
     var didPushUndo = false
 
     /// Below this a comment could no longer be grabbed at all — its two edge handles would cover
     /// the whole of it. A floor, not a snap: nothing rounds to it.
     static let minDuration: Double = 0.05
+}
+
+/// A marker carried by an OBJECT being moved.
+///
+/// HORIZONTAL only, and that is not a restriction but what the thing is: the mark lives in its
+/// object's frame (@see SoundObject.markers), so moving it changes its RELATIVE time and there is
+/// no row for it to change — the row belongs to the object underneath. Hence no axis lock either,
+/// where the band's drag needs one: there is only ever one axis here.
+///
+/// The model is written on every frame, as the band's marks are, and for the same reason — a mark
+/// is a hairline, and a preview of a hairline is a second geometry to keep in step for nothing.
+struct ObjectMarkerDragState {
+    let objectID: UUID
+    let markerID: UUID
+    /// Its time in the object's own frame when the hand took hold, and the object's ABSOLUTE
+    /// start: the snap speaks edit time, the model stores relative time, and the sum is what
+    /// carries a mark on a child of an open group to the right place.
+    let originTime: Double
+    let objectOrigin: Double
+    /// Pushed at the first movement that changes anything, and once: a drag is ONE undo.
+    var didPushUndo = false
 }
 
 enum DragPhase { case changed, ended }
@@ -397,6 +424,7 @@ extension TimelineView {
         // A crossfade drag already running takes the frame before anything else.
         if crossfadeDrag != nil { handleCrossfadeDrag(value, phase: phase); return }
         if commentDrag != nil { handleCommentDrag(value, phase: phase); return }
+        if objectMarkerDrag != nil { handleObjectMarkerDrag(value, phase: phase); return }
         if infiniteBusDrag != nil { handleInfiniteBusDrag(value, phase: phase); return }
 
         if moveDrag == nil && resizeDrag == nil && trimDrag == nil
@@ -420,6 +448,16 @@ extension TimelineView {
             // top of the matter it talks about.
             if commentZone(at: p) != nil {
                 handleCommentDrag(value, phase: phase)
+                return
+            }
+
+            // A marker carried by an OBJECT: it is drawn over the block's top strip, so it is
+            // grabbed before the block, exactly as a comment is and for the same reason — a mark
+            // one can see and cannot move is a mark one re-creates instead of adjusting. The grab
+            // zone is the strip's and nothing more (@see ObjectMarkersOverlay.grabStripHeight):
+            // the rest of the block stays the object's.
+            if objectMarkerHit(at: p) != nil {
+                handleObjectMarkerDrag(value, phase: phase)
                 return
             }
 
@@ -1884,6 +1922,47 @@ extension TimelineView {
         }
     }
 
+    /// Moving a marker carried by an object. Live, one undo for the gesture — the same shape as
+    /// the band's drag above, minus the vertical (@see ObjectMarkerDragState).
+    ///
+    /// It is CLAMPED to the object's window, which the model itself is not: a mark dragged past an
+    /// edge would be pushed behind it, where it is deliberately neither drawn nor clickable, and a
+    /// mark that vanishes under the hand moving it has no way back but ⌘Z. It stops at the edge
+    /// instead; a trim is what puts a mark behind one.
+    func handleObjectMarkerDrag(_ value: DragGesture.Value, phase: DragPhase) {
+        if objectMarkerDrag == nil {
+            guard phase == .changed, pixelsPerSecond > 0,
+                  case .objectMarker(let oid, let mid)? = objectMarkerHit(at: value.startLocation),
+                  let m = viewModel.find(id: oid)?.markers.first(where: { $0.id == mid })
+            else { return }
+            // Grabbing selects, as it does on a block and on a mark of the band: one sees what the
+            // hand has, and ⌫ then means this mark.
+            viewModel.selectAnnotation(.objectMarker(object: oid, marker: mid))
+            viewModel.snapGuide = nil     // the last gesture's line is not this one's
+            objectMarkerDrag = ObjectMarkerDragState(
+                objectID: oid, markerID: mid, originTime: m.time,
+                objectOrigin: viewModel.absoluteStart(of: oid) ?? 0)
+        }
+        guard var st = objectMarkerDrag else { return }
+        defer {
+            objectMarkerDrag = phase == .ended ? nil : st
+            if phase == .ended { viewModel.snapGuide = nil }
+        }
+
+        // The snap is the timeline's own, asked in EDIT time — a mark is placed against the
+        // material around it, which is where the grid and the other marks are. And it is left out
+        // of its OWN targets: the model is written on every frame, so it stands where the hand
+        // last put it and would be its own magnet (@see EditViewModel.snapTargets).
+        let dt = Double(value.translation.width) / pixelsPerSecond
+        let t  = viewModel.snapTime(max(0, st.objectOrigin + st.originTime + dt),
+                                    excluding: [st.markerID])
+        let window = viewModel.find(id: st.objectID)?.duration ?? 0
+        let rel = (t - st.objectOrigin).clamped(to: 0...max(0, window))
+        if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+        viewModel.moveObjectMarker(objectID: st.objectID, markerID: st.markerID,
+                                   toRelativeTime: rel, pushesUndo: false)
+    }
+
     /// The part of a comment a point lands on: its body, or one of its two ends.
     ///
     /// The handles are proportional and capped, the same rule as a clip's (@see handleWidth), with
@@ -1892,16 +1971,17 @@ extension TimelineView {
     /// ends give way to the move.
     func commentZone(at point: CGPoint) -> (id: UUID, part: CommentDragState.Part)? {
         guard pixelsPerSecond > 0 else { return nil }
-        for c in viewModel.comments.reversed() {         // the last laid is the one on top
-            let x0 = c.startTime * pixelsPerSecond
-            let x1 = c.endTime * pixelsPerSecond
-            let y0 = laneY(for: c.lane)          // BASE row → the one on screen (@see commentHit)
+        for p in viewModel.visibleComments.reversed() {  // the last laid is the one on top
+            let x0 = p.absStart * pixelsPerSecond
+            let x1 = p.absEnd * pixelsPerSecond
+            // Resolved, never raw: a comment's frame may be a group's band (@see commentHit).
+            let y0 = rulerHeight + Double(p.displayLane) * laneStep
             guard point.x >= x0, point.x <= x1, point.y >= y0, point.y <= y0 + blockHeight
             else { continue }
             let handle = min(10, (x1 - x0) / 4)
-            if point.x <= x0 + handle { return (c.id, .resizeLeft) }
-            if point.x >= x1 - handle { return (c.id, .resizeRight) }
-            return (c.id, .move)
+            if point.x <= x0 + handle { return (p.id, .resizeLeft) }
+            if point.x >= x1 - handle { return (p.id, .resizeRight) }
+            return (p.id, .move)
         }
         return nil
     }
@@ -1947,12 +2027,14 @@ extension TimelineView {
         if commentDrag == nil {
             guard phase == .changed, pixelsPerSecond > 0,
                   let z = commentZone(at: value.startLocation),
-                  let c = viewModel.comments.first(where: { $0.id == z.id })
+                  let p = viewModel.visibleComments.first(where: { $0.id == z.id })
             else { return }
-            viewModel.selectAnnotation(.comment(c.id))
+            viewModel.selectAnnotation(.comment(p.id))
             viewModel.snapGuide = nil       // the last gesture's line is not this one's
-            commentDrag = CommentDragState(id: c.id, part: z.part, originStart: c.startTime,
-                                           originDuration: c.duration, originLane: c.lane)
+            commentDrag = CommentDragState(id: p.id, part: z.part, originStart: p.absStart,
+                                           originDuration: p.comment.duration,
+                                           originLane: p.comment.lane,
+                                           parent: p.comment.parentID)
         }
         guard var st = commentDrag else { return }
         defer {
@@ -1976,8 +2058,17 @@ extension TimelineView {
             // straight to `originLane + delta` would have it jump over as many rows as an open
             // group holds children.
             let travelled = Int((Double(value.translation.height) / laneStep).rounded())
-            let targetDL = max(0, displayLane(for: st.originLane) + travelled)
-            lane = viewModel.baseLaneForDisplay(targetDL)
+            let from = viewModel.displayLane(forBase: st.originLane, inParent: st.parent) ?? 0
+            var targetDL = max(0, from + travelled)
+            // A comment stays in the frame it was laid in: dragged inside a group it travels the
+            // group's band and stops at its edges, rather than falling out onto the timeline at
+            // the first row too far. Changing frame is a creation, not a slip of the hand.
+            if let p = st.parent,
+               let e = viewModel.laneEntries.first(where: { $0.item.id == p }) {
+                targetDL = min(max(targetDL, e.displayLane + 1),
+                               e.displayLane + e.item.childLaneCount)
+            }
+            lane = viewModel.baseLaneForDisplay(targetDL, inParent: st.parent)
         case .resizeLeft:
             // The right edge is the anchor: cropping from the left moves the start AND shortens by
             // as much, exactly like a clip's left handle.

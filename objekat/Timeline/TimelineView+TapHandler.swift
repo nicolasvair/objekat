@@ -195,9 +195,15 @@ extension TimelineView {
         let lane    = max(0, Int((point.y - rulerHeight) / laneStep))
         let tapTime = viewModel.snapTime(max(0, point.x / pixelsPerSecond))
 
+        // The origin ⇧ extends from, read BEFORE the caret is moved — a plain click lays it down,
+        // a ⇧-click reads it and leaves it exactly where it was, which is what makes a second
+        // ⇧-click re-extend from the same point (@see EditViewModel.timeSelectionOrigin).
+        let extendOrigin = shift ? viewModel.timeSelectionExtendOrigin() : nil
+
         // Every plain click lays the caret on the display lane aimed at; the branches
         // that create a timeSelection (cmd/shift) set it back to nil further down.
         viewModel.caretLane = lane
+        if !shift { viewModel.timeSelectionOrigin = (lane: lane, time: tapTime) }
 
         // Clip hit: top-level leaf objects (a clip OR an aux; not groups). An infinite bus
         // (an aux) is selected over its whole lane (0 → the content's width), not at its real position.
@@ -270,6 +276,30 @@ extension TimelineView {
                 viewModel.timeSelection = base
             }
             if let ts = viewModel.timeSelection { selectInDisplayLanes(ts) }
+            return
+        }
+
+        // ⇧ + click with nothing traced and nothing selected: the passage BETWEEN the caret and the
+        // point clicked — the gesture a text has, brought to a surface that already says "this
+        // passage" in time × rows. So it covers the rows crossed on the way as well, a time
+        // selection being a span of time over a span of rows and never a line.
+        //
+        // Before the union below and not after it, because the two answer different questions: the
+        // union GROWS an existing range from whichever end is nearer, while this one is anchored —
+        // the origin does not move, so a second ⇧-click aimed back inside the range SHORTENS it,
+        // which is what one expects of an anchor and what a union can never do.
+        if shift && inUpperZone, let origin = extendOrigin {
+            let tLo = min(origin.time, tapTime), tHi = max(origin.time, tapTime)
+            // A ⇧-click back onto the origin itself: there is no passage between a point and
+            // itself. The caret laid just above stands, and nothing else moves.
+            guard tHi - tLo > 1e-9 else { return }
+            let laneLo = min(origin.lane, lane), laneHi = max(origin.lane, lane)
+            let newSel = TimeSelection(timeRange: tLo...tHi, lanes: Set(laneLo...laneHi))
+            viewModel.caretLane = nil
+            viewModel.selectedIDs = []
+            viewModel.timeSelection = newSel
+            selectInDisplayLanes(newSel)
+            onMoveCursor(tLo)
             return
         }
 

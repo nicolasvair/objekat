@@ -16,14 +16,14 @@ import SwiftUI
 /// `TextEditor`. There are few comments, so the ZStack costs nothing here (the rule of thumb that
 /// asks for a Canvas past ~100 items is about the BLOCKS).
 struct CommentsOverlay: View {
-    let comments: [TimelineComment]
+    /// Already resolved for the screen — absolute start and display row, the frame counted
+    /// (@see EditViewModel.visibleComments). A comment whose group is folded is simply not in this
+    /// list: there is no row for it to be drawn on.
+    let comments: [PlacedComment]
     let pixelsPerSecond: Double
     let rulerHeight: Double
     let laneStep: Double
     let blockHeight: Double
-    /// The comment's BASE row turned into the visual one — an open group above it pushes it down,
-    /// like everything else on the lanes (@see TimelineComment.lane).
-    let displayLane: (Int) -> Int
     var selected: AnnotationSel? = nil
     /// The comment being edited, if any (compared against `EditViewModel.renamingID`).
     var editingID: UUID? = nil
@@ -32,7 +32,8 @@ struct CommentsOverlay: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(comments) { c in
+            ForEach(comments) { placed in
+                let c = placed.comment
                 let w = max(24, c.duration * pixelsPerSecond)
                 // White unless it asked for a hue: a comment is not matter, and the palette it
                 // would otherwise borrow from is the OBJECTS' (@see TimelineComment.colorIndex).
@@ -55,8 +56,8 @@ struct CommentsOverlay: View {
                 // mouse while it is being EDITED. Selecting it is the canvas's job, geometrically
                 // (@see TimelineView.commentHit), like everything else here.
                 .allowsHitTesting(editingID == c.id)
-                .offset(x: c.startTime * pixelsPerSecond,
-                        y: rulerHeight + Double(displayLane(c.lane)) * laneStep)
+                .offset(x: placed.absStart * pixelsPerSecond,
+                        y: rulerHeight + Double(placed.displayLane) * laneStep)
             }
         }
     }

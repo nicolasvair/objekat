@@ -679,6 +679,15 @@ final class EditViewModel {
     var seekRequest: Double? = nil
     var cursorPosition: Double = 0
     var caretLane: Int? = nil   // the display lane of the last click; nil = no caret
+    /// Where a ⇧-click extends a TIME SELECTION from — the point the last plain click laid the
+    /// caret at, its row AND its instant. The caret alone could not serve as the origin: it keeps
+    /// the row, and its instant is the cursor, which the extension itself then moves onto the
+    /// range's left edge. Held through the extensions so that a SECOND ⇧-click re-extends from the
+    /// same point rather than from the range the first one made — a text selection's rule, the
+    /// anchor stays and only the other end travels — which is also what lets a range be made
+    /// SHORTER, something a union of the two ends can never do.
+    /// Read through `timeSelectionExtendOrigin()`, which alone says when it is still to be trusted.
+    var timeSelectionOrigin: (lane: Int, time: Double)? = nil
 
     // The clips flattened with absolute positions (for the list and certain operations)
     var allClips: [SoundObject] {

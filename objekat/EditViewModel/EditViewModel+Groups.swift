@@ -481,6 +481,18 @@ extension EditViewModel {
             var c = $0; c.lane += group.lane; c.stemID = group.stemID; return c
         }
 
+        // The comments the group held come up in the SAME two moves as its children: the row made
+        // the enclosing frame's (+ group.lane), the time made that frame's too. Read BEFORE the
+        // tree is rewritten, while `parentGroup` can still answer. A note must not die of the
+        // frame that carried it being taken away — dissolving is opening, not deleting.
+        let outerParent = parentGroup(for: id)
+        let outerStart  = outerParent?.startTime ?? 0
+        for i in comments.indices where comments[i].parentID == id {
+            comments[i].startTime = max(0, group.startTime + comments[i].startTime - outerStart)
+            comments[i].lane     += group.lane
+            comments[i].parentID  = outerParent?.id
+        }
+
         // The group took up only ONE model lane; its content claims as many as its
         // lowest inner row. The unfolded children therefore fell onto the lanes of what
         // lived below — an invisible stacking for as long as the group existed (unfolded, the

@@ -16,7 +16,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 14
+    static let formatVersion = 15
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -90,12 +90,19 @@ enum SessionSchema {
         "  Same type, two frames of reference: that is this section's trap.",
         "  colorIndex on a mark is an EXCEPTION, and it is written only when there is one: with no",
         "  key, a mark takes the colour of what carries it — its row here, white inside an object.",
-        "comments — free texts laid over a span of the timeline: { startTime, duration, lane, text }.",
-        "  The text is markdown (inline: bold, italic, code, links). They live BESIDE items and not",
-        "  inside: a comment carries no sound. No colorIndex = WHITE, which is not a hue of the",
-        "  object palette: a note must never read as one more object laid on the lane.",
+        "comments — free texts laid over a span of the timeline: { startTime, duration, lane, text,",
+        "  parentID }. The text is markdown (inline: bold, italic, code, links). They live BESIDE",
+        "  items and not inside: a comment carries no sound. No colorIndex = WHITE, which is not a",
+        "  hue of the object palette: a note must never read as one more object laid on the lane.",
         "  lane is a BASE row, like items[].lane and not the visual row index: what is unfolded",
         "  above it (an open group, a piano roll, an automation band) pushes it down on screen.",
+        "  parentID — the GROUP the comment lives in, recursively; absent = the timeline itself",
+        "  (which is every comment of a session written before format 15). WITH a parent, the two",
+        "  coordinates change frame, exactly as a group's children do: startTime becomes RELATIVE",
+        "  to that group's start, and lane a row of the group's own band (0 = the first row under",
+        "  it). That is what makes the note follow its group when it is moved or copied, and why it",
+        "  is not drawn at all while the group is folded. It is this section's second trap, the",
+        "  first being the two frames of a marker just above.",
         "  Markers, regions and comments are purely visual — nothing here changes what is heard.",
         "",
         "TO ACT ON THIS PROJECT — prefer the app's command API (UNIX socket, JSON-lines, `help`",

@@ -491,6 +491,18 @@ note beside somebody else's lane. `comment.list` answers with both: `lane` as st
 `display_lane` as it is actually drawn once every unfolded zone above it — an open group's
 children, an open piano roll, the automation bands — has taken its rows.
 
+**A comment can live INSIDE a group, recursively** (`parent`, on `comment.create` and
+`comment.move`; `parent: null` in an answer = the timeline). Inside a group it changes FRAME,
+exactly as the group's children do: its stored `start` / `end` become relative to the group's own
+start and its `lane` becomes a row of the group's band (0 = the first row under it). That is what
+makes it follow the group when it is moved or copied — and what makes it go with the group when
+that is deleted. `comment.list` answers with `abs_start` / `abs_end` beside the stored pair, and
+`display_lane` is **null** when the comment is not on screen at all (its group is folded, or is
+showing its automation band, so there is no row for it). `comment.create`'s `from` / `to` and
+`comment.move`'s `at` are always ABSOLUTE — the frame is applied on the way in. On `comment.move`,
+`parent` absent leaves the frame alone and an explicit `null` brings the comment back onto the
+timeline.
+
 **Colour is INHERITED until it is asked for**, and `color_index: null` in an answer says so —
 null is not "no colour", it is "the one I take from what carries me": its ROW for a mark of the
 band (`marker_lane.set_color` therefore recolours a whole layer at once), and WHITE for a comment
@@ -510,6 +522,13 @@ after the move. With `snap: true` both bounds go through the timeline's own snap
 left **out of its own targets** — the door the band's drag uses, and the reason the flag exists:
 the drag writes into the model on every frame, so a mark left in its own list would be its own
 magnet and would refuse to move at all.
+
+`object.move_marker` is the same gesture for a mark an OBJECT carries, and it takes both readings:
+`at` for the instant a hand would point at, `rel` for the object's own frame — it is stored relative
+either way. `snap` behaves exactly as `marker.move`'s, the mark left out of its own targets. A
+negative `rel` is legal and is NOT clamped here: that is a mark pushed behind an edge, kept and not
+drawn. The HAND's drag clamps to the object's window instead, because a mark that vanished under
+the hand moving it would have no way back but ⌘Z.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 

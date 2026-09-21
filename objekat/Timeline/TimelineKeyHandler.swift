@@ -894,7 +894,18 @@ extension TimelineView {
 
             // The ruler and its band: their own menu, which is the ONLY way a marker or a region is
             // created. A click that merely lands somewhere has asked for nothing.
-            if pos.y <= rulerH {
+            //
+            // The header is STICKY, and that is the question this test has to answer: it is drawn
+            // at `scrollOffsetY`, so as soon as the view is scrolled it lies OVER lanes. Comparing
+            // against `rulerH` alone named the top of the CONTENT and not the band under the hand,
+            // so a right click in the band fell through onto whatever object the band was covering
+            // — and a marker could no longer be created there. Asked through the canvas's own two
+            // predicates so that the left click and the right click cannot disagree about where
+            // the band is (@see TimelineView.markerBandRow, which reads the row count live too).
+            let inHeader = MainActor.assumeIsolated {
+                self.rulerBandContains(pos) || self.markerBandContains(pos)
+            }
+            if inHeader {
                 let menu: NSMenu = MainActor.assumeIsolated {
                     // The row's COLOUR DOT, pinned at the left of the viewport: the palette that
                     // sets what the WHOLE row is by default. Asked first — the dot lies over the

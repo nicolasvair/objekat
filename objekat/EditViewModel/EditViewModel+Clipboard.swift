@@ -8,6 +8,11 @@ struct ClipboardContent {
     var originLane: Int    // the display lane of the first item
     var selectionDuration: Double?
     var lanes: Set<Int>?   // the display lanes of the time selection
+    /// The comments laid INSIDE the copied groups, kept as they stand — their coordinates are
+    /// already their group's own, so only the parent id has to be remapped at the paste
+    /// (@see EditViewModel.copyComments). Frozen HERE rather than read at the paste, so that a
+    /// CUT — which takes the groups and their comments with them — can still put them back.
+    var comments: [TimelineComment] = []
 }
 
 extension EditViewModel {
@@ -212,7 +217,8 @@ extension EditViewModel {
             originTime: clips.map(\.startTime).min()!,
             originLane: clips.map(\.lane).min()!,
             selectionDuration: nil,
-            lanes: nil
+            lanes: nil,
+            comments: entries.flatMap { commentsInSubtree(of: $0.item.id) }
         )
     }
 
@@ -276,6 +282,10 @@ extension EditViewModel {
                 allPasted.append(placed)
             }
         }
+        // The comments the copied groups held, laid onto the copies. Same table as the sends, and
+        // nothing to shift: a comment's coordinates are its group's own (@see copyComments).
+        copyComments(using: idMap, from: cb.comments)
+
         // A sender added BEFORE the aux it aims at could not be wired along the way: the
         // final reconciliation catches the order up (it is idempotent).
         resyncAllSends()
@@ -1023,6 +1033,9 @@ extension EditViewModel {
                     added.append(placeClip(Self.remappingSends(copy, using: idMap),
                                            snapshot: snapshot))
                 }
+                // A duplicated group takes its notes with it, exactly as a paste does
+                // (@see copyComments). Read off the live `comments`, the originals still being there.
+                copyComments(using: idMap)
             }
             resyncAllSends()
 

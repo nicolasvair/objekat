@@ -124,12 +124,13 @@ func addCommentItem(menu: NSMenu, proxies: inout [MenuActionProxy],
                     vm: EditViewModel, selection: TimeSelection) {
     let lo = selection.timeRange.lowerBound
     let hi = selection.timeRange.upperBound
-    // A time selection speaks in DISPLAY rows; a comment stores a BASE one
-    // (@see TimelineComment.lane). A range traced over the children of an open group comes back as
-    // that group's own row — a comment nests in nothing.
-    let lane = vm.baseLaneForDisplay(selection.lanes.min() ?? 0)
+    // A time selection speaks in DISPLAY rows; a comment stores a BASE one, IN THE FRAME IT FALLS
+    // IN (@see TimelineComment.parentID). A range traced over the open band of a group therefore
+    // lays the comment INSIDE that group — where the eye put it — and `commentAnchor` answers the
+    // frame and the row at once, on the same rule a paste and a drop already follow.
+    let anchor = vm.commentAnchor(forDisplayLane: selection.lanes.min() ?? 0)
     addItem(menu, &proxies, L("menu.context.comment.create")) {
-        if let id = vm.addComment(from: lo, to: hi, lane: lane) {
+        if let id = vm.addComment(from: lo, to: hi, lane: anchor.lane, parentID: anchor.parent) {
             vm.selectAnnotation(.comment(id))
             vm.renamingID = id       // it opens on its editor: an empty comment says nothing
         }

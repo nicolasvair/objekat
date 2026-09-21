@@ -132,11 +132,22 @@ struct MarkerLane: Codable, Equatable, Identifiable {
 /// where it was put.
 struct TimelineComment: Codable, Equatable, Identifiable {
     var id: UUID = UUID()
+    /// Its start. In EDIT seconds when `parentID` is nil; RELATIVE to the group's own start when
+    /// it has one — exactly the choice an object's `markers` make, and for the same reason: a note
+    /// laid inside a group has to follow it when it is moved or copied, and a frame that moves
+    /// with what it describes is what makes that free rather than one more gesture to teach.
     var startTime: Double
     var duration: Double
+    /// The group this comment lives IN, or nil for the timeline itself. Recursive: the group may
+    /// itself be a child of another.
+    ///
+    /// What it changes: `startTime` becomes relative to that group's start and `lane` a row of that
+    /// group's own band (0 = the first row under it), exactly as a CHILD's `lane` is. Which is why
+    /// the comment follows a move or a copy of the group without one line of gesture naming it, and
+    /// why it is simply not drawn while the group is folded — there is no row for it on screen.
+    var parentID: UUID? = nil
     /// The row it is laid on, in the BASE frame — `SoundObject.lane`'s own, not the visual row
-    /// index. A comment has no content to nest, so it never belongs to a container: it is always a
-    /// top-level row.
+    /// index. The timeline's frame when `parentID` is nil, the parent group's band otherwise.
     ///
     /// BASE and not DISPLAY, and this is the whole point: opening a group inserts its children's
     /// rows into the display and pushes everything below DOWN. A display row stored here would stay
@@ -156,18 +167,21 @@ struct TimelineComment: Codable, Equatable, Identifiable {
     var colorIndex: Int? = nil
 
     init(id: UUID = UUID(), startTime: Double, duration: Double, lane: Int,
-         text: String = "", colorIndex: Int? = nil) {
+         text: String = "", colorIndex: Int? = nil, parentID: UUID? = nil) {
         self.id = id
         self.startTime = startTime
         self.duration = duration
         self.lane = lane
         self.text = text
         self.colorIndex = colorIndex
+        self.parentID = parentID
     }
 
     var endTime: Double { startTime + duration }
 
-    enum CodingKeys: String, CodingKey { case id, startTime, duration, lane, text, colorIndex }
+    enum CodingKeys: String, CodingKey {
+        case id, startTime, duration, lane, text, colorIndex, parentID
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -177,6 +191,8 @@ struct TimelineComment: Codable, Equatable, Identifiable {
         lane       = try c.decodeIfPresent(Int.self, forKey: .lane) ?? 0
         text       = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
+        // Absent = a comment of the TIMELINE, which is every comment written before format 15.
+        parentID   = try c.decodeIfPresent(UUID.self, forKey: .parentID)
     }
 }
 

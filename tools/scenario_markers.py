@@ -223,7 +223,7 @@ with ObjekatClient(SOCK) as c:
     cmd("project.save_as", path=path)
     with open(path) as f:
         doc = json.load(f)
-    check("session format bumped", doc.get("version") == 14, str(doc.get("version")))
+    check("session format bumped", doc.get("version") == 15, str(doc.get("version")))
     check("the rows are written", len(doc.get("markerLanes", [])) == 1)
     check("the comments are written", len(doc.get("comments", [])) == 1)
     check("the object's markers are written",
@@ -285,6 +285,85 @@ with ObjekatClient(SOCK) as c:
     got = cmd("comment.list")["comments"][0]
     check("closing it brings the comment back", got["display_lane"] == 3)
     cmd("comment.remove", comment=note)
+
+    # ── a comment INSIDE a group, and recursively ─────────────────────────
+    # A note about a group's content belongs in the group, not beside it: it changes FRAME on the
+    # way in — its time becomes the group's own and its row a row of the group's band — which is
+    # what makes it follow the group when it moves, disappear while the group is folded, be copied
+    # with it and go with it when it is deleted. Exactly the bargain a marker carried by an object
+    # strikes, one level up.
+    cmd("project.new")
+    b1 = cmd("object.add", path=FIXTURE, lane=0, start=2.0)["id"]
+    b2 = cmd("object.add", path=FIXTURE, lane=1, start=3.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    g = cmd("group.create", ids=[b1, b2])["id"]
+    cmd("group.expand", id=g, expanded=True)
+    gstart = cmd("object.get", id=g)["start"]
+    inner = cmd("comment.create", **{"from": gstart + 1.0, "to": gstart + 2.0,
+                                     "lane": 0, "parent": g, "text": "dans le groupe"})["comment"]
+    got = [x for x in cmd("comment.list")["comments"] if x["id"] == inner][0]
+    check("a comment can be laid IN a group", got["parent"] == g)
+    check("its stored time is the GROUP's frame", approx(got["start"], 1.0), str(got["start"]))
+    check("and its absolute time is where it was asked for",
+          approx(got["abs_start"], gstart + 1.0), str(got["abs_start"]))
+    check("it is drawn INSIDE the group's band", got["display_lane"] is not None
+          and got["display_lane"] > 0, str(got["display_lane"]))
+
+    # Moving the group carries the note: nothing in the gesture names it.
+    cmd("object.move", id=g, start=gstart + 5.0)
+    got = [x for x in cmd("comment.list")["comments"] if x["id"] == inner][0]
+    check("the comment FOLLOWS its group when it moves",
+          approx(got["abs_start"], gstart + 6.0) and approx(got["start"], 1.0),
+          "%s / %s" % (got["abs_start"], got["start"]))
+    cmd("object.move", id=g, start=gstart)
+
+    # Folded, it has no row at all — and that is a null, not a wrong row.
+    cmd("group.expand", id=g, expanded=False)
+    got = [x for x in cmd("comment.list")["comments"] if x["id"] == inner][0]
+    check("a folded group draws none of its comments", got["display_lane"] is None,
+          str(got["display_lane"]))
+    cmd("group.expand", id=g, expanded=True)
+    check("unfolding gives it its row back",
+          [x for x in cmd("comment.list")["comments"]
+           if x["id"] == inner][0]["display_lane"] is not None)
+
+    # A save and a reload keep the frame.
+    folder2 = tempfile.mkdtemp(prefix="objekat-nested-comment-")
+    path2 = os.path.join(folder2, "nested.objekat.json")
+    cmd("project.save_as", path=path2)
+    with open(path2) as f:
+        doc2 = json.load(f)
+    check("the parent is written into the session",
+          doc2.get("comments", [{}])[0].get("parentID") == g, str(doc2.get("comments")))
+    check("the notice describes the frame a parent puts the comment in",
+          any("parentID" in l for l in doc2.get("_readme", [])))
+    cmd("project.new")
+    cmd("project.open", path=path2)
+    cmd("wait_idle", timeout_ms=5000)
+    back = cmd("comment.list")["comments"]
+    check("a nested comment comes back with its group",
+          len(back) == 1 and back[0]["parent"] == g and approx(back[0]["start"], 1.0),
+          str(back))
+
+    # A copy takes it along, a deletion takes it away.
+    cmd("object.duplicate", ids=[g])
+    cl = cmd("comment.list")["comments"]
+    check("duplicating a group duplicates its comments", len(cl) == 2, str(len(cl)))
+    check("and the copy hangs off the COPY of the group",
+          len({x["parent"] for x in cl}) == 2, str([x["parent"] for x in cl]))
+    cmd("object.remove", ids=[g])
+    cl = cmd("comment.list")["comments"]
+    check("deleting a group takes its comments with it",
+          len(cl) == 1 and cl[0]["parent"] != g, str(cl))
+
+    # Dissolving is opening, not deleting: the note comes up onto the timeline.
+    other = cl[0]["parent"]
+    cmd("group.disband", id=other)
+    cl = cmd("comment.list")["comments"]
+    check("dissolving a group brings its comments up to the timeline",
+          len(cl) == 1 and cl[0]["parent"] is None, str(cl))
+    check("and they keep the instant they were at",
+          approx(cl[0]["abs_start"], cl[0]["start"]), str(cl[0]))
 
     # ── the marks are SNAP TARGETS ────────────────────────────────────────
     # The point of putting a mark somewhere is to be able to land on it. Until now the snap knew

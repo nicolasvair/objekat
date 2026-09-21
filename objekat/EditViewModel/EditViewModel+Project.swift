@@ -254,6 +254,7 @@ extension EditViewModel {
         loopRegion = nil
         cursorPosition = 0
         caretLane = nil
+        timeSelectionOrigin = nil    // the point ⇧ extends from: another project's, hence nobody's
         isRestoringTransport = true
         tempo = 120.0
         timeSigNumerator = 4

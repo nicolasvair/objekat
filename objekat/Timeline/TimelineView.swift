@@ -194,6 +194,9 @@ struct TimelineView: View {
     /// business in the guards that ask whether the content is being edited.
     @State var markerBandDrag: MarkerBandDragState? = nil
     @State var commentDrag: CommentDragState? = nil
+    /// A marker carried by an OBJECT being moved along it. A slot of its own for the same reason:
+    /// it moves a mark inside the object's frame, not the object (@see ObjectMarkerDragState).
+    @State var objectMarkerDrag: ObjectMarkerDragState? = nil
     /// An infinite bus being carried to another row. A slot of its own for the same reason as the
     /// two above: it moves no matter in TIME, so it has no business in the guards that ask whether
     /// the content is being edited (@see relaxStickyDuration).
@@ -470,12 +473,11 @@ struct TimelineView: View {
 
                 if !viewModel.comments.isEmpty {
                     CommentsOverlay(
-                        comments: viewModel.comments,
+                        comments: viewModel.visibleComments,
                         pixelsPerSecond: pixelsPerSecond,
                         rulerHeight: rulerHeight,
                         laneStep: laneStep,
                         blockHeight: blockHeight,
-                        displayLane: { displayLane(for: $0) },
                         selected: viewModel.selectedAnnotation,
                         editingID: viewModel.renamingID,
                         onCommit: { id, text in
@@ -547,6 +549,7 @@ struct TimelineView: View {
                 // dragged is left OUT of its own targets, @see `EditViewModel.snapTargets`.
                 let dragActive = moveDrag != nil || resizeDrag != nil || trimDrag != nil
                              || markerBandDrag != nil || commentDrag != nil
+                             || objectMarkerDrag != nil
                 //
                 // Dashed while it is grey, solid once it is yellow. The width alone would not have
                 // been enough to tell it from the selection cursor, which is grey too and sits one
@@ -1215,6 +1218,15 @@ struct TimelineView: View {
             if cutHover != nil { cutHover = nil }
             return
         }
+        // A marker carried by an OBJECT: the open hand, the one word the band's marks and a comment
+        // already speak for 'this can be taken hold of'. It has no crop cursor — a mark on an
+        // object moves along it and nothing else. Same order as the click and the drag.
+        if viewModel.activeTool == .toolSelection, objectMarkerHit(at: pos) != nil {
+            TimelineCursorKeeper.set(NSCursor.openHand)
+            if editZoneHover != nil { editZoneHover = nil }
+            if cutHover != nil { cutHover = nil }
+            return
+        }
         // A CROSSFADE zone: the same priority as in the drag, and for the same reason — the
         // surfaces the per-block carve-up would name here are the two fade triangles the zone is
         // made of, and naming one of them would promise a gesture on one side alone. The cursor
@@ -1831,15 +1843,16 @@ struct TimelineView: View {
     /// blocks — a comment one cannot click is a comment one cannot delete.
     func commentHit(at point: CGPoint) -> AnnotationSel? {
         guard pixelsPerSecond > 0 else { return nil }
-        for c in viewModel.comments.reversed() {     // the last laid is the one on top
-            let x0 = c.startTime * pixelsPerSecond
-            let x1 = c.endTime * pixelsPerSecond
-            // `laneY` and not `c.lane * laneStep`: a comment stores a BASE row and is drawn at the
-            // DISPLAY one. Reading it raw here would leave it clickable where it no longer is as
-            // soon as a group above it opened.
-            let y0 = laneY(for: c.lane)
+        // `visibleComments` and not `comments`: a comment stores a BASE row of ITS OWN FRAME, and
+        // the resolved list is where that becomes an absolute time and a row on screen. Reading
+        // the model raw here would leave it clickable where it no longer is as soon as a group
+        // above it opened — and would make one clickable whose group is folded.
+        for p in viewModel.visibleComments.reversed() {   // the last laid is the one on top
+            let x0 = p.absStart * pixelsPerSecond
+            let x1 = p.absEnd * pixelsPerSecond
+            let y0 = rulerHeight + Double(p.displayLane) * laneStep
             if point.x >= x0 && point.x <= x1 && point.y >= y0 && point.y <= y0 + blockHeight {
-                return .comment(c.id)
+                return .comment(p.id)
             }
         }
         return nil
