@@ -21,6 +21,12 @@ import Foundation
 //  • The zone is opened SYMMETRICALLY when it can be, and lopsidedly when it cannot. A side with
 //    no file left simply gives nothing, and the other side gives the whole width. That falls out
 //    of one clamp rather than out of a special case (@see `openCrossfade`).
+//    That is the default of a seam OPENED, where nothing says which side should give: the two
+//    edges are alike and the join is the only landmark. It is NOT what a hand PULLING a fade onto
+//    its neighbour means — there the fade drawn is the source and the facing one its consequence,
+//    so the gesture names the edge the zone grows from (`anchor`) and the neighbour's own edge
+//    stays put. The clamp is the same one in both cases, which is why the lopsided answer still
+//    comes out when the pulled side runs out of file.
 //  • An edge engaged in a crossfade has no fade length of its own any more: the zone commands.
 //    Setting the width sets both fades, and that is the only thing that keeps the definition
 //    above true. The SHAPE stays each edge's own — two curves, one on each side, which is what
@@ -290,14 +296,24 @@ extension EditViewModel {
     /// keeps the width and slides the start — instead of three near-copies of this arithmetic.
     /// It is a wish, not an order: the clamp below has the last word.
     ///
+    /// `anchor` says the same thing in the language of an EDGE rather than of a time — "the zone
+    /// starts here" / "the zone ends here", whatever width the clamp allows. It is what a gesture
+    /// building the zone FROM one of its two edges needs, and it differs from `pin` in exactly one
+    /// way, the one that matters: a pin lowers the ceiling on the width, an anchor does not. So a
+    /// side with no file left still gives what it can and the other side makes up the difference —
+    /// "if the matter is missing on one side, open on the other" — instead of the gesture stopping
+    /// dead. @see the fade pulled onto its neighbour, in `TimelineView.seamSpill`.
+    ///
     /// Returns the refusal rather than a bare `false`: the gesture has to be able to show why.
     @discardableResult
     func openCrossfade(leftID: UUID, rightID: UUID, width: Double,
                        idealStart: Double? = nil,
                        pin: ZonePin? = nil,
+                       anchor: ZonePin? = nil,
                        approach: SeamApproach = .none) -> Result<CrossfadeZone?, SeamRefusal> {
         switch plannedCrossfade(leftID: leftID, rightID: rightID, width: width,
-                                idealStart: idealStart, pin: pin, approach: approach) {
+                                idealStart: idealStart, pin: pin, anchor: anchor,
+                                approach: approach) {
         case .failure(let reason):
             return .failure(reason)
         case .success(let plan):
@@ -494,6 +510,7 @@ extension EditViewModel {
     func plannedCrossfade(leftID: UUID, rightID: UUID, width: Double,
                           idealStart: Double? = nil,
                           pin: ZonePin? = nil,
+                          anchor: ZonePin? = nil,
                           approach: SeamApproach = .none) -> Result<CrossfadePlan, SeamRefusal> {
         let hem: SeamHem
         switch seamHem(leftID: leftID, rightID: rightID, approach: approach) {
@@ -516,8 +533,12 @@ extension EditViewModel {
         let w = min(max(0, width), max(0, pin?.ceiling(in: hem) ?? hem.maxWidth))
 
         // The unknown: `s`, the right-hand object's new start. The left one then ends at `s + w`,
-        // which is what makes the zone exactly `w` wide. Unpinned, the caller's wish stands.
-        let wish: Double? = pin?.zoneStart(forWidth: w) ?? idealStart
+        // which is what makes the zone exactly `w` wide. Unpinned, the caller's wish stands —
+        // named as a time (`idealStart`) or as an EDGE (`anchor`), which is the same wish read
+        // once the width is settled. Both are clamped just below; only `pin` was an order.
+        let wish: Double? = pin?.zoneStart(forWidth: w)
+                         ?? anchor?.zoneStart(forWidth: w)
+                         ?? idealStart
         let sMin = hem.startFloor
         let sMax = hem.startCeilingBase - w
         // `maxWidth` above is exactly the width at which these two meet, so the clamp has already

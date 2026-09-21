@@ -136,6 +136,19 @@ struct FadeCurve: Codable, Equatable, Sendable {
     /// The bend as a signed value, −1 … +1: + bulges, − hollows, 0 straight.
     var signedAmount: Double { isStraight ? 0 : (shape.isHollow ? -amount : amount) }
 
+    /// The same curve seen from the OTHER side of the diagonal: bulged becomes hollowed and back,
+    /// an S becomes the other S, and the straight line is its own reflection. An EXACT reflection
+    /// and not a resemblance — the two families of a pair differ by nothing but taking the
+    /// exponent or its inverse (@see FadeShape.isHollow), and `a^p` / `a^(1/p)` are reflections
+    /// through the diagonal — so a curve and its mirror give away and take back the same amount at
+    /// the same places.
+    ///
+    /// What it is FOR: the crossfade born of a fade PULLED onto its neighbour. The fade the hand
+    /// drew is the source and the facing one is its consequence, so the facing one takes this
+    /// rather than a copy — a copy would put the same bend on both sides of the X, which is two
+    /// fades that hang back together or come forward together (@see TimelineView.spillCurve).
+    var mirrored: FadeCurve { .signed(-signedAmount, sCurve: isS) }
+
     /// The curve a signed bend names, clamped to −1 … +1. `sCurve` picks the S of that direction
     /// over the plain shape.
     static func signed(_ value: Double, sCurve: Bool) -> FadeCurve {

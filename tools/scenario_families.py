@@ -185,10 +185,54 @@ with ObjekatClient(SOCK) as c:
     halves = step("object.split_at", lambda: c.send("object.split_at", {"ids": [ids_], "seconds": 0.8 * D}))
     check("a split leaves the left half without a fade-out",
           abs(c.send("object.get", {"id": ids_})["fade_out"]) < 1e-9)
+    # --- WHERE a crossfade's zone is taken FROM. `crossfade.open` on its own centres the zone on
+    #     the join, both edges giving half: nothing there says which of two alike objects should
+    #     give, so the join is the only landmark. A fade PULLED onto its neighbour is not that
+    #     gesture — the fade drawn is the source and the facing one its consequence, so the zone is
+    #     anchored on the NEIGHBOUR's own edge and the whole travel happens on the pulled side.
+    #     Both readings go through this one command (`start` = the wish, clamped like the width),
+    #     which is what lets the difference be asserted with no hand on the screen.
+    #     The two fixtures are trimmed on purpose: opening a seam re-exposes hidden matter, so a
+    #     pair of untouched clips has nothing to give and the zone could not open at all.
+    xa = step("object.add crossfade left", lambda: c.send("object.add", {"path": BIP, "lane": 16, "start": 0}))
+    xb = step("object.add crossfade right", lambda: c.send("object.add", {"path": BIP, "lane": 16, "start": D}))
+    idxa, idxb = xa["id"], xb["id"]
+    c.send("object.set_duration", {"id": idxa, "duration": 0.5 * D})   # 0.5 D of file left behind its end
+    c.send("object.trim", {"id": idxb, "start": 1.2 * D, "duration": 0.6 * D})  # 0.2 D behind its start
+    c.send("object.move", {"id": idxb, "start": 0.5 * D})              # butted against the left one
+    step("crossfade.open centred", lambda: c.send("crossfade.open",
+         {"left": idxa, "right": idxb, "width": 0.25 * D}))
+    g = c.send("object.get", {"id": idxb})
+    check("told only a width, the zone is shared out — the neighbour backs up by half of it",
+          abs(g["start"] - 0.375 * D) < 1e-6, "start=%s, expected %s" % (g["start"], 0.375 * D))
+    c.send("crossfade.close", {"left": idxa, "right": idxb})
+    step("crossfade.open from the neighbour's edge", lambda: c.send("crossfade.open",
+         {"left": idxa, "right": idxb, "width": 0.25 * D, "start": 0.5 * D}))
+    gb = c.send("object.get", {"id": idxb})
+    ga = c.send("object.get", {"id": idxa})
+    check("anchored on the neighbour's edge, it does not move and the pulled side travels alone",
+          abs(gb["start"] - 0.5 * D) < 1e-6
+          and abs(ga["start"] + ga["duration"] - 0.75 * D) < 1e-6
+          and abs(ga["fade_out"] - 0.25 * D) < 1e-6 and abs(gb["fade_in"] - 0.25 * D) < 1e-6,
+          "left=%s right=%s" % (ga, gb))
+    # And the two facing SHAPES stay each edge's own through it: the zone commands the LENGTH and
+    # nothing else, which is what lets the created fade be the MIRROR of the one that was drawn
+    # (`a^p` and `a^(1/p)`, reflected through the diagonal) instead of a copy of it.
+    c.send("object.set_fade_curve", {"id": idxa, "out": "convex", "out_bend": 0.5})
+    c.send("object.set_fade_curve", {"id": idxb, "in": "concave", "in_bend": 0.5})
+    c.send("crossfade.open", {"left": idxa, "right": idxb, "width": 0.25 * D, "start": 0.5 * D})
+    ga = c.send("object.get", {"id": idxa})
+    gb = c.send("object.get", {"id": idxb})
+    check("a bulged fade and its hollowed mirror survive the zone being laid again",
+          ga["fade_out_curve"] == "convex" and abs(ga["fade_out_bend"] - 0.5) < 1e-9
+          and gb["fade_in_curve"] == "concave" and abs(gb["fade_in_bend"] - 0.5) < 1e-9,
+          "left=%s right=%s" % (ga["fade_out_curve"], gb["fade_in_curve"]))
+
     # Every fixture goes, the split's right-hand half included: the rows they occupy are the
     # timeline's LAST, and one left behind would move the floor the arrow assertions below stop at.
     step("remove the fade fixtures",
-         lambda: c.send("object.remove", {"ids": [idf, idt, idc] + (halves["ids"] if halves else [ids_])}))
+         lambda: c.send("object.remove", {"ids": [idf, idtr, idhd, idt, idc, idxa, idxb]
+                                                 + (halves["ids"] if halves else [ids_])}))
     c.send("selection.clear")
 
     # --- the time selection slides across the rows (the bare arrows), moving nothing

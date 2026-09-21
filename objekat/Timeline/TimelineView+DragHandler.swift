@@ -910,18 +910,25 @@ extension TimelineView {
                     // is crossing a gap, and crossing a gap is not making a crossfade.
                     if let sp = seamSpill(state, for: id) {
                         let pair = state.side == .out ? (id, sp.neighbour) : (sp.neighbour, id)
+                        // Built FROM the fade one drew, and not shared out between the two edges:
+                        // the neighbour's facing edge is the anchor and stays where it is, so the
+                        // fade one lets go of is exactly the length one gave it (@see seamSpill).
                         viewModel.openCrossfade(leftID: pair.0, rightID: pair.1,
-                                                width: sp.width, approach: sp.approach)
-                        // A crossfade is SYMMETRIC or it is not one, and the shape is half of that:
-                        // a bent fade spilling onto a flat neighbour used to make a lopsided X, one
-                        // side bulged and the other straight. So the pair takes ONE curve — the
-                        // hand's if it bent anything during the drag, the straight line otherwise.
-                        // Not the fade's own former shape: that shape was made for an edge, and it
-                        // arrives here as an asymmetry nobody asked for.
-                        let bent = state.overshootY != 0
-                        let curve = bent ? state.curve(for: id) : .linear
-                        viewModel.updateFadeCurve(id: pair.0, fadeOut: curve)
-                        viewModel.updateFadeCurve(id: pair.1, fadeIn: curve)
+                                                width: sp.width, anchor: sp.anchor,
+                                                approach: sp.approach)
+                        // And exactly the SHAPE one gave it, its own starting bend included. The
+                        // facing fade is created to its measure: the MIRROR of it, which is the
+                        // same curve reflected through the diagonal (@see FadeCurve.mirrored) —
+                        // what one side gives up the other takes back. The pair used to take ONE
+                        // curve, both sides alike, which is two fades hanging back together or
+                        // coming forward together; and a hand that had bent nothing straightened
+                        // the fade it was pulling, which was a shape lost to a gesture about
+                        // length.
+                        let curve = state.curve(for: id)
+                        viewModel.updateFadeCurve(id: pair.0,
+                                                  fadeOut: state.side == .out ? curve : curve.mirrored)
+                        viewModel.updateFadeCurve(id: pair.1,
+                                                  fadeIn: state.side == .in ? curve : curve.mirrored)
                         continue
                     }
                     if state.dEdge != 0, let a = state.edgeAnchors[id] {
@@ -1481,13 +1488,13 @@ extension TimelineView {
     /// The SHAPE under way, so the block draws what one is about to get — including the return to
     /// straight when the hand comes back inside the row.
     func previewFadeCurveIn(for object: SoundObject) -> FadeCurve? {
-        if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : spillCurve }
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : spillCurve(isLeft: false) }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.curve(for: object.id)
     }
 
     func previewFadeCurveOut(for object: SoundObject) -> FadeCurve? {
-        if let sp = spillPlan(for: object.id) { return sp.isLeft ? spillCurve : nil }
+        if let sp = spillPlan(for: object.id) { return sp.isLeft ? spillCurve(isLeft: true) : nil }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.curve(for: object.id)
     }

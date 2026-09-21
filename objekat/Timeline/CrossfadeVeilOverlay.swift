@@ -232,6 +232,7 @@ extension TimelineView {
             guard case .success(let plan) = viewModel.plannedCrossfade(leftID: pair.0,
                                                                       rightID: pair.1,
                                                                       width: sp.width,
+                                                                      anchor: sp.anchor,
                                                                       approach: sp.approach)
             else { return nil }
             return (plan, plan.leftID == id)
@@ -240,26 +241,50 @@ extension TimelineView {
     }
 
     /// What a fade pulled outwards is asking of its seam, for one of the objects the gesture
-    /// holds: the neighbour, the width of the zone it would open, and the gap it is crossing to
-    /// get there. `nil` while the edge has not REACHED the neighbour — it is then a plain
+    /// holds: the neighbour, the width of the zone it would open, the gap it is crossing to get
+    /// there, and the edge the zone is built FROM. `nil` while the edge has not REACHED the
+    /// neighbour — it is then a plain
     /// extension and nothing else, which is the whole difference between closing a gap and making
     /// a crossfade. One reading, so the preview and the commit cannot disagree about which of the
     /// two is happening.
     func seamSpill(_ fd: FadeDragState, for id: UUID)
-        -> (neighbour: UUID, width: Double, approach: EditViewModel.SeamApproach)? {
+        -> (neighbour: UUID, width: Double, approach: EditViewModel.SeamApproach,
+            anchor: EditViewModel.ZonePin?)? {
         guard fd.dEdge != 0, let n = fd.seamNeighbours[id] else { return nil }
         let gap  = fd.seamGaps[id] ?? 0
         let over = abs(fd.dEdge) - gap
         guard over > EditViewModel.seamEpsilon else { return nil }
+        // The zone is built FROM the fade the hand is pulling, and not shared out between the two
+        // edges. The NEIGHBOUR's facing edge is where the zone is anchored — it does not move at
+        // all — so the whole travel happens on the side the hand is on, and the fade one lets go
+        // of is exactly as long as the one one drew. Shared out, half of that travel went into
+        // backing the neighbour up, and the fade came out half the length the hand had given it.
+        // An anchor and not a pin: where the pulled side has no file left, the clamp still takes
+        // the difference out of the neighbour rather than stopping the gesture dead
+        // (@see EditViewModel.openCrossfade).
+        var anchor: EditViewModel.ZonePin? = nil
+        if let other = viewModel.find(id: n) {
+            anchor = fd.side == .out ? EditViewModel.ZonePin.start(other.startTime)
+                                     : EditViewModel.ZonePin.end(other.startTime + other.duration)
+        }
         return (n, (fd.zoneAnchors[id] ?? 0) + over,
-                gap > 0 ? (fd.side == .out ? .leftGrows(gap) : .rightGrows(gap)) : .none)
+                gap > 0 ? (fd.side == .out ? .leftGrows(gap) : .rightGrows(gap)) : .none,
+                anchor)
     }
 
-    /// The curve a spill is about to lay on BOTH sides: the hand's if it bent anything, straight
-    /// otherwise — the same rule as the commit, so the preview cannot promise another shape.
-    var spillCurve: FadeCurve {
-        guard let fd = fadeDrag, fd.overshootY != 0 else { return .linear }
-        return fd.curve(for: fd.grabbedID)
+    /// The curve a spill is about to lay on ONE of the two sides of the X — the same rule as the
+    /// commit, so the preview cannot promise another shape.
+    ///
+    /// The fade the hand is pulling keeps exactly what it drew, its own starting bend included: it
+    /// is the source, and straightening it because the hand happened not to leave the row would be
+    /// throwing away a shape nobody asked to lose. The facing one is its MIRROR — the reflection
+    /// through the diagonal (@see FadeCurve.mirrored) — so the two halves of the X hand over to
+    /// one another instead of both hanging back or both coming forward.
+    func spillCurve(isLeft: Bool) -> FadeCurve {
+        guard let fd = fadeDrag else { return .linear }
+        let drawn = fd.curve(for: fd.grabbedID)
+        // A fade-OUT pulled is the LEFT object's; a fade-in pulled is the right one's.
+        return (fd.side == .out) == isLeft ? drawn : drawn.mirrored
     }
 
     /// The crossfade the fade drag under way would open if it were released now, in canvas
@@ -278,17 +303,17 @@ extension TimelineView {
         let pair = fd.side == .out ? (fd.grabbedID, sp.neighbour) : (sp.neighbour, fd.grabbedID)
         guard case .success(let plan) = viewModel.plannedCrossfade(leftID: pair.0, rightID: pair.1,
                                                                   width: sp.width,
+                                                                  anchor: sp.anchor,
                                                                   approach: sp.approach),
               plan.width * pixelsPerSecond >= 1
         else { return nil }
         // The plan speaks in the container's time; the canvas in absolute time. One offset, read
         // off the row the gesture started on — the same conversion the rest of the canvas makes.
         let offset = entry.absStart - entry.item.startTime
-        let curve = spillCurve
         return (x: (plan.start + offset) * pixelsPerSecond,
                 y: rulerHeight + Double(entry.displayLane) * laneStep,
                 width: plan.width * pixelsPerSecond,
-                outCurve: curve, inCurve: curve)
+                outCurve: spillCurve(isLeft: true), inCurve: spillCurve(isLeft: false))
     }
 }
 
