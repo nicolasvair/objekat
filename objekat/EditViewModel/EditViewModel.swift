@@ -939,6 +939,20 @@ final class EditViewModel {
         snappedTime(t, excluding: excluding).time
     }
 
+    /// Re-pins the guide onto the value the gesture actually KEPT, once the caller has clamped it.
+    ///
+    /// `snapTime` answers the hand, and every edge-moving gesture then clamps that answer — the
+    /// end of the source material, t = 0, a minimum length, the far end of a region. The line was
+    /// left at the unclamped value, so the moment an edge hit its stop the edge froze and the
+    /// line went on travelling with the pointer: a reference mark that says an instant the edge
+    /// is not at is worse than none. The line stands where the EDGE stands.
+    ///
+    /// Grey, always: the value no longer comes from a mark it landed on — it comes from a wall.
+    func pinSnapGuide(to t: Double) {
+        guard let g = snapGuide, abs(g.time - t) > 1e-9 else { return }
+        snapGuide = SnapGuide(time: t, onTarget: false)
+    }
+
     /// The snap, PLUS the guide line it leaves behind. The line stands wherever the value landed,
     /// whether or not anything was there to catch it: with the snap off, or on a plain stretch of
     /// grid, it simply follows the edge, in grey.

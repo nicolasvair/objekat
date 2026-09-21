@@ -459,6 +459,7 @@ struct TimelineView: View {
                     renamingID: viewModel.renamingID,
                     scrollOffsetX: cullScrollX,
                     viewportWidth: cullViewportWidth,
+                    previews: objectMarkerPreviews,
                     width: totalDuration * pixelsPerSecond,
                     height: canvasHeight,
                     onRename: { id, name in
@@ -480,6 +481,7 @@ struct TimelineView: View {
                         blockHeight: blockHeight,
                         selected: viewModel.selectedAnnotation,
                         editingID: viewModel.renamingID,
+                        previewOffsets: commentPreviewOffsets,
                         onCommit: { id, text in
                             viewModel.renamingID = nil
                             guard let text else { return }

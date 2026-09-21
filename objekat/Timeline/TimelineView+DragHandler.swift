@@ -1025,6 +1025,9 @@ extension TimelineView {
             let maxDDur = state.anchors.values.map(\.room).min() ?? .infinity
             dDur = max(minDDur, min(maxDDur, dDur))
             state.dDur = dDur
+            // The edge has stopped — no material left, or the minimum length reached — and the
+            // guide stops with it (@see pinSnapGuide).
+            viewModel.pinSnapGuide(to: grabbed.start + grabbed.duration + dDur)
             // The cursor says live how much travel is left on each side — or, while looping, that the
             // travel is unbounded and REPEATS instead of revealing new content.
             if grabbed.looping {
@@ -1063,6 +1066,9 @@ extension TimelineView {
             let maxDStart = state.anchors.values.map { $0.duration - 0.01 }.min() ?? .infinity
             dStart = max(minDStart, min(maxDStart, dStart))
             state.dStart = dStart
+            // Idem: at t = 0, at the head of the file or at the minimum length, the line stays on
+            // the edge's real x rather than following the pointer past it (@see pinSnapGuide).
+            viewModel.pinSnapGuide(to: grabbed.start + dStart)
             setEdgeCursor(open: true, room: (dStart - minDStart, maxDStart - dStart))
 
             if phase == .ended {
@@ -1116,6 +1122,10 @@ extension TimelineView {
 
         let minStart = state.anchors.values.map { $0.start }.min() ?? 0
         dt = max(dt, -minStart)
+        // The move too comes up against t = 0 — the leftmost object of the selection stops there
+        // while the hand carries on. The guide is drawn on the grabbed object's edge, whichever of
+        // the two won the snap, so it is that edge it must be pinned to (@see pinSnapGuide).
+        viewModel.pinSnapGuide(to: grabbedAnchor.start + dt + (useEnd ? grabbedDur : 0))
         // dl is a DISPLAY lane delta: clamped in display space (not in base lanes, otherwise it
         // would be impossible to climb above the children of an expanded group).
         if state.timeSelectionAnchor != nil {
@@ -1394,6 +1404,45 @@ extension TimelineView {
         guard let md = moveDrag, md.ids.contains(object.id) else { return nil }
         if md.isAltCopy { return nil }
         return (md.dt * pixelsPerSecond, Double(md.dl) * laneStep)
+    }
+
+    /// The preview of the gesture under way, for the layer that draws the marks the objects carry
+    /// (@see ObjectMarkersOverlay.Preview). A mark lives in its object's frame: it has to travel
+    /// with the block while the hand carries it, and to go in and out of sight while an edge is
+    /// pulled over it — otherwise it says the wrong instant for the whole length of the gesture
+    /// and only snaps back on release.
+    ///
+    /// Built off the SAME helpers the blocks are positioned with, deliberately: a second channel
+    /// would be one more thing to keep in step. Empty while nothing is being dragged, which is
+    /// what keeps the overlay's Canvas from being redrawn for nothing.
+    var objectMarkerPreviews: [UUID: ObjectMarkersOverlay.Preview] {
+        guard moveDrag != nil || trimDrag != nil || resizeDrag != nil || fadeDrag != nil
+        else { return [:] }
+        var out: [UUID: ObjectMarkersOverlay.Preview] = [:]
+        for e in viewModel.laneEntries where !e.item.markers.isEmpty {
+            let o = previewOffset(for: e.item)
+            let p = ObjectMarkersOverlay.Preview(dx: o?.dx ?? 0, dy: o?.dy ?? 0,
+                                                 dLeft: previewTrimDX(for: e.item),
+                                                 dRight: previewResizeDX(for: e.item))
+            if p != ObjectMarkersOverlay.Preview() { out[e.item.id] = p }
+        }
+        return out
+    }
+
+    /// The travel of the GROUP a comment was laid in, while that group is being carried. Same
+    /// defect and same cure as the marks above: a comment stores its start in its parent's frame,
+    /// so it only reached its new place at the release (@see CommentsOverlay.previewOffsets).
+    /// A comment laid on the timeline itself has no parent, hence no travel — an object's move
+    /// does not take it, by design (@see TimelineComment).
+    var commentPreviewOffsets: [UUID: CGSize] {
+        guard moveDrag != nil else { return [:] }
+        var out: [UUID: CGSize] = [:]
+        for p in viewModel.visibleComments {
+            guard let pid = p.comment.parentID, let g = viewModel.find(id: pid),
+                  let o = previewOffset(for: g) else { continue }
+            out[p.id] = CGSize(width: o.dx, height: o.dy)
+        }
+        return out
     }
 
     var altDragGhosts: [(object: SoundObject, dx: Double, dy: Double)] {
@@ -1893,11 +1942,13 @@ extension TimelineView {
             if st.part == .resizeLeft {
                 let t = min(viewModel.snapTime(max(0, st.originTime + dt), excluding: mine),
                             originEnd - minD)
+                viewModel.pinSnapGuide(to: t)   // the minimum length is a wall (@see pinSnapGuide)
                 viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: t,
                                      duration: originEnd - t, pushesUndo: false)
             } else {
                 let t = max(viewModel.snapTime(max(0, originEnd + dt), excluding: mine),
                             st.originTime + minD)
+                viewModel.pinSnapGuide(to: t)
                 viewModel.moveMarker(laneID: st.laneID, markerID: st.markerID, to: st.originTime,
                                      duration: t - st.originTime, pushesUndo: false)
             }
@@ -1965,6 +2016,9 @@ extension TimelineView {
                                     excluding: [st.markerID])
         let window = viewModel.find(id: st.objectID)?.duration ?? 0
         let rel = (t - st.objectOrigin).clamped(to: 0...max(0, window))
+        // Clamped to the object's window: past an edge the mark stops, so the line stops too
+        // (@see pinSnapGuide).
+        viewModel.pinSnapGuide(to: st.objectOrigin + rel)
         if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
         viewModel.moveObjectMarker(objectID: st.objectID, markerID: st.markerID,
                                    toRelativeTime: rel, pushesUndo: false)
@@ -2081,8 +2135,10 @@ extension TimelineView {
             // as much, exactly like a clip's left handle.
             start = min(viewModel.snapTime(max(0, st.originStart + dt)), originEnd - minD)
             duration = originEnd - start
+            viewModel.pinSnapGuide(to: start)   // the minimum width is a wall (@see pinSnapGuide)
         case .resizeRight:
             duration = max(minD, viewModel.snapTime(max(0, originEnd + dt)) - st.originStart)
+            viewModel.pinSnapGuide(to: st.originStart + (duration ?? 0))
         }
 
         if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }

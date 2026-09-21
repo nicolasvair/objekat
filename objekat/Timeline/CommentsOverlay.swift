@@ -27,6 +27,13 @@ struct CommentsOverlay: View {
     var selected: AnnotationSel? = nil
     /// The comment being edited, if any (compared against `EditViewModel.renamingID`).
     var editingID: UUID? = nil
+    /// commentID → the travel, in canvas px, of the GROUP a comment was laid in while that group
+    /// is being carried. A comment stores its start and its row in its frame, so moving the group
+    /// moves the comment — at the release. Until then the block travelled and the note stayed
+    /// behind, over matter that is no longer under it. Empty outside a gesture.
+    /// @see `TimelineView.commentPreviewOffsets`, `ObjectMarkersOverlay.Preview` (same defect,
+    /// same cure, and the one place that holds the preview is the block's own).
+    var previewOffsets: [UUID: CGSize] = [:]
     /// nil = cancelled (Esc). Otherwise the new text.
     let onCommit: (UUID, String?) -> Void
 
@@ -56,8 +63,9 @@ struct CommentsOverlay: View {
                 // mouse while it is being EDITED. Selecting it is the canvas's job, geometrically
                 // (@see TimelineView.commentHit), like everything else here.
                 .allowsHitTesting(editingID == c.id)
-                .offset(x: placed.absStart * pixelsPerSecond,
-                        y: rulerHeight + Double(placed.displayLane) * laneStep)
+                .offset(x: placed.absStart * pixelsPerSecond + (previewOffsets[c.id]?.width ?? 0),
+                        y: rulerHeight + Double(placed.displayLane) * laneStep
+                           + (previewOffsets[c.id]?.height ?? 0))
             }
         }
     }

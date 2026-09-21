@@ -25,6 +25,27 @@ struct ObjectMarkersOverlay: View {
     /// slack under the name, which is what a hand aiming at a 6 px pennant needs.
     static let grabStripHeight: Double = 14
 
+    /// What a GESTURE UNDER WAY does to a block, in canvas px, so the marks travel with the matter
+    /// they name. It is the very preview the block is drawn with, read from the one place that
+    /// holds it (@see `TimelineView.previewOffset` / `previewTrimDX` / `previewResizeDX`) rather
+    /// than a second channel that would have to be kept in step.
+    ///
+    /// The two halves do NOT do the same thing, and that is the whole point:
+    /// • `dx` / `dy` — a MOVE. The object travels, and its marks travel with it; without this they
+    ///   stayed at the model's position and only jumped to their (correct) place on release.
+    /// • `dLeft` / `dRight` — a TRIM or a CROP. The window moves, the material does NOT, so a mark
+    ///   keeps its x and only the BOUNDS of what is drawn change: the edge is pulled in over a
+    ///   mark and the mark goes out, pulled back open and it comes back, live.
+    ///
+    /// Empty outside a gesture, which is also what keeps this layer diffable: the dictionary is
+    /// Equatable, so the Canvas is not redrawn for a preview nobody asked for.
+    struct Preview: Equatable {
+        var dx: Double = 0
+        var dy: Double = 0
+        var dLeft: Double = 0
+        var dRight: Double = 0
+    }
+
     let entries: [LaneEntry]
     let pixelsPerSecond: Double
     let rulerHeight: Double
@@ -34,6 +55,9 @@ struct ObjectMarkersOverlay: View {
     var renamingID: UUID? = nil
     var scrollOffsetX: CGFloat = 0
     var viewportWidth: CGFloat = 0
+    /// objectID → the gesture preview its block is drawn with. Empty while nothing is being
+    /// dragged. @see `Preview`
+    var previews: [UUID: Preview] = [:]
     let width: Double
     let height: Double
     /// nil = cancelled (Esc). Otherwise the new name, for the marker being renamed.
@@ -66,21 +90,29 @@ struct ObjectMarkersOverlay: View {
 
             for e in entries {
                 guard !e.item.markers.isEmpty else { continue }
-                let by = rulerHeight + Double(e.displayLane) * laneStep
+                // The gesture under way, if this object is in one. A move carries the marks along
+                // (dx/dy); a trim only moves the WINDOW, so the marks keep their x. @see Preview
+                let p = previews[e.item.id] ?? Preview()
+                let by = rulerHeight + Double(e.displayLane) * laneStep + p.dy
+                let startPx = e.absStart * pixelsPerSecond + p.dx
                 // The wall each name stops at, in canvas px: the next mark of THIS object, or the
                 // object's own right edge. The same rule as the band's (@see fittedMarkerLabel) —
                 // a name laid over the mark that follows it names the wrong instant, and on a
                 // block it would also run out over the neighbouring clip.
                 let edgesPx = e.item.markers
-                    .map { (e.absStart + $0.time) * pixelsPerSecond }.sorted()
-                let blockEndPx = (e.absStart + e.item.duration) * pixelsPerSecond
+                    .map { startPx + $0.time * pixelsPerSecond }.sorted()
+                let blockEndPx = startPx + e.item.duration * pixelsPerSecond + p.dRight
+                let windowStartPx = startPx + p.dLeft
                 for m in e.item.markers {
                     // Behind an edge: kept in the model, not drawn. A left trim or the right half of
                     // a cut pushes a marker out of the window, where it waits for the edge to be
                     // reopened (@see Array where Element == Marker). Drawing it would put it on top
                     // of a neighbour it has nothing to do with.
-                    guard m.time >= -1e-9, m.time <= e.item.duration + 1e-9 else { continue }
-                    let x = (e.absStart + m.time) * pixelsPerSecond
+                    //
+                    // Read against the PREVIEWED window rather than the model's, so the closing and
+                    // the reopening of an edge are seen while the hand is still on it.
+                    let x = startPx + m.time * pixelsPerSecond
+                    guard x >= windowStartPx - 0.5, x <= blockEndPx + 0.5 else { continue }
                     if x < visX0 || x > visX1 { continue }
                     let sel = selected == .objectMarker(object: e.item.id, marker: m.id)
                     // White by default here rather than a row's hue — a mark laid ON matter has no
