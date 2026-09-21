@@ -85,9 +85,13 @@ extension EditViewModel {
             // A split gives the fade to the right piece and leaves the left with none, which is
             // right for a division — but 'keep the left' is not a division, it is the END being
             // deleted, and there the fade stays, ending earlier (@see fadeOutAnchoredAtStart).
+            // Its SHAPE comes back with it: the split clears both on the edge it opens (@see
+            // freshCutCurve) and here the edge is not a new one — it is the object's own end,
+            // arriving earlier, and a fade that keeps its length keeps its curve.
             let keptFadeOut = EditViewModel.fadeOutAnchoredAtStart(
                 oldDuration: before.duration, oldFadeOut: before.fadeOut,
                 newDuration: splitTime - before.startTime)
+            let keptFadeOutCurve = before.fadeOutCurve
             guard let newID = _splitInternal(id: id, atTime: splitTime) else { continue }
             pairs = pairs.map {
                 $0.left == id ? CrossfadePair(left: newID, right: $0.right) : $0
@@ -95,7 +99,10 @@ extension EditViewModel {
             switch keeping {
             case nil:      result.formUnion([id, newID])
             case .left?:   remove(id: newID)
-                           if keptFadeOut > 0 { updateFadeOut(id: id, fadeOut: keptFadeOut) }
+                           if keptFadeOut > 0 {
+                               updateFadeOut(id: id, fadeOut: keptFadeOut)
+                               updateFadeCurve(id: id, fadeOut: keptFadeOutCurve)
+                           }
                            result.insert(id)
             case .right?:  remove(id: id);    result.insert(newID)
             }
@@ -211,7 +218,10 @@ extension EditViewModel {
             let offsets = splitSourceOffsets(of: child, at: splitTime)
             var lc = child
             lc.duration = splitTime - childStart
-            lc.fadeOut  = 0
+            // The two faces of the cut are born bare, shape included (@see freshCutCurve); the
+            // edges the cut did not touch keep theirs.
+            lc.fadeOut      = 0
+            lc.fadeOutCurve = Self.freshCutCurve
             lc.automation = autoL
             lc.markers    = markL
             lc.sourceOffset = offsets.left
@@ -219,6 +229,7 @@ extension EditViewModel {
             let rc = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: child.fadeOut,
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
                 markers: markR,
@@ -232,7 +243,8 @@ extension EditViewModel {
             let (leftNotes, rightNotes) = Self.splitMidiNotes(notes, atBeat: splitBeat)
             var lc = child
             lc.duration = splitTime - childStart
-            lc.fadeOut  = 0
+            lc.fadeOut      = 0
+            lc.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
             lc.automation = autoL
             lc.markers    = markL
             lc.kind = .midiClip(notes: leftNotes,
@@ -240,6 +252,7 @@ extension EditViewModel {
             let rc = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: child.fadeOut,
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
                 instruments: copiedInstruments(of: child),
                 automation: autoR,
@@ -260,12 +273,14 @@ extension EditViewModel {
                 var lg = child
                 lg.duration = splitTime - childStart
                 lg.fadeIn   = min(child.fadeIn, lg.duration)
-                lg.fadeOut  = 0
+                lg.fadeOut      = 0
+                lg.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
                 lg.automation = autoL
                 lg.markers    = markL
                 var rg = child.derivedCopy(
                     startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                     fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
+                    fadeInCurve: Self.freshCutCurve,
                     plugins: copiedPlugins(of: child),
                     automation: autoR,
                     markers: markR,
@@ -288,13 +303,15 @@ extension EditViewModel {
             var lg = child
             lg.duration = splitTime - childStart
             lg.fadeIn   = min(child.fadeIn, lg.duration)
-            lg.fadeOut  = 0
+            lg.fadeOut      = 0
+            lg.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
             lg.automation = autoL
             lg.markers    = markL
             lg.kind     = .group(children: innerLeft, isExpanded: isExpanded)
             let rg = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
                 markers: markR,
@@ -414,6 +431,9 @@ extension EditViewModel {
             let leftFadeOut = 0.0
             items[i].fadeIn  = leftFadeIn
             items[i].fadeOut = leftFadeOut
+            // The left half's new right edge: no length, and no SHAPE either — the engine keeps
+            // the window plugin of the object as it was, curve included (@see freshCutCurve).
+            items[i].fadeOutCurve = Self.freshCutCurve
             engine.updateFade(in: leftFadeIn, fadeOut: leftFadeOut, forID: id.uuidString)
 
             let rightFadeOut = min(original.fadeOut, original.duration - splitRel)
@@ -428,6 +448,7 @@ extension EditViewModel {
                 lane: original.lane,
                 fadeIn: 0,
                 fadeOut: rightFadeOut,
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: original),
                 automation: autoR,
                 markers: markR,
@@ -453,6 +474,11 @@ extension EditViewModel {
             // a send or plugin curve would have nowhere to write itself.
             pushAutomation(items[i])
             pushAutomation(rightObject)
+            // And the SHAPES: nothing on this path relays them (no `syncPosition`, and
+            // `setWindowForKey` says nothing of the curve), so the engine would keep the shape the
+            // object had on the very edge the cut has just cleared.
+            pushFadeCurveTree(items[i])
+            pushFadeCurveTree(rightObject)
             return newID
         }
 
@@ -478,7 +504,8 @@ extension EditViewModel {
             var leftChild = captured
             leftChild.duration = splitRelChild
             leftChild.fadeIn   = min(child.fadeIn, splitRelChild)
-            leftChild.fadeOut  = 0
+            leftChild.fadeOut      = 0
+            leftChild.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
             leftChild.automation = autoL
             leftChild.markers    = markL
             leftChild.sourceOffset = offsets.left
@@ -491,6 +518,7 @@ extension EditViewModel {
                 duration: child.startTime + child.duration - splitTime,
                 lane: child.lane,
                 fadeIn: 0, fadeOut: min(child.fadeOut, child.startTime + child.duration - splitTime),
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: captured),
                 automation: autoR,
                 markers: markR,
@@ -520,6 +548,8 @@ extension EditViewModel {
             // As in case 1, and for the same reason: last, with the carriers in place.
             pushAutomation(leftChild)
             pushAutomation(rightChild)
+            pushFadeCurveTree(leftChild)    // the cleared shapes, as in case 1
+            pushFadeCurveTree(rightChild)
 
             isDirty = true
             return rightID
@@ -542,7 +572,8 @@ extension EditViewModel {
             let (markL, markR) = original.markers.splitInTime(at: splitRel)
             guard var left = find(id: id) else { return nil }   // the FRESHLY linked original
             left.duration = splitRel
-            left.fadeOut  = 0
+            left.fadeOut      = 0
+            left.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
             left.automation = autoL
             left.markers    = markL
 
@@ -551,6 +582,7 @@ extension EditViewModel {
                 id: rightID, startTime: splitTime, duration: original.duration - splitRel,
                 lane: original.lane,
                 fadeIn: 0, fadeOut: original.fadeOut,
+                fadeInCurve: Self.freshCutCurve,
                 plugins: rightPlugins,
                 automation: autoR,
                 markers: markR,
@@ -575,7 +607,9 @@ extension EditViewModel {
             // right = a new aux, put back into the group if the original was in one.
             syncAuxWindow(left)
             pushAutomation(left)   // the left is not re-added: its trimmed curve is still to be pushed
+            pushFadeCurveTree(left)   // …and its cleared fade-out shape, which the window says nothing of
             engineAddAux(right)
+            pushFadeCurveTree(right)
             if let parent { engine?.assignObject(rightID.uuidString, toGroupFolder: parent.id.uuidString) }
 
             // The sends targeting the original aux target the right half too.
@@ -608,7 +642,8 @@ extension EditViewModel {
             guard var left = find(id: id) else { return nil }
             left.duration = splitRel
             left.fadeIn   = min(left.fadeIn, splitRel)
-            left.fadeOut  = 0
+            left.fadeOut      = 0
+            left.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
             left.automation = autoL
             left.markers    = markL
             left.kind     = .midiClip(notes: leftNotes,
@@ -619,6 +654,7 @@ extension EditViewModel {
                 id: rightID, startTime: splitTime, duration: original.duration - splitRel,
                 lane: original.lane,
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
+                fadeInCurve: Self.freshCutCurve,
                 plugins: rightPlugins, instruments: rightInstruments,
                 automation: autoR,
                 markers: markR,
@@ -651,6 +687,7 @@ extension EditViewModel {
                 engine?.assignObjects([rightID.uuidString], toStemID: sid.uuidString)
             }
             engine?.updateFade(in: 0, fadeOut: right.fadeOut, forID: rightID.uuidString)
+            pushFadeCurveTree(right)   // `syncPosition(left)` has already relayed the left's
             syncSends(right)
 
             isDirty = true
@@ -724,6 +761,7 @@ extension EditViewModel {
                 id: original.id, startTime: original.startTime, duration: splitRel,
                 lane: original.lane,
                 fadeIn: min(original.fadeIn, splitRel), fadeOut: 0,
+                fadeOutCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoL,
                 markers: markL,
@@ -733,6 +771,7 @@ extension EditViewModel {
                 id: rightID, startTime: splitTime, duration: original.duration - splitRel,
                 lane: original.lane,
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
+                fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoR,
                 markers: markR,

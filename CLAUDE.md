@@ -146,7 +146,12 @@ What has landed since mid-August, in order:
   starts as often as not from a curve that is already one. And the double click that erased a
   fade's length erases its SHAPE with it — with the bend anchored, nothing else in the gesture
   brings a curve back to the straight line, and a bend left behind a cleared fade would lie in wait
-  for the next time one pulled that edge. What
+  for the next time one pulled that edge. The same reasoning reaches every edge a CUT opens —
+  the scissors, the cut by dragging, a hole pierced by a time selection or by an object dropped
+  over another (`EditViewModel.freshCutCurve`, 21 September 2026): each half keeps the edge it
+  already had, fade AND shape, and the two faces of the cut are born bare, the shape cleared with
+  the length. A fade merely SHORTENED by matter going is not one of them — there the edge is the
+  old one with less room, and it keeps its curve. What
   gives the travel somewhere to GO is the family being a power `a^p` and not the quarter-sine it
   started with: `bend` maps to the exponent as `8 ^ bend` — geometric, which is what the eye and the
   ear read as an even progression — so the sine's whole bend now sits at about a third of the

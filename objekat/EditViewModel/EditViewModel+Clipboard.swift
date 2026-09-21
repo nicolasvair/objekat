@@ -312,6 +312,10 @@ extension EditViewModel {
 
     // MARK: - Time selection
 
+    /// The fragments the time selection carries off. A bound falling INSIDE an object cuts it, so
+    /// the fragment's edge there is one the selection has just opened: no fade, and no SHAPE
+    /// either (@see freshCutCurve). A bound falling exactly on the object's own edge takes that
+    /// edge as it stands, fade and curve — which is what the two ternaries say, on each field.
     func makeTimeSelectionFragments(lo: Double, hi: Double, lanes: Set<Int>) -> [SoundObject] {
         var capturedGroupIDs: Set<UUID> = []
         var fragments: [SoundObject] = []
@@ -349,6 +353,8 @@ extension EditViewModel {
                     lane: entry.displayLane,
                     fadeIn:  fragStart == s ? entry.item.fadeIn  : 0,
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
+                    fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
+                    fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
@@ -370,6 +376,8 @@ extension EditViewModel {
                     lane: entry.displayLane,
                     fadeIn:  fragStart == s ? entry.item.fadeIn  : 0,
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
+                    fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
+                    fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
                     instruments: copiedInstruments(of: entry.item),
                     automation: fragAutomation,
@@ -383,6 +391,8 @@ extension EditViewModel {
                     lane: entry.displayLane,
                     fadeIn:  fragStart == s ? entry.item.fadeIn  : 0,
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
+                    fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
+                    fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
@@ -420,6 +430,8 @@ extension EditViewModel {
                     lane: entry.displayLane,
                     fadeIn:  fragStart == s ? entry.item.fadeIn  : 0,
                     fadeOut: fragEnd   == e ? entry.item.fadeOut : 0,
+                    fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
+                    fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
@@ -687,7 +699,10 @@ extension EditViewModel {
                     let (markL, markR) = child.markers.splitInTime(at: cutLo - absStart)
                     var left = child
                     left.duration   = cutLo - absStart
-                    left.fadeOut    = 0
+                    // Both faces of the hole are edges this cut has opened: no length, and no
+                    // shape lying in wait behind it (@see freshCutCurve).
+                    left.fadeOut      = 0
+                    left.fadeOutCurve = Self.freshCutCurve
                     left.automation = autoL
                     left.markers    = markL
                     let loopBounds = clipLoopFileBounds(left)
@@ -697,6 +712,9 @@ extension EditViewModel {
                                            forID: left.id.uuidString)
                     engine?.updateFade(in: left.fadeIn, fadeOut: 0, forID: left.id.uuidString)
                     pushAutomation(left)
+                    // The cleared SHAPE too: the engine still holds the window plugin of the
+                    // child as it was, and no length carries a curve with it.
+                    pushFadeCurveTree(left)
                     updated.append(left)
 
                     // derivedCopy: the right half inherits the sends/chain gains/sound-object
@@ -706,6 +724,7 @@ extension EditViewModel {
                     let right = child.derivedCopy(
                         startTime: cutHi, duration: absEnd - cutHi, lane: child.lane,
                         fadeIn: 0, fadeOut: child.fadeOut,
+                        fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
                         markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
@@ -716,6 +735,7 @@ extension EditViewModel {
                     engine?.assignObject(right.id.uuidString, toGroupFolder: groupID.uuidString)
                     syncSends(right)
                     pushAutomation(right)
+                    pushFadeCurveTree(right)
                     updated.append(right)
                 }
 
@@ -762,7 +782,8 @@ extension EditViewModel {
                     let (markL, markR) = child.markers.splitInTime(at: cutLo - absStart)
                     var left = child
                     left.duration   = cutLo - absStart
-                    left.fadeOut    = 0
+                    left.fadeOut      = 0
+                    left.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
                     left.automation = autoL
                     left.markers    = markL
                     left.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: loBeat).left,
@@ -774,6 +795,7 @@ extension EditViewModel {
                     let right = child.derivedCopy(
                         startTime: cutHi, duration: absEnd - cutHi, lane: child.lane,
                         fadeIn: 0, fadeOut: child.fadeOut,
+                        fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: child),
                         instruments: copiedInstruments(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
@@ -785,6 +807,7 @@ extension EditViewModel {
                     engine?.updateFade(in: 0, fadeOut: right.fadeOut, forID: right.id.uuidString)
                     syncSends(right)
                     pushAutomation(right)
+                    pushFadeCurveTree(right)
                     updated.append(right)
                 }
 

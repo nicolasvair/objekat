@@ -85,6 +85,27 @@ extension EditViewModel {
         return max(0, oldFadeIn - (newStart - oldStart))
     }
 
+    /// The fade an edge the CUT has just OPENED is born with: none at all, SHAPE included.
+    ///
+    /// The third gesture, beside the two above. A crop moves an edge and the fade travels with it;
+    /// matter removed shortens the fade against the material left; and DIVIDING matter — the
+    /// scissors, the Cut tool, a hole pierced by a time selection or by an object dropped over
+    /// another — makes an edge that did not exist a moment ago. That edge inherits nothing: each
+    /// half keeps the edge it already had, fade and shape, and the two faces of the cut start bare.
+    ///
+    /// The LENGTH has always been zeroed at these sites. The SHAPE had not, and a shape left on a
+    /// fade of no length does not show: it lies in wait, and comes out bent the first time that
+    /// edge is pulled — a fade nobody drew curved. It is the very reasoning of the double click
+    /// that clears a fade, which clears its shape with its length (@see CLAUDE.md, "Shaped fades");
+    /// with the bend anchored on what is already there, nothing else in the gesture would bring
+    /// that edge back to the straight line.
+    ///
+    /// NOT for the edges the cut did not touch: the left half's fade-in and the right half's
+    /// fade-out are the ORIGINAL edges and keep their curve as they keep their length — and no
+    /// more for the fades merely SHORTENED by matter going (@see fadeOutAnchoredAtStart /
+    /// fadeInAnchoredAtEnd), where the edge is the old one with less room.
+    static let freshCutCurve: FadeCurve = .linear
+
     /// The fade the hand is MAKING, heard while it is being made — pushed to the engine and to
     /// NOTHING else: no model change, no undo point, no dirty flag. The gesture goes on owning
     /// the value; this is the engine being told what the eye is already shown.

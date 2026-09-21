@@ -362,8 +362,14 @@ full level and starts later. A deletion PAST the curve's far end leaves no fade 
 of it was inside the piece that went. In both cases the SHAPE is untouched (`fade_in_curve` /
 `fade_out_curve` are separate fields): a shorter fade is the same curve read over less room.
 
-A plain `object.split_at` is neither: there the fade-out goes with the right-hand half, the one that
-still ends where it ended, and the left half is born with none — its edge is NEW.
+*DIVIDING the matter* — `object.split_at`, the cut by dragging, a hole pierced by `timesel.delete`
+or by an object dropped over another — is neither. Each half keeps the edge it already had, fade
+and SHAPE, and gains a NEW one at the cut: the fade-out goes with the right-hand half, the one that
+still ends where it ended, the fade-in with the left, and the two faces of the cut are born bare.
+Bare means the shape too (`fade_out_curve` / `fade_out_bend` back to `linear` / `0` on the left
+half, `fade_in_*` on the right): a curve left on a fade of no length shows nowhere and would come
+out bent the first time that edge was pulled. It is the rule of the double click that clears a
+fade, which clears its shape with its length.
 
 ### Crossfades
 

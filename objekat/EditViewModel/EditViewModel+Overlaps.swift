@@ -109,7 +109,10 @@ extension EditViewModel {
     ///
     /// Shared with `carveTimeRange`, which shortens windows the same way and had the same hole.
     static func clampFades(_ o: inout SoundObject, clearFadeOut: Bool = false) {
-        if clearFadeOut { o.fadeOut = 0 }
+        // Its SHAPE goes with its length: an edge the cut has just opened inherits nothing, and a
+        // curve left on a fade of no length would come back out the first time that edge is
+        // pulled (@see EditViewModel.freshCutCurve).
+        if clearFadeOut { o.fadeOut = 0; o.fadeOutCurve = freshCutCurve }
         o.fadeOut = min(o.fadeOut, max(0, o.duration))
         o.fadeIn  = min(o.fadeIn, max(0, o.duration - o.fadeOut))
     }
@@ -179,6 +182,9 @@ extension EditViewModel {
                     toAdd.append(ex.derivedCopy(
                         startTime: ne, duration: rDur, lane: ex.lane,
                         fadeIn: 0, fadeOut: ex.fadeOut,
+                        // Born on the hole's right-hand face: no fade-in, and no shape behind it
+                        // either (@see freshCutCurve). The mirror of `clearFadeOut` on the left.
+                        fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
@@ -278,6 +284,9 @@ extension EditViewModel {
                     toAdd.append(ex.derivedCopy(
                         startTime: ne, duration: rDur, lane: ex.lane,
                         fadeIn: 0, fadeOut: ex.fadeOut,
+                        // Born on the hole's right-hand face: no fade-in, and no shape behind it
+                        // either (@see freshCutCurve). The mirror of `clearFadeOut` on the left.
+                        fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
@@ -309,6 +318,9 @@ extension EditViewModel {
             faded.duration = t.duration
             Self.clampFades(&faded, clearFadeOut: t.holeLeftPiece)
             engine?.updateFade(in: faded.fadeIn, fadeOut: faded.fadeOut, forID: t.old.id.uuidString)
+            // And its SHAPES, which `updateFade` says nothing of: the hole's left-hand piece has
+            // just had its fade-out curve cleared, and this path goes through no `syncPosition`.
+            pushFadeCurveTree(faded)
             // A trim without going through `syncPosition`: the trimmed sibling's curves, for their part,
             // are in relative time. They follow its new start on the ENGINE side, and realign on the
             // matter on the model side if it is the LEFT edge that moved (see `updateTrim`).
@@ -322,6 +334,7 @@ extension EditViewModel {
             engine?.assignObject(obj.id.uuidString, toGroupFolder: parent.id.uuidString)
             syncSends(obj)
             pushAutomation(obj)   // carriers in place → the right-hand piece's curves
+            pushFadeCurveTree(obj)   // …and its fade shapes, born with the window plugin
         }
 
         // Model: a single pass over the parent's CURRENT children (not the snapshot)

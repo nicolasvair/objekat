@@ -179,6 +179,11 @@ extension EditViewModel {
         // The carrying plugins have just been born (and the sends just wired): the sub-tree's curves
         // are to be pushed again, as `syncAdd` does for a top-level object.
         pushAutomationTree(child)
+        // And the fades' SHAPES, which travel beside them and for the same reason: the window
+        // plugin is reborn with the object, straight, and only the model knows it was bent.
+        // Without this, a group split inside another lost the shape of the edges the cut left
+        // alone (@see pushFadeCurveTree, and `syncAdd` which does the same at the top level).
+        pushFadeCurveTree(child)
         isDirty = true
     }
 

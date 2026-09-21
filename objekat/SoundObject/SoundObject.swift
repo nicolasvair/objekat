@@ -989,8 +989,14 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// would therefore name a plugin that is not in this copy. We remap it, pairing up the leaves
     /// of the two flattened lists in the same order; whatever does not pair up is DROPPED rather
     /// than left dangling (a curve with no carrier is worse than a missing curve).
+    /// `fadeInCurve` / `fadeOutCurve`: the SHAPE of one edge, for the rare caller that is not
+    /// copying an edge but OPENING one. A shape is inherited by default — it is part of what the
+    /// object is — but a copy born of matter being DIVIDED has an edge the cut just made, and that
+    /// edge inherits nothing (@see EditViewModel.freshCutCurve). Passing the shape here rather
+    /// than writing it back afterwards keeps it travelling beside the LENGTH it belongs to.
     func derivedCopy(id: UUID = UUID(), startTime: Double, duration: Double, lane: Int,
                      fadeIn: Double, fadeOut: Double,
+                     fadeInCurve: FadeCurve? = nil, fadeOutCurve: FadeCurve? = nil,
                      plugins: [ObjectPlugin], instruments: [ObjectPlugin] = [],
                      automation: [AutomationLane]? = nil,
                      markers: [Marker]? = nil,
@@ -1004,8 +1010,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
         return SoundObject(id: id, startTime: startTime, duration: duration, lane: lane,
                     volume: volume, pan: pan, fadeIn: fadeIn, fadeOut: fadeOut,
                     // The LENGTHS are the caller's business (it cuts, trims, fragments); the
-                    // SHAPES are the object's identity and are inherited as they are.
-                    fadeInCurve: fadeInCurve, fadeOutCurve: fadeOutCurve,
+                    // SHAPES are the object's identity and are inherited unless the caller, which
+                    // has just OPENED an edge, says otherwise.
+                    fadeInCurve:  fadeInCurve  ?? self.fadeInCurve,
+                    fadeOutCurve: fadeOutCurve ?? self.fadeOutCurve,
                     isMuted: isMuted, stemID: stemID,
                     plugins: plugins, instruments: instruments,
                     label: label, colorIndex: colorIndex,

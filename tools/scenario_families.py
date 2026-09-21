@@ -172,19 +172,41 @@ with ObjekatClient(SOCK) as c:
     fc = step("object.add fade cut", lambda: c.send("object.add", {"path": BIP, "lane": 12, "start": 0}))
     idc = fc["id"]
     c.send("object.set_fade", {"id": idc, "in": 0, "out": 0.4 * D})
+    c.send("object.set_fade_curve", {"id": idc, "out": "convex", "out_bend": 0.5})
     step("ripple_cut keeping the left", lambda: c.send("object.ripple_cut",
          {"id": idc, "seconds": 0.8 * D, "keep": "left"}))
     g = c.send("object.get", {"id": idc})
     check("keeping the left half is deleting the end, so the fade stays",
           abs(g["fade_out"] - 0.2 * D) < 1e-6, str(g))
+    check("…and its SHAPE stays with it: a shortened fade is the same curve with less room",
+          g["fade_out_curve"] == "convex" and abs(g["fade_out_bend"] - 0.5) < 1e-9, str(g))
     # A plain SPLIT is not that: there the fade goes with the right-hand piece, which is the half
     # that still ends where it ended.
     fs = step("object.add split", lambda: c.send("object.add", {"path": BIP, "lane": 13, "start": 0}))
     ids_ = fs["id"]
-    c.send("object.set_fade", {"id": ids_, "in": 0, "out": 0.4 * D})
+    c.send("object.set_fade", {"id": ids_, "in": 0.2 * D, "out": 0.4 * D})
+    # Both edges BENT before the cut: what the two halves do with the shapes is the whole
+    # question (21 September 2026). A shape left on the fade of no length the cut opens does not
+    # show — it lies in wait and comes out the first time that edge is pulled.
+    c.send("object.set_fade_curve", {"id": ids_, "in": "concave", "in_bend": 0.5,
+                                     "out": "convex", "out_bend": 0.75})
     halves = step("object.split_at", lambda: c.send("object.split_at", {"ids": [ids_], "seconds": 0.8 * D}))
     check("a split leaves the left half without a fade-out",
           abs(c.send("object.get", {"id": ids_})["fade_out"]) < 1e-9)
+    gl = c.send("object.get", {"id": ids_})
+    gr = c.send("object.get", {"id": [i for i in halves["ids"] if i != ids_][0]})
+    check("the edge the cut OPENED starts straight, on either half",
+          gl["fade_out_curve"] == "linear" and abs(gl["fade_out_bend"]) < 1e-9
+          and gr["fade_in_curve"] == "linear" and abs(gr["fade_in_bend"]) < 1e-9,
+          "left=%s/%s right=%s/%s" % (gl["fade_out_curve"], gl["fade_out_bend"],
+                                      gr["fade_in_curve"], gr["fade_in_bend"]))
+    check("and each half keeps the edge it already had, shape included",
+          gl["fade_in_curve"] == "concave" and abs(gl["fade_in_bend"] - 0.5) < 1e-9
+          and abs(gl["fade_in"] - 0.2 * D) < 1e-6
+          # 0.4 D of fade on a half 0.2 D long: the length clamps to the room left, the shape does not.
+          and gr["fade_out_curve"] == "convex" and abs(gr["fade_out_bend"] - 0.75) < 1e-9
+          and abs(gr["fade_out"] - 0.2 * D) < 1e-6,
+          "left=%s right=%s" % (gl, gr))
     # --- WHERE a crossfade's zone is taken FROM. `crossfade.open` on its own centres the zone on
     #     the join, both edges giving half: nothing there says which of two alike objects should
     #     give, so the join is the only landmark. A fade PULLED onto its neighbour is not that
