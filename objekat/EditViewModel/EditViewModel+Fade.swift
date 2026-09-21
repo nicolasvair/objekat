@@ -59,6 +59,27 @@ extension EditViewModel {
         return max(0, newDuration - (oldDuration - oldFadeOut))
     }
 
+    /// The fade-IN an object keeps when its START is taken away — the left trim by dragging, a
+    /// time selection deleted off the head. The exact mirror of `fadeOutAnchoredAtStart`.
+    ///
+    /// THE RULE: the fade's END — the instant the sound reaches its full level, a point IN the
+    /// matter — stays where it is, so the fade starts later and is SHORTENED by exactly what was
+    /// taken. Clearing it, which is what this did, made the passage start dead on; keeping it whole
+    /// would carry the level's arrival point forward over material the hand never meant to touch.
+    /// Its SHAPE is untouched: `fadeInCurve` is a separate field, and a shorter fade is the same
+    /// curve read over less room.
+    ///
+    /// A cut PAST the end of the curve leaves nothing to fade (the result goes negative, hence the
+    /// floor at 0): the whole of it was inside the piece that went.
+    ///
+    /// Only for an edge coming IN. Reopening the start reveals matter the fade never covered, and
+    /// there the fade keeps its length and follows the edge, as it always has.
+    static func fadeInAnchoredAtEnd(oldStart: Double, oldFadeIn: Double,
+                                    newStart: Double) -> Double {
+        guard newStart > oldStart else { return oldFadeIn }
+        return max(0, oldFadeIn - (newStart - oldStart))
+    }
+
     /// The fade the hand is MAKING, heard while it is being made — pushed to the engine and to
     /// NOTHING else: no model change, no undo point, no dirty flag. The gesture goes on owning
     /// the value; this is the engine being told what the eye is already shown.

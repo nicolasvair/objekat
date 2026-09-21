@@ -536,10 +536,17 @@ extension EditViewModel {
             } else if s >= lo && e > hi {
                 let delta = hi - s
                 update(id: id) { obj in
+                    // The START goes, and the object keeps its fade-in: the curve's END stays where
+                    // it is and the fade begins later, shortened by exactly what was taken (@see
+                    // fadeInAnchoredAtEnd). Clearing it, which is what this did, made the passage
+                    // after the selection start dead on. The mirror of the fade-out branch above.
+                    let fi = EditViewModel.fadeInAnchoredAtEnd(oldStart: s,
+                                                               oldFadeIn: obj.fadeIn,
+                                                               newStart: hi)
                     obj.startTime    += delta
                     obj.sourceOffset += delta * obj.speedRatio  // timeline delta → source = delta×speed
                     obj.duration      = e - hi
-                    obj.fadeIn        = 0
+                    obj.fadeIn        = fi
                     EditViewModel.clampFades(&obj)   // the mirror of the branch above
                     // The start has advanced, the matter has not: the curves realign on it
                     // (the same rule as `updateTrim`).
@@ -557,7 +564,8 @@ extension EditViewModel {
                 if let obj = find(id: id) {
                     syncPosition(obj)
                     if obj.isClip || obj.isMIDI {
-                        engine?.updateFade(in: 0, fadeOut: obj.fadeOut, forID: id.uuidString)
+                        // What the model kept, not a zero: the fade-in survives the cut, shortened.
+                        engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: id.uuidString)
                     } else if case .group = obj.kind, !porthole {
                         _cutGroupChildren(groupID: id, cutLo: s, cutHi: hi)
                     }

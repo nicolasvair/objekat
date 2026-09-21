@@ -150,7 +150,13 @@ extension EditViewModel {
             let oldStart = obj.startTime
             let oldDuration = obj.duration
             let D = max(0.01, newDuration)
-            var fi = obj.fadeIn
+            // The start comes in: the fade-in keeps its END and starts later, rather than
+            // travelling with the edge (@see fadeInAnchoredAtEnd, the mirror of what
+            // `updateDuration` does with the fade-out). Reopening the start leaves it alone, and
+            // the two clamps below stay the last word on both fades.
+            var fi = EditViewModel.fadeInAnchoredAtEnd(oldStart: obj.startTime,
+                                                       oldFadeIn: obj.fadeIn,
+                                                       newStart: newStart)
             var fo = obj.fadeOut
             if D < fo { fo = D; fi = 0 }
             else if D < fi + fo { fi = D - fo }

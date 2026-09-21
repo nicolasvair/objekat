@@ -694,7 +694,14 @@ extension TimelineView {
                 if !viewModel.selectedIDs.contains(item.id) {
                     viewModel.select(item.id, additive: false)
                 }
-                let ids: Set<UUID> = viewModel.selectedIDs.union([item.id])
+                // A selected DESCENDANT takes no part in its ancestor's trim — the same
+                // convention as the move (@see effectiveSelectedIDs), and here it is not merely a
+                // double edit: the clamp below is the MINIMUM over every anchor, so a child sitting
+                // at 0 s (or a clip entered at the head of its file) froze the whole gesture. A
+                // group cropped to 2 s could then never be reopened to 0: its children "blocked"
+                // an edge that is a framing of theirs, not a limit set by them. A group's window
+                // is a frame — trimming it must not trim what it holds.
+                let ids: Set<UUID> = viewModel.effectiveSelectedIDs.union([item.id])
                 let anchors = Dictionary(uniqueKeysWithValues:
                     ids.compactMap { viewModel.find(id: $0) }.map { obj in
                         // A group / aux / MIDI: no source content → `.infinity`, hence
@@ -709,7 +716,10 @@ extension TimelineView {
                 if !viewModel.selectedIDs.contains(item.id) {
                     viewModel.select(item.id, additive: false)
                 }
-                let ids: Set<UUID> = viewModel.selectedIDs.union([item.id])
+                // The mirror of the left trim just above, and for exactly the same reason: a child
+                // with nothing left after its right edge would forbid the group's end any outward
+                // travel at all.
+                let ids: Set<UUID> = viewModel.effectiveSelectedIDs.union([item.id])
                 let anchors = Dictionary(uniqueKeysWithValues:
                     ids.compactMap { viewModel.find(id: $0) }.map { obj in
                         (obj.id, (start: obj.startTime, duration: obj.duration,
