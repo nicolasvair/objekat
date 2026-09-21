@@ -106,6 +106,37 @@ extension EditViewModel {
         return true
     }
 
+    /// Moves the INSERTION CARET one displayed row up (`-1`) or down (`+1`) — the case where
+    /// NOTHING is selected: a plain click has laid a point of insertion, and the arrows walk THAT
+    /// point across the rows instead of falling through every branch and beeping.
+    ///
+    /// The same road as the time selection (@see stepTimeSelectionLanes), and for the same
+    /// reasons: DISPLAY rows, the empty ones counted (a caret on an empty lane is where a paste
+    /// lands), stopping at row 0 and at the last row the timeline draws, and NO undo — a caret is
+    /// where one is ABOUT to work, not something one has changed.
+    ///
+    /// The clamp is written as a step and not as a `min` on the target, for the trap the range
+    /// hit: a caret laid in the bottom headroom sits BELOW `lastRow`, and a `min(…, lastRow)`
+    /// would teleport it upwards instead of leaving it where it is.
+    ///
+    /// The ⇧-click origin travels WITH it, keeping its instant: the origin IS the point the last
+    /// click laid the caret at (@see timeSelectionOrigin), so an origin left on the row one has
+    /// just walked off would make the next ⇧-click trace a range from a row nobody is on.
+    @discardableResult
+    func stepCaretLane(by delta: Int) -> Bool {
+        guard delta != 0, timeSelection == nil, selectedIDs.isEmpty, let lane = caretLane else {
+            return false
+        }
+        let lastRow = displayLane(forBase: (items.map(\.lane).max() ?? 0) + 1)
+        let step = delta < 0 ? max(delta, -lane) : min(delta, max(0, lastRow - lane))
+        guard step != 0 else { return false }
+        caretLane = lane + step
+        if let origin = timeSelectionOrigin {
+            timeSelectionOrigin = (lane: lane + step, time: origin.time)
+        }
+        return true
+    }
+
     /// The frame a set of selected OBJECTS fills: from the first one's start to the last one's end,
     /// over the DISPLAY rows they sit on — the rows, because that is the space the range travels
     /// in, and a child of an open group has no row of its own in the model's lanes.

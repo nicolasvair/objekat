@@ -77,6 +77,53 @@ extension CommandRegistry {
             return .object(payload)
         }
 
+        register("caret.set",
+                 summary: "Lays the INSERTION CARET on a display row — what a plain click in an "
+                        + "empty part of the timeline does: the selections are let go of, and it is "
+                        + "from there that a paste lands and that the bare arrows then walk. "
+                        + "'time' moves the cursor with it, the cursor being the caret's instant.",
+                 params: [ParamSpec("lane", "int", "Display row."),
+                          ParamSpec("time", "number", required: false,
+                                    "Instant, in seconds (default: the cursor where it is).")],
+                 undo: .none) { p in
+            let session = try CommandContext.shared.requireSession()
+            let vm = session.viewModel
+            let lane = max(0, try p.int("lane"))
+            if p.raw["time"] != nil { session.seek(to: max(0, try p.double("time"))) }
+            vm.clearSelection()
+            vm.caretLane = lane
+            // A plain click lays the ⇧-extension origin at the same point (@see the tap handler).
+            vm.timeSelectionOrigin = (lane: lane, time: vm.cursorPosition)
+            return CommandAdapters.selectionPayload(vm)
+        }
+
+        register("caret.step_lane",
+                 summary: "Moves the INSERTION CARET one displayed row up or down — what the bare "
+                        + "↑ / ↓ arrows do when NOTHING is selected, a click alone having laid a "
+                        + "point of insertion. Nothing is modified and no undo is pushed. An empty "
+                        + "row is a row like any other, and at the two ends — row 0, and the last "
+                        + "row the timeline draws — the caret stays where it is. With a range "
+                        + "traced or objects selected the arrows belong to `timesel.step_lane`, "
+                        + "which is the state this command refuses.",
+                 params: [ParamSpec("by", "int", "-1 = one row up, +1 = one row down.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard vm.caretLane != nil else {
+                throw CommandError(code: .invalid_state, message: "no caret laid")
+            }
+            guard vm.timeSelection == nil, vm.selectedIDs.isEmpty else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a selection holds the arrows: see timesel.step_lane")
+            }
+            let moved = vm.stepCaretLane(by: try p.int("by"))
+            guard case .object(var payload) = CommandAdapters.selectionPayload(vm) else {
+                return CommandAdapters.selectionPayload(vm)
+            }
+            // False at an end: the caret stays exactly on the row it was on.
+            payload["moved"] = .bool(moved)
+            return .object(payload)
+        }
+
         register("timesel.copy",
                  summary: "Copies the content of the time selection to the clipboard.") { _ in
             let vm = try CommandContext.shared.requireViewModel()

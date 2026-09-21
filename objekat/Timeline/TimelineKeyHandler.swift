@@ -490,6 +490,13 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: 1) }
                     return nil
                 }
+                // Nothing selected at all, just a CARET laid by a click: the point of insertion is
+                // what travels (@see stepCaretLane). Below the branch above, which keeps its
+                // priority: a traced range and an object selection are still read first.
+                if vm.caretLane != nil, flags.intersection(Self.heldModifiers).isEmpty {
+                    DispatchQueue.main.async { vm.stepCaretLane(by: 1) }
+                    return nil
+                }
             case 126:  // ↑
                 if !vm.selectedMidiNoteIDs.isEmpty, !flags.contains(.command) {
                     DispatchQueue.main.async {
@@ -511,6 +518,11 @@ extension TimelineView {
                 if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
                    flags.intersection(Self.heldModifiers).isEmpty {  // one row up
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: -1) }
+                    return nil
+                }
+                // @see the ↓ branch: with nothing selected, the caret alone travels.
+                if vm.caretLane != nil, flags.intersection(Self.heldModifiers).isEmpty {
+                    DispatchQueue.main.async { vm.stepCaretLane(by: -1) }
                     return nil
                 }
             case 18, 19, 20, 21, 22, 23, 25, 26, 28,   // the digit row (the top of the keyboard)

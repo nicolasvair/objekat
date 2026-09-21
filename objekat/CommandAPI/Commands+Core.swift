@@ -639,6 +639,11 @@ enum CommandAdapters {
             "effective_ids": .array(vm.effectiveSelectedIDs.map { .string($0.uuidString) }),
             "count": .int(vm.selectedIDs.count),
         ]
+        // The insertion caret: the display row a plain click laid it on, and its instant. Reported
+        // beside the range because it is the state the bare ↑ / ↓ move when nothing is selected.
+        if let cl = vm.caretLane {
+            payload["caret"] = .object(["lane": .int(cl), "time": .number(vm.cursorPosition)])
+        }
         if let ts = vm.timeSelection {
             payload["time_selection"] = .object([
                 "start": .number(ts.timeRange.lowerBound),

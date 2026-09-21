@@ -667,6 +667,20 @@ With neither a time selection nor a usable object selection it answers `invalid_
 returns having touched NOTHING, the object selection included. The answer is the selection payload,
 plus `moved`.
 
+### Walking the insertion caret
+
+With **nothing selected at all** the arrows are not idle: a plain click in the timeline lays a
+CARET — a point of insertion, a row and an instant — and `caret.step_lane` (`by`: -1 up, +1 down) is
+what the bare ↑ / ↓ then move. The same road as above: displayed rows, empty ones counted, a stop at
+row 0 and at the last row the timeline draws, nothing modified and no undo. The ⇧-extension origin
+travels with the caret, keeping its instant, so a following ⇧-click traces from where the caret
+actually is. It answers `invalid_state` when there is no caret, and when a range or an object
+selection is holding the arrows — that case is `timesel.step_lane`'s.
+
+`caret.set` (`lane`, optional `time`) lays the caret as a plain click does: the selections are let
+go of, and `time` moves the cursor with it. The selection payload now carries **`caret`**
+(`lane` + `time`) whenever there is one.
+
 ### Ripple
 
 `timesel.ripple_delete` and `object.ripple_cut` do not merely remove matter: they **close the gap

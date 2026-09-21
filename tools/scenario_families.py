@@ -235,6 +235,24 @@ with ObjekatClient(SOCK) as c:
     c.send("timesel.clear")
     c.send("selection.clear")
 
+    # --- with NOTHING selected the arrows are not idle either: a plain click lays a CARET, and it
+    #     is that point of insertion which then walks the rows (same floor, same ceiling, no undo).
+    r = step("caret.set row 1", lambda: c.send("caret.set", {"lane": 1, "time": 0.25}))
+    check("a caret is laid where the click was, the selections let go of",
+          r and r.get("caret", {}).get("lane") == 1 and r["count"] == 0
+          and "time_selection" not in r, str(r))
+    r = step("caret.step_lane ↓", lambda: c.send("caret.step_lane", {"by": 1}))
+    check("↓ walks the caret one row down, its instant kept",
+          r and r["moved"] is True and r["caret"]["lane"] == 2
+          and abs(r["caret"]["time"] - 0.25) < 1e-9, str(r))
+    r = step("caret.step_lane ↓ at the floor", lambda: c.send("caret.step_lane", {"by": 1}))
+    check("the last row the timeline draws stops it, and the caret is kept",
+          r and r["moved"] is False and r["caret"]["lane"] == 2, str(r))
+    r = step("caret.step_lane ↑ ×3", lambda: c.send("caret.step_lane", {"by": -3}))
+    check("row 0 stops it going up, without losing the caret",
+          r and r["caret"]["lane"] == 0, str(r))
+    c.send("selection.clear")
+
     # --- an infinite bus changes row: an empty one takes it, another bus swaps with it, a row
     #     holding matter refuses it (a full-width band would cover whatever is there).
     x1 = step("aux.create bus 1",  lambda: c.send("aux.create", {"start": 0, "end": 1, "lane": 4}))
