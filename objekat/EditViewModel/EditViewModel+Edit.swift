@@ -117,12 +117,15 @@ extension EditViewModel {
         update(id: id) { obj in
             let D = max(0.01, duration)
             var fi = obj.fadeIn
-            // The end comes in: the fade-out keeps its START and ends earlier, rather than
-            // travelling back with the edge (@see fadeOutAnchoredAtStart). Pulling the end back out
-            // leaves it alone, and the two clamps below stay the last word on both fades.
-            var fo = EditViewModel.fadeOutAnchoredAtStart(oldDuration: obj.duration,
-                                                          oldFadeOut: obj.fadeOut,
-                                                          newDuration: D)
+            // A CROP DOES NOT CHANGE THE SIZE OF A FADE. This is the hand on the edge handle, and
+            // there the fade is a property of the EDGE, not of the matter behind it: the window
+            // moves and the fade-out keeps its LENGTH against the new end, exactly as the fade-in
+            // keeps its own against the start. Shortening it here (`fadeOutAnchoredAtStart`) made
+            // the two edges disagree under the same gesture, which is what was read on screen.
+            // Removing matter is the OTHER gesture (@see carveTimeRange, `cut(keeping:)`), and
+            // there the anchored helpers still hold. The two clamps below stay the last word: an
+            // object shorter than its fades is a physical limit, not a rule of its own.
+            var fo = obj.fadeOut
             if D < fi { fi = D; fo = 0 }
             else if D < fi + fo { fo = D - fi }
             // The RIGHT edge moves: played forwards the source range does not move, but in reverse
@@ -154,13 +157,12 @@ extension EditViewModel {
             let oldStart = obj.startTime
             let oldDuration = obj.duration
             let D = max(0.01, newDuration)
-            // The start comes in: the fade-in keeps its END and starts later, rather than
-            // travelling with the edge (@see fadeInAnchoredAtEnd, the mirror of what
-            // `updateDuration` does with the fade-out). Reopening the start leaves it alone, and
-            // the two clamps below stay the last word on both fades.
-            var fi = EditViewModel.fadeInAnchoredAtEnd(oldStart: obj.startTime,
-                                                       oldFadeIn: obj.fadeIn,
-                                                       newStart: newStart)
+            // The mirror of `updateDuration`: a trim does not change the size of a fade. The
+            // fade-in keeps its LENGTH and follows the start edge it is anchored to. Shortening it
+            // here (`fadeInAnchoredAtEnd`) belonged to the other gesture — matter REMOVED off the
+            // head (@see carveTimeRange) — and it came back through this door, which drives the
+            // mouse trim, the API's `object.trim` and the crossfade's edge travel alike.
+            var fi = obj.fadeIn
             var fo = obj.fadeOut
             if D < fo { fo = D; fi = 0 }
             else if D < fi + fo { fi = D - fo }

@@ -38,42 +38,47 @@ extension EditViewModel {
         isDirty = true
     }
 
-    /// The fade-out an object keeps when its END is taken away — the crop by dragging, a time
-    /// selection deleted off the tail, the Cut tool's 'keep the left'.
+    /// The fade-out an object keeps when matter is REMOVED off its end — a time selection deleted
+    /// off the tail, the Cut tool's 'keep the left', a relink onto a shorter file.
     ///
-    /// THE RULE: the fade's START stays where it is and the fade ends earlier. A fade-out is laid
-    /// on the sound one can see — it starts at a point IN the matter, not at a distance from the
-    /// edge — so taking half a second off the end must not carry that point half a second back over
-    /// material the hand never meant to touch, and must not clear the fade either. What was a fade
-    /// down to silence stays one: it simply has less room, and reaches silence at the new end.
+    /// NOT the crop / trim by dragging, nor `object.resize` / `object.trim`, which go through
+    /// `updateDuration` / `updateTrim`: there the hand is on the edge HANDLE and a fade keeps its
+    /// SIZE, travelling with the edge it is anchored to. The two gestures are told apart by what
+    /// the hand is doing, not by the fact that the object got shorter — that is the one distinction
+    /// this helper and its mirror exist to serve.
     ///
-    /// A cut PAST the fade's own start leaves nothing to fade (the result goes negative, hence the
-    /// floor at 0): the whole of the curve was inside the piece that went.
+    /// THE RULE, for removal: the fade's START stays where it is and the fade ends earlier. A
+    /// fade-out is laid on the sound one can see — it starts at a point IN the matter — so deleting
+    /// half a second of that matter must not carry the point half a second back over material
+    /// nobody touched, and must not clear the fade either. What was a fade down to silence stays
+    /// one: it simply has less room, and reaches silence at the new end.
     ///
-    /// Only for an edge coming IN. Pulling the end back OUT reveals matter the fade never covered,
-    /// and a fade that grew with it would be a shape nobody drew — there the fade keeps its length
-    /// and follows the edge, as it always has.
+    /// A removal PAST the fade's own start leaves nothing to fade (the result goes negative, hence
+    /// the floor at 0): the whole of the curve was inside the piece that went.
+    ///
+    /// Only for matter going: an end that moves OUTWARDS gets its fade back untouched.
     static func fadeOutAnchoredAtStart(oldDuration: Double, oldFadeOut: Double,
                                        newDuration: Double) -> Double {
         guard newDuration < oldDuration else { return oldFadeOut }
         return max(0, newDuration - (oldDuration - oldFadeOut))
     }
 
-    /// The fade-IN an object keeps when its START is taken away — the left trim by dragging, a
-    /// time selection deleted off the head. The exact mirror of `fadeOutAnchoredAtStart`.
+    /// The fade-IN an object keeps when matter is REMOVED off its head — a time selection deleted
+    /// there. The exact mirror of `fadeOutAnchoredAtStart`, and bounded by the same distinction:
+    /// NOT the left trim by dragging, nor `object.trim`, where the hand is on the edge handle and
+    /// the fade-in keeps its SIZE against the new start (@see `updateTrim`).
     ///
-    /// THE RULE: the fade's END — the instant the sound reaches its full level, a point IN the
-    /// matter — stays where it is, so the fade starts later and is SHORTENED by exactly what was
-    /// taken. Clearing it, which is what this did, made the passage start dead on; keeping it whole
-    /// would carry the level's arrival point forward over material the hand never meant to touch.
-    /// Its SHAPE is untouched: `fadeInCurve` is a separate field, and a shorter fade is the same
-    /// curve read over less room.
+    /// THE RULE, for removal: the fade's END — the instant the sound reaches its full level, a
+    /// point IN the matter — stays where it is, so the fade starts later and is SHORTENED by
+    /// exactly what was taken. Clearing it, which is what this path did, made the passage start
+    /// dead on; keeping it whole would carry the level's arrival point forward over material
+    /// nobody touched. Its SHAPE is untouched: `fadeInCurve` is a separate field, and a shorter
+    /// fade is the same curve read over less room.
     ///
-    /// A cut PAST the end of the curve leaves nothing to fade (the result goes negative, hence the
-    /// floor at 0): the whole of it was inside the piece that went.
+    /// A removal PAST the end of the curve leaves nothing to fade (the result goes negative, hence
+    /// the floor at 0): the whole of it was inside the piece that went.
     ///
-    /// Only for an edge coming IN. Reopening the start reveals matter the fade never covered, and
-    /// there the fade keeps its length and follows the edge, as it always has.
+    /// Only for matter going: a start that moves back OUTWARDS gets its fade back untouched.
     static func fadeInAnchoredAtEnd(oldStart: Double, oldFadeIn: Double,
                                     newStart: Double) -> Double {
         guard newStart > oldStart else { return oldFadeIn }

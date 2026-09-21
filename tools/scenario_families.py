@@ -115,25 +115,49 @@ with ObjekatClient(SOCK) as c:
           abs(r["pans"][0] - 1.0) < 1e-6, str(r["pans"]))
     c.send("object.set_pan", {"ids": [ida, idb], "pan": 0.0})
 
-    # --- the END goes, the fade-out stays: its START is anchored and it simply ends earlier
-    #     (16 September 2026). Three doors, one rule — the crop, a time selection deleted off the
-    #     tail, and the cut that keeps the left. Lengths are taken as fractions of the fixture's
-    #     own duration, so the assertions hold whatever bip.wav lasts.
+    # --- TWO GESTURES, told apart (21 September 2026). The hand on the edge HANDLE — the crop,
+    #     the trim, `object.resize` / `object.trim` — does not change the SIZE of a fade: the fade
+    #     travels with the edge it is anchored to. Matter REMOVED — a time selection deleted, the
+    #     cut that keeps the left — shortens the fade by exactly what went, its start (or its end)
+    #     staying opposite the same material. Lengths are taken as fractions of the fixture's own
+    #     duration, so the assertions hold whatever bip.wav lasts.
     fo = step("object.add fade", lambda: c.send("object.add", {"path": BIP, "lane": 10, "start": 0}))
     idf = fo["id"]
     D = c.send("object.get", {"id": idf})["duration"]
     c.send("object.set_fade", {"id": idf, "in": 0, "out": 0.4 * D})
     step("object.set_duration crops", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.8 * D}))
     g = c.send("object.get", {"id": idf})
-    # The fade began at 0.6·D and still does: 0.8·D − 0.6·D is left of it.
-    check("cropping the end keeps the fade, ending earlier",
-          abs(g["fade_out"] - 0.2 * D) < 1e-6, "fade_out=%s, expected %s" % (g["fade_out"], 0.2 * D))
+    check("cropping the end keeps the fade's SIZE — it follows the edge",
+          abs(g["fade_out"] - 0.4 * D) < 1e-6, "fade_out=%s, expected %s" % (g["fade_out"], 0.4 * D))
     step("object.set_duration lengthens", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.9 * D}))
-    check("pulling the end back OUT leaves the fade alone — it follows the edge",
-          abs(c.send("object.get", {"id": idf})["fade_out"] - 0.2 * D) < 1e-6)
-    step("object.set_duration past the fade", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.5 * D}))
-    check("a crop PAST the fade's own start leaves no fade at all",
-          abs(c.send("object.get", {"id": idf})["fade_out"]) < 1e-9)
+    check("pulling the end back OUT leaves the fade alone too",
+          abs(c.send("object.get", {"id": idf})["fade_out"] - 0.4 * D) < 1e-6)
+    step("object.set_duration under the fade", lambda: c.send("object.set_duration", {"id": idf, "duration": 0.3 * D}))
+    check("cropped SHORTER than its fade, the object clamps — a physical limit, not the rule",
+          abs(c.send("object.get", {"id": idf})["fade_out"] - 0.3 * D) < 1e-6)
+
+    # The left edge under the same hand: the fade-in keeps its size against the new start, which
+    # is the fade-out's mirror just above. This is what tells `object.trim` from a deletion.
+    tr = step("object.add trim", lambda: c.send("object.add", {"path": BIP, "lane": 14, "start": 0}))
+    idtr = tr["id"]
+    c.send("object.set_fade", {"id": idtr, "in": 0.2 * D, "out": 0.2 * D})
+    step("object.trim moves the start in",
+         lambda: c.send("object.trim", {"id": idtr, "start": 0.2 * D, "duration": 0.6 * D}))
+    g = c.send("object.get", {"id": idtr})
+    check("trimming the start keeps BOTH fades' size",
+          abs(g["fade_in"] - 0.2 * D) < 1e-6 and abs(g["fade_out"] - 0.2 * D) < 1e-6, str(g))
+
+    # And the other gesture on the same edge: matter taken off the head shortens the fade-in by
+    # exactly what went, instead of leaving it whole or clearing it.
+    hd = step("object.add fade head", lambda: c.send("object.add", {"path": BIP, "lane": 15, "start": 0}))
+    idhd = hd["id"]
+    c.send("object.set_fade", {"id": idhd, "in": 0.4 * D, "out": 0})
+    c.send("timesel.set", {"start": 0, "end": 0.2 * D, "lane": 15})
+    step("timesel.delete the head", lambda: c.send("timesel.delete"))
+    g = c.send("object.get", {"id": idhd})
+    check("a selection deleted off the head SHORTENS the fade-in by what went",
+          abs(g["fade_in"] - 0.2 * D) < 1e-6 and abs(g["duration"] - 0.8 * D) < 1e-6, str(g))
+    c.send("timesel.clear")
 
     ft = step("object.add fade tail", lambda: c.send("object.add", {"path": BIP, "lane": 11, "start": 0}))
     idt = ft["id"]

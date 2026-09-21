@@ -527,6 +527,15 @@ What has landed since mid-August, in order:
   the fade never covered, and a fade that grew with it would be a shape nobody drew. A plain SPLIT
   keeps the old rule and must: the fade goes with the RIGHT-hand half, the one that still ends where
   it ended.
+  **CORRECTED on 21 September 2026 — the crop is NOT one of those doors.** Read on screen: moving an
+  EDGE and taking MATTER away are two gestures, and only the second shortens a fade. Under the hand
+  on a trim handle (`updateDuration` / `updateTrim`, hence `object.resize` / `object.trim` and the
+  crossfade's edge travel) a fade keeps its SIZE and travels with the edge it is anchored to — the
+  clamps against the object's own length stay the last word, and that is a physical limit, not a
+  rule. `fadeOutAnchoredAtStart` and `fadeInAnchoredAtEnd` are now reserved for matter REMOVED:
+  `carveTimeRange`, the Cut tool's keep-the-left, a relink onto a shorter file. The fade-in half of
+  the 21 September morning's `adfa52d8` was undone in `updateTrim` for the same reason, and kept in
+  `carveTimeRange`, which is where it was asked for.
   Verified with no screen: a build; `scenario_families.py` 127 OK, with nine new assertions on the
   four doors (crop, lengthen, crop past the start, tail deleted, cut keeping the left, plain split);
   `scenario_markers.py` ALL PASS; `scenario_plugin_selection.py` 58; `smoke.jsonl` clean; i18n 393

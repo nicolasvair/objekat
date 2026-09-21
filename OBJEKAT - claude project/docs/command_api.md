@@ -344,14 +344,26 @@ Every object wears them, clip and group alike: in this engine ALL fades live in
 `ObjWindowFadePlugin` at the tail of the object's chain, and Tracktion's own clip fades are held at
 zero on purpose (@see OBJEngineCore.mm) — so there is one shape implementation and not two.
 
-**Taking the END away keeps the fade-out**, which is worth knowing before asserting on one. Its
-START stays where it is and the fade ends earlier with the edge, still reaching silence:
-`object.set_duration` shortening an object, `timesel.delete` over its tail and `object.ripple_cut
---keep left` all leave it that way. A crop PAST the fade's own start leaves no fade at all — the
-whole of the curve was inside the piece that went. Pulling the end back OUT does not touch it: the
-fade keeps its length and follows the edge, since what is revealed is matter the fade never covered.
-A plain `object.split_at` is NOT that case: there the fade goes with the right-hand half, the one
-that still ends where it ended, and the left half is born with none.
+**Two gestures shorten an object, and they do NOT treat its fades alike** — which is worth knowing
+before asserting on one.
+
+*Moving an EDGE* — `object.set_duration`, `object.trim`, and the crop / trim handles under the hand
+— **does not change the size of a fade**. A fade belongs to the edge it is anchored to and travels
+with it: crop an object whose fade-out lasts a second and it still lasts a second, against the new
+end. The only thing that can shorten it there is the object becoming too short to hold both fades,
+which is a physical limit and not a rule of its own. Pulling the edge back OUT likewise leaves the
+fade alone.
+
+*Taking MATTER away* — `timesel.delete` over an object's head or tail, `object.ripple_cut --keep
+left`, a relink onto a shorter file — **shortens the fade by exactly what went**. A fade-out starts
+at a point IN the sound, not at a distance from the edge: that point stays opposite the same
+material and the fade ends earlier, still reaching silence; a fade-in keeps the instant it reaches
+full level and starts later. A deletion PAST the curve's far end leaves no fade at all — the whole
+of it was inside the piece that went. In both cases the SHAPE is untouched (`fade_in_curve` /
+`fade_out_curve` are separate fields): a shorter fade is the same curve read over less room.
+
+A plain `object.split_at` is neither: there the fade-out goes with the right-hand half, the one that
+still ends where it ended, and the left half is born with none — its edge is NEW.
 
 ### Crossfades
 
