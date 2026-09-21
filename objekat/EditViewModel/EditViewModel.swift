@@ -1215,17 +1215,54 @@ final class EditViewModel {
 
     // MARK: - Internal helpers
 
-    /// The window we last titled. `NSApp.mainWindow` is nil while a panel is on screen (a
-    /// "Save as…" above all): the document window has resigned main, the title went nowhere, and
-    /// the new name only landed at the NEXT save. Remembering the window makes the rename take
-    /// effect at once, without going hunting through `NSApp.windows` — where a plugin's editor
-    /// or the panel itself would answer first.
+    /// The document window, remembered. It is NOT `NSApp.mainWindow`: that one is nil while a
+    /// panel is on screen (a "Save as…" above all), where the title would land nowhere and only
+    /// catch up at the NEXT save — and it is a PLUGIN'S EDITOR as soon as a knob has been
+    /// touched (JUCE's `OBJPluginEditorWindow`, or ours @see
+    /// `BuiltInPluginEditorWindowController`), which would then wear the project's name and its
+    /// proxy icon.
     @ObservationIgnored weak var titledWindow: NSWindow? = nil
 
+    /// The identifier SwiftUI gave that window, READ and never written (it is what SwiftUI
+    /// restores frames by). Only there to find the window again if the weak reference has gone.
+    @ObservationIgnored private var documentWindowIdentifier: NSUserInterfaceItemIdentifier? = nil
+
+    /// The window to title: the one remembered, or the one bearing the identifier noted at the
+    /// time of adoption. Nil before the adoption — and with no window at all (`--headless`).
+    private var documentWindow: NSWindow? {
+        if let window = titledWindow { return window }
+        guard let id = documentWindowIdentifier else { return nil }
+        titledWindow = NSApp.windows.first { $0.identifier == id }
+        return titledWindow
+    }
+
+    /// Remembers the window the `WindowGroup` opened. Called at the first `onAppear`: at that
+    /// moment the app has that window and no other — no plugin editor can exist yet — which is
+    /// what makes the identification safe. The window may not be there at the very first pass,
+    /// hence the few attempts (the same pattern as `ContentView.releaseInitialTextFocus`).
+    func adoptDocumentWindow(attempt: Int = 0) {
+        if let window = NSApp.windows.first(where: {
+            $0.styleMask.contains(.titled) && $0.contentView != nil && !($0 is NSPanel)
+        }) {
+            titledWindow = window
+            documentWindowIdentifier = window.identifier
+            updateWindowTitle()
+            return
+        }
+        guard attempt < 10 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.adoptDocumentWindow(attempt: attempt + 1)
+        }
+    }
+
     func updateWindowTitle() {
-        let title = isDirty ? "\(projectName) •" : projectName
-        if let main = NSApp.mainWindow { titledWindow = main }
-        titledWindow?.title = title
+        guard let window = documentWindow else { return }
+        window.title = isDirty ? "\(projectName) •" : projectName
+        // The project's file, which is what earns the window the proxy icon macOS gives a
+        // document for free: ⌘-click (and right-click) on the title drops down the folders
+        // holding the project, and choosing one opens it in the Finder. Nil as long as nothing
+        // has been saved — there is no place to show yet.
+        window.representedURL = projectURL
     }
 
     /// Adds a `.clip` object to the engine at its ABSOLUTE position, on its own track.

@@ -165,6 +165,10 @@ struct ContentView: View {
             // `NSApp.keyWindow` is still nil at that first onAppear (the window is not key):
             // the old call therefore never did anything. We try again briefly.
             Self.releaseInitialTextFocus()
+            // The document window is identified HERE, while it is the only one: it then wears
+            // the project's name and its file (the proxy icon, ⌘-click on the title), and a
+            // plugin's editor opened later can no longer be mistaken for it.
+            viewModel.adoptDocumentWindow()
             // Audio device status ('device — 44.1k — 512') in the title bar, on the right.
             // DISABLED for now: the title-bar accessory does not show reliably under this SwiftUI
             // WindowGroup (installation succeeds but nothing is visible). The code

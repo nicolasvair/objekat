@@ -40,8 +40,9 @@ extension EditViewModel {
     /// driving will call directly, skipping the panel but not a single line of the copying
     /// logic.
     func performSaveCopy(to destFolder: URL) {
-        let folderName = destFolder.lastPathComponent
-        let projectFileURL = destFolder.appendingPathComponent("\(folderName).objekat.json")
+        // The manifest bears the folder's name and nothing more: "My Project copy/My Project copy.json".
+        let folderName = EditViewModel.projectDisplayName(for: destFolder)
+        let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
 
         // Destination folders.
         let samplesDst  = destFolder.appendingPathComponent("samples", isDirectory: true)

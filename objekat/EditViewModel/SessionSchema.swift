@@ -2,7 +2,8 @@ import Foundation
 
 // MARK: - Session format notice
 
-/// What a `.objekat.json` holds, written AT THE HEAD of the file (the `_readme` key) and served
+/// What a project manifest (`<name>.json`) holds, written AT THE HEAD of the file (the
+/// `_readme` key) and served
 /// by the `project.schema` command.
 ///
 /// WHY IN THE FILE. A project travels: you send it to someone, you hand it to a language model,

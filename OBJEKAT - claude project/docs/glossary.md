@@ -67,7 +67,7 @@ source, not a translation.
 - The API's command names and their arguments: they are already in English and form a
   contract. Their descriptions and their error messages are in English **and are never
   localised** — a script must not depend on the language of the machine that hosts it.
-- The keys of the session file (`.objekat.json`): changing them would break existing projects.
+- The keys of the session file (`<name>.json`): changing them would break existing projects.
 - The names of the folders created on disk (`samples/`, `objects/`, `waveforms/`, `Objekat/`).
 - The tool labels (`Edit`, `Vol.`, `Pan`, `Aux`, `Cut`): their INITIAL is the shortcut's
   key. Translating the word would move the letter, and the shortcut would no longer be readable in the name.

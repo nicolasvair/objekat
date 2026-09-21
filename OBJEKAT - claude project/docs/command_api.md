@@ -182,7 +182,7 @@ run loop. So the app is indeed there, simply invisible (`.prohibited`), with no 
 
 ```bash
 objekat.app/Contents/MacOS/objekat --headless --no-audio --no-recent \
-    --project=/path/project.objekat.json --exec=scenario.jsonl
+    --project=/path/project.json --exec=scenario.jsonl
 objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 ```
 
@@ -883,7 +883,7 @@ its own wav files on disk.
 
 ### Reading a project without the app
 
-Every `.objekat.json` carries its own notice, under the `_readme` key, **at the head of the file**:
+Every manifest (`<name>.json`, `<name>.objekat.json` before September 2026) carries its own notice, under the `_readme` key, **at the head of the file**:
 the keys are sorted on writing and "_" comes before the lowercase letters, so it falls first
 under a reader's eye — human or model. It says the essential of what the file does not show:
 that `items` is a tree, that the times are in seconds **except MIDI, in musical time**,

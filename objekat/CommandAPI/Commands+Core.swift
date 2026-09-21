@@ -107,7 +107,7 @@ extension CommandRegistry {
         }
 
         register("project.open",
-                 summary: "Opens a .objekat.json version file.",
+                 summary: "Opens a project manifest (`<name>.json`, or a legacy `<name>.objekat.json`).",
                  params: [ParamSpec("path", "string", "Path to the project file.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
@@ -138,7 +138,8 @@ extension CommandRegistry {
 
         register("project.save_as",
                  summary: "Saves the project to a given path (creating samples/ and waveforms/).",
-                 params: [ParamSpec("path", "string", "Path of the .objekat.json file to write.")]) { p in
+                 params: [ParamSpec("path", "string",
+                                    "Path of the manifest, written AS GIVEN (`<name>.json`).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
             let url = URL(fileURLWithPath: path)
@@ -212,7 +213,7 @@ extension CommandRegistry {
         }
 
         register("project.schema",
-                 summary: "The session format's notice: what each field of a .objekat.json "
+                 summary: "The session format's notice: what each field of a project manifest "
                         + "file stands for.") { _ in
             // The same text as the one written at the head of the files (the `_readme` key): one
             // source, so the API cannot describe a format the files no longer follow.

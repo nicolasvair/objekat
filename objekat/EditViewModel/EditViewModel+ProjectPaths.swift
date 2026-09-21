@@ -9,7 +9,7 @@ import Foundation
 //     for a capsule's embedded sources): it travels WITH the project → we record a path
 //     RELATIVE to the project folder, otherwise moving (or renaming) the folder breaks the link.
 //
-// The conversion happens at the write/read boundaries — the `.objekat.json` version file
+// The conversion happens at the write/read boundaries — the `.json` version file
 // and the `*_objectstate.json` sidecars — never in memory: the live model, the engine and the
 // waveform cache go on handling absolute paths.
 //
