@@ -134,14 +134,18 @@ enum ParamRef: Codable, Equatable, Hashable {
 
     /// A dB value → text: NO decimal when the value is round (`+3 dB`, `-12 dB`), one when it
     /// carries something (`-12.5 dB`). The value is first brought onto the tenth it is read at, so
-    /// that a -11.97 coming out of a drag reads `-12 dB` and not `-12.0 dB`; the tenth of a
-    /// negative value that rounds to zero loses its sign (`0 dB`, never `-0 dB`).
+    /// that a -11.97 coming out of a drag reads `-12 dB` and not `-12.0 dB`; zero carries NO sign
+    /// at all (`0 dB`, never `+0 dB` nor `-0 dB`).
     /// The detent already lands the gesture on whole dB (@see `valueStep`): a decimal shown here
     /// means the value really has one.
     static func formatDb(_ value: Float) -> String {
         let tenths = (value * 10).rounded()
         let rounded = tenths == 0 ? 0 : tenths / 10
         let hasDecimal = tenths.truncatingRemainder(dividingBy: 10) != 0
+        // Zero has no direction: `+0 dB` reads like a gain that is not one (and `-0 dB` like an
+        // attenuation that is not one either). The explicit sign is kept for everything else — it
+        // is what tells a gain from a cut at a glance.
+        guard rounded != 0 else { return "0 dB" }
         return String(format: hasDecimal ? "%+.1f dB" : "%+.0f dB", rounded)
     }
 

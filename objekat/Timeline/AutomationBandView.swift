@@ -103,7 +103,12 @@ struct AutomationBandView: View {
     /// showPointValue): on a row some fifteen pixels tall, the eye reads no precision at all, and
     /// that figure is the only usable feedback. ONE state for the two, deliberately: the gesture
     /// writes over it and has priority as long as it lasts.
-    @State private var readout: (row: Int, x: Double, text: String)? = nil
+    ///
+    /// `y` is what tells the two apart on screen: nil = the gesture's badge, pinned at the TOP of
+    /// the row (during a drag the pointer IS on the point, and a badge stuck to it would sit under
+    /// the hand); set = the hovered point's own height, which is where one reads it (@see
+    /// drawReadout).
+    @State private var readout: (row: Int, x: Double, y: Double?, text: String)? = nil
     /// The HOVERED point (its row plus its storage index): the one that would answer the click. It
     /// carries a white halo, the same promise as the veil over an object's six zones (@see
     /// ClipEditZonesOverlay) — the view lights up where the hand is about to act, before one presses.
@@ -138,6 +143,9 @@ struct AutomationBandView: View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in
                 for (i, ref) in rows.enumerated() { draw(row: i, ref: ref, in: &ctx) }
+                // The badge LAST, over every row: anchored on a hovered point it leans out of its
+                // own row (@see drawReadout), and the next row's background would paint over it.
+                drawReadout(in: &ctx)
             }
             .allowsHitTesting(false)
 
@@ -279,7 +287,6 @@ struct AutomationBandView: View {
             drawCurve(pts, row: row, ref: ref, rect: rect, in: &ctx)
         }
 
-        drawReadout(row: row, rect: rect, in: &ctx)
     }
 
     /// The curve's polyline, CURVATURE INCLUDED. Straight segments (`c == 0`) are drawn in one
@@ -411,17 +418,31 @@ struct AutomationBandView: View {
         return path
     }
 
-    /// The figure for the gesture under way — or for the point hovered — laid above the cursor
-    /// (above the point, on a hover) and kept inside the band.
-    private func drawReadout(row: Int, rect: CGRect, in ctx: inout GraphicsContext) {
-        guard let r = readout, r.row == row else { return }
+    /// The figure for the gesture under way — or for the point hovered. One badge, one wording,
+    /// TWO anchors (@see the `readout` state): a gesture pins it at the top of the row, because
+    /// the pointer is on the point and would cover it; a hover lays it just beside the point,
+    /// at its height, which is where the eye already is.
+    ///
+    /// Kept whole inside the band, never inside the ROW alone: on a fifteen-pixel row a badge
+    /// clamped to the row would climb back onto the point it names. It leans above the point, and
+    /// only flips underneath when there is no room left over it.
+    private func drawReadout(in ctx: inout GraphicsContext) {
+        guard let r = readout, rows.indices.contains(r.row) else { return }
+        let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
         let text = Text(r.text)
             .font(.system(size: 9, weight: .semibold).monospacedDigit())
             .foregroundStyle(Color.white.opacity(0.9))
         let resolved = ctx.resolve(text)
         let size = resolved.measure(in: CGSize(width: 200, height: 20))
         let x = (r.x + 10).clamped(to: 0...max(0, rect.maxX - size.width - 4))
-        let y = rect.minY + 2
+        let y: Double = {
+            guard let py = r.y else { return rect.minY + 2 }
+            // Above the point by a hair — enough not to cover it nor the curve running through it;
+            // underneath if the band's top is in the way.
+            let above = py - size.height - 5
+            let placed = above >= 3 ? above : py + 5
+            return placed.clamped(to: 3...max(3, geo.interactiveHeight - size.height - 3))
+        }()
         let box = CGRect(x: x - 3, y: y - 1, width: size.width + 6, height: size.height + 2)
         ctx.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(.black.opacity(0.55)))
         ctx.draw(resolved, at: CGPoint(x: x, y: y), anchor: .topLeading)
@@ -592,7 +613,7 @@ struct AutomationBandView: View {
                 guard pts.indices.contains(i) else { return }
                 pts[i].c = c
             }
-            readout = (row: d.row, x: Double(location.x),
+            readout = (row: d.row, x: Double(location.x), y: nil,
                        text: String(format: L("automation.curveReadout"), c))
 
         case .staticValue:
@@ -715,25 +736,29 @@ struct AutomationBandView: View {
     }
 
     private func setReadout(row: Int, x: Double, ref: ParamRef, value: Float) {
-        readout = (row, x, viewModel.automationReadout(ref, value: value, on: object))
+        readout = (row, x, nil, viewModel.automationReadout(ref, value: value, on: object))
     }
 
-    /// The figure a point shows ON PLAIN HOVER — the same badge as the gesture's, in the same
-    /// place and the same words (@see drawReadout, automationReadout): on a row some fifteen
-    /// pixels tall the eye reads no value at all, and reading one must not say something other
-    /// than moving it. It changes nothing and creates no undo: it only puts into words the point
-    /// the halo is already naming.
+    /// The figure a point shows ON PLAIN HOVER — the same badge and the same words as the
+    /// gesture's (@see drawReadout, automationReadout): on a row some fifteen pixels tall the eye
+    /// reads no value at all, and reading one must not say something other than moving it. It
+    /// changes nothing and creates no undo: it only puts into words the point the halo is already
+    /// naming.
     ///
-    /// Anchored on the POINT and not on the cursor: the badge does not shiver under the hand, and
-    /// the state is written once per point hovered instead of once per pixel travelled (the same
-    /// concern as `setHover`).
+    /// Anchored on the POINT — its x AND its height: a badge at the top of the row while the eye
+    /// is on a point halfway down it names it from too far away. Only the POSITION differs from
+    /// the gesture's badge; the wording and the look are the same, so that the two read as one
+    /// piece of information. The badge does not shiver under the hand either, and the state is
+    /// written once per point hovered instead of once per pixel travelled (the same concern as
+    /// `setHover`).
     private func showPointValue(row: Int, index: Int, ref: ParamRef, points pts: [AutomationPoint]) {
         guard pts.indices.contains(index) else { return }
         let p = pts[index]
         let x = geo.x(ofT: p.t)
+        let y = geo.y(of: p.v, ref: ref, row: row)
         let text = viewModel.automationReadout(ref, value: p.v, on: object)
-        if readout?.row != row || readout?.x != x || readout?.text != text {
-            readout = (row: row, x: x, text: text)
+        if readout?.row != row || readout?.x != x || readout?.y != y || readout?.text != text {
+            readout = (row: row, x: x, y: y, text: text)
         }
     }
 }
