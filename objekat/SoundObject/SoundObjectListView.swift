@@ -160,11 +160,53 @@ struct SoundObjectListView: View {
             // is what claims the arrows — the same reading the plugin selection makes of a click
             // in the signal view.
             listFocused = true
-            viewModel.select(row.id, additive: false)
+            selectRow(row.id)
         }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded { activate(row) }
         )
+    }
+
+    // MARK: - Selecting, alone or by the handful
+    //
+    // **The list's selection IS the app's**: it is written into `viewModel.selectedIDs` through
+    // the very doors a click in the timeline uses (`select(_:additive:)`, `selectIDs`), so
+    // selecting here highlights the blocks over there, the inspector follows, and ⌫ ⌘C ⌘D mean
+    // what they always meant. There is no second selection to keep in step, which is the whole
+    // point of the panel being a table of contents rather than a browser.
+    //
+    // The two modifiers say what they say everywhere else in the app (@see
+    // `TimelineView+TapHandler`): ⌘ adds or removes ONE, ⇧ extends to a contiguous range. The one
+    // thing that is this list's own is what CONTIGUOUS means — the timeline's
+    // `extendSelectionTo` spans a rectangle of display lanes × time, which is what "between" means
+    // on a canvas, while between two ROWS of a flattened tree is the rows one sees in between.
+    // Same reading of the modifier, taken in the space the eye is actually working in; and like
+    // the timeline's, it needs NO anchor of its own — the range is taken from the ends of what is
+    // already selected, so nothing has to be remembered between two clicks.
+
+    /// A click on a row, the modifiers honoured.
+    private func selectRow(_ id: UUID) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift) { extendSelection(to: id) }
+        else { viewModel.select(id, additive: flags.contains(.command)) }
+    }
+
+    /// ⇧ — everything from the end of the current selection to the row clicked, over the rows
+    /// currently SHOWN: a range that swept up rows hidden by a fold or by the search would select
+    /// objects nobody can see, which is the one thing the arrows are careful not to do either.
+    ///
+    /// With nothing selected (or with a selection that is nowhere in this list — a child of a
+    /// folded group, say) there is nothing to extend FROM, so it behaves as a plain click.
+    private func extendSelection(to id: UUID) {
+        let shown = rows
+        guard let target = shown.firstIndex(where: { $0.id == id }) else { return }
+        let chosen = shown.indices.filter { viewModel.isSelected(shown[$0].id) }
+        guard let lo = chosen.min(), let hi = chosen.max() else {
+            viewModel.select(id, additive: false)
+            return
+        }
+        let range = min(lo, target)...max(hi, target)
+        viewModel.selectIDs(Set(range.map { shown[$0].id }))
     }
 
     // MARK: - Header

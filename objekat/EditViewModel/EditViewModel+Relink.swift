@@ -23,7 +23,10 @@ import Foundation
 //
 // **THE THREE GESTURES, and the line between them is a design decision (@see CONTRACTS, 1-2):**
 //   - `replaceSource(of:with:)` — the file is THERE and another one is wanted (a sound re-edited
-//     outside). One object, deliberate, never propagated, available when nothing is missing at all.
+//     outside). Deliberate, available when nothing is missing at all, and the unit is the OBJECT:
+//     the objects NAMED change and no other placement of the file does. Naming several is the
+//     hand's business (the sound list's selection), and so is the question "and the others?",
+//     which the dialog puts from `objectsSharingSource` — nothing propagates by itself here.
 //   - `relinkPath(_:to:)` / `repairPath(_:to:propagate:)` — a file is GONE. The unit is the PATH,
 //     not the object: one file lost breaks the N objects that name it, and putting it back mends
 //     all N in ONE undo point. Accidents come by packets, so a repair can propagate what it
@@ -78,27 +81,56 @@ extension EditViewModel {
         return nil
     }
 
-    // MARK: - Replacing the source of ONE object
+    // MARK: - Replacing the source of N objects
 
-    /// Points one object at another file. The deliberate gesture: no propagation, no question, and
-    /// available whether or not anything is missing — "I have re-edited that sound outside" is not
-    /// an accident to repair, it is an edit.
+    /// Points one object at another file. The contract door (`object.replace_source`), and the
+    /// single-object reading of the one just below.
+    @discardableResult
+    func replaceSource(of id: UUID, with url: URL) -> Bool {
+        replaceSource(of: [id], with: url)
+    }
+
+    /// Points N objects at another file, in ONE undo point. The deliberate gesture: no
+    /// propagation, no question, and available whether or not anything is missing — "I have
+    /// re-edited that sound outside" is not an accident to repair, it is an edit.
+    ///
+    /// The unit here is the OBJECT and not the path, which is exactly what tells this gesture from
+    /// a repair (@see the head of this file): the objects named are the ones that change, and no
+    /// other placement of the same file is touched unless it was named too. Offering the others is
+    /// the caller's business — it is a question, and this file never asks one (@see
+    /// `objectsSharingSource`, which the dialog reads to put it).
     ///
     /// Refuses an INSTANCE of a sound object (`definitionID != nil`): its content is not its own,
     /// it reads the definition's current wave, and the next re-bake would silently put that wave
-    /// back — a gesture undone by something the user did not do is worse than one refused.
+    /// back — a gesture undone by something the user did not do is worse than one refused. An id
+    /// that cannot take the file is DROPPED rather than failing the batch: a selection holding one
+    /// instance among ten sounds must still replace the ten.
     @discardableResult
-    func replaceSource(of id: UUID, with url: URL) -> Bool {
+    func replaceSource(of ids: [UUID], with url: URL) -> Bool {
         let path = url.path
-        guard let object = find(id: id), case .clip(let oldPath, _, _, _, _) = object.kind,
-              object.definitionID == nil,
-              oldPath != path,
-              FileManager.default.fileExists(atPath: path) else { return false }
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        // Deduplicated, the callers being free to hand over a selection plus the objects sharing
+        // its files — the two lists can overlap, and rebuilding one object twice would cost it its
+        // window a second time.
+        var seen = Set<UUID>()
+        let targets = ids.filter { id in
+            guard seen.insert(id).inserted,
+                  let object = find(id: id), case .clip(let oldPath, _, _, _, _) = object.kind,
+                  object.definitionID == nil, oldPath != path else { return false }
+            return true
+        }
+        guard !targets.isEmpty else { return false }
 
+        // The file is read ONCE however many objects take it, exactly as `rebuildClips` does for
+        // a repair: N objects on one take must not cost N reads.
         pushUndo()
         let length = audioFileDuration(url)
-        guard rebuildClip(id: id, onFile: path, fileLength: length,
-                          size: Self.fileSize(atPath: path)) else {
+        let size = Self.fileSize(atPath: path)
+        var done = 0
+        for id in targets {
+            if rebuildClip(id: id, onFile: path, fileLength: length, size: size) { done += 1 }
+        }
+        guard done > 0 else {
             _ = undoStack.popLast()
             return false
         }
@@ -107,6 +139,25 @@ extension EditViewModel {
         rescanMissingFiles()
         isDirty = true
         return true
+    }
+
+    /// The objects that read one of `paths` and are NOT in `excluding` — what "replace the others
+    /// too?" is asked about, and what it replaces when the answer is yes.
+    ///
+    /// The counterpart of `propagationTargets` for the deliberate gesture, and it counts OBJECTS
+    /// where that one counts paths: the sentence says "N other sounds use this file", and here
+    /// several placements of one take are several sounds to the eye. Only what `replaceSource`
+    /// would really accept is returned (an instance of a sound object is left out), so the figure
+    /// offered is a figure of things that will change. Sorted by nothing but the tree's own order
+    /// — `allClips` walks it — which is what makes a headless assertion repeatable.
+    func objectsSharingSource(_ paths: Set<String>, excluding: Set<UUID>) -> [UUID] {
+        guard !paths.isEmpty else { return [] }
+        return allClips.compactMap { clip -> UUID? in
+            guard case .clip(let p, _, _, _, _) = clip.kind,
+                  paths.contains(p), !excluding.contains(clip.id),
+                  clip.definitionID == nil else { return nil }
+            return clip.id
+        }
     }
 
     // MARK: - Repairing a PATH

@@ -5038,6 +5038,29 @@
         }
       }
     },
+    "menu.context.replaceFile.many": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace the File of %d Sounds…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reemplazar el archivo de %d sonidos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remplacer le fichier de %d sons…"
+          }
+        }
+      }
+    },
     "menu.context.replaceWithObjects": {
       "extractionState": "manual",
       "localizations": {
@@ -6924,6 +6947,29 @@
         }
       }
     },
+    "relink.panel.replace.message.many": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the sound that will replace the file of %d sounds."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elige el sonido que reemplazará el archivo de %d sonidos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisir le son qui remplacera le fichier de %d sons."
+          }
+        }
+      }
+    },
     "relink.panel.replace.prompt": {
       "extractionState": "manual",
       "localizations": {
@@ -7081,6 +7127,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tout réparer"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.info.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d other sound in the project uses the same file. Replace it too?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d sonido más del proyecto usa el mismo archivo. ¿Reemplazarlo también?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d autre son du projet utilise le même fichier. Le remplacer aussi ?"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.info.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d other sounds in the project use the same file. Replace them too?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d sonidos más del proyecto usan el mismo archivo. ¿Reemplazarlos también?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d autres sons du projet utilisent le même fichier. Les remplacer aussi ?"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.no.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This One Only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo este"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Celui-ci seulement"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.no.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Selection Only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo la selección"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La sélection seulement"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace the other sounds too?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Reemplazar también los demás sonidos?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remplacer aussi les autres sons ?"
+          }
+        }
+      }
+    },
+    "relink.replaceOthers.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace All"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reemplazar todo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout remplacer"
           }
         }
       }

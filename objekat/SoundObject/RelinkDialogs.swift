@@ -5,10 +5,11 @@ import UniformTypeIdentifiers
 // MARK: - The relink, as a hand performs it
 //
 // `EditViewModel+Relink` knows HOW to mend a sound; this file is the only place that ASKS. It
-// carries the three gestures' panels, the propagation's question and what is said afterwards —
-// once, for the two surfaces that offer them: a row of the sound list and a block of the timeline.
-// Two menus, one set of actions: an entry worded one way in the panel and another in the canvas
-// would be two features as far as anyone using them is concerned.
+// carries the three gestures' panels, the two questions and what is said afterwards — once, for
+// the two surfaces that offer them: a row of the sound list and a block of the timeline. Two
+// menus, one set of actions: an entry worded one way in the panel and another in the canvas would
+// be two features as far as anyone using them is concerned. The ONE item that is not on both is
+// "Replace File…", which belongs to the list alone (@see addRelinkItems for why).
 //
 // **THE HEADLESS RULE, and it is the reason every door here is guarded.** An `NSOpenPanel` or an
 // `NSAlert.runModal()` reached from a script would put a window on the screen of whoever is
@@ -42,7 +43,8 @@ enum RelinkUI {
     /// - **Replace is always available on a sound**, missing or not: "I have re-edited that file
     ///   outside" is an edit, not an accident (@see CONTRACTS, decision 1). It is withheld from an
     ///   INSTANCE of a sound object, whose content is not its own — `replaceSource` refuses one,
-    ///   and an item that can only fail is worse than no item.
+    ///   and an item that can only fail is worse than no item. It is also the one flag only ONE of
+    ///   the two menus reads: the item lives in the sound list (@see `addRelinkItems`).
     /// - **Repair only when the file is actually gone**, since there is nothing to repair
     ///   otherwise.
     /// - **An offline volume is not a lost file.** The drive is in a drawer; it comes back on its
@@ -75,27 +77,67 @@ enum RelinkUI {
         }
     }
 
-    // MARK: - Replacing the source of one sound
+    // MARK: - Replacing the source of one sound, or of several
 
-    /// "Replace File…": one sound pointed at another file. No propagation, no question — a
-    /// deliberate gesture on one object says nothing about any other (@see CONTRACTS, decision 1).
-    static func replaceSource(vm: EditViewModel, objectID: UUID) {
+    /// "Replace File…": the sounds NAMED pointed at another file. The deliberate gesture, and its
+    /// unit is the object — what is not named does not change (@see CONTRACTS, decision 1).
+    ///
+    /// **The one question it puts is about the OTHERS**, and it is the propagation's question worn
+    /// by the other gesture: the same file is very often laid down in several places, and having
+    /// re-edited it outside one almost always means all of them. So when objects the hand did NOT
+    /// name read the same file, they are offered — counted, with the two answers spelled out —
+    /// and never mentioned when there are none (a question with only one answer is not put).
+    ///
+    /// It is asked BEFORE anything is written, for the reason `repairLink` is built around: the
+    /// answer is folded into ONE call, hence ONE undo point, where asking afterwards would give a
+    /// ⌘Z that hands back half a gesture.
+    static func replaceSource(vm: EditViewModel, objectIDs: [UUID]) {
         guard vm.hasInterface else { return }
-        // Read from the MODEL at the moment of the action and not from the object the menu was
+        // Read from the MODEL at the moment of the action and not from the objects the menu was
         // built with: a menu is built, then shown, and what it was built from can have moved.
-        guard let object = vm.find(id: objectID), object.isClip else { return }
-        let oldPath = object.filePath
+        let targets = objectIDs.filter { id in
+            guard let object = vm.find(id: id) else { return false }
+            return object.isClip && object.definitionID == nil && !object.filePath.isEmpty
+        }
+        guard let first = targets.first, let firstObject = vm.find(id: first) else { return }
+        let oldPaths = Set(targets.compactMap { vm.find(id: $0)?.filePath }.filter { !$0.isEmpty })
+        let oldPath = firstObject.filePath
 
+        // The loud line names the FILE when there is one, and counts the sounds when the selection
+        // spans several: a panel headed with one name while five objects are about to change would
+        // be saying the wrong thing.
+        // No singular form for the second: several PATHS means at least two objects.
+        let message = oldPaths.count == 1
+            ? L("relink.panel.replace.message", (oldPath as NSString).lastPathComponent)
+            : L("relink.panel.replace.message.many", targets.count)
         guard let url = chooseFile(vm: vm,
                                    title: L("relink.panel.replace.title"),
-                                   message: L("relink.panel.replace.message",
-                                              (oldPath as NSString).lastPathComponent),
+                                   message: message,
                                    prompt: L("relink.panel.replace.prompt"),
                                    startingAt: nearestExistingDirectory(of: oldPath)) else { return }
         // The same file chosen again is not a failure and not a change: say nothing, do nothing.
-        guard url.path != oldPath else { return }
+        // The paths that will really move are what the question is asked about, so an object
+        // already reading the chosen file is counted nowhere — neither among the targets, which
+        // `replaceSource` drops on its own, nor among the others, which would make the figure say
+        // one more than the "yes" will do.
+        let changing = oldPaths.subtracting([url.path])
+        guard !changing.isEmpty else { return }
 
-        if !vm.replaceSource(of: objectID, with: url) {
+        var ids = targets
+        let others = vm.objectsSharingSource(changing, excluding: Set(targets))
+        if !others.isEmpty {
+            // The count and nothing else: with a selection spanning several files, naming one of
+            // them in the question would describe only part of what the "yes" is about.
+            if vm.confirm(L("relink.replaceOthers.title"),
+                          Ln("relink.replaceOthers.info", others.count, others.count),
+                          yes: L("relink.replaceOthers.yes"),
+                          no: Ln("relink.replaceOthers.no", targets.count),
+                          style: .informational) {
+                ids += others
+            }
+        }
+
+        if !vm.replaceSource(of: ids, with: url) {
             reportFailure(vm: vm, chosen: url)
         }
         // Success says itself: the name, the waveform and the red all change on screen. An alert
@@ -306,18 +348,22 @@ enum RelinkUI {
 /// (@see `addObjectMarkerItem`): an `NSMenuItem` per action, each targeting a `MenuActionProxy`
 /// the caller keeps alive — an item's target is held weakly, so a proxy that went out of scope
 /// would give a menu whose entries do nothing.
+///
+/// **"Replace File…" is deliberately NOT here**, and it is the one item the two menus differ by.
+/// Repairing answers an ACCIDENT and belongs wherever the red is seen, the timeline included;
+/// replacing is a deliberate act on a named object, it can now be aimed at several at once, and
+/// the place where several objects are named is the left panel's list. So it lives there and only
+/// there, and `plan.canReplace` is read here for the separator alone.
 @MainActor
 func addRelinkItems(menu: NSMenu, proxies: inout [MenuActionProxy],
                     vm: EditViewModel, object: SoundObject) {
     let plan = RelinkUI.MenuPlan(vm: vm, object: object)
-    guard !plan.isEmpty else { return }
+    // `isEmpty` counts the replace item this menu does not offer, so the emptiness is recomputed
+    // from what is really about to be drawn: without it a sound with nothing missing would open a
+    // menu holding one separator and no entry at all.
+    guard plan.canRepair || plan.offlineVolume != nil || plan.canSweepFolder else { return }
     if !menu.items.isEmpty { menu.addItem(.separator()) }
 
-    if plan.canReplace {
-        addRelinkItem(menu, &proxies, L("menu.context.replaceFile")) {
-            RelinkUI.replaceSource(vm: vm, objectID: plan.objectID)
-        }
-    }
     if plan.canRepair {
         addRelinkItem(menu, &proxies, L("menu.context.repairLink")) {
             RelinkUI.repairLink(vm: vm, objectID: plan.objectID)
@@ -332,9 +378,9 @@ func addRelinkItems(menu: NSMenu, proxies: inout [MenuActionProxy],
         menu.addItem(item)
     }
     if plan.canSweepFolder {
-        // The sweep is aimed at the PROJECT where the three above are aimed at one sound, so it
+        // The sweep is aimed at the PROJECT where the two above are aimed at one sound, so it
         // stands apart — the same separator the SwiftUI side draws, for the same reason.
-        if plan.canReplace || plan.canRepair || plan.offlineVolume != nil {
+        if plan.canRepair || plan.offlineVolume != nil {
             menu.addItem(.separator())
         }
         addRelinkItem(menu, &proxies, L("menu.context.repairFromFolder")) {
@@ -355,21 +401,48 @@ private func addRelinkItem(_ menu: NSMenu, _ proxies: inout [MenuActionProxy],
 
 // MARK: - The same items, for the sound list's SwiftUI menu
 
-/// The list's half of the same menu. The two are built from ONE `MenuPlan`, so an entry can never
-/// be offered on one side of the window and withheld on the other.
+/// The list's half of the same menu — plus "Replace File…", which is the list's alone (@see
+/// `addRelinkItems`). Both are built from ONE `MenuPlan`, so no OTHER entry can be offered on one
+/// side of the window and withheld on the other.
 ///
-/// The actions name their object EXPLICITLY and read nothing from the selection: a right click in
+/// The repairs name their object EXPLICITLY and read nothing from the selection: a right click in
 /// a list does not select, so acting on the selection would mend whichever row happened to be blue
-/// rather than the one under the pointer.
+/// rather than the one under the pointer — and a repair works on the PATH anyway, which mends
+/// every object naming it whatever is selected.
+///
+/// **Replacing is the exception, and it follows the app's batch rule** (the plugin cards': a card
+/// IN the selection speaks for the whole selection, one outside it speaks for itself). A right
+/// click on a row that is part of a multiple selection replaces the file of the WHOLE selection —
+/// that is what makes the selection worth making — and a right click anywhere else replaces that
+/// row alone. The item says which of the two it is about to do.
 struct RelinkContextMenuItems: View {
     var viewModel: EditViewModel
     let object: SoundObject
 
+    /// The objects "Replace File…" is about to act on: the selection when the row is in it, this
+    /// row alone otherwise.
+    ///
+    /// Walked through `allClips` and not through the selection set: a `Set` has no order, and the
+    /// panel's own heading reads the FIRST of these (which file it names, which folder it opens
+    /// in). The tree's order is the one the list shows.
+    private var replaceTargets: [UUID] {
+        let selected = viewModel.selectedIDs
+        guard selected.count > 1, selected.contains(object.id) else { return [object.id] }
+        return viewModel.allClips.compactMap { clip -> UUID? in
+            guard selected.contains(clip.id), clip.isClip,
+                  clip.definitionID == nil else { return nil }
+            return clip.id
+        }
+    }
+
     var body: some View {
         let plan = RelinkUI.MenuPlan(vm: viewModel, object: object)
         if plan.canReplace {
-            Button(L("menu.context.replaceFile")) {
-                RelinkUI.replaceSource(vm: viewModel, objectID: plan.objectID)
+            let targets = replaceTargets
+            // No singular form: the many-worded item is only ever drawn for two or more.
+            Button(targets.count > 1 ? L("menu.context.replaceFile.many", targets.count)
+                                     : L("menu.context.replaceFile")) {
+                RelinkUI.replaceSource(vm: viewModel, objectIDs: targets)
             }
         }
         if plan.canRepair {

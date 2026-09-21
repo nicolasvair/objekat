@@ -1134,11 +1134,13 @@ extension TimelineView {
                     addCommentItem(menu: menu, proxies: &proxies, vm: vm, selection: sel)
                 }
 
-                // The relink block: replace this sound's file, repair a link that is broken, or
-                // sweep a folder for everything the project has lost. The SAME items the sound
-                // list's rows carry, built from ONE plan (@see RelinkDialogs.MenuPlan) — an entry
-                // offered in one window and withheld in the other would be two features. It adds
-                // nothing when there is nothing to offer, its own separator included.
+                // The relink block: repair a link that is broken, or sweep a folder for everything
+                // the project has lost. The same items the sound list's rows carry, built from ONE
+                // plan (@see RelinkDialogs.MenuPlan) — an entry offered in one window and withheld
+                // in the other would be two features. It adds nothing when there is nothing to
+                // offer, its own separator included. The one exception is deliberate and is
+                // documented at `addRelinkItems`: "Replace File…" belongs to the list alone, being
+                // a deliberate act on named objects rather than an answer to an accident.
                 if let target = hit.colorable {
                     addRelinkItems(menu: menu, proxies: &proxies, vm: vm, object: target)
                 }
