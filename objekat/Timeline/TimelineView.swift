@@ -1827,8 +1827,18 @@ struct TimelineView: View {
     /// The marker CARRIED BY AN OBJECT that a point lands on. Only the top strip of a block takes
     /// them: the rest of its surface belongs to the object itself, and a marker must not make a
     /// block harder to grab.
+    /// The horizontal reading is done in TIME, exactly as the band reads its own marks
+    /// (@see `markerBandZone`, which is this function's model in every other respect too) — and
+    /// that conversion is what was MISSING: `point.x` arrives in PIXELS while the mark's instant,
+    /// the tolerance and the name's span are all in seconds. The comparison could therefore only
+    /// come true within a handful of pixels of the canvas's left edge, so a mark carried by an
+    /// object was unreachable by EVERY gesture at once — the click that selects it, the double
+    /// click that renames it, the right click that opens its menu and the drag that moves it all
+    /// ask this one question, and all four got nil. The menu, the inline field and the model's
+    /// `moveObjectMarker` existed and were correct; none of them had a door onto the hand.
     func objectMarkerHit(at point: CGPoint) -> AnnotationSel? {
         guard pixelsPerSecond > 0 else { return nil }
+        let t    = point.x / pixelsPerSecond
         let grab = MarkerBandGeometry.grabPx / pixelsPerSecond
         for e in viewModel.laneEntries {
             let by = rulerHeight + Double(e.displayLane) * laneStep
@@ -1837,9 +1847,9 @@ struct TimelineView: View {
                 // Only what is INSIDE the window: a marker pushed behind an edge is kept but not
                 // drawn, so it must not be clickable either (@see Array where Element == Marker).
                 guard m.time >= 0, m.time <= e.item.duration else { continue }
-                let t = e.absStart + m.time
+                let mt = e.absStart + m.time
                 let labelSpan = MarkerBandGeometry.labelWidth(m.name) / pixelsPerSecond
-                if point.x >= t - grab && point.x <= t + max(grab, labelSpan) {
+                if t >= mt - grab && t <= mt + max(grab, labelSpan) {
                     return .objectMarker(object: e.item.id, marker: m.id)
                 }
             }

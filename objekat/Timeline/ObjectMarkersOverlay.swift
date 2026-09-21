@@ -13,10 +13,17 @@ import SwiftUI
 /// PURE PRESENTATION: the clicks are resolved by `TimelineView.objectMarkerHit`, geometrically,
 /// like everything else in the canvas.
 struct ObjectMarkersOverlay: View {
-    /// The height of the strip at the top of a block that belongs to the markers. It bounds the
-    /// drawing AND the grab zone (@see TimelineView.objectMarkerHit): the rest of the block's
-    /// surface belongs to the object, and a marker must not make a block harder to grab.
-    static let grabStripHeight: Double = 11
+    /// The height of the strip at the top of a block the markers answer in (@see
+    /// `TimelineView.objectMarkerHit`): the rest of the block's surface belongs to the object, and
+    /// a marker must not make a block harder to grab. It bounds the GRAB only — the drawing goes
+    /// on using the whole block height for the tick, which is what names an instant in the matter.
+    ///
+    /// 14 px, raised from 11 on 21 September 2026 after the marks were found unreachable: the
+    /// pennant and its name occupy the first 9 or so, and a band row — the thing this is meant to
+    /// feel like — is 17 px of which every pixel grabs. 14 keeps the block's upper half in the
+    /// majority (a fade handle and a traced range still live there) while leaving a few pixels of
+    /// slack under the name, which is what a hand aiming at a 6 px pennant needs.
+    static let grabStripHeight: Double = 14
 
     let entries: [LaneEntry]
     let pixelsPerSecond: Double

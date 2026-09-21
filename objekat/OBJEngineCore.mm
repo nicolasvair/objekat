@@ -875,6 +875,9 @@ struct OBJRenderChain {
                     end:(double)endSecs
                  fadeIn:(double)fadeIn
                 fadeOut:(double)fadeOut;
+// Mémorise (ou oublie) ce que `key` a sous le zéro de la timeline. @see _headCutMap
+- (void)noteHeadCutForKey:(const std::string&)key modelStart:(double)startSecs;
+- (double)headCutForKey:(const std::string&)key;
 // Oublie tout ce que le moteur retient de l'objet (chaîne, repères, appartenance).
 - (void)forgetObjectBookkeeping:(const std::string&)key;
 // Retire les envois dont l'émetteur et l'aux ne sont plus au même niveau de montage.
@@ -936,6 +939,27 @@ struct OBJRenderChain {
     // pour un aux (canLoop l'exclut côté modèle) ni consulté pour un groupe infini (pas de
     // fenêtre à dépasser). @see [[loop-item-plan]]
     std::unordered_map<std::string, te::TimeRange>            _groupLoopRangeMap;
+    // objectID → durée (secondes) que l'objet a SOUS LE ZÉRO de la timeline, quand le modèle le
+    // fait commencer avant lui. C'est un fait légitime du modèle : la fenêtre d'un groupe est un
+    // CADRE, pas une coupe, donc croper un groupe puis le ramener à 0 laisse ses enfants — dont la
+    // position est absolue — à un temps négatif, et ré-ouvrir le bord doit les rendre. Tracktion,
+    // lui, ne sait pas représenter ça : `Clip::setPosition` clampe le début à 0 et GARDE la fin
+    // (tracktion_Clip.cpp), sans toucher à l'offset — le clip se mettait donc à jouer le début de
+    // son fichier au zéro, tout son contenu en avance d'autant, et sa queue perdue.
+    //
+    // La traduction est faite à l'entrée (@see updatePosition:) : le début se pose à 0 et c'est
+    // l'OFFSET SOURCE qui absorbe la coupe, exactement comme un rognage du bord gauche
+    // (@see WaveformShaping.retrimmedSourceOffset, même convention, reverse compris). Ce qui
+    // reste ici est ce que l'offset ne dit pas — de combien la fenêtre a été raccourcie en tête —
+    // et sert à poser les fondus (@see setWindowForKey:) et à rendre au modèle sa vérité
+    // (@see getClipStartTimeForID:). Absent = l'objet commence à 0 ou après.
+    std::unordered_map<std::string, double>                   _headCutMap;
+    // objectID → fondus (entrée, sortie) TELS QUE LE MODÈLE LES POSE, avant le raccourcissement
+    // que peut leur valoir une tête passée sous le zéro. La fenêtre se repose à chaque
+    // déplacement, et la reposer en RELISANT le fondu du plugin rendrait ce raccourcissement
+    // cumulatif — puis irréversible le jour où l'objet repasse au-dessus de 0. Le modèle fait foi,
+    // donc on garde ce qu'il a dit. @see setWindowForKey:
+    std::unordered_map<std::string, std::pair<double, double>> _modelFadeMap;
     // objectID → fader ObjGain (volume/pan) dans sa plugin-list hôte. Repère EXPLICITE : la
     // chaîne contient d'autres ObjGain (trims début/fin), on ne peut plus « prendre le premier ».
     std::unordered_map<std::string, te::Plugin::Ptr>          _faderGainMap;
@@ -1596,6 +1620,16 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 
 // Repose la fenêtre + les fades de l'objet (ObjWindowFade mémorisé). Conserve les fades
 // courants si `keepFades` (déplacement/redimensionnement).
+- (void)noteHeadCutForKey:(const std::string&)key modelStart:(double)startSecs {
+    if (startSecs < 0.0) _headCutMap[key] = -startSecs;
+    else                 _headCutMap.erase(key);
+}
+
+- (double)headCutForKey:(const std::string&)key {
+    auto it = _headCutMap.find(key);
+    return it == _headCutMap.end() ? 0.0 : it->second;
+}
+
 - (void)setWindowForKey:(const std::string&)key
                   start:(double)startSecs
                     end:(double)endSecs
@@ -1603,6 +1637,21 @@ static te::Track* objOwningTrack(te::Clip& clip) {
                 fadeOut:(double)fadeOut {
     auto it = _windowFadeMap.find(key);
     if (it == _windowFadeMap.end()) return;
+
+    // Un objet qui commence sous le zéro de la timeline (@see _headCutMap). La fenêtre se pose à
+    // 0 — il n'y a pas d'avant — et le FONDU D'ENTRÉE perd exactement ce qui est passé dessous :
+    // sa FIN, l'instant du plein niveau, est un point DANS la matière et ne doit pas bouger.
+    // Même règle que `EditViewModel.fadeInAnchoredAtEnd` côté Swift, et pour la même raison : le
+    // laisser entier ferait redémarrer le fondu au zéro, donc arriver au niveau trop tard.
+    //
+    // La coupe vient de l'appel quand il porte encore le début du modèle (updateGroupWindow:,
+    // updateAuxWindow:), et de la table quand elle a déjà été appliquée à l'étendue du clip
+    // qu'on relit ici (updateFadeIn:fadeOut:forID:). Jamais des deux : le clamp du début est
+    // inconditionnel et ne dépend pas de la provenance.
+    const double headCut = startSecs < 0.0 ? -startSecs : [self headCutForKey:key];
+    startSecs = juce::jmax(0.0, startSecs);
+    fadeIn    = juce::jmax(0.0, fadeIn - headCut);
+
     if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
         w->setWindow(startSecs, endSecs, fadeIn, fadeOut);
 }
@@ -2175,6 +2224,31 @@ static bool moveClipToOwner(te::Clip& clip, te::ClipOwner& dest) {
     }
     if (!clip) return;
 
+    // SOUS LE ZÉRO — un objet que le modèle fait commencer avant le début de la timeline. C'est
+    // un état ordinaire ici : les enfants d'un groupe portent une position ABSOLUE, la fenêtre du
+    // groupe n'est qu'un cadre, donc croper un groupe puis le ramener à 0 pousse légitimement sa
+    // matière de tête sous le zéro — et ré-ouvrir le bord doit la rendre.
+    //
+    // Tracktion ne sait pas la porter : `setPosition` clampe le début à 0, GARDE la fin et NE
+    // TOUCHE PAS à l'offset (tracktion_Clip.cpp). Laissé faire, le clip jouait le début de son
+    // fichier au zéro — tout son contenu en avance de la coupe, et sa queue jamais atteinte.
+    //
+    // On traduit donc nous-mêmes, et la traduction est celle d'un ROGNAGE du bord gauche jusqu'à
+    // 0 : même convention que `WaveformShaping.retrimmedSourceOffset` côté modèle, reverse
+    // compris — à l'endroit c'est le bord GAUCHE qui commande la plage source (l'offset avance de
+    // la coupe × la vitesse), à l'envers c'est le bord DROIT, qui ne bouge pas (l'offset reste,
+    // et la formule proxy plus bas se recale seule sur la durée raccourcie).
+    // La coupe est mémorisée : elle sert ensuite aux fondus (@see setWindowForKey:) et à rendre
+    // au modèle sa vérité (@see getClipStartTimeForID:). @see _headCutMap
+    [self noteHeadCutForKey:key modelStart:startTime];
+    double headCut = 0.0;
+    if (startTime < 0.0) {
+        // Entièrement sous le zéro ⇒ étendue nulle, donc muet : rien à entendre avant le début.
+        headCut   = juce::jmin(-startTime, duration);
+        startTime = juce::jmax(0.0, startTime + headCut);
+        duration  = juce::jmax(0.0, duration - headCut);
+    }
+
     te::ClipPosition pos;
     pos.time = te::TimeRange(
         te::TimePosition::fromSeconds(startTime),
@@ -2197,7 +2271,11 @@ static bool moveClipToOwner(te::Clip& clip, te::ClipOwner& dest) {
     if (!isMidi) {
         const double speed = clip->getSpeedRatio();
         auto* acb = dynamic_cast<te::AudioClipBase*>(clip);
-        double offsetSourceSecs = sourceOffset;
+        // `headCut` : la tête passée sous le zéro avance le point d'entrée fichier d'autant (en
+        // secondes SOURCE, donc × vitesse) — c'est ce qui maintient à sa place ce qu'on entend à
+        // un instant donné. En reverse la branche ci-dessous écrase ce calcul : là c'est le bord
+        // DROIT qui commande la plage, il n'a pas bougé, et la durée raccourcie suffit.
+        double offsetSourceSecs = sourceOffset + headCut * speed;
         if (acb && acb->getIsReversed()) {
             const double srcLen = acb->getSourceLength().inSeconds();   // fichier d'ORIGINE
             offsetSourceSecs = srcLen - sourceOffset - duration * speed;
