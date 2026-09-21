@@ -97,6 +97,16 @@ struct AutomationBandView: View {
     /// become ten times twitchier than a tall one.
     private static let curveDragTravel: Double = 60
 
+    /// The badge's clearance from the point it names (@see drawReadout): to its right by `dx`, and
+    /// `gap` clear of it vertically. WIDER under a gesture than under a hover — dragging, the
+    /// pointer sits ON the point and its glyph spills down and to the right of its hotspot, so the
+    /// figure has to step aside further to stay readable.
+    private static let readoutOffset: (hover: (dx: Double, gap: Double), drag: (dx: Double, gap: Double))
+        = (hover: (10, 5), drag: (18, 11))
+    /// The badge's height, as guessed BEFORE drawing — `beginDrag` has to choose its side without a
+    /// `GraphicsContext` to measure in (@see BandDrag.badgeBelow). A 9 pt line, rounded up.
+    private static let readoutHeightGuess: Double = 12
+
     @State private var lastTap: (time: Date, loc: CGPoint) = (.distantPast, .zero)
     @State private var drag: BandDrag? = nil
     /// The value shown during a gesture — and, with no gesture, that of the point HOVERED (@see
@@ -104,9 +114,9 @@ struct AutomationBandView: View {
     /// that figure is the only usable feedback. ONE state for the two, deliberately: the gesture
     /// writes over it and has priority as long as it lasts.
     ///
-    /// `y` is what tells the two apart on screen: nil = the gesture's badge, pinned at the TOP of
-    /// the row (during a drag the pointer IS on the point, and a badge stuck to it would sit under
-    /// the hand); set = the hovered point's own height, which is where one reads it (@see
+    /// `y` is the height to read it at: that of the point (hovered or dragged), so the figure is
+    /// where the eye already is. nil = pinned at the TOP of the row, which is left to the
+    /// CURVATURE alone — it names a bend, not a value, and has no point to sit by (@see
     /// drawReadout).
     @State private var readout: (row: Int, x: Double, y: Double?, text: String)? = nil
     /// The HOVERED point (its row plus its storage index): the one that would answer the click. It
@@ -134,6 +144,10 @@ struct AutomationBandView: View {
         let origPoints: [AutomationPoint]
         let origStatic: Float
         let start: CGPoint
+        /// Which side of the point the badge sits on, FROZEN at the grab. Recomputing it at every
+        /// step would have it leap over the point the moment the drag skims the height where the
+        /// rule changes sides; decided once, it holds for the whole gesture (@see drawReadout).
+        let badgeBelow: Bool
         /// The last known cursor position: it allows REPLAYING the gesture without a mouse movement,
         /// when ⌘ flips the snap along the way.
         var last: CGPoint
@@ -419,13 +433,14 @@ struct AutomationBandView: View {
     }
 
     /// The figure for the gesture under way — or for the point hovered. One badge, one wording,
-    /// TWO anchors (@see the `readout` state): a gesture pins it at the top of the row, because
-    /// the pointer is on the point and would cover it; a hover lays it just beside the point,
-    /// at its height, which is where the eye already is.
+    /// ONE anchor: the point's own height, hover and gesture alike. Only the clearance differs
+    /// (@see readoutOffset), the pointer sitting on the point during a gesture. The curvature is
+    /// the exception: no value, no point — it stays at the top of the row.
     ///
     /// Kept whole inside the band, never inside the ROW alone: on a fifteen-pixel row a badge
     /// clamped to the row would climb back onto the point it names. It leans above the point, and
-    /// only flips underneath when there is no room left over it.
+    /// flips underneath when there is no room left over it — a choice FROZEN for the whole of a
+    /// gesture (@see BandDrag.badgeBelow), since under the hand it is the point that moves.
     private func drawReadout(in ctx: inout GraphicsContext) {
         guard let r = readout, rows.indices.contains(r.row) else { return }
         let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
@@ -434,13 +449,15 @@ struct AutomationBandView: View {
             .foregroundStyle(Color.white.opacity(0.9))
         let resolved = ctx.resolve(text)
         let size = resolved.measure(in: CGSize(width: 200, height: 20))
-        let x = (r.x + 10).clamped(to: 0...max(0, rect.maxX - size.width - 4))
+        let off = drag == nil ? Self.readoutOffset.hover : Self.readoutOffset.drag
+        let x = (r.x + off.dx).clamped(to: 0...max(0, rect.maxX - size.width - 4))
         let y: Double = {
             guard let py = r.y else { return rect.minY + 2 }
             // Above the point by a hair — enough not to cover it nor the curve running through it;
-            // underneath if the band's top is in the way.
-            let above = py - size.height - 5
-            let placed = above >= 3 ? above : py + 5
+            // underneath when the top of the band is in the way. Under a gesture the side was
+            // settled at the grab and does not change any more.
+            let below = drag?.badgeBelow ?? (py - size.height - off.gap < 3)
+            let placed = below ? py + off.gap : py - size.height - off.gap
             return placed.clamped(to: 3...max(3, geo.interactiveHeight - size.height - 3))
         }()
         let box = CGRect(x: x - 3, y: y - 1, width: size.width + 6, height: size.height + 2)
@@ -668,7 +685,9 @@ struct AutomationBandView: View {
         viewModel.select(object.id, additive: false)
         viewModel.beginAutomationEdit()
         drag = BandDrag(ref: ref, row: row, mode: mode, origPoints: pts,
-                        origStatic: staticValue(ref), start: p, last: p)
+                        origStatic: staticValue(ref), start: p,
+                        badgeBelow: p.y - Self.readoutHeightGuess - Self.readoutOffset.drag.gap < 3,
+                        last: p)
     }
 
     // MARK: - Curvature
@@ -735,8 +754,13 @@ struct AutomationBandView: View {
         return (snapped - object.startTime).clamped(to: 0...max(0, geo.maxT))
     }
 
+    /// The gesture's badge, at the height of the VALUE being set — the same anchor as the hover's
+    /// (@see showPointValue): the figure follows the point instead of waiting at the top of the row
+    /// while the eye is elsewhere. Only the clearance differs, the pointer being on the point here
+    /// (@see readoutOffset).
     private func setReadout(row: Int, x: Double, ref: ParamRef, value: Float) {
-        readout = (row, x, nil, viewModel.automationReadout(ref, value: value, on: object))
+        readout = (row, x, geo.y(of: value, ref: ref, row: row),
+                   viewModel.automationReadout(ref, value: value, on: object))
     }
 
     /// The figure a point shows ON PLAIN HOVER — the same badge and the same words as the
