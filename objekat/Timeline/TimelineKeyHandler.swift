@@ -317,14 +317,11 @@ extension TimelineView {
         //    for the keys the plugin did NOT consume.
         let handleKeyDown: (NSEvent) -> NSEvent? = { event in
             if isTextInput() { return event }
-            // Let a LEFT-HAND PANEL handle the arrows when it has focus — the sound library
-            // browser, or the sound list. This monitor runs inside `NSApp.sendEvent`, ahead of
-            // the responder chain, so a focused SwiftUI view's `.onKeyPress` would never see an
-            // arrow unless it is let through here (@see `SoundListFocus`).
-            if ExplorerFocus.shared.active || SoundListFocus.shared.active,
-               [123, 124, 125, 126].contains(event.keyCode) {
-                return event
-            }
+            // Let a LEFT-HAND PANEL or a value box handle its own keys when it holds the claim.
+            // This monitor runs inside `NSApp.sendEvent`, ahead of the responder chain, so a
+            // focused SwiftUI view's `.onKeyPress` would never see the key unless it is let
+            // through here (@see `KeyboardClaim`).
+            if KeyboardClaim.shared.owns(event) { return event }
             // A keystroke (outside auto-repeat) cancels the hold under way: the modifiers' cheat
             // sheet must not open behind a ⌘Z. The TOOL keys then restart their own hold, below.
             //
@@ -417,6 +414,7 @@ extension TimelineView {
                     // A safety net: if the 's' keyUp was lost (an app switch mid-hold),
                     // Esc gives the click its normal part back.
                     vm.soloKeyHeld = false
+                    KeyboardClaim.shared.revoke()   // gives a value box's keyboard back too
                 }
             case 36, 76:  // Return / numpad Enter
                 // 's' held → freezes into the committed solo what one is hearing temporarily (the starting

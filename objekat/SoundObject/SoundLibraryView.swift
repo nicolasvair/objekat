@@ -89,15 +89,6 @@ struct FileDragSource: NSViewRepresentable {
     }
 }
 
-// MARK: - Browser focus (shared with the timeline's keyboard monitor)
-
-@MainActor
-final class ExplorerFocus {
-    static let shared = ExplorerFocus()
-    var active = false
-    private init() {}
-}
-
 // MARK: - Tree node (a folder or an audio file)
 
 @MainActor
@@ -715,7 +706,7 @@ struct SoundLibraryView: View {
             }
         }
         .onAppear { vm.restoreFolder() }
-        .onDisappear { ExplorerFocus.shared.active = false }
+        .onDisappear { KeyboardClaim.shared.release(.explorer) }
     }
 
     // MARK: List (tree plus keyboard navigation)
@@ -733,7 +724,9 @@ struct SoundLibraryView: View {
             }
             .focusable()
             .focused($listFocused)
-            .onChange(of: listFocused) { _, f in ExplorerFocus.shared.active = f }
+            .onChange(of: listFocused) { _, f in
+                if f { KeyboardClaim.shared.claim(.explorer) } else { KeyboardClaim.shared.release(.explorer) }
+            }
             .onChange(of: vm.cursorID) { _, id in
                 if let id { withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(id, anchor: nil) } }
             }

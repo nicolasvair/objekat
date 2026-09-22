@@ -1039,6 +1039,10 @@ struct DragValueBox: View {
     @State private var typing: String? = nil   // non-nil = direct keyboard entry under way
     @FocusState private var focused: Bool       // the container (display mode: drag / arrows / digit)
     @FocusState private var fieldFocused: Bool  // the TextField (typing mode)
+    /// This instance's identity for `KeyboardClaim`, stable for the view's whole lifetime —
+    /// distinct from `focused`/`fieldFocused`, which are SwiftUI's own and say nothing to the
+    /// AppKit-level monitor.
+    @State private var claimID = UUID()
 
     private var isFocused: Bool { focused || fieldFocused }
 
@@ -1052,24 +1056,26 @@ struct DragValueBox: View {
     /// (TimelineKeyHandler) bails as soon as the first responder is an `NSTextView` → the digit
     /// typed goes into that field instead of starting the entry here. So we take the first
     /// responder away from it (window → the SwiftUI hosting view) so that the keystroke reaches
+    /// `onKeyPress`. A COMPULSORY passage for a plain click as for the start of a drag: so it is
+    /// here, and only once, that 'this control has just been touched' is reported.
     private func grabKeyFocus() {
-        // `onKeyPress`.
-        // A COMPULSORY passage for a plain click as for the start of a drag: so it is here, and
         onTouch?()
         focused = true
         if let win = NSApp.keyWindow, let fr = win.firstResponder,
            (fr is NSTextView || fr is NSTextField), fieldFocused == false {
-            NSLog(" only once, that 'this control has just been touched' is reported.", String(describing: type(of: fr)))
             win.makeFirstResponder(nil)
         }
     }
 
-    private func commitTyping() {
+    /// `refocus = false` when the caller is about to give the whole box's keyboard up right
+    /// after (@see the `KeyboardClaim.revocation` handler) — deferring `focused = true` there
+    /// would only have it undone a runloop hop later.
+    private func commitTyping(refocus: Bool = true) {
         if let t = typing, let v = parse(t.trimmingCharacters(in: .whitespaces)) {
             onBegin?(); onChange(clamp(v))
-            NSLog("[MIXFOCUS] commitTyping: value '%@' applied", t)
         }
         typing = nil
+        guard refocus else { return }
         // Giving focus back to the container MUST be deferred: done synchronously, it races with the
         // TextField being torn down (having just resigned) → the first responder shoots off to the
         // window/nowhere and the ↑/↓ arrows stop working until the view is rebuilt. One runloop hop
@@ -1109,6 +1115,22 @@ struct DragValueBox: View {
         // the focus until the TextField takes it back.
         .focusable()
         .focused($focused)
+        // Claim the keyboard for THIS box for as long as it shows any focus (container or
+        // field), release it the instant neither does. The guard against the A/B race between
+        // two boxes' focus changes lives in `KeyboardClaim.release` itself.
+        .onChange(of: isFocused) { _, f in
+            if f { KeyboardClaim.shared.claim(.valueField(claimID)) }
+            else { KeyboardClaim.shared.release(.valueField(claimID)) }
+        }
+        // The timeline took the keyboard back (a click on the canvas, Escape…) with no `release`
+        // of ours ever called. "Partir, c'est valider": a typed-but-uncommitted entry is
+        // committed rather than dropped, then the box lets go of its own visual focus too.
+        .onChange(of: KeyboardClaim.shared.revocation) { _, _ in
+            if typing != nil { commitTyping(refocus: false) }
+            focused = false
+            fieldFocused = false
+        }
+        .onDisappear { KeyboardClaim.shared.release(.valueField(claimID)) }
         .gesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { v in
@@ -1132,10 +1154,8 @@ struct DragValueBox: View {
             default:
                 guard let ch = press.characters.first,
                       ch.isNumber || ch == "-" || ch == "." || ch == "," else {
-                    NSLog("[MIXFOCUS] onKeyPress ignored (char='%@')", String(press.characters))
                     return .ignored
                 }
-                NSLog("[MIXFOCUS] onKeyPress → typing started (char='%@')", String(ch))
                 typing = String(ch)
                 DispatchQueue.main.async {
                     fieldFocused = true

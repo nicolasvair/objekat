@@ -369,6 +369,7 @@ extension TimelineView {
         // that is AppKit's drag and drop (@see TimelineDropHandler) — so the selection it lands
         // with is safe.
         viewModel.clearPluginSelection()
+        KeyboardClaim.shared.revoke()
 
         // End of gesture: the block has moved, been trimmed, cut or ungrouped — the remembered hover
         // points at the place it was BEFORE. `defer` so as to cover this function's many early

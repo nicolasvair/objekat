@@ -10,24 +10,10 @@ import AppKit
 /// needs no explaining, the order in which things HAPPEN, and the one shape the project really
 /// has: the tree of its groups. Everything read here — the fold, the selection, the colours — is
 /// the timeline's own state, seen from the side. Two views, never two truths.
-/// WHO OWNS THE ARROW KEYS, for the sound list.
 ///
-/// The exact counterpart of `ExplorerFocus` (@see `SoundLibraryView`), and it exists for the same
-/// reason: the timeline reads the arrows through an AppKit LOCAL monitor, which runs inside
-/// `NSApp.sendEvent` — ahead of the responder chain, hence ahead of any `.onKeyPress` in a
-/// focused SwiftUI view. So a panel that wants the arrows cannot simply take focus and wait; the
-/// monitor has to be told to let them through. `TimelineKeyHandler` asks both flags before
-/// consuming ↑ ↓ ← →.
-///
-/// A flag and not a `@FocusState` read from afar: the monitor is not a view and has no body to
-/// read one in.
-@MainActor
-final class SoundListFocus {
-    static let shared = SoundListFocus()
-    var active = false
-    private init() {}
-}
-
+/// WHO OWNS THE ARROW KEYS while this list has focus: @see `KeyboardClaim` (`Shared/`), which
+/// carries the explanation (an AppKit LOCAL monitor runs ahead of the responder chain, so a
+/// focused SwiftUI view's `.onKeyPress` never sees an arrow unless the monitor lets it through).
 struct SoundObjectListView: View {
     @Bindable var viewModel: EditViewModel
     @FocusState private var searchFocused: Bool
@@ -107,8 +93,10 @@ struct SoundObjectListView: View {
             .focusable()
             .focused($listFocused)
             // The timeline's monitor must let the arrows through while this list holds them
-            // (@see `SoundListFocus`), and take them back the moment it does not.
-            .onChange(of: listFocused) { _, f in SoundListFocus.shared.active = f }
+            // (@see `KeyboardClaim`), and take them back the moment it does not.
+            .onChange(of: listFocused) { _, f in
+                if f { KeyboardClaim.shared.claim(.soundList) } else { KeyboardClaim.shared.release(.soundList) }
+            }
             .onKeyPress(.upArrow)    { moveCursor(-1);    return .handled }
             .onKeyPress(.downArrow)  { moveCursor(+1);    return .handled }
             .onKeyPress(.leftArrow)  { collapseOrParent(); return .handled }
@@ -135,7 +123,7 @@ struct SoundObjectListView: View {
             }
         }
         .frame(minWidth: 240)
-        .onDisappear { SoundListFocus.shared.active = false }
+        .onDisappear { KeyboardClaim.shared.release(.soundList) }
     }
 
     // MARK: - One row, with its gestures

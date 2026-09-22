@@ -10,6 +10,7 @@ extension TimelineView {
         // dozen branches below — a single one of them forgetting it would leave ⌫ deleting a
         // plugin while the hand was pointing at a clip.
         viewModel.clearPluginSelection()
+        KeyboardClaim.shared.revoke()
 
         // ... and it leaves any inline rename open elsewhere. Clicking away is how one normally
         // leaves a field, and the ONE rename nothing else closes is a marker ROW's name: the
