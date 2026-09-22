@@ -46,7 +46,9 @@ final class WaveformCache {
         var sampleRate: Double
     }
 
-    // A region of samples decoded on demand (deep zoom), a raw signed mono mixdown.
+    // A region of samples decoded on demand (deep zoom): per sample, the value of the channel
+    // with the LARGEST MAGNITUDE, sign kept (@see decodeRegion — not a mono mixdown, which a
+    // stereo pair in phase opposition can silence outright).
     // We NEVER keep the whole PCM in RAM: only a small window around the view,
     // evicted when zooming out or looking at another file.
     struct SampleRegion {
@@ -177,12 +179,28 @@ final class WaveformCache {
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
         else { return nil }
         file.framePosition = startFrame
+        // `processingFormat` is always non-interleaved float32: `floatChannelData[c]` is its own
+        // pointer, stride 1 — never assume interleaving on an AVAudioPCMBuffer.
         guard (try? file.read(into: buffer, frameCount: frames)) != nil,
-              let channel = buffer.floatChannelData?[0]
+              let channels = buffer.floatChannelData
         else { return nil }
+        let channelCount = Int(format.channelCount)
         let n = Int(buffer.frameLength)
         var samples = [Float](repeating: 0, count: n)
-        for i in 0..<n { samples[i] = channel[i] }
+        // The channel of LARGEST MAGNITUDE speaks for each sample, SIGN KEPT: a max would
+        // rectify the shape, and it is always the loudest channel that should be heard here —
+        // its min/max per pixel is exactly the union `computeMipmap` draws for the peaks levels,
+        // so the two paths agree either side of the samples-mode threshold.
+        for i in 0..<n {
+            var best = channels[0][i]
+            var bestMag = abs(best)
+            for c in 1..<channelCount {
+                let v = channels[c][i]
+                let mag = abs(v)
+                if mag > bestMag { best = v; bestMag = mag }
+            }
+            samples[i] = best
+        }
         return SampleRegion(startTime: Double(startFrame) / format.sampleRate,
                             endTime: Double(startFrame + AVAudioFramePosition(n)) / format.sampleRate,
                             samples: samples, sampleRate: format.sampleRate)
@@ -253,17 +271,26 @@ final class WaveformCache {
         let format = audioFile.processingFormat
         let frameCount = AVAudioFrameCount(audioFile.length)
         let duration = Double(audioFile.length) / format.sampleRate
+        // `processingFormat` is always non-interleaved float32: `floatChannelData[c]` is its own
+        // pointer, stride 1 — never assume interleaving on an AVAudioPCMBuffer.
         guard frameCount > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
               (try? audioFile.read(into: buffer)) != nil,
-              let channel = buffer.floatChannelData?[0]
+              let channels = buffer.floatChannelData
         else {
             return Entry(peaks: densities.map { _ in [] }, densities: densities,
                          duration: duration, sampleRate: format.sampleRate)
         }
         let total = Int(buffer.frameLength)
+        let channelCount = Int(format.channelCount)
 
-        // For each level: an asymmetric envelope (negative lo, positive hi) per block.
+        // For each level: an asymmetric envelope (negative lo, positive hi) per block — the
+        // UNION of every channel's own envelope (lo = the lowest minimum, hi = the highest
+        // maximum, each end taking whichever channel reaches furthest on ITS side), never a
+        // mixdown. The envelope must show what comes out LOUDEST: summing channels can halve
+        // matter that sits on one of them alone, and in phase opposition can cancel it outright
+        // — drawing silence over real signal. @see decodeRegion for the samples-mode twin of
+        // this rule (its min/max per pixel is exactly this union).
         // RAW values, no normalisation — the real amplitude.
         var allPeaks: [[PeakPair]] = []
         for density in densities {
@@ -275,10 +302,13 @@ final class WaveformCache {
                 let end   = min(Int(Double(i + 1) * step), total)
                 var lo: Float = 0
                 var hi: Float = 0
-                for j in start..<end {
-                    let v = channel[j]
-                    if v < lo { lo = v }
-                    if v > hi { hi = v }
+                for c in 0..<channelCount {
+                    let channel = channels[c]
+                    for j in start..<end {
+                        let v = channel[j]
+                        if v < lo { lo = v }
+                        if v > hi { hi = v }
+                    }
                 }
                 peaks[i] = PeakPair(lo: lo, hi: hi)
             }
