@@ -102,20 +102,51 @@ final class WaveformCache {
     }
 
     // The project's `waveforms/` folder, where the `.wfc` caches are written and read back.
-    // nil while the project is unsaved → computed in memory only.
-    // When it becomes non-nil (the 1st Save As), the entries already computed are flushed.
-    var waveformsDirectory: URL? {
-        didSet {
-            guard let dir = waveformsDirectory, dir != oldValue else { return }
-            let snapshot = cache
-            // Deliberately `.utility`, unlike `load`'s own task: nobody is waiting on this
-            // write, a Save As having already returned before it finishes. Real background work.
-            Task.detached(priority: .utility) {
-                for (path, entry) in snapshot where Self.isUsable(entry) {
-                    Self.writeToDisk(entry, path: path, dir: dir)
-                }
+    // nil while the project is unsaved → computed in memory only. `private(set)`: the only door
+    // onto it is `setWaveformsDirectory`, which is what flushes the peaks already computed —
+    // an ordinary assignment here would skip that flush entirely.
+    private(set) var waveformsDirectory: URL?
+
+    /// Says whether the CURRENT project names this file. The cache must not know what a project
+    /// is, and the view model must not know what a `.wfc` is — so the rule crosses as a closure,
+    /// exactly as the zoom does (@see `EditViewModel.applyHorizontalZoom`). nil (nothing wired
+    /// yet) reads as "names nothing", which is the safe answer: nothing is written until this is
+    /// set.
+    var referencedPaths: (() -> Set<String>)?
+
+    /// Points the disk cache at a project's waveforms/ folder. Becoming non-nil flushes the
+    /// peaks already computed — which is why this exists at all: a file dropped into a project
+    /// that has never been saved has its peaks computed with nowhere to put them, and losing
+    /// them on the first Save As would mean recomputing a whole session's work.
+    /// What it no longer does is flush the WHOLE cache. The memory cache is shared between
+    /// projects on purpose (reopening a file already seen is instant, and that is a benefit), so
+    /// the snapshot it held at a Save As was largely somebody ELSE'S project — and every one of
+    /// those `.wfc` used to land in the folder that was becoming current regardless. Measured: a
+    /// new project with ZERO objects, saved into a virgin folder, received a 92 MB `.wfc` of a
+    /// file it had never heard of. Filtered through `referencedPaths` now: only an entry the
+    /// INCOMING project actually names is written.
+    func setWaveformsDirectory(_ dir: URL?) {
+        guard dir != waveformsDirectory else { return }
+        waveformsDirectory = dir
+        guard let dir else { return }
+        let referenced = referencedPaths?() ?? []
+        let snapshot = cache
+        // Deliberately `.utility`, unlike `load`'s own task: nobody is waiting on this
+        // write, a Save As having already returned before it finishes. Real background work.
+        Task.detached(priority: .utility) {
+            for (path, entry) in snapshot where referenced.contains(path) && Self.isUsable(entry) {
+                Self.writeToDisk(entry, path: path, dir: dir)
             }
         }
+    }
+
+    /// The folder this path's `.wfc` may be written into: the current project's, and only while
+    /// the current project still names that file. nil = keep it in memory only. ONE rule, read
+    /// by the flush above and by `load`'s own write — a second copy of "does this project name
+    /// this file?" is a second copy that can say something different.
+    private func writeTarget(for filePath: String) -> URL? {
+        guard let dir = waveformsDirectory, referencedPaths?().contains(filePath) == true else { return nil }
+        return dir
     }
 
     // Returns the peaks of the level best suited to the current zoom.
@@ -280,10 +311,14 @@ final class WaveformCache {
         // .userInitiated, not .utility: measured ×3.2 on this machine, because `.utility` is
         // routed onto the two EFFICIENCY cores and nothing else. Someone who just opened their
         // project is WAITING for these peaks to appear — this is not background housekeeping,
-        // unlike the flush below (@see `waveformsDirectory.didSet`), which nobody is watching
+        // unlike the flush below (@see `setWaveformsDirectory`), which nobody is watching
         // for and MUST stay on `.utility`: do not "harmonise" the two.
         Task.detached(priority: .userInitiated) {
-            // 1) Try the `.wfc` disk cache (instant peaks, no decoding).
+            // 1) Try the `.wfc` disk cache (instant peaks, no decoding). Reading is effectively
+            // instant, so the folder captured at this call's own start is fine here: a folder
+            // that has since gone stale just MISSES (the file is not there, or fails the
+            // identity check) and falls through to a fresh compute below — never a wrong answer,
+            // unlike the write this function ends with (@see step 2's own note).
             let diskStart = CFAbsoluteTimeGetCurrent()
             if let dir, let cached = Self.loadFromDisk(path: filePath, dir: dir) {
                 WaveformCacheMeter.record { stats in
@@ -298,7 +333,13 @@ final class WaveformCache {
                 }
                 return
             }
-            // 2) Otherwise compute, then persist if a project folder is known.
+            // 2) Otherwise compute, then persist into whatever the CURRENT project names AT THE
+            // MOMENT THE COMPUTE FINISHES — not the one that was current when it started. A large
+            // file's decode runs past a second (@see `chunkFrames`), and a second is enough for a
+            // close, a new project or a Save As to have already retargeted `waveformsDirectory`
+            // out from under it; re-reading `writeTarget` here, on the MainActor, right before the
+            // write, is what keeps a slow decode from landing in the folder it started in rather
+            // than the one open when it finished.
             let computeStart = CFAbsoluteTimeGetCurrent()
             let result = await Self.computeMipmap(path: filePath)
             WaveformCacheMeter.record { stats in
@@ -306,7 +347,8 @@ final class WaveformCache {
                 stats.mipmapComputeSeconds += CFAbsoluteTimeGetCurrent() - computeStart
                 stats.peakBytesInMemory += Self.peakByteSize(result)
             }
-            if let dir { Self.writeToDisk(result, path: filePath, dir: dir) }
+            let target = await MainActor.run { self.writeTarget(for: filePath) }
+            if let target { Self.writeToDisk(result, path: filePath, dir: target) }
             await MainActor.run {
                 self.cache[filePath] = result
                 self.inFlight.remove(filePath)

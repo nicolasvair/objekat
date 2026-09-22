@@ -727,9 +727,20 @@ final class EditViewModel {
     /// Every audio file this project names — groups walked recursively, folded ones included,
     /// exactly as `allClips` already reaches them (@see `EditViewModel+MissingFiles.rescanMissingFiles`,
     /// which reads the disk by the same walk). What `waveform.preload` hands the cache, so a
-    /// script can compute every peak the project will ever draw without a Canvas on screen.
+    /// script can compute every peak the project will ever draw without a Canvas on screen — and,
+    /// since C3, what `WaveformCache` asks before writing a `.wfc` into the CURRENT project's
+    /// folder (@see `WaveformCache.referencedPaths`), which is what keeps that folder from
+    /// receiving another project's peaks.
+    /// CACHED: asked once per completed mipmap (a write, or a decision not to write) and once
+    /// per project change, not worth walking `items` again for every one of those — invalidated
+    /// wherever `laneEntries` is (@see `items.didSet` → `rebuildLaneEntries`), the same walk both
+    /// caches are built from.
+    private var referencedAudioPathsCache: Set<String>?
     var referencedAudioPaths: Set<String> {
-        Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
+        if let cached = referencedAudioPathsCache { return cached }
+        let paths = Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
+        referencedAudioPathsCache = paths
+        return paths
     }
 
     /// The flattening of the objects into display rows. CACHED: rebuilt only
@@ -740,6 +751,7 @@ final class EditViewModel {
 
     func rebuildLaneEntries() {
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
+        referencedAudioPathsCache = nil
     }
 
     /// Grouped mutations of `items`: a single rebuild of laneEntries at the end instead
