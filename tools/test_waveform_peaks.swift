@@ -1,0 +1,153 @@
+// `WaveformPeaks` (`Shared/WaveformPeaks.swift`) has no model behind it, which is why it can be
+// compiled and run alone, exactly like `SendColumns` / `SynopticMarquee` / `PianoRollFraming` /
+// `CutSelection` before it.
+//
+//     swiftc -parse-as-library ../objekat/Shared/WaveformPeaks.swift test_waveform_peaks.swift \
+//         -o /tmp/wfpeaks && /tmp/wfpeaks
+//
+// Exit: 0 if every assertion passes, 1 otherwise.
+
+import Foundation
+
+var fails: [String] = []
+var total = 0
+
+func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+    total += 1
+    if ok { print("ok    " + label) }
+    else { fails.append(label); print("FAIL  \(label)  \(detail)") }
+}
+
+/// A tiny deterministic LCG — no `SystemRandomNumberGenerator`, so a failure is reproducible
+/// from the printed seed alone and the suite behaves the same on every machine.
+struct DeterministicRNG {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func nextFloat(in range: ClosedRange<Float>) -> Float {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        let unit = Float(state >> 40) / Float(1 << 24)  // [0, 1)
+        return range.lowerBound + unit * (range.upperBound - range.lowerBound)
+    }
+}
+
+/// The brute-force reference this suite checks `decimate` against: min/max recomputed by hand
+/// over the same folded ranges, with NO shared code with `WaveformPeaks.decimate`.
+func referenceDecimate(_ fine: [PeakPair], ratio: Int) -> [PeakPair] {
+    guard ratio > 1, !fine.isEmpty else { return fine }
+    let count = Int((Double(fine.count) / Double(ratio)).rounded(.up))
+    var result: [PeakPair] = []
+    result.reserveCapacity(count)
+    for i in 0..<count {
+        let start = i * ratio
+        let end = min(start + ratio, fine.count)
+        guard start < end else { continue }
+        var lo = fine[start].lo, hi = fine[start].hi
+        for j in (start + 1)..<end {
+            lo = min(lo, fine[j].lo)
+            hi = max(hi, fine[j].hi)
+        }
+        result.append(PeakPair(lo: lo, hi: hi))
+    }
+    return result
+}
+
+@main
+enum WaveformPeaksTest {
+  static func main() {
+
+    // MARK: - foldRatio
+
+    check("foldRatio(10000, 1000) == 10", WaveformPeaks.foldRatio(fine: 10000, coarse: 1000) == 10)
+    check("foldRatio(1000, 100) == 10", WaveformPeaks.foldRatio(fine: 1000, coarse: 100) == 10)
+    check("foldRatio guards >= 1 on equal densities",
+          WaveformPeaks.foldRatio(fine: 1000, coarse: 1000) == 1)
+    check("foldRatio guards >= 1 even if coarse > fine (should never happen, but must not crash)",
+          WaveformPeaks.foldRatio(fine: 100, coarse: 1000) >= 1)
+
+    // MARK: - coarseCount
+
+    check("coarseCount(10007, 10) == 1001", WaveformPeaks.coarseCount(fineCount: 10007, ratio: 10) == 1001)
+    check("coarseCount(10, 10) == 1", WaveformPeaks.coarseCount(fineCount: 10, ratio: 10) == 1)
+    check("coarseCount(1, 10) == 1", WaveformPeaks.coarseCount(fineCount: 1, ratio: 10) == 1)
+    check("coarseCount(0, 10) never 0", WaveformPeaks.coarseCount(fineCount: 0, ratio: 10) >= 1)
+    check("coarseCount(1000000, 1) == fineCount (ratio 1 = identity in count too)",
+          WaveformPeaks.coarseCount(fineCount: 1_000_000, ratio: 1) == 1_000_000)
+
+    // MARK: - decimate: a deterministic 10 007-pair sweep against a hand-recomputed reference
+
+    var rng = DeterministicRNG(seed: 0xC0FFEE)
+    var fine: [PeakPair] = []
+    fine.reserveCapacity(10_007)
+    for _ in 0..<10_007 {
+        let a = rng.nextFloat(in: -1...1)
+        let b = rng.nextFloat(in: -1...1)
+        fine.append(PeakPair(lo: min(a, b), hi: max(a, b)))
+    }
+
+    let coarse = WaveformPeaks.decimate(fine, ratio: 10)
+    let ref = referenceDecimate(fine, ratio: 10)
+    check("decimate(10007, ratio: 10) has the same block count as the reference",
+          coarse.count == ref.count, "got \(coarse.count), expected \(ref.count)")
+    if coarse.count == ref.count {
+        var allExactButLast = true
+        for i in 0..<(coarse.count - 1) where coarse[i] != ref[i] {
+            allExactButLast = false
+        }
+        check("every block but the last matches the reference bit for bit", allExactButLast)
+        // The last block: `decimate` may cover fewer fine blocks than a naive reference expects
+        // right at the tail, never more — so it is always at least as wide an envelope, never
+        // narrower (@see WaveformPeaks.decimate's doc comment, and pitfall #8 of PLAN-WAVEFORM.md).
+        let lastCoarse = coarse[coarse.count - 1]
+        let lastRef = ref[ref.count - 1]
+        check("the last block is a superset of the reference's (lo <=, hi >=)",
+              lastCoarse.lo <= lastRef.lo && lastCoarse.hi >= lastRef.hi,
+              "got \(lastCoarse), reference \(lastRef)")
+    }
+
+    // MARK: - decimate: ratio 1 is the identity
+
+    check("decimate(_, ratio: 1) == identity", WaveformPeaks.decimate(fine, ratio: 1) == fine)
+
+    // MARK: - decimate: folding twice by 10 == folding once by 100 (the invariant that licenses
+    // the single cascading pass in `computeMipmap`: fine -> ×10 -> ×10, instead of a fresh
+    // ×100 fold recomputed from scratch for every coarser level)
+
+    let foldedTwice = WaveformPeaks.decimate(WaveformPeaks.decimate(fine, ratio: 10), ratio: 10)
+    let foldedOnce = WaveformPeaks.decimate(fine, ratio: 100)
+    check("folding by 10 twice has the same block count as folding by 100 once",
+          foldedTwice.count == foldedOnce.count,
+          "got \(foldedTwice.count) vs \(foldedOnce.count)")
+    if foldedTwice.count == foldedOnce.count {
+        var identical = true
+        for i in foldedTwice.indices where foldedTwice[i] != foldedOnce[i] { identical = false }
+        check("folding by 10 twice == folding by 100 once, block for block", identical)
+    }
+
+    // The same invariant across a spread of lengths, including ones not evenly divisible by
+    // either 10 or 100 — the case the tail's "fewer than ratio" rule exists for.
+    for n in [1, 7, 10, 11, 99, 100, 101, 999, 1000, 1001, 4995, 50_000] {
+        var rng2 = DeterministicRNG(seed: UInt64(n) &* 0x9E3779B97F4A7C15)
+        var arr: [PeakPair] = []
+        arr.reserveCapacity(n)
+        for _ in 0..<n {
+            let a = rng2.nextFloat(in: -1...1)
+            let b = rng2.nextFloat(in: -1...1)
+            arr.append(PeakPair(lo: min(a, b), hi: max(a, b)))
+        }
+        let twice = WaveformPeaks.decimate(WaveformPeaks.decimate(arr, ratio: 10), ratio: 10)
+        let once = WaveformPeaks.decimate(arr, ratio: 100)
+        check("n=\(n): folding by 10 twice == folding by 100 once (count)",
+              twice.count == once.count, "got \(twice.count) vs \(once.count)")
+        if twice.count == once.count {
+            check("n=\(n): folding by 10 twice == folding by 100 once (values)", twice == once)
+        }
+    }
+
+    print("\n\(total - fails.count)/\(total) passed")
+    if !fails.isEmpty {
+        print("FAILURES:")
+        for f in fails { print(" - \(f)") }
+        exit(1)
+    }
+  }
+}

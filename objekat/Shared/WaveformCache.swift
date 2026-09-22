@@ -32,12 +32,8 @@ final class WaveformCache {
         (effectiveDensitiesPerSecond.last ?? 10000) * 3
     }
 
-    // An asymmetric envelope per block: negative extremum (lo) and positive one (hi),
-    // raw values in [-1, 1] (no normalisation, we show the real amplitude).
-    struct PeakPair {
-        var lo: Float  // typically <= 0
-        var hi: Float  // typically >= 0
-    }
+    // `PeakPair` moved to `WaveformPeaks.swift`: a plain value type with no model behind it,
+    // compiled and asserted standalone (`tools/test_waveform_peaks.swift`).
 
     struct Entry {
         var peaks: [[PeakPair]]      // one array per level
@@ -295,7 +291,7 @@ final class WaveformCache {
     private nonisolated static func computeMipmap(path: String) async -> Entry {
         let densities = effectiveDensitiesPerSecond
         let url = URL(fileURLWithPath: path)
-        guard let audioFile = try? AVAudioFile(forReading: url) else {
+        guard let audioFile = try? AVAudioFile(forReading: url), let finestDensity = densities.last else {
             return Entry(peaks: densities.map { _ in [] }, densities: densities,
                          duration: 0, sampleRate: 0)
         }
@@ -308,18 +304,32 @@ final class WaveformCache {
         }
 
         await computeGate.acquire()
-        let peaks = decodeChunked(audioFile: audioFile, total: total, channelCount: Int(format.channelCount),
-                                  duration: duration, densities: densities)
+        let finest = decodeChunked(audioFile: audioFile, total: total, channelCount: Int(format.channelCount),
+                                   duration: duration, density: finestDensity)
         await computeGate.release()
 
-        guard let peaks else {
+        guard let finest else {
             return Entry(peaks: densities.map { _ in [] }, densities: densities,
                          duration: duration, sampleRate: format.sampleRate)
         }
-        return Entry(peaks: peaks, densities: densities, duration: duration, sampleRate: format.sampleRate)
+
+        // Every coarser level is a FOLD of the one just finer than it, ratio 10 between
+        // neighbours — never a fresh scan of the raw samples. Three full passes over the buffer
+        // (one per density) became one decode plus two cheap folds over an already-reduced array
+        // (×2.4 measured on the peak stage; @see WaveformPeaks.decimate for the invariant that
+        // makes the cascade exact: folding by 10 twice lands on the same blocks as folding by
+        // 100 once).
+        var levels = [finest]
+        for i in stride(from: densities.count - 2, through: 0, by: -1) {
+            let ratio = WaveformPeaks.foldRatio(fine: densities[i + 1], coarse: densities[i])
+            levels.append(WaveformPeaks.decimate(levels[levels.count - 1], ratio: ratio))
+        }
+        levels.reverse()   // back to coarse → fine, matching `densities`' own order
+
+        return Entry(peaks: levels, densities: densities, duration: duration, sampleRate: format.sampleRate)
     }
 
-    /// One density level's blocks, filled while the file streams past in chunks. Keeps the
+    /// The finest level's blocks, filled while the file streams past in chunks. Keeps the
     /// in-progress block's (lo, hi) across chunk boundaries — a block is almost always far
     /// narrower than `chunkFrames` (4.8 frames at 10 000 peaks/s and 48 kHz), so it WILL straddle
     /// a boundary, at most one block per boundary. Skipping that carry would draw a false notch
@@ -376,15 +386,16 @@ final class WaveformCache {
     /// silence over real signal. @see decodeRegion for the samples-mode twin of this rule (its
     /// min/max per pixel is exactly this union). RAW values, no normalisation.
     ///
-    /// nil on a read failure partway through — a partial mipmap would be indistinguishable from
-    /// a complete one once written to disk.
+    /// Only the FINEST level is decoded from the raw file (@see computeMipmap for why). nil on a
+    /// read failure partway through — a partial mipmap would be indistinguishable from a
+    /// complete one once written to disk.
     private nonisolated static func decodeChunked(audioFile: AVAudioFile, total: Int, channelCount: Int,
-                                                   duration: Double, densities: [Double]) -> [[PeakPair]]? {
+                                                   duration: Double, density: Double) -> [PeakPair]? {
         guard channelCount > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
                                             frameCapacity: AVAudioFrameCount(chunkFrames))
         else { return nil }
-        var levels = densities.map { LevelAccumulator(density: $0, duration: duration, total: total) }
+        var level = LevelAccumulator(density: density, duration: duration, total: total)
 
         var framesRead = 0
         while framesRead < total {
@@ -403,17 +414,11 @@ final class WaveformCache {
                     if v < frameLo { frameLo = v }
                     if v > frameHi { frameHi = v }
                 }
-                let absoluteFrame = framesRead + j
-                for li in levels.indices {
-                    levels[li].add(absoluteFrame: absoluteFrame, lo: frameLo, hi: frameHi)
-                }
+                level.add(absoluteFrame: framesRead + j, lo: frameLo, hi: frameHi)
             }
             framesRead += n
         }
-        var result: [[PeakPair]] = []
-        result.reserveCapacity(levels.count)
-        for li in levels.indices { result.append(levels[li].finish()) }
-        return result
+        return level.finish()
     }
 
     // MARK: - The .wfc disk cache
