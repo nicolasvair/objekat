@@ -75,6 +75,8 @@ final class WaveformCache {
         didSet {
             guard let dir = waveformsDirectory, dir != oldValue else { return }
             let snapshot = cache
+            // Deliberately `.utility`, unlike `load`'s own task: nobody is waiting on this
+            // write, a Save As having already returned before it finishes. Real background work.
             Task.detached(priority: .utility) {
                 for (path, entry) in snapshot where Self.isUsable(entry) {
                     Self.writeToDisk(entry, path: path, dir: dir)
@@ -194,7 +196,12 @@ final class WaveformCache {
             stats.inFlight += 1
             stats.peakConcurrency = max(stats.peakConcurrency, stats.inFlight)
         }
-        Task.detached(priority: .utility) {
+        // .userInitiated, not .utility: measured ×3.2 on this machine, because `.utility` is
+        // routed onto the two EFFICIENCY cores and nothing else. Someone who just opened their
+        // project is WAITING for these peaks to appear — this is not background housekeeping,
+        // unlike the flush below (@see `waveformsDirectory.didSet`), which nobody is watching
+        // for and MUST stay on `.utility`: do not "harmonise" the two.
+        Task.detached(priority: .userInitiated) {
             // 1) Try the `.wfc` disk cache (instant peaks, no decoding).
             let diskStart = CFAbsoluteTimeGetCurrent()
             if let dir, let cached = Self.loadFromDisk(path: filePath, dir: dir) {
