@@ -1050,6 +1050,20 @@ struct DragValueBox: View {
 
     private func bump(_ delta: Double) { onTouch?(); onBegin?(); onChange(clamp(value + delta)) }
 
+    /// NSDeleteCharacter — what the ⌫ key actually TYPES on macOS.
+    private static let deleteCharacter: Character = "\u{7F}"
+
+    /// ⌫ / forward delete, read by CHARACTER and not by `KeyEquivalent` alone: the constant that
+    /// carries the name does not carry the key. `.delete` is U+0008 — the old backspace character
+    /// — while the ⌫ key types U+007F, so a `case .delete, .deleteForward` matched the FORWARD
+    /// delete and nothing else, and ⌫ fell through unconsumed. Same family as the ⌥+letter trap:
+    /// what a key MEANS and what it TYPES are two different questions.
+    /// (Kept out of the body: the view builder could no longer type-check it in reasonable time.)
+    private static func isResetKey(_ press: KeyPress) -> Bool {
+        if press.key == .delete || press.key == .deleteForward { return true }
+        return press.characters.first == deleteCharacter
+    }
+
     /// Takes keyboard focus for THIS box. The crux of the 'digit → Search field' bug:
     /// a search/filter field ('Search…' / 'Filter…') can keep AppKit's FIRST RESPONDER while
     /// SwiftUI has given this box no more than visual focus. The global keyboard monitor
@@ -1147,10 +1161,10 @@ struct DragValueBox: View {
         .onTapGesture { grabKeyFocus() }
         .onKeyPress(phases: .down) { press in
             guard typing == nil else { return .ignored }   // typing under way → leave it to the TextField
+            if Self.isResetKey(press) { onReset?(); return .handled }
             switch press.key {
             case .upArrow:   bump(keyStep);  return .handled
             case .downArrow: bump(-keyStep); return .handled
-            case .delete, .deleteForward: onReset?(); return .handled
             default:
                 guard let ch = press.characters.first,
                       ch.isNumber || ch == "-" || ch == "." || ch == "," else {
