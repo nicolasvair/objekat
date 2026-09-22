@@ -13,7 +13,15 @@ final class WaveformCache {
 
     // Target densities (peaks per second of file), from coarse to fine.
     // A ×10 log scale: covers browsing → editing → close zoom.
-    nonisolated static let baseDensitiesPerSecond: [Double] = [100, 1000, 10000]
+    // The finest level (10 000/s) is GONE: it weighed 90% of a mipmap to cover a zoom band
+    // (3 000-30 000 px/s) the samples mode — PCM read straight off disk, costing nothing to
+    // store — already served, and which was almost never the one actually open (@see
+    // PLAN-WAVEFORM.md, section C1b). `sampleModeThreshold` and `loadFromDisk`'s own comparison
+    // against `effectiveDensitiesPerSecond` follow this array with no other change required
+    // (@see C1b0, the prerequisite that keeps the samples mode correct at the lower threshold
+    // this now opens at). REPLI documented if the eye refuses it: `[100, 1000, 3000]` (threshold
+    // 9 000 px/s), the same array shape — a partial revert, not a redesign.
+    nonisolated static let baseDensitiesPerSecond: [Double] = [100, 1000]
 
     // Global detail multiplier. 1.0 = the default densities.
     // 0.5 → half as many peaks (lighter on memory), 2.0 → twice as fine.
