@@ -482,7 +482,10 @@ private struct ToolPickerButtons: View {
             // listen' mode lives on `soloKeyHeld`, which the keyboard arms with a HELD 's'; the
             // button, for its part, locks it until the next click on it, for anyone without a free
             // hand. The same entry point as the key: `beginHeldSolo` takes the current selection if
-            // there is one, otherwise the first click in the timeline brings the layer into being.
+            // there is one, and failing that the objects on the WORKING LANES (the traced zone's
+            // lanes, or the caret's) — so there is always something to solo, even from a bare
+            // click on this button with nothing selected. The first click in the timeline then
+            // brings a layer into being from there.
             //
             // Lit on `hasAnySolo` TOO, and not only on its own mode: as soon as a solo filters what
             // is heard — committed with s+⏎, laid on a stem with s+N, or temporary — the button

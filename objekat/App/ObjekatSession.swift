@@ -3,7 +3,7 @@ import Observation
 
 /// An Objekat session: the engine, the document, and the TRANSPORT state that ties them.
 ///
-/// WHY THIS TYPE — that transport state (`isPlaying`, playhead position, pause, temporary solo,
+/// WHY THIS TYPE — that transport state (`isPlaying`, playhead position, pause,
 /// the Tracktion loop) used to live as `@State` in `ContentView`. Two consequences: it only
 /// existed while a view was showing it, and nothing outside the view could read or write it —
 /// a `transport.play` command did start the sound, but the button stayed on ▶ and the playhead
@@ -27,10 +27,6 @@ final class ObjekatSession {
     /// Playback suspended by ⇧space: the position where it was cut, and where it will resume.
     /// nil = not paused (a normal stop, or playback under way).
     var pausedAt: Double? = nil
-
-    /// The end (in seconds) of the temporary solo window during playback; nil = no temporary solo,
-    /// or playback to the end. The playhead tick stops playback when it reaches it.
-    var tempSoloEnd: Double? = nil
 
     /// Distinct from `viewModel.loopModeEnabled`: that one is the user's INTENT (it can be true
     /// before the loopIn is even reached), this one only becomes true once the Tracktion engine is
@@ -73,20 +69,14 @@ final class ObjekatSession {
 
     // MARK: - Playhead tracking
 
-    /// One tick: advances the playhead, stops at the end of a temporary solo window, and arms the
-    /// Tracktion loop when the playhead enters the region.
+    /// One tick: advances the playhead and arms the Tracktion loop when the playhead enters the
+    /// region.
     func tickPlayhead() {
         guard isPlaying else { return }
         playheadPosition = engine.currentPlaybackPosition()
         // An automated parameter moves on its own during playback: the inspector has to show that,
         // not the static setting the curve has replaced.
         viewModel.refreshLiveAutomation(at: playheadPosition)
-
-        // Temporary solo over a range: an automatic stop at the end of the window.
-        if let end = tempSoloEnd, playheadPosition >= end {
-            stop()
-            return
-        }
 
         // Objekat's loop mode is on but Tracktion is not looping yet: we turn it on as soon as the
         // playhead ENTERS the region. The end bound is EXCLUDED — a cursor sitting exactly on the
@@ -104,10 +94,11 @@ final class ObjekatSession {
 
     // MARK: - Transport commands
 
-    /// Normal playback: clears any temporary solo (restoring the mix / the committed solo).
+    /// Normal playback, from the cursor. Does NOT touch solo any more: solo is a listening state
+    /// that survives the transport, not one it resets on every play. A temporary solo held down
+    /// with "s" has to keep filtering the whole playback, otherwise pressing space would break it
+    /// at the very moment one wants to hear it.
     func play() {
-        viewModel.endTemporarySolo()
-        tempSoloEnd = nil
         pausedAt = nil   // a plain playback starts from the cursor, not from the pause
         playheadPosition = viewModel.cursorPosition
         engine.seek(to: playheadPosition)
@@ -115,20 +106,10 @@ final class ObjekatSession {
         engine.play()
     }
 
-    /// ⇧+space: arms the temporary solo (through the view-model) and plays the selection/range —
-    /// added to whatever is already soloed, the two layers summing.
-    func soloPlay() {
-        guard let win = viewModel.beginTemporarySolo() else { return }
-        tempSoloEnd = win.end
-        playheadPosition = win.start
-        engine.seek(to: win.start)
-        isPlaying = true
-        engine.play()
-    }
-
-    /// ⇧space: suspends playback WITHOUT moving the playhead, and resumes exactly there.
-    /// Any temporary solo is kept during the suspension — resuming must give back the same
-    /// listening as before. On a plain stop (space), everything returns to the cursor.
+    /// ⇧space: suspends playback WITHOUT moving the playhead, and resumes exactly there. Touches
+    /// nothing about solo — pausing and resuming must give back the exact same listening, and so
+    /// must a plain stop; only the playhead differs between the two (the cursor vs. where it was
+    /// cut).
     func togglePause() {
         if isPlaying {
             engine.stop()
@@ -148,9 +129,6 @@ final class ObjekatSession {
         engine.stop()
         isPlaying = false
         pausedAt = nil
-        // End of playback: clears the temporary solo (restoring the mix / the committed solo).
-        viewModel.endTemporarySolo()
-        tempSoloEnd = nil
         playheadPosition = viewModel.cursorPosition
         // Resets the Tracktion loop for the next play (`loopModeEnabled` stays untouched — that is
         // the user's intent).

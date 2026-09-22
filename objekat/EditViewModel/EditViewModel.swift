@@ -210,10 +210,11 @@ final class EditViewModel {
     var soloedIDs: Set<UUID> = []
     /// The stems soloed wholesale (the s + N shortcut, combinable).
     var soloedStemIDs: Set<UUID> = []
-    /// The roots of the TEMPORARY solo (tied to a ⇧+space playback, or to "s" held); nil otherwise.
+    /// The roots of the TEMPORARY solo, tied to the "s" key being HELD; nil otherwise.
     var tempSoloRoots: Set<UUID>? = nil
-    /// True when the current temporary solo comes from the "s" key being HELD (and not from an
-    /// audition): drives its HUD, which invites you to release the key to go back to normal listening.
+    /// True while the temporary solo is armed: drives its HUD, which invites you to release "s" to
+    /// go back to normal listening. Invariant: `tempSoloRoots != nil ⟺ heldSoloActive` — the two
+    /// are set and cleared together, everywhere (@see EditViewModel+Solo's header comment).
     var heldSoloActive: Bool = false
     /// True while "s" is physically held down (set/lifted by the keyboard monitor). Opens the
     /// "click = enter/leave the listening" mode in the timeline — independent of `heldSoloActive`,

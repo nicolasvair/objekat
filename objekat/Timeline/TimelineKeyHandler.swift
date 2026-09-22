@@ -266,9 +266,8 @@ extension TimelineView {
         let togglePlayback = onTogglePlayback
         let togglePause = onTogglePause
         let returnToZero = onReturnToZero
-        let soloPlay = onSoloPlay
         // Synchronous tracking of the physically held 's' key: it arms the solo chords
-        // (s+Return, s+space, s+N). It lives in the monitor's closure (the same thread as the
+        // (s+Return, s+N, s+⌫). It lives in the monitor's closure (the same thread as the
         // events) → readable with no latency by the switch's other cases.
         let chord = SoloChordState()
         // Holding a key → the cheat sheet (see ShortcutCheatsheet). The same lifetime as the
@@ -285,16 +284,15 @@ extension TimelineView {
             center.addObserver(forName: NSApplication.didResignActiveNotification,
                                object: nil, queue: .main) { _ in
                 cheat.schedule(nil, in: vm)
-                let auditioning = chord.didAudition
                 chord.keyCode = nil
-                chord.didAudition = false
                 MainActor.assumeIsolated {
                     vm.cmdKeyHeld = false
                     vm.optKeyHeld = false
                     vm.soloKeyHeld = false
-                    // An audition started by s+space keeps the temporary solo: it is its stop
-                    // that will clear it, as on a normal release of the key.
-                    if !auditioning { vm.endHeldSolo() }
+                    // ⌘-Tab away in the middle of holding 's' lifts the temporary solo, exactly as
+                    // a plain release would — the rule stated above (no other owner exists any
+                    // more for a temporary layer) now holds with NO exception.
+                    vm.endHeldSolo()
                     if vm.heldToolKeyCode != nil {
                         vm.heldToolKeyCode = nil
                         if !vm.isToolPermanent {
@@ -335,14 +333,11 @@ extension TimelineView {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             switch event.keyCode {
             case 49:  // Space
-                // 's' held → a temporary solo (⇧+space): it plays the selection/range only.
-                // The audition takes the temporary layer over (didAudition): releasing 's'
-                // during playback must not restore the full mix.
-                if chord.keyCode != nil {
-                    chord.didAudition = true
-                    DispatchQueue.main.async { soloPlay() }
-                    return nil
-                }
+                // No chord here any more, deliberately: space is ALWAYS play/stop, even with 's'
+                // held. Solo only FILTERS what is heard — it does not get a say over the transport.
+                // (There used to be a s+space "audition" that seeked to the selection and stopped
+                // at its end; removed on purpose — @see EditViewModel+Solo's header comment. Do not
+                // reintroduce a chord here.)
                 // ⇧space = pause / resume IN THE SAME PLACE (bare space, for its part, goes back to the cursor).
                 if flags.contains(.shift) {
                     DispatchQueue.main.async { togglePause() }
@@ -765,13 +760,12 @@ extension TimelineView {
                 case "s":
                     // 'S' is no longer a tool shortcut: the Aux tool moved to 'A'.
                     if flags.contains(.command) { break }   // Cmd+S = Save (the menu)
-                    // 's' held arms the solo chords (s+Return, s+space, s+N), independently of ⇧.
+                    // 's' held arms the solo chords (s+Return, s+N, s+⌫), independently of ⇧.
                     // The release is caught on keyUp by the same keyCode.
                     chord.keyCode = event.keyCode
                     // …and, on its own, it adds the selection to what is heard for the length of the hold
                     // (a temporary solo), while opening the 'click = come in / out of what is heard' mode.
                     if !event.isARepeat {
-                        chord.didAudition = false
                         DispatchQueue.main.async {
                             vm.soloKeyHeld = true
                             vm.beginHeldSolo()
@@ -817,14 +811,14 @@ extension TimelineView {
                 cheat.schedule(nil, in: vm)
                 if chord.keyCode == event.keyCode {
                     chord.keyCode = nil
-                    // The end of the 's' hold → back to normal listening, unless an audition (s+space)
-                    // has taken over: it is what will clear the solo when it stops.
-                    let auditioning = chord.didAudition
+                    // The end of the 's' hold → ALWAYS back to the previous listening, including in
+                    // the middle of a playback: solo no longer pilots the transport, so there is no
+                    // audition left to hand the temporary layer off to. This is (with Esc) the only
+                    // gesture that lifts it.
                     DispatchQueue.main.async {
                         vm.soloKeyHeld = false   // it closes the 'click = listen' mode
-                        if !auditioning { vm.endHeldSolo() }
+                        vm.endHeldSolo()
                     }
-                    chord.didAudition = false
                 }
                 if let held = vm.heldToolKeyCode, held == event.keyCode {
                     DispatchQueue.main.async {
@@ -1231,11 +1225,10 @@ extension TimelineView {
 /// (s+Return, s+space, s+N). It lives in the keyboard monitor's closure — mutated and read
 /// synchronously on the events thread, so no `DispatchQueue` latency.
 final class SoloChordState {
+    /// The keyCode of 's' while it is physically held down, nil otherwise. Its only remaining job
+    /// is arming the solo chords (s+Return, s+N, s+⌫) — space is no longer one of them, solo no
+    /// longer pilots the transport.
     var keyCode: UInt16? = nil
-    /// True when holding 's' has started an audition (s+space): releasing the key must then NOT
-    /// clear the temporary solo, which now belongs to the playback under way (which will clear it
-    /// when it stops).
-    var didAudition = false
 }
 
 // MARK: - 'Create N sound objects' (a multiple selection)

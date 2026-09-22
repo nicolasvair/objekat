@@ -102,8 +102,7 @@ struct ContentView: View {
                     onMoveCursor: { t in
                         viewModel.cursorPosition = max(0, t)
                     },
-                    onReturnToZero: { session.returnToZero() },
-                    onSoloPlay: { session.soloPlay() }
+                    onReturnToZero: { session.returnToZero() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .simultaneousGesture(TapGesture().onEnded {

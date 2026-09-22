@@ -228,8 +228,8 @@ extension CommandRegistry {
                  params: [ParamSpec("seconds", "number", required: false,
                                     "Starting position; default = current playhead.")]) { p in
             // Through the SESSION, and not through the engine directly: `play()` is exactly what
-            // the ▶ button does — temporary solo cleared, pause forgotten, playhead reset. Driving the
-            // engine over the session's head left the sound running and the screen frozen.
+            // the ▶ button does — pause forgotten, playhead reset. Driving the engine over the
+            // session's head left the sound running and the screen frozen.
             let session = try CommandContext.shared.requireSession()
             if let seconds = try p.optionalDouble("seconds") {
                 session.seek(to: seconds)

@@ -11,15 +11,30 @@ import Foundation
 //  1. A CONFIRMED solo (the "solo on" attribute): persistent until it is turned off (Esc, ⇧⌫,
 //     s+⏎ on what is already confirmed). Carried by `soloedIDs` (objects confirmed one by one) and
 //     `soloedStemIDs` (stems confirmed wholesale, combinable: s+2+3+4).
-//  2. A TEMPORARY solo: tied to ONE playback (⇧+space) or to the "s" key being HELD. Writes nothing
-//     persistent: `tempSoloRoots` is armed for the length of the playback (emptied on stop) or of the
-//     hold (emptied on release). It does NOT OUST the confirmed one, it adds to it: "s" makes
-//     the selection heard ON TOP of what is already soloed, and releasing it gives back the listening
-//     as it was.
+//  2. A TEMPORARY solo: tied to the "s" key being HELD (keyboard or toolbar button), and to the
+//     clicks that compose it while it is held (`toggleHeldSolo`). Writes nothing persistent:
+//     `tempSoloRoots` is armed for the length of the hold and emptied on release. It does NOT OUST
+//     the confirmed one, it adds to it: "s" makes the selection heard ON TOP of what is already
+//     soloed, and releasing it gives back the listening as it was.
+//
+// Invariant: `tempSoloRoots != nil ⟺ heldSoloActive`. There is only ONE owner of the temporary
+// layer — the held "s" — so every layer that exists has exactly one way to be lifted:
+// `endHeldSolo()` (the key's release, ⌘-Tab, or the toolbar button) or `clearAllSolo()` (Esc).
 //
 // For as long as "s" is held, a click on an object brings it into or out of the listening
 // (`toggleHeldSolo`): you compose by ear, then s + ⏎ freezes the result into the confirmed layer — without
 // anything changing in the sound, since the two layers already add up.
+//
+// THE SEPARATION THAT MATTERS: solo FILTERS the listening, it does not PILOT the transport. Space
+// is always play/stop and ⇧space is always pause/resume, whatever solo is active — playback starts
+// at `cursorPosition` and runs to the stop, the caret or a traced zone making no difference. This
+// used to be different: an "audition" (⇧+space, later s+space) seeked to a selection's start,
+// played, and stopped automatically at its end. It was removed because a single key meaning two
+// things — space plays / space auditions a zone — made the transport unpredictable, and because
+// stopping at the zone's end is exactly wrong when what one wants to hear is what comes AFTER what
+// was soloed. With nowhere left to fall back to (no selection, no zone), `beginHeldSolo` now falls
+// back to the objects on the WORKING LANES (@see objectIDsOnWorkingLanes) so that "s" then space
+// never plays into silence.
 //
 // The engine has no notion of solo: it is emulated by pushing -96 dB onto the objects that have to be
 // silenced. What "have to" means is NOT decided here: solo is only one of the layers of
@@ -115,19 +130,26 @@ extension EditViewModel {
 
     // MARK: The temporary solo (the "s" key held)
 
-    /// "s" held: adds the selection to the listening for the length of the hold, without starting anything or
-    /// persisting anything. The same layer as the audition (`tempSoloRoots`), which ADDS to the confirmed solo —
-    /// with no confirmed solo, only the selection is heard; with one, it is heard on top. The
-    /// release (`endHeldSolo`) gives back the previous listening, the confirmed layer included.
-    /// With no selection there is nothing to add → a no-op; the click (`toggleHeldSolo`) and the
-    /// s+N, s+⏎… chords stay armed.
+    /// "s" held: adds the current selection to the listening for the length of the hold, without
+    /// starting anything or persisting anything. It ADDS to the confirmed solo — with no confirmed
+    /// solo, only the selection is heard; with one, it is heard on top. The release (`endHeldSolo`)
+    /// gives back the previous listening, the confirmed layer included.
+    ///
+    /// Three roots, tried in order, and NOT as an if/else if: a time selection with lanes but no
+    /// objects on them must still fall through to the object selection test (empty), then on to
+    /// the working-lanes fallback — an early "if let sel = timeSelection" would stop there with an
+    /// empty `roots` and never reach it.
+    ///   1. a time selection → the objects it crosses (@see objectIDs(inZone:));
+    ///   2. failing that, the object selection;
+    ///   3. failing that too, the fallback: everything sitting on the WORKING LANES (the zone's
+    ///      lanes if one is traced, even empty of objects, otherwise the caret's lane). This exists
+    ///      so that pressing "s" then space never does NOTHING — with no selection at all, the
+    ///      solo would otherwise have nothing to filter and the key would read as dead.
     func beginHeldSolo() {
         var roots: Set<UUID> = []
-        if let sel = timeSelection {
-            roots = objectIDs(inZone: sel)
-        } else if !selectedIDs.isEmpty {
-            roots = selectedIDs
-        }
+        if let sel = timeSelection { roots = objectIDs(inZone: sel) }
+        if roots.isEmpty { roots = selectedIDs }
+        if roots.isEmpty { roots = objectIDsOnWorkingLanes() }
         guard !roots.isEmpty else { return }
         tempSoloRoots  = roots
         heldSoloActive = true
@@ -135,7 +157,9 @@ extension EditViewModel {
     }
 
     /// Releasing "s": lifts the temporary layer and hands back to the confirmed solo (or to the full
-    /// mix). What was frozen by s+⏎ stays, the rest goes out.
+    /// mix). What was frozen by s+⏎ stays, the rest goes out. This is now, together with Esc, the
+    /// ONLY path that lifts the temporary layer — the transport never touches it any more: space
+    /// and ⇧space are plain play/stop and pause/resume, whatever solo is filtering the listening.
     func endHeldSolo() {
         guard heldSoloActive else { return }
         heldSoloActive = false
@@ -178,64 +202,11 @@ extension EditViewModel {
         } else {
             tempSoloRoots = roots
             // A layer born of the click → it belongs to the hold of "s" (HUD + lifted on
-            // release). If a layer already existed, its owner is left alone:
-            // an audition (⇧space) under way stays master of its own lifting.
+            // release). If a layer already existed, its owner is left alone — but that owner
+            // can now only ever be the held "s" itself: since the audition (⇧+space) was
+            // removed, a click-born layer has no other possible master.
             if !hadLayer { heldSoloActive = true }
         }
-        refreshSolo()
-    }
-
-    // MARK: The temporary solo (tied to a playback)
-
-    /// The playback window of a temporary solo: `start`/`end` in timeline seconds. `end == nil`
-    /// = play to the end (no automatic stop).
-    struct TempSoloWindow { var start: Double; var end: Double? }
-
-    /// ⇧+space: arms a temporary solo and returns the window to play, or nil if there is nothing to
-    /// audition. A time selection → the [start, end] range + the objects inside it; an already composed
-    /// "s" layer (selection + clicks) → that layer; otherwise an object selection → [the start of the
-    /// earliest, the end of the latest]. The transport (ContentView) takes care of the seek/play and of stopping at
-    /// `end`. Like any temporary layer, it ADDS to the confirmed solo: the audition is heard
-    /// over what is already soloed.
-    func beginTemporarySolo() -> TempSoloWindow? {
-        var roots: Set<UUID> = []
-        var start = 0.0
-        var end: Double? = nil
-
-        if let sel = timeSelection {
-            roots = objectIDs(inZone: sel)
-            start = sel.timeRange.lowerBound
-            end   = sel.timeRange.upperBound
-        } else if heldSoloActive, let temp = tempSoloRoots, !temp.isEmpty {
-            // "s" held: what is auditioned is what has just been composed by clicking, not the
-            // selection alone. The window = the span of those objects in ABSOLUTE time (children of groups
-            // included), hence going through laneEntries rather than through `startTime`.
-            roots = temp
-            let spans = laneEntries.filter { temp.contains($0.item.id) }
-            guard let s = spans.map(\.absStart).min(),
-                  let e = spans.map({ $0.absStart + $0.item.duration }).max() else { return nil }
-            start = s; end = e
-        } else if !selectedIDs.isEmpty {
-            roots = selectedIDs
-            let objs = selectedIDs.compactMap { find(id: $0) }
-            guard let s = objs.map(\.startTime).min(),
-                  let e = objs.map({ $0.startTime + $0.duration }).max() else { return nil }
-            start = s; end = e
-        }
-
-        guard !roots.isEmpty else { return nil }
-        tempSoloRoots  = roots
-        heldSoloActive = false   // the audition takes over from the held "s" (HUD included)
-        refreshSolo()
-        return TempSoloWindow(start: max(0, start), end: end)
-    }
-
-    /// The end of the auditioned playback: lifts the temporary solo and restores the listening (either the
-    /// solo still toggled on, or the full mix).
-    func endTemporarySolo() {
-        guard tempSoloRoots != nil else { return }
-        tempSoloRoots  = nil
-        heldSoloActive = false
         refreshSolo()
     }
 
@@ -250,6 +221,28 @@ extension EditViewModel {
                 && e.absStart < hi
                 && e.absStart + e.item.duration > lo
         }.map { $0.item.id })
+    }
+
+    /// The last-resort roots for `beginHeldSolo`: everything sitting on the WORKING lanes, with no
+    /// time bound at all. "Working lanes" = the lanes of the traced time selection if there is one
+    /// (even if it holds no object — the lanes themselves are what was aimed at), otherwise the
+    /// caret's own lane; with neither, there is nothing to fall back on.
+    ///
+    /// No temporal filter here, unlike `objectIDs(inZone:)`: the cursor only ever says WHERE
+    /// PLAYBACK STARTS, never what gets filtered out of the listening — solo is not the transport.
+    /// So an object on a working lane that starts after the cursor is soloed all the same, since it
+    /// will be heard once playback reaches it.
+    ///
+    /// What "sitting on a lane" means is the same visual truth as `objectIDs(inZone:)`: a folded
+    /// group is itself the entry on its lane, an unfolded one puts its children on their own lanes
+    /// — `laneEntries` already resolves that, so reading it here keeps the two functions agreeing on
+    /// what is "on screen" at a given row.
+    func objectIDsOnWorkingLanes() -> Set<UUID> {
+        let lanes: Set<Int>
+        if let sel = timeSelection { lanes = sel.lanes }
+        else if let cl = caretLane { lanes = [cl] }
+        else { return [] }
+        return Set(laneEntries.filter { lanes.contains($0.displayLane) }.map { $0.item.id })
     }
 
     // MARK: Applying it to the engine + the cached audible set

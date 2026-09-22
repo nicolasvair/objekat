@@ -47,9 +47,6 @@ struct TimelineView: View {
     var onTogglePause: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
     var onReturnToZero: () -> Void = {}
-    /// S+space: it plays the selection/range only (a temporary solo). The transport (ContentView)
-    /// arms the solo, seeks to the start and handles the automatic stop at the end of the window.
-    var onSoloPlay: () -> Void = {}
 
     // Not `private`: read by the gesture handlers (extensions in other files) so as to bound the
     // tool controls to the block's visible portion (see visibleSpan).
@@ -2842,8 +2839,9 @@ struct TimelineView: View {
     }
 
     // The solo HUD: visible while a committed solo filters what is heard. It reminds one how many
-    // objects/stems are soloed and how to leave (Esc). A temporary solo (tied to playback) does
-    // not show it — it disappears of its own accord on stopping.
+    // objects/stems are soloed and how to leave (Esc). The temporary solo has its OWN HUD
+    // (`heldSoloHUD`, just above): it no longer disappears on stopping playback, only on releasing
+    // "s" (or Esc) — the transport does not touch it any more.
     @ViewBuilder
     private var soloHUD: some View {
         if viewModel.soloActive {
