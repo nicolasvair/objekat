@@ -237,7 +237,7 @@ final class WaveformCache {
             }
             // 2) Otherwise compute, then persist if a project folder is known.
             let computeStart = CFAbsoluteTimeGetCurrent()
-            let result = Self.computeMipmap(path: filePath)
+            let result = await Self.computeMipmap(path: filePath)
             WaveformCacheMeter.record { stats in
                 stats.mipmapsComputed += 1
                 stats.mipmapComputeSeconds += CFAbsoluteTimeGetCurrent() - computeStart
@@ -261,7 +261,38 @@ final class WaveformCache {
         entry.peaks.reduce(0) { $0 + $1.count * MemoryLayout<PeakPair>.stride }
     }
 
-    private nonisolated static func computeMipmap(path: String) -> Entry {
+    /// Bounds how many mipmaps are computed AT ONCE. Not a thread count — the cooperative pool
+    /// already caps that — but a MEMORY bound and a scheduling one: `ensureWaveformsLoaded`
+    /// (`TimelineView`) asks for every visible entry in one go, and 200 files each holding a
+    /// decode buffer is how the resident set reached 3.76 GB on a 16 GB machine with the engine
+    /// and the plugins running beside it. An actor rather than a `DispatchSemaphore`: the wait
+    /// has to be `async`, or every caller would block a cooperative-pool thread while it queues.
+    private actor ComputeGate {
+        private let limit: Int
+        private var running = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        init(limit: Int) { self.limit = limit }
+
+        func acquire() async {
+            if running < limit { running += 1; return }
+            await withCheckedContinuation { waiters.append($0) }
+            // No `running += 1` here: `release()` hands its slot straight to the next waiter
+            // instead of freeing it and letting a THIRD task race to reclaim it.
+        }
+
+        func release() {
+            if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
+        }
+    }
+    private nonisolated static let computeGate = ComputeGate(limit: 8)
+
+    /// Frames per chunk: ~1 MB of float32 per channel, one buffer allocated ONCE and reused for
+    /// every read of a file — a 317 MB source no longer needs a 423 MB decode buffer to draw its
+    /// waveform, it needs this one, however long the file is.
+    private nonisolated static let chunkFrames = 1 << 18
+
+    private nonisolated static func computeMipmap(path: String) async -> Entry {
         let densities = effectiveDensitiesPerSecond
         let url = URL(fileURLWithPath: path)
         guard let audioFile = try? AVAudioFile(forReading: url) else {
@@ -269,53 +300,120 @@ final class WaveformCache {
                          duration: 0, sampleRate: 0)
         }
         let format = audioFile.processingFormat
-        let frameCount = AVAudioFrameCount(audioFile.length)
+        let total = Int(audioFile.length)
         let duration = Double(audioFile.length) / format.sampleRate
-        // `processingFormat` is always non-interleaved float32: `floatChannelData[c]` is its own
-        // pointer, stride 1 — never assume interleaving on an AVAudioPCMBuffer.
-        guard frameCount > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
-              (try? audioFile.read(into: buffer)) != nil,
-              let channels = buffer.floatChannelData
-        else {
+        guard total > 0 else {
             return Entry(peaks: densities.map { _ in [] }, densities: densities,
                          duration: duration, sampleRate: format.sampleRate)
         }
-        let total = Int(buffer.frameLength)
-        let channelCount = Int(format.channelCount)
 
-        // For each level: an asymmetric envelope (negative lo, positive hi) per block — the
-        // UNION of every channel's own envelope (lo = the lowest minimum, hi = the highest
-        // maximum, each end taking whichever channel reaches furthest on ITS side), never a
-        // mixdown. The envelope must show what comes out LOUDEST: summing channels can halve
-        // matter that sits on one of them alone, and in phase opposition can cancel it outright
-        // — drawing silence over real signal. @see decodeRegion for the samples-mode twin of
-        // this rule (its min/max per pixel is exactly this union).
-        // RAW values, no normalisation — the real amplitude.
-        var allPeaks: [[PeakPair]] = []
-        for density in densities {
-            let count = max(1, Int((density * duration).rounded()))
-            var peaks = [PeakPair](repeating: PeakPair(lo: 0, hi: 0), count: count)
-            let step = Double(total) / Double(count)
-            for i in 0..<count {
-                let start = Int(Double(i) * step)
-                let end   = min(Int(Double(i + 1) * step), total)
-                var lo: Float = 0
-                var hi: Float = 0
-                for c in 0..<channelCount {
-                    let channel = channels[c]
-                    for j in start..<end {
-                        let v = channel[j]
-                        if v < lo { lo = v }
-                        if v > hi { hi = v }
-                    }
-                }
-                peaks[i] = PeakPair(lo: lo, hi: hi)
-            }
-            allPeaks.append(peaks)
+        await computeGate.acquire()
+        let peaks = decodeChunked(audioFile: audioFile, total: total, channelCount: Int(format.channelCount),
+                                  duration: duration, densities: densities)
+        await computeGate.release()
+
+        guard let peaks else {
+            return Entry(peaks: densities.map { _ in [] }, densities: densities,
+                         duration: duration, sampleRate: format.sampleRate)
         }
-        return Entry(peaks: allPeaks, densities: densities, duration: duration,
-                     sampleRate: format.sampleRate)
+        return Entry(peaks: peaks, densities: densities, duration: duration, sampleRate: format.sampleRate)
+    }
+
+    /// One density level's blocks, filled while the file streams past in chunks. Keeps the
+    /// in-progress block's (lo, hi) across chunk boundaries — a block is almost always far
+    /// narrower than `chunkFrames` (4.8 frames at 10 000 peaks/s and 48 kHz), so it WILL straddle
+    /// a boundary, at most one block per boundary. Skipping that carry would draw a false notch
+    /// every `chunkFrames` worth of file — about once every 5.5 s.
+    private nonisolated struct LevelAccumulator {
+        let count: Int
+        private let step: Double
+        private let total: Int
+        private var peaks: [PeakPair]
+        private var blockIndex = 0
+        private var blockEnd: Int
+        private var lo: Float = 0
+        private var hi: Float = 0
+
+        init(density: Double, duration: Double, total: Int) {
+            count = max(1, Int((density * duration).rounded()))
+            step = Double(total) / Double(count)
+            self.total = total
+            peaks = [PeakPair](repeating: PeakPair(lo: 0, hi: 0), count: count)
+            blockEnd = min(Int(step), total)
+        }
+
+        /// `absoluteFrame` must arrive in strictly increasing order across the whole file — the
+        /// one assumption that turns this into a single streaming pass instead of a second scan.
+        mutating func add(absoluteFrame: Int, lo v0: Float, hi v1: Float) {
+            while absoluteFrame >= blockEnd, blockIndex < count {
+                peaks[blockIndex] = PeakPair(lo: lo, hi: hi)
+                blockIndex += 1
+                lo = 0; hi = 0
+                blockEnd = blockIndex < count ? min(Int(Double(blockIndex + 1) * step), total) : blockEnd
+            }
+            guard blockIndex < count else { return }
+            if v0 < lo { lo = v0 }
+            if v1 > hi { hi = v1 }
+        }
+
+        /// Closes whatever block is still open once the last chunk has been folded in — nothing
+        /// past the final frame ever reaches `blockEnd`, since the last block's end is the file's
+        /// own end.
+        mutating func finish() -> [PeakPair] {
+            while blockIndex < count {
+                peaks[blockIndex] = PeakPair(lo: lo, hi: hi)
+                blockIndex += 1
+                lo = 0; hi = 0
+            }
+            return peaks
+        }
+    }
+
+    /// The UNION of every channel's own envelope (lo = the lowest minimum, hi = the highest
+    /// maximum, each end taking whichever channel reaches furthest on ITS side), never a
+    /// mixdown. The envelope must show what comes out LOUDEST: summing channels can halve matter
+    /// that sits on one of them alone, and in phase opposition can cancel it outright — drawing
+    /// silence over real signal. @see decodeRegion for the samples-mode twin of this rule (its
+    /// min/max per pixel is exactly this union). RAW values, no normalisation.
+    ///
+    /// nil on a read failure partway through — a partial mipmap would be indistinguishable from
+    /// a complete one once written to disk.
+    private nonisolated static func decodeChunked(audioFile: AVAudioFile, total: Int, channelCount: Int,
+                                                   duration: Double, densities: [Double]) -> [[PeakPair]]? {
+        guard channelCount > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
+                                            frameCapacity: AVAudioFrameCount(chunkFrames))
+        else { return nil }
+        var levels = densities.map { LevelAccumulator(density: $0, duration: duration, total: total) }
+
+        var framesRead = 0
+        while framesRead < total {
+            // `processingFormat` is always non-interleaved float32: `floatChannelData[c]` is its
+            // own pointer, stride 1 — never assume interleaving on an AVAudioPCMBuffer.
+            guard (try? audioFile.read(into: buffer, frameCount: AVAudioFrameCount(chunkFrames))) != nil,
+                  let channels = buffer.floatChannelData
+            else { return nil }
+            let n = Int(buffer.frameLength)
+            guard n > 0 else { break }
+            for j in 0..<n {
+                var frameLo = channels[0][j]
+                var frameHi = frameLo
+                for c in 1..<channelCount {
+                    let v = channels[c][j]
+                    if v < frameLo { frameLo = v }
+                    if v > frameHi { frameHi = v }
+                }
+                let absoluteFrame = framesRead + j
+                for li in levels.indices {
+                    levels[li].add(absoluteFrame: absoluteFrame, lo: frameLo, hi: frameHi)
+                }
+            }
+            framesRead += n
+        }
+        var result: [[PeakPair]] = []
+        result.reserveCapacity(levels.count)
+        for li in levels.indices { result.append(levels[li].finish()) }
+        return result
     }
 
     // MARK: - The .wfc disk cache
