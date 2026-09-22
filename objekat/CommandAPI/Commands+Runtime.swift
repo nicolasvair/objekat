@@ -165,6 +165,61 @@ extension CommandRegistry {
                 "engine_nodes": .null,
             ])
         }
+
+        // MARK: waveform cache
+
+        register("perf.waveforms",
+                 summary: """
+                 The waveform cache's counters (@see `Shared/WaveformCacheMeter.swift`) — \
+                 computed once per file or per region, never per sample, so reading this costs \
+                 nothing the cache was not already paying. Answers even with no project open: \
+                 the counters are process-wide statics, not a view-model's.
+                 """,
+                 params: [ParamSpec("reset", "bool", required: false,
+                                    "Zero the counters first (default false).")],
+                 undo: .none) { p in
+            if try p.bool("reset", or: false) { WaveformCacheMeter.reset() }
+            let stats = WaveformCacheMeter.snapshot()
+            let vm = CommandContext.shared.viewModel
+            return .object([
+                "mipmaps_computed": .int(stats.mipmapsComputed),
+                "mipmap_compute_seconds": .number(stats.mipmapComputeSeconds),
+                "mipmaps_read_from_disk": .int(stats.mipmapsReadFromDisk),
+                "disk_read_seconds": .number(stats.diskReadSeconds),
+                "mipmaps_written": .int(stats.mipmapsWritten),
+                "bytes_written": .int(stats.bytesWritten),
+                "region_decodes": .int(stats.regionsDecoded),
+                "region_decode_seconds": .number(stats.regionDecodeSeconds),
+                "region_evictions": .int(stats.regionsEvicted),
+                "peak_bytes_in_memory": .int(stats.peakBytesInMemory),
+                "region_bytes_in_memory": .int(stats.regionBytesInMemory),
+                "in_flight": .int(stats.inFlight),
+                "peak_concurrency": .int(stats.peakConcurrency),
+                "densities": .array(WaveformCache.effectiveDensitiesPerSecond.map { .number($0) }),
+                "sample_mode_threshold": .number(WaveformCache.sampleModeThreshold),
+                "format_version": .int(Int(WaveformCache.formatVersion)),
+                "waveforms_dir": .stringOrNull(vm?.waveformsFolder?.path),
+            ])
+        }
+
+        register("waveform.preload",
+                 summary: """
+                 Computes the waveforms of every file the CURRENT project names, whether or not \
+                 their blocks are on screen — the only door a script has onto the peaks, since \
+                 `ensureWaveformsLoaded` is driven by what the Canvas draws and nothing headless \
+                 has one. `available: false` means this instance has no interface (`--headless`): \
+                 that is the guard against measuring an empty cache and concluding there is \
+                 nothing to fix.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let preload = vm.preloadWaveforms else {
+                return .object(["available": .bool(false), "paths": .int(0)])
+            }
+            let paths = Array(vm.referencedAudioPaths)
+            preload(paths)
+            return .object(["available": .bool(true), "paths": .int(paths.count)])
+        }
     }
 
     // MARK: - Running a batch

@@ -661,6 +661,14 @@ final class EditViewModel {
     @ObservationIgnored var beginVerticalZoomDrag: (() -> Void)?
     @ObservationIgnored var endVerticalZoomDrag: (() -> Void)?
 
+    /// Asks the timeline to compute the waveforms of these files now, whether or not their
+    /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`
+    /// is driven by what the Canvas draws, so nothing headless — and nothing that is merely
+    /// scrolled elsewhere — would ever trigger it. nil when there is no interface (@see
+    /// `waveform.preload`, whose `available: false` in `--headless` is the guard that keeps
+    /// a script from measuring an empty cache and concluding there is nothing to fix).
+    @ObservationIgnored var preloadWaveforms: (([String]) -> Void)?
+
 
     var clipboard: ClipboardContent? = nil
     /// A clipboard dedicated to MIDI notes (independent of `clipboard`, which carries clips/groups).
@@ -714,6 +722,14 @@ final class EditViewModel {
         }
         collect(items, laneOffset: 0)
         return result
+    }
+
+    /// Every audio file this project names — groups walked recursively, folded ones included,
+    /// exactly as `allClips` already reaches them (@see `EditViewModel+MissingFiles.rescanMissingFiles`,
+    /// which reads the disk by the same walk). What `waveform.preload` hands the cache, so a
+    /// script can compute every peak the project will ever draw without a Canvas on screen.
+    var referencedAudioPaths: Set<String> {
+        Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
     }
 
     /// The flattening of the objects into display rows. CACHED: rebuilt only

@@ -1091,6 +1091,9 @@ struct TimelineView: View {
             }
             viewModel.endHorizontalZoomDrag = { hZoomHeld = false }
             viewModel.applyHorizontalZoom = { newPPS in applyZoom(newPPS) }
+            // The one door `waveform.preload` calls through: a script has no Canvas to trigger
+            // `ensureWaveformsLoaded`, and this closure is the only other way in.
+            viewModel.preloadWaveforms = { paths in for p in paths { waveformCache.load(filePath: p) } }
             viewModel.beginVerticalZoomDrag = {
                 openVerticalZoomSession()
                 vZoomHeld = true

@@ -23,6 +23,15 @@ final class WaveformCache {
         baseDensitiesPerSecond.map { $0 * finenessMultiplier }
     }
 
+    /// Above this many pixels per second, a pixel covers FEWER samples than a peak block does —
+    /// the finest mipmap level starts under-resolving, and `WaveformDrawing` switches to reading
+    /// decoded samples directly. One definition, read by both drawing paths
+    /// (`WaveformDrawing.swift`) and by `perf.waveforms`: two copies of a threshold is two
+    /// thresholds the day one of them drifts.
+    nonisolated static var sampleModeThreshold: Double {
+        (effectiveDensitiesPerSecond.last ?? 10000) * 3
+    }
+
     // An asymmetric envelope per block: negative extremum (lo) and positive one (hi),
     // raw values in [-1, 1] (no normalisation, we show the real amplitude).
     struct PeakPair {
@@ -120,12 +129,18 @@ final class WaveformCache {
             let hi = min(duration, center + half)
             regionInFlight[filePath] = lo...hi
 
+            let decodeStart = CFAbsoluteTimeGetCurrent()
             let region = await Task.detached(priority: .userInitiated) {
                 Self.decodeRegion(path: filePath, startTime: lo, endTime: hi, sampleRate: sr)
             }.value
 
             regionInFlight[filePath] = nil
             guard let region else { return }
+            WaveformCacheMeter.record { stats in
+                stats.regionsDecoded += 1
+                stats.regionDecodeSeconds += CFAbsoluteTimeGetCurrent() - decodeStart
+                stats.regionBytesInMemory += region.samples.count * MemoryLayout<Float>.stride
+            }
             sampleRegions[filePath] = region
             regionRecency.removeAll { $0 == filePath }
             regionRecency.insert(filePath, at: 0)
@@ -136,6 +151,12 @@ final class WaveformCache {
     private func evictRegionsIfNeeded() {
         while regionRecency.count > Self.regionCap {
             let victim = regionRecency.removeLast()
+            if let region = sampleRegions[victim] {
+                WaveformCacheMeter.record { stats in
+                    stats.regionsEvicted += 1
+                    stats.regionBytesInMemory -= region.samples.count * MemoryLayout<Float>.stride
+                }
+            }
             sampleRegions[victim] = nil
         }
     }
@@ -169,23 +190,50 @@ final class WaveformCache {
         guard !inFlight.contains(filePath), cache[filePath] == nil else { return }
         inFlight.insert(filePath)
         let dir = waveformsDirectory
+        WaveformCacheMeter.record { stats in
+            stats.inFlight += 1
+            stats.peakConcurrency = max(stats.peakConcurrency, stats.inFlight)
+        }
         Task.detached(priority: .utility) {
             // 1) Try the `.wfc` disk cache (instant peaks, no decoding).
+            let diskStart = CFAbsoluteTimeGetCurrent()
             if let dir, let cached = Self.loadFromDisk(path: filePath, dir: dir) {
+                WaveformCacheMeter.record { stats in
+                    stats.mipmapsReadFromDisk += 1
+                    stats.diskReadSeconds += CFAbsoluteTimeGetCurrent() - diskStart
+                    stats.peakBytesInMemory += Self.peakByteSize(cached)
+                }
                 await MainActor.run {
                     self.cache[filePath] = cached
                     self.inFlight.remove(filePath)
+                    WaveformCacheMeter.record { $0.inFlight -= 1 }
                 }
                 return
             }
             // 2) Otherwise compute, then persist if a project folder is known.
+            let computeStart = CFAbsoluteTimeGetCurrent()
             let result = Self.computeMipmap(path: filePath)
+            WaveformCacheMeter.record { stats in
+                stats.mipmapsComputed += 1
+                stats.mipmapComputeSeconds += CFAbsoluteTimeGetCurrent() - computeStart
+                stats.peakBytesInMemory += Self.peakByteSize(result)
+            }
             if let dir { Self.writeToDisk(result, path: filePath, dir: dir) }
             await MainActor.run {
                 self.cache[filePath] = result
                 self.inFlight.remove(filePath)
+                WaveformCacheMeter.record { $0.inFlight -= 1 }
             }
         }
+    }
+
+    /// The memory footprint of one entry's peaks — a gauge for `perf.waveforms`, never on the
+    /// drawing path. Computed once per file at load, not tracked per mutation: the mipmap cache
+    /// is never evicted (@see `setWaveformsDirectory`, C3 — the memory cache stays shared across
+    /// projects on purpose), so this only ever grows, which is exactly what a resident-set gauge
+    /// should do.
+    private nonisolated static func peakByteSize(_ entry: Entry) -> Int {
+        entry.peaks.reduce(0) { $0 + $1.count * MemoryLayout<PeakPair>.stride }
     }
 
     private nonisolated static func computeMipmap(path: String) -> Entry {
@@ -246,7 +294,9 @@ final class WaveformCache {
     // We do NOT persist `samples` (regenerable, enormous) — see the roadmap.
 
     private nonisolated static let magic = Array("WFC1".utf8)
-    private nonisolated static let formatVersion: UInt32 = 2
+    // Not `private`: `perf.waveforms` reports it, so a script can tell a stale `.wfc` on disk
+    // from a fresh one without parsing the binary header itself.
+    nonisolated static let formatVersion: UInt32 = 2
 
     /// The cache file name for a source: basename + '.wfc'.
     private nonisolated static func cacheFileName(path: String) -> String {
@@ -296,6 +346,10 @@ final class WaveformCache {
         }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: dir.appendingPathComponent(cacheFileName(path: path)), options: .atomic)
+        WaveformCacheMeter.record { stats in
+            stats.mipmapsWritten += 1
+            stats.bytesWritten += data.count
+        }
     }
 
     private nonisolated static func loadFromDisk(path: String, dir: URL) -> Entry? {
