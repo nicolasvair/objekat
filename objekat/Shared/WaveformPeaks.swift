@@ -114,3 +114,46 @@ enum PeakQuantisation {
     /// the assertion that IS the int16 decision (@see PLAN-WAVEFORM.md, section A1).
     nonisolated static var maxAbsoluteError: Float { 1 / (2 * scale) }
 }
+
+extension WaveformPeaks {
+    /// The (lo, hi) of the samples a single pixel covers, `from`/`to` given as FRACTIONAL sample
+    /// indices into `s` (not seconds — the caller has already multiplied by the sample rate).
+    ///
+    /// Under one sample per pixel (`to - from < 1`) this degenerates to the linear interpolation
+    /// the samples-mode drawing has always done, `lo == hi` at the midpoint — so at the zoom the
+    /// samples mode used to start at (30 000 px/s, ~1.6 samples/px at 48 kHz), nothing changes on
+    /// screen. Above one sample per pixel it is a real min/max over the span, which is what a
+    /// peaks LEVEL does and what point sampling does NOT: at 3 000 px/s a pixel spans 16 samples
+    /// at 48 kHz, and drawing one of those 16 draws an alias, not a waveform (@see
+    /// PLAN-WAVEFORM.md, section A2 — the reason this function exists at all).
+    ///
+    /// (0, 0) on an empty array or a span entirely out of `s`'s bounds — never a crash, the same
+    /// contract the drawing's own bounds check (`sIdx < 0 || sIdx >= n - 1`) already relied on.
+    nonisolated static func sampleEnvelope(_ s: [Float], from: Double, to: Double) -> PeakPair {
+        let n = s.count
+        guard n > 0 else { return PeakPair(lo: 0, hi: 0) }
+
+        if to - from < 1 {
+            // The exact formula the drawing used before this existed: interpolate at the span's
+            // midpoint. Guarded the same way — `mid < n - 1` so `i0 + 1` never runs off the end.
+            let mid = (from + to) * 0.5
+            guard mid >= 0, mid < Double(n - 1) else { return PeakPair(lo: 0, hi: 0) }
+            let i0 = Int(mid.rounded(.down))
+            let frac = mid - Double(i0)
+            let v = Float(Double(s[i0]) * (1 - frac) + Double(s[i0 + 1]) * frac)
+            return PeakPair(lo: v, hi: v)
+        }
+
+        guard to >= 0, from < Double(n) else { return PeakPair(lo: 0, hi: 0) }
+        let lo0 = max(0, Int(from.rounded(.down)))
+        let hi0 = min(n - 1, Int(to.rounded(.up)))
+        guard lo0 <= hi0 else { return PeakPair(lo: 0, hi: 0) }
+        var lo = s[lo0]
+        var hi = s[lo0]
+        for i in (lo0 + 1)...hi0 {
+            if s[i] < lo { lo = s[i] }
+            if s[i] > hi { hi = s[i] }
+        }
+        return PeakPair(lo: lo, hi: hi)
+    }
+}

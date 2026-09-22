@@ -59,12 +59,39 @@ final class WaveformCache {
     private var cache: [String: Entry] = [:]
     private var inFlight: Set<String> = []
 
-    // An LRU cache of sample regions (the cap is deliberately low: ~260 kB/region).
-    private var sampleRegions: [String: SampleRegion] = [:]
-    private var regionRecency: [String] = []          // most recent at the head
-    private var regionInFlight: [String: ClosedRange<Double>] = [:]  // the target currently being decoded
-    private static let regionCap = 8
-    private static let regionMinSpan: Double = 2.0    // at least 2 s decoded per region
+    /// A decoded region's key. Keying on the PATH alone was enough while the samples mode only
+    /// opened past 30 000 px/s: the viewport then held 0.05 s of timeline, so two windows of one
+    /// file could not both be on screen. At 3 000 px/s (@see C1b) they can — a chopped take laid
+    /// twice at distant source offsets — and one region per path made them evict each other on
+    /// EVERY frame, each redecoding what the other had just replaced.
+    private struct RegionKey: Hashable { let path: String; let slot: Int }
+    /// File seconds per slot — the unit `RegionKey.slot` buckets a request into.
+    private static let regionSlotSpan: Double = 2.0
+    private static func slot(for fileTime: Double) -> Int { Int((fileTime / regionSlotSpan).rounded(.down)) }
+
+    // An LRU cache of sample regions.
+    private var sampleRegions: [RegionKey: SampleRegion] = [:]
+    private var regionRecency: [RegionKey] = []          // most recent at the head
+    private var regionInFlight: [RegionKey: ClosedRange<Double>] = [:]  // the target currently being decoded
+    /// Capped in BYTES and not in count: the regions no longer have one size (@see
+    /// `regionMinSpan`), so a fixed count is either too tight at the floor or too loose at the
+    /// ceiling. 48 MB ≈ 250 s of mono float32 at 48 kHz — enough for every file a tall viewport
+    /// can show at once, at the widest span this cache ever decodes.
+    private static let regionByteCap = 48 << 20
+    private var regionBytesTotal = 0
+
+    /// Wider windows in the middle band: near the samples-mode threshold the viewport shows
+    /// about half a second of file (@see PLAN-WAVEFORM.md section A3 — `viewportWidth /
+    /// pixelsPerSecond` at 3 000 px/s), and a 2 s region is spent after one second of scrolling —
+    /// this widens it there, so a few scroll-widths land inside one region instead of one. Deep
+    /// in the zoom `requestSpan` itself shrinks towards a fraction of a millisecond — a region is
+    /// aimed at a POINT there, not a passage, so the 2 s floor already outlives minutes of real
+    /// scrolling. The ceiling exists so a long LOOP's own period (which `requestSpan` can equal,
+    /// @see `WaveformDrawing.draw`'s `winStart`/`winEnd` under a loop) cannot inflate one region
+    /// past a sane share of `regionByteCap` on its own.
+    private static func regionMinSpan(requestSpan: Double) -> Double {
+        min(max(2.0, requestSpan * 8), 6.0)
+    }
 
     // The project's `waveforms/` folder, where the `.wfc` caches are written and read back.
     // nil while the project is unsaved → computed in memory only.
@@ -106,56 +133,88 @@ final class WaveformCache {
         guard let duration = cache[filePath]?.duration, duration > 0 else { return nil }
         // A PURELY read-only synchronous path (called while the Canvas renders):
         // a hit returns the region, a miss schedules the decode without mutating state here.
-        if let region = sampleRegions[filePath],
-           region.startTime <= fileStart, region.endTime >= fileEnd {
+        if let region = existingRegion(filePath, fileStart: fileStart, fileEnd: fileEnd) {
             return region
         }
         requestRegion(filePath, fileStart: fileStart, fileEnd: fileEnd, duration: duration)
         return nil
     }
 
+    /// Looks at the request's own slot AND ITS TWO NEIGHBOURS: a request straddling a slot
+    /// boundary may have been decoded under the slot next door, its widened window having
+    /// started (or ended) on the other side of the line (@see `RegionKey`).
+    private func existingRegion(_ filePath: String, fileStart: Double, fileEnd: Double) -> SampleRegion? {
+        let centerSlot = Self.slot(for: fileStart)
+        for s in (centerSlot - 1)...(centerSlot + 1) {
+            if let region = sampleRegions[RegionKey(path: filePath, slot: s)],
+               region.startTime <= fileStart, region.endTime >= fileEnd {
+                return region
+            }
+        }
+        return nil
+    }
+
+    private func inFlightCovers(_ filePath: String, fileStart: Double, fileEnd: Double) -> Bool {
+        let centerSlot = Self.slot(for: fileStart)
+        for s in (centerSlot - 1)...(centerSlot + 1) {
+            if let t = regionInFlight[RegionKey(path: filePath, slot: s)],
+               t.contains(fileStart), t.contains(fileEnd) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Schedules (outside the view update) the windowed decode of a missing region.
     private func requestRegion(_ filePath: String, fileStart: Double, fileEnd: Double, duration: Double) {
         Task { @MainActor in
             // De-duplication: the region may have arrived, or a decode may already cover it.
-            if let r = sampleRegions[filePath], r.startTime <= fileStart, r.endTime >= fileEnd { return }
-            if let t = regionInFlight[filePath], t.contains(fileStart), t.contains(fileEnd) { return }
+            if existingRegion(filePath, fileStart: fileStart, fileEnd: fileEnd) != nil { return }
+            if inFlightCovers(filePath, fileStart: fileStart, fileEnd: fileEnd) { return }
             guard let sr = cache[filePath]?.sampleRate, sr > 0 else { return }
 
             // The target: the requested window widened (≥ regionMinSpan), bounded by the file.
+            let requestKey = RegionKey(path: filePath, slot: Self.slot(for: fileStart))
+            let span = Self.regionMinSpan(requestSpan: fileEnd - fileStart)
             let center = (fileStart + fileEnd) * 0.5
-            let half = max((fileEnd - fileStart) * 1.5, Self.regionMinSpan * 0.5)
+            let half = max((fileEnd - fileStart) * 1.5, span * 0.5)
             let lo = max(0, center - half)
             let hi = min(duration, center + half)
-            regionInFlight[filePath] = lo...hi
+            regionInFlight[requestKey] = lo...hi
 
             let decodeStart = CFAbsoluteTimeGetCurrent()
             let region = await Task.detached(priority: .userInitiated) {
                 Self.decodeRegion(path: filePath, startTime: lo, endTime: hi, sampleRate: sr)
             }.value
 
-            regionInFlight[filePath] = nil
+            regionInFlight[requestKey] = nil
             guard let region else { return }
+            let bytes = region.samples.count * MemoryLayout<Float>.stride
             WaveformCacheMeter.record { stats in
                 stats.regionsDecoded += 1
                 stats.regionDecodeSeconds += CFAbsoluteTimeGetCurrent() - decodeStart
-                stats.regionBytesInMemory += region.samples.count * MemoryLayout<Float>.stride
+                stats.regionBytesInMemory += bytes
             }
-            sampleRegions[filePath] = region
-            regionRecency.removeAll { $0 == filePath }
-            regionRecency.insert(filePath, at: 0)
+            // Keyed by where the DECODED region actually starts, not the request: widening can
+            // pull `lo` back into the slot before the one the request itself fell in.
+            let storeKey = RegionKey(path: filePath, slot: Self.slot(for: region.startTime))
+            sampleRegions[storeKey] = region
+            regionBytesTotal += bytes
+            regionRecency.removeAll { $0 == storeKey }
+            regionRecency.insert(storeKey, at: 0)
             evictRegionsIfNeeded()
         }
     }
 
     private func evictRegionsIfNeeded() {
-        while regionRecency.count > Self.regionCap {
-            let victim = regionRecency.removeLast()
+        while regionBytesTotal > Self.regionByteCap, let victim = regionRecency.popLast() {
             if let region = sampleRegions[victim] {
+                let bytes = region.samples.count * MemoryLayout<Float>.stride
                 WaveformCacheMeter.record { stats in
                     stats.regionsEvicted += 1
-                    stats.regionBytesInMemory -= region.samples.count * MemoryLayout<Float>.stride
+                    stats.regionBytesInMemory -= bytes
                 }
+                regionBytesTotal -= bytes
             }
             sampleRegions[victim] = nil
         }

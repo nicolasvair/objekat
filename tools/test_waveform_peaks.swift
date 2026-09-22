@@ -186,6 +186,41 @@ enum WaveformPeaksTest {
     check("worst-case pixel error (int16, mid 450 px, +24 dB) < 0.5 px",
           worstCasePixelError < 0.5, "got \(worstCasePixelError)")
 
+    // MARK: - WaveformPeaks.sampleEnvelope (C1b0)
+
+    // A known sinusoid: 16 samples per pixel-span should give back the true min and max.
+    let sineLen = 1000
+    var sine = [Float](repeating: 0, count: sineLen)
+    for i in 0..<sineLen { sine[i] = sinf(Float(i) * 0.37) }
+    let spanStart = 100.0, spanEnd = 116.0   // 16 samples: [100, 116)
+    var bruteLo: Float = sine[100], bruteHi: Float = sine[100]
+    for i in 100...115 {
+        bruteLo = min(bruteLo, sine[i])
+        bruteHi = max(bruteHi, sine[i])
+    }
+    let env = WaveformPeaks.sampleEnvelope(sine, from: spanStart, to: spanEnd)
+    check("sampleEnvelope over 16 samples returns the true min",
+          env.lo == bruteLo, "got \(env.lo), expected \(bruteLo)")
+    check("sampleEnvelope over 16 samples returns the true max",
+          env.hi == bruteHi, "got \(env.hi), expected \(bruteHi)")
+
+    // Under one sample per pixel: degenerates to the linear interpolation the drawing always
+    // did (lo == hi), so nothing changes at the zoom the samples mode used to start at.
+    let midSpan = WaveformPeaks.sampleEnvelope(sine, from: 100.2, to: 100.8)
+    let expectedMid = Double(sine[100]) * (1 - 0.5) + Double(sine[101]) * 0.5
+    check("sampleEnvelope under 1 sample/px: lo == hi", midSpan.lo == midSpan.hi)
+    check("sampleEnvelope under 1 sample/px: interpolates at the span's midpoint",
+          abs(Double(midSpan.lo) - expectedMid) < 1e-6,
+          "got \(midSpan.lo), expected \(expectedMid)")
+
+    // An empty array or an out-of-bounds span answers (0, 0), never a crash.
+    check("sampleEnvelope on an empty array is (0, 0)",
+          WaveformPeaks.sampleEnvelope([], from: 0, to: 10) == PeakPair(lo: 0, hi: 0))
+    check("sampleEnvelope entirely past the array's end is (0, 0)",
+          WaveformPeaks.sampleEnvelope(sine, from: 5000, to: 5010) == PeakPair(lo: 0, hi: 0))
+    check("sampleEnvelope entirely before the array's start is (0, 0)",
+          WaveformPeaks.sampleEnvelope(sine, from: -50, to: -10) == PeakPair(lo: 0, hi: 0))
+
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {
         print("FAILURES:")
