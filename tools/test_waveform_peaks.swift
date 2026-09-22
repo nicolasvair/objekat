@@ -143,6 +143,49 @@ enum WaveformPeaksTest {
         }
     }
 
+    // MARK: - PeakQuantisation (C1a): the round trip, and the assertion that IS the int16 decision
+
+    // A sweep of 20 001 values across [-1, 1]: the round-trip error never exceeds half a step.
+    let sweepCount = 20_001
+    var worstError: Float = 0
+    for i in 0..<sweepCount {
+        let v = -1 + 2 * Float(i) / Float(sweepCount - 1)
+        let roundTripped = PeakQuantisation.decode(PeakQuantisation.encode(v))
+        let error = abs(roundTripped - v)
+        worstError = max(worstError, error)
+    }
+    check("quantisation round trip stays within maxAbsoluteError across 20 001 values",
+          worstError <= PeakQuantisation.maxAbsoluteError,
+          "worst \(worstError), bound \(PeakQuantisation.maxAbsoluteError)")
+
+    check("encode/decode(0) == 0 exactly", PeakQuantisation.decode(PeakQuantisation.encode(0)) == 0)
+    check("encode/decode(1) == 1 exactly", PeakQuantisation.decode(PeakQuantisation.encode(1)) == 1)
+    check("encode/decode(-1) == -1 exactly", PeakQuantisation.decode(PeakQuantisation.encode(-1)) == -1)
+    check("+1.5 clamps to +1 (a float WAV sample legitimately exceeding ±1 is already pinned to "
+          + "the block's edge by clampY — @see PeakQuantisation.encode's doc comment)",
+          PeakQuantisation.decode(PeakQuantisation.encode(1.5)) == 1)
+    check("-1.5 clamps to -1", PeakQuantisation.decode(PeakQuantisation.encode(-1.5)) == -1)
+
+    // lo <= 0 <= hi preserved on a round trip: no rounding may push `hi` under zero or `lo` above
+    // it, which would turn a real crossing envelope into a one-sided one.
+    var envelopeOK = true
+    for i in 0..<2000 {
+        var rng3 = DeterministicRNG(seed: UInt64(i) &+ 1)
+        let lo = min(0, rng3.nextFloat(in: -1...0.01))
+        let hi = max(0, rng3.nextFloat(in: -0.01...1))
+        let q = PeakQuantisation.encode(PeakPair(lo: lo, hi: hi))
+        let back = PeakQuantisation.decode(q)
+        if !(back.lo <= 0 && back.hi >= 0) { envelopeOK = false }
+    }
+    check("lo <= 0 <= hi is preserved by encode/decode on a spread of crossing pairs", envelopeOK)
+
+    // The pixel-error bound at the project's own worst case (@see PeakQuantisation.maxAbsoluteError
+    // and PLAN-WAVEFORM.md section A1): mid = 450 px, +24 dB = linear gain 15.85. This IS the
+    // decision that int16 (not int8) is the right width.
+    let worstCasePixelError = PeakQuantisation.maxAbsoluteError * 15.85 * 450
+    check("worst-case pixel error (int16, mid 450 px, +24 dB) < 0.5 px",
+          worstCasePixelError < 0.5, "got \(worstCasePixelError)")
+
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {
         print("FAILURES:")

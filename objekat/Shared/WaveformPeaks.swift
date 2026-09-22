@@ -68,3 +68,49 @@ enum WaveformPeaks {
         return result
     }
 }
+
+/// A peak pair as it is WRITTEN to a `.wfc`: two signed 16-bit values. Only the DISK format is
+/// quantised — the memory cache (`WaveformCache.Entry.peaks`) stays `Float`, because the drawing
+/// reads a pair per pixel per block per FRAME, and a decode there would be paid forever, whereas
+/// a decode at load is paid once per file.
+struct QuantisedPeakPair: Equatable {
+    var lo: Int16
+    var hi: Int16
+}
+
+// `nonisolated` throughout — see the note above `WaveformPeaks`.
+enum PeakQuantisation {
+    /// `Int16.max`, not `32768`: encoding stays symmetric around zero (`encode(1) == -encode(-1)`
+    /// in magnitude), at the cost of one unused code (`-32768`) nothing ever produces.
+    nonisolated static let scale: Float = 32767
+
+    /// A `|v| > 1` WAV float sample is legitimate and NOT clamped here for safety's sake alone:
+    /// `WaveformDrawing.clampY` already bounds every drawn point to the block's own height, and
+    /// `waveformDisplayDB` only ever ADDS gain (0…24 dB, never negative) — so anything past ±1
+    /// was already pinned to the block's edge before this quantisation existed. Clipping the
+    /// cache loses nothing VISIBLE today. That is a property of the DRAWING, not a guarantee:
+    /// the day `waveformDisplayDB` can go negative, this argument no longer holds and the format
+    /// would need a stored scale factor instead of an assumed [-1, 1] range.
+    nonisolated static func encode(_ v: Float) -> Int16 {
+        let clamped = min(1, max(-1, v))
+        return Int16((clamped * scale).rounded())
+    }
+
+    nonisolated static func decode(_ q: Int16) -> Float {
+        Float(q) / scale
+    }
+
+    nonisolated static func encode(_ p: PeakPair) -> QuantisedPeakPair {
+        QuantisedPeakPair(lo: encode(p.lo), hi: encode(p.hi))
+    }
+
+    nonisolated static func decode(_ q: QuantisedPeakPair) -> PeakPair {
+        PeakPair(lo: decode(q.lo), hi: decode(q.hi))
+    }
+
+    /// The worst a round trip can drift: half a quantisation step. At the project's own worst
+    /// case (a block stretched to `mid = 450` px, `waveformDisplayDB` pushed to +24 dB, i.e. a
+    /// linear gain of 10^(24/20) ≈ 15.85) that is `maxAbsoluteError × 15.85 × 450 ≈ 0.11` px —
+    /// the assertion that IS the int16 decision (@see PLAN-WAVEFORM.md, section A1).
+    nonisolated static var maxAbsoluteError: Float { 1 / (2 * scale) }
+}

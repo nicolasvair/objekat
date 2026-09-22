@@ -253,6 +253,9 @@ final class WaveformCache {
     /// is never evicted (@see `setWaveformsDirectory`, C3 — the memory cache stays shared across
     /// projects on purpose), so this only ever grows, which is exactly what a resident-set gauge
     /// should do.
+    /// Deliberately `MemoryLayout<PeakPair>` (Float), not `QuantisedPeakPair`: this gauges what
+    /// sits in RAM, and only the `.wfc` on disk is quantised — the entry this walks was just
+    /// decoded BACK to Float by `loadFromDisk`, or was never quantised at all (`computeMipmap`).
     private nonisolated static func peakByteSize(_ entry: Entry) -> Int {
         entry.peaks.reduce(0) { $0 + $1.count * MemoryLayout<PeakPair>.stride }
     }
@@ -430,13 +433,16 @@ final class WaveformCache {
     //   "WFC1" | version u32 | sampleRate f64 | duration f64
     //   | fileSize u64 | mtime f64 | levelCount u32
     //   per level: density f64 | count u32
-    //   then, per level: count × PeakPair(lo f32, hi f32) as a raw dump
+    //   then, per level: count × QuantisedPeakPair(lo i16, hi i16) as a raw dump
     // We do NOT persist `samples` (regenerable, enormous) — see the roadmap.
 
     private nonisolated static let magic = Array("WFC1".utf8)
     // Not `private`: `perf.waveforms` reports it, so a script can tell a stale `.wfc` on disk
     // from a fresh one without parsing the binary header itself.
-    nonisolated static let formatVersion: UInt32 = 2
+    // 2 → 3: the peak dump quantises to signed 16-bit (@see PeakQuantisation) instead of raw
+    // float32 — a v2 file fails the version check below and is silently recomputed (@see
+    // `loadFromDisk`'s own note: a cache's only obligation is to never lie, not to migrate).
+    nonisolated static let formatVersion: UInt32 = 3
 
     /// The cache file name for a source: basename + '.wfc'.
     private nonisolated static func cacheFileName(path: String) -> String {
@@ -481,8 +487,13 @@ final class WaveformCache {
             appendF64(entry.densities[i])
             appendU32(UInt32(level.count))
         }
+        // Quantised to signed 16-bit on the way to disk ONLY (@see QuantisedPeakPair) — the
+        // in-memory `entry.peaks` handed to the caller stays Float throughout, untouched here.
+        // Same little-endian assumption as the header above, now explicit: `Int16`'s own byte
+        // layout on every platform this project builds for.
         for level in entry.peaks {
-            level.withUnsafeBytes { data.append(contentsOf: $0) }
+            let quantised = level.map(PeakQuantisation.encode)
+            quantised.withUnsafeBytes { data.append(contentsOf: $0) }
         }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: dir.appendingPathComponent(cacheFileName(path: path)), options: .atomic)
@@ -540,17 +551,20 @@ final class WaveformCache {
         // no longer match → we ignore the cache and recompute.
         guard densities == effectiveDensitiesPerSecond else { return nil }
 
+        // The dump on disk is `QuantisedPeakPair` (i16, i16); decoded back to `Float` HERE, once
+        // per file at load — negligible next to the audio decode this cache exists to avoid
+        // (@see PeakQuantisation, and `writeToDisk`'s own note on the write side).
         var peaks: [[PeakPair]] = []
         for c in counts {
-            let byteCount = c * MemoryLayout<PeakPair>.stride
+            let byteCount = c * MemoryLayout<QuantisedPeakPair>.stride
             guard let d = readBytes(byteCount) else { return nil }
-            var arr = [PeakPair](repeating: PeakPair(lo: 0, hi: 0), count: c)
+            var quantised = [QuantisedPeakPair](repeating: QuantisedPeakPair(lo: 0, hi: 0), count: c)
             if c > 0 {
-                _ = arr.withUnsafeMutableBytes { dst in
+                _ = quantised.withUnsafeMutableBytes { dst in
                     d.copyBytes(to: dst.bindMemory(to: UInt8.self))
                 }
             }
-            peaks.append(arr)
+            peaks.append(quantised.map(PeakQuantisation.decode))
         }
         let entry = Entry(peaks: peaks, densities: densities, duration: duration,
                           sampleRate: sampleRate)
