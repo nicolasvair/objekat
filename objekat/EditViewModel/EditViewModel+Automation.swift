@@ -142,6 +142,11 @@ extension EditViewModel {
                             t: Double, v: Float, c: Float = 0) -> Int? {
         var index: Int? = nil
         pushUndo()
+        // The point selection goes: it is addressed by STORAGE INDEX, and appending shifts nothing
+        // today but removing one shifts everything behind it — so both doors are closed at once
+        // rather than one of them being reasoned about and the other forgotten the day the append
+        // becomes an insert (@see AutomationPointRef).
+        clearAutomationPointSelection()
         // The chain trims exist on the engine side only if the rack has been compiled — and it is
         // not, for an object with no plugin whose trims have stayed at 0 dB. Materialise it
         // BEFORE the first point, otherwise the curve would have no plugin to write itself into (the same
@@ -175,6 +180,9 @@ extension EditViewModel {
     /// point does not exist (an invariant), and the row becomes a static-value row again.
     func removeAutomationPoint(objectID: UUID, param: ParamRef, at index: Int) {
         pushUndo()
+        // Every index BEHIND the one removed now names its neighbour: the selection is dropped
+        // rather than renumbered (@see AutomationPointRef).
+        clearAutomationPointSelection()
         update(id: objectID) { obj in
             guard let i = obj.automation.firstIndex(where: { $0.param == param }),
                   obj.automation[i].points.indices.contains(index) else { return }
@@ -191,9 +199,22 @@ extension EditViewModel {
 
     /// A live mutation of the points during a drag: no `pushUndo` (already done by
     /// `beginAutomationEdit`). The guard covers the WHOLE list — the value within the parameter's
-    /// range, the curvature within -1…+1, the time positive. No UPPER bound on the time here: it
-    /// depends on the band's width (an infinite bus has no end), hence on the gesture, which sets
-    /// it itself.
+    /// range, the curvature within -1…+1.
+    ///
+    /// TIME IS NOT BOUNDED HERE, and that is a correction rather than an omission. The guard used
+    /// to carry `pts[k].t = max(0, pts[k].t)`, applied to every point of the row and not to the
+    /// ones the gesture had touched — so moving ONE point on an object cropped at the left
+    /// silently stacked onto zero every point hidden behind that edge, which is precisely the
+    /// material `AutomationPoint` and `AutomationLane.shifted(by:)` declare legitimate: a negative
+    /// time is matter waiting behind the edge, and reopening the edge has to bring it back. The
+    /// clamp made that irreversible, and a gesture moving a whole SELECTION in time would have
+    /// made it systematic.
+    ///
+    /// Bounding time belongs to the GESTURE and never to this primitive, for the reason that makes
+    /// the rule general: only the gesture knows what the bound IS. The band's own width says it
+    /// (an infinite bus has no end), and both doors a hand comes in by already bound there —
+    /// `AutomationBandView.snappedT(atX:)` and `AutomationBandGeometry.t(atX:)` land in
+    /// `0…maxT` by construction. What is below zero was never aimed at by a hand; it is carried.
     func updateAutomationPoints(objectID: UUID, param: ParamRef,
                                 _ transform: (inout [AutomationPoint]) -> Void) {
         update(id: objectID) { obj in
@@ -201,7 +222,6 @@ extension EditViewModel {
             var pts = obj.automation[i].points
             transform(&pts)
             for k in pts.indices {
-                pts[k].t = max(0, pts[k].t)
                 pts[k].v = pts[k].v.clamped(to: param.valueRange)
                 pts[k].c = pts[k].c.clamped(to: -1...1)
             }
@@ -210,6 +230,36 @@ extension EditViewModel {
         // During a drag: one push per frame. This is a ValueTree write, not a graph
         // rebuild — the engine recomputes the parameter's iterator only once,
         // on a deferred timer (@see AutomationCurveSource).
+        pushAutomation(objectID)
+        isDirty = true
+    }
+
+    /// SEVERAL rows mutated under ONE gesture frame, with ONE engine push — the batch form of
+    /// `updateAutomationPoints`, and the only one a multi-row gesture may use.
+    ///
+    /// It is NOT a comfort. `pushAutomation(objectID)` pushes EVERY curve of the object, not the
+    /// one just touched: calling `updateAutomationPoints` row by row therefore costs N × M engine
+    /// writes per frame on a gesture that runs at screen rate (N rows selected, M curves on the
+    /// object). Going through here it is M, once, whatever N is.
+    ///
+    /// The transform receives the object's WHOLE `automation` array, so it can address its rows by
+    /// `param` and write several of them; the same per-point guard as above is applied afterwards,
+    /// row by row and with the same deliberate silence about time. A row emptied by the transform
+    /// is dropped: 'no point = no automation' (@see AutomationLane).
+    func updateAutomationRows(objectID: UUID,
+                              _ transform: (inout [AutomationLane]) -> Void) {
+        update(id: objectID) { obj in
+            var lanes = obj.automation
+            transform(&lanes)
+            for i in lanes.indices {
+                let range = lanes[i].param.valueRange
+                for k in lanes[i].points.indices {
+                    lanes[i].points[k].v = lanes[i].points[k].v.clamped(to: range)
+                    lanes[i].points[k].c = lanes[i].points[k].c.clamped(to: -1...1)
+                }
+            }
+            obj.automation = lanes.filter { !$0.points.isEmpty }
+        }
         pushAutomation(objectID)
         isDirty = true
     }

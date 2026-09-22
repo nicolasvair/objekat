@@ -127,6 +127,20 @@ struct AutomationBandView: View {
     /// over a few dozen pixels — the counterpart of a point's halo, for a gesture that plays out
     /// along the line (a segment, or the static value of an empty row).
     @State private var hoverLine: (row: Int, x: Double)? = nil
+    /// The row the cursor is simply IN — not a point, not a line. The transform box can span rows,
+    /// and its grips have to show the moment the hand comes anywhere over it; `hoverPoint` /
+    /// `hoverLine` are nil in a row's dead space, which is precisely where one aims a grip.
+    @State private var hoverRowIndex: Int? = nil
+
+    /// One row under a transform: which curve, which of its points, and what the WHOLE lane was.
+    /// The lane whole and not just the selected points, exactly as `BandDrag.origPoints` already
+    /// does for the single-row modes — the mutation writes the lane back, by storage index.
+    private struct TransformRow {
+        let param:      ParamRef
+        let row:        Int                  // display row: geometry and nothing else
+        let indices:    [Int]                // storage indices, validated at the grab
+        let origPoints: [AutomationPoint]
+    }
 
     /// The gesture under way. The mode is decided ONCE, on the first movement, from the zone
     /// grabbed and ⌥; the points are named by their STORAGE index, stable even if the drag takes a
@@ -137,12 +151,31 @@ struct AutomationBandView: View {
             case segment([Int])     // the value of the points holding the segment (1 on a plateau)
             case curve(Int)         // the curvature carried by the segment's left-hand point
             case staticValue        // a row with no point: the model's static value
+            /// A rectangle being drawn. `base` = what was selected when it started, so that
+            /// WIDENING and NARROWING the rectangle both recompute from the same ground instead of
+            /// piling up — word for word `SynopticView.marqueeBase`. `adds` / `flips` = ⇧ / ⌘, read
+            /// at the first pixel: a hand that lets go of ⇧ mid-drag is resting a finger, not
+            /// changing its mind.
+            case marquee(base: Set<AutomationPointRef>, adds: Bool, flips: Bool)
+            /// A grip of the transform box. Everything is FROZEN at the grab: the transformation
+            /// always recomputes from the originals (the non-destructive rule), and re-reading the
+            /// selection mid-gesture would let a stale index through.
+            case transform(handle: AutomationTransform.Handle,
+                           rows: [TransformRow],
+                           box: CGRect)      // pixels; its Y is what `boxFactor` measures against
         }
         let ref:  ParamRef
+        /// The row the gesture STARTED in. For the single-row modes it is the row it acts on; for
+        /// `.marquee` and `.transform`, which cross rows, it serves only to place the badge
+        /// (@see drawReadout, badgeBelow).
         let row:  Int
         let mode: Mode
         let origPoints: [AutomationPoint]
         let origStatic: Float
+        /// The WHOLE selection this gesture carries, frozen at the grab — non-nil only when the
+        /// point (or the segment) grabbed was part of it. nil = the gesture acts on its own row
+        /// alone, which is what it has always done.
+        let groupRows: [TransformRow]?
         let start: CGPoint
         /// Which side of the point the badge sits on, FROZEN at the grab. Recomputing it at every
         /// step would have it leap over the point the moment the drag skims the height where the
@@ -157,6 +190,10 @@ struct AutomationBandView: View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in
                 for (i, ref) in rows.enumerated() { draw(row: i, ref: ref, in: &ctx) }
+                // The marquee and the transform box, above every row and below the badge: they
+                // BELONG to no row — the rectangle is traced across them and the box spans as many
+                // of them as the selection touches.
+                drawSelection(in: &ctx)
                 // The badge LAST, over every row: anchored on a hovered point it leans out of its
                 // own row (@see drawReadout), and the next row's background would paint over it.
                 drawReadout(in: &ctx)
@@ -180,7 +217,7 @@ struct AutomationBandView: View {
                     // the timeline goes through the tracking view's `mouseExited`. This `.ended`
                     // can arrive AFTER the hover that succeeds it — it would take its claim away
                     // from it.
-                    case .ended:         clearHover()
+                    case .ended:         clearHover(); hoverRowIndex = nil
                     }
                 }
                 .contextMenu { newLaneMenu }
@@ -248,6 +285,50 @@ struct AutomationBandView: View {
         let sorted = geo.ordered(pts).map(\.point)
         guard let first = sorted.first else { return nil }
         return AutomationCurveMath.value(at: t, in: sorted, default: first.v)
+    }
+
+    // MARK: - The point selection
+
+    /// The selection as the geometry and the transform want it: one entry per ROW OF THIS BAND,
+    /// carrying the display row, the storage indices VALIDATED against what the curve holds now,
+    /// and the row's whole point list.
+    ///
+    /// Recomputed rather than cached, and that is deliberate: a storage index is only true of the
+    /// curve it was read off (@see AutomationPointRef), so the one place it may be turned into an
+    /// actual point is the moment it is used.
+    private func selectedRows()
+        -> [(row: Int, ref: ParamRef, indices: [Int], points: [AutomationPoint])] {
+        guard !viewModel.selectedAutomationPoints.isEmpty else { return [] }
+        var out: [(row: Int, ref: ParamRef, indices: [Int], points: [AutomationPoint])] = []
+        for (i, ref) in rows.enumerated() {
+            let idx = viewModel.selectedIndices(objectID: object.id, param: ref)
+            if !idx.isEmpty { out.append((row: i, ref: ref, indices: idx, points: points(ref))) }
+        }
+        return out
+    }
+
+    /// The box the grips belong to. FROZEN during a transform (@see BandDrag.Mode.transform): a
+    /// box recomputed from points the gesture is itself moving runs away under the hand — the
+    /// classic exponential blow-up of a scale by grip — and the grips would leave the fingers
+    /// holding them. Everywhere else it follows the material, which is what makes a group move
+    /// read as carrying the box along.
+    private func transformBox() -> CGRect? {
+        if let d = drag, case .transform(_, _, let box) = d.mode { return box }
+        return geo.selectionBox(selectedRows())
+    }
+
+    /// The selection's TIME envelope, taken from the points FROZEN at the grab rather than read
+    /// back off the box's pixels: the same numbers the transform will write, with no round trip
+    /// through a coordinate conversion that bounds at the band's edges.
+    private func transformSpan(_ trows: [TransformRow]) -> AutomationTransform.TimeSpan {
+        var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
+        for r in trows {
+            for i in r.indices where r.origPoints.indices.contains(i) {
+                lo = min(lo, r.origPoints[i].t)
+                hi = max(hi, r.origPoints[i].t)
+            }
+        }
+        return AutomationTransform.TimeSpan(t0: lo, t1: hi)
     }
 
     // MARK: - Rendering
@@ -352,6 +433,7 @@ struct AutomationBandView: View {
             return i
         }()
         let hovered: Int? = hoverPoint.flatMap { $0.row == row ? $0.index : nil }
+        let selected = Set(viewModel.selectedIndices(objectID: object.id, param: ref))
         for (idx, p) in pts.enumerated() {
             let c = CGPoint(x: g.x(ofT: p.t), y: g.y(of: p.v, ref: ref, row: row))
             // The hover halo: the point lights up as soon as the cursor comes into ITS grab zone —
@@ -373,7 +455,56 @@ struct AutomationBandView: View {
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                            with: .color(.white.opacity(0.8)), lineWidth: 1)
             }
+            // A SELECTED point wears a RING, and the colour is the piano roll's yellow rather than
+            // the white halo one row above: the halo says "this would answer the click", which is
+            // a promise about the next instant, and a selection says "this is taken", which is a
+            // state. Two different things must not share a vocabulary on the same pixels.
+            if selected.contains(idx) {
+                let rr = r + 2.5
+                ctx.stroke(Path(ellipseIn: CGRect(x: c.x - rr, y: c.y - rr,
+                                                  width: rr * 2, height: rr * 2)),
+                           with: .color(.yellow), lineWidth: 1.2)
+            }
         }
+    }
+
+    /// The marquee being traced, or the transform box and its eight grips. Drawn ABOVE every row
+    /// because neither belongs to one: a rectangle is traced across the rows and the box spans as
+    /// many of them as the selection touches.
+    private func drawSelection(in ctx: inout GraphicsContext) {
+        // While a rectangle is being traced it is the only thing that speaks. A box drawn at the
+        // same time would be a box of the selection the rectangle is in the middle of replacing.
+        if let d = drag, case .marquee = d.mode {
+            let r = CGRect(x: min(d.start.x, d.last.x), y: min(d.start.y, d.last.y),
+                           width: abs(d.last.x - d.start.x), height: abs(d.last.y - d.start.y))
+            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.12)))
+            ctx.stroke(Path(r), with: .color(Color.accentColor.opacity(0.7)), lineWidth: 1)
+            return
+        }
+
+        guard let box = transformBox() else { return }
+        // The OUTLINE shows as soon as a selection exists: it is what says the eight grips are
+        // somewhere to be had. The GRIPS themselves only show when the hand is over the box —
+        // eight white squares standing permanently on a sixteen-pixel row would read as matter.
+        ctx.stroke(Path(box), with: .color(.white.opacity(0.45)),
+                   style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        guard showsHandles(box: box) else { return }
+        for (_, c) in AutomationBandGeometry.handleCenters(of: box) {
+            let s = 2.5
+            let square = CGRect(x: c.x - s, y: c.y - s, width: s * 2, height: s * 2)
+            ctx.fill(Path(square), with: .color(.white.opacity(0.92)))
+            ctx.stroke(Path(square), with: .color(.black.opacity(0.55)), lineWidth: 0.5)
+        }
+    }
+
+    /// Are the grips shown? The hover is shut off for the whole of a drag (@see body), so a
+    /// transform under way has to say so itself — without that clause the grips would vanish the
+    /// instant one took hold of one.
+    private func showsHandles(box: CGRect) -> Bool {
+        if let d = drag, case .transform = d.mode { return true }
+        guard let hr = hoverRowIndex else { return false }
+        let top = geo.rowTop(hr)
+        return top + rowHeight > box.minY && top < box.maxY
     }
 
     /// A white halo laid on the PORTION OF LINE the gesture would move, and nothing else: the
@@ -471,7 +602,22 @@ struct AutomationBandView: View {
     /// without which the arrow would come back as soon as the mouse stopped during playback
     /// (@see CursorClaim).
     private func updateCursor(at p: CGPoint) {
-        guard let row = geo.rowIndex(atY: p.y) else { clearHover(); TimelineCursorKeeper.set(.arrow); return }
+        // The row the hand is merely IN, written before anything else: it is what decides whether
+        // the transform box shows its grips, and the dead space of a row — where `hoverPoint` and
+        // `hoverLine` are both nil — is precisely where one aims one.
+        let inRow = geo.rowIndex(atY: p.y)
+        if hoverRowIndex != inRow { hoverRowIndex = inRow }
+
+        // A GRIP answers before everything else, in the same order `beginDrag` branches in: a
+        // cursor that did not say "grip" where the grip is would promise a gesture the click then
+        // fails to start.
+        if let box = transformBox(), let h = geo.handleHit(at: p, box: box) {
+            clearHover()
+            TimelineCursorKeeper.set(handleCursor(h))
+            return
+        }
+
+        guard let row = inRow else { clearHover(); TimelineCursorKeeper.set(.arrow); return }
         let ref = rows[row]
         let pts = points(ref)
         if pts.isEmpty {
@@ -503,6 +649,18 @@ struct AutomationBandView: View {
             TimelineCursorKeeper.set(.crosshair)      // ⌥ = curvature
         } else {
             TimelineCursorKeeper.set(.resizeUpDown)
+        }
+    }
+
+    /// The cursor a grip wears. The two edges of an axis say which axis they travel on; a CORNER
+    /// says neither, because it belongs to both — it scales the value with a gradient in time —
+    /// and the crosshair is the glyph this band already uses for "two things at once" (⌥ on a
+    /// segment, which bends it).
+    private func handleCursor(_ h: AutomationTransform.Handle) -> NSCursor {
+        switch h {
+        case .top, .bottom:   return .resizeUpDown
+        case .left, .right:   return .resizeLeftRight
+        default:              return .crosshair
         }
     }
 
@@ -559,8 +717,39 @@ struct AutomationBandView: View {
             return
         }
 
+        // A click ON A POINT is a SELECTION, and it does NOT move the cursor — an assumed change:
+        // the hand was aiming at a point, not at an instant, and a seek is what the rest of the
+        // band is for. The double click keeps working on top of it (the first click selects, the
+        // second deletes), the two branches never competing for the same event.
+        if let row = geo.rowIndex(atY: p.y) {
+            let ref = rows[row]
+            let pts = points(ref)
+            if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
+                let target = AutomationPointRef(objectID: object.id, param: ref, index: i)
+                let flags = NSEvent.modifierFlags
+                if flags.contains(.command) {
+                    // ⌘ toggles ONE point in or out — the only way to correct a rectangle that
+                    // brushed a neighbour, and the same modifier the marquee flips with.
+                    var s = viewModel.selectedAutomationPoints
+                    if s.contains(target) { s.remove(target) } else { s.insert(target) }
+                    viewModel.setAutomationPointSelection(s)
+                } else if flags.contains(.shift) {
+                    viewModel.setAutomationPointSelection(extendedSelection(to: target))
+                } else {
+                    viewModel.setAutomationPointSelection([target])
+                }
+                viewModel.select(object.id, additive: false)
+                return
+            }
+        }
+
         // A plain click: it selects the carrying object (the inspector follows), and consumes the
         // click so that it does not fall through onto the timeline's canvas.
+        //
+        // It also drops the point selection. Clicking in the void is how one lets go of a
+        // selection everywhere else in the timeline, and a box left standing over points nothing
+        // points at any more would go on taking ⌫ from the objects.
+        viewModel.clearAutomationPointSelection()
         viewModel.select(object.id, additive: false)
         // ... and it moves the cursor, exactly as a click on a lane does. A curve is read against
         // the moment it plays at, so the one thing one comes here to do with a bare click is to go
@@ -571,6 +760,37 @@ struct AutomationBandView: View {
         // to create it on) and falls through to here: the band is a stretch of the timeline all the
         // way across, and one part of it answering while the next does not is the hole again.
         onSeekToTime(bandStartTime + p.x / pixelsPerSecond)
+    }
+
+    /// ⇧+click GROWS the selection to the box holding what was already taken plus the point aimed
+    /// at, and everything that box touches comes with it. The rule is not written here: it is
+    /// `SynopticMarquee.boundingBox`, word for word and already asserted
+    /// (@see tools/test_synoptic_marquee.swift) — the same gesture on another canvas of the same
+    /// application, and two copies of it would drift.
+    ///
+    /// The only thing this function does is lend the rule the identity it speaks: that unit knows
+    /// `UUID`s, an automation point is named by its storage slot, so a throwaway id is minted per
+    /// point for the length of one click. A ⇧+click is a rare gesture and this is what keeps the
+    /// rule single.
+    private func extendedSelection(to target: AutomationPointRef) -> Set<AutomationPointRef> {
+        var cards: [SynopticMarquee.Card] = []
+        var byCard: [UUID: AutomationPointRef] = [:]
+        var held: Set<UUID> = []
+        var targetID: UUID? = nil
+        for (i, ref) in rows.enumerated() {
+            for (k, pt) in points(ref).enumerated() {
+                let pointRef = AutomationPointRef(objectID: object.id, param: ref, index: k)
+                let id = UUID()
+                byCard[id] = pointRef
+                cards.append(SynopticMarquee.Card(
+                    id: id, frame: geo.marqueeRect(of: pt, ref: ref, row: i)))
+                if viewModel.selectedAutomationPoints.contains(pointRef) { held.insert(id) }
+                if pointRef == target { targetID = id }
+            }
+        }
+        guard let targetID else { return [target] }
+        return Set(SynopticMarquee.boundingBox(of: held, extendedTo: targetID, cards: cards)
+                    .compactMap { byCard[$0] })
     }
 
     // MARK: - Dragging
@@ -597,6 +817,14 @@ struct AutomationBandView: View {
             guard d.origPoints.indices.contains(i) else { return }
             let o = d.origPoints[i]
             let t = snappedT(atX: g.x(ofT: o.t) + dx)
+            // The point grabbed was part of the selection: the whole of it travels, by ONE common
+            // 2D delta. The TIME half is snapped on the grabbed point and the difference handed to
+            // the others — snapping each of them in turn would destroy the curve's internal
+            // rhythm, which is the same rule `PianoRollView.moveBody` applies to a chord.
+            if let trows = d.groupRows {
+                applyGroupMove(trows, dt: t - o.t, dy: dy, x: location.x, startedRow: d.row, ref: ref)
+                return
+            }
             let v = detentedValue((o.v + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 guard pts.indices.contains(i) else { return }
@@ -606,6 +834,13 @@ struct AutomationBandView: View {
             setReadout(row: d.row, x: location.x, ref: ref, value: v)
 
         case .segment(let idxs):
+            // Dragging a straight whose two ends are taken moves the WHOLE selection, and not just
+            // that straight: the line is a handle on the matter, and "drag by the line" is how one
+            // moves a stretch of curve without aiming at any single point of it.
+            if let trows = d.groupRows {
+                applyGroupMove(trows, dt: 0, dy: dy, x: location.x, startedRow: d.row, ref: ref)
+                return
+            }
             let origs = idxs.compactMap { d.origPoints.indices.contains($0) ? d.origPoints[$0].v : nil }
             guard let lo = origs.min(), let hi = origs.max() else { return }
             // The segment moves by a SINGLE difference: clamping it point by point would flatten it
@@ -637,55 +872,240 @@ struct AutomationBandView: View {
             let v = detentedValue((d.origStatic + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
             viewModel.setAutomationStaticValue(ref, on: object.id, to: v)
             setReadout(row: d.row, x: location.x, ref: ref, value: v)
+
+        case .marquee(let base, let adds, let flips):
+            let rect = CGRect(x: min(d.start.x, location.x), y: min(d.start.y, location.y),
+                              width: abs(location.x - d.start.x),
+                              height: abs(location.y - d.start.y))
+            var caught: Set<AutomationPointRef> = []
+            for (i, r) in rows.enumerated() {
+                for k in g.pointsTouching(rect, row: i, ref: r, points: points(r)) {
+                    caught.insert(AutomationPointRef(objectID: object.id, param: r, index: k))
+                }
+            }
+            viewModel.setAutomationPointSelection(
+                flips ? base.symmetricDifference(caught)
+                      : adds ? base.union(caught) : caught)
+
+        case .transform(let handle, let trows, let box):
+            // The box is a DIAL: `k` is read as a ratio of pixels between the pulled edge and the
+            // anchored one, so it is 1 at rest, 0 on the anchor and unbounded past the grip — and
+            // no point has a say in it (@see AutomationTransform.boxFactor).
+            let pulled   = handle.pullsTop ? box.minY : box.maxY
+            let opposite = handle.pullsTop ? box.maxY : box.minY
+            let req = AutomationTransform.request(
+                handle,
+                span: transformSpan(trows),
+                verticalK: AutomationTransform.boxFactor(pulled: pulled, opposite: opposite,
+                                                         pointer: Double(location.y)),
+                // The snap applies to the TARGET OF THE GRIP and not to the points one by one:
+                // snapping each of them would flatten the curve's internal rhythm onto the grid.
+                targetT: snappedT(atX: location.x),
+                fineTune: NSEvent.modifierFlags.contains(.shift))
+            viewModel.applyAutomationTransform(
+                objectID: object.id,
+                rows: trows.map { (param: $0.param, indices: $0.indices, original: $0.origPoints) },
+                request: req)
+            readout = (row: d.row, x: Double(location.x), y: nil, text: transformReadout(req))
+        }
+    }
+
+    /// Moving a whole SELECTION — the shared body of `.point` and `.segment` when what was grabbed
+    /// belongs to it. `dt` is the common time delta (zero for a segment, which does not travel in
+    /// time); `dy` is the raw vertical travel, read differently on either side of ONE branch:
+    ///
+    /// - a selection inside ONE row keeps exactly what it has always had: the difference in the
+    ///   PARAMETER's own unit, detent included, bounded so the row holds its internal differences
+    ///   instead of flattening against a bound;
+    /// - a selection spanning SEVERAL rows moves by a NORMALISED difference, applied per row and
+    ///   WITHOUT a detent. The branch is necessary and not a refinement: a common delta "of one
+    ///   dB" would move a pan row by half its whole range, and a proportion has no unit to round
+    ///   to anyway — the rows' own `valueStep`s differ.
+    private func applyGroupMove(_ trows: [TransformRow], dt: Double, dy: Double,
+                                x: Double, startedRow: Int, ref: ParamRef) {
+        let g = geo
+        let multi = trows.count > 1
+        let dn = multi ? g.normalizedDelta(dy: dy) : 0
+        var shown: Float? = nil
+        viewModel.updateAutomationRows(objectID: object.id) { lanes in
+            for tr in trows {
+                guard let li = lanes.firstIndex(where: { $0.param == tr.param }) else { continue }
+                let taken = tr.indices.filter {
+                    tr.origPoints.indices.contains($0) && lanes[li].points.indices.contains($0)
+                }
+                guard !taken.isEmpty else { continue }
+
+                var dv: Float = 0
+                if !multi {
+                    let origs = taken.map { tr.origPoints[$0].v }
+                    let range = tr.param.valueRange
+                    let low  = range.lowerBound - (origs.min() ?? 0)
+                    let high = range.upperBound - (origs.max() ?? 0)
+                    dv = detentedDelta(g.valueDelta(dy: dy, ref: tr.param), ref: tr.param)
+                    // A selection already spanning the parameter's WHOLE range leaves no room to
+                    // move at all, and the bounds cross: then nothing moves, rather than a range
+                    // built the wrong way round.
+                    if low <= high { dv = dv.clamped(to: low...high) }
+                    else           { dv = 0 }
+                }
+
+                for i in taken {
+                    let o = tr.origPoints[i]
+                    lanes[li].points[i].t = o.t + dt
+                    lanes[li].points[i].v = multi
+                        ? g.denormalized((g.normalized(o.v, ref: tr.param) + dn).clamped(to: 0...1),
+                                         ref: tr.param)
+                        : o.v + dv
+                }
+                if tr.row == startedRow, let first = taken.first {
+                    shown = lanes[li].points[first].v
+                }
+            }
+        }
+        if let v = shown { setReadout(row: startedRow, x: x, ref: ref, value: v) }
+    }
+
+    /// The figure a transform shows: ×k and nothing else — the one thing common to every row the
+    /// selection spans, and exactly what the gesture carries (the `Request` itself). A time grip
+    /// says ×kt, or the delta when the selection has no extent to stretch. A CORNER says ×k too:
+    /// the gradient is what the eye reads off the curve, and a second figure for it would name
+    /// something no row can be pointed at for.
+    private func transformReadout(_ r: AutomationTransform.Request) -> String {
+        switch r.time {
+        case .scale(_, let k): return String(format: L("automation.timeStretchReadout"), k)
+        case .shift(let d):    return String(format: L("automation.timeShiftReadout"), d)
+        case .none:
+            return r.skew == nil
+                ? String(format: L("automation.scaleReadout"), r.valueK)
+                : String(format: L("automation.skewReadout"), r.valueK)
         }
     }
 
     /// Decides the mode on the FIRST movement — the only instant when the zone grabbed and ⌥ are
     /// both known (the drag starts at 3 px, hence after the click).
+    /// Decides the mode on the FIRST movement. THE ORDER OF THE BRANCHING IS HALF THE FEATURE:
+    ///
+    /// 1. a GRIP of the transform box — first, and before the row test itself. A grip laid over a
+    ///    point would otherwise be unreachable, and a grip on the bottom edge of the last row can
+    ///    fall a pixel outside `bandHeight`, where `rowIndex(atY:)` answers nil;
+    /// 2. a POINT. If it is IN the selection the whole selection travels; otherwise the selection
+    ///    is dropped and this is the gesture of always;
+    /// 3. a LINE / a segment, under the same rule: both its ends taken ⇒ the selection travels;
+    /// 4. ⌥ + a line ⇒ the curvature, untouched;
+    /// 5. anything else ⇒ a MARQUEE. Those are exactly the two bare `return`s this function used
+    ///    to end on — a drag in a row's dead space did nothing at all.
     private func beginDrag(_ value: DragGesture.Value) {
         let p = value.startLocation
+        let option = NSEvent.modifierFlags.contains(.option)
+
+        // 1. A grip of the box.
+        let sel = selectedRows()
+        if let box = geo.selectionBox(sel), let handle = geo.handleHit(at: p, box: box),
+           let anchorRow = sel.first {
+            let trows = sel.map { TransformRow(param: $0.ref, row: $0.row,
+                                               indices: $0.indices, origPoints: $0.points) }
+            beginDrag(ref: anchorRow.ref, row: geo.rowIndex(atY: p.y) ?? anchorRow.row,
+                      mode: .transform(handle: handle, rows: trows, box: box),
+                      points: anchorRow.points, groupRows: nil, at: p, edits: true)
+            return
+        }
+
         guard let row = geo.rowIndex(atY: p.y) else { return }
         let ref = rows[row]
         let pts = points(ref)
-        let option = NSEvent.modifierFlags.contains(.option)
 
         // The curve (and the static value of an empty row) is only grabbed IN ITS BAND — 15 % of
         // the row's height above and below the line (@see AutomationBandGeometry.curveGrabY).
         // Before, a drag anywhere in the row moved it: one could no longer hover it without
         // risking knocking it out.
         let mode: BandDrag.Mode
+        var groupRows: [TransformRow]? = nil
+
         if pts.isEmpty {
             // A row with no point = a fader. A plugin parameter has no static value on the model's
             // side: its empty row cannot be set, it waits for its first point.
-            guard let sv = viewModel.automationStaticValue(ref, on: object),
-                  geo.nearLine(p, lineY: geo.y(of: sv, ref: ref, row: row)) else { return }
-            mode = .staticValue
+            if let sv = viewModel.automationStaticValue(ref, on: object),
+               geo.nearLine(p, lineY: geo.y(of: sv, ref: ref, row: row)) {
+                mode = .staticValue
+            } else {
+                mode = marqueeMode()
+            }
         } else if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
+            groupRows = carriedSelection(containing:
+                [AutomationPointRef(objectID: object.id, param: ref, index: i)], sel)
             mode = .point(i)
         } else if let lineY = geo.curveY(atX: p.x, ref: ref, row: row, points: pts),
                   geo.nearLine(p, lineY: lineY) {
             if option, let owner = curvableSegment(atX: p.x, ref: ref, points: pts) {
                 mode = .curve(owner)
             } else if let seg = geo.segment(atX: p.x, points: pts), !seg.movedPoints.isEmpty {
+                groupRows = carriedSelection(
+                    containing: Set(seg.movedPoints.map {
+                        AutomationPointRef(objectID: object.id, param: ref, index: $0)
+                    }), sel)
                 mode = .segment(seg.movedPoints)
             } else {
-                return
+                mode = marqueeMode()
             }
         } else {
-            return
+            mode = marqueeMode()
         }
 
         // The halo freezes on what is held, and stays there for the whole gesture: on a POINT it is
-        // its own halo that speaks (@see drawCurve), on a segment it is the portion grabbed.
+        // its own halo that speaks (@see drawCurve), on a segment it is the portion grabbed. A
+        // marquee lights nothing up: what it is about to take it has not taken yet.
         switch mode {
-        case .point: setHover(point: hoverPoint, line: nil)
-        default:     setHover(point: nil, line: (row: row, x: Double(p.x)))
+        case .point:   setHover(point: hoverPoint, line: nil)
+        case .marquee: setHover(point: nil, line: nil)
+        default:       setHover(point: nil, line: (row: row, x: Double(p.x)))
         }
 
+        // A MARQUEE modifies NOTHING, so it pushes no undo point: an empty entry is one ⌘Z spent
+        // on nothing, and on a gesture one makes ten times in a row that is ten of them between
+        // the hand and the edit it means to take back. Selecting the carrying object stays —
+        // that is what a click anywhere in this band has always meant.
+        let edits: Bool = { if case .marquee = mode { return false } else { return true } }()
+        beginDrag(ref: ref, row: row, mode: mode, points: pts, groupRows: groupRows,
+                  at: p, edits: edits)
+    }
+
+    /// The whole selection, when what was grabbed belongs to it — otherwise nil AND the selection
+    /// dropped. "What one grabs decides", the rule the crossfades and the plugin cards already
+    /// follow: taking hold of something outside the selection is how one says one has finished
+    /// with it.
+    private func carriedSelection(
+        containing grabbed: Set<AutomationPointRef>,
+        _ sel: [(row: Int, ref: ParamRef, indices: [Int], points: [AutomationPoint])]
+    ) -> [TransformRow]? {
+        guard !grabbed.isEmpty, grabbed.isSubset(of: viewModel.selectedAutomationPoints) else {
+            viewModel.clearAutomationPointSelection()
+            return nil
+        }
+        return sel.map { TransformRow(param: $0.ref, row: $0.row,
+                                      indices: $0.indices, origPoints: $0.points) }
+    }
+
+    /// A rectangle starting. The three things it decides are decided HERE, at the first pixel, and
+    /// never again: that there is a marquee at all, what the modifiers mean (⇧ adds, ⌘ flips,
+    /// neither replaces), and what was already selected — so that widening AND narrowing the
+    /// rectangle both recompute from the same ground instead of piling up.
+    private func marqueeMode() -> BandDrag.Mode {
+        let flags = NSEvent.modifierFlags
+        let adds  = flags.contains(.shift)
+        let flips = flags.contains(.command)
+        return .marquee(base: (adds || flips) ? viewModel.selectedAutomationPoints : [],
+                        adds: adds, flips: flips)
+    }
+
+    /// Lays the gesture's state down — the one place `BandDrag` is built, so the undo rule and the
+    /// badge's frozen side cannot be forgotten by one branch out of six.
+    private func beginDrag(ref: ParamRef, row: Int, mode: BandDrag.Mode,
+                           points pts: [AutomationPoint], groupRows: [TransformRow]?,
+                           at p: CGPoint, edits: Bool) {
         viewModel.select(object.id, additive: false)
-        viewModel.beginAutomationEdit()
+        if edits { viewModel.beginAutomationEdit() }
         drag = BandDrag(ref: ref, row: row, mode: mode, origPoints: pts,
-                        origStatic: staticValue(ref), start: p,
+                        origStatic: staticValue(ref), groupRows: groupRows, start: p,
                         badgeBelow: p.y - Self.readoutHeightGuess - Self.readoutOffset.drag.gap < 3,
                         last: p)
     }

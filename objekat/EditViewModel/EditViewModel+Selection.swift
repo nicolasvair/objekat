@@ -165,6 +165,7 @@ extension EditViewModel {
         selectedCrossfade = nil
         timeSelection = nil
         selectedMidiNoteIDs = []
+        clearAutomationPointSelection()
         selectedAnnotation = sel
     }
 
@@ -175,6 +176,7 @@ extension EditViewModel {
         timeSelection = nil
         selectedMidiNoteIDs = []
         selectedAnnotation = nil
+        clearAutomationPointSelection()
         selectedCrossfade = (left, right)
     }
 
@@ -183,6 +185,7 @@ extension EditViewModel {
         selectedIDs = []
         timeSelection = nil
         selectedAnnotation = nil
+        clearAutomationPointSelection()
     }
 
     /// The effective IDs for multi-item operations: excludes any item one of whose direct

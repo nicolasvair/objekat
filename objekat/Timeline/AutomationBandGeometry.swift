@@ -129,6 +129,146 @@ struct AutomationBandGeometry {
         return best?.index
     }
 
+    // MARK: - Selecting points, and the box that transforms them
+
+    /// Half-side of the square a marquee has to touch to take a point. NOT `pointGrabX` (10 pt): a
+    /// rectangle drawn BETWEEN two points fifteen pixels apart would take both without touching
+    /// either, and a selection one did not draw is worse than one that takes an extra click to
+    /// finish. A grab zone has to be generous because it answers a single click; a rectangle
+    /// already says its own extent.
+    var pointMarqueeInset: Double { 4 }
+
+    /// Half-side of a transform grip's catching square. The grip is drawn smaller than that: what
+    /// is aimed at here is a corner of a box on a sixteen-pixel row.
+    var handleGrab: Double { 6 }
+
+    /// Where a point sits, in the band's coordinates — the one conversion `pointsTouching` and the
+    /// ⇧+click box both need, and the reason neither of them has to know about `ParamRef`.
+    func center(of p: AutomationPoint, ref: ParamRef, row: Int) -> CGPoint {
+        CGPoint(x: x(ofT: p.t), y: y(of: p.v, ref: ref, row: row))
+    }
+
+    /// The square a rectangle has to touch to take this point — what ⇧+click unions into a box
+    /// (@see AutomationBandView.handleTap).
+    func marqueeRect(of p: AutomationPoint, ref: ParamRef, row: Int) -> CGRect {
+        let c = center(of: p, ref: ref, row: row)
+        return CGRect(x: c.x - pointMarqueeInset, y: c.y - pointMarqueeInset,
+                      width: pointMarqueeInset * 2, height: pointMarqueeInset * 2)
+    }
+
+    /// The STORAGE indices of the points of ONE row a rectangle takes. The rule itself lives in
+    /// `AutomationTransform.touching` — which is where the flat-rectangle divergence from
+    /// `SynopticMarquee` is argued and asserted; all that is left here is the wiring.
+    func pointsTouching(_ rect: CGRect, row: Int, ref: ParamRef,
+                        points: [AutomationPoint]) -> [Int] {
+        AutomationTransform.touching(rect,
+                                     points: points.map { center(of: $0, ref: ref, row: row) },
+                                     inset: pointMarqueeInset)
+    }
+
+    // MARK: - Normalised values
+
+    /// A parameter's value → NORMALISED (0 = the bottom of its range, 1 = its top). A two-line
+    /// wrapper over `AutomationTransform.normalized`, whose only job is the `ParamRef` lookup:
+    /// the arithmetic stays in the unit that can be asserted with no screen.
+    func normalized(_ v: Float, ref: ParamRef) -> Double {
+        let r = ref.valueRange
+        return AutomationTransform.normalized(Double(v), lo: Double(r.lowerBound),
+                                              hi: Double(r.upperBound))
+    }
+
+    func denormalized(_ n: Double, ref: ParamRef) -> Float {
+        let r = ref.valueRange
+        return Float(AutomationTransform.denormalized(n, lo: Double(r.lowerBound),
+                                                      hi: Double(r.upperBound)))
+    }
+
+    /// The normalised value a y asks for, WITHOUT clamping — and that is the whole point: asking
+    /// for more than 1 is how a selection whose top point already sits at the ceiling raises the
+    /// others while that one stays put. `value(atY:)` clamps, and would have frozen the gesture the
+    /// moment one point reached the top.
+    ///
+    /// It no longer feeds the transform grips — those read a ratio of pixels off the box itself
+    /// (@see AutomationTransform.boxFactor), which holds the same requirement one level up and
+    /// leaves no per-row clamp to forget. It is kept because the requirement is the same wherever
+    /// the pointer is read, and because a row's own normalised height is the natural unit here.
+    func rawNormalized(atY y: Double, row: Int) -> Double {
+        1 - (y - rowTop(row) - Self.vInset) / usableHeight
+    }
+
+    /// A vertical travel in pixels → a NORMALISED difference. The group move's own unit as soon as
+    /// the selection spans two rows: a common delta in dB means nothing to a pan row, where the
+    /// whole range is two units wide.
+    func normalizedDelta(dy: Double) -> Double { -dy / usableHeight }
+
+    // MARK: - The transform box
+
+    /// The shortest side the box is ever drawn with, in X. A selection of ONE point has no time
+    /// extent at all, and a box of zero width carries no grip one could aim at. In Y nothing needs
+    /// inflating: the box covers at least one whole row.
+    static let boxMinSide: Double = 10
+
+    /// The transform box, in the band's coordinates. X = the selection's time envelope, every row
+    /// together. Y = the TOP of the highest row the selection touches down to the BOTTOM of the
+    /// lowest — deliberately NOT the points' vertical extent.
+    ///
+    /// THE TWO AXES ARE ASYMMETRIC, on purpose. In X the box HUGS THE MATERIAL (the points' own
+    /// time envelope), so the pulled edge follows the hand; in Y it COVERS THE ROWS, so the travel
+    /// is linear over the parameter's whole range. Time has a natural EXTENT — the material's; a
+    /// value has a natural RANGE — the parameter's. Each grip acts on the natural thing of its own
+    /// axis.
+    ///
+    /// nil on an empty selection: nothing to draw, nothing to grab.
+    func selectionBox(_ sel: [(row: Int, ref: ParamRef, indices: [Int],
+                               points: [AutomationPoint])]) -> CGRect? {
+        var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
+        var minRow = Int.max, maxRow = Int.min
+        for r in sel {
+            for i in r.indices where r.points.indices.contains(i) {
+                lo = Swift.min(lo, x(ofT: r.points[i].t))
+                hi = Swift.max(hi, x(ofT: r.points[i].t))
+                minRow = Swift.min(minRow, r.row)
+                maxRow = Swift.max(maxRow, r.row)
+            }
+        }
+        guard minRow <= maxRow else { return nil }
+        if hi - lo < Self.boxMinSide {
+            let mid = (lo + hi) / 2
+            lo = mid - Self.boxMinSide / 2
+            hi = mid + Self.boxMinSide / 2
+        }
+        let top    = rowTop(minRow)
+        let bottom = rowTop(maxRow) + rowHeight
+        return CGRect(x: lo, y: top, width: hi - lo, height: bottom - top)
+    }
+
+    /// The eight grips, in the box's own coordinates. It takes a plain `CGRect` and knows nothing
+    /// of rows — which is why a box spanning several of them needed no change here at all.
+    static func handleCenters(of box: CGRect) -> [(AutomationTransform.Handle, CGPoint)] {
+        [(.topLeft,     CGPoint(x: box.minX, y: box.minY)),
+         (.top,         CGPoint(x: box.midX, y: box.minY)),
+         (.topRight,    CGPoint(x: box.maxX, y: box.minY)),
+         (.left,        CGPoint(x: box.minX, y: box.midY)),
+         (.right,       CGPoint(x: box.maxX, y: box.midY)),
+         (.bottomLeft,  CGPoint(x: box.minX, y: box.maxY)),
+         (.bottom,      CGPoint(x: box.midX, y: box.maxY)),
+         (.bottomRight, CGPoint(x: box.maxX, y: box.maxY))]
+    }
+
+    /// The grip under a point, if any. The CORNERS are tested first: on a box barely wider than a
+    /// grip they overlap the edge grips, and a corner is the harder of the two to aim at.
+    func handleHit(at p: CGPoint, box: CGRect) -> AutomationTransform.Handle? {
+        let all = Self.handleCenters(of: box)
+        let corners = all.filter { h, _ in
+            h == .topLeft || h == .topRight || h == .bottomLeft || h == .bottomRight
+        }
+        for (h, c) in corners + all
+        where abs(p.x - c.x) <= handleGrab && abs(p.y - c.y) <= handleGrab {
+            return h
+        }
+        return nil
+    }
+
     /// The y of the LINE at an x, plateaux and curvature included — exactly what
     /// `AutomationBandView` draws, since it is the same function the engine uses.
     /// nil on a row with no point (its line is that of the static value, which only the view

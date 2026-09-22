@@ -314,6 +314,7 @@ extension EditViewModel {
     /// piano rolls (keys = UUIDs of the old project).
     private func resetTransientSessionState() {
         selectedAnnotation = nil
+        clearAutomationPointSelection()
         clipboard = nil
         midiNotesClipboard = nil
         selectedMidiNoteIDs = []
