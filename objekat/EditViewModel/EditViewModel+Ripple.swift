@@ -271,7 +271,11 @@ extension EditViewModel {
             _ = undoStack.popLast()
             return
         }
-        selectedIDs   = []
+        // No `selectedIDs = []` here: the selection follows the matter, same rule as an ordinary
+        // cut (@see EditViewModel+Cut). Whatever `carveTimeRange` swallows is pruned by
+        // `remove(id:)`; what survives keeps its id — `keeping: .left` truncates it in place,
+        // `.right` only advances its start — so a selected grabbed object is simply still there,
+        // still named the same, with nothing to rewrite.
         timeSelection = nil
         isDirty       = true
     }

@@ -371,6 +371,25 @@ half, `fade_in_*` on the right): a curve left on a fade of no length shows nowhe
 out bent the first time that edge was pulled. It is the rule of the double click that clears a
 fade, which clears its shape with its length.
 
+**A division does not re-aim the SELECTION either — the selection follows the matter.** An object
+that was not selected has none of its pieces selected afterwards: a cut is not a pick. An object
+that WAS selected hands its selection to whichever piece survives it; when an oriented cut (`keep`)
+leaves only one, that one gets it, there being no other candidate. When BOTH halves survive (a
+plain division, `keep` absent), the selection goes to the SHORTER one — cutting is most often done
+to throw a small scrap away (a breath, a click, a count-in), and handing the selection to the piece
+about to be discarded saves the click that would otherwise follow. A tie goes LEFT, and costs
+nothing: the left half always keeps the object's own id (every branch of the split hands the fresh
+UUID to the right piece, never the left), so "equal duration → left" does not even touch
+`selection.get`'s answer. An object selected but not itself among the ones cut is left exactly as
+it was. The rule holds for `object.split_at` (oriented or not) and for `object.ripple_cut` alike —
+neither empties the selection outright the way a naive "cut clears the selection" would.
+
+`object.split_at` takes an optional `keep` (`"left"` / `"right"`, same vocabulary as
+`object.ripple_cut`'s) for the oriented cut — absent, it is a plain division and both halves stay.
+Its answer keeps `ids` naming the PIECES the cut produced, as it always has (not the selection,
+which the cut may or may not have touched), and gains a `selection` field — the selection as it
+stands right after, for a caller that wants to check the rule above without a screen.
+
 ### Crossfades
 
 A crossfade is **the zone two neighbours share**, and nothing else. There is no crossfade object and
@@ -709,6 +728,12 @@ Three consequences a script has to know about:
 A ripple whose scope is a **looping** group is refused (`false`, no undo step): that group's window
 is a porthole onto a repeating pattern, and shortening the pattern would change every repeat at
 once, including those the gesture never aimed at.
+
+`object.ripple_cut` no longer empties the selection. It goes through no separate id at all — the
+surviving matter is TRIMMED in place, never re-split — so the grabbed object simply keeps answering
+to its own id, and, if it was selected, to its own selection too. Same rule as an ordinary division
+(@see "DIVIDING the matter" above): the selection follows the matter, and a ripple does not touch
+it when the object it is given was not selected to begin with.
 
 ### Export
 

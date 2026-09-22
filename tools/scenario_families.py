@@ -207,6 +207,197 @@ with ObjekatClient(SOCK) as c:
           and gr["fade_out_curve"] == "convex" and abs(gr["fade_out_bend"] - 0.75) < 1e-9
           and abs(gr["fade_out"] - 0.2 * D) < 1e-6,
           "left=%s right=%s" % (gl, gr))
+
+    # --- THE SELECTION AFTER A CUT (22 September 2026). "A cut does not re-aim the selection: the
+    #     selection follows the matter." An object never selected keeps none of its pieces
+    #     selected; an object that WAS selected hands its selection to the surviving piece — the
+    #     SHORTER one, of the two, for a plain division (one cuts, most often, to throw a small
+    #     scrap away). An object selected but not itself cut is left alone. `cutSelectionSide`
+    #     (Shared/CutSelection.swift) carries the arithmetic on its own — this block drives the
+    #     GESTURE end to end, through the API, which is the only way to see whether the rule
+    #     actually reaches `selectedIDs` and not merely the pure function behind it.
+    # Everything below is swept up at the very end, by comparing the object set before and after —
+    # a ripple cut bounded by NO container reaches the WHOLE timeline (@see EditViewModel+Ripple:
+    # "container == nil ⇒ the whole timeline"), and a stray fixture left lying around at a high
+    # lane number would shift where the LATER, pre-existing tests expect the timeline's last row
+    # to fall. Leaving no trace is therefore part of the correctness of this block, not tidiness.
+    before_ids = {o["id"] for o in c.send("object.list")["objects"]}
+    def add(lane, start=0.0, duration=None):
+        params = {"path": BIP, "lane": lane, "start": start}
+        if duration is not None:
+            params["duration"] = duration
+        return c.send("object.add", params)["id"]
+
+    # 1-2. Nothing selected, cut A at 80%: the selection stays EMPTY (the case that motivates the
+    #      whole rule), and the cut still happened — two pieces on the wire.
+    a = add(40)
+    c.send("selection.clear")
+    r = step("split_at, nothing selected", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.8 * D}))
+    check("cutting an UNSELECTED object leaves the selection empty",
+          c.send("selection.get")["count"] == 0, str(c.send("selection.get")))
+    check("…and the cut did happen: two pieces came out of it",
+          len(r["ids"]) == 2, str(r))
+
+    # 3. B selected, cut A: B is untouched, and still the whole of the selection.
+    a = add(41); b = add(42)
+    c.send("selection.set", {"ids": [b]})
+    c.send("object.split_at", {"ids": [a], "seconds": 0.5 * D})
+    check("cutting A while B is selected leaves B, and only B, selected",
+          c.send("selection.get")["ids"] == [b], str(c.send("selection.get")))
+
+    # 4-5. A selected, cut at 80%: left = 0.8 D, right = 0.2 D — the right, SHORTER piece
+    #      inherits the selection, and it really is the shorter one.
+    a = add(43)
+    c.send("selection.set", {"ids": [a]})
+    r = step("split_at, A selected, 80%", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.8 * D}))
+    newID = [i for i in r["ids"] if i != a][0]
+    sel = c.send("selection.get")
+    check("the selection moves to the new, SHORTER piece",
+          sel["ids"] == [newID] and newID != a, str(sel))
+    check("…which really is the shorter one",
+          c.send("object.get", {"id": newID})["duration"] < c.send("object.get", {"id": a})["duration"])
+
+    # 18. Right after 4-5, on the SAME undo entry: edit.undo gives the whole object back.
+    step("edit.undo", lambda: c.send("edit.undo"))
+    check("undo brings the object back whole",
+          abs(c.send("object.get", {"id": a})["duration"] - D) < 1e-6, str(c.send("object.get", {"id": a})))
+    try:
+        c.send("object.get", {"id": newID})
+        check("…and the piece the cut had made is gone again", False, "object.get(newID) should fail")
+    except ObjekatError as e:
+        check("…and the piece the cut had made is gone again", e.code == "not_found", e.args[0])
+
+    # 6. A selected, cut at 20%: left = 0.2 D (shorter) — the selection does not move at all.
+    a = add(44)
+    c.send("selection.set", {"ids": [a]})
+    c.send("object.split_at", {"ids": [a], "seconds": 0.2 * D})
+    check("cutting near the START leaves the (shorter, left) original selected",
+          c.send("selection.get")["ids"] == [a], str(c.send("selection.get")))
+
+    # 7. A selected, cut EXACTLY at the middle: a tie, and ties go left — the selection does not move.
+    a = add(45)
+    c.send("selection.set", {"ids": [a]})
+    c.send("object.split_at", {"ids": [a], "seconds": 0.5 * D})
+    check("an exact half-and-half cut ties left: the selection does not move",
+          c.send("selection.get")["ids"] == [a], str(c.send("selection.get")))
+
+    # 8. A and B both selected, both cut at 80%: two new, shorter pieces inherit the selection —
+    #    neither A nor B is in it any more.
+    a = add(46); b = add(47)
+    c.send("selection.set", {"ids": [a, b]})
+    c.send("object.split_at", {"ids": [a, b], "seconds": 0.8 * D})
+    sel = c.send("selection.get")
+    check("cutting a whole selection moves it wholesale to the new, shorter pieces",
+          sel["count"] == 2 and a not in sel["ids"] and b not in sel["ids"], str(sel))
+
+    # 9. A, B and C selected; only A and B are cut. C was never touched by the cut: it stays
+    #    selected, and it is still there.
+    a = add(48); b = add(49); cc = add(50)
+    c.send("selection.set", {"ids": [a, b, cc]})
+    c.send("object.split_at", {"ids": [a, b], "seconds": 0.8 * D})
+    sel = c.send("selection.get")
+    check("an object selected but not cut stays selected, untouched",
+          cc in sel["ids"], str(sel))
+    check("…and it is still there to answer for itself",
+          c.send("object.get", {"id": cc})["id"] == cc)
+
+    # 10. `ids` in the split_at ANSWER always names the PIECES, never the selection — even when
+    #     the object cut is not the one selected. (This is also what the split just above, at
+    #     line ~186, already relies on: `halves["ids"]` has to be the two pieces regardless of
+    #     what is selected at the time.)
+    a = add(51); b = add(52)
+    c.send("selection.set", {"ids": [b]})
+    r = c.send("object.split_at", {"ids": [a], "seconds": 0.5 * D})
+    check("split_at's `ids` names the pieces cut, not the selection",
+          len(r["ids"]) == 2 and a in r["ids"], str(r))
+    check("…and `selection` in the same answer is the untouched selection",
+          r["selection"] == [b], str(r))
+
+    # 11. A selected, keep='left': the survivor keeps A's own id, and it is the ONLY piece —
+    #     one object fewer than a plain division of the same object would have left (which
+    #     produces two, @see test 10 just above).
+    a = add(53)
+    c.send("selection.set", {"ids": [a]})
+    r = step("split_at keep=left", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.7 * D, "keep": "left"}))
+    check("keep='left' leaves exactly A, ALONE, still selected",
+          r["ids"] == [a] and r["count"] == 1 and c.send("selection.get")["ids"] == [a], str(r))
+
+    # 12. A selected, keep='right': a NEW id survives and takes the selection, A itself is gone.
+    a = add(54)
+    c.send("selection.set", {"ids": [a]})
+    r = step("split_at keep=right", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.3 * D, "keep": "right"}))
+    check("keep='right' selects the ONE surviving piece, which is not A",
+          len(r["ids"]) == 1 and r["ids"][0] != a and c.send("selection.get")["ids"] == r["ids"], str(r))
+    try:
+        c.send("object.get", {"id": a})
+        check("…and A itself no longer answers", False, "object.get(A) should fail")
+    except ObjekatError as e:
+        check("…and A itself no longer answers", e.code == "not_found", e.args[0])
+
+    # 13. A NOT selected, keep='right': the selection stays exactly as untouched as the rule says
+    #     for any cut of an unselected object — oriented or not changes nothing about that.
+    a = add(55)
+    c.send("selection.clear")
+    c.send("object.split_at", {"ids": [a], "seconds": 0.3 * D, "keep": "right"})
+    check("keep='right' on an unselected object still leaves the selection empty",
+          c.send("selection.get")["count"] == 0, str(c.send("selection.get")))
+
+    # 14-15. `object.ripple_cut` no longer empties the selection either — it goes through no
+    #        separate id at all (the surviving matter is TRIMMED in place, never re-split), so the
+    #        grabbed object simply keeps answering to its own id, and to its own selection.
+    #        A ripple with NO container is scoped to the WHOLE timeline (@see
+    #        EditViewModel+Ripple), which would reach every other fixture on every other lane —
+    #        so each object here gets its OWN one-member group first, bounding the ripple to it
+    #        and it alone. That scoping is not what this test is about; the selection rule is.
+    a = add(56)
+    ga_scope = c.send("group.create", {"ids": [a]})["id"]
+    c.send("group.expand", {"id": ga_scope, "expanded": True})   # else `a` is hidden, unreachable
+    a_dur = c.send("object.get", {"id": a})["duration"]
+    c.send("selection.set", {"ids": [a]})
+    step("ripple_cut keep=left, A selected", lambda: c.send("object.ripple_cut", {"id": a, "seconds": 0.7 * a_dur, "keep": "left"}))
+    check("ripple_cut keep='left' leaves A selected (today's code would have emptied it)",
+          c.send("selection.get")["ids"] == [a], str(c.send("selection.get")))
+
+    a = add(57)
+    gb_scope = c.send("group.create", {"ids": [a]})["id"]
+    c.send("group.expand", {"id": gb_scope, "expanded": True})   # else `a` is hidden, unreachable
+    a_dur = c.send("object.get", {"id": a})["duration"]
+    c.send("selection.set", {"ids": [a]})
+    step("ripple_cut keep=right, A selected", lambda: c.send("object.ripple_cut", {"id": a, "seconds": 0.1 * a_dur, "keep": "right"}))
+    check("ripple_cut keep='right' leaves A selected too",
+          c.send("selection.get")["ids"] == [a], str(c.send("selection.get")))
+
+    # 16. A GROUP obeys the very same rule: selected, cut with keep='right', it is the right half
+    #     — a fresh id — that ends up both the answer's one piece and the whole selection.
+    ga = add(58); gb = add(59)
+    g = c.send("group.create", {"ids": [ga, gb]})["id"]
+    gdur = c.send("object.get", {"id": g})["duration"]
+    c.send("selection.set", {"ids": [g]})
+    r = step("split_at a group, keep=right", lambda: c.send("object.split_at", {"ids": [g], "seconds": 0.8 * gdur, "keep": "right"}))
+    check("a selected GROUP hands its selection to its surviving (right) half too",
+          len(r["ids"]) == 1 and r["ids"][0] != g and c.send("selection.get")["ids"] == r["ids"], str(r))
+
+    # 17. And a CHILD of an open group follows the same rule as a top-level object: selected,
+    #     cut near its own start, the shorter (left) piece keeps its id and its selection.
+    ha = add(60); hb = add(61)
+    h = c.send("group.create", {"ids": [ha, hb]})["id"]
+    c.send("group.expand", {"id": h, "expanded": True})
+    e = [o["id"] for o in c.send("object.list")["objects"] if o["parent"] == h][0]
+    edur = c.send("object.get", {"id": e})["duration"]
+    c.send("selection.set", {"ids": [e]})
+    c.send("object.split_at", {"ids": [e], "seconds": 0.2 * edur})
+    check("a selected CHILD of an open group keeps its own selection after being cut near its start",
+          c.send("selection.get")["ids"] == [e], str(c.send("selection.get")))
+
+    # Sweep up everything this block introduced (@see the note at the top of it) — whatever is
+    # NEW relative to `before_ids`, whichever of the splits, ripples and groups above left it
+    # standing. Removing the survivors is enough: a group taken out cascades to its descendants.
+    after_ids = {o["id"] for o in c.send("object.list")["objects"]}
+    leftover = list(after_ids - before_ids)
+    if leftover:
+        c.send("object.remove", {"ids": leftover})
+    c.send("selection.clear")
+
     # --- WHERE a crossfade's zone is taken FROM. `crossfade.open` on its own centres the zone on
     #     the join, both edges giving half: nothing there says which of two alike objects should
     #     give, so the join is the only landmark. A fade PULLED onto its neighbour is not that

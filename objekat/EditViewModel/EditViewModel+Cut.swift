@@ -1,8 +1,5 @@
 import Foundation
 
-/// The side KEPT by an oriented cut (the Cut tool, a drag gesture).
-enum CutKeepSide { case left, right }
-
 extension EditViewModel {
 
     // MARK: - The source offsets of a cut
@@ -63,8 +60,25 @@ extension EditViewModel {
     /// Cuts ONE OR SEVERAL objects at the same instant. `keeping == nil` = a plain division (both
     /// halves stay); otherwise the opposite half is deleted — that is the Cut tool's "cut by
     /// pulling" gesture (pulling right keeps the left, and vice versa).
-    func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) {
-        guard !ids.isEmpty else { return }
+    ///
+    /// A cut does not re-aim the selection: the selection follows the MATTER. An object that was
+    /// not selected has none of its pieces selected afterwards — a cut is not a pick. An object
+    /// that WAS selected hands its selection to whichever piece survives it; when BOTH pieces
+    /// survive (a plain division), it goes to the SHORTER one — a cut is most often made to throw
+    /// a small scrap away (a breath, a click, a count-in), and pre-selecting that scrap saves the
+    /// click that would otherwise follow. Ties go LEFT, which costs nothing: the left half always
+    /// keeps the object's own id (@see `_splitInternal`), so the selection simply does not move.
+    /// An object cut but never selected in the first place is left alone throughout. The actual
+    /// side is decided by `cutSelectionSide` (`Shared/CutSelection.swift`), which is the whole
+    /// reason that unit exists on its own — asserted with no screen, no model behind it.
+    ///
+    /// Returns the pieces the cut produced (both halves of a division, or the one survivor of an
+    /// oriented cut) — NOT the selection, which may differ or may be untouched. A caller that
+    /// wants to know what came out of the matter (@see `object.split_at`) needs that, independently
+    /// of what the eye is watching.
+    @discardableResult
+    func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
         pushUndo()
         // The crossfades the cut objects are in, noted while they still stand — and this one
         // cannot simply be wrapped like a move (@see withCrossfadeRefit), because a split hands
@@ -81,6 +95,9 @@ extension EditViewModel {
         for id in ids {
             // An object already carried off by the cut of an ancestor no longer exists: it is skipped.
             guard let before = find(id: id) else { continue }
+            // Read BRUT, before the split touches anything — the rule is about what the eye sees
+            // in surbrillance at the moment of the cut, not about what remains reachable after.
+            let wasSelected = selectedIDs.contains(id)
             // The fade-out the left half is OWED if the right one is about to be thrown away.
             // A split gives the fade to the right piece and leaves the left with none, which is
             // right for a division — but 'keep the left' is not a division, it is the END being
@@ -106,15 +123,34 @@ extension EditViewModel {
                            result.insert(id)
             case .right?:  remove(id: id);    result.insert(newID)
             }
+            // The selection follows the matter, and only for an object it was already watching.
+            // The `.left` case writes NOTHING: the left half already carries the id `selectedIDs`
+            // names, so touching the set here would only cost an `@Observable` invalidation and,
+            // for a lone selected annotation elsewhere, nothing at all — deliberately minimal.
+            guard wasSelected else { continue }
+            if cutSelectionSide(objectStart: before.startTime, objectDuration: before.duration,
+                                splitTime: splitTime, keeping: keeping) == .right {
+                selectedIDs.remove(id)      // no-op if `remove(id:)` above already pruned it
+                selectedIDs.insert(newID)
+            }
         }
         // A half thrown away takes its seam with it: `refitCrossfade` then clears what is left.
         for p in pairs { refitCrossfade(leftID: p.left, rightID: p.right) }
         guard !result.isEmpty else {
             _ = undoStack.popLast()
-            return
+            return []
         }
-        selectedIDs = result
+        // A marker or a region left on a piece the cut swallowed no longer names anything —
+        // the same pruning `applySnapshot` does after an undo (@see EditViewModel+UndoRedo).
+        if let sel = selectedAnnotation, !annotationExists(sel) { selectedAnnotation = nil }
+        // And a crossfade zone naming one of the cut objects: the zone it named may no longer
+        // exist (cut through, or one member gone), and ⌫ must not aim at it regardless
+        // (@see TimelineKeyHandler).
+        if let xf = selectedCrossfade, ids.contains(xf.left) || ids.contains(xf.right) {
+            selectedCrossfade = nil
+        }
         isDirty = true
+        return result
     }
 
     /// The objects concerned by a cut triggered on `id`. Alone → it. In a multiple selection it

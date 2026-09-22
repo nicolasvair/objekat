@@ -517,7 +517,10 @@ extension CommandRegistry {
                  summary: "Cuts the given objects at an instant.",
                  params: [ParamSpec("seconds", "number", "Instant to cut at."),
                           ParamSpec("ids", "array<uuid>", required: false,
-                                    "Objects to cut; default = current selection.")],
+                                    "Objects to cut; default = current selection."),
+                          ParamSpec("keep", "string", required: false,
+                                    "The side KEPT: 'left' or 'right'. Absent = a plain "
+                                  + "division, both halves stay.")],
                  // `cut` already pushes its undo (and removes it if it cut nothing).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -531,9 +534,23 @@ extension CommandRegistry {
             guard !ids.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no object to cut")
             }
-            vm.cut(ids: ids, atTime: t, keeping: nil)
-            return .object(["ids": .array(vm.selectedIDs.map { .string($0.uuidString) }),
-                            "count": .int(vm.selectedIDs.count)])
+            var keeping: CutKeepSide? = nil
+            if p.raw["keep"] != nil {
+                switch try p.string("keep") {
+                case "left":  keeping = .left
+                case "right": keeping = .right
+                default:
+                    throw CommandError(code: .bad_params, message: "'keep': 'left' or 'right' was expected")
+                }
+            }
+            // `ids` in the answer keeps its long-standing meaning: the PIECES the cut produced —
+            // not the selection, which the cut may or may not have touched (@see
+            // EditViewModel+Cut, "a cut does not re-aim the selection"). `selection` is the new
+            // field, for a caller that wants to verify the rule itself with no screen.
+            let pieces = vm.cut(ids: ids, atTime: t, keeping: keeping)
+            return .object(["ids": .array(pieces.map { .string($0.uuidString) }),
+                            "count": .int(pieces.count),
+                            "selection": .array(vm.selectedIDs.map { .string($0.uuidString) })])
         }
 
         register("object.ripple_cut",

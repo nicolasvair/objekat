@@ -1035,6 +1035,62 @@ What has landed since mid-August, in order:
   tool's knob clicking from dB to dB; and whether the dB still left between the steps by ⌘ in the
   inspector's and the synoptic's boxes is wanted or is one more value nobody meant to type.
 
+- **A cut does not re-aim the selection: the selection follows the matter** (22 September 2026) —
+  `EditViewModel+Cut.swift:116` used to write `selectedIDs = result` outright, `result` being BOTH
+  halves of a plain division (or the survivor, for an oriented one). So cutting with nothing
+  selected left two objects selected out of nowhere, and cutting object B while A was selected
+  quietly took A off the selection. The rule now: an object never selected keeps none of its
+  pieces selected; an object that WAS selected hands its selection to whichever piece survives it,
+  and to the SHORTER one when both do (a plain division) — cutting is most often done to throw a
+  small scrap away (a breath, a click, a count-in), and pre-selecting that scrap saves the click
+  that follows. A tie goes LEFT, and costs nothing: the left half always keeps the object's own id
+  (every branch of `_splitInternal` hands the fresh UUID to the right piece, never the left), so
+  "equal duration → left" does not even touch `selectedIDs`. An object selected but not itself cut
+  is left exactly as it was — read off `selectedIDs` BRUT, before the split, which is what the eye
+  actually sees in surbrillance.
+  The arithmetic went into its own unit, `Shared/CutSelection.swift` (`cutSelectionSide`), for the
+  reason `SendColumns` / `SynopticMarquee` / `PianoRollFraming` / `ComposedName` are units: it has
+  no model behind it, so it can be compiled and asserted alone — `tools/test_cut_selection.swift`.
+  `cut(ids:atTime:keeping:)` now RETURNS the pieces it produced (`@discardableResult`), which is
+  NOT the same thing as the selection any more — `object.split_at`'s answer keeps `ids` naming the
+  pieces (so `tools/scenario_families.py`'s pre-existing split fixture, which reads
+  `halves["ids"]`, did not have to change) and gains a `selection` field for the new rule. The same
+  function also closes two things left dangling by a cut: a `selectedAnnotation` naming a marker
+  the cut swallowed (the same pruning `applySnapshot` already does after an undo), and a
+  `selectedCrossfade` naming one of the objects cut — left standing, ⌫ would have aimed at a zone
+  that may no longer exist. `object.ripple_cut` had the same fault in its own shape
+  (`EditViewModel+Ripple.swift`, an outright `selectedIDs = []`) and lost it the same way: what
+  `carveTimeRange` swallows is pruned by `remove(id:)`, what survives keeps its id (`keep: "left"`
+  truncates it in place, `"right"` only advances its start), so the selection simply has nothing
+  to rewrite.
+  The one trap worth knowing for whoever next touches a ripple from a script: its scope with NO
+  container is the WHOLE TIMELINE (documented already, easy to forget) — a ripple test fixture
+  left at the top level reaches every other lane's matter at that instant, which is exactly what
+  broke three unrelated, pre-existing assertions the first time this was tested (an old split
+  fixture on another lane vanished into a ripple's hole 300 ms away). Fixed by giving each such
+  fixture its OWN one-member group first, and by sweeping every object this session's new test
+  block introduces before it hands back to the rest of the file (an object.list diff, taken before
+  and after) — a stray fixture at a high lane number shifts where the pre-existing "last row"
+  assertions expect the floor to be, which is its own lesson: **a test fixture that outlives its
+  own test is a fixture the NEXT test has to know about.**
+  Verified with no screen: a Debug build, no new warning; `tools/test_cut_selection.swift`, 15
+  assertions (the arithmetic alone: 80%/20%/exact-middle splits, the 1e-9 tolerance either side of
+  a tie, a negative-start object, `keeping` overriding duration outright, a six-case sweep);
+  `tools/scenario_families.py` grown to 185 OK (18 new assertions driving the rule end to end
+  through the API — nothing selected, the untouched neighbour, the shorter piece inheriting a
+  plain division, the tie, a whole multi-object selection, an object selected but not cut, `ids`
+  vs `selection` in the same answer, `keep: "left"/"right"`, `object.ripple_cut` both ways, a
+  GROUP, a CHILD of an open group, and an undo bringing the object back whole); `scenario_markers.py`
+  ALL PASS; `scenario_plugin_selection.py` 58; `scenario_export_preview.py` 35 OK;
+  `scenario_relink.py` ALL PASS; `scenario_plugin_state_undo.py` 5; the five other standalone Swift
+  suites 22 / 21 / 31 / 27 / 36; `smoke.jsonl` clean; i18n 429 keys, no orphans; and no window on
+  the headless pid.
+  **Not seen, not felt**: every pixel of it — the Cut tool's drag (nothing/⌥/⌘ orientation), a
+  marker or a crossfade zone actually catching the loss on screen rather than through
+  `annotationExists`/`selectedCrossfade` read back over the socket, and whether losing the
+  selection on a bare, unselected cut (the case the whole rule was written for) reads as help or as
+  one fewer thing confirmed by the eye.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
