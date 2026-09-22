@@ -32,9 +32,15 @@ import Foundation
 // played, and stopped automatically at its end. It was removed because a single key meaning two
 // things — space plays / space auditions a zone — made the transport unpredictable, and because
 // stopping at the zone's end is exactly wrong when what one wants to hear is what comes AFTER what
-// was soloed. With nowhere left to fall back to (no selection, no zone), `beginHeldSolo` now falls
-// back to the objects on the WORKING LANES (@see objectIDsOnWorkingLanes) so that "s" then space
-// never plays into silence.
+// was soloed.
+//
+// That removal decided what a time selection MEANS to solo, and it is the one rule to keep in mind
+// here: since playback is no longer bounded by the zone, neither is the listening. A zone is read
+// for its ROWS and never for its span — everything on a row it touches is soloed, whether or not a
+// block of that row falls inside it, and a row it crosses while holding nothing is soloed just the
+// same (@see objectIDs(onLanes:)). Solo therefore has no time filter anywhere, which is also what
+// keeps "s" then space from ever playing into silence: with no zone and no selection, the caret's
+// own row answers.
 //
 // The engine has no notion of solo: it is emulated by pushing -96 dB onto the objects that have to be
 // silenced. What "have to" means is NOT decided here: solo is only one of the layers of
@@ -64,7 +70,9 @@ extension EditViewModel {
 
     /// s + Enter: freezes into the confirmed layer what is being listened to temporarily — the "s"
     /// layer if it is armed (the starting selection, retouched by clicks), otherwise the current
-    /// selection (a time selection → the sounds in the selection).
+    /// selection, read by the same rule `beginHeldSolo` reads it with (a time selection → the
+    /// whole of its ROWS, never a span of time). The two must agree: committing is meant to keep
+    /// exactly what one is hearing, and a fallback of its own would freeze something else.
     ///
     /// Since the two layers add up, confirming changes NOTHING in the sound: it simply makes
     /// permanent what is being heard. The usual collective convention (as with mute): if everything is
@@ -73,7 +81,7 @@ extension EditViewModel {
     func toggleSoloForCurrentSelection() {
         let roots: Set<UUID>
         if let temp = tempSoloRoots, !temp.isEmpty { roots = temp }
-        else if let sel = timeSelection            { roots = objectIDs(inZone: sel) }
+        else if let sel = timeSelection            { roots = objectIDs(onLanes: sel.lanes) }
         else                                       { roots = selectedIDs }
         guard !roots.isEmpty else { return }
 
@@ -135,21 +143,25 @@ extension EditViewModel {
     /// solo, only the selection is heard; with one, it is heard on top. The release (`endHeldSolo`)
     /// gives back the previous listening, the confirmed layer included.
     ///
-    /// Three roots, tried in order, and NOT as an if/else if: a time selection with lanes but no
-    /// objects on them must still fall through to the object selection test (empty), then on to
-    /// the working-lanes fallback — an early "if let sel = timeSelection" would stop there with an
-    /// empty `roots` and never reach it.
-    ///   1. a time selection → the objects it crosses (@see objectIDs(inZone:));
-    ///   2. failing that, the object selection;
-    ///   3. failing that too, the fallback: everything sitting on the WORKING LANES (the zone's
-    ///      lanes if one is traced, even empty of objects, otherwise the caret's lane). This exists
-    ///      so that pressing "s" then space never does NOTHING — with no selection at all, the
-    ///      solo would otherwise have nothing to filter and the key would read as dead.
+    /// What one hears is chosen by ROWS or by OBJECTS, never by a span of time (@see
+    /// objectIDs(onLanes:)). Three roots, tried in order, and NOT as an if/else chain — a row that
+    /// holds nothing must fall through rather than stop the cascade with an empty set:
+    ///   1. a traced time selection → everything on ITS ROWS, whole. The zone says which rows were
+    ///      aimed at and nothing more: a row it crosses while holding no object inside it is soloed
+    ///      all the same, with whatever sits on it elsewhere in time.
+    ///   2. failing that, the object selection — the one root that is not a row, because pointing
+    ///      at an object is pointing at it and not at its neighbours. It comes AFTER the zone and
+    ///      BEFORE the caret on purpose: every plain click lays a caret down as it selects (@see
+    ///      TimelineView+TapHandler), so reading the caret first would widen a one-object solo to
+    ///      its whole row.
+    ///   3. failing that too, the caret's own row. This is what stops "s" then space from doing
+    ///      NOTHING when one has merely clicked somewhere: with no root at all the solo would have
+    ///      nothing to filter and the key would read as dead.
     func beginHeldSolo() {
         var roots: Set<UUID> = []
-        if let sel = timeSelection { roots = objectIDs(inZone: sel) }
-        if roots.isEmpty { roots = selectedIDs }
-        if roots.isEmpty { roots = objectIDsOnWorkingLanes() }
+        if let sel = timeSelection    { roots = objectIDs(onLanes: sel.lanes) }
+        if roots.isEmpty              { roots = selectedIDs }
+        if roots.isEmpty, let cl = caretLane { roots = objectIDs(onLanes: [cl]) }
         guard !roots.isEmpty else { return }
         tempSoloRoots  = roots
         heldSoloActive = true
@@ -210,39 +222,28 @@ extension EditViewModel {
         refreshSolo()
     }
 
-    // MARK: The set of sound objects in a time selection
+    // MARK: The set of sound objects on a set of lanes
 
-    /// The IDs of the objects (at any depth) whose block crosses the selection (lanes + time).
-    /// The same overlap rule as `deleteTimeSelection`.
-    func objectIDs(inZone sel: TimeSelection) -> Set<UUID> {
-        let lo = sel.timeRange.lowerBound, hi = sel.timeRange.upperBound
-        return Set(laneEntries.filter { e in
-            sel.lanes.contains(e.displayLane)
-                && e.absStart < hi
-                && e.absStart + e.item.duration > lo
-        }.map { $0.item.id })
-    }
-
-    /// The last-resort roots for `beginHeldSolo`: everything sitting on the WORKING lanes, with no
-    /// time bound at all. "Working lanes" = the lanes of the traced time selection if there is one
-    /// (even if it holds no object — the lanes themselves are what was aimed at), otherwise the
-    /// caret's own lane; with neither, there is nothing to fall back on.
+    /// Everything sitting on `lanes`, with NO time bound at all. The one reader of rows solo has:
+    /// a traced zone hands over its `lanes`, a bare caret its own row.
     ///
-    /// No temporal filter here, unlike `objectIDs(inZone:)`: the cursor only ever says WHERE
-    /// PLAYBACK STARTS, never what gets filtered out of the listening — solo is not the transport.
-    /// So an object on a working lane that starts after the cursor is soloed all the same, since it
-    /// will be heard once playback reaches it.
+    /// The absence of a time filter is the whole rule, and it is what tells solo apart from every
+    /// other gesture that reads a time selection (`deleteTimeSelection`, `carveTimeRange`…). Those
+    /// act on MATTER, so they take what the zone crosses. Solo acts on the LISTENING, and the
+    /// listening is not bounded in time since playback stopped being windowed: it starts at
+    /// `cursorPosition` and runs past the zone's end, so an object the zone does not touch WILL be
+    /// heard, and anything that will be heard has to be part of what one chose to hear.
     ///
-    /// What "sitting on a lane" means is the same visual truth as `objectIDs(inZone:)`: a folded
-    /// group is itself the entry on its lane, an unfolded one puts its children on their own lanes
-    /// — `laneEntries` already resolves that, so reading it here keeps the two functions agreeing on
-    /// what is "on screen" at a given row.
-    func objectIDsOnWorkingLanes() -> Set<UUID> {
-        let lanes: Set<Int>
-        if let sel = timeSelection { lanes = sel.lanes }
-        else if let cl = caretLane { lanes = [cl] }
-        else { return [] }
-        return Set(laneEntries.filter { lanes.contains($0.displayLane) }.map { $0.item.id })
+    /// Hence a zone drawn across a row holding nothing inside it still solos that row ENTIRELY: the
+    /// rows are what the gesture aimed at, and asking for a row is asking for what plays on it.
+    /// Anything else makes the neighbour heard or silenced depending on where its block happens to
+    /// sit relative to a zone that no longer bounds the playback.
+    ///
+    /// What "sitting on a lane" means is the visual truth and nothing else: a folded group is
+    /// itself the entry on its row, an unfolded one puts its children on rows of their own —
+    /// `laneEntries` already resolves that, so what gets soloed is what the eye sees on that row.
+    func objectIDs(onLanes lanes: Set<Int>) -> Set<UUID> {
+        Set(laneEntries.filter { lanes.contains($0.displayLane) }.map { $0.item.id })
     }
 
     // MARK: Applying it to the engine + the cached audible set
