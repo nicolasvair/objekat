@@ -28,7 +28,10 @@ extension EditViewModel {
     func pushUndo() {
         undoStack.append(currentSnapshot())
         redoStack = []
-        if undoStack.count > 50 { undoStack.removeFirst() }
+        if undoStack.count > 50 {
+            undoStack.removeFirst()
+            shiftSessionUndoDepths()   // an open consolidated session's depth follows (@see closeSessionUndo)
+        }
         isDirty = true
     }
 

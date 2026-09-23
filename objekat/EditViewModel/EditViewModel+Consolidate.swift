@@ -20,6 +20,12 @@ struct ConsolidateEditSession: Identifiable {
     /// The content's signature at the last mirror laid: laying an identical mirror again would cost an
     /// engine rebuild (hence a re-instantiation of plugins) for nothing.
     var lastMirrorSignature: Data?
+    /// The depth of the undo stack BEFORE the opening's own undo point. Every point pushed above it
+    /// belongs to the session: snapshots of the MATERIALISED content, which mean nothing once the
+    /// session is gone (restoring one gives back the content as a plain group, unlinked — the
+    /// "undo detaches the instance" bug). Closing and cancelling cut the stack back to this depth.
+    /// Kept in step by `pushUndo` when the stack's cap drops its oldest entry.
+    var undoDepthAtOpen: Int = 0
     var id: UUID { placementID }
 }
 
@@ -834,6 +840,7 @@ extension EditViewModel {
         // below already journals itself and counts towards this total.
         let tOpen = CFAbsoluteTimeGetCurrent()
 
+        let undoDepthAtOpen = undoStack.count
         pushUndo()
         // Opening for editing must make the CONTENT visible and clickable — in particular the
         // NESTED consolidated objects that will be re-edited in their turn (a child session). A group
@@ -855,7 +862,8 @@ extension EditViewModel {
         // a cancel (they belong to the placement, not to the content being edited).
         consolidateEditStack.append(ConsolidateEditSession(defID: defID, placementID: placementID,
                                                  originalPlacement: withCapturedPluginStates(placement),
-                                                 openedSubtree: restored))
+                                                 openedSubtree: restored,
+                                                 undoDepthAtOpen: undoDepthAtOpen))
 
         removeFromEngine(placement)
         update(id: placementID) { $0 = restored }
@@ -1008,7 +1016,13 @@ extension EditViewModel {
         // any session.
         restoreLiveMirrors()
 
-        pushUndo()
+        // The undo point of a COMMIT is the state it replaces as the user sees it: the instance
+        // LINKED to the previous revision — not the materialised content, which is what a plain
+        // `pushUndo()` here used to capture: undone, that content came back as an ordinary group,
+        // detached from its definition, with no session left to close it. The session's own
+        // points (the opening, the edits of the content) go the same way, for the same reason.
+        // See `closeSessionUndo`.
+        closeSessionUndo(pushing: snapshotWithSessionCancelled(current: live))
 
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
@@ -1104,12 +1118,8 @@ extension EditViewModel {
 
         // The same boundary as at closing with a render (@see finishCloseConsolidate): what survives the
         // wave leaves with the instance, the rest falls with the content that carried it.
-        var restored = originalPlacement
-        if keepingRootAutomation {
-            restored.automation          = current.automationSurvivingBake
-            restored.automationTouchOrder = current.automationTouchOrder
-            restored.automationOpen      = current.automationOpen && !restored.automation.isEmpty
-        }
+        let restored = cancelledPlacement(originalPlacement, current: current,
+                                          keepingRootAutomation: keepingRootAutomation)
 
         removeFromEngine(current)
         update(id: placementID) { $0 = restored }
@@ -1125,11 +1135,99 @@ extension EditViewModel {
         pushAutomation(restored)
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).
 
+        // The undo stack: a cancel leaves nothing behind it — the session's points (the opening,
+        // the edits of the materialised content) are cut, since restoring one without its session
+        // would hand back the content as a detached group. A closing with no content change that
+        // kept the ROOT's curves leaves one point, the instance as it was opened, when those
+        // curves did move (otherwise their edits could no longer be undone).
+        var before: EditSnapshot? = nil
+        if keepingRootAutomation, restored != originalPlacement {
+            let snap = currentSnapshot()
+            before = EditSnapshot(items: Self.replacingSubtree(placementID, with: originalPlacement,
+                                                                in: snap.items),
+                                  stems: snap.stems, consolidateDefinitions: snap.consolidateDefinitions,
+                                  tempo: snap.tempo, timeSigNumerator: snap.timeSigNumerator,
+                                  timeSigDenominator: snap.timeSigDenominator,
+                                  markerLanes: snap.markerLanes, comments: snap.comments)
+        }
+        closeSessionUndo(pushing: before)
+
         // Pops the current session; picks the parent up again (a nested edit) or cuts everything.
         if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
         resumeParentObjectEditAfterPop()
         selectedIDs = [placementID]
         isDirty = true
+    }
+
+    // MARK: - The undo stack of an editing session
+
+    /// The linked instance a CANCEL of the current session would put back: the exact placement
+    /// taken at opening, with the ROOT's curves as they are now when `keepingRootAutomation`
+    /// (they belong to the instance, not to the content being edited).
+    private func cancelledPlacement(_ original: SoundObject, current: SoundObject,
+                                    keepingRootAutomation: Bool) -> SoundObject {
+        var restored = original
+        if keepingRootAutomation {
+            restored.automation           = current.automationSurvivingBake
+            restored.automationTouchOrder = current.automationTouchOrder
+            restored.automationOpen       = current.automationOpen && !restored.automation.isEmpty
+        }
+        return restored
+    }
+
+    /// The live state with the CURRENT session cancelled: the materialised placement replaced by
+    /// its linked instance from before the opening (root curves kept, as at a closing). Called
+    /// once the mirrors are back on the official wave and before the registry moves to the new
+    /// revision — so it is exactly "the consolidated object as it was before the commit", other
+    /// instances and nested definitions included. nil if the session is inconsistent.
+    private func snapshotWithSessionCancelled(current: SoundObject) -> EditSnapshot? {
+        guard let original = editingOriginalPlacement else { return nil }
+        let linked = cancelledPlacement(original, current: current, keepingRootAutomation: true)
+        let snap = currentSnapshot()
+        return EditSnapshot(items: Self.replacingSubtree(current.id, with: linked, in: snap.items),
+                            stems: snap.stems, consolidateDefinitions: snap.consolidateDefinitions,
+                            tempo: snap.tempo, timeSigNumerator: snap.timeSigNumerator,
+                            timeSigDenominator: snap.timeSigDenominator,
+                            markerLanes: snap.markerLanes, comments: snap.comments)
+    }
+
+    /// Ends the CURRENT session on the undo stack: cuts it back to its depth at opening (dropping
+    /// the opening's point and every point pushed during the session — the materialised states a
+    /// restoration without the session would turn into detached groups), then pushes `before`
+    /// if given. A nested session only cuts its own points: the parent's stay, and they are cut in
+    /// their turn when the parent closes. Gestures made OUTSIDE the content during the session
+    /// lose their separate undo points and fold into the closing's.
+    private func closeSessionUndo(pushing before: EditSnapshot?) {
+        if let depth = consolidateEditStack.last?.undoDepthAtOpen, depth < undoStack.count {
+            undoStack.removeSubrange(max(0, depth)...)
+        }
+        if let before {
+            undoStack.append(before)
+            if undoStack.count > 50 { undoStack.removeFirst(); shiftSessionUndoDepths() }
+        }
+        redoStack = []
+        isDirty = true
+    }
+
+    /// The undo stack dropped its OLDEST entry (the cap): every open session's depth moves down one.
+    func shiftSessionUndoDepths() {
+        for i in consolidateEditStack.indices {
+            consolidateEditStack[i].undoDepthAtOpen = max(0, consolidateEditStack[i].undoDepthAtOpen - 1)
+        }
+    }
+
+    /// `items` with the object `id` (at any depth) replaced by `replacement`.
+    static func replacingSubtree(_ id: UUID, with replacement: SoundObject,
+                                 in items: [SoundObject]) -> [SoundObject] {
+        items.map { o in
+            if o.id == id { return replacement }
+            if case .group(let children, let e) = o.kind {
+                var n = o
+                n.kind = .group(children: replacingSubtree(id, with: replacement, in: children), isExpanded: e)
+                return n
+            }
+            return o
+        }
     }
 
     /// After popping a session (a closing/cancel), picks the PARENT session up again if the stack

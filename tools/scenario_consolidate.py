@@ -29,6 +29,10 @@ PHASE B drives the new build through B1 → B14 of `plan_consolidate.md`, plus t
 did not list (the X-labelled checks): undo/redo of a commit across the two folders, deconsolidating
 an instance that only exists in the legacy folder, a copy onto the project's own folder.
 
+Then the pre-existing bugs fixed on 2026-09-24, each checked STRICTLY (a failure counts):
+  • BUG 1 — "Save a copy" onto / into / around the project's folder erased its consolidated waves;
+  • BUG 2 — undoing a commit gave back the content as a detached group (commit, cancel, nested);
+
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
@@ -55,7 +59,6 @@ LEGACY_APP = os.environ.get("LEGACY_APP") or os.path.normpath(
 ROOT = os.path.realpath(tempfile.mkdtemp(prefix="objk-cons-", dir="/tmp"))
 
 fails = []
-known_bugs = []
 
 
 def check(label, ok, detail=""):
@@ -64,16 +67,6 @@ def check(label, ok, detail=""):
     else:
         fails.append(label)
         print("FAIL  %s  %s" % (label, detail))
-
-
-def known(label, ok, detail, why):
-    """A check of the RIGHT behaviour that fails because of a bug older than the rename, reproduced
-    on the old build too: reported, not counted. The day it passes, it says so."""
-    if ok:
-        print("ok    %s  (the known bug is gone: %s)" % (label, why))
-    else:
-        known_bugs.append(label)
-        print("KNOWN %s  %s\n      ↳ pre-existing, also on the old build: %s" % (label, detail, why))
 
 
 def section(title):
@@ -109,6 +102,12 @@ def fingerprint(folder):
             st = os.stat(p)
             fp[os.path.relpath(p, folder)] = (st.st_size, st.st_mtime_ns)
     return fp
+
+
+def same_file(a, b):
+    """The same file on disk, whatever the spelling (`/tmp` is `/private/tmp`): an instance
+    restored from the project as it was LOADED keeps the spelling of the load."""
+    return bool(a) and bool(b) and os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
 
 
 def only(fp, prefix):
@@ -409,12 +408,12 @@ try:
         du = defs_by_id(cmd)
         pa_row = obj(cmd, ids["pa"])
         check("X  undo: A back to revision 0", du[ids["a"]]["revision"] == 0, du[ids["a"]])
-        known("X  undo: A's instance back, linked, on the objects/ wave",
-              pa_row and pa_row.get("definition") == ids["a"]
-              and pa_row.get("file") == os.path.join(OBJ, du[ids["a"]]["wave"]),
-              pa_row, "undoing a COMMIT gives back the materialised CONTENT as a plain group — "
-                      "finishCloseConsolidate pushes its undo point while the placement is "
-                      "still materialised, and the edit session is not part of the snapshot")
+        # BUG 2 (fixed): undoing a COMMIT used to give back the materialised CONTENT as a plain
+        # group — the undo point was pushed while the placement was still materialised.
+        check("BUG2 undo: A's instance back, linked, on the objects/ wave",
+              pa_row and pa_row["kind"] == "clip" and pa_row.get("definition") == ids["a"]
+              and same_file(pa_row.get("file"), os.path.join(OBJ, du[ids["a"]]["wave"])), pa_row)
+        check("BUG2 undo: no edit session left open", not cmd("consolidate.state")["editing"])
         check("X  undo: B back to revision 0 and not stale",
               du[ids["b"]]["revision"] == 0 and not du[ids["b"]]["stale"], du[ids["b"]])
         check("X  undo: nothing missing", cmd("project.rescan_missing")["path_count"] == 0)
@@ -739,6 +738,146 @@ try:
         finally:
             os.rename(HIDDEN, LEG)
 
+        # ── BUG 2 — undo / redo of a commit, of a cancel, of a nested commit ─────────────────
+        section("BUG 2 — undoing a commit gives back the LINKED instance")
+        U = os.path.join(ROOT, "undo")
+        cmd("project.new")
+        u1 = cmd("object.add", path=BIP, lane=0, start=0.0)["id"]
+        u2 = cmd("object.add", path=BIP, lane=2, start=1.0)["id"]
+        cmd("project.save_as", path=os.path.join(U, "undo.json"))
+        job_wait(cmd, cmd("consolidate.make", id=u1))
+        ua = list(defs_by_id(cmd))[0]
+        pa1 = defs_by_id(cmd)[ua]["placements"][0]
+        pa2 = cmd("object.duplicate", ids=[pa1])["ids"][0]          # a second ROOT instance of A
+        # …and one to nest in B (duplicated from pa2: a second duplicate of pa1 would land on pa2's
+        # spot and cover it)
+        pa3 = cmd("object.duplicate", ids=[pa2])["ids"][0]
+        check("BUG2 setup: three root instances of A",
+              all(obj(cmd, x) and obj(cmd, x).get("definition") == ua for x in (pa1, pa2, pa3)))
+        ug = cmd("group.create", ids=[pa3, u2])["id"]
+        job_wait(cmd, cmd("consolidate.make", id=ug))
+        ub = [d for d in defs_by_id(cmd) if d != ua][0]
+        cmd("wait_idle", timeout_ms=30000)
+        d0 = defs_by_id(cmd)
+        UC = os.path.join(U, "samples", "consolidate")
+
+        def linked(oid, defid, wave):
+            row = obj(cmd, oid)
+            return bool(row) and row["kind"] == "clip" and row.get("definition") == defid \
+                and same_file(row.get("file"), os.path.join(UC, wave)), row
+
+        def edit_and_commit(placement):
+            cmd("consolidate.edit_begin", placement=placement)
+            kids = [o for o in children_of(cmd, placement) if o["kind"] == "clip"]
+            cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
+            j = job_wait(cmd, cmd("consolidate.edit_commit"))
+            cmd("wait_idle", timeout_ms=60000)
+            return j
+
+        # 1. commit on one root instance, then undo / undo / redo / redo.
+        edit_and_commit(pa1)
+        d1 = defs_by_id(cmd)
+        check("BUG2 setup: A at revision 1, the cascade re-baked B",
+              d1[ua]["revision"] == 1 and d1[ub]["revision"] == 1, (d1[ua], d1[ub]))
+        cmd("edit.undo")
+        cmd("wait_idle", timeout_ms=30000)
+        du = defs_by_id(cmd)
+        ok, row = linked(pa1, ua, d0[ua]["wave"])
+        check("BUG2 undo commit: the edited instance is LINKED to A, on revision 0's wave", ok, row)
+        ok, row = linked(pa2, ua, d0[ua]["wave"])
+        check("BUG2 undo commit: the OTHER root instance of A back on revision 0's wave", ok, row)
+        ok, row = linked(ug, ub, d0[ub]["wave"])
+        check("BUG2 undo commit: B (holding A) back on its revision 0", ok, row)
+        check("BUG2 undo commit: registry A rev 0, B rev 0, nothing stale",
+              du[ua]["revision"] == 0 and du[ub]["revision"] == 0
+              and not any(d["stale"] for d in du.values()), du)
+        check("BUG2 undo commit: no session open", not cmd("consolidate.state")["editing"])
+        check("BUG2 undo commit: no group left over from the content",
+              not any(o["kind"] == "group" and not o.get("definition") for o in objects(cmd)),
+              [o for o in objects(cmd) if o["kind"] == "group"])
+        # A second undo steps over the session's own points (opening, the gain on the content)
+        # to the gesture BEFORE the opening — B's consolidation — never into a materialised state.
+        cmd("edit.undo")
+        ok, row = linked(pa1, ua, d0[ua]["wave"])
+        check("BUG2 2nd undo: the edited instance still linked (no session point resurrected)", ok, row)
+        row = obj(cmd, ug)
+        check("BUG2 2nd undo: it undid the gesture before the opening (B's consolidation)",
+              row and row["kind"] == "group" and not row.get("definition"), row)
+        cmd("edit.redo")
+        ok, row = linked(ug, ub, d0[ub]["wave"])
+        check("BUG2 redo: B consolidated again", ok, row)
+        cmd("edit.redo")
+        cmd("wait_idle", timeout_ms=30000)
+        dr = defs_by_id(cmd)
+        check("BUG2 redo commit: registry A rev 1, B rev 1",
+              dr[ua]["revision"] == 1 and dr[ub]["revision"] == 1, (dr[ua], dr[ub]))
+        for oid, label in ((pa1, "the edited instance"), (pa2, "the other root instance")):
+            ok, row = linked(oid, ua, d1[ua]["wave"])
+            check("BUG2 redo commit: %s on revision 1's wave" % label, ok, row)
+        ok, row = linked(ug, ub, d1[ub]["wave"])
+        check("BUG2 redo commit: B on its revision 1", ok, row)
+        check("BUG2 redo: nothing missing", cmd("project.rescan_missing")["path_count"] == 0)
+
+        # 2. a cancel leaves nothing behind it: the undo after it never resurrects the content.
+        cmd("consolidate.edit_begin", placement=pa1)
+        kids = [o for o in children_of(cmd, pa1) if o["kind"] == "clip"]
+        cmd("object.set_gain", ids=[kids[0]["id"]], db=-12)
+        cmd("consolidate.edit_cancel")
+        ok, row = linked(pa1, ua, d1[ua]["wave"])
+        check("BUG2 cancel: linked on revision 1", ok, row)
+        cmd("edit.undo")
+        cmd("wait_idle", timeout_ms=30000)
+        ok, row = linked(pa1, ua, d0[ua]["wave"])
+        check("BUG2 undo after a cancel: the COMMIT is undone (the session left no point)", ok, row)
+        cmd("edit.redo")
+        cmd("wait_idle", timeout_ms=30000)
+        ok, row = linked(pa1, ua, d1[ua]["wave"])
+        check("BUG2 …and redone", ok, row)
+
+        # 3. a NESTED commit (A opened inside B), then B's commit: one undo = B before ITS commit.
+        cmd("consolidate.edit_begin", placement=ug)
+        inner = [o for o in children_of(cmd, ug) if o.get("definition") == ua]
+        check("BUG2 nested: B open, holding one instance of A", len(inner) == 1, inner)
+        r = cmd("consolidate.edit_begin", placement=inner[0]["id"])
+        check("BUG2 nested: A opened inside B (depth 2)", r["depth"] == 2, r)
+        kids = [o for o in children_of(cmd, inner[0]["id"]) if o["kind"] == "clip"]
+        cmd("object.set_gain", ids=[kids[0]["id"]], db=-3)
+        j = job_wait(cmd, cmd("consolidate.edit_commit"))
+        cmd("wait_idle", timeout_ms=60000)
+        st = cmd("consolidate.state")
+        check("BUG2 nested: the child commit leaves B open",
+              j["state"] == "done" and st["editing"] and st["definition"] == ub, (j, st))
+        d2 = defs_by_id(cmd)
+        check("BUG2 nested: A at revision 2", d2[ua]["revision"] == 2, d2[ua])
+        cmd("edit.undo")          # inside B's session: undoes A's commit, B stays open
+        inner_row = obj(cmd, inner[0]["id"])
+        check("BUG2 nested undo inside the parent: the inner A back LINKED to revision 1",
+              inner_row and inner_row["kind"] == "clip" and inner_row.get("definition") == ua
+              and inner_row["file"] == os.path.join(UC, d1[ua]["wave"])
+              and cmd("consolidate.state")["editing"], inner_row)
+        cmd("edit.redo")
+        inner_row = obj(cmd, inner[0]["id"])
+        check("BUG2 nested redo inside the parent: the inner A on revision 2",
+              inner_row and inner_row.get("definition") == ua
+              and inner_row["file"] == os.path.join(UC, d2[ua]["wave"]), inner_row)
+        job_wait(cmd, cmd("consolidate.edit_commit"))       # B's commit
+        cmd("wait_idle", timeout_ms=60000)
+        d3 = defs_by_id(cmd)
+        check("BUG2 nested: B committed (revision 2)", d3[ub]["revision"] == 2, d3[ub])
+        cmd("edit.undo")
+        cmd("wait_idle", timeout_ms=30000)
+        du = defs_by_id(cmd)
+        ok, row = linked(ug, ub, d1[ub]["wave"])
+        check("BUG2 nested undo: B LINKED again, on the revision before its commit", ok, row)
+        check("BUG2 nested undo: B back to revision 1, A keeps revision 2 (committed before)",
+              du[ub]["revision"] == 1 and du[ua]["revision"] == 2, (du[ub], du[ua]))
+        check("BUG2 nested undo: no session open", not cmd("consolidate.state")["editing"])
+        cmd("edit.redo")
+        cmd("wait_idle", timeout_ms=30000)
+        ok, row = linked(ug, ub, d3[ub]["wave"])
+        check("BUG2 nested redo: B on revision 2", ok, row)
+        cmd("project.new")
+
         # ── BUG 1, the last line of defence: a SOURCE file already sitting where the copy would
         # put it. An unsaved project has no folder to refuse, and the destination is legitimate —
         # but the "remove, then copy" of its own source used to delete the only copy there is.
@@ -772,7 +911,5 @@ finally:
     else:
         shutil.rmtree(ROOT, ignore_errors=True)
 
-if known_bugs:
-    print("\n%d KNOWN pre-existing bug(s), not counted: %s" % (len(known_bugs), ", ".join(known_bugs)))
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)
