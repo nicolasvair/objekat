@@ -5,9 +5,10 @@ import Foundation
 // A `.clip` carries a file path. Two clearly distinct natures:
 //   • an EXTERNAL file (sound library, Finder): it lives outside the project folder → an ABSOLUTE
 //     path, the only way to find it again, and moving the project does not concern it;
-//   • an INTERNAL file (`samples/objects/` for sound-object waves, `samples/sources/`
-//     for a capsule's embedded sources): it travels WITH the project → we record a path
-//     RELATIVE to the project folder, otherwise moving (or renaming) the folder breaks the link.
+//   • an INTERNAL file (`samples/consolidate/` for consolidated-object waves — `samples/objects/`
+//     for a project predating that name, read for ever — `samples/sources/` for a capsule's
+//     embedded sources): it travels WITH the project → we record a path RELATIVE to the project
+//     folder, otherwise moving (or renaming) the folder breaks the link.
 //
 // The conversion happens at the write/read boundaries — the `.json` version file
 // and the `*_objectstate.json` sidecars — never in memory: the live model, the engine and the
@@ -17,8 +18,9 @@ import Foundation
 // validated on (size, mtime), which a move preserves.
 enum ProjectPaths {
 
-    /// The project folder's sub-folders that host audio, in search order.
-    private static let audioSubfolders = ["samples/objects", "samples/sources"]
+    /// The project folder's sub-folders that host audio, in search order. `consolidate` wins a
+    /// collision (cas E18); `objects` is the legacy folder, still read (cas E1, never migrated).
+    private static let audioSubfolders = ConsolidateFolders.audioSubfolders
 
     // MARK: Writing
 
@@ -47,11 +49,27 @@ enum ProjectPaths {
     static func resolved(_ path: String, projectFolder: URL) -> String {
         guard !path.isEmpty else { return path }
         if !path.hasPrefix("/") {
-            return projectFolder.appendingPathComponent(path).standardizedFileURL.path
+            let direct = projectFolder.appendingPathComponent(path).standardizedFileURL
+            // Cas E2/E16: a path recorded as `samples/objects/x.wav` (the legacy folder) whose file
+            // is not there any more, but IS under `samples/consolidate/x.wav` — a definition
+            // re-baked since the session was last written, whose relative path was not itself
+            // rewritten anywhere else. Only tried when the direct path misses.
+            if !FileManager.default.fileExists(atPath: direct.path),
+               let swapped = ConsolidateFolders.swappedToConsolidate(path) {
+                let swappedURL = projectFolder.appendingPathComponent(swapped).standardizedFileURL
+                if FileManager.default.fileExists(atPath: swappedURL.path) { return swappedURL.path }
+            }
+            return direct.path
         }
         if let suffix = audioSuffix(of: path) {
             let local = projectFolder.appendingPathComponent(suffix).standardizedFileURL
             if FileManager.default.fileExists(atPath: local.path) { return local.path }
+            // The same repli, for an ABSOLUTE path going through another project's
+            // `samples/objects/…` (cas E16: a project duplicated in the Finder).
+            if let swapped = ConsolidateFolders.swappedToConsolidate(suffix) {
+                let swappedLocal = projectFolder.appendingPathComponent(swapped).standardizedFileURL
+                if FileManager.default.fileExists(atPath: swappedLocal.path) { return swappedLocal.path }
+            }
         }
         return path
     }

@@ -292,9 +292,9 @@ extension EditViewModel {
         do {
             let data = try Data(contentsOf: url)
             var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
-            // Internal paths (samples/objects, samples/sources) made absolute IN this
-            // project folder: that is what makes the folder movable, and what catches up
-            // projects predating portability. See `ProjectPaths.resolved`.
+            // Internal paths (samples/consolidate, the legacy samples/objects, samples/sources)
+            // made absolute IN this project folder: that is what makes the folder movable, and
+            // what catches up projects predating portability. See `ProjectPaths.resolved`.
             doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
             applyProjectDocument(doc)
             projectURL = url

@@ -3,15 +3,16 @@ import AppKit
 // MARK: - Save a copy with audio files (a self-contained capsule)
 //
 // Creates a SELF-CONTAINED project folder holding the project + ALL the audio files it needs,
-// and NOTHING more (the orphan waves piled up in samples/objects/ after a re-bake are
+// and NOTHING more (the orphan waves piled up in samples/consolidate/ after a re-bake are
 // excluded). Used to send a "ready to open" copy to somebody else.
 //
 // A reminder of the model: the SOURCE files of a normal `.clip` point at an EXTERNAL absolute
-// path (Sound library/Finder) — they are not in the project folder. Only sound-object waves
-// (samples/objects/) live there, each with a JSON sidecar
-// (`*_objectstate.json`) carrying the editable sub-tree. Those sidecars themselves reference
-// other files (sources, nested sound objects) → they are collected by transitive closure
-// so that the recipient can open AND edit everything.
+// path (Sound library/Finder) — they are not in the project folder. Only consolidated-object
+// waves (samples/consolidate/, or the legacy samples/objects/ — cas E1, read but never written
+// again) live there, each with a JSON sidecar (`*_objectstate.json`) carrying the editable
+// sub-tree. Those sidecars themselves reference other files (sources, nested consolidated
+// objects) → they are collected by transitive closure so that the recipient can open AND edit
+// everything.
 
 extension EditViewModel {
 
@@ -44,10 +45,12 @@ extension EditViewModel {
         let folderName = EditViewModel.projectDisplayName(for: destFolder)
         let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
 
-        // Destination folders.
+        // Destination folders. The copy NORMALISES: every consolidated wave lands in
+        // `samples/consolidate/`, wherever it was actually read from (cas E1/E6) — the copy is in
+        // effect the migration tool this project deliberately has no other one of.
         let samplesDst  = destFolder.appendingPathComponent("samples", isDirectory: true)
         let sourcesDst  = samplesDst.appendingPathComponent("sources", isDirectory: true)
-        let objectsDst  = samplesDst.appendingPathComponent("objects", isDirectory: true)
+        let consolidateDst  = samplesDst.appendingPathComponent("consolidate", isDirectory: true)
         let waveformsDst = destFolder.appendingPathComponent("waveforms", isDirectory: true)
 
         // 1) Discovery (transitive closure through the sidecars).
@@ -82,7 +85,7 @@ extension EditViewModel {
                 missing.append(L("saveCopy.missingDefinition", String(defID.uuidString.prefix(8))))
                 continue
             }
-            if let original = readObjectSidecar(def.wave) {
+            if let original = readObjectSidecar(def.wave, definition: defID) {
                 objectSidecars[defID] = original
                 discover(original)
             } else {
@@ -136,13 +139,16 @@ extension EditViewModel {
             addWaveformCopy(originalBasename: srcURL.lastPathComponent, destBasename: name)
         }
 
-        // 3) Sound-object waves: copied from the CURRENT folder into the capsule.
-        if let objects = objectsFolder {
+        // 3) Consolidated-object waves: copied from WHEREVER each is actually found (cas E1/E6 —
+        //    samples/consolidate/, the legacy samples/objects/, or the Q3 fallback) into the
+        //    capsule's samples/consolidate/. The copy is what normalises a mixed project.
+        if projectFolder != nil {
             for defID in processedDefs {
-                guard let def = objectDefinitions[defID] else { continue }
-                let srcWave = objects.appendingPathComponent(def.wave)
+                guard let def = objectDefinitions[defID],
+                      let srcFolder = consolidateReadFolder(forWave: def.wave, definition: defID) else { continue }
+                let srcWave = srcFolder.appendingPathComponent(def.wave)
                 if fm.fileExists(atPath: srcWave.path) {
-                    fileCopies.append((srcWave, objectsDst.appendingPathComponent(def.wave)))
+                    fileCopies.append((srcWave, consolidateDst.appendingPathComponent(def.wave)))
                     addWaveformCopy(originalBasename: def.wave, destBasename: def.wave)
                 } else {
                     missing.append(def.wave)
@@ -156,7 +162,7 @@ extension EditViewModel {
             var n = o
             if let defID = o.definitionID, let def = objectDefinitions[defID],
                case .clip(_, let so, let fd, let sr, let rev) = o.kind {
-                n.kind = .clip(filePath: objectsDst.appendingPathComponent(def.wave).path,
+                n.kind = .clip(filePath: consolidateDst.appendingPathComponent(def.wave).path,
                                sourceOffset: so, fileDuration: fd, speedRatio: sr, isReversed: rev)
             } else {
                 switch o.kind {
@@ -182,7 +188,7 @@ extension EditViewModel {
             guard let def = objectDefinitions[defID],
                   let data = try? encodedObjectSidecar(rewrite(original), projectFolder: destFolder)
             else { continue }
-            sidecarWrites.append((objectSidecarURL(forWave: def.wave, in: objectsDst), data))
+            sidecarWrites.append((objectSidecarURL(forWave: def.wave, in: consolidateDst), data))
         }
 
         // 6) The project document: items (with captured plugin states) rewritten + the definition
@@ -212,7 +218,7 @@ extension EditViewModel {
         }
 
         // Folders to create (waveforms/ empty: a cache the recipient can regenerate).
-        let dirsToCreate = [destFolder, samplesDst, sourcesDst, objectsDst, waveformsDst]
+        let dirsToCreate = [destFolder, samplesDst, sourcesDst, consolidateDst, waveformsDst]
 
         // 7) File I/O in the background, then the report on the main thread.
         DispatchQueue.global(qos: .userInitiated).async {
@@ -261,9 +267,10 @@ extension EditViewModel {
 
     // MARK: - Reading the source sidecars (the project's current folders)
 
-    private func readObjectSidecar(_ wave: String) -> SoundObject? {
-        guard let objects = objectsFolder else { return nil }
-        let url = objectSidecarURL(forWave: wave, in: objects)
+    private func readObjectSidecar(_ wave: String, definition defID: UUID? = nil) -> SoundObject? {
+        // Cas E4: read where the wave was actually found, not assumed to be the write folder.
+        guard let folder = consolidateReadFolder(forWave: wave, definition: defID) else { return nil }
+        let url = objectSidecarURL(forWave: wave, in: folder)
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? decodedObjectSidecar(data, projectFolder: projectFolder)
     }

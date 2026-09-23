@@ -27,18 +27,73 @@ extension EditViewModel {
 
     // MARK: - Sound objects (content reusable in N places)
 
-    /// The project's `samples/objects/` folder (nil as long as the project has not been saved).
-    /// A sound object requires a saved project: it needs a stable place on disk
-    /// for its baked wave + its sidecar.
+    /// The project's `samples/consolidate/` folder (nil as long as the project has not been
+    /// saved) — where a NEW bake is written. A sound object requires a saved project: it needs a
+    /// stable place on disk for its baked wave + its sidecar.
     var objectsFolder: URL? {
-        projectFolder?.appendingPathComponent("samples", isDirectory: true)
-            .appendingPathComponent("objects", isDirectory: true)
+        projectFolder.map { ConsolidateFolders.consolidateFolder(projectFolder: $0) }
+    }
+
+    /// The project's `samples/objects/` folder — the LEGACY write folder (cas E1): still read for
+    /// ever, never written to again. nil as long as the project has not been saved.
+    var legacyConsolidateFolder: URL? {
+        projectFolder.map { ConsolidateFolders.legacyFolder(projectFolder: $0) }
+    }
+
+    /// Creates `samples/consolidate/` if it is not there yet (cas E3, critical): the ENGINE never
+    /// creates it on its own when rendering (`renderObjectToFileAsync`, `OBJEngineCore.mm`), and
+    /// only the FIRST creation of a definition used to create the folder — a headless re-bake or a
+    /// `closeObject` on an OLD project (whose `samples/consolidate/` has never existed) would
+    /// otherwise fail its render with no folder to write into. A no-op, cheaply, once the folder
+    /// exists. Called before EVERY consolidate render.
+    @discardableResult
+    func ensureConsolidateFolder() -> Bool {
+        guard let folder = objectsFolder else { return false }
+        return (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil
     }
 
     /// The path of the sidecar (the original editable sub-tree) associated with a definition's current wave.
     func objectSidecarURL(forWave wave: String, in folder: URL) -> URL {
         let base = (wave as NSString).deletingPathExtension
         return folder.appendingPathComponent("\(base)_objectstate.json")
+    }
+
+    // MARK: - Resolving a wave/sidecar that may live in EITHER folder (cas E1, E4, E5/Q3)
+
+    /// The folder of an existing PLACEMENT's own wave, for the definition `defID` — the Q3
+    /// fallback (retained, cas E5): a Save As to a new folder leaves the instances' absolute
+    /// `filePath` pointing at the OLD project's folder, which is where the wave (and its sidecar)
+    /// actually still are. Empty if `defID` is nil or has no placement with a resolvable clip path.
+    private func consolidateFallbackDirs(forDefinition defID: UUID?) -> [URL] {
+        guard let defID else { return [] }
+        for pid in placementIDs(forDefinition: defID) {
+            guard let obj = find(id: pid), case .clip(let fp, _, _, _, _) = obj.kind, !fp.isEmpty else { continue }
+            return [URL(fileURLWithPath: fp).deletingLastPathComponent()]
+        }
+        return []
+    }
+
+    /// The folder `wave` is ACTUALLY found in — cas E4: a sidecar has to be read where the wave
+    /// WAS FOUND, never assumed to be the write folder. Tries `samples/consolidate/`, then
+    /// `samples/objects/` (cas E1, never migrated), then the Q3 fallback for `defID` if given.
+    /// Falls back to the WRITE folder when the wave is nowhere to be found, so a caller's own
+    /// file-not-found error path still fires cleanly rather than the whole thing silently doing
+    /// nothing. `nil` only when the project itself has never been saved.
+    func consolidateReadFolder(forWave wave: String, definition defID: UUID? = nil) -> URL? {
+        guard let projectFolder else { return nil }
+        if let found = ConsolidateFolders.resolve(wave: wave, projectFolder: projectFolder,
+                                                   extraDirs: consolidateFallbackDirs(forDefinition: defID),
+                                                   fileExists: { FileManager.default.fileExists(atPath: $0.path) }) {
+            return found
+        }
+        return objectsFolder
+    }
+
+    /// `wave`'s full URL, wherever it is actually found (cas E1/E4/E5) — the read-side
+    /// counterpart of appending `def.wave` onto `objectsFolder` outright, which only ever looked
+    /// in the write folder and so missed a wave still sitting in `samples/objects/`.
+    func consolidateWaveURL(_ wave: String, forDefinition defID: UUID? = nil) -> URL? {
+        consolidateReadFolder(forWave: wave, definition: defID)?.appendingPathComponent(wave)
     }
 
     /// An instance's definition, if `definitionID` points at a known entry of the registry.
@@ -194,8 +249,8 @@ extension EditViewModel {
     func refreshObjectReferences(in subtree: SoundObject) -> SoundObject {
         var o = subtree
         if let defID = o.definitionID, let def = objectDefinitions[defID],
-           let folder = objectsFolder, case .clip(_, let so, _, let sr, let rev) = o.kind {
-            let wav = folder.appendingPathComponent(def.wave)
+           case .clip(_, let so, _, let sr, let rev) = o.kind,
+           let wav = consolidateWaveURL(def.wave, forDefinition: defID) {
             let waveLen = audioFileDuration(wav) ?? 0
             o.kind = .clip(filePath: wav.path, sourceOffset: so, fileDuration: waveLen,
                            speedRatio: sr, isReversed: rev)
@@ -307,7 +362,12 @@ extension EditViewModel {
         guard let engine, let def = objectDefinitions[defID], let folder = objectsFolder else {
             completion(false); return
         }
-        let sidecar = objectSidecarURL(forWave: def.wave, in: folder)
+        // Cas E4: read the sidecar where the CURRENT wave was actually found (samples/consolidate/
+        // or the legacy samples/objects/) — never assumed to already be the write folder.
+        guard let readFolder = consolidateReadFolder(forWave: def.wave, definition: defID) else {
+            completion(false); return
+        }
+        let sidecar = objectSidecarURL(forWave: def.wave, in: readFolder)
         let original: SoundObject
         do {
             let data = try Data(contentsOf: sidecar)
@@ -316,6 +376,9 @@ extension EditViewModel {
             NSLog("[OBJECT] headless rebake \(defID): unreadable sidecar (\(sidecar.lastPathComponent)) — skipped")
             completion(false); return
         }
+        // Cas E3: an old project may never have had samples/consolidate/ — create it before the
+        // render that is about to write the new revision's wave there.
+        ensureConsolidateFolder()
 
         // Fresh ids (zero timeline collision) + child refs pointing at the CURRENT waves.
         let restored = refreshObjectReferences(in: deepFreshCopy(original))
@@ -764,11 +827,13 @@ extension EditViewModel {
     func openObject(viaPlacementID placementID: UUID) {
         guard let placement = find(id: placementID), let defID = placement.definitionID,
               let def = objectDefinitions[defID] else { return }
-        guard let folder = objectsFolder else { return }
         guard !isBaking(placementID) else { return }
         // Nesting is allowed, but a placement already present in the stack is not reopened — nor is
         // a mirrored instance, which is only the reflection of an origin already open.
         guard !isInObjectEditStack(placementID), !isLiveMirror(placementID) else { return }
+        // Cas E4: the sidecar is read where the wave was actually FOUND (consolidate/ or the
+        // legacy objects/), not assumed to be the write folder.
+        guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { return }
 
         let sidecar = objectSidecarURL(forWave: def.wave, in: folder)
         let original: SoundObject
@@ -862,6 +927,9 @@ extension EditViewModel {
               let engine, let live = find(id: placementID), let def = objectDefinitions[defID] else { return }
         guard let folder = objectsFolder else { return }
         guard !isBaking(placementID) else { return }
+        // Cas E3: an old project may never have had samples/consolidate/ — create it before the
+        // render about to write the new revision's wave there.
+        ensureConsolidateFolder()
 
         // Perf: covers the SYNCHRONOUS part only. The re-bake that follows
         // is asynchronous and journals itself separately (`[PERF] bake …`), except in the "no
@@ -1404,12 +1472,13 @@ extension EditViewModel {
     func detachFromDefinition(placementID: UUID) {
         guard let engine, let placement = find(id: placementID), placement.isObjectInstance,
               let defID = placement.definitionID, let def = objectDefinitions[defID] else { return }
-        guard let folder = objectsFolder else { return }
         // Detaching a nested instance DURING the editing of a parent is allowed (it is a
         // plain modification of the parent's content); only detaching a placement that
         // is itself an editing session under way is forbidden.
         guard !isBaking(placementID), !isInObjectEditStack(placementID),
               !isLiveMirror(placementID) else { return }
+        // Cas E4: read where the wave was actually found.
+        guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { return }
 
         let sidecar = objectSidecarURL(forWave: def.wave, in: folder)
         let original: SoundObject
