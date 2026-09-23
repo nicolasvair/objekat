@@ -465,22 +465,22 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Retourne YES si le plugin a un éditeur natif disponible (ExternalPlugin + hasEditor).
 - (BOOL)pluginHasEditor:(NSString*)pluginKey;
 
-// MARK: - Écoute des paramètres (objet sonore OUVERT, re-miroir vivant)
+// MARK: - Écoute des paramètres (objet consolidé OUVERT, re-miroir vivant)
 //
-// Tant qu'un objet sonore est ouvert, on veut reposer ses miroirs dès que l'utilisateur touche un
-// FX du contenu édité — y compris les mouvements de knob LIVE dans un éditeur natif/built-in, qui
-// ne passent PAS par le modèle Swift. `beginObjectEditParamWatch:` installe un écouteur sur tous
-// les params automatables des plugins USER des objets `objectKeys` (exemplaire matérialisé +
-// descendants) ; chaque changement de valeur appelle
-// `onObjectEditParamChanged` sur le main thread. Les plugins système (ObjGain/ObjWindowFade/VU)
+// Tant qu'un objet consolidé est ouvert, on veut reposer ses miroirs dès que l'utilisateur touche
+// un FX du contenu édité — y compris les mouvements de knob LIVE dans un éditeur natif/built-in,
+// qui ne passent PAS par le modèle Swift. `beginConsolidateEditParamWatch:` installe un écouteur
+// sur tous les params automatables des plugins USER des objets `objectKeys` (exemplaire
+// matérialisé + descendants) ; chaque changement de valeur appelle
+// `onConsolidateEditParamChanged` sur le main thread. Les plugins système (ObjGain/ObjWindowFade/VU)
 // sont ignorés — leurs params ne représentent pas une modif de contenu (et le VU spammerait).
-@property (nonatomic, copy, nullable) void (^onObjectEditParamChanged)(void);
-- (void)beginObjectEditParamWatch:(NSArray<NSString*>*)objectKeys;
-- (void)endObjectEditParamWatch;
+@property (nonatomic, copy, nullable) void (^onConsolidateEditParamChanged)(void);
+- (void)beginConsolidateEditParamWatch:(NSArray<NSString*>*)objectKeys;
+- (void)endConsolidateEditParamWatch;
 // Pousse l'état courant des plugins surveillés dans leur ValueTree (chunk externe inclus) : à
 // appeler juste avant de reposer un miroir ou de baker, pour que la lecture du sous-arbre capture
 // les réglages LIVE des plugins externes (dont le state n'est pas synchronisé en continu).
-- (void)flushObjectEditPluginStates;
+- (void)flushConsolidateEditPluginStates;
 
 // MARK: - Dernier paramètre TOUCHÉ (éditeur de plugin ouvert)
 //
@@ -492,7 +492,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // PORTÉE VOLONTAIREMENT MINUSCULE, et suffisante : on ne peut toucher un paramètre de plugin que
 // par un éditeur OUVERT. On n'écoute donc que les plugins dont l'éditeur est à l'écran — zéro à
 // trois à un instant donné — au lieu de poser un écouteur par paramètre de chaque plugin de la
-// session (un AU en a des centaines ; c'est exactement le coût que `beginObjectEditParamWatch:`
+// session (un AU en a des centaines ; c'est exactement le coût que `beginConsolidateEditParamWatch:`
 // s'est refusé). Un plugin sans éditeur ouvert ne peut être touché QUE par le modèle Swift, qui
 // sait déjà ce qu'il fait.
 //

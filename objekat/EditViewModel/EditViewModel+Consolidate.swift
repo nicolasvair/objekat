@@ -1218,7 +1218,7 @@ extension EditViewModel {
     /// Idempotent (called again when plugins have been added).
     private func armConsolidateEditParamWatch() {
         guard let placementID = editingPlacementID, let live = find(id: placementID) else { return }
-        engine?.onObjectEditParamChanged = { [weak self] in
+        engine?.onConsolidateEditParamChanged = { [weak self] in
             // The engine's parameter listeners fire on the message thread (= main); we
             // go back through the main queue to hop the actor cleanly.
             DispatchQueue.main.async {
@@ -1226,7 +1226,7 @@ extension EditViewModel {
                 self.scheduleLiveMirror()
             }
         }
-        engine?.beginObjectEditParamWatch(subtreeObjectKeys(live))
+        engine?.beginConsolidateEditParamWatch(subtreeObjectKeys(live))
         liveMirrorSuppressed = false
     }
 
@@ -1312,7 +1312,7 @@ extension EditViewModel {
         // The binary state of external plugins only goes down into their ValueTree on request:
         // without this flush, the signature would not see a setting made with the mouse in a native
         // editor, and the mirrors would stay behind.
-        engine.flushObjectEditPluginStates()
+        engine.flushConsolidateEditPluginStates()
         let captured  = withCapturedPluginStates(live)
         let signature = subtreeSignature(captured)
 
@@ -1405,8 +1405,8 @@ extension EditViewModel {
     private func teardownLiveMirroring() {
         liveMirrorSuppressed = true
         liveMirrorWorkItem?.cancel(); liveMirrorWorkItem = nil
-        engine?.onObjectEditParamChanged = nil
-        engine?.endObjectEditParamWatch()
+        engine?.onConsolidateEditParamChanged = nil
+        engine?.endConsolidateEditParamWatch()
     }
 
     /// Cuts all consolidated session activity. To be called on a project reset/close
