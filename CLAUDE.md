@@ -1208,6 +1208,23 @@ What has landed since mid-August, in order:
   rather than a nicety: a selection lying on automation rows must SWALLOW ⌫ even holding no point,
   because falling through hands those lanes to the object deletion, which resolves a display lane
   back to a BASE lane — and the base lane of a row inside a band is the band's OWNER.
+  **The CLICK rules are the timeline's, called and not copied** —
+  `EditViewModel.handleTimeSelectionClick` holds the caret, ⇧ and ⌘ for both surfaces, lifted out
+  of the tap handler where they sat between two hit tests. A plain click lays the caret on the lane
+  aimed at (so `onSeekToTime` no longer clears it: the ruler's "no caret on a lane" contract is
+  what a row being a lane retires, and the caret is where the arrows and ⌘V start from); ⇧ extends
+  from an anchor that does not move, so a second ⇧-click aimed back inside SHORTENS the range; ⌘
+  toggles one lane. Clicking a POINT keeps priority over all three — the hand was aiming at a
+  point, not an instant — which is the ordering the drag already used.
+  **A TIME SELECTION HOLDS ONE KIND OF LANE**, decided by where the gesture started
+  (`EditViewModel.confine`). Not tidiness: object lanes and automation rows answer the same keys
+  differently (⌘C copies clips or a passage of curve, ⌫ deletes objects or points), so a mixed
+  selection has to pick one and silently drop the other — and before the rule, a rubber band
+  dragged over objects whose bands happened to be open quietly became a selection of automation
+  points. The cost is stated: no passage can cover a clip AND its own curve, and nothing will be
+  able to express that without lifting the rule.
+  **The grips show over the ZONE**, not over any row the box crosses — a row runs the band's whole
+  width, and the old reading lit eight squares up with the hand screens away from them.
   **Copy / cut / paste** sit beside the MIDI notes' clipboard and are modelled on it. A passage
   lands ON THE SELECTION — its rows and its start — which is what makes the arrows worth having:
   copy a passage of volume, walk the frame down onto pan, paste, and the curve arrives at the SAME
@@ -1242,8 +1259,9 @@ What has landed since mid-August, in order:
   gets in the way at a coarse grid (⌘ inverts it, but the first reflex on a zone that took
   nothing will not be to reach for ⌘); whether 4 px points are right or now too heavy on a
   sixteen-pixel row; whether pasting onto the same instant of another row is the gesture wanted,
-  or whether the hand will expect the playhead more often than the frame; and that the arrows now
-  walk the frame OUT of the band and on down the timeline — the consistency that was asked for,
+  or whether the hand will expect the playhead more often than the frame; whether ⌘ toggling a
+  WHOLE row reads as useful on a band of two or three; and that the arrows now walk the frame OUT
+  of the band and on down the timeline — the consistency that was asked for,
   and also a passage leaving the curve it was taken from in one keystroke.
 ### What is owed
 
