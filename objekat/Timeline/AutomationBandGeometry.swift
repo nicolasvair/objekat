@@ -142,8 +142,7 @@ struct AutomationBandGeometry {
     /// is aimed at here is a corner of a box on a sixteen-pixel row.
     var handleGrab: Double { 6 }
 
-    /// Where a point sits, in the band's coordinates — the one conversion `pointsTouching` and the
-    /// ⇧+click box both need, and the reason neither of them has to know about `ParamRef`.
+    /// Where a point sits, in the band's coordinates — the one conversion the ⇧+click box needs, and the reason neither of them has to know about `ParamRef`.
     func center(of p: AutomationPoint, ref: ParamRef, row: Int) -> CGPoint {
         CGPoint(x: x(ofT: p.t), y: y(of: p.v, ref: ref, row: row))
     }
@@ -154,16 +153,6 @@ struct AutomationBandGeometry {
         let c = center(of: p, ref: ref, row: row)
         return CGRect(x: c.x - pointMarqueeInset, y: c.y - pointMarqueeInset,
                       width: pointMarqueeInset * 2, height: pointMarqueeInset * 2)
-    }
-
-    /// The STORAGE indices of the points of ONE row a rectangle takes. The rule itself lives in
-    /// `AutomationTransform.touching` — which is where the flat-rectangle divergence from
-    /// `SynopticMarquee` is argued and asserted; all that is left here is the wiring.
-    func pointsTouching(_ rect: CGRect, row: Int, ref: ParamRef,
-                        points: [AutomationPoint]) -> [Int] {
-        AutomationTransform.touching(rect,
-                                     points: points.map { center(of: $0, ref: ref, row: row) },
-                                     inset: pointMarqueeInset)
     }
 
     // MARK: - Normalised values

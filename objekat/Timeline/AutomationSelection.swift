@@ -310,25 +310,26 @@ enum AutomationTransform {
                 mid(q[1], q[2]), q[3], mid(q[3], q[2]), q[2]]
     }
 
-    // MARK: - What a rectangle takes
+    // MARK: - Walking a frame across the rows
 
-    /// The indices of the points a rectangle takes. `inset` is the half-side of the square around
-    /// a point the rectangle has to touch.
+    /// ↑ / ↓ on a zone: the rows it covers, moved by `delta`, or nil when it cannot move.
     ///
-    /// UNLIKE `SynopticMarquee.touching`, a FLAT rectangle is NOT refused — and that divergence is
-    /// deliberate, so nobody harmonises the two later and breaks the gesture: sweeping left to
-    /// right ALONG a row is the most natural way to take a stretch of curve, and a three-pixel
-    /// tall rectangle is exactly what that hand produces. A card in the signal view is a surface
-    /// one draws over; a curve is a line one draws ALONG. Only a rectangle with no extent at all —
-    /// a click that never travelled — takes nothing.
-    static func touching(_ rect: CGRect, points: [CGPoint], inset: Double) -> [Int] {
-        let r = rect.standardized
-        guard r.width > 0 || r.height > 0 else { return [] }
-        return points.indices.filter { i in
-            let p = points[i]
-            return p.x >= r.minX - inset && p.x <= r.maxX + inset
-                && p.y >= r.minY - inset && p.y <= r.maxY + inset
-        }
+    /// The frame travels AS A BLOCK and keeps its shape — a zone three rows tall pushed downwards
+    /// stops when its FOOT reaches the last row, not when its head does. That is the whole of the
+    /// arithmetic, and it is here rather than in the view-model for one reason: the timeline's own
+    /// version of it carries a comment about a bare `min(delta, …)` going NEGATIVE once the foot
+    /// is already home, which then teleports the frame the other way. A bound that fails by
+    /// reversing direction is not a bound one checks by eye.
+    ///
+    /// nil — not an unchanged array — when nothing can move, so a caller can tell "already against
+    /// the edge" from "moved", and leave the model alone in the first case.
+    static func stepRows(_ idx: [Int], count: Int, by delta: Int) -> [Int]? {
+        guard delta != 0, count > 0, !idx.isEmpty,
+              let lo = idx.min(), let hi = idx.max(),
+              lo >= 0, hi < count else { return nil }
+        let step = delta < 0 ? max(delta, -lo) : min(delta, max(0, count - 1 - hi))
+        guard step != 0 else { return nil }
+        return idx.map { $0 + step }
     }
 }
 

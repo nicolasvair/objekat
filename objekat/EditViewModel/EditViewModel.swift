@@ -101,6 +101,17 @@ final class EditViewModel {
     /// stays in the view is the TRANSIENT state of the gesture: the rectangle being drawn, the
     /// original points, the frozen box.
     var selectedAutomationPoints: Set<AutomationPointRef> = []
+    /// The stretch of time traced on an object's automation rows, when the selection came from
+    /// ONE — and nil the moment points are picked on their own (@see
+    /// EditViewModel+AutomationZone, which holds that invariant and says why). Here rather than in
+    /// the band for the reason written just above: a band leaving the viewport takes its `@State`
+    /// with it, and the keyboard monitor runs ahead of the responder chain and sees only this.
+    var automationTimeSelection: AutomationTimeSelection? = nil
+    /// The copied passage of automation (@see EditViewModel+AutomationClipboard). Its own
+    /// clipboard rather than a case of `ClipboardContent`, like the MIDI notes': what it holds is
+    /// meaningless outside an automation band, and pouring it into the general one would make ⌘V
+    /// in the timeline answer with a fragment of curve.
+    var automationClipboard: AutomationClipboard? = nil
     /// The last MIDI clip whose piano roll received a click: the current "piano-roll context".
     /// Lets ⌘A select every note of that clip even with no note selection
     /// active. Reset to nil as soon as a click lands elsewhere in the timeline. Pure UI.

@@ -487,6 +487,16 @@ extension TimelineView {
                 // .function AND .numericPad (0xA00000), so `isEmpty` is never true and the key fell
                 // through every branch — AppKit then BEEPS, the same symptom as the ⌥+letter trap.
                 // What is asked here is that no modifier one HOLDS is down.
+                // An AUTOMATION band holds the arrows BEFORE the branch below, and the order is
+                // load-bearing rather than tidy: editing a curve SELECTS its object (@see
+                // AutomationBandView.beginDrag), so `!vm.selectedIDs.isEmpty` is true throughout
+                // and would slide the timeline's own frame under a hand aiming at a row of
+                // automation.
+                if vm.automationSurfaceHasKeyboard,
+                   flags.intersection(Self.heldModifiers).isEmpty {
+                    DispatchQueue.main.async { vm.stepAutomationZoneRows(by: 1) }
+                    return nil
+                }
                 if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
                    flags.intersection(Self.heldModifiers).isEmpty {
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: 1) }
@@ -515,8 +525,13 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(0.1) } }
                     return nil
                 }
-                // @see the ↓ branch: an arrow always carries .function + .numericPad, and an object
-                // selection is read as the frame it fills.
+                // @see the ↓ branch, both for the modifier reading and for why the automation
+                // band is served first.
+                if vm.automationSurfaceHasKeyboard,
+                   flags.intersection(Self.heldModifiers).isEmpty {
+                    DispatchQueue.main.async { vm.stepAutomationZoneRows(by: -1) }
+                    return nil
+                }
                 if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
                    flags.intersection(Self.heldModifiers).isEmpty {  // one row up
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: -1) }
@@ -654,7 +669,9 @@ extension TimelineView {
                 case "x":
                     if flags.contains(.command) {
                         DispatchQueue.main.async {
-                            if !vm.selectedMidiNoteIDs.isEmpty {
+                            if vm.automationSurfaceHasKeyboard {
+                                vm.cutAutomationSelection()       // the automation band (internal undo push)
+                            } else if !vm.selectedMidiNoteIDs.isEmpty {
                                 vm.cutSelectedMidiNotes()         // the piano-roll context (internal undo push)
                             } else if vm.timeSelection != nil {
                                 vm.edit { vm.cutTimeSelection() }
@@ -669,6 +686,8 @@ extension TimelineView {
                         DispatchQueue.main.async {
                             if vm.pluginSurfaceHasKeyboard {
                                 vm.copySelectedPluginsToClipboard()   // the signal view
+                            } else if vm.automationSurfaceHasKeyboard {
+                                vm.copyAutomationSelection()     // the automation band
                             } else if !vm.selectedMidiNoteIDs.isEmpty {
                                 vm.copySelectedMidiNotes()       // the piano-roll context
                             } else if vm.timeSelection != nil {
@@ -723,6 +742,11 @@ extension TimelineView {
                         // chain, after the last selected card or at the end when none is chosen.
                         if let host = vm.selectedPluginHostID, !vm.pluginClipboard.isEmpty {
                             DispatchQueue.main.async { vm.pastePlugins(into: host) }  // internal undo push
+                        }
+                        // A passage of automation goes back into the band it was traced on — the
+                        // zone says which rows and at which instant (@see pasteAutomation).
+                        else if vm.automationSurfaceHasKeyboard, vm.canPasteAutomation {
+                            DispatchQueue.main.async { vm.pasteAutomation() }  // internal undo push
                         }
                         // The notes take priority if we are in the piano-roll context (notes selected).
                         else if !vm.selectedMidiNoteIDs.isEmpty, vm.canPasteMidiNotes {

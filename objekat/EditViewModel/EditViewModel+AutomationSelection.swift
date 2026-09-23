@@ -34,8 +34,13 @@ extension EditViewModel {
     /// Sets the point selection, and takes the MIDI note selection out with it. The exclusivity is
     /// the point: ⌫ must have exactly one thing in front of it, and the two surfaces are both
     /// inside the timeline, where no other claim separates them.
+    /// It also DROPS THE ZONE, and that is the load-bearing half of the invariant: a frame that no
+    /// longer describes what is taken is worse than no frame, and putting the clearing here means
+    /// no caller — a click on a point, a ⇧-click on the next — has to remember it. The zone's own
+    /// path lays the frame back down straight after (@see setAutomationZone).
     func setAutomationPointSelection(_ refs: Set<AutomationPointRef>) {
         if !refs.isEmpty, !selectedMidiNoteIDs.isEmpty { selectedMidiNoteIDs.removeAll() }
+        if automationTimeSelection != nil { automationTimeSelection = nil }
         if selectedAutomationPoints != refs { selectedAutomationPoints = refs }
     }
 
@@ -43,6 +48,7 @@ extension EditViewModel {
     /// the usual deselecting gestures — an index that outlives the point it named now names
     /// somebody else (@see AutomationPointRef).
     func clearAutomationPointSelection() {
+        if automationTimeSelection != nil { automationTimeSelection = nil }
         if !selectedAutomationPoints.isEmpty { selectedAutomationPoints.removeAll() }
     }
 

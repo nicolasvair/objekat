@@ -366,44 +366,6 @@ enum AutomationTransformTest {
             == values(modest),
           "including the row that had been clamped at the ceiling")
 
-    // MARK: - What a rectangle takes
-    //
-    // The rule diverges DELIBERATELY from `SynopticMarquee.touching`, which refuses a flat
-    // rectangle: sweeping ALONG a row is the most natural way to take a stretch of curve, and a
-    // three-pixel-tall rectangle is exactly what that hand draws.
-
-    let laid = [CGPoint(x: 10, y: 50), CGPoint(x: 30, y: 50),
-                CGPoint(x: 50, y: 50), CGPoint(x: 70, y: 90)]
-
-    check("a FLAT rectangle takes the points it sweeps along",
-          AutomationTransform.touching(CGRect(x: 5, y: 50, width: 50, height: 0),
-                                       points: laid, inset: 4) == [0, 1, 2],
-          "the divergence from SynopticMarquee, and the whole point of it")
-    check("a rectangle with NO extent at all takes nothing",
-          AutomationTransform.touching(CGRect(x: 10, y: 50, width: 0, height: 0),
-                                       points: laid, inset: 4).isEmpty,
-          "a click that never travelled")
-    check("a rectangle drawn UPWARDS and LEFTWARDS reads the same",
-          AutomationTransform.touching(CGRect(x: 55, y: 95, width: -50, height: -50),
-                                       points: laid, inset: 4)
-            == AutomationTransform.touching(CGRect(x: 5, y: 45, width: 50, height: 50),
-                                            points: laid, inset: 4))
-    check("the 4 px tolerance reaches BEFORE the rectangle",
-          AutomationTransform.touching(CGRect(x: 14, y: 46, width: 10, height: 8),
-                                       points: laid, inset: 4) == [0],
-          "the point at x = 10 is 4 px short of the left edge")
-    check("... and AFTER it",
-          AutomationTransform.touching(CGRect(x: 16, y: 46, width: 10, height: 8),
-                                       points: laid, inset: 4) == [1],
-          "the point at x = 30 is 4 px past the right edge")
-    check("one pixel further and the point is out",
-          AutomationTransform.touching(CGRect(x: 15, y: 46, width: 10, height: 8),
-                                       points: laid, inset: 4).isEmpty,
-          "neither 10 nor 30 is within 4 px of 15…25")
-    check("a rectangle takes across rows, the y being read like any other",
-          AutomationTransform.touching(CGRect(x: 0, y: 40, width: 100, height: 60),
-                                       points: laid, inset: 4) == [0, 1, 2, 3])
-
     // MARK: - The box the eye follows
     //
     // The box that MEASURES is frozen at the grab; the one DRAWN is that same box put through the
@@ -525,6 +487,41 @@ enum AutomationTransformTest {
               nears(values(out), byFactor),
               "the extraction must be behaviour-preserving, corner included")
     }
+
+    // MARK: - Walking the frame across the rows
+    //
+    // ↑ / ↓ moves the ZONE, not the matter. The bound is the one the timeline's own version warns
+    // about: written with a bare `min`, it goes negative once the frame's foot is home and the
+    // arrow then teleports the frame the other way — a failure that reverses direction rather
+    // than simply stopping, which is exactly what an eye does not catch.
+
+    check("a frame one row tall steps down",
+          AutomationTransform.stepRows([1], count: 4, by: 1) ?? [] == [2])
+    check("... and up",
+          AutomationTransform.stepRows([1], count: 4, by: -1) ?? [] == [0])
+    check("a frame TWO rows tall keeps its shape",
+          AutomationTransform.stepRows([1, 2], count: 5, by: 1) ?? [] == [2, 3])
+    check("it stops on its FOOT, not its head",
+          AutomationTransform.stepRows([2, 3], count: 4, by: 1) == nil,
+          "the foot is already on the last row: nothing to give")
+    check("... and on its head going up",
+          AutomationTransform.stepRows([0, 1], count: 4, by: -1) == nil)
+    check("a step larger than the room left is TRUNCATED, never reversed",
+          AutomationTransform.stepRows([1, 2], count: 4, by: 5) ?? [] == [2, 3],
+          "this is the case the bare `min` turns into a jump upwards")
+    check("nil rather than an unchanged array when nothing can move",
+          AutomationTransform.stepRows([0], count: 1, by: 1) == nil,
+          "a caller has to be able to leave the model alone")
+    check("a delta of zero moves nothing",
+          AutomationTransform.stepRows([1], count: 4, by: 0) == nil)
+    check("an empty frame has nowhere to go",
+          AutomationTransform.stepRows([], count: 4, by: 1) == nil)
+    check("a frame naming a row that no longer exists is refused",
+          AutomationTransform.stepRows([7], count: 4, by: -1) == nil,
+          "a curve losing its last point takes its row out of the band altogether")
+    check("a frame with a HOLE in it keeps the hole",
+          AutomationTransform.stepRows([0, 2], count: 5, by: 1) ?? [] == [1, 3],
+          "the rows are moved, not re-gathered")
 
     // MARK: -
 

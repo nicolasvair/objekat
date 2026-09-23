@@ -151,12 +151,13 @@ struct AutomationBandView: View {
             case segment([Int])     // the value of the points holding the segment (1 on a plateau)
             case curve(Int)         // the curvature carried by the segment's left-hand point
             case staticValue        // a row with no point: the model's static value
-            /// A rectangle being drawn. `base` = what was selected when it started, so that
-            /// WIDENING and NARROWING the rectangle both recompute from the same ground instead of
-            /// piling up — word for word `SynopticView.marqueeBase`. `adds` / `flips` = ⇧ / ⌘, read
-            /// at the first pixel: a hand that lets go of ⇧ mid-drag is resting a finger, not
-            /// changing its mind.
-            case marquee(base: Set<AutomationPointRef>, adds: Bool, flips: Bool)
+            /// A stretch of TIME being traced over the rows the drag crosses — not a rectangle
+            /// laid over the points it happens to cover (@see EditViewModel+AutomationZone, which
+            /// says why the difference decides what can be copied). `base` = the zone already
+            /// there when ⇧ was held at the first pixel, which the new one is UNIONED with; nil
+            /// otherwise, and the zone simply replaces. Read once, at the first pixel: a hand
+            /// letting go of ⇧ mid-drag is resting a finger, not changing its mind.
+            case timeZone(base: AutomationTimeSelection?)
             /// A grip of the transform box. Everything is FROZEN at the grab: the transformation
             /// always recomputes from the originals (the non-destructive rule), and re-reading the
             /// selection mid-gesture would let a stale index through.
@@ -166,7 +167,7 @@ struct AutomationBandView: View {
         }
         let ref:  ParamRef
         /// The row the gesture STARTED in. For the single-row modes it is the row it acts on; for
-        /// `.marquee` and `.transform`, which cross rows, it serves only to place the badge
+        /// `.timeZone` and `.transform`, which cross rows, it serves only to place the badge
         /// (@see drawReadout, badgeBelow).
         let row:  Int
         let mode: Mode
@@ -195,7 +196,7 @@ struct AutomationBandView: View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in
                 for (i, ref) in rows.enumerated() { draw(row: i, ref: ref, in: &ctx) }
-                // The marquee and the transform box, above every row and below the badge: they
+                // The zone and the transform box, above every row and below the badge: they
                 // BELONG to no row — the rectangle is traced across them and the box spans as many
                 // of them as the selection touches.
                 drawSelection(in: &ctx)
@@ -212,7 +213,7 @@ struct AutomationBandView: View {
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 3)
                         .onChanged { handleDragChanged($0) }
-                        .onEnded   { _ in drag = nil; readout = nil; clearHover() }
+                        .onEnded   { _ in settleZoneAfterTransform(); drag = nil; readout = nil; clearHover() }
                 )
                 .onContinuousHover { phase in
                     guard drag == nil else { return }
@@ -321,7 +322,34 @@ struct AutomationBandView: View {
     /// where frozen and live are the same thing.
     private func transformBox() -> CGRect? {
         if let d = drag, case .transform(_, _, let box) = d.mode { return box }
-        return geo.selectionBox(selectedRows())
+        if let r = zoneRect() { return r }
+        // NO BOX FOR A SINGLE POINT. Eight grips round one point say nothing a point does not
+        // already say — it is dragged, and that is the gesture of always. The box is what appears
+        // when there is a RELATION to act on: several points, or a stretch of time.
+        let sel = selectedRows()
+        guard sel.reduce(0, { $0 + $1.indices.count }) >= 2 else { return nil }
+        return geo.selectionBox(sel)
+    }
+
+    /// The zone's own rectangle: its time range in X, the rows it names in Y. nil when there is no
+    /// zone on THIS object's band.
+    ///
+    /// Unlike `selectionBox`, both axes are the FRAME and neither is the matter — which is the
+    /// whole difference between a zone and a bounding box, and the reason a grip pulled sideways
+    /// now stretches the passage rather than the points' own envelope.
+    private func zoneRect() -> CGRect? {
+        guard let z = viewModel.automationTimeSelection, z.objectID == object.id else { return nil }
+        let idx = z.params.compactMap { rows.firstIndex(of: $0) }
+        guard let lo = idx.min(), let hi = idx.max() else { return nil }
+        var x0 = geo.x(ofT: z.timeRange.lowerBound)
+        var x1 = geo.x(ofT: z.timeRange.upperBound)
+        if x1 - x0 < AutomationBandGeometry.boxMinSide {
+            let mid = (x0 + x1) / 2
+            x0 = mid - AutomationBandGeometry.boxMinSide / 2
+            x1 = mid + AutomationBandGeometry.boxMinSide / 2
+        }
+        let top = geo.rowTop(lo), bottom = geo.rowTop(hi) + rowHeight
+        return CGRect(x: x0, y: top, width: x1 - x0, height: bottom - top)
     }
 
     /// The box that is DRAWN, as four corners: the frozen box put through the request the hand is
@@ -347,6 +375,14 @@ struct AutomationBandView: View {
     /// back off the box's pixels: the same numbers the transform will write, with no round trip
     /// through a coordinate conversion that bounds at the band's edges.
     private func transformSpan(_ trows: [TransformRow]) -> AutomationTransform.TimeSpan {
+        // A ZONE speaks for itself: its edges are the frame one took hold of, so a sideways grip
+        // stretches the PASSAGE and its silences with it. Reading the points' envelope here
+        // instead would make the box's left edge and the pivot two different instants — one would
+        // pull an edge and watch the matter move against it.
+        if let z = viewModel.automationTimeSelection, z.objectID == object.id {
+            return AutomationTransform.TimeSpan(t0: z.timeRange.lowerBound,
+                                                t1: z.timeRange.upperBound)
+        }
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
         for r in trows {
             for i in r.indices where r.origPoints.indices.contains(i) {
@@ -479,7 +515,7 @@ struct AutomationBandView: View {
             // it is supposed to describe. It comes up to full only when it has something to say —
             // hovered (it will answer the click), held (it is following the mouse), or taken.
             let speaks = idx == held || idx == hovered || selected.contains(idx)
-            let r = idx == held ? 4.0 : 2.0
+            let r = idx == held ? 6.0 : 4.0
             ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                      with: .color(tint.opacity(speaks ? 0.95 : 0.4)))
             if idx == held {
@@ -499,21 +535,25 @@ struct AutomationBandView: View {
         }
     }
 
-    /// The marquee being traced, or the transform box and its eight grips. Drawn ABOVE every row
+    /// The zone being traced, or the transform box and its eight grips. Drawn ABOVE every row
     /// because neither belongs to one: a rectangle is traced across the rows and the box spans as
     /// many of them as the selection touches.
     private func drawSelection(in ctx: inout GraphicsContext) {
-        // While a rectangle is being traced it is the only thing that speaks. A box drawn at the
-        // same time would be a box of the selection the rectangle is in the middle of replacing.
-        if let d = drag, case .marquee = d.mode {
-            let r = CGRect(x: min(d.start.x, d.last.x), y: min(d.start.y, d.last.y),
-                           width: abs(d.last.x - d.start.x), height: abs(d.last.y - d.start.y))
-            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.12)))
+        // While a zone is being traced it is the only thing that speaks, and what is drawn is the
+        // ZONE — whole rows, edges snapped — and not the pixels the hand swept. Drawing the raw
+        // sweep would promise a rectangle, which is exactly the reading this gesture left behind.
+        if let d = drag, case .timeZone = d.mode, let r = zoneRect() {
+            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.14)))
             ctx.stroke(Path(r), with: .color(Color.accentColor.opacity(0.7)), lineWidth: 1)
             return
         }
 
         guard let box = transformBox(), let quad = transformQuad() else { return }
+        // A settled zone keeps a veil: it is a stretch of time that goes on existing when it holds
+        // nothing, and an outline alone on an empty passage reads as a stray frame.
+        if drag == nil, let r = zoneRect() {
+            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.10)))
+        }
         // The OUTLINE shows as soon as a selection exists: it is what says the eight grips are
         // somewhere to be had. The GRIPS themselves only show when the hand is over the box —
         // eight white squares standing permanently on a sixteen-pixel row would read as matter.
@@ -763,7 +803,7 @@ struct AutomationBandView: View {
                 let flags = NSEvent.modifierFlags
                 if flags.contains(.command) {
                     // ⌘ toggles ONE point in or out — the only way to correct a rectangle that
-                    // brushed a neighbour, and the same modifier the marquee flips with.
+                    // brushed a neighbour.
                     var s = viewModel.selectedAutomationPoints
                     if s.contains(target) { s.remove(target) } else { s.insert(target) }
                     viewModel.setAutomationPointSelection(s)
@@ -907,19 +947,25 @@ struct AutomationBandView: View {
             viewModel.setAutomationStaticValue(ref, on: object.id, to: v)
             setReadout(row: d.row, x: location.x, ref: ref, value: v)
 
-        case .marquee(let base, let adds, let flips):
-            let rect = CGRect(x: min(d.start.x, location.x), y: min(d.start.y, location.y),
-                              width: abs(location.x - d.start.x),
-                              height: abs(location.y - d.start.y))
-            var caught: Set<AutomationPointRef> = []
-            for (i, r) in rows.enumerated() {
-                for k in g.pointsTouching(rect, row: i, ref: r, points: points(r)) {
-                    caught.insert(AutomationPointRef(objectID: object.id, param: r, index: k))
-                }
+        case .timeZone(let base):
+            // X = a stretch of time, SNAPPED like every other time this band lays down (⌘ inverts
+            // it, @see snappedT). Y = the rows the sweep crosses, WHOLE — a zone owns rows, it
+            // does not cut into them, which is what `TimeSelection` means by lanes.
+            let t0 = min(snappedT(atX: d.start.x), snappedT(atX: location.x))
+            let t1 = max(snappedT(atX: d.start.x), snappedT(atX: location.x))
+            let band = max(0, g.bandHeight - 1)
+            let r0 = g.rowIndex(atY: min(d.start.y, location.y).clamped(to: 0...band)) ?? d.row
+            let r1 = g.rowIndex(atY: max(d.start.y, location.y).clamped(to: 0...band)) ?? d.row
+            var params = Array(rows[min(r0, r1)...max(r0, r1)])
+            var range  = t0...t1
+            // ⇧: the new sweep is UNIONED with the zone that was there — the same "extend what is
+            // already taken" ⇧ means everywhere else, transposed onto a frame that has two axes.
+            if let b = base, b.objectID == object.id {
+                range = min(t0, b.timeRange.lowerBound)...max(t1, b.timeRange.upperBound)
+                let all = Set(params).union(b.params)
+                params = rows.filter { all.contains($0) }
             }
-            viewModel.setAutomationPointSelection(
-                flips ? base.symmetricDifference(caught)
-                      : adds ? base.union(caught) : caught)
+            viewModel.setAutomationZone(objectID: object.id, timeRange: range, params: params)
 
         case .transform(let handle, let trows, let box):
             // The box is a DIAL: `k` is read as a ratio of pixels between the pulled edge and the
@@ -1035,7 +1081,11 @@ struct AutomationBandView: View {
 
         // 1. A grip of the box.
         let sel = selectedRows()
-        if let box = geo.selectionBox(sel), let handle = geo.handleHit(at: p, box: box),
+        // `transformBox()` and NOT `geo.selectionBox(sel)`: with a zone the two are different
+        // rectangles — the zone's frame and the points' envelope — and a grip drawn on one while
+        // being caught on the other is a grip that answers a click several pixels from where it
+        // is. It is also what withholds the grips from a lone point, which has none to offer.
+        if let box = transformBox(), let handle = geo.handleHit(at: p, box: box),
            let anchorRow = sel.first {
             let trows = sel.map { TransformRow(param: $0.ref, row: $0.row,
                                                indices: $0.indices, origPoints: $0.points) }
@@ -1063,7 +1113,7 @@ struct AutomationBandView: View {
                geo.nearLine(p, lineY: geo.y(of: sv, ref: ref, row: row)) {
                 mode = .staticValue
             } else {
-                mode = marqueeMode()
+                mode = zoneMode()
             }
         } else if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
             groupRows = carriedSelection(containing:
@@ -1080,18 +1130,18 @@ struct AutomationBandView: View {
                     }), sel)
                 mode = .segment(seg.movedPoints)
             } else {
-                mode = marqueeMode()
+                mode = zoneMode()
             }
         } else {
-            mode = marqueeMode()
+            mode = zoneMode()
         }
 
         // The halo freezes on what is held, and stays there for the whole gesture: on a POINT it is
         // its own halo that speaks (@see drawCurve), on a segment it is the portion grabbed. A
-        // marquee lights nothing up: what it is about to take it has not taken yet.
+        // zone lights nothing up: what it is about to take it has not taken yet.
         switch mode {
         case .point:   setHover(point: hoverPoint, line: nil)
-        case .marquee: setHover(point: nil, line: nil)
+        case .timeZone: setHover(point: nil, line: nil)
         default:       setHover(point: nil, line: (row: row, x: Double(p.x)))
         }
 
@@ -1099,7 +1149,7 @@ struct AutomationBandView: View {
         // on nothing, and on a gesture one makes ten times in a row that is ten of them between
         // the hand and the edit it means to take back. Selecting the carrying object stays —
         // that is what a click anywhere in this band has always meant.
-        let edits: Bool = { if case .marquee = mode { return false } else { return true } }()
+        let edits: Bool = { if case .timeZone = mode { return false } else { return true } }()
         beginDrag(ref: ref, row: row, mode: mode, points: pts, groupRows: groupRows,
                   at: p, edits: edits)
     }
@@ -1120,16 +1170,33 @@ struct AutomationBandView: View {
                                       indices: $0.indices, origPoints: $0.points) }
     }
 
-    /// A rectangle starting. The three things it decides are decided HERE, at the first pixel, and
-    /// never again: that there is a marquee at all, what the modifiers mean (⇧ adds, ⌘ flips,
-    /// neither replaces), and what was already selected — so that widening AND narrowing the
-    /// rectangle both recompute from the same ground instead of piling up.
-    private func marqueeMode() -> BandDrag.Mode {
-        let flags = NSEvent.modifierFlags
-        let adds  = flags.contains(.shift)
-        let flips = flags.contains(.command)
-        return .marquee(base: (adds || flips) ? viewModel.selectedAutomationPoints : [],
-                        adds: adds, flips: flips)
+    /// A sideways grip stretches the passage, and the FRAME has to land where the matter did —
+    /// otherwise the box snaps back to its old edges the instant the mouse comes up, and the next
+    /// ⌘C copies a length nobody asked for. Done at the END and not on every step: the request is
+    /// always read against the zone frozen at the grab, and moving that zone mid-gesture is the
+    /// first link of the feedback loop `transformBox` exists to prevent.
+    private func settleZoneAfterTransform() {
+        guard let d = drag, case .transform = d.mode, let r = d.live,
+              let z = viewModel.automationTimeSelection, z.objectID == object.id else { return }
+        let lo = AutomationTransform.movedT(r, z.timeRange.lowerBound)
+        let hi = AutomationTransform.movedT(r, z.timeRange.upperBound)
+        guard lo != z.timeRange.lowerBound || hi != z.timeRange.upperBound else { return }
+        viewModel.setAutomationZone(objectID: z.objectID, timeRange: min(lo, hi)...max(lo, hi),
+                                    params: z.params)
+    }
+
+    /// A zone starting. What it decides HERE, at the first pixel, and never again: whether the
+    /// sweep EXTENDS the zone already there (⇧) or replaces it, and which zone that was — so that
+    /// widening and narrowing the sweep both recompute from the same ground instead of piling up.
+    ///
+    /// ⌘ NO LONGER FLIPS. It inverts the SNAP, as it does on every other time this band lays down
+    /// (@see snappedT), and one key cannot mean two things inside one gesture. What ⌘ used to buy
+    /// — taking points away from a selection — belongs to clicking them, where it still works;
+    /// what a zone is for is a passage, and a passage with holes in it is not one.
+    private func zoneMode() -> BandDrag.Mode {
+        let base = NSEvent.modifierFlags.contains(.shift)
+            ? viewModel.automationTimeSelection : nil
+        return .timeZone(base: base)
     }
 
     /// Lays the gesture's state down — the one place `BandDrag` is built, so the undo rule and the
