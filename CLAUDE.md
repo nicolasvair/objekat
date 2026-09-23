@@ -1178,73 +1178,84 @@ What has landed since mid-August, in order:
   alone, so two sources sharing a file name share a cache file and invalidate each other:
   pre-existing, out of scope, worth knowing the day an unexplained recompute appears.
 
-- **Automation points are selected by rectangle, and transformed as a block** (22-23 September 2026,
-  merged into `main` on the 23rd) — a curve was read point by point, so halving a crescendo or
-  tightening a gesture in time meant taking every point by hand: deciding on a NUMBER where the ear
-  only asked for a RATIO. One draws round a portion now and transforms it whole, with the eight
-  grips the timeline's other surfaces already have.
-  **The clause everything is shaped around: the transform is NON-DESTRUCTIVE.** The factor is
+- **Automation is selected by a STRETCH OF TIME, and transformed as a block** (22-23 September
+  2026, merged into `main` on the 23rd, then rebuilt the same day on the first real use).
+  A curve was read point by point, so halving a crescendo meant taking every point by hand:
+  deciding on a NUMBER where the ear only asked for a RATIO. One draws round a portion now and
+  transforms it whole, with the eight grips the timeline's other surfaces already have.
+  **The selection is a ZONE, not a rectangle**, and the difference is not presentation. A
+  rectangle frames THE MATTER IT FOUND; a zone frames a stretch of time that goes on existing
+  when it is EMPTY — which is the only reason a passage of automation can be copied at all, a
+  bounding box of points having no length to replace and nowhere to put an emptiness. It is
+  `TimeSelection` (timeRange × lanes) transposed onto one object's rows, and the rows are NAMED
+  and not numbered: a curve losing its last point leaves `automationRows` altogether ('no point =
+  no automation') and every index below it shifts.
+  **THE ZONE OWNS THE POINT SELECTION**, written in one place: the points inside it are selected
+  because it says so, and picking points on their own drops the zone rather than leaving a frame
+  that no longer describes what is taken. The clearing lives inside `setAutomationPointSelection`,
+  so no caller has to remember it.
+  **The transform is NON-DESTRUCTIVE**, and everything is shaped around that clause. The factor is
   re-read on EVERY FRAME from the ORIGINAL points captured when the grip was taken, never composed
-  onto the current state, and the clamp is an OUTPUT clamp, per point. That is what lets a selection
-  be pushed up while one of its points already sits on the ceiling — that one stays, the others rise
-  — and then come back exactly where it started. Composing onto the current state would crush the
-  curve against the bound and leave it there, and the symptom would be invisible for one frame and
+  onto the current state, and the clamp is an OUTPUT clamp, per point. That is what lets a
+  selection be pushed up while one of its points already sits on the ceiling — that one stays, the
+  others rise — and then come back exactly where it started. Composing onto the current state
+  would crush the curve against the bound and leave it there, invisible for one frame and
   permanent after two.
-  **The box is not a frame, it is a DIAL** — one box for the whole selection, hugging the material
-  in X and covering the ROWS in Y. `boxFactor` is a ratio of PIXELS between the pulled edge and the
-  anchored one: it reads no point, is 1 at rest, 0 on the anchor and passes 1 unbounded. That
-  dissolves two cases that would otherwise be code — no division by a null distance, and a row lying
-  flat on its bound does not move on its own (`v' = 0 × k = 0`) while its neighbours rise. The
-  anchoring is SEMANTIC and per row, so ONE `Request` travels to every row speaking in proportions:
-  "the same proportions, never the same values" became a type rather than a discipline.
+  **The box is not a frame, it is a DIAL.** `boxFactor` is a ratio of PIXELS between the pulled
+  edge and the anchored one: it reads no point, is 1 at rest, 0 on the anchor and passes 1
+  unbounded. That dissolves two cases that would otherwise be code — no division by a null
+  distance, and a row lying flat on its bound does not move on its own (`v' = 0 × k = 0`) while
+  its neighbours rise. The anchoring is SEMANTIC and per row, so ONE `Request` travels to every
+  row speaking in proportions. The box that MEASURES is frozen at the grab and must stay so (a
+  dial read off its own output runs away under the hand); the box that is DRAWN is that same one
+  put through the request, so the pulled edge lands ON the pointer and ⇧ shows as the edge lagging
+  the finger. Under a corner the drawn shape is a TRAPEZIUM, from the same `factor(_:atT:)` the
+  points go through — the slant IS the gradient. Nothing drawn is clamped: the box escaping its
+  row is the only thing on screen that says one is asking beyond the range while the points pile
+  up at the bound.
+  **Copy / cut / paste** sit beside the MIDI notes' clipboard and are modelled on it. A passage
+  lands ON THE ZONE — its rows and its start — which is what makes ↑ / ↓ worth having: copy a
+  passage of volume, walk the frame down onto pan, paste, and the curve arrives at the SAME
+  INSTANT on the other parameter. The range is REPLACED, not added to (an automation is a function
+  of time: two sets of points over one stretch interleave into a curve that is neither); onto the
+  same parameter the values are exact, onto a different one they keep their PROPORTIONS. ↑ / ↓ is
+  `stepTimeSelectionLanes` for the band and is served BEFORE the timeline's own branch — editing a
+  curve selects its object, so `!selectedIDs.isEmpty` is true throughout and would slide the
+  timeline's frame under a hand aiming at a row of automation. An EMPTY zone still answers the
+  keyboard (`automationSurfaceHasKeyboard`): copying an empty stretch to wipe a busy one elsewhere
+  is the feature, and read off the points alone those keys would do nothing on exactly the passage
+  they were built for.
   **A pre-existing bug repaired on the way**, and it is the one to remember:
   `updateAutomationPoints` clamped `t` to zero across the WHOLE lane rather than on the points
   touched, so moving a single point on an object cropped at the left piled silently onto zero
   everything waiting behind the edge — material `AutomationPoint` and `shifted(by:)` both declare
-  legitimate (@see the negative-time convention). Clamping time belongs to the GESTURE, which alone
-  knows where the bound is. With it came `updateAutomationRows`, which is not a convenience:
-  `pushAutomation` pushes ALL of an object's curves, so N rows mutated one by one cost N × M engine
-  writes per frame on a gesture running at screen speed.
-  Two decisions worth keeping. **ONE `DragGesture`** — the marquee and the transform are MODES of
-  the one that existed, concurrent `DragGesture`s firing about half the time on macOS (@see the
-  permanent points). And the ORDER of `beginDrag`'s branching is half the feature: grip, then point,
-  then line, then a marquee — the grip tested BEFORE the row, a bottom grip being able to fall a
-  pixel outside the band. `beginAutomationEdit` is SKIPPED for a marquee (selecting changes nothing
-  and must not leave an empty undo entry), the snap applies to the GRIP'S TARGET and never to the
-  points one by one (otherwise the curve's internal rhythm leaves for the grid), and a FLAT
-  rectangle is accepted — a deliberate divergence from `SynopticMarquee`, argued in the code:
-  sweeping along a row is the most natural gesture there is and that is exactly what it produces.
-  Points are addressed by STORAGE INDEX and not by an id of their own, as the whole existing API
-  already does; the price is paid in one place and in full — the selection is PURGED at any
-  structural change, undo included, where it is dropped wholesale rather than pruned (an index that
-  survives does not name a vanished point, it names a DIFFERENT one).
-  Verified, on the base it was merged onto and not the one it was written against: Debug build with
-  no new warning; `tools/test_automation_transform.swift` 56 assertions all pass;
-  `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 58,
-  `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing, no orphans.
-  **Validated at the keyboard on 23 September 2026** — "ça marche super" — and two things the
-  first real gesture made obvious were repaired at once.
-  **The box let go of the fingers holding it**: pulling a grip moved the points and left the
-  rectangle behind, which reads as the gesture having missed. The box is frozen at the grab ON
-  PURPOSE (a dial read off its own output runs away under the hand), so the repair is not to
-  unfreeze it but to separate the box that MEASURES — still frozen, and still what the hit test
-  and the cursor read — from the box that is DRAWN, which is that same box put through the
-  request the hand is making. The pulled edge then lands exactly ON the pointer, and ⇧ shows as
-  the edge lagging the finger, which is what fine adjustment is. Under a CORNER the drawn shape
-  is a TRAPEZIUM, from the very same `factor(_:atT:)` the points go through: the slant IS the
-  gradient, and a rectangle there would claim a uniform scale the points do not get. Nothing in
-  the drawn box is clamped — the box escaping its row is the ONLY thing on screen that says one
-  is asking beyond the range while the points pile up at the bound, and a clamp would hide
-  exactly what makes their behaviour legible.
-  **A point at rest is now barely there** (2 px at 40%): a point is a handle, not matter, and a
-  row of solid dots competes with the line it is meant to describe. It comes up to full only
-  when it has something to say — hovered, held, or taken.
-  69 assertions now, all passing. What still cannot be reached headless is the gesture itself:
-  the command API has no `automation.*` family, so nothing can lay a point and read back what it
-  is worth (the oldest debt in this memo). What no assertion can settle either: whether a box
-  free to leave its row READS as over-travel or as a bug, and whether 40% is discreet or merely
-  faint on a dark row. Both are matters for the eye.
-
+  legitimate (@see the negative-time convention). Clamping time belongs to the GESTURE. With it
+  came `updateAutomationRows`: `pushAutomation` pushes ALL of an object's curves, so N rows
+  mutated one by one cost N × M engine writes per frame on a gesture running at screen speed.
+  Decisions worth keeping. **ONE `DragGesture`** — the zone and the transform are MODES of the one
+  that existed, concurrent `DragGesture`s firing about half the time on macOS. The ORDER of
+  `beginDrag`'s branching is half the feature: grip, then point, then line, then a zone — the grip
+  tested BEFORE the row, a bottom grip being able to fall a pixel outside the band, and hit-tested
+  on the box that is DRAWN (with a zone the two rectangles differ). `beginAutomationEdit` is
+  SKIPPED for a zone (selecting must not leave an empty undo entry), the snap applies to the
+  GRIP'S TARGET and never to the points one by one, and **no box is drawn for a SINGLE point** —
+  eight grips round one point say nothing a point does not already say. ⌘ does not flip a
+  selection during a drag; it inverts the SNAP, as everywhere else in the band. Points are
+  addressed by STORAGE INDEX, as the whole existing API already does; the price is paid in one
+  place and in full — the selection is PURGED at any structural change, undo included.
+  Verified: Debug build clean; `tools/test_automation_transform.swift` 73 assertions;
+  `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py`
+  58, `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing.
+  **What no machine here can reach is the gesture itself**: the command API still has no
+  `automation.*` family, so nothing headless can lay a point and read back what it is worth (the
+  oldest debt in this memo, and the fourth entry to name it). The assertions prove the
+  ARITHMETIC — the box's, and the row-stepping bound, which is where the timeline's own comment
+  warns that a bare `min` goes NEGATIVE once the frame's foot is home and the arrow then
+  teleports it the other way. Standing questions for the eye: whether a SNAPPED zone helps or
+  gets in the way at a coarse grid (⌘ inverts it, but the first reflex on a zone that took
+  nothing will not be to reach for ⌘); whether 4 px points are right or now too heavy on a
+  sixteen-pixel row; and whether pasting onto the same instant of another row is the gesture
+  wanted, or whether the hand will expect the playhead more often than the frame.
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
