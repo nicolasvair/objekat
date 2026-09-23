@@ -1183,48 +1183,37 @@ What has landed since mid-August, in order:
   A curve was read point by point, so halving a crescendo meant taking every point by hand:
   deciding on a NUMBER where the ear only asked for a RATIO. One draws round a portion now and
   transforms it whole, with the eight grips the timeline's other surfaces already have.
-  **The selection is a ZONE, not a rectangle**, and the difference is not presentation. A
-  rectangle frames THE MATTER IT FOUND; a zone frames a stretch of time that goes on existing
-  when it is EMPTY — which is the only reason a passage of automation can be copied at all, a
-  bounding box of points having no length to replace and nowhere to put an emptiness. It is
-  `TimeSelection` (timeRange × lanes) transposed onto one object's rows, and the rows are NAMED
-  and not numbered: a curve losing its last point leaves `automationRows` altogether ('no point =
-  no automation') and every index below it shifts.
-  **THE ZONE OWNS THE POINT SELECTION**, written in one place: the points inside it are selected
-  because it says so, and picking points on their own drops the zone rather than leaving a frame
-  that no longer describes what is taken. The clearing lives inside `setAutomationPointSelection`,
-  so no caller has to remember it.
-  **The transform is NON-DESTRUCTIVE**, and everything is shaped around that clause. The factor is
-  re-read on EVERY FRAME from the ORIGINAL points captured when the grip was taken, never composed
-  onto the current state, and the clamp is an OUTPUT clamp, per point. That is what lets a
-  selection be pushed up while one of its points already sits on the ceiling — that one stays, the
-  others rise — and then come back exactly where it started. Composing onto the current state
-  would crush the curve against the bound and leave it there, invisible for one frame and
-  permanent after two.
-  **The box is not a frame, it is a DIAL.** `boxFactor` is a ratio of PIXELS between the pulled
-  edge and the anchored one: it reads no point, is 1 at rest, 0 on the anchor and passes 1
-  unbounded. That dissolves two cases that would otherwise be code — no division by a null
-  distance, and a row lying flat on its bound does not move on its own (`v' = 0 × k = 0`) while
-  its neighbours rise. The anchoring is SEMANTIC and per row, so ONE `Request` travels to every
-  row speaking in proportions. The box that MEASURES is frozen at the grab and must stay so (a
-  dial read off its own output runs away under the hand); the box that is DRAWN is that same one
-  put through the request, so the pulled edge lands ON the pointer and ⇧ shows as the edge lagging
-  the finger. Under a corner the drawn shape is a TRAPEZIUM, from the same `factor(_:atT:)` the
-  points go through — the slant IS the gradient. Nothing drawn is clamped: the box escaping its
-  row is the only thing on screen that says one is asking beyond the range while the points pile
-  up at the bound.
+  **The selection is a STRETCH OF TIME, and it is the TIMELINE'S OWN** — there is no second kind,
+  and the day there briefly was one is the lesson: ↑ and ↓ moved one frame or the other depending
+  on what had last been touched, and nothing on screen said which. It collapses on a fact already
+  in the model — `SoundObject.automationSpan` says "one row = one lane", and a band's row `i` is
+  laid at `entry.displayLane + 1 + i` — so a curve's row is nameable by `TimeSelection.lanes`
+  exactly as an object's lane is. `stepTimeSelectionLanes` then walks onto it and off it again,
+  the caret appears there and playback starts from it, none of which had to be written.
+  A rectangle would frame THE MATTER IT FOUND; a stretch of time goes on existing when it is
+  EMPTY, which is the only reason a passage of automation can be copied at all — a bounding box of
+  points has no length to replace and nowhere to put a silence.
+  **What belongs to automation is a READING, not a state**: `automationRowsOnScreen()` says which
+  rows are unfolded and at which lane, `automationRowsInTimeSelection()` filters them. Empty means
+  the selection is on objects, and that is how the keys tell the two apart — nothing stored,
+  nothing to keep in step. The point selection stays stored (points can also be picked one by one)
+  and is read off the frame by ONE hook, `timeSelection`'s own `didSet`: tracing, ⇧-extending,
+  the arrows and undo all pass through that property, so none of them can forget to bring the
+  points along. Picking points on their own clears the frame BEFORE laying them down, since that
+  hook would otherwise undo the very call making it.
+  Times travel in ABSOLUTE timeline seconds; a row's zero is its object's start, so the conversion
+  lives at one door (`AutomationRowOnScreen.origin`), taken the way the LAYOUT takes it — an
+  infinite bus has no start and its band begins at the timeline's zero whatever its object says.
+  **⌫ is gated on `automationSurfaceHasKeyboard` and not on the point set**, and that is a trap
+  rather than a nicety: a selection lying on automation rows must SWALLOW ⌫ even holding no point,
+  because falling through hands those lanes to the object deletion, which resolves a display lane
+  back to a BASE lane — and the base lane of a row inside a band is the band's OWNER.
   **Copy / cut / paste** sit beside the MIDI notes' clipboard and are modelled on it. A passage
-  lands ON THE ZONE — its rows and its start — which is what makes ↑ / ↓ worth having: copy a
-  passage of volume, walk the frame down onto pan, paste, and the curve arrives at the SAME
+  lands ON THE SELECTION — its rows and its start — which is what makes the arrows worth having:
+  copy a passage of volume, walk the frame down onto pan, paste, and the curve arrives at the SAME
   INSTANT on the other parameter. The range is REPLACED, not added to (an automation is a function
   of time: two sets of points over one stretch interleave into a curve that is neither); onto the
-  same parameter the values are exact, onto a different one they keep their PROPORTIONS. ↑ / ↓ is
-  `stepTimeSelectionLanes` for the band and is served BEFORE the timeline's own branch — editing a
-  curve selects its object, so `!selectedIDs.isEmpty` is true throughout and would slide the
-  timeline's frame under a hand aiming at a row of automation. An EMPTY zone still answers the
-  keyboard (`automationSurfaceHasKeyboard`): copying an empty stretch to wipe a busy one elsewhere
-  is the feature, and read off the points alone those keys would do nothing on exactly the passage
-  they were built for.
+  same parameter the values are exact, onto a different one they keep their PROPORTIONS.
   **A pre-existing bug repaired on the way**, and it is the one to remember:
   `updateAutomationPoints` clamped `t` to zero across the WHOLE lane rather than on the points
   touched, so moving a single point on an object cropped at the left piled silently onto zero
@@ -1243,19 +1232,19 @@ What has landed since mid-August, in order:
   selection during a drag; it inverts the SNAP, as everywhere else in the band. Points are
   addressed by STORAGE INDEX, as the whole existing API already does; the price is paid in one
   place and in full — the selection is PURGED at any structural change, undo included.
-  Verified: Debug build clean; `tools/test_automation_transform.swift` 73 assertions;
+  Verified: Debug build clean; `tools/test_automation_transform.swift` 62 assertions;
   `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py`
   58, `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing.
   **What no machine here can reach is the gesture itself**: the command API still has no
   `automation.*` family, so nothing headless can lay a point and read back what it is worth (the
   oldest debt in this memo, and the fourth entry to name it). The assertions prove the
-  ARITHMETIC — the box's, and the row-stepping bound, which is where the timeline's own comment
-  warns that a bare `min` goes NEGATIVE once the frame's foot is home and the arrow then
-  teleports it the other way. Standing questions for the eye: whether a SNAPPED zone helps or
+  ARITHMETIC of the box, the half with no model behind it. Standing questions for the eye: whether a SNAPPED zone helps or
   gets in the way at a coarse grid (⌘ inverts it, but the first reflex on a zone that took
   nothing will not be to reach for ⌘); whether 4 px points are right or now too heavy on a
-  sixteen-pixel row; and whether pasting onto the same instant of another row is the gesture
-  wanted, or whether the hand will expect the playhead more often than the frame.
+  sixteen-pixel row; whether pasting onto the same instant of another row is the gesture wanted,
+  or whether the hand will expect the playhead more often than the frame; and that the arrows now
+  walk the frame OUT of the band and on down the timeline — the consistency that was asked for,
+  and also a passage leaving the curve it was taken from in one keystroke.
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
