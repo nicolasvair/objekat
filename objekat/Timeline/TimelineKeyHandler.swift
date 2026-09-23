@@ -417,10 +417,10 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.removeSelected() } }
                 }
             case 53:  // Escape
-                // An open sound object → Esc = cancel with a rollback (a design decision),
+                // An open consolidated object → Esc = cancel with a rollback (a design decision),
                 // with priority over resetting the selection/tool.
-                if vm.isEditingObject {
-                    DispatchQueue.main.async { vm.cancelObjectEdit() }
+                if vm.isEditingConsolidate {
+                    DispatchQueue.main.async { vm.cancelConsolidateEdit() }
                     return nil
                 }
                 DispatchQueue.main.async {
@@ -593,11 +593,11 @@ extension TimelineView {
                     if flags.contains(.command),
                        !(NSApp.keyWindow?.firstResponder is NSTextView) {
                         DispatchQueue.main.async {
-                            // An open sound object: ⌘Z cancels the opening (a clean rollback of the
+                            // An open consolidated object: ⌘Z cancels the opening (a clean rollback of the
                             // preview machinery plus popping the session), like Esc.
                             // The generic ⌘Z would restore the items without undoing the session.
-                            if !flags.contains(.shift), vm.isEditingObject {
-                                vm.cancelObjectEdit()
+                            if !flags.contains(.shift), vm.isEditingConsolidate {
+                                vm.cancelConsolidateEdit()
                             } else if flags.contains(.shift) { vm.redo() }
                             else { vm.undo() }
                         }
@@ -990,7 +990,7 @@ extension TimelineView {
                 return nil
             }
 
-            typealias HitResult = (group: SoundObject?, clip: SoundObject?, instance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, isEditingObject: Bool, colorable: SoundObject?, clickedIsEditFrame: Bool)
+            typealias HitResult = (group: SoundObject?, clip: SoundObject?, consolidateInstance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, isEditingConsolidate: Bool, colorable: SoundObject?, clickedIsEditFrame: Bool)
             let hit: HitResult = MainActor.assumeIsolated {
                 let pps  = vm.pixelsPerSecond
                 let bh   = vm.blockHeight
@@ -1010,30 +1010,30 @@ extension TimelineView {
                     return pos.x >= bx && pos.x <= bx + bw
                 }
                 let grp         = entry.flatMap { $0.item.isGroup ? $0.item : nil }
-                let instanceHit = entry.flatMap { $0.item.isObjectInstance ? $0.item : nil }
+                let instanceHit = entry.flatMap { $0.item.isConsolidateInstance ? $0.item : nil }
                 let clipHit     = entry.flatMap { e -> SoundObject? in
-                    if (e.item.isClip || e.item.isMIDI), !e.item.isObjectInstance { return e.item }
+                    if (e.item.isClip || e.item.isMIDI), !e.item.isConsolidateInstance { return e.item }
                     return nil
                 }
                 let hasClip = vm.selectedIDs.contains { id in
                     guard let item = vm.find(id: id), (item.isClip || item.isMIDI),
-                          !item.isObjectInstance else { return false }
+                          !item.isConsolidateInstance else { return false }
                     return true
                 }
-                let clickedIsEditFrame = entry.map { vm.isInObjectEditStack($0.item.id) } ?? false
+                let clickedIsEditFrame = entry.map { vm.isInConsolidateEditStack($0.item.id) } ?? false
                 return (grp, clipHit, instanceHit, vm.selectedIDs, hasClip, vm.timeSelection,
-                        vm.isEditingObject, entry?.item, clickedIsEditFrame)
+                        vm.isEditingConsolidate, entry?.item, clickedIsEditFrame)
             }
 
             let menu = NSMenu(title: "")
             menu.autoenablesItems = false   // we drive isEnabled by hand (during a bake, say)
             proxies = []
 
-            // An OPEN sound object: closing goes through the double click and cancelling through
+            // An OPEN consolidated object: closing goes through the double click and cancelling through
             // Esc / the ✕ button (a design decision). So a right click on the editing frame no
             // longer offers a dedicated entry — we simply swallow the event (a right click on a
             // child that is NOT being edited falls back on its normal menu, below).
-            if hit.isEditingObject, hit.clickedIsEditFrame {
+            if hit.isEditingConsolidate, hit.clickedIsEditFrame {
                 return nil
             }
 
@@ -1054,48 +1054,50 @@ extension TimelineView {
                     bakeItem.isEnabled = false
                     menu.addItem(bakeItem)
                 } else {
-                    // 'Make object': it captures the submix into a definition reusable elsewhere in the
-                    // project (see EditViewModel+Objects). In a multiple selection, the option only appears
-                    // if it is an identical copy-paste (→ 'Replace with N sound objects'), otherwise it is
+                    // 'Consolidate': it captures the submix into a definition reusable elsewhere in the
+                    // project (see EditViewModel+Consolidate). In a multiple selection, the option only appears
+                    // if it is an identical copy-paste (→ 'Consolidate as N linked instances'), otherwise it is
                     // hidden (see hasClip).
                     if hit.selectedIDs.count >= 2 {
-                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForObject() }) {
-                            let pr = MenuActionProxy { Task { @MainActor in vm.replaceSelectionWithObjects() } }
+                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
+                            let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
                             proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.replaceWithObjects", n),
+                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
                                                 action: #selector(MenuActionProxy.run), keyEquivalent: "")
                             it.target = pr
                             menu.addItem(it)
                         }
-                        MainActor.assumeIsolated { addMakeObjectsItem(menu: menu, proxies: &proxies, vm: vm) }
+                        MainActor.assumeIsolated { addConsolidateEachItem(menu: menu, proxies: &proxies, vm: vm) }
                     } else {
-                        let ps = MenuActionProxy { Task { @MainActor in vm.makeObject(fromGroupID: gid) } }
+                        let ps = MenuActionProxy { Task { @MainActor in vm.consolidate(groupID: gid) } }
                         proxies.append(ps)
-                        let objectItem = NSMenuItem(title: L("menu.context.makeObject"),
+                        let objectItem = NSMenuItem(title: L("menu.context.consolidate"),
                                                     action: #selector(MenuActionProxy.run),
                                                     keyEquivalent: "")
                         objectItem.target = ps
+                        objectItem.toolTip = L("menu.context.consolidate.help")
                         menu.addItem(objectItem)
                     }
                 }
-            } else if let instance = hit.instance {
+            } else if let instance = hit.consolidateInstance {
                 let sid = instance.id
                 let baking = MainActor.assumeIsolated { vm.isBaking(sid) }
-                // OPENING a sound object goes through the DOUBLE CLICK (open / close); the right click
-                // only keeps 'Detach this instance' (which materialises the instance as an independent
+                // OPENING a consolidated object goes through the DOUBLE CLICK (open / close); the right click
+                // only keeps 'Deconsolidate' (which materialises the instance as an independent
                 // editable clip/group). It stays possible while a parent is open.
                 let editable = !baking
-                let pd = MenuActionProxy { Task { @MainActor in vm.detachFromDefinition(placementID: sid) } }
+                let pd = MenuActionProxy { Task { @MainActor in vm.deconsolidate(placementID: sid) } }
                 proxies.append(pd)
-                let dItem = NSMenuItem(title: L("menu.context.detachInstance"),
+                let dItem = NSMenuItem(title: L("menu.context.deconsolidate"),
                                       action: #selector(MenuActionProxy.run), keyEquivalent: "")
                 dItem.target = pd
                 dItem.isEnabled = editable
+                dItem.toolTip = L("menu.context.deconsolidate.help")
                 menu.addItem(dItem)
 
                 // No more manual 'Refresh' action: stale definitions are re-baked AUTOMATICALLY in the
                 // background (a transitive cascade, see
-                // EditViewModel+Objects.cascadeRebakeStaleFixpoint). A recompute indicator shows on
+                // EditViewModel+Consolidate.cascadeRebakeStaleFixpoint). A recompute indicator shows on
                 // the instances concerned for the length of the re-bake.
             } else if let sel = hit.timeSelection {
                 let p = MenuActionProxy { Task { @MainActor in vm.createGroupFromTimeSelection(sel) } }
@@ -1133,9 +1135,9 @@ extension TimelineView {
                 item.target = p
                 menu.addItem(item)
 
-                // 'Create sound object' on a lone clip: a sound object is ALWAYS a group (a design
+                // 'Create consolidated object' on a lone clip: a consolidated object is ALWAYS a group (a design
                 // decision) → we first wrap the clip in a one-item group
-                // (see makeObjectWrappingClip).
+                // (see consolidateWrappingClip).
                 if let clip = hit.clip {
                     let cid = clip.id
                     let baking = MainActor.assumeIsolated { vm.isBaking(cid) }
@@ -1144,26 +1146,27 @@ extension TimelineView {
                         bi.isEnabled = false
                         menu.addItem(bi)
                     } else if count >= 2 {
-                        // A multiple selection: 'Replace with N sound objects' only appears if it is a
+                        // A multiple selection: 'Consolidate as N linked instances' only appears if it is a
                         // strictly identical copy-paste (the same wav, the same settings) — one definition,
-                        // N linked instances. 'Create N sound objects', for its part, holds for any
+                        // N linked instances. 'Create N consolidated objects', for its part, holds for any
                         // selection: one INDEPENDENT object per element.
-                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForObject() }) {
-                            let pr = MenuActionProxy { Task { @MainActor in vm.replaceSelectionWithObjects() } }
+                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
+                            let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
                             proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.replaceWithObjects", n),
+                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
                                                 action: #selector(MenuActionProxy.run), keyEquivalent: "")
                             it.target = pr
                             menu.addItem(it)
                         }
-                        MainActor.assumeIsolated { addMakeObjectsItem(menu: menu, proxies: &proxies, vm: vm) }
+                        MainActor.assumeIsolated { addConsolidateEachItem(menu: menu, proxies: &proxies, vm: vm) }
                     } else {
                         // A lone clip → the classic creation (wrapping in a one-item group).
-                        let ps = MenuActionProxy { Task { @MainActor in vm.makeObjectWrappingClip(clipID: cid) } }
+                        let ps = MenuActionProxy { Task { @MainActor in vm.consolidateWrappingClip(clipID: cid) } }
                         proxies.append(ps)
-                        let si = NSMenuItem(title: L("menu.context.makeObject"),
+                        let si = NSMenuItem(title: L("menu.context.consolidate"),
                                             action: #selector(MenuActionProxy.run), keyEquivalent: "")
                         si.target = ps
+                        si.toolTip = L("menu.context.consolidate.help")
                         menu.addItem(si)
                     }
                 }
@@ -1263,19 +1266,19 @@ final class SoloChordState {
     var keyCode: UInt16? = nil
 }
 
-// MARK: - 'Create N sound objects' (a multiple selection)
+// MARK: - 'Create N consolidated objects' (a multiple selection)
 
-/// Adds the 'Create N sound objects' item to the menu: one INDEPENDENT sound object per selected
+/// Adds the 'Create N consolidated objects' item to the menu: one INDEPENDENT consolidated object per selected
 /// element (clips, MIDI, groups mixed). Nothing to add if the selection does not lend itself to
 /// it (fewer than two eligible elements, a project never saved).
 @MainActor
-private func addMakeObjectsItem(menu: NSMenu, proxies: inout [MenuActionProxy], vm: EditViewModel) {
-    let targets = vm.objectCreationTargets()
-    guard targets.count >= 2, vm.objectsFolder != nil else { return }
+private func addConsolidateEachItem(menu: NSMenu, proxies: inout [MenuActionProxy], vm: EditViewModel) {
+    let targets = vm.consolidateTargets()
+    guard targets.count >= 2, vm.consolidateFolder != nil else { return }
     guard !targets.contains(where: { vm.isBaking($0) }) else { return }
-    let p = MenuActionProxy { Task { @MainActor in await vm.makeObjectsFromSelection() } }
+    let p = MenuActionProxy { Task { @MainActor in await vm.consolidateEachInSelection() } }
     proxies.append(p)
-    let item = NSMenuItem(title: L("menu.context.makeObjects", targets.count),
+    let item = NSMenuItem(title: L("menu.context.consolidateEach", targets.count),
                           action: #selector(MenuActionProxy.run), keyEquivalent: "")
     item.target = p
     menu.addItem(item)

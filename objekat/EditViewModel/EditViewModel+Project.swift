@@ -175,22 +175,34 @@ extension EditViewModel {
         return try encodedSession(projectFolder: folder)
     }
 
+    /// THE session document, for every writer (a save, `project.get_state`, "Save a copy"): only
+    /// the items and the definitions differ from one writer to the other (paths rewritten, registry
+    /// filtered), and they are the only parameters. Everything else — tempo, grid, snap, viewport,
+    /// annotations — is read HERE, once: "Save a copy" used to build its own document and silently
+    /// dropped the snap and the viewport (the initialiser's defaults are nil), and a field added
+    /// later would have been dropped the same way.
+    func projectDocument(items: [SoundObject],
+                         consolidateDefinitions defs: [ConsolidateDefinition]) -> ProjectDocument {
+        ProjectDocument(items: items,
+                        stems: stems,
+                        tempo: tempo,
+                        timeSigNumerator: timeSigNumerator,
+                        timeSigDenominator: timeSigDenominator,
+                        gridMode: gridMode,
+                        snapEnabled: snapEnabled,
+                        consolidateDefinitions: defs.isEmpty ? nil : defs,
+                        viewport: currentViewport,
+                        markerLanes: markerLanes.isEmpty ? nil : markerLanes,
+                        comments: comments.isEmpty ? nil : comments)
+    }
+
     /// Serialises the current session (with refreshed plugin states) into JSON. The paths of the
     /// files that live in the project folder are written RELATIVE to `folder` (the folder
     /// this version file lands in): moving the folder breaks no link.
     /// See `ProjectPaths`.
     func encodedSession(projectFolder folder: URL) throws -> Data {
-        let doc = ProjectDocument(items: portableItems(itemsWithCapturedPluginStates(), projectFolder: folder),
-                                  stems: stems,
-                                  tempo: tempo,
-                                  timeSigNumerator: timeSigNumerator,
-                                  timeSigDenominator: timeSigDenominator,
-                                  gridMode: gridMode,
-                                  snapEnabled: snapEnabled,
-                                  objectDefinitions: objectDefinitions.isEmpty ? nil : Array(objectDefinitions.values),
-                                  viewport: currentViewport,
-                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
-                                  comments: comments.isEmpty ? nil : comments)
+        let doc = projectDocument(items: portableItems(itemsWithCapturedPluginStates(), projectFolder: folder),
+                                  consolidateDefinitions: Array(consolidateDefinitions.values))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(doc)
@@ -242,10 +254,10 @@ extension EditViewModel {
         selectedIDs = []
         undoStack = []
         redoStack = []
-        objectDefinitions = [:]
+        consolidateDefinitions = [:]
         markerLanes = []
         comments = []
-        objectEditStack.removeAll()
+        consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil
         loopModeEnabled = false
@@ -292,9 +304,9 @@ extension EditViewModel {
         do {
             let data = try Data(contentsOf: url)
             var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
-            // Internal paths (samples/objects, samples/sources) made absolute IN this
-            // project folder: that is what makes the folder movable, and what catches up
-            // projects predating portability. See `ProjectPaths.resolved`.
+            // Internal paths (samples/consolidate, the legacy samples/objects, samples/sources)
+            // made absolute IN this project folder: that is what makes the folder movable, and
+            // what catches up projects predating portability. See `ProjectPaths.resolved`.
             doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
             applyProjectDocument(doc)
             projectURL = url
@@ -309,7 +321,7 @@ extension EditViewModel {
 
     /// TRANSIENT session state to purge when changing project (a new project or a
     /// load): the clipboard (pasting across projects would insert objects with dangling stemID /
-    /// auxID / definitionID), the note selection, the bakes under way (their
+    /// auxID / consolidateID), the note selection, the bakes under way (their
     /// completions find the object gone and give up cleanly) and the UI states of the
     /// piano rolls (keys = UUIDs of the old project).
     private func resetTransientSessionState() {
@@ -330,7 +342,7 @@ extension EditViewModel {
         soloAudibleObjectIDs = []
         audibility = AudibilitySnapshot()   // otherwise solo roots from the previous project
                                             // would survive in the silence rule
-        resetObjectEditSession()   // stops the listening on the params + the re-mirroring pending
+        resetConsolidateEditSession()   // stops the listening on the params + the re-mirroring pending
         pianoRollBasePitchByClip = [:]
         pianoRollCropByClip = [:]
         pianoRollCropOffsetByClip = [:]
@@ -430,12 +442,12 @@ extension EditViewModel {
         selectedIDs = []
         undoStack = []
         redoStack = []
-        objectDefinitions = Dictionary(uniqueKeysWithValues: (doc.objectDefinitions ?? []).map { ($0.id, $0) })
+        consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
         // The annotations: restored as they are, with nothing to reconcile — no engine object
         // stands behind a marker or a comment.
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
-        objectEditStack.removeAll()
+        consolidateEditStack.removeAll()
         resetTransientSessionState()
 
         // Tempo / time signature / grid mode: RESTORED data → pushed to the engine with no remap

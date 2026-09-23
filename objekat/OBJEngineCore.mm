@@ -534,7 +534,7 @@ struct OBJParamMirror : public te::AutomatableParameter::Listener {
 // (listener sur te::AutomatableParameter) rate certaines modifs faites dans la GUI native du plugin
 // (le plugin ne notifie pas toujours l'AutomatableParameter). L'AudioProcessorListener, lui, reçoit
 // `audioProcessorParameterChanged` / `audioProcessorChanged` directement du plugin. Utilisé en plus
-// du mirror pendant qu'un objet sonore est ouvert (miroir vivant). Les callbacks peuvent tomber sur un
+// du mirror pendant qu'un objet consolidé est ouvert (miroir vivant). Les callbacks peuvent tomber sur un
 // thread non-message → on marshale vers le message thread.
 struct OBJProcessorWatcher : public juce::AudioProcessorListener {
     juce::AudioProcessor*  processor = nullptr;
@@ -678,7 +678,7 @@ static constexpr int kObjStateReassertMaxTicks   = 40;   // ~10 s avant abandon
 // CONSIGNE DE PLUGINS.
 //
 // Beaucoup de gestes retirent un objet du moteur pour le réajouter aussitôt, identique :
-// emballer un clip MIDI dans un groupe pour en faire un objet sonore, matérialiser puis
+// emballer un clip MIDI dans un groupe pour en faire un objet consolidé, matérialiser puis
 // refermer une session d'édition, couper/coller, défaire. Chaque aller-retour DÉTRUISAIT les
 // plugins de l'objet et les recréait — soit, pour un AU, un chargement complet sur le thread
 // principal : 2,4 s mesurées pour un UADx Opal, à chaque geste.
@@ -1030,13 +1030,13 @@ struct OBJRenderChain {
     // groupID → (index param → dernière valeur canonique). Sert de garde anti-boucle.
     std::unordered_map<std::string, std::unordered_map<int, float>> _groupCanonical;
 
-    // Écoute des params tant qu'un objet sonore est ouvert (re-miroir vivant). Écouteurs
+    // Écoute des params tant qu'un objet consolidé est ouvert (re-miroir vivant). Écouteurs
     // installés sur les FX user de l'objet édité ; vidés à la fin de session (begin/end).
-    std::vector<std::unique_ptr<OBJParamMirror>>          _objectEditMirrors;
+    std::vector<std::unique_ptr<OBJParamMirror>>          _consolidateEditMirrors;
     // Idem pour les plugins EXTERNES (AU/VST) : listener au niveau du juce::AudioProcessor, qui capte
     // les modifs faites dans la GUI native que l'AutomatableParameter rate parfois.
-    std::vector<std::unique_ptr<OBJProcessorWatcher>>     _objectEditProcWatchers;
-    std::vector<te::Plugin::Ptr>                          _objectEditPlugins;  // pour flush pré-rendu
+    std::vector<std::unique_ptr<OBJProcessorWatcher>>     _consolidateEditProcWatchers;
+    std::vector<te::Plugin::Ptr>                          _consolidateEditPlugins;  // pour flush pré-rendu
 
     // Écoute du dernier paramètre TOUCHÉ, armée le temps qu'un éditeur de plugin soit ouvert
     // (@see beginPluginParamTouchWatch:).
@@ -1760,7 +1760,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
 //   • et surtout un tel clip ne pouvait pas entrer dans le container d'un groupe : il restait
 //     audible mais hors du bus, donc le bake d'un groupe qui en contenait perdait le MIDI.
 // Avec le container, un objet MIDI est un objet comme les autres : chaîne, fenêtre, fondus,
-// lane, groupe, aux, bake, objet sonore. @see canContainMIDI (patch moteur 0021)
+// lane, groupe, aux, bake, objet consolidé. @see canContainMIDI (patch moteur 0021)
 //
 // L'instrument NE PEUT PAS être posé sur le container d'un groupe qui porte aussi des enfants
 // audio : un VSTi ÉCRIT son buffer, il ne l'additionne pas — il écraserait leur somme. D'où
@@ -4648,12 +4648,12 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         NSLog(@"[PERF] bake : %d AU ré-initialisé(s) sur le clone", reasserted);
 }
 
-// MARK: Écoute des params (objet sonore ouvert)
+// MARK: Écoute des params (objet consolidé ouvert)
 
-- (void)beginObjectEditParamWatch:(NSArray<NSString*>*)objectKeys {
-    _objectEditMirrors.clear();
-    _objectEditProcWatchers.clear();
-    _objectEditPlugins.clear();
+- (void)beginConsolidateEditParamWatch:(NSArray<NSString*>*)objectKeys {
+    _consolidateEditMirrors.clear();
+    _consolidateEditProcWatchers.clear();
+    _consolidateEditPlugins.clear();
     __unsafe_unretained OBJEngineCore* weakSelf = self;  // self possède les mirrors → toujours vivant
     for (NSString* k in objectKeys) {
         std::string key([k UTF8String]);
@@ -4668,33 +4668,33 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
                 || dynamic_cast<te::LevelMeterPlugin*>(p))
                 continue;
             te::Plugin::Ptr ptr(p);
-            _objectEditPlugins.push_back(ptr);
-            _objectEditMirrors.push_back(std::make_unique<OBJParamMirror>(ptr,
+            _consolidateEditPlugins.push_back(ptr);
+            _consolidateEditMirrors.push_back(std::make_unique<OBJParamMirror>(ptr,
                 [weakSelf](int, float) {
-                    if (weakSelf->_onObjectEditParamChanged) weakSelf->_onObjectEditParamChanged();
+                    if (weakSelf->_onConsolidateEditParamChanged) weakSelf->_onConsolidateEditParamChanged();
                 }));
             // Plugin externe : doubler d'un listener processor (capte la GUI native AU/VST).
             if (auto* ext = dynamic_cast<te::ExternalPlugin*>(p))
                 if (auto* inst = ext->getAudioPluginInstance())
-                    _objectEditProcWatchers.push_back(std::make_unique<OBJProcessorWatcher>(inst,
+                    _consolidateEditProcWatchers.push_back(std::make_unique<OBJProcessorWatcher>(inst,
                         [weakSelf] {
-                            if (weakSelf->_onObjectEditParamChanged) weakSelf->_onObjectEditParamChanged();
+                            if (weakSelf->_onConsolidateEditParamChanged) weakSelf->_onConsolidateEditParamChanged();
                         }));
         }
     }
-    NSLog(@"[OBJ] beginObjectEditParamWatch : %lu plugin(s) surveillé(s), %lu externe(s)",
-          (unsigned long)_objectEditPlugins.size(),
-          (unsigned long)_objectEditProcWatchers.size());
+    NSLog(@"[OBJ] beginConsolidateEditParamWatch : %lu plugin(s) surveillé(s), %lu externe(s)",
+          (unsigned long)_consolidateEditPlugins.size(),
+          (unsigned long)_consolidateEditProcWatchers.size());
 }
 
-- (void)endObjectEditParamWatch {
-    _objectEditMirrors.clear();      // ~OBJParamMirror retire les listeners (params encore vivants)
-    _objectEditProcWatchers.clear(); // ~OBJProcessorWatcher retire les listeners (processors vivants)
-    _objectEditPlugins.clear();
+- (void)endConsolidateEditParamWatch {
+    _consolidateEditMirrors.clear();      // ~OBJParamMirror retire les listeners (params encore vivants)
+    _consolidateEditProcWatchers.clear(); // ~OBJProcessorWatcher retire les listeners (processors vivants)
+    _consolidateEditPlugins.clear();
 }
 
-- (void)flushObjectEditPluginStates {
-    for (auto& p : _objectEditPlugins)
+- (void)flushConsolidateEditPluginStates {
+    for (auto& p : _consolidateEditPlugins)
         if (p) p->flushPluginStateToValueTree();
 }
 

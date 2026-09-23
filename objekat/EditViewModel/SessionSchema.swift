@@ -17,7 +17,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 15
+    static let formatVersion = 16
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -25,8 +25,9 @@ enum SessionSchema {
         "OBJEKAT session — format \(formatVersion). Sound object editor (musique concrète).",
         "",
         "PROJECT FOLDER — this file lives at its root; several versions can live side by side and",
-        "share: samples/ (imported sounds), samples/objects/ (baked sound objects plus their",
-        "sidecars *_objectstate.json), waveforms/ (display caches, throwaway).",
+        "share: samples/ (imported sounds), samples/consolidate/ (baked consolidated objects plus",
+        "their sidecars *_objectstate.json — a project saved before format 16 keeps them in",
+        "samples/objects/ instead, which the app still reads), waveforms/ (display caches, throwaway).",
         "File paths are RELATIVE to that folder when the file lives in it: the folder can be",
         "moved. A path outside the folder stays absolute.",
         "",
@@ -67,9 +68,11 @@ enum SessionSchema {
         "  is muted, or left out by a solo, stays silent — its volume curve is set aside for as",
         "  long as it is.",
         "",
-        "objectDefinitions — the registry of SOUND OBJECTS: content baked once, laid down as N",
-        "  instances. An item whose definitionID points here is an instance: its content is the",
-        "  definition's, but its position, its fades and its gain are its own.",
+        "objectDefinitions — the registry of CONSOLIDATED OBJECTS: content baked once, laid down as N",
+        "  instances. The key keeps its historical name (a data contract already on every session",
+        "  on disk; the app calls the concept 'consolidated' everywhere else, code and screen alike).",
+        "  An item whose definitionID points here is an instance: its content is the definition's,",
+        "  but its position, its fades and its gain are its own.",
         "  revision is bumped on every re-bake; dependsOn is what detects stale definitions.",
         "  Changing a definition updates every one of its instances.",
         "",

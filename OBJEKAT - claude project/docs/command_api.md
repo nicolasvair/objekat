@@ -73,6 +73,21 @@ help {"name": "…"}      → the detail of a single one
 repository copies the list out — a duplicated list diverges at the first addition, and nobody
 notices before a call fails.
 
+**Hidden aliases.** A command family renamed keeps its old names answering, transparently —
+today that is the `consolidate.*` family, whose names were `definition.*` before 24 September
+2026. `execute` resolves an alias to its target before dispatch, so behaviour and undo policy are
+identical either way; a bare `help` never lists an alias (a script discovering the API fresh is
+only ever offered the current name), and `help {"name": "definition.make"}` answers
+`consolidate.make`'s own description with an added `"alias_of": "consolidate.make"`, which is how
+a script can find the name to move to. Nothing else in the repository is aliased at the moment.
+
+The rename only ever touches what a reader sees — commands, labels, error messages. The
+`consolidate.*` family's own response fields, and the session's JSON keys, are a DATA CONTRACT
+and keep their historical names on purpose: `consolidate.list`'s `definitions` / `placements`,
+`consolidate.state`'s `definition`, `perf.census`'s `object_definitions` / `object_instances`, and
+the session file's `definitionID` / `objectDefinitions` / `dependsOn[].definitionID` (@see
+`SessionSchema`). A script written against any of these needs no change.
+
 ---
 
 ## Undo is carried by the bus
@@ -108,7 +123,7 @@ scanning). So a read launched just after a write can observe an intermediate sta
 {"cmd": "wait_idle", "params": {"timeout_ms": 5000, "settle_ms": 0}}
 ```
 
-Quiescence **reads the existing state** (`freezingIDs`, `recomputingDefinitionIDs`,
+Quiescence **reads the existing state** (`bakingIDs`, `recomputingConsolidateIDs`,
 `isCascadingRebake`, `isScanning`, the pending debounced work) instead of instrumenting the
 hot paths: no counter to unbalance. In exchange, **the engine's deferred work
 stays invisible** — that would take modifying `OBJEngineCore`. Hence `settle_ms`: a grace delay to
@@ -120,10 +135,10 @@ saying what it was waiting for cannot be diagnosed.
 ### Jobs
 
 Long commands return a `job_id` at once rather than lie about unfinished
-work: `plugin.scan`, `definition.make`, `definition.edit_commit`.
+work: `plugin.scan`, `consolidate.make`, `consolidate.edit_commit`.
 
 ```json
-{"cmd": "definition.make", "params": {"id": "…"}}      → {"job_id": "job-1"}
+{"cmd": "consolidate.make", "params": {"id": "…"}}      → {"job_id": "job-1"}
 {"cmd": "job.wait", "params": {"id": "job-1", "timeout_ms": 30000}}
 ```
 
@@ -257,7 +272,7 @@ That is end-of-process noise, with no effect on the result.
 | family | what it covers |
 |---|---|
 | `app.*` | version, current project, engine state, dialogue policy, journal |
-| `project.*` | new, open, save, save as, serialised state, the snap, the format notice |
+| `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
@@ -266,7 +281,7 @@ That is end-of-process noise, with no effect on the result.
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
-| `definition.*` | reusable sound objects: creation, editing, detaching |
+| `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
 | `export.*` | render the mix into a file, follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
 | `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
@@ -826,6 +841,46 @@ is really launched, and only zeroed when its graph is built, so it still answers
 export's shape in between. `peaks_filled` is 0 throughout that phase rather than the last render's
 count.
 
+### Saving a copy with the audio files
+
+`project.save_copy {path}` is the menu's "Save a copy with audio files…" without its panel: `path`
+is the capsule's **folder** (created if absent), and the manifest inside is named after it
+(`/x/My copy/` → `/x/My copy/My copy.json`). The command **waits for the last write** before it
+answers — no job, no polling:
+
+```json
+{"cmd": "project.save_copy", "params": {"path": "/tmp/capsule"}}
+→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.json",
+   "copied_files": 3, "missing": []}
+```
+
+What goes in is what the project **plays**, and nothing more. The source files are copied into
+`samples/sources/` (de-duplicated by name). The consolidated objects are carried by transitive
+closure through their sidecars (a consolidated object nested in another one comes along), each wave
+copied from **wherever it is actually read** — `samples/consolidate/`, the legacy
+`samples/objects/`, or another project's folder — into the capsule's `samples/consolidate/`, with
+its sidecar rewritten to name the capsule's paths. The copy is therefore what **normalises** a
+project from before the consolidate rename: the capsule never has a `samples/objects/`. Orphan
+waves (older revisions, a consolidation undone) and definitions without an instance stay behind.
+The `.wfc` caches of the included files travel along when they exist.
+
+It copies the project **as it is in memory**, unsaved changes included. The current project is not
+touched: it stays the open one, with the same path and the same dirty flag — this is not a Save As.
+
+- `missing`: what could not be carried (an absent source, a sidecar, a definition); the copy still
+  succeeds and those links are left as they were.
+- A write failure throws `invalid_state` with `details.errors`; the capsule is then incomplete.
+- `bad_params` (with `details.source`) if `path` overlaps a folder the copy **reads** from — the
+  project's own folder, a folder inside it, a folder containing it, or the folder of an older
+  project whose consolidated waves are still read (after a Save As). A copy there would remove each
+  wave before copying it from itself: that was a real data loss through the menu. Identity is the
+  file system's, so another case (APFS), a symbolic link, `..` or `/tmp` vs `/private/tmp` are all
+  seen through. The refusal is the menu's own and records its alert. Nothing is read or written.
+- A source file that already sits exactly where the copy would put it (an unsaved project playing
+  `<dest>/samples/sources/x.wav`) is left in place, never removed "to be replaced".
+- The end-of-copy report goes through the dialogue policy like any other (`app.dialogs` under a
+  script, a modal under `ask`).
+
 ### Missing files, and repairing a link
 
 A clip names a file on disk, and that file can go: a drive unplugged, a folder moved, a take
@@ -905,10 +960,10 @@ beginning of the file. `object.replace_source` answers `clamped: true` when eith
 consumes, `[source_offset, source_offset + duration × speed]`, so the speed counts and the playback
 direction does not. A length that cannot be read clamps nothing at all.
 
-Two refusals worth branching on: `object.replace_source` on an **instance of a sound object** is
-`invalid_state` (it reads its definition's wave, and the next re-bake would silently put that wave
-back), and so is pointing a clip at the file it already reads. Everything else missing — the object,
-the file, the folder — is `not_found`.
+Two refusals worth branching on: `object.replace_source` on an **instance of a consolidated
+object** is `invalid_state` (it reads its definition's wave, and the next re-bake would silently
+put that wave back), and so is pointing a clip at the file it already reads. Everything else
+missing — the object, the file, the folder — is `not_found`.
 
 **`volumeOffline` is not `absent`**: a path under a `/Volumes/<name>` that is not mounted says the
 file is on a disk in a drawer, not that it is lost. The app watches the mount notifications and

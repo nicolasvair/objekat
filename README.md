@@ -9,7 +9,7 @@ Following a 2016 graduation thesis of Nicolas Vercambre (ENS Louis Lumière, Sou
 
 ## Progress
 
-The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **automation**, and the **loop** of a clip, of a group or of a MIDI clip. I also introduced **sound objects**, which are basically a freeze or wav render of a clip or a group, but that you can revert back to a previous "live" state if needed.
+The app runs: an object timeline, nested groups, stems and auxiliaries, an FX chain shown by the synoptic, MIDI clips + a basic piano roll, **automation**, and the **loop** of a clip, of a group or of a MIDI clip. I also introduced **consolidated objects**, which are basically a freeze or wav render of a clip or a group, but that you can revert back to a previous "live" state if needed.
 
 It can also be driven **with no interface**: a command API over a UNIX socket (~105 commands) gives outside access to everything the interface does — it is the project's test harness. See [`docs/command_api.md`](OBJEKAT%20-%20claude%20project/docs/command_api.md).
 

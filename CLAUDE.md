@@ -1273,6 +1273,104 @@ What has landed since mid-August, in order:
   WHOLE row reads as useful on a band of two or three; and that the arrows now walk the frame OUT
   of the band and on down the timeline — the consistency that was asked for,
   and also a passage leaving the curve it was taken from in one keystroke.
+
+- **"Sound object" (the baked/shared kind) becomes "consolidated object"** (24 September 2026, ON
+  THE BRANCH `refactor/consolidate`, NOT on `main`) — a pure rename, decided ahead of time in
+  `plan_consolidate.md`: what a reader sees, the command names and the Swift/ObjC identifiers all
+  move to "consolidate/consolidated/deconsolidate"; `SoundObject` (the type) and "sound object" in
+  its GENERIC sense (any object on the timeline, Schaeffer's own term) are UNCHANGED — the two
+  senses had shared one English word since July, and that is exactly what made the vocabulary hard
+  to read. **The disk key never moves**: `definitionID` / `objectDefinitions` /
+  `dependsOn[].definitionID` stay those exact JSON keys forever (an explicit `CodingKeys` mapping
+  pins each one by hand, e.g. `case consolidateID = "definitionID"` — cas E7 of the plan, the whole
+  reason blind renaming was safe). New bakes land in `samples/consolidate/`; a project from before
+  this branch keeps its content in `samples/objects/`, read by a 3-candidate resolver
+  (`ConsolidateFolders.swift`) that also falls back on an existing instance's own folder (Q3,
+  fixing a Save-As-to-a-new-folder trap). The old `definition.*` command family answers as hidden
+  aliases (`CommandRegistry.aliases`, resolved by `execute`, absent from bare `help`, named via
+  `alias_of`). Session format 15 → 16 for the `_readme` text alone — no old build can EDIT a
+  consolidated object made by a new one (its wave sits in a folder the old build never reads), but
+  it plays the project whole; accepted, forward incompatibility only.
+  Nine steps, one commit each: (1) the resolver + its standalone test,
+  `tools/test_consolidate_folders.swift`, 17/17; (2) the Swift identifier rename (`\b`-bounded,
+  longest names first) + the three CodingKeys pins + three file `git mv`s
+  (`ObjectDefinition.swift` → `ConsolidateDefinition.swift` among them); (3) the ObjC bridge
+  (`OBJEngineCore.h`/`.mm`) — including its **auto-synthesized backing ivars**, which a renamed
+  `@property` moves silently and would otherwise have failed to compile; (4) the `consolidate.*`
+  command family + the alias mechanism; (5) 20 `Localizable.xcstrings` keys renamed, 2 rewritten in
+  place, 2 new tooltips (`menu.context.consolidate.help` / `.deconsolidate.help`) — `check` 435
+  keys clean, `orphans` empty, a JSON diff against `main` confirming nothing else in the catalogue
+  moved; (6) the format bump, and a bug this same rename surfaced: step 2's blind identifier
+  substitution had also renamed a PROSE sentence in `SessionSchema`'s own `_readme` text into
+  saying the JSON key was `consolidateDefinitions` — it never was and never will be, so the note
+  was actively lying about the file format until this step corrected it back to `objectDefinitions`;
+  (7) this entry, plus `glossary.md`, `command_api.md` (incl. fixing a pre-existing `freezingIDs` →
+  `bakingIDs` drift), `architecture_decisions.md`, `README.md:12`.
+  **Deviation worth knowing**: step 2's own bare-word `\bmakeObject\b` substitution (needed for the
+  Swift FUNCTION `makeObject` → `consolidate`) silently reached into ONE xcstrings key reference
+  living inside a Swift string literal, `L("menu.context.makeObject")` →
+  `L("menu.context.consolidate")`, a whole step ahead of the i18n step that was supposed to own
+  that rename. It happened to land on exactly the name step 5 needed, verified by diffing against
+  `main`, so nothing broke — but it is the kind of accident a word shared between an identifier
+  table and a string literal will keep producing, worth watching for on the next such rename.
+  Verified with no screen, through step 7: a Debug build after every step, no new warning;
+  `tools/scenario_families.py` grown with three assertions on the alias mechanism, 191 OK; the
+  xcstrings check/orphans above. **Not yet run, at the time of this entry** (done since — see the
+  next entry): the dedicated
+  migration scenario (`tools/scenario_consolidate.py`, T3 of the plan — an old-format project
+  built with `objects/`, opened and edited by the new build) and `project.save_copy`, both still to
+  come as steps 8–9 of the same plan. **Not seen, not heard**: every pixel of the rename — the
+  "Consolider" / "Dé-consolider" menu entries and their tooltips in the three languages, the
+  synoptic's badges on a closed consolidated object, dé-consolidating a nested instance while its
+  parent is open, and a real user project opened on a copy.
+
+- **Consolidate, steps 8–9 and three older bugs fixed** (24 September 2026, still ON THE BRANCH
+  `refactor/consolidate`, not merged, nothing pushed). Step 9 = `project.save_copy {path}` (the
+  menu's "Save a copy with audio files" without its panel, awaits the last write, answers a
+  `SaveCopyReport`). Step 8 = `tools/scenario_consolidate.py`: phase A has the ARCHIVED OLD BUILD
+  (`../objekat 2026-09-23 13-00-42.app`) make a real `samples/objects/` project (A, A nested in B,
+  C), phase B drives the new build through B1–B14 of the plan plus X-checks. It found two bugs of
+  the rename, fixed in their own commits: `consolidate.list` ordered by name only over a dictionary
+  (flaky B6 — now name then id), and E17 (a read-only project ended its commit on a bare "render
+  failed" — `ensureConsolidateFolder` now throws and the session stays open). Then three bugs
+  OLDER than the rename (reproduced on the 23 September build), one commit each:
+  1. **Data loss — "Save a copy" onto the project's own folder erased its consolidated waves.**
+     The copy writes "remove the destination, then copy the source"; there, the destination of
+     each wave IS its source. `performSaveCopy` (so the menu, and the API through it) now refuses
+     a destination that is, lies inside, or contains a folder the copy READS from — the project
+     folder AND the old project folder waves are still read from after a Save As (Q3) — with a
+     localised alert (5 keys `saveCopy.error.destination.*`, 440 keys, check/orphans clean);
+     identity by `fileResourceIdentifier`, so case (APFS), symlinks, `..`, `/tmp` vs
+     `/private/tmp` are seen through. Last line of defence in the I/O loop: a file whose
+     destination is the same file is left in place. API: `bad_params` + `details.source`
+     (was `invalid_state`, equality only).
+  2. **Undoing `consolidate.edit_commit` detached the instance** (a plain group). The commit's
+     `pushUndo()` ran while the placement was still MATERIALISED, and the session is not in the
+     snapshot. Now the commit's undo point is the state with the session CANCELLED (the linked
+     instance from before the opening, root curves kept), taken after the mirrors are back and
+     before the registry moves — other instances and nested definitions return to their previous
+     revision; redo gives the committed state. Each `ConsolidateEditSession` records
+     `undoDepthAtOpen`; commit AND cancel cut the stack back to it (a materialised snapshot must
+     never outlive its session — the undo after a cancel had the same flaw). Consequence to know:
+     gestures made OUTSIDE the content during a session fold into the commit's single undo point;
+     a nested session cuts only its own points. `edit.undo` over the API INSIDE an open session
+     still restores items without touching the session stack (the UI's ⌘Z cancels instead) —
+     tested only for the nested-commit case, where it is coherent.
+  3. **The copy lost `snapEnabled` and `viewport`**: `performSaveCopy` built its own
+     `ProjectDocument` and the initialiser defaults them to nil. One builder now,
+     `projectDocument(items:consolidateDefinitions:)`, shared by save/get_state and the copy.
+  **Verified with no screen** (Debug build after each fix, no new warning):
+  `scenario_consolidate.py` ALL PASS, 137 checks, phase A made by the real old build, the
+  former KNOWN check now strict; T2 — `smoke.jsonl` (`--exec`) rc 0, `scenario_families` 191 OK,
+  `scenario_markers` 93 ALL PASS, `scenario_relink` 46 ALL PASS, `scenario_plugin_selection` 58,
+  `scenario_plugin_state_undo` 5 ALL PASS; the nine standalone Swift tests of `tools/` all pass.
+  **Not verified**: the save panel itself and the alert on screen (the refusal is exercised
+  through the same `performSaveCopy`, the alert only as a recorded dialogue); the viewport's
+  SCROLL end to end (restored by the TimelineView, absent headless — only the zoom is checked
+  through a reopening; a headless save writes scroll 0, pre-existing); ⌘Z in the UI around a
+  session; the "no window on the headless pid" check of the plan; and everything the previous
+  entry lists as never seen or heard.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
@@ -1449,7 +1547,9 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
 
 Condensed; the detail is in `architecture_decisions.md` and in the memory notes.
 
-- **July 2026 — the "sound objects" rework.** A sound object is a group that can be instantiated in N
+- **July 2026 — the "sound objects" rework** (renamed "consolidated objects" on 24 September 2026 —
+  see Current state; the type `SoundObject` and the term's GENERIC sense are untouched, only the
+  shared/baked kind's own name moved). A sound object is a group that can be instantiated in N
   places. Two accepted regimes: **baked** (a closed object, every instance reads a wave) and
   **live** (an open object, the other instances are mirrors of the origin, with no render).
   Opening on a double-click, cancelling with `Esc` / `⌘Z`. Freezing was taken out of the UI, but its

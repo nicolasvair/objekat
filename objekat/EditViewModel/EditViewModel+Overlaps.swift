@@ -176,7 +176,7 @@ extension EditViewModel {
                 }
                 if rDur >= minDur {
                     // derivedCopy + copiedPlugins: the right-hand piece inherits the sends/chain
-                    // gains/sound-object link, and its plugins are CLONED (reusing ex.plugins
+                    // gains/consolidated link, and its plugins are CLONED (reusing ex.plugins
                     // duplicated the UUIDs across two objects → a collision in the engine's
                     // _pluginMap, and no link).
                     toAdd.append(ex.derivedCopy(

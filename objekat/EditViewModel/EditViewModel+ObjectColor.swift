@@ -21,8 +21,8 @@ extension EditViewModel {
         guard !ids.isEmpty else { return }
         var targets = ids
         for id in ids {
-            guard let defID = find(id: id)?.definitionID else { continue }
-            targets.formUnion(placementIDs(forDefinition: defID))
+            guard let defID = find(id: id)?.consolidateID else { continue }
+            targets.formUnion(placementIDs(forConsolidate: defID))
         }
         pushUndo()
         for id in targets {

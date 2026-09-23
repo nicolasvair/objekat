@@ -73,8 +73,8 @@ def main():
     lines.append("Plugins   : %d (+%d parallel blocks)" % (census["plugins"], census["racks"]))
     lines.append("Sends     : %d" % census["sends"])
     lines.append("MIDI notes: %d" % census["midi_notes"])
-    lines.append("Shared    : %d definitions, %d instances"
-                 % (census["shared_definitions"], census["shared_placements"]))
+    lines.append("Consolidated: %d definitions, %d instances"
+                 % (census["object_definitions"], census["object_instances"]))
     lines.append("")
     for stem in stems["stems"]:
         lines.append("  bus “%s” — %+.1f dB%s%s"

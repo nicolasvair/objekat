@@ -243,24 +243,24 @@ The `.local` coordinate space gives `location.x` in pixels from the block's left
 
 ---
 
-## Sound objects — reworking the paradigm (July 2026)
+## Consolidated objects (called "sound objects" until 23 September 2026) — reworking the paradigm (July 2026)
 
-A **sound object** = a group that can be instantiated in N places on the timeline, recorded as an `ObjectDefinition` (in the project registry `objectDefinitions`). The baked wave lives in `samples/objects/`, the original editable sub-tree in a sidecar `<wave>_objectstate.json` beside it. An automatic transitive cascade when A ⊂ B ⊂ C (a fixed point over freshness).
+A **consolidated object** = a group that can be instantiated in N places on the timeline, recorded as a `ConsolidateDefinition` (in the project registry `objectDefinitions` — the key keeps its historical name). The baked wave lives in `samples/consolidate/` (a project saved before 24 September 2026 keeps it in `samples/objects/`, still read), the original editable sub-tree in a sidecar `<wave>_objectstate.json` beside it. An automatic transitive cascade when A ⊂ B ⊂ C (a fixed point over freshness).
 
 ### Decision: two regimes, live and baked (August 2026, the containerclip branch)
 
-A sound object exists in one regime or the other, never in both.
+A consolidated object exists in one regime or the other, never in both.
 
-- **Baked** — the object is CLOSED. Each instance is a `.clip` placement (`SoundObject.definitionID`) that reads the definition's wave. N instances cost N file reads, nothing more.
+- **Baked** — the object is CLOSED. Each instance is a `.clip` placement (`SoundObject.consolidateID`, the JSON key still `definitionID`) that reads the definition's wave. N instances cost N file reads, nothing more.
 - **Live** — the object is OPEN. The content is materialised on the instance opened, and the OTHERS become **mirrors** of it: the same sub-tree, put back at their position, with their mix and their window. They all refer to the same origin, **with no render at all**.
 
-The live → baked passage is the CLOSING (`closeObject`: one single render, then every instance comes back to the wave). Cancelling (`cancelObjectEdit`) brings each one back to its snapshot from before the session.
+The live → baked passage is the CLOSING (`closeConsolidate`: one single render, then every instance comes back to the wave). Cancelling (`cancelConsolidateEdit`) brings each one back to its snapshot from before the session.
 
 What this replaces: the debounced live preview, which re-rendered the sub-tree offline every 300 ms to hot-swap the other instances onto throwaway waves (`samples/temp/`). No more temporary files, no more generations to invalidate, no more rendering while you edit.
 
 What makes it possible: the **ContainerClip**. On the folder model, a group was a FolderTrack + N AudioTracks — there was no single node to lay down elsewhere, hence the detour through baking. A group is now ONE clip, hence a content that can be laid down identically.
 
-The CPU cost holds because only one sound object is open at a time, and because a track's `CombiningNode` only handles a container where it crosses the current block.
+The CPU cost holds because only one consolidated object is open at a time, and because a track's `CombiningNode` only handles a container where it crosses the current block.
 
 Details that matter:
 
@@ -269,11 +269,11 @@ Details that matter:
 - Each mirror aligns on its **snapshot** from before the session, never on its current state: once mirrored it is a group, it no longer has a `sourceOffset` or a `speedRatio` to question, and the alignment would drift on every pass.
 - The mirrors become baked clips again **before the closing's `pushUndo`**: otherwise, undoing a closing would resurrect N live copies of the content, orphans of any session.
 
-The key files: `EditViewModel+Objects.swift`, `EditViewModel+Bake.swift` (the bake primitives: the render span, the copy with fresh ids, realigning a restored sub-tree), `SoundObject/ObjectDefinition.swift`, `Timeline/SoundBlockView.swift` / `GroupBlockView.swift`, `Timeline/TimelineView+TapHandler.swift`, `Timeline/TimelineKeyHandler.swift`, `Inspector/Synoptic/SynopticView.swift`.
+The key files: `EditViewModel+Consolidate.swift`, `EditViewModel+Bake.swift` (the bake primitives: the render span, the copy with fresh ids, realigning a restored sub-tree), `SoundObject/ConsolidateDefinition.swift`, `Timeline/SoundBlockView.swift` / `GroupBlockView.swift`, `Timeline/TimelineView+TapHandler.swift`, `Timeline/TimelineKeyHandler.swift`, `Inspector/Synoptic/SynopticView.swift`.
 
 ### Decision: the render isolates through `allowedClips`, no longer by amputating the clone (August 2026)
 
-`renderObjectToFileAsync` isolated the object to be baked by removing every other clip from the cloned track. A track's clip list holds only its **direct** clips: for an object living inside a group, that loop removed the ancestor carrying it and rendered an empty track — a silent wave, published with no error since the file existed. Every bake of a nested object was silent: a sound object created from a sub-group, closing a nested instance, re-baking a child of a group.
+`renderObjectToFileAsync` isolated the object to be baked by removing every other clip from the cloned track. A track's clip list holds only its **direct** clips: for an object living inside a group, that loop removed the ancestor carrying it and rendered an empty track — a silent wave, published with no error since the file existed. Every bake of a nested object was silent: a consolidated object created from a sub-group, closing a nested instance, re-baking a child of a group.
 
 The isolation is now **declared to the renderer**: `Renderer::Parameters::allowedClips` receives the target **and its chain of ancestor containers** (`renderChainForKey:`). The ancestors are indispensable — `createNodeForContainerClip` passes the same `CreateNodeParams` to `createNodeForClips`, so the filter also applies *inside* the container: a container not allowed has no node, and its content does not exist.
 
@@ -283,7 +283,7 @@ The clone is now touched only for what the renderer cannot know: bypassing the t
 
 `renderChainForKey:` returns **two** lists, not one. The renderer's allow list (`allowed`) carries the target, **all of its content** *and* its ancestors — it needs all three, for the reason above. But only the **ancestors** (`ancestors`) are made transparent on the clone. As long as the chain arrived flattened, `prepare` treated "everything that is not the target" as an ancestor, so it also disabled the plugins **of the content** — that is to say, exactly what is being baked:
 
-- **a MIDI object**: its instrument is a plugin of its `ContainerClip` (@see "MIDI inside a `ContainerClip`"). Wrapped in the group of one that "Create a sound object" creates, it became content — its instrument disabled, not a single source of audio left in the group, and the renderer failed on *Didn't find any audio to render*;
+- **a MIDI object**: its instrument is a plugin of its `ContainerClip` (@see "MIDI inside a `ContainerClip`"). Wrapped in the group of one that "Consolidate" creates, it became content — its instrument disabled, not a single source of audio left in the group, and the renderer failed on *Didn't find any audio to render*;
 - **a group**: the fader / window / FX of its children went to bypass and the sub-groups' bounds opened over the whole range, against the rule above (sub-groups keep their bounds and fades: they are part of the content being baked).
 
 The same blind spot, the same campaign: flushing the plugins' state before cloning and re-asserting it on the clone (`forcePluginStatesForRenderClone:`) went through `te::getAllPlugins`, which sweeps only a track's **direct** clips. Every plugin living inside a container — hence of every grouped object, MIDI instruments included — started again from its last serialised state, often the factory settings. Hence `objAllPluginsDeep`, which descends into the `ClipOwner`s.
@@ -294,7 +294,7 @@ A measuring campaign on a bake that froze the interface for 6.9 s showed that 5.
 
 **The clone loads only what it renders.** `Edit::EditRole::forRendering` only means `playDisabled` — it is `forExporting` that carries `pluginsDisabled` — so a render clone loads *every* plugin of the Edit, and `ExternalPlugin`'s constructor calls `callBlocking (startPluginInstanceCreation)`: on the main thread, at ~2.4 s per instance for a UADx. Yet the target track is detached at the root and `useMasterPlugins` is false: stem plugins and other objects' plugins cannot enter the wave. So `OBJEngineBehaviour::shouldLoadPlugin` filters the loading during the building of the clone alone, by walking up the PLUGIN node's ancestors to the first CLIP or TRACK. Walking up, and not looking at the direct parent: a parallel-block plugin lives under the PLUGIN that hosts it.
 
-**A removed plugin is put in storage instead of being reloaded.** Many gestures take an object out of the graph to put an identical one back: opening a sound object, wrapping a MIDI clip, cut/paste, undoing. The mechanism for avoiding that is already native — `PluginList::insertPlugin (ValueTree)` goes through `PluginCache::getOrCreatePluginFor`, which returns the **already live** plugin whose state it is, and the cache only releases a plugin when nobody else holds it any more. Detaching a plugin does not destroy its instance. So keeping a `Plugin::Ptr` for the length of the round trip is enough: it is `moveClipToOwner` applied to plugins. Paired on the model + the state chunk, with a 20 s TTL.
+**A removed plugin is put in storage instead of being reloaded.** Many gestures take an object out of the graph to put an identical one back: opening a consolidated object, wrapping a MIDI clip, cut/paste, undoing. The mechanism for avoiding that is already native — `PluginList::insertPlugin (ValueTree)` goes through `PluginCache::getOrCreatePluginFor`, which returns the **already live** plugin whose state it is, and the cache only releases a plugin when nobody else holds it any more. Detaching a plugin does not destroy its instance. So keeping a `Plugin::Ptr` for the length of the round trip is enough: it is `moveClipToOwner` applied to plugins. Paired on the model + the state chunk, with a 20 s TTL.
 
 What the storage cannot serve: a real duplication (two simultaneous instances = two instances, that is DSP physics) and the render clone, which is another Edit.
 
@@ -304,23 +304,23 @@ The consequence: moving the clone's construction into a thread removes nothing, 
 
 **The rule that comes out of it, to be applied before accusing anything else:** in this application, a slow gesture is almost always an AudioUnit instantiation on the main thread — not the view, not the graph, not the undo capture. All three were measured innocent here (a frame of 63 to 481 ms against 3000 to 6800 ms of model; graph rebuilds at 2 ms; a snapshot at 15 ms). `UIPerf.measure` separates the model's cost from the frame's, and `renderTrackToFileAsync`'s milestones break the bake down: start there.
 
-### Decision: a sound object is ALWAYS a group
+### Decision: a consolidated object is ALWAYS a group
 
-"Create a sound object" is only offered on a group. On a lone clip/MIDI, `makeObjectWrappingClip` first wraps it in a **group of one** (the existing grouping primitive, with the nesting preserved: a sub-group if it is already inside a group) and then makes a sound object of it.
+"Consolidate" is only offered on a group. On a lone clip/MIDI, `consolidateWrappingClip` first wraps it in a **group of one** (the existing grouping primitive, with the nesting preserved: a sub-group if it is already inside a group) and then makes a consolidated object of it.
 
 ### Decision: editing on a double-click (right-clicking no longer modifies anything)
 
-- **Double-click** on a sound object = OPEN; **double-clicking again** on the open object = CLOSE (a new bake). It takes priority over unfolding a group and over the MIDI piano roll; resolved geometrically in `handleCanvasTap` (the block stays pure presentation). The children keep their double-click once the object is open.
+- **Double-click** on a consolidated object = OPEN; **double-clicking again** on the open object = CLOSE (a new bake). It takes priority over unfolding a group and over the MIDI piano roll; resolved geometrically in `handleCanvasTap` (the block stays pure presentation). The children keep their double-click once the object is open.
 - **Cancelling with a rollback**: `Esc`, `⌘Z`, or the arrow button (`arrow.uturn.backward.circle.fill`) at the top right of the block being edited (the click detected geometrically, in the top-right zone).
-- **Right-click**: keeps only "Create a sound object" (an ordinary group/clip) and "Detach this instance" (an instance). No "Open" / "Close" / "Cancel" entry.
+- **Right-click**: keeps only "Consolidate" (an ordinary group/clip) and "Deconsolidate" (an instance). No "Open" / "Close" / "Cancel" entry.
 
 ### Decision: explicit states on the block
 
-A discreet spinner during the automatic re-bake (`recomputingDefinitionIDs`), then a **transient green ✓ for 15 s** when an instance is resynchronised (a timestamped `resyncedBadgeDeadline`, robust to overlapping re-bakes). For as long as an object is open, it carries the "other instances are following me live" indicator (`hasLiveMirrors`).
+A discreet spinner during the automatic re-bake (`recomputingConsolidateIDs`), then a **transient green ✓ for 15 s** when an instance is resynchronised (a timestamped `resyncedBadgeDeadline`, robust to overlapping re-bakes). For as long as an object is open, it carries the "other instances are following me live" indicator (`hasLiveMirrors`).
 
 ### Decision: the synoptic's FX are read-only outside an edit
 
-On a **closed** sound object, the synoptic's FX (cards, "+" inserts, parallel branchings, branch/chain gains) are greyed out/disabled with an "Open to edit" tooltip (`SynopticView.fxReadOnly`). The mix (volume/pan/mute), the source and the stems stay interactive. Once the object is open, the instance is materialised (it is no longer `isObjectInstance`) → the FX are fully interactive, with no dedicated code.
+On a **closed** consolidated object, the synoptic's FX (cards, "+" inserts, parallel branchings, branch/chain gains) are greyed out/disabled with an "Open to edit" tooltip (`SynopticView.fxReadOnly`). The mix (volume/pan/mute), the source and the stems stay interactive. Once the object is open, the instance is materialised (it is no longer `isConsolidateInstance`) → the FX are fully interactive, with no dedicated code.
 
 ### A fix: the "digit → Search field" bug (editing volume/pan)
 
@@ -380,12 +380,12 @@ A MIDI object is now a `ContainerClip` with, as its only child, its `MidiClip`, 
 
 `assignObject:toGroupFolder:` left a MIDI clip on its track: audible, but **outside the group's bus**. Consequences never reported to the user:
 
-- baking a group that held a MIDI clip **lost the MIDI** (`renderChainForKey` only collects the container's clips) — the same for a sound object built on such a group;
+- baking a group that held a MIDI clip **lost the MIDI** (`renderChainForKey` only collects the container's clips) — the same for a consolidated object built on such a group;
 - a send from a MIDI clip that was a child of a group was refused (its chain was not swept by the container's aux return).
 
 ### What it gains
 
-One track fewer per MIDI clip — the last thing making the number of tracks proportional to the number of objects — and an instrument that no longer runs on **every block** of the session (as a track plugin) but only within its object's activation window. Incidentally, a MIDI object becomes an object like any other: chain, window, fades, lane, group, aux, sound object. **Every object in Objekat is now a clip, and only a clip.**
+One track fewer per MIDI clip — the last thing making the number of tracks proportional to the number of objects — and an instrument that no longer runs on **every block** of the session (as a track plugin) but only within its object's activation window. Incidentally, a MIDI object becomes an object like any other: chain, window, fades, lane, group, aux, consolidated object. **Every object in Objekat is now a clip, and only a clip.**
 
 ### Still open
 

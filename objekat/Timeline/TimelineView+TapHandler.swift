@@ -109,7 +109,7 @@ extension TimelineView {
         guard viewModel.activeTool == .toolSelection else { return }
         guard point.y > rulerHeight else { return }
 
-        // The cancel button (✕) of the open sound object: the top-right zone of the placement
+        // The cancel button (✕) of the open consolidated object: the top-right zone of the placement
         // being edited. The block being pure presentation, the click is resolved geometrically
         // here (with priority over the selection). See SoundBlockView/GroupBlockView (`isEditing`).
         if let pid = viewModel.editingPlacementID,
@@ -119,7 +119,7 @@ extension TimelineView {
             let by = rulerHeight + Double(e.displayLane) * laneStep
             let btn = CGRect(x: bx + bw - 26, y: by + 1, width: 25, height: 24)
             if btn.contains(point) {
-                viewModel.cancelObjectEdit()
+                viewModel.cancelConsolidateEdit()
                 return
             }
         }
@@ -157,8 +157,8 @@ extension TimelineView {
         // pulled out of an edge one had just cleared. One double click, one fade, gone whole.
         if isDoubleTap, let (hover, item) = selectionZoneHover(at: point),
            hover.zone == .fadeIn || hover.zone == .fadeOut,
-           // A sound object's double click (open / close) still takes priority.
-           !item.isObjectInstance, viewModel.editingPlacementID != item.id {
+           // A consolidated object's double click (open / close) still takes priority.
+           !item.isConsolidateInstance, viewModel.editingPlacementID != item.id {
             viewModel.edit {
                 if hover.zone == .fadeIn {
                     viewModel.updateFadeIn(id: hover.id, fadeIn: 0)
@@ -276,7 +276,7 @@ extension TimelineView {
         }
 
         // ⌥ + double click = OPEN / CLOSE the automation band, on ANY object.
-        // It is the ONLY path for a sound object instance, whose bare double click is already
+        // It is the ONLY path for a consolidated object instance, whose bare double click is already
         // taken (it opens the object, see just below) and which, folded, shows no selector at
         // all. Elsewhere it is a shortcut: it saves opening the content only to reach the
         // selector afterwards.
@@ -287,19 +287,19 @@ extension TimelineView {
             return
         }
 
-        // A sound object TAKES PRIORITY (a design decision): a double click = OPEN the object;
+        // A consolidated object TAKES PRIORITY (a design decision): a double click = OPEN the object;
         // a double click again on the open object = CLOSE (a new bake). Uniform top-level / child,
         // and with priority over unfolding a group / the MIDI piano roll. The children keep their
         // double click once the object is open (we fall through further down).
         if isDoubleTap, let ho = hitChild ?? hitClip ?? hitGroup {
             if viewModel.editingPlacementID == ho.id {
                 viewModel.timeSelection = nil
-                viewModel.closeObject()
+                viewModel.closeConsolidate()
                 return
             }
-            if ho.isObjectInstance {
+            if ho.isConsolidateInstance {
                 viewModel.timeSelection = nil
-                viewModel.openObject(viaPlacementID: ho.id)
+                viewModel.openConsolidate(viaPlacementID: ho.id)
                 return
             }
         }

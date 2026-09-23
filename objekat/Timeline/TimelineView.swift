@@ -612,7 +612,7 @@ struct TimelineView: View {
                 //
                 // A PERF SPLIT: the visible 'ordinary' clips are drawn in ONE Canvas (1 view node
                 // instead of N×layers → the cost of scrolling was the number of SwiftUI nodes, not
-                // the drawing). The rich blocks (selection, tools, renaming, a sound object, an aux,
+                // the drawing). The rich blocks (selection, tools, renaming, a consolidated object, an aux,
                 // MIDI, groups, a drag) keep their SwiftUI view.
                 let plainVisible = viewModel.laneEntries.filter {
                     isEntryVisible($0) && isPlainCanvasClip($0.item)
@@ -864,7 +864,7 @@ struct TimelineView: View {
                     .zIndex(2.7)
                 }
 
-                // Sound object LINK overlay: PURPLE lines between the instances of one definition
+                // Consolidated object LINK overlay: PURPLE lines between the instances of one definition
                 // (those that are visible). Contextual — like the plugin link, we only show it for the
                 // selection. The selected placements are grouped by definition:
                 //
@@ -876,22 +876,22 @@ struct TimelineView: View {
                         var byDef: [UUID: [UUID]] = [:]
                         for id in viewModel.selectedIDs {
                             guard let obj = viewModel.find(id: id),
-                                  let defID = obj.definitionID else { continue }
+                                  let defID = obj.consolidateID else { continue }
                             byDef[defID, default: []].append(id)
                         }
                         for (defID, selected) in byDef {
                             if selected.count <= 1 {
                                 guard let src = selected.first, let srcTarget = linkTarget(for: src) else { continue }
-                                let members = viewModel.placementIDs(forDefinition: defID, excluding: src)
+                                let members = viewModel.placementIDs(forConsolidate: defID, excluding: src)
                                     .compactMap { linkTarget(for: $0) }
                                 guard !members.isEmpty else { continue }
                                 LinkOverlay.drawStar(in: ctx, source: srcTarget, members: members,
-                                                     color: LinkColor.soundObject)
+                                                     color: LinkColor.consolidate)
                             } else {
                                 // Every visible instance of the definition, ordered along the timeline
                                 // (left→right, then top→bottom), joined in a chain.
                                 let selectedSet = Set(selected)
-                                let nodes = viewModel.placementIDs(forDefinition: defID)
+                                let nodes = viewModel.placementIDs(forConsolidate: defID)
                                     .compactMap { id -> (target: LinkTarget, active: Bool)? in
                                         guard let t = linkTarget(for: id) else { return nil }
                                         return (t, selectedSet.contains(id))
@@ -902,7 +902,7 @@ struct TimelineView: View {
                                             : l.target.rect.minY < r.target.rect.minY
                                     }
                                 guard nodes.count > 1 else { continue }
-                                LinkOverlay.drawChain(in: ctx, nodes: nodes, color: LinkColor.soundObject)
+                                LinkOverlay.drawChain(in: ctx, nodes: nodes, color: LinkColor.consolidate)
                             }
                         }
                     }
@@ -1945,10 +1945,10 @@ struct TimelineView: View {
                                 ? viewModel.sendRows(for: object.id) : [],
             isRenaming:       viewModel.renamingID == object.id,
             isBaking:         viewModel.isBaking(object.id),
-            isStale:          object.isObjectInstance && viewModel.isStale(object.id),
+            isStale:          object.isConsolidateInstance && viewModel.isStale(object.id),
             isPreviewing:     viewModel.hasLiveMirrors && viewModel.editingPlacementID == object.id,
-            isRecomputing:    object.definitionID.map { viewModel.recomputingDefinitionIDs.contains($0) } ?? false,
-            isResynced:       object.definitionID.map { viewModel.recentlyResyncedDefinitionIDs.contains($0) } ?? false,
+            isRecomputing:    object.consolidateID.map { viewModel.recomputingConsolidateIDs.contains($0) } ?? false,
+            isResynced:       object.consolidateID.map { viewModel.recentlyResyncedConsolidateIDs.contains($0) } ?? false,
             isEditing:        viewModel.editingPlacementID == object.id,
             onRename: { label in
                 if let label { viewModel.renameObject(id: object.id, label: label) }
@@ -1956,7 +1956,7 @@ struct TimelineView: View {
             }
         )
         // `.task(id:)` (and not `.onAppear`): the placement can change its `filePath` WITHOUT the
-        // view being rebuilt (a clip→sound object transformation, a definition's re-bake) — `onAppear`
+        // view being rebuilt (a clip→consolidated object transformation, a definition's re-bake) — `onAppear`
         // would not fire again and the waveform would stay frozen on the old wave. `load` is
         // idempotent (a no-op if it is already cached / in flight).
         .task(id: object.filePath) { waveformCache.load(filePath: object.filePath) }
@@ -1986,7 +1986,7 @@ struct TimelineView: View {
         if viewModel.isSelected(item.id) { return false }
         if viewModel.renamingID == item.id { return false }
         if viewModel.isBaking(item.id) { return false }
-        if item.isObjectInstance { return false }   // a link/freshness badge → a rich view
+        if item.isConsolidateInstance { return false }   // a link/freshness badge → a rich view
         if item.colorIndex != nil { return false }   // a 10%/90% band → a rich view
         switch viewModel.activeTool {
         case .toolVolume, .toolPan, .toolAux: return false   // interactive overlays
@@ -2159,7 +2159,7 @@ struct TimelineView: View {
                 // own clip, per block per frame, in the regime that exists precisely because
                 // there are too many blocks to afford that.
                 // The cache key must therefore carry the icon as well as the name: two clips can
-                // share a name and not a kind (a sound and the sound object made from it), and a
+                // share a name and not a kind (a sound and the consolidated object made from it), and a
                 // key on the string alone would hand the second one the first one's glyph.
                 func resolvedLabel(_ s: String, icon: String, missing: Bool) -> GraphicsContext.ResolvedText {
                     let key = icon + "\u{0}" + s
@@ -2278,7 +2278,7 @@ struct TimelineView: View {
             stemColor: viewModel.stemColor(for: group.id),
             isMutedInMix: viewModel.isMutedInMix(group),
             containsMissingFile: viewModel.containsMissingDescendant(group),
-            isOpenObject: viewModel.isInObjectEditStack(group.id),
+            isOpenConsolidate: viewModel.isInConsolidateEditStack(group.id),
             displayLane: dl,
             scrollOffsetX: cullScrollX,
             viewportWidth: cullViewportWidth,

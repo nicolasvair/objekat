@@ -12,8 +12,8 @@ import Foundation
 // so an object whose file went missing is a GHOST down there — no clip, no chain, no fades, no
 // sends, no plugins. Writing a new path into the model would therefore mend the drawing and
 // nothing else: the object would still be silent, and silently so. What has to happen is the
-// birth of the whole object on the new file, which is exactly the gesture `applyDefinitionWave`
-// makes when a sound object is re-baked onto another wave (@see EditViewModel+Objects):
+// birth of the whole object on the new file, which is exactly the gesture `applyConsolidateWave`
+// makes when a consolidated object is re-baked onto another wave (@see EditViewModel+Consolidate):
 // removeFromEngine → rewrite the kind → engineAddClip → reattach to the group or the stem →
 // syncSends → updateFade → pushAutomation. `rebuildClip` is that sequence, plus the fade SHAPES
 // (they live in the ObjWindowFade plugin, which is reborn with the object) — and the plugins come
@@ -100,7 +100,7 @@ extension EditViewModel {
     /// the caller's business — it is a question, and this file never asks one (@see
     /// `objectsSharingSource`, which the dialog reads to put it).
     ///
-    /// Refuses an INSTANCE of a sound object (`definitionID != nil`): its content is not its own,
+    /// Refuses an INSTANCE of a consolidated object (`consolidateID != nil`): its content is not its own,
     /// it reads the definition's current wave, and the next re-bake would silently put that wave
     /// back — a gesture undone by something the user did not do is worse than one refused. An id
     /// that cannot take the file is DROPPED rather than failing the batch: a selection holding one
@@ -116,7 +116,7 @@ extension EditViewModel {
         let targets = ids.filter { id in
             guard seen.insert(id).inserted,
                   let object = find(id: id), case .clip(let oldPath, _, _, _, _) = object.kind,
-                  object.definitionID == nil, oldPath != path else { return false }
+                  object.consolidateID == nil, oldPath != path else { return false }
             return true
         }
         guard !targets.isEmpty else { return false }
@@ -147,7 +147,7 @@ extension EditViewModel {
     /// The counterpart of `propagationTargets` for the deliberate gesture, and it counts OBJECTS
     /// where that one counts paths: the sentence says "N other sounds use this file", and here
     /// several placements of one take are several sounds to the eye. Only what `replaceSource`
-    /// would really accept is returned (an instance of a sound object is left out), so the figure
+    /// would really accept is returned (an instance of a consolidated object is left out), so the figure
     /// offered is a figure of things that will change. Sorted by nothing but the tree's own order
     /// — `allClips` walks it — which is what makes a headless assertion repeatable.
     func objectsSharingSource(_ paths: Set<String>, excluding: Set<UUID>) -> [UUID] {
@@ -155,7 +155,7 @@ extension EditViewModel {
         return allClips.compactMap { clip -> UUID? in
             guard case .clip(let p, _, _, _, _) = clip.kind,
                   paths.contains(p), !excluding.contains(clip.id),
-                  clip.definitionID == nil else { return nil }
+                  clip.consolidateID == nil else { return nil }
             return clip.id
         }
     }
@@ -419,7 +419,7 @@ extension EditViewModel {
         }
         guard let after = find(id: id) else { return false }
 
-        // From here on it is `applyDefinitionWave`'s sequence, word for word — the object is born,
+        // From here on it is `applyConsolidateWave`'s sequence, word for word — the object is born,
         // then put back where it belongs, then given back everything the birth does not carry.
         engineAddClip(after, lane: carrierLane(for: id, fallback: after.lane))
         if let parent = parentGroup(for: id) {

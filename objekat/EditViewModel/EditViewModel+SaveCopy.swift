@@ -3,15 +3,115 @@ import AppKit
 // MARK: - Save a copy with audio files (a self-contained capsule)
 //
 // Creates a SELF-CONTAINED project folder holding the project + ALL the audio files it needs,
-// and NOTHING more (the orphan waves piled up in samples/objects/ after a re-bake are
+// and NOTHING more (the orphan waves piled up in samples/consolidate/ after a re-bake are
 // excluded). Used to send a "ready to open" copy to somebody else.
 //
 // A reminder of the model: the SOURCE files of a normal `.clip` point at an EXTERNAL absolute
-// path (Sound library/Finder) — they are not in the project folder. Only sound-object waves
-// (samples/objects/) live there, each with a JSON sidecar
-// (`*_objectstate.json`) carrying the editable sub-tree. Those sidecars themselves reference
-// other files (sources, nested sound objects) → they are collected by transitive closure
-// so that the recipient can open AND edit everything.
+// path (Sound library/Finder) — they are not in the project folder. Only consolidated-object
+// waves (samples/consolidate/, or the legacy samples/objects/ — cas E1, read but never written
+// again) live there, each with a JSON sidecar (`*_objectstate.json`) carrying the editable
+// sub-tree. Those sidecars themselves reference other files (sources, nested consolidated
+// objects) → they are collected by transitive closure so that the recipient can open AND edit
+// everything.
+
+/// What a finished "Save a copy" did — handed to `performSaveCopy`'s completion.
+struct SaveCopyReport {
+    /// The capsule's manifest (`<folder>/<folder>.json`).
+    let projectFile: URL
+    /// Files copied (sources + consolidated waves; the regenerable `.wfc` caches are not counted).
+    let copiedFiles: Int
+    /// What the capsule could not carry (absent source, sidecar or definition) — the copy still
+    /// succeeded, those links are left as they were.
+    let missing: [String]
+    /// Write failures. Non-empty = the capsule is incomplete.
+    let errors: [String]
+    /// Set when the destination was REFUSED (nothing read, nothing written).
+    var destinationProblem: SaveCopyDestinationProblem? = nil
+    var succeeded: Bool { errors.isEmpty }
+}
+
+/// Why a folder cannot receive a copy of the project: it overlaps a folder the copy READS from.
+///
+/// The copy writes into the destination with "remove what is there, then copy": on a destination
+/// that IS the source (or overlaps it) the removal falls on the very file about to be copied — a
+/// consolidated wave deleted, then copied from… nothing. That is how a copy onto the project's
+/// own folder erased its consolidated waves. The folder is refused up front, before anything is
+/// read or written.
+struct SaveCopyDestinationProblem: Equatable {
+    enum Overlap: Equatable {
+        /// The destination IS a folder the copy reads from.
+        case sameFolder
+        /// The destination lies INSIDE such a folder (e.g. `<project>/samples/`).
+        case insideSource
+        /// The destination CONTAINS such a folder (e.g. the project's parent folder, whose
+        /// `samples/` would then be the project's own).
+        case containsSource
+    }
+    let overlap: Overlap
+    /// The folder the copy reads from that the destination overlaps.
+    let source: URL
+    /// True when `source` is the project's own folder; false for the folder of an OLDER project
+    /// the consolidated waves are still read from (the Q3 fallback, after a Save As).
+    let sourceIsProject: Bool
+
+    /// For the API (English, stable wording — the code is what a script branches on).
+    var apiMessage: String {
+        let what = sourceIsProject ? "the project's own folder"
+                                   : "a folder the project still reads consolidated waves from"
+        switch overlap {
+        case .sameFolder:     return "the copy's folder is \(what): \(source.path)"
+        case .insideSource:   return "the copy's folder is inside \(what): \(source.path)"
+        case .containsSource: return "the copy's folder contains \(what): \(source.path)"
+        }
+    }
+
+    /// For the alert (localised).
+    var localizedInfo: String {
+        guard sourceIsProject else { return L("saveCopy.error.destination.readFolder", source.path) }
+        switch overlap {
+        case .sameFolder:     return L("saveCopy.error.destination.same", source.path)
+        case .insideSource:   return L("saveCopy.error.destination.inside", source.path)
+        case .containsSource: return L("saveCopy.error.destination.contains", source.path)
+        }
+    }
+}
+
+/// Folder identity that holds on a case-insensitive volume, through symbolic links and through
+/// Unicode normalisation: two URLs name the same folder when the FILE SYSTEM says so (its resource
+/// identifier), never because two strings compare equal — `/tmp/P` vs `/private/tmp/p` vs a link
+/// to it are one and the same folder on APFS, and a string comparison misses all three.
+enum FolderIdentity {
+
+    /// The file-system identity of an EXISTING item (symbolic links resolved), nil if absent.
+    static func identifier(_ url: URL) -> NSObject? {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+        guard FileManager.default.fileExists(atPath: resolved.path) else { return nil }
+        return (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]))?
+            .fileResourceIdentifier as? NSObject
+    }
+
+    /// `url` and each of its ancestors up to `/`, symbolic links resolved on the existing part.
+    /// A path that does not exist yet (a copy's new folder) is walked from its deepest existing
+    /// ancestor: that is where it WILL be created.
+    static func existingChain(_ url: URL) -> [URL] {
+        var u = url.standardizedFileURL
+        let fm = FileManager.default
+        while !fm.fileExists(atPath: u.path), u.path != "/" { u = u.deletingLastPathComponent() }
+        u = u.resolvingSymlinksInPath()
+        var chain = [u]
+        while u.path != "/" {
+            u = u.deletingLastPathComponent()
+            chain.append(u)
+        }
+        return chain
+    }
+
+    /// True if `a` and `b` are the same existing file or folder.
+    static func same(_ a: URL, _ b: URL) -> Bool {
+        guard let ia = identifier(a), let ib = identifier(b) else { return false }
+        return ia.isEqual(ib)
+    }
+}
 
 extension EditViewModel {
 
@@ -27,8 +127,59 @@ extension EditViewModel {
         panel.canCreateDirectories = true
         panel.begin { [weak self] response in
             guard let self, response == .OK, let dest = panel.url else { return }
+            // `performSaveCopy` refuses an overlapping destination itself (with the alert): the
+            // panel happily offers the project's own folder, and "Replace" on it was a data loss.
             self.performSaveCopy(to: dest)
         }
+    }
+
+    // MARK: - Where a copy may NOT go
+
+    /// The folders the copy READS from and must therefore never write into: the project's folder,
+    /// plus the project folder of every consolidated wave read from elsewhere (the Q3 fallback — a
+    /// Save As leaves the waves in the OLD project's folder until the next re-bake).
+    func saveCopySourceFolders() -> [URL] {
+        var out: [URL] = []
+        if let projectFolder { out.append(projectFolder) }
+        for (defID, def) in consolidateDefinitions {
+            guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { continue }
+            // `<project>/samples/<consolidate|objects>` → `<project>`; any other layout → the folder itself.
+            let samples = folder.deletingLastPathComponent()
+            let root = samples.lastPathComponent == "samples" ? samples.deletingLastPathComponent() : folder
+            if !out.contains(where: { FolderIdentity.same($0, root) || $0.standardizedFileURL == root.standardizedFileURL }) {
+                out.append(root)
+            }
+        }
+        return out
+    }
+
+    /// nil if `dest` may receive a copy; otherwise the first overlap found with a folder the copy
+    /// reads from (@see SaveCopyDestinationProblem). Identity is the FILE SYSTEM's, so a different
+    /// case, a symbolic link or `/tmp` vs `/private/tmp` are all seen through (@see FolderIdentity).
+    func saveCopyDestinationProblem(_ dest: URL) -> SaveCopyDestinationProblem? {
+        let destChain = FolderIdentity.existingChain(dest)
+        let destExists = FileManager.default.fileExists(
+            atPath: dest.standardizedFileURL.resolvingSymlinksInPath().path)
+        for (n, source) in saveCopySourceFolders().enumerated() {
+            guard let sourceID = FolderIdentity.identifier(source) else { continue }
+            let isProject = n == 0 && projectFolder != nil
+            // dest == source, or dest (or where it will be created) under source.
+            for (i, ancestor) in destChain.enumerated() {
+                guard let id = FolderIdentity.identifier(ancestor), id.isEqual(sourceID) else { continue }
+                return SaveCopyDestinationProblem(overlap: (i == 0 && destExists) ? .sameFolder : .insideSource,
+                                                  source: source, sourceIsProject: isProject)
+            }
+            // source under dest (only an existing dest can contain anything).
+            if destExists, let destID = FolderIdentity.identifier(dest) {
+                for ancestor in FolderIdentity.existingChain(source).dropFirst() {
+                    if let id = FolderIdentity.identifier(ancestor), id.isEqual(destID) {
+                        return SaveCopyDestinationProblem(overlap: .containsSource, source: source,
+                                                          sourceIsProject: isProject)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Carrying it out
@@ -38,16 +189,32 @@ extension EditViewModel {
     ///
     /// Internal (and not private): this is the AppKit-free heart of "Save a copy", the one external
     /// driving will call directly, skipping the panel but not a single line of the copying
-    /// logic.
-    func performSaveCopy(to destFolder: URL) {
+    /// logic (`project.save_copy`).
+    ///
+    /// `completion` is called on the main thread once EVERY write is over, after the final alert
+    /// (which itself goes through the dialogue policy) — it is what lets the API wait for the end
+    /// instead of guessing it.
+    func performSaveCopy(to destFolder: URL, completion: ((SaveCopyReport) -> Void)? = nil) {
         // The manifest bears the folder's name and nothing more: "My Project copy/My Project copy.json".
         let folderName = EditViewModel.projectDisplayName(for: destFolder)
         let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
 
-        // Destination folders.
+        // A destination overlapping a folder the copy reads from is refused BEFORE anything is
+        // read or written: the "remove, then copy" of step 7 would otherwise delete the very
+        // files it is about to copy (the consolidated waves of the project's own folder).
+        if let problem = saveCopyDestinationProblem(destFolder) {
+            notify(L("saveCopy.error.destination.title"), problem.localizedInfo)
+            completion?(SaveCopyReport(projectFile: projectFileURL, copiedFiles: 0, missing: [],
+                                       errors: [problem.apiMessage], destinationProblem: problem))
+            return
+        }
+
+        // Destination folders. The copy NORMALISES: every consolidated wave lands in
+        // `samples/consolidate/`, wherever it was actually read from (cas E1/E6) — the copy is in
+        // effect the migration tool this project deliberately has no other one of.
         let samplesDst  = destFolder.appendingPathComponent("samples", isDirectory: true)
         let sourcesDst  = samplesDst.appendingPathComponent("sources", isDirectory: true)
-        let objectsDst  = samplesDst.appendingPathComponent("objects", isDirectory: true)
+        let consolidateDst  = samplesDst.appendingPathComponent("consolidate", isDirectory: true)
         let waveformsDst = destFolder.appendingPathComponent("waveforms", isDirectory: true)
 
         // 1) Discovery (transitive closure through the sidecars).
@@ -57,7 +224,7 @@ extension EditViewModel {
         var missing: [String] = []
 
         func discover(_ o: SoundObject) {
-            if let defID = o.definitionID {
+            if let defID = o.consolidateID {
                 referencedDefIDs.insert(defID)
                 return   // an instance reads the baked wave; the recursion goes through the definition
             }
@@ -78,15 +245,15 @@ extension EditViewModel {
         var processedDefs: Set<UUID> = []
         while let defID = referencedDefIDs.subtracting(processedDefs).first {
             processedDefs.insert(defID)
-            guard let def = objectDefinitions[defID] else {
-                missing.append(L("saveCopy.missingDefinition", String(defID.uuidString.prefix(8))))
+            guard let def = consolidateDefinitions[defID] else {
+                missing.append(L("saveCopy.missingConsolidate", String(defID.uuidString.prefix(8))))
                 continue
             }
-            if let original = readObjectSidecar(def.wave) {
+            if let original = readConsolidateSidecar(def.wave, definition: defID) {
                 objectSidecars[defID] = original
                 discover(original)
             } else {
-                missing.append(objectSidecarName(def.wave))
+                missing.append(consolidateSidecarName(def.wave))
             }
         }
 
@@ -136,13 +303,16 @@ extension EditViewModel {
             addWaveformCopy(originalBasename: srcURL.lastPathComponent, destBasename: name)
         }
 
-        // 3) Sound-object waves: copied from the CURRENT folder into the capsule.
-        if let objects = objectsFolder {
+        // 3) Consolidated-object waves: copied from WHEREVER each is actually found (cas E1/E6 —
+        //    samples/consolidate/, the legacy samples/objects/, or the Q3 fallback) into the
+        //    capsule's samples/consolidate/. The copy is what normalises a mixed project.
+        if projectFolder != nil {
             for defID in processedDefs {
-                guard let def = objectDefinitions[defID] else { continue }
-                let srcWave = objects.appendingPathComponent(def.wave)
+                guard let def = consolidateDefinitions[defID],
+                      let srcFolder = consolidateReadFolder(forWave: def.wave, definition: defID) else { continue }
+                let srcWave = srcFolder.appendingPathComponent(def.wave)
                 if fm.fileExists(atPath: srcWave.path) {
-                    fileCopies.append((srcWave, objectsDst.appendingPathComponent(def.wave)))
+                    fileCopies.append((srcWave, consolidateDst.appendingPathComponent(def.wave)))
                     addWaveformCopy(originalBasename: def.wave, destBasename: def.wave)
                 } else {
                     missing.append(def.wave)
@@ -154,9 +324,9 @@ extension EditViewModel {
         //    the copy's sources/ (through `pathMap`). Applied to the items AND to each sidecar.
         func rewrite(_ o: SoundObject) -> SoundObject {
             var n = o
-            if let defID = o.definitionID, let def = objectDefinitions[defID],
+            if let defID = o.consolidateID, let def = consolidateDefinitions[defID],
                case .clip(_, let so, let fd, let sr, let rev) = o.kind {
-                n.kind = .clip(filePath: objectsDst.appendingPathComponent(def.wave).path,
+                n.kind = .clip(filePath: consolidateDst.appendingPathComponent(def.wave).path,
                                sourceOffset: so, fileDuration: fd, speedRatio: sr, isReversed: rev)
             } else {
                 switch o.kind {
@@ -179,40 +349,35 @@ extension EditViewModel {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         for (defID, original) in objectSidecars {
-            guard let def = objectDefinitions[defID],
-                  let data = try? encodedObjectSidecar(rewrite(original), projectFolder: destFolder)
+            guard let def = consolidateDefinitions[defID],
+                  let data = try? encodedConsolidateSidecar(rewrite(original), projectFolder: destFolder)
             else { continue }
-            sidecarWrites.append((objectSidecarURL(forWave: def.wave, in: objectsDst), data))
+            sidecarWrites.append((consolidateSidecarURL(forWave: def.wave, in: consolidateDst), data))
         }
 
         // 6) The project document: items (with captured plugin states) rewritten + the definition
         //    registry filtered down to the closure (orphan definitions are dropped).
         let rewrittenItems = portableItems(itemsWithCapturedPluginStates().map(rewrite),
                                            projectFolder: destFolder)
-        let closureDefs = processedDefs.compactMap { objectDefinitions[$0] }
-        let doc = ProjectDocument(items: rewrittenItems,
-                                  stems: stems,
-                                  tempo: tempo,
-                                  timeSigNumerator: timeSigNumerator,
-                                  timeSigDenominator: timeSigDenominator,
-                                  gridMode: gridMode,
-                                  objectDefinitions: closureDefs.isEmpty ? nil : closureDefs,
-                                  // The annotations travel with the copy: they name nothing outside
-                                  // the project, so there is nothing to rewrite in them — but a
-                                  // capsule that lost the notes written on it would be a poor copy.
-                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
-                                  comments: comments.isEmpty ? nil : comments)
+        let closureDefs = processedDefs.compactMap { consolidateDefinitions[$0] }
+        // The SAME document as a save (@see projectDocument): snap, viewport, tempo, grid and the
+        // annotations travel with the copy — only the items (paths rewritten) and the registry
+        // (filtered down to the closure: orphan definitions are dropped) are the copy's own.
+        let doc = projectDocument(items: rewrittenItems, consolidateDefinitions: closureDefs)
         let projectData: Data
         do {
             projectData = try encoder.encode(doc)
         } catch {
             copyAlert(success: false,
                       info: L("saveCopy.encodeFailed", error.localizedDescription))
+            completion?(SaveCopyReport(projectFile: projectFileURL, copiedFiles: 0,
+                                       missing: missing,
+                                       errors: [error.localizedDescription]))
             return
         }
 
         // Folders to create (waveforms/ empty: a cache the recipient can regenerate).
-        let dirsToCreate = [destFolder, samplesDst, sourcesDst, objectsDst, waveformsDst]
+        let dirsToCreate = [destFolder, samplesDst, sourcesDst, consolidateDst, waveformsDst]
 
         // 7) File I/O in the background, then the report on the main thread.
         DispatchQueue.global(qos: .userInitiated).async {
@@ -224,7 +389,12 @@ extension EditViewModel {
                 catch { ioErrors.append(L("saveCopy.error.folder", dir.lastPathComponent,
                                           error.localizedDescription)) }
             }
+            // The last line of defence, below the folder check: a destination file that IS its
+            // source (a clip whose source already sits in the destination's samples/sources/,
+            // reached through another spelling of the same path) is left alone — removing it
+            // "to replace it" would delete the one copy there is. It is already where it belongs.
             for (src, dst) in fileCopies {
+                if FolderIdentity.same(src, dst) { continue }
                 do {
                     if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
                     try fm.copyItem(at: src, to: dst)
@@ -234,6 +404,7 @@ extension EditViewModel {
             }
             // Waveform caches: regenerable → a failure does not invalidate the copy (silent).
             for (src, dst) in waveformCopies {
+                if FolderIdentity.same(src, dst) { continue }
                 if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
                 try? fm.copyItem(at: src, to: dst)
             }
@@ -255,20 +426,24 @@ extension EditViewModel {
                                    info: L("saveCopy.writeErrors") + "\n"
                                         + self.truncatedList(ioErrors))
                 }
+                completion?(SaveCopyReport(projectFile: projectFileURL,
+                                           copiedFiles: fileCopies.count,
+                                           missing: missing, errors: ioErrors))
             }
         }
     }
 
     // MARK: - Reading the source sidecars (the project's current folders)
 
-    private func readObjectSidecar(_ wave: String) -> SoundObject? {
-        guard let objects = objectsFolder else { return nil }
-        let url = objectSidecarURL(forWave: wave, in: objects)
+    private func readConsolidateSidecar(_ wave: String, definition defID: UUID? = nil) -> SoundObject? {
+        // Cas E4: read where the wave was actually found, not assumed to be the write folder.
+        guard let folder = consolidateReadFolder(forWave: wave, definition: defID) else { return nil }
+        let url = consolidateSidecarURL(forWave: wave, in: folder)
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? decodedObjectSidecar(data, projectFolder: projectFolder)
+        return try? decodedConsolidateSidecar(data, projectFolder: projectFolder)
     }
 
-    private func objectSidecarName(_ wave: String) -> String {
+    private func consolidateSidecarName(_ wave: String) -> String {
         "\((wave as NSString).deletingPathExtension)_objectstate.json"
     }
 

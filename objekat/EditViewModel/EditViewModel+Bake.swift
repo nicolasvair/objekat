@@ -2,11 +2,11 @@ import AppKit
 import AVFoundation
 
 // The BAKE machinery shared by everything that renders a sub-tree into a wave: creating a sound
-// object (`makeObject`), closing an edit (`closeObject`) and the headless re-bake of a
-// definition (`rebakeDefinitionInBackground`). Nothing here knows about sound objects — these are
+// object (`consolidate`), closing an edit (`closeConsolidate`) and the headless re-bake of a
+// definition (`rebakeConsolidateInBackground`). Nothing here knows about consolidated objects — these are
 // primitives: the render span, a deep copy with fresh ids, realigning a restored sub-tree
 // onto a placement, naming a file, a lock during a render.
-// @see EditViewModel+Objects
+// @see EditViewModel+Consolidate
 
 extension EditViewModel {
 
@@ -39,7 +39,7 @@ extension EditViewModel {
     /// A deep copy of a sub-tree with FRESH ids everywhere (objects + plugins), remapping
     /// the internal references: sends pointing at an aux OF the sub-tree, and link groups. Two
     /// instances taken from the same sidecar thus produce independent sub-trees, openable
-    /// separately with no id collision. Used to open a sound object, to detach an
+    /// separately with no id collision. Used to open a consolidated object, to detach an
     /// instance, to lay a live mirror, and for the headless re-bake of a definition (which
     /// instantiates a sub-tree in the engine with no collision with the timeline).
     func deepFreshCopy(_ root: SoundObject) -> SoundObject {
@@ -122,12 +122,12 @@ extension EditViewModel {
     // MARK: - Realigning a restored sub-tree
 
     /// Rebuilds `original` (a sub-tree from a sidecar, with fresh ids) ALIGNED on the window/
-    /// position of any LIVE wrapper (`wrapper`: the sound-object placement being opened,
+    /// position of any LIVE wrapper (`wrapper`: the consolidated placement being opened,
     /// being detached, or an instance being turned into a mirror — only its generic fields
     /// startTime/duration/fades/lane/volume/pan/.../sourceOffset/speedRatio count here, whatever
-    /// the mechanism that produced it). See `EditViewModel+Objects.openObject` /
+    /// the mechanism that produced it). See `EditViewModel+Consolidate.openConsolidate` /
     /// `detachFromObjectDefinition` / `applyLiveMirror` for the callers. Does not touch the result's
-    /// `definitionID` (set to nil, to be laid back by the caller if needed) nor its own
+    /// `consolidateID` (set to nil, to be laid back by the caller if needed) nor its own
     /// `plugins` (to be merged by the caller).
     func restoredSubtree(from original: SoundObject, alignedTo wrapper: SoundObject) -> SoundObject {
         var restored = deepFreshCopy(original)
@@ -144,7 +144,7 @@ extension EditViewModel {
         // only those the render carries away (the parameters of the root's user FX, baked into
         // the wave); the others — gain, pan, trims, sends, and the plugins belonging to the
         // instance — belong to the placement and arrive with it.
-        // @see SoundObject.asObjectDefinition, which carries the rule and its reason.
+        // @see SoundObject.asConsolidateDefinition, which carries the rule and its reason.
         //
         // It is this gluing back that holds the invariant: opening, re-editing then re-baking a
         // definition does not lose the own curve of the instance it was entered through — and
@@ -159,7 +159,7 @@ extension EditViewModel {
         restored.automation           = restored.automation.filter { !ownParams.contains($0.param) }
                                       + wrapper.automation
         restored.automationTouchOrder = wrapper.automationTouchOrder
-        restored.definitionID = nil
+        restored.consolidateID = nil
 
         if case .group(var children, let isExpanded) = restored.kind {
             let spd            = wrapper.speedRatio

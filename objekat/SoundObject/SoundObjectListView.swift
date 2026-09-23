@@ -136,7 +136,7 @@ struct SoundObjectListView: View {
             isSelected: viewModel.isSelected(row.id),
             isMissing: viewModel.isMissing(row.object),
             isExpanded: row.object.isExpanded,
-            isOpenObject: viewModel.isInObjectEditStack(row.id),
+            isOpenConsolidate: viewModel.isInConsolidateEditStack(row.id),
             stemColor: viewModel.stemColor(for: row.id),
             filterText: viewModel.filterText,
             onToggleExpand: { viewModel.toggleGroupExpansion(id: row.id) }
@@ -366,11 +366,11 @@ struct SoundObjectListView: View {
             // business knowing: that a group showing its automation band must be given its
             // content back before anything is toggled at all.
             viewModel.toggleGroupExpansion(id: object.id)
-        } else if object.definitionID != nil {
-            // A sound object (a placement of a definition): entering it means EDITING it — it
+        } else if object.consolidateID != nil {
+            // A consolidated object (a placement of a definition): entering it means EDITING it — it
             // leaves the baked regime for the live one and the other instances become mirrors of
-            // this placement. The guards on what can be opened are inside `openObject`.
-            viewModel.openObject(viaPlacementID: object.id)
+            // this placement. The guards on what can be opened are inside `openConsolidate`.
+            viewModel.openConsolidate(viaPlacementID: object.id)
         } else {
             // A plain sound: go and listen to it where it is.
             viewModel.engine?.seek(to: row.absStart)
@@ -397,8 +397,8 @@ private struct SoundListRowView: View {
     let isSelected: Bool
     let isMissing: Bool
     let isExpanded: Bool
-    /// Open for editing — @see `ObjectKindIcon.name(for:isOpenObject:)`.
-    let isOpenObject: Bool
+    /// Open for editing — @see `ObjectKindIcon.name(for:isOpenConsolidate:)`.
+    let isOpenConsolidate: Bool
     let stemColor: Color
     let filterText: String
     let onToggleExpand: () -> Void
@@ -427,10 +427,10 @@ private struct SoundListRowView: View {
 
     /// The kind, at a glance — ONE definition, shared with the four places the timeline draws a
     /// block's name (@see `ObjectKindIcon`), because tying this list to the timeline is the whole
-    /// point of the glyph. `isOpenObject` is what keeps a sound object reading as one while it is
+    /// point of the glyph. `isOpenConsolidate` is what keeps a consolidated object reading as one while it is
     /// open for editing, its `kind` having genuinely become `.group` for the duration.
     private var iconName: String {
-        ObjectKindIcon.name(for: row.object, isOpenObject: isOpenObject)
+        ObjectKindIcon.name(for: row.object, isOpenConsolidate: isOpenConsolidate)
     }
 
     var body: some View {

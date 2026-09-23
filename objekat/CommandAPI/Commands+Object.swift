@@ -409,7 +409,7 @@ extension CommandRegistry {
                         + "file was missing has no engine clip at all), and its window is fitted "
                         + "to it: the offset slides back if the new file is shorter, and the "
                         + "length is cut only if the file is shorter than the window itself. "
-                        + "Refused on an instance of a sound object, which reads its "
+                        + "Refused on an instance of a consolidated object, which reads its "
                         + "definition's wave and would be put back at the next bake.",
                  params: [ParamSpec("id", "uuid", "Target audio clip."),
                           ParamSpec("path", "string", "Path to the file to read from now on.")],
@@ -426,9 +426,9 @@ extension CommandRegistry {
             }
             // Asked here as well as in the model: the model answers `false` to everything, and a
             // script deserves to know WHICH refusal it met.
-            guard before.definitionID == nil else {
+            guard before.consolidateID == nil else {
                 throw CommandError(code: .invalid_state,
-                                   message: "an instance of a sound object reads its definition's wave")
+                                   message: "an instance of a consolidated object reads its definition's wave")
             }
             guard vm.replaceSource(of: id, with: URL(fileURLWithPath: path)) else {
                 throw CommandError(code: .invalid_state,

@@ -5,7 +5,7 @@ import SwiftUI
 
 /// The menu of the RULER and of the marker band: creating a mark, renaming one, deleting one.
 ///
-/// A free function rather than a method, like `addMakeObjectsItem` next door: the right-click
+/// A free function rather than a method, like `addConsolidateEachItem` next door: the right-click
 /// monitor's closure hands it the `proxies` array it must keep alive — an `NSMenuItem`'s target is
 /// held weakly, so a proxy that went out of scope would give a menu whose items do nothing.
 @MainActor

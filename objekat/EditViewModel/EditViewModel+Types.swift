@@ -23,9 +23,9 @@ struct ProjectDocument: Codable {
     /// nobody should have to turn the snap off again on every open. nil/absent (an older file, and
     /// the app's own start) ⇒ ON, which is where a fresh project begins.
     var snapEnabled: Bool?
-    /// The registry of the sound objects referenced by `SoundObject.definitionID` in
+    /// The registry of the consolidated objects referenced by `SoundObject.consolidateID` in
     /// `items`. nil/absent ⇒ none.
-    var objectDefinitions: [ObjectDefinition]?
+    var consolidateDefinitions: [ConsolidateDefinition]?
     /// The state of the timeline view at the time of saving (H zoom = px/s, V zoom = block
     /// height, scroll position). All optional: an earlier project leaves them at nil and the
     /// view keeps its default values. See `ViewportState`.
@@ -40,7 +40,11 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, objectDefinitions, viewport, markerLanes, comments
+        case gridMode, snapEnabled, viewport, markerLanes, comments
+        // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
+        // "objectDefinitions" — every session on disk already carries the registry under that
+        // key (cas E7: rename the code, never the key).
+        case consolidateDefinitions = "objectDefinitions"
     }
 
     init(items: [SoundObject], stems: [Stem]?,
@@ -49,7 +53,7 @@ struct ProjectDocument: Codable {
          timeSigDenominator: Int? = nil,
          gridMode: GridMode? = nil,
          snapEnabled: Bool? = nil,
-         objectDefinitions: [ObjectDefinition]? = nil,
+         consolidateDefinitions: [ConsolidateDefinition]? = nil,
          viewport: ViewportState? = nil,
          markerLanes: [MarkerLane]? = nil,
          comments: [TimelineComment]? = nil) {
@@ -61,7 +65,7 @@ struct ProjectDocument: Codable {
         self.timeSigDenominator = timeSigDenominator
         self.gridMode = gridMode
         self.snapEnabled = snapEnabled
-        self.objectDefinitions = objectDefinitions
+        self.consolidateDefinitions = consolidateDefinitions
         self.viewport = viewport
         self.markerLanes = markerLanes
         self.comments = comments
@@ -85,10 +89,10 @@ struct EditSnapshot {
     // INC 2: a bus's FX chain lives on Stem.plugins → included in the undo. Optional = the
     // snapshots from before this field (none in practice, in-memory) restore the current stems.
     var stems: [Stem]? = nil
-    // The sound-object registry: without it, undoing the creation of a sound object, a
+    // The consolidated registry: without it, undoing the creation of a consolidated object, a
     // closing (with the revision bumped) or a volume/pan/mute propagation left the registry
     // out of step with the restored instances.
-    var objectDefinitions: [UUID: ObjectDefinition]? = nil
+    var consolidateDefinitions: [UUID: ConsolidateDefinition]? = nil
     // Tempo / time signature: without them, undoing a tempo change in BPM mode restored the
     // positions from BEFORE the remap while leaving the new tempo — model and grid out of tune.
     var tempo: Double? = nil
@@ -198,7 +202,7 @@ enum TimeLadder {
 
 // MARK: - Annotation selection
 
-/// What is selected among the things that are NOT sound objects: a marker or a region on a row of
+/// What is selected among the things that are NOT consolidated objects: a marker or a region on a row of
 /// the band, a marker carried by an object, a comment.
 ///
 /// ONE slot for the three, on the model of `selectedCrossfade` and for the same reason: putting

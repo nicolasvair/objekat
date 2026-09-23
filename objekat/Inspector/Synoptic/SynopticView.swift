@@ -73,7 +73,7 @@ struct SynopticActions {
     var onToggleMute: (() -> Void)? = nil
     var onToggleSolo: (() -> Void)? = nil
     var onBeginMixEdit: (() -> Void)? = nil
-    /// A double click on the link icon of a mix attribute (a sound object): toggles synced/independent.
+    /// A double click on the link icon of a mix attribute (a consolidated object): toggles synced/independent.
     var onToggleAttrSync: ((SynopticMixAttr) -> Void)? = nil
 
     // The 'stems' zone (output): assigning the stem.
@@ -98,10 +98,10 @@ struct SynopticAudioFile: Equatable {
     var isLooping: Bool
 }
 
-/// A sound object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
+/// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
 enum SynopticMixAttr { case volume, pan, mute }
 
-/// The synced/independent state of a sound object instance's mix attributes (`true` = synced
+/// The synced/independent state of a consolidated object instance's mix attributes (`true` = synced
 /// with the other instances). nil on `SynopticMix.attrLinks` = an unlinked object (no icons).
 struct SynopticMixLinks: Equatable {
     var volumeSynced: Bool
@@ -129,7 +129,7 @@ struct SynopticMix: Equatable {
     /// Volume / pan driven by an automation CURVE (their static setting is neutralised).
     var volumeAutomated: Bool = false
     var panAutomated: Bool = false
-    /// Non-nil ⇒ a sound object instance: it shows the per-attribute link icons.
+    /// Non-nil ⇒ a consolidated object instance: it shows the per-attribute link icons.
     var attrLinks: SynopticMixLinks? = nil
 }
 
@@ -182,7 +182,7 @@ extension View {
     /// A decision from the automation work: no offset, no composition — as soon as a parameter
     /// carries a point, the curve is what counts and the static setting is no longer heard. A
     /// control that still answered the gesture without changing the sound would look like a
-    /// fault: we grey it out, like the FX of a closed sound object just above.
+    /// fault: we grey it out, like the FX of a closed consolidated object just above.
     @ViewBuilder
     func automationLocked(_ locked: Bool) -> some View {
         if locked {
@@ -207,7 +207,7 @@ extension View {
         if let text, !text.isEmpty { self.help(text) } else { self }
     }
 
-    /// Greys out and neutralises the FX of a CLOSED sound object, saying why they do not answer.
+    /// Greys out and neutralises the FX of a CLOSED consolidated object, saying why they do not answer.
     func fxReadOnlyLocked(_ readOnly: Bool) -> some View {
         disabled(readOnly)
             .opacity(readOnly ? 0.45 : 1)
@@ -261,7 +261,7 @@ struct SynopticView: View {
     /// Non-nil ⇒ looping is available: a group (the chain head) or a MIDI clip (the MIDI zone).
     /// Audio has its own badge in `audioFile` (@see [[loop-item-plan]]).
     var loop: SynopticLoop? = nil
-    /// True = a sound object shown CLOSED: the FX (cards, '+' inserts, parallel branches, branch
+    /// True = a consolidated object shown CLOSED: the FX (cards, '+' inserts, parallel branches, branch
     /// and chain gains) are visible but greyed out and disabled, with an 'Open to edit' tooltip.
     /// The source, the mix and the stems stay interactive. Fully interactive as soon as the object
     /// is opened for editing (double click). See SynopticBoundView.
@@ -326,7 +326,7 @@ struct SynopticView: View {
             }
 
             // FX (cards, inserts, branches, gains): greyed out and disabled outside the editing of a
-            // closed sound object (`fxReadOnly`), fully interactive otherwise. Source / mix / stems are
+            // closed consolidated object (`fxReadOnly`), fully interactive otherwise. Source / mix / stems are
             // NOT in this group (they always stay active).
             Group {
             // 'Cable' drop zones: rendered FIRST (hence under the cards) so that dropping a plugin on a
@@ -1362,12 +1362,12 @@ struct ClipMixZoneView: View {
                 Text(mix.title)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                // A 'linked sound object' marker (the attributes below carry a link icon).
+                // A 'linked consolidated object' marker (the attributes below carry a link icon).
                 if mix.attrLinks != nil {
                     Image(systemName: "waveform.circle")
                         .font(.system(size: 17))
-                        .foregroundStyle(LinkColor.soundObject)
-                        .help(L("synoptic.soundObject.linked"))
+                        .foregroundStyle(LinkColor.consolidate)
+                        .help(L("synoptic.consolidate.linked"))
                 }
                 Spacer(minLength: 0)
                 // Each attribute: the value, then (tight to the right) its link icon.
@@ -1409,7 +1409,7 @@ struct ClipMixZoneView: View {
         }
     }
 
-    /// An attribute's link icon (a sound object): green = synced between instances,
+    /// An attribute's link icon (a consolidated object): green = synced between instances,
     /// red = independent. Double click to flip the state.
     private func attrLinkBadge(_ attr: SynopticMixAttr, synced: Bool) -> some View {
         Image(systemName: "arrow.down.left.arrow.up.right.square.fill")
@@ -1418,8 +1418,8 @@ struct ClipMixZoneView: View {
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { actions.onToggleAttrSync?(attr) }
             .help(synced
-                  ? L("synoptic.soundObject.attrSynced")
-                  : L("synoptic.soundObject.attrIndependent"))
+                  ? L("synoptic.consolidate.attrSynced")
+                  : L("synoptic.consolidate.attrIndependent"))
     }
 
     private var muteButton: some View {
@@ -1827,7 +1827,7 @@ struct SynopticBoundView: View {
         let mix: SynopticMix? = obj.map { o in
             let title = L(o.isGroup ? "synoptic.mix.kind.group"
                         : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip"))
-            let links: SynopticMixLinks? = o.isObjectInstance
+            let links: SynopticMixLinks? = o.isConsolidateInstance
                 ? SynopticMixLinks(volumeSynced: viewModel.isAttrSynced(o, .volume),
                                    panSynced:    viewModel.isAttrSynced(o, .pan),
                                    muteSynced:   viewModel.isAttrSynced(o, .mute))
@@ -1904,10 +1904,10 @@ struct SynopticBoundView: View {
                             audioFile: audioFile, mix: mix, stems: stems,
                             groupRouting: groupRouting,
                             sends: sends, receivedSends: received, infinite: infinite, loop: loop,
-                            // A closed sound object → read-only FX ('Open to edit'). While editing, the
-                            // placement is materialised (no longer isObjectInstance) so the FX become
+                            // A closed consolidated object → read-only FX ('Open to edit'). While editing, the
+                            // placement is materialised (no longer isConsolidateInstance) so the FX become
                             // interactive again.
-                            fxReadOnly: (obj?.isObjectInstance ?? false),
+                            fxReadOnly: (obj?.isConsolidateInstance ?? false),
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
             // The power button of a card that is IN the selection speaks for the WHOLE selection;
@@ -2016,7 +2016,7 @@ struct SynopticBoundView: View {
             onBeginMixEdit: { viewModel.pushUndo() },
             onToggleAttrSync: { attr in
                 guard let o = viewModel.find(id: objectID) else { return }
-                let mask: ObjectAttrLinks
+                let mask: ConsolidateAttrLinks
                 switch attr {
                 case .volume: mask = .volume
                 case .pan:    mask = .pan

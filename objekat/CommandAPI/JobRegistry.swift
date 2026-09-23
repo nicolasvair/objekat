@@ -3,7 +3,7 @@ import Foundation
 /// Tracking of LONG-RUNNING commands.
 ///
 /// A command that hands back in a few milliseconds answers directly. Those that start an
-/// offline render (a sound object bake, a plugin scan) cannot: they work through completion
+/// offline render (a consolidated object bake, a plugin scan) cannot: they work through completion
 /// blocks and can run for minutes. So they return a `{job_id}` immediately, and the caller
 /// follows with `job.status` / `job.wait`.
 ///

@@ -177,8 +177,8 @@ extension EditViewModel {
         // (the same logic as colour/name, see EditViewModel+ObjectColor/renameObject) — a
         // linked object stays on the same bus everywhere it appears. EXCEPTION: an instance
         // inside a group follows its group (no stem of its own), and is skipped.
-        if let defID = obj.definitionID {
-            for sid in placementIDs(forDefinition: defID, excluding: objectID) {
+        if let defID = obj.consolidateID {
+            for sid in placementIDs(forConsolidate: defID, excluding: objectID) {
                 guard let sibling = find(id: sid),
                       parentGroup(for: sid) == nil else { continue }
                 let siblingOld = sibling.stemID ?? mainStemID

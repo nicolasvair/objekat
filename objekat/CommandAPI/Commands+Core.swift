@@ -149,6 +149,48 @@ extension CommandRegistry {
             return .object(["path": .string(url.path), "name": .string(vm.projectName)])
         }
 
+        register("project.save_copy",
+                 summary: "\"Save a copy with audio files\" without the panel: writes a SELF-CONTAINED "
+                        + "capsule into the given folder — the manifest (named after the folder), "
+                        + "the source files it plays in samples/sources/, and the consolidated "
+                        + "objects it actually uses in samples/consolidate/ (wherever they were "
+                        + "read from; orphan waves and old revisions are left out). Waits for the "
+                        + "last write before answering. The current project is untouched: it stays "
+                        + "the open one, with the same path and dirty flag.",
+                 params: [ParamSpec("path", "string",
+                                    "The capsule's FOLDER (created if absent). Must not be, lie "
+                                  + "inside, or contain the current project's folder (bad_params).")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let path = try p.string("path")
+            let dest = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+            let report: SaveCopyReport = await withCheckedContinuation { cont in
+                vm.performSaveCopy(to: dest) { cont.resume(returning: $0) }
+            }
+            // Copying a project onto itself would have each consolidated wave removed and then
+            // copied from… itself: `performSaveCopy` refuses a destination overlapping a folder
+            // the copy reads from — the same one, one inside it, or one containing it — by
+            // file-system identity (case, symbolic links, /private seen through). The refusal is
+            // the MENU's own, alert included: the API goes through it rather than beside it.
+            if let problem = report.destinationProblem {
+                throw CommandError(code: .bad_params, message: problem.apiMessage,
+                                   details: .object(["source": .string(problem.source.path)]))
+            }
+            let payload: [String: JSONValue] = [
+                "path": .string(dest.path),
+                "manifest": .string(report.projectFile.path),
+                "copied_files": .int(report.copiedFiles),
+                "missing": .array(report.missing.map { .string($0) }),
+            ]
+            guard report.succeeded else {
+                var details = payload
+                details["errors"] = .array(report.errors.map { .string($0) })
+                throw CommandError(code: .invalid_state,
+                                   message: "the copy is incomplete: \(report.errors.count) write error(s)",
+                                   details: .object(details))
+            }
+            return .object(payload)
+        }
+
         register("project.get_state",
                  summary: "The current session, serialised (the same document as the project file).") { _ in
             let vm = try CommandContext.shared.requireViewModel()
@@ -362,7 +404,7 @@ extension CommandRegistry {
             // The file's size, recorded at the moment it is laid down: it is what settles two
             // homonyms the day this link breaks and a folder is swept for it (@see
             // EditViewModel+Relink, SoundObject.fileSize). Read here and at the timeline's drop,
-            // the two doors an EXTERNAL file comes in by — the internal waves of a sound object
+            // the two doors an EXTERNAL file comes in by — the internal waves of a consolidated object
             // are relinked by their relative path and never go missing.
             object.fileSize = EditViewModel.fileSize(atPath: path)
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
@@ -691,7 +733,7 @@ enum CommandAdapters {
             "muted": .bool(item.isMuted),
             "parent": .stringOrNull(entry.parentID?.uuidString),
         ]
-        if let defID = item.definitionID { payload["definition"] = .string(defID.uuidString) }
+        if let defID = item.consolidateID { payload["definition"] = .string(defID.uuidString) }
         if let stemID = item.stemID { payload["stem"] = .string(stemID.uuidString) }
         if case .clip(let filePath, _, _, _, _) = item.kind { payload["file"] = .string(filePath) }
         // Whether this object's source file was found at the last scan. A dictionary lookup, no

@@ -3,14 +3,14 @@ import SwiftUI
 // MARK: - Semantic colours of the app's "links"
 //
 // A single convention shared by the whole UI to show that one element is tied to another:
-//   • purple = linked sound objects (placements sharing the same definition)
+//   • purple = linked consolidated objects (placements sharing the same definition)
 //   • yellow = linked plugins (the same parameters synced between instances)
 //   • red    = sends (routing towards an aux)
 //
 // Every line or dot drawn in the timeline or the inspector takes its colour from here, so that
 // one place stays consistent with another.
 enum LinkColor {
-    static let soundObject = Color.purple
+    static let consolidate = Color.purple
     static let plugin      = Color.yellow
     static let send        = Color.red
 }
@@ -31,7 +31,7 @@ struct LinkTarget {
     }
 }
 
-// The link curves (red sends, yellow linked plugins, purple linked sound objects) all shared
+// The link curves (red sends, yellow linked plugins, purple linked consolidated objects) all shared
 // the same S-shaped sweep, copied and pasted. Factored out here: one path, and the colour
 // carries the meaning (see LinkColor).
 enum LinkOverlay {
@@ -47,7 +47,7 @@ enum LinkOverlay {
 
     /// Draws a "star" of links: an active halo around `source`, a discreet halo around each
     /// `member`, and a curve from the source to each of them. `member` excludes the source.
-    /// Reused for linked plugins (yellow) and linked sound objects (purple).
+    /// Reused for linked plugins (yellow) and linked consolidated objects (purple).
     static func drawStar(in ctx: GraphicsContext, source: LinkTarget,
                          members: [LinkTarget], color: Color) {
         drawHalo(in: ctx, target: source, color: color, active: true)
