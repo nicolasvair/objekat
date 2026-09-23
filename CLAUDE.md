@@ -1091,6 +1091,93 @@ What has landed since mid-August, in order:
   selection on a bare, unselected cut (the case the whole rule was written for) reads as help or as
   one fewer thing confirmed by the eye.
 
+- **The waveform cache stops costing what the sounds cost** (22-23 September 2026) — three
+  complaints, one cache: it weighed almost as much as the sources it described, it was slow on a
+  first open, and a project's `waveforms/` folder received `.wfc` of sounds that project had never
+  heard of. Eleven commits, each buildable and revertable alone, because the two levers on SIZE had
+  to stay SEPARABLE — the representation (int16) and the resolution (one mipmap level fewer) touch
+  no function in common, so either can be reverted on its own and the two compared by eye.
+  **int8 was the plan and int8 is wrong**, and the arithmetic is worth keeping because it will come
+  back the next time somebody wants the cache smaller: `maxBlockHeight` is the VIEWPORT's height, so
+  a block reaches ~900 px and `mid ≈ 450`; `maxWaveformDB` is 24 and the gain multiplies `mid`. Half
+  a quantisation step × gain × mid puts int8 at **28 px of stair-stepping** and int16 at 0.11 px —
+  and those 28 px land in the QUIET material, which is precisely what the gain exists to inspect. No
+  arrangement of 8 bits escapes it (the question was asked): what the drawing needs is RELATIVE
+  precision, because `clampY` hides the error on loud values, and 1/900 relative is ~10 bits of
+  mantissa. A minifloat gives 14 px; *block floating point* gives 1.8 px until a transient sits
+  beside its own tail, which is the material this program is for. **~14-15 bits is what the problem
+  demands, which is what int16 is**, and the prize for going to 8 bits would have been 12 MB.
+  **Dropping the 10 000 peaks/s level** (90% of a mipmap's weight) hands the 3 000–30 000 px/s band
+  to the PCM path that already existed and costs nothing to store. It needed a prerequisite nobody
+  had noticed: the samples mode drew ONE interpolated point per pixel — true at 1.6 samples/px, an
+  alias at 16 — so the waveform would have THINNED on crossing the new threshold, with moire on the
+  scroll. Hence a real min/max envelope per pixel, degenerating to the old interpolation under one
+  sample per pixel so nothing changes where the mode used to start. And with it a region LRU keyed
+  by `(path, slice)` instead of by path alone: at 3 000 px/s the canvas shows 20-40 lanes at once,
+  where 30 000 px/s showed 0.05 s of timeline and one region per file was enough.
+  **The spill was real** and was proven in isolation — a new project with ZERO objects, saved into a
+  virgin folder, received a 92 MB `.wfc` of a file it had never opened, because
+  `waveformsDirectory.didSet` wrote the WHOLE memory cache into whichever folder became current. The
+  memory cache stays shared between projects on purpose (that is a benefit, not the bug); the flush
+  is filtered through what the INCOMING project names, and `load` re-reads the target folder on the
+  main actor JUST BEFORE writing — a big file takes a second, and a second is enough for a Save As
+  to move the target.
+  **And the envelope read channel 0 alone** while its comment claimed a mono mixdown. A mixdown
+  would be worse, not better: out-of-phase channels cancel, so it would draw SILENCE over real
+  sound. Peaks take the UNION of the channels' envelopes, a sample region takes the channel of
+  largest magnitude with its sign, so the two paths agree either side of the threshold. Visible on
+  existing projects: stereo material sitting on one side now draws LOUDER than it did.
+  **The bug the testing found**, and the one to remember: a region is about as wide as the slot it
+  is filed under, so a replacement is the ORDINARY case — and its memory was freed without the byte
+  count hearing about it. The count climbed on memory nobody held, crossed `regionByteCap`, and from
+  then on every region was evicted the instant it was decoded, each eviction forcing the re-decode
+  that inflated the count again. Its signature is an eviction for EVERY decode: 18 705 of each at
+  10 000 px/s with 40 lanes, where the regions actually resident came to 15 MB against a 48 MB cap.
+  The widened-window constants were the suspect and were innocent.
+  **The trap every test here is built around, and it produced a false negative during the
+  investigation**: `--headless` proves NOTHING about this cache. With no Canvas,
+  `ensureWaveformsLoaded` never fires, so nothing is computed and a headless run concludes there is
+  no problem with a cache it never touched. `waveform.preload` exists for that, and answers
+  `available: false` in headless so a scenario can refuse to pretend.
+  Measured, RELEASE build, real 1.2 GB project, cache emptied first, driven over the API in UI mode:
+  `waveforms/` **485 MB → 19.7 MB (÷24.6)**, RSS max 3.76 GB → **968 MB**, mipmap compute 1.82 s
+  cumulative. Thrash at 10 000 px/s / 40 lanes: 18 705 decodes → **258**, decode work 106.4 s →
+  **2.57 s**. `tools/test_waveform_peaks.swift` 54/54 including the assertion that IS the int16
+  decision (`maxAbsoluteError × 15.85 × 450 < 0.5` px); the `.wfc` header checked byte by byte.
+  Non-regression: smoke clean, families 185, markers ALL PASS, plugin-selection 58, export-preview
+  35, relink ALL PASS, plugin-state-undo 5, the six standalone Swift suites, i18n 429 keys, no
+  orphans, no visible string added. Session format untouched; `.wfc` format 2 → **3**, a v2 file
+  being rejected and recomputed once per project, which is what `loadFromDisk` has always done.
+  New commands: `perf.waveforms`, `waveform.preload`.
+  **A figure NOT to trust, and why**: no comparison against `main` under this protocol is possible,
+  the bench reading instrumentation `main` does not have. The 3.14 s quoted during the investigation
+  came from standalone benchmarks of the compute stage alone and is NOT comparable to the 5.45 s
+  wall measured here. What IS comparable is Debug against Release on one protocol: the compute stage
+  runs **40× faster optimised** (72.1 s → 1.82 s). A lag felt at high zoom from Xcode's Play is
+  largely that — `sampleEnvelope` costs 185 ms/frame at `-Onone` and 0.91 ms at `-O`.
+  **Not seen on screen — not one pixel of any of it.** The reading that DECIDES: a dense, bright
+  sound (cymbal, noise), block stretched to full height, the waveform pill at **+24 dB**, compared
+  between the int16-only build and the complete one — no stair-stepping expected, and if there is
+  any, the arithmetic above is wrong. Then the 3 000 → 30 000 px/s band by steps with scroll,
+  watching the envelope's THICKNESS on crossing 3 000 (a sudden thinning means the aliasing is not
+  solved), holes, and moire. Then two clips of one take at distant source offsets, a compressed
+  source, and an open group in deep zoom — its composite band has NO samples path
+  (`GroupWaveformView`), so it caps at 1 000 peaks/s and will show steps where top-level blocks are
+  smooth; that is the main argument if the eye rejects the level removal, and the documented
+  fallback is `[100, 1000, 3000]`, the same one-line array. **For an A/B, give each build its OWN
+  copy of the project folder** (`cp -R`): two builds on one folder invalidate each other's cache at
+  every launch.
+  **Still doubted besides**: one assertion of `tools/scenario_waveform_cache.py` FAILS reproducibly
+  — reopening a project already seen in the same process reads one mipmap off disk where zero was
+  expected (waste, not a wrong result; the suspect is the macOS `/private/var` vs `/var` split
+  showing as two spellings of one path in a dictionary keyed by string, the class of bug
+  `PathRelink` already knows — a hypothesis, not a proof). `regionMinSpan`'s constants (×8, ceiling
+  6 s) were chosen and never measured. Orphaned `.wfc` are NOT collected, deliberately: the cause is
+  closed and the existing files are left alone, so they become ~80% of a `waveforms/` folder — an
+  ugly ratio over an absolute size that no longer grows. And a `.wfc` is still named by BASENAME
+  alone, so two sources sharing a file name share a cache file and invalidate each other:
+  pre-existing, out of scope, worth knowing the day an unexplained recompute appears.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
