@@ -1222,18 +1222,28 @@ What has landed since mid-August, in order:
   no new warning; `tools/test_automation_transform.swift` 56 assertions all pass;
   `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 58,
   `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing, no orphans.
-  **NOT ONE GESTURE HAS BEEN MADE.** Nothing seen on screen, nothing felt, and no suite can reach it
-  — the command API still has no `automation.*` family, so nothing headless can lay a point and read
-  back what it is worth (the oldest debt in this memo, and this is the third entry to name it).
-  What the 56 assertions prove is the ARITHMETIC of the box, the half with no model behind it.
-  Unverified: the marquee's veil, the eight grips and their cursors, which grip a pixel at the
-  band's edge belongs to, ⇧ and ⌘ adding and flipping, and the drag itself.
-  **The two readings that decide**: a curve carrying a point ALREADY ON THE CEILING, pushed up by
-  the top grip and brought back, three times running — it must return exactly where it started, and
-  that is the non-destructive clause, the one thing a single composed frame would silently break.
-  And a selection on an object CROPPED AT THE LEFT whose points sit at negative times behind the
-  edge — they must STAY behind it and not pile onto zero, which is the pre-existing bug above and
-  the reason it was repaired here.
+  **Validated at the keyboard on 23 September 2026** — "ça marche super" — and two things the
+  first real gesture made obvious were repaired at once.
+  **The box let go of the fingers holding it**: pulling a grip moved the points and left the
+  rectangle behind, which reads as the gesture having missed. The box is frozen at the grab ON
+  PURPOSE (a dial read off its own output runs away under the hand), so the repair is not to
+  unfreeze it but to separate the box that MEASURES — still frozen, and still what the hit test
+  and the cursor read — from the box that is DRAWN, which is that same box put through the
+  request the hand is making. The pulled edge then lands exactly ON the pointer, and ⇧ shows as
+  the edge lagging the finger, which is what fine adjustment is. Under a CORNER the drawn shape
+  is a TRAPEZIUM, from the very same `factor(_:atT:)` the points go through: the slant IS the
+  gradient, and a rectangle there would claim a uniform scale the points do not get. Nothing in
+  the drawn box is clamped — the box escaping its row is the ONLY thing on screen that says one
+  is asking beyond the range while the points pile up at the bound, and a clamp would hide
+  exactly what makes their behaviour legible.
+  **A point at rest is now barely there** (2 px at 40%): a point is a handle, not matter, and a
+  row of solid dots competes with the line it is meant to describe. It comes up to full only
+  when it has something to say — hovered, held, or taken.
+  69 assertions now, all passing. What still cannot be reached headless is the gesture itself:
+  the command API has no `automation.*` family, so nothing can lay a point and read back what it
+  is worth (the oldest debt in this memo). What no assertion can settle either: whether a box
+  free to leave its row READS as over-travel or as a bug, and whether 40% is discreet or merely
+  faint on a dark row. Both are matters for the eye.
 
 ### What is owed
 
