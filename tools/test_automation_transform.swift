@@ -488,41 +488,6 @@ enum AutomationTransformTest {
               "the extraction must be behaviour-preserving, corner included")
     }
 
-    // MARK: - Walking the frame across the rows
-    //
-    // ↑ / ↓ moves the ZONE, not the matter. The bound is the one the timeline's own version warns
-    // about: written with a bare `min`, it goes negative once the frame's foot is home and the
-    // arrow then teleports the frame the other way — a failure that reverses direction rather
-    // than simply stopping, which is exactly what an eye does not catch.
-
-    check("a frame one row tall steps down",
-          AutomationTransform.stepRows([1], count: 4, by: 1) ?? [] == [2])
-    check("... and up",
-          AutomationTransform.stepRows([1], count: 4, by: -1) ?? [] == [0])
-    check("a frame TWO rows tall keeps its shape",
-          AutomationTransform.stepRows([1, 2], count: 5, by: 1) ?? [] == [2, 3])
-    check("it stops on its FOOT, not its head",
-          AutomationTransform.stepRows([2, 3], count: 4, by: 1) == nil,
-          "the foot is already on the last row: nothing to give")
-    check("... and on its head going up",
-          AutomationTransform.stepRows([0, 1], count: 4, by: -1) == nil)
-    check("a step larger than the room left is TRUNCATED, never reversed",
-          AutomationTransform.stepRows([1, 2], count: 4, by: 5) ?? [] == [2, 3],
-          "this is the case the bare `min` turns into a jump upwards")
-    check("nil rather than an unchanged array when nothing can move",
-          AutomationTransform.stepRows([0], count: 1, by: 1) == nil,
-          "a caller has to be able to leave the model alone")
-    check("a delta of zero moves nothing",
-          AutomationTransform.stepRows([1], count: 4, by: 0) == nil)
-    check("an empty frame has nowhere to go",
-          AutomationTransform.stepRows([], count: 4, by: 1) == nil)
-    check("a frame naming a row that no longer exists is refused",
-          AutomationTransform.stepRows([7], count: 4, by: -1) == nil,
-          "a curve losing its last point takes its row out of the band altogether")
-    check("a frame with a HOLE in it keeps the hole",
-          AutomationTransform.stepRows([0, 2], count: 5, by: 1) ?? [] == [1, 3],
-          "the rows are moved, not re-gathered")
-
     // MARK: -
 
     print("")

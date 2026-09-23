@@ -309,28 +309,6 @@ enum AutomationTransform {
         return [q[0], mid(q[0], q[1]), q[1], mid(q[0], q[3]),
                 mid(q[1], q[2]), q[3], mid(q[3], q[2]), q[2]]
     }
-
-    // MARK: - Walking a frame across the rows
-
-    /// ↑ / ↓ on a zone: the rows it covers, moved by `delta`, or nil when it cannot move.
-    ///
-    /// The frame travels AS A BLOCK and keeps its shape — a zone three rows tall pushed downwards
-    /// stops when its FOOT reaches the last row, not when its head does. That is the whole of the
-    /// arithmetic, and it is here rather than in the view-model for one reason: the timeline's own
-    /// version of it carries a comment about a bare `min(delta, …)` going NEGATIVE once the foot
-    /// is already home, which then teleports the frame the other way. A bound that fails by
-    /// reversing direction is not a bound one checks by eye.
-    ///
-    /// nil — not an unchanged array — when nothing can move, so a caller can tell "already against
-    /// the edge" from "moved", and leave the model alone in the first case.
-    static func stepRows(_ idx: [Int], count: Int, by delta: Int) -> [Int]? {
-        guard delta != 0, count > 0, !idx.isEmpty,
-              let lo = idx.min(), let hi = idx.max(),
-              lo >= 0, hi < count else { return nil }
-        let step = delta < 0 ? max(delta, -lo) : min(delta, max(0, count - 1 - hi))
-        guard step != 0 else { return nil }
-        return idx.map { $0 + step }
-    }
 }
 
 /// The project's own `clamped(to:)` lives on `Comparable`, in `EditViewModel+Types.swift` — a file

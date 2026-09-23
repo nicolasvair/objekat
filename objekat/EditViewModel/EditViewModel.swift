@@ -101,12 +101,6 @@ final class EditViewModel {
     /// stays in the view is the TRANSIENT state of the gesture: the rectangle being drawn, the
     /// original points, the frozen box.
     var selectedAutomationPoints: Set<AutomationPointRef> = []
-    /// The stretch of time traced on an object's automation rows, when the selection came from
-    /// ONE — and nil the moment points are picked on their own (@see
-    /// EditViewModel+AutomationZone, which holds that invariant and says why). Here rather than in
-    /// the band for the reason written just above: a band leaving the viewport takes its `@State`
-    /// with it, and the keyboard monitor runs ahead of the responder chain and sees only this.
-    var automationTimeSelection: AutomationTimeSelection? = nil
     /// The copied passage of automation (@see EditViewModel+AutomationClipboard). Its own
     /// clipboard rather than a case of `ClipboardContent`, like the MIDI notes': what it holds is
     /// meaningless outside an automation band, and pouring it into the general one would make ⌘V
@@ -489,7 +483,14 @@ final class EditViewModel {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
-    var timeSelection: TimeSelection? = nil
+    var timeSelection: TimeSelection? = nil {
+        // THE ONE HOOK that keeps the automation band in step. An automation row IS a display lane
+        // (@see EditViewModel+AutomationZone), so the timeline's own selection reaches it — and
+        // every way it can move, from a traced zone to ↑ / ↓ to an undo, passes through here.
+        // Written as a `didSet` rather than called from each of those: one of them would be
+        // forgotten, and the symptom is points staying lit under a frame that has left them.
+        didSet { if timeSelection != nil { syncAutomationSelectionToTimeSelection() } }
+    }
 
     var loopModeEnabled: Bool = false
     var loopRegion: ClosedRange<Double>? = nil

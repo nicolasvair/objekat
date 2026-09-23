@@ -34,13 +34,16 @@ extension EditViewModel {
     /// Sets the point selection, and takes the MIDI note selection out with it. The exclusivity is
     /// the point: ⌫ must have exactly one thing in front of it, and the two surfaces are both
     /// inside the timeline, where no other claim separates them.
-    /// It also DROPS THE ZONE, and that is the load-bearing half of the invariant: a frame that no
-    /// longer describes what is taken is worse than no frame, and putting the clearing here means
-    /// no caller — a click on a point, a ⇧-click on the next — has to remember it. The zone's own
-    /// path lays the frame back down straight after (@see setAutomationZone).
+    /// Picking points ON THEIR OWN — a click, a ⇧-click — DROPS THE TIME SELECTION, and the
+    /// clearing lives here so no caller has to remember it: a frame that no longer describes what
+    /// is taken is worse than no frame. It is cleared BEFORE the points are laid down, because
+    /// `timeSelection`'s `didSet` reads the points back off the frame and would otherwise undo
+    /// this very call (setting it to nil is a no-op for that hook, by design).
     func setAutomationPointSelection(_ refs: Set<AutomationPointRef>) {
-        if !refs.isEmpty, !selectedMidiNoteIDs.isEmpty { selectedMidiNoteIDs.removeAll() }
-        if automationTimeSelection != nil { automationTimeSelection = nil }
+        if !refs.isEmpty {
+            if !selectedMidiNoteIDs.isEmpty { selectedMidiNoteIDs.removeAll() }
+            if timeSelection != nil { timeSelection = nil }
+        }
         if selectedAutomationPoints != refs { selectedAutomationPoints = refs }
     }
 
@@ -48,7 +51,6 @@ extension EditViewModel {
     /// the usual deselecting gestures — an index that outlives the point it named now names
     /// somebody else (@see AutomationPointRef).
     func clearAutomationPointSelection() {
-        if automationTimeSelection != nil { automationTimeSelection = nil }
         if !selectedAutomationPoints.isEmpty { selectedAutomationPoints.removeAll() }
     }
 

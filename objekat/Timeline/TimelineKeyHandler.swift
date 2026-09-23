@@ -362,7 +362,12 @@ extension TimelineView {
                 // two selections are held exclusive by `setAutomationPointSelection`, so both can
                 // never be non-empty at once — but it has to be WRITTEN somewhere all the same,
                 // and here beside its neighbour is where one will look.
-                else if !vm.selectedAutomationPoints.isEmpty {
+                // `automationSurfaceHasKeyboard` and not the point set: a selection lying on
+                // automation rows SWALLOWS ⌫ even when it holds no point. Letting it fall through
+                // would hand those lanes to the object deletion, which resolves a display lane
+                // back to a base lane — and the base lane of a row inside a band is the band's
+                // OWNER. An empty passage would delete the object it belongs to.
+                else if vm.automationSurfaceHasKeyboard {
                     DispatchQueue.main.async { vm.deleteSelectedAutomationPoints() }  // internal undo push
                 }
                 // The piano roll: if notes are selected, we delete them (NOT the clip).
@@ -479,7 +484,11 @@ extension TimelineView {
                 }
                 // Bare ↓ with a TIME SELECTION — or with OBJECTS selected, whose frame is then
                 // adopted: the passage slides one row down, the frame travels and the matter does
-                // not (@see stepTimeSelectionLanes). Last of the branches, so the tools and the
+                // not (@see stepTimeSelectionLanes). THIS SERVES AUTOMATION TOO, and needs nothing
+                // added for it: a curve's row IS a display lane, so the frame walks onto it, takes
+                // what it holds and walks off again (@see EditViewModel+AutomationZone). There was
+                // briefly a second branch here for a selection of its own, and two frames answering
+                // one key differently is worse than either. Last of the branches, so the tools and the
                 // piano roll keep the key they already had; with a modifier it is left alone,
                 // since ⇧ and ⌥ are where extending and the other readings will go.
                 //
@@ -487,16 +496,6 @@ extension TimelineView {
                 // .function AND .numericPad (0xA00000), so `isEmpty` is never true and the key fell
                 // through every branch — AppKit then BEEPS, the same symptom as the ⌥+letter trap.
                 // What is asked here is that no modifier one HOLDS is down.
-                // An AUTOMATION band holds the arrows BEFORE the branch below, and the order is
-                // load-bearing rather than tidy: editing a curve SELECTS its object (@see
-                // AutomationBandView.beginDrag), so `!vm.selectedIDs.isEmpty` is true throughout
-                // and would slide the timeline's own frame under a hand aiming at a row of
-                // automation.
-                if vm.automationSurfaceHasKeyboard,
-                   flags.intersection(Self.heldModifiers).isEmpty {
-                    DispatchQueue.main.async { vm.stepAutomationZoneRows(by: 1) }
-                    return nil
-                }
                 if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
                    flags.intersection(Self.heldModifiers).isEmpty {
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: 1) }
@@ -527,11 +526,6 @@ extension TimelineView {
                 }
                 // @see the ↓ branch, both for the modifier reading and for why the automation
                 // band is served first.
-                if vm.automationSurfaceHasKeyboard,
-                   flags.intersection(Self.heldModifiers).isEmpty {
-                    DispatchQueue.main.async { vm.stepAutomationZoneRows(by: -1) }
-                    return nil
-                }
                 if vm.timeSelection != nil || !vm.selectedIDs.isEmpty,
                    flags.intersection(Self.heldModifiers).isEmpty {  // one row up
                     DispatchQueue.main.async { vm.stepTimeSelectionLanes(by: -1) }

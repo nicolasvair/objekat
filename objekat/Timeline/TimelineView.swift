@@ -662,6 +662,7 @@ struct TimelineView: View {
                         AutomationBandView(
                             viewModel: viewModel,
                             object: entry.item,
+                            bandTopLane: entry.displayLane + 1,
                             pixelsPerSecond: pixelsPerSecond,
                             bandWidth: r.width,
                             laneStep: laneStep,

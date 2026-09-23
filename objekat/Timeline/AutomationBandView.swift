@@ -55,6 +55,11 @@ import AppKit
 struct AutomationBandView: View {
     var viewModel: EditViewModel
     let object: SoundObject
+    /// The DISPLAY lane of this band's first row — `entry.displayLane + 1` (@see
+    /// TimelineView.automationBandRect, which lays the rows out from there). It is what lets a row
+    /// be named by `TimeSelection.lanes` like any other lane, which is the whole reason there is
+    /// no second kind of time selection (@see EditViewModel+AutomationZone).
+    let bandTopLane: Int
     let pixelsPerSecond: Double
     /// The band's width. Supplied by the parent: it is the object's width, EXCEPT for an infinite
     /// bus, which has no end and spans the whole timeline.
@@ -157,7 +162,7 @@ struct AutomationBandView: View {
             /// there when ⇧ was held at the first pixel, which the new one is UNIONED with; nil
             /// otherwise, and the zone simply replaces. Read once, at the first pixel: a hand
             /// letting go of ⇧ mid-drag is resting a finger, not changing its mind.
-            case timeZone(base: AutomationTimeSelection?)
+            case timeZone(base: TimeSelection?)
             /// A grip of the transform box. Everything is FROZEN at the grab: the transformation
             /// always recomputes from the originals (the non-destructive rule), and re-reading the
             /// selection mid-gesture would let a stale index through.
@@ -338,11 +343,11 @@ struct AutomationBandView: View {
     /// whole difference between a zone and a bounding box, and the reason a grip pulled sideways
     /// now stretches the passage rather than the points' own envelope.
     private func zoneRect() -> CGRect? {
-        guard let z = viewModel.automationTimeSelection, z.objectID == object.id else { return nil }
-        let idx = z.params.compactMap { rows.firstIndex(of: $0) }
+        guard let z = viewModel.timeSelection else { return nil }
+        let idx = rows.indices.filter { z.lanes.contains(bandTopLane + $0) }
         guard let lo = idx.min(), let hi = idx.max() else { return nil }
-        var x0 = geo.x(ofT: z.timeRange.lowerBound)
-        var x1 = geo.x(ofT: z.timeRange.upperBound)
+        var x0 = geo.x(ofT: z.timeRange.lowerBound - bandStartTime)
+        var x1 = geo.x(ofT: z.timeRange.upperBound - bandStartTime)
         if x1 - x0 < AutomationBandGeometry.boxMinSide {
             let mid = (x0 + x1) / 2
             x0 = mid - AutomationBandGeometry.boxMinSide / 2
@@ -379,9 +384,11 @@ struct AutomationBandView: View {
         // stretches the PASSAGE and its silences with it. Reading the points' envelope here
         // instead would make the box's left edge and the pivot two different instants — one would
         // pull an edge and watch the matter move against it.
-        if let z = viewModel.automationTimeSelection, z.objectID == object.id {
-            return AutomationTransform.TimeSpan(t0: z.timeRange.lowerBound,
-                                                t1: z.timeRange.upperBound)
+        if let z = viewModel.timeSelection, rows.indices.contains(where: {
+            z.lanes.contains(bandTopLane + $0)
+        }) {
+            return AutomationTransform.TimeSpan(t0: z.timeRange.lowerBound - bandStartTime,
+                                                t1: z.timeRange.upperBound - bandStartTime)
         }
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
         for r in trows {
@@ -539,21 +546,14 @@ struct AutomationBandView: View {
     /// because neither belongs to one: a rectangle is traced across the rows and the box spans as
     /// many of them as the selection touches.
     private func drawSelection(in ctx: inout GraphicsContext) {
-        // While a zone is being traced it is the only thing that speaks, and what is drawn is the
-        // ZONE — whole rows, edges snapped — and not the pixels the hand swept. Drawing the raw
-        // sweep would promise a rectangle, which is exactly the reading this gesture left behind.
-        if let d = drag, case .timeZone = d.mode, let r = zoneRect() {
-            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.14)))
-            ctx.stroke(Path(r), with: .color(Color.accentColor.opacity(0.7)), lineWidth: 1)
-            return
-        }
+        // NOTHING is drawn here while a zone is being traced, and that is the point: what is being
+        // laid down is the TIMELINE's own selection, so the timeline's own cyan veil and its caret
+        // are already on these rows — a row of automation being a display lane like any other
+        // (@see EditViewModel+AutomationZone). A second veil painted here was the visible half of
+        // having had two selections.
+        if let d = drag, case .timeZone = d.mode { return }
 
         guard let box = transformBox(), let quad = transformQuad() else { return }
-        // A settled zone keeps a veil: it is a stretch of time that goes on existing when it holds
-        // nothing, and an outline alone on an empty passage reads as a stray frame.
-        if drag == nil, let r = zoneRect() {
-            ctx.fill(Path(r), with: .color(Color.accentColor.opacity(0.10)))
-        }
         // The OUTLINE shows as soon as a selection exists: it is what says the eight grips are
         // somewhere to be had. The GRIPS themselves only show when the hand is over the box —
         // eight white squares standing permanently on a sixteen-pixel row would read as matter.
@@ -951,21 +951,25 @@ struct AutomationBandView: View {
             // X = a stretch of time, SNAPPED like every other time this band lays down (⌘ inverts
             // it, @see snappedT). Y = the rows the sweep crosses, WHOLE — a zone owns rows, it
             // does not cut into them, which is what `TimeSelection` means by lanes.
-            let t0 = min(snappedT(atX: d.start.x), snappedT(atX: location.x))
-            let t1 = max(snappedT(atX: d.start.x), snappedT(atX: location.x))
+            let a0 = bandStartTime + snappedT(atX: d.start.x)
+            let a1 = bandStartTime + snappedT(atX: location.x)
             let band = max(0, g.bandHeight - 1)
             let r0 = g.rowIndex(atY: min(d.start.y, location.y).clamped(to: 0...band)) ?? d.row
             let r1 = g.rowIndex(atY: max(d.start.y, location.y).clamped(to: 0...band)) ?? d.row
-            var params = Array(rows[min(r0, r1)...max(r0, r1)])
-            var range  = t0...t1
-            // ⇧: the new sweep is UNIONED with the zone that was there — the same "extend what is
-            // already taken" ⇧ means everywhere else, transposed onto a frame that has two axes.
-            if let b = base, b.objectID == object.id {
-                range = min(t0, b.timeRange.lowerBound)...max(t1, b.timeRange.upperBound)
-                let all = Set(params).union(b.params)
-                params = rows.filter { all.contains($0) }
+            var lanes = Set((min(r0, r1)...max(r0, r1)).map { bandTopLane + $0 })
+            var range = min(a0, a1)...max(a0, a1)
+            // ⇧: the new sweep is UNIONED with the selection that was there — the same "extend
+            // what is already taken" ⇧ means everywhere else.
+            if let b = base {
+                let lo = min(range.lowerBound, b.timeRange.lowerBound)
+                let hi = max(range.upperBound, b.timeRange.upperBound)
+                range = lo...hi
+                lanes.formUnion(b.lanes)
             }
-            viewModel.setAutomationZone(objectID: object.id, timeRange: range, params: params)
+            // The timeline's OWN selection, in absolute seconds: the points follow from its
+            // `didSet`, and so do the caret and the instant playback will start from — none of
+            // which a selection of this band's own could have given without re-implementing.
+            viewModel.timeSelection = TimeSelection(timeRange: range, lanes: lanes)
 
         case .transform(let handle, let trows, let box):
             // The box is a DIAL: `k` is read as a ratio of pixels between the pulled edge and the
@@ -1177,12 +1181,14 @@ struct AutomationBandView: View {
     /// first link of the feedback loop `transformBox` exists to prevent.
     private func settleZoneAfterTransform() {
         guard let d = drag, case .transform = d.mode, let r = d.live,
-              let z = viewModel.automationTimeSelection, z.objectID == object.id else { return }
-        let lo = AutomationTransform.movedT(r, z.timeRange.lowerBound)
-        let hi = AutomationTransform.movedT(r, z.timeRange.upperBound)
+              let z = viewModel.timeSelection,
+              rows.indices.contains(where: { z.lanes.contains(bandTopLane + $0) }) else { return }
+        // Through the band's local time and back: the request speaks in the same seconds the
+        // points do.
+        let lo = bandStartTime + AutomationTransform.movedT(r, z.timeRange.lowerBound - bandStartTime)
+        let hi = bandStartTime + AutomationTransform.movedT(r, z.timeRange.upperBound - bandStartTime)
         guard lo != z.timeRange.lowerBound || hi != z.timeRange.upperBound else { return }
-        viewModel.setAutomationZone(objectID: z.objectID, timeRange: min(lo, hi)...max(lo, hi),
-                                    params: z.params)
+        viewModel.timeSelection = TimeSelection(timeRange: min(lo, hi)...max(lo, hi), lanes: z.lanes)
     }
 
     /// A zone starting. What it decides HERE, at the first pixel, and never again: whether the
@@ -1194,8 +1200,7 @@ struct AutomationBandView: View {
     /// — taking points away from a selection — belongs to clicking them, where it still works;
     /// what a zone is for is a passage, and a passage with holes in it is not one.
     private func zoneMode() -> BandDrag.Mode {
-        let base = NSEvent.modifierFlags.contains(.shift)
-            ? viewModel.automationTimeSelection : nil
+        let base = NSEvent.modifierFlags.contains(.shift) ? viewModel.timeSelection : nil
         return .timeZone(base: base)
     }
 
