@@ -661,6 +661,14 @@ final class EditViewModel {
     @ObservationIgnored var beginVerticalZoomDrag: (() -> Void)?
     @ObservationIgnored var endVerticalZoomDrag: (() -> Void)?
 
+    /// Asks the timeline to compute the waveforms of these files now, whether or not their
+    /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`
+    /// is driven by what the Canvas draws, so nothing headless — and nothing that is merely
+    /// scrolled elsewhere — would ever trigger it. nil when there is no interface (@see
+    /// `waveform.preload`, whose `available: false` in `--headless` is the guard that keeps
+    /// a script from measuring an empty cache and concluding there is nothing to fix).
+    @ObservationIgnored var preloadWaveforms: (([String]) -> Void)?
+
 
     var clipboard: ClipboardContent? = nil
     /// A clipboard dedicated to MIDI notes (independent of `clipboard`, which carries clips/groups).
@@ -716,6 +724,25 @@ final class EditViewModel {
         return result
     }
 
+    /// Every audio file this project names — groups walked recursively, folded ones included,
+    /// exactly as `allClips` already reaches them (@see `EditViewModel+MissingFiles.rescanMissingFiles`,
+    /// which reads the disk by the same walk). What `waveform.preload` hands the cache, so a
+    /// script can compute every peak the project will ever draw without a Canvas on screen — and,
+    /// since C3, what `WaveformCache` asks before writing a `.wfc` into the CURRENT project's
+    /// folder (@see `WaveformCache.referencedPaths`), which is what keeps that folder from
+    /// receiving another project's peaks.
+    /// CACHED: asked once per completed mipmap (a write, or a decision not to write) and once
+    /// per project change, not worth walking `items` again for every one of those — invalidated
+    /// wherever `laneEntries` is (@see `items.didSet` → `rebuildLaneEntries`), the same walk both
+    /// caches are built from.
+    private var referencedAudioPathsCache: Set<String>?
+    var referencedAudioPaths: Set<String> {
+        if let cached = referencedAudioPathsCache { return cached }
+        let paths = Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
+        referencedAudioPathsCache = paths
+        return paths
+    }
+
     /// The flattening of the objects into display rows. CACHED: rebuilt only
     /// when `items` changes (didSet), not on every access. Read in ~64 sites (including per
     /// drag/scroll frame) → the cache removes an O(N²) repeated on the main thread.
@@ -724,6 +751,7 @@ final class EditViewModel {
 
     func rebuildLaneEntries() {
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
+        referencedAudioPathsCache = nil
     }
 
     /// Grouped mutations of `items`: a single rebuild of laneEntries at the end instead

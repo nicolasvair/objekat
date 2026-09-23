@@ -45,8 +45,7 @@ enum WaveformDrawing {
         loopRange: (start: Double, end: Double)? = nil
     ) -> Bool {
         guard let fileDuration = waveformCache.duration(for: filePath), fileDuration > 0 else { return true }
-        let sampleModeThreshold = (WaveformCache.effectiveDensitiesPerSecond.last ?? 10000) * 3
-        if pixelsPerSecond >= sampleModeThreshold { return false }   // samples mode → drawn individually
+        if pixelsPerSecond >= WaveformCache.sampleModeThreshold { return false }   // samples mode → drawn individually
         guard let peaks = waveformCache.peaks(for: filePath, pixelsPerSecond: pixelsPerSecond),
               !peaks.isEmpty else { return true }
 
@@ -172,7 +171,6 @@ enum WaveformDrawing {
     ) {
         guard let fileDuration = waveformCache.duration(for: filePath), fileDuration > 0 else { return }
 
-        let sampleModeThreshold = (WaveformCache.effectiveDensitiesPerSecond.last ?? 10000) * 3
         let gainLin = WaveformShaping.linearGain(dB: volumeDb)
         let displayGain = WaveformShaping.linearGain(dB: Float(waveformDisplayDB))
 
@@ -222,7 +220,7 @@ enum WaveformDrawing {
             winStart = sourceOffset + loop.start * speedRatio
             winEnd   = sourceOffset + (loop.start + loop.period) * speedRatio
         }
-        let region = pixelsPerSecond >= sampleModeThreshold
+        let region = pixelsPerSecond >= WaveformCache.sampleModeThreshold
             ? waveformCache.samplesRegion(for: filePath, fileStart: winStart, fileEnd: winEnd)
             : nil
 
@@ -232,9 +230,18 @@ enum WaveformDrawing {
             let n = samples.count
             var poly = Path()
             var filled = Path()
-            filled.move(to: CGPoint(x: Double(startI), y: mid))
-            var started = false
+            var polyStarted = false
+            // One (lo, hi) per pixel, kept for the backward pass below instead of recomputed —
+            // `sampleEnvelope` walks every sample the pixel covers, so doing it twice would cost
+            // exactly what this commit exists to avoid.
+            var loValues: [Double] = []
+            loValues.reserveCapacity(endI - startI + 1)
             for i in startI...endI {
+                // The STROKE and the per-sample dots below read a single interpolated value,
+                // UNCHANGED from before this commit: they only draw where the envelope is
+                // DEGENERATE anyway (one sample per pixel or finer, @see
+                // WaveformPeaks.sampleEnvelope), where the point they trace and the fill's own
+                // edge already coincide.
                 let sIdx = (loopedSrc(i) - region.startTime) * sr
                 var value: Double
                 if sIdx < 0 || sIdx >= Double(n - 1) {
@@ -245,13 +252,26 @@ enum WaveformDrawing {
                     value = Double(samples[i0]) * (1 - frac) + Double(samples[i0 + 1]) * frac
                 }
                 value *= mul(i)
-                let y = clampY(mid - value * vScale)
-                let p = CGPoint(x: Double(i), y: y)
-                filled.addLine(to: p)
-                if !started { poly.move(to: p); started = true }
-                else { poly.addLine(to: p) }
+                let strokePoint = CGPoint(x: Double(i), y: clampY(mid - value * vScale))
+                if !polyStarted { poly.move(to: strokePoint); polyStarted = true }
+                else { poly.addLine(to: strokePoint) }
+
+                // The FILL reads the true (lo, hi) spread of every sample this pixel covers —
+                // what keeps the envelope from THINNING at the samples-mode threshold: a pixel
+                // spanning several samples showed one aliased point among them before this commit
+                // (@see PLAN-WAVEFORM.md section A2). `loopedSrc(i+1)` closes the span at the next
+                // pixel's own position, the same convention a peaks BLOCK's width already is.
+                let idxA = sIdx
+                let idxB = (loopedSrc(i + 1) - region.startTime) * sr
+                let envelope = WaveformPeaks.sampleEnvelope(samples, from: min(idxA, idxB), to: max(idxA, idxB))
+                let hiVal = Double(envelope.hi) * mul(i)
+                loValues.append(Double(envelope.lo) * mul(i))
+                if i == startI { filled.move(to: CGPoint(x: Double(i), y: clampY(mid - hiVal * vScale))) }
+                else { filled.addLine(to: CGPoint(x: Double(i), y: clampY(mid - hiVal * vScale))) }
             }
-            filled.addLine(to: CGPoint(x: Double(endI), y: mid))
+            for i in stride(from: endI, through: startI, by: -1) {
+                filled.addLine(to: CGPoint(x: Double(i), y: clampY(mid - loValues[i - startI] * vScale)))
+            }
             filled.closeSubpath()
             ctx.fill(filled, with: .color(fillColor))
             ctx.stroke(poly, with: .color(strokeColor), lineWidth: 1)

@@ -1082,7 +1082,11 @@ struct TimelineView: View {
             registerRightClickMonitor()
             currentSelectionCursor = selectionCursor
             // The waveform cache folder = the project's waveforms/ (nil if unsaved).
-            waveformCache.waveformsDirectory = viewModel.waveformsFolder
+            waveformCache.setWaveformsDirectory(viewModel.waveformsFolder)
+            // What the disk cache may write into that folder: only a file the CURRENT project
+            // still names (@see WaveformCache.referencedPaths, WaveformCache.writeTarget) — set
+            // once here, read on every flush and every completed compute from then on.
+            waveformCache.referencedPaths = { [weak viewModel] in viewModel?.referencedAudioPaths ?? [] }
             // Dragging on the zoom pills: the same session as the wheel, simply held open by the
             // gesture (no inactivity window to respect).
             viewModel.beginHorizontalZoomDrag = {
@@ -1091,6 +1095,9 @@ struct TimelineView: View {
             }
             viewModel.endHorizontalZoomDrag = { hZoomHeld = false }
             viewModel.applyHorizontalZoom = { newPPS in applyZoom(newPPS) }
+            // The one door `waveform.preload` calls through: a script has no Canvas to trigger
+            // `ensureWaveformsLoaded`, and this closure is the only other way in.
+            viewModel.preloadWaveforms = { paths in for p in paths { waveformCache.load(filePath: p) } }
             viewModel.beginVerticalZoomDrag = {
                 openVerticalZoomSession()
                 vZoomHeld = true
@@ -1150,7 +1157,7 @@ struct TimelineView: View {
         // The project folder changes (Save As, opening, a new version) → retarget the
         // disk cache; becoming non-nil flushes the peaks already computed.
         .onChange(of: viewModel.projectURL) {
-            waveformCache.waveformsDirectory = viewModel.waveformsFolder
+            waveformCache.setWaveformsDirectory(viewModel.waveformsFolder)
         }
         // A new project / an opening: the displayed length starts again from the real content,
         // without waiting for `relaxStickyDuration`'s conditions — they protect an editing GESTURE

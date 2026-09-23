@@ -151,6 +151,18 @@ Runs a sequence under **a single undo**.
 the main loop stayed busy afterwards: SwiftUI invalidations, relayout). That
 distinction is the heart of the project's measuring method. `perf.census` counts the project.
 
+`perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
+disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
+densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.
+It answers even with no project open — the counters are process-wide statics — and `reset: true`
+zeroes them first, for a bench that wants to measure from a known zero.
+
+`waveform.preload` is the one door a script has onto the peaks: the timeline only ever computes
+a waveform when its block is drawn on a Canvas, so a headless run — or a UI run that has simply
+never scrolled a file into view — would otherwise measure an empty cache and conclude, wrongly,
+that there is nothing to compute. It returns `available: false` (and computes nothing) when the
+instance has no interface; `available: true` with a `paths` count otherwise.
+
 ---
 
 ## Dialogues: not freezing a script on a modal
