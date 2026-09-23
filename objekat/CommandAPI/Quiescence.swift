@@ -3,7 +3,7 @@ import Foundation
 /// Quiescence detection: "has the model finished working?"
 ///
 /// Without it, every script is non-deterministic: the view-model defers a great deal of work
-/// (debouncing the consolidated mirror, cascading re-bakes, definition bakes with completion
+/// (debouncing the consolidated mirror, cascading re-bakes, consolidate bakes with completion
 /// blocks), and a read command issued right after a mutation command would observe an
 /// in-between state.
 ///
@@ -35,7 +35,7 @@ enum Quiescence {
         if let vm = CommandContext.shared.viewModel {
             // `bakingIDs` carries an ancestor's name: freezing is no longer a user action (the menu
             // entries were removed), but the RENDER LOCK it introduced still serves — consolidated objects are
-            // what arm it now, for the time of a definition bake or a placement re-bake. So the label
+            // what arm it now, for the time of a consolidate bake or a placement re-bake. So the label
             // says what actually happens: "freeze in progress" would no longer teach anyone anything.
             if !vm.bakingIDs.isEmpty {
                 reasons.append("consolidated object render running (\(vm.bakingIDs.count))")

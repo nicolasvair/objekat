@@ -14,8 +14,8 @@ driver, which chains the commands while keeping the identifiers to hand.
     # 2. replay the scenario
     ./scenario_families.py /tmp/o.sock /tmp/trial/project.objekat.json
 
-The second argument is the project path to create: sound objects require a project
-folder (samples/objects/). Exit: 0 if everything passes, 1 as soon as one command fails.
+The second argument is the project path to create: a consolidated object requires a project
+folder (samples/consolidate/). Exit: 0 if everything passes, 1 as soon as one command fails.
 """
 
 import sys, os, json
@@ -627,19 +627,36 @@ with ObjekatClient(SOCK) as c:
     step("timesel.delete",    lambda: c.send("timesel.delete"))
     step("edit.undo",         lambda: c.send("edit.undo"))
 
-    # --- sound objects (an asynchronous bake)
+    # --- consolidated objects (an asynchronous bake)
     step("selection.set B",   lambda: c.send("selection.set", {"ids": [idb]}))
-    sh = step("definition.make",  lambda: c.send("definition.make", {"id": idb}))
+    sh = step("consolidate.make",  lambda: c.send("consolidate.make", {"id": idb}))
     if sh:
         step("job.wait",      lambda: c.send("job.wait", {"id": sh["job_id"], "timeout_ms": 30000}))
-        lst = step("definition.list", lambda: c.send("definition.list"))
+        lst = step("consolidate.list", lambda: c.send("consolidate.list"))
         if lst and lst["count"]:
+            # The old `definition.*` names, kept as hidden aliases (@see plan_consolidate.md Q1):
+            # resolved transparently by `execute`, read here BEFORE anything below changes the
+            # registry's state, so the two answers are directly comparable.
+            old_list = step("definition.list (alias)", lambda: c.send("definition.list"))
+            if old_list:
+                check("definition.list == consolidate.list", old_list == lst, (old_list, lst))
             pl = lst["definitions"][0]["placements"]
             if pl:
-                step("definition.edit_begin", lambda: c.send("definition.edit_begin", {"placement": pl[0]}))
-                step("definition.state",  lambda: c.send("definition.state"))
-                step("definition.edit_cancel", lambda: c.send("definition.edit_cancel"))
-                step("definition.detach", lambda: c.send("definition.detach", {"placement": pl[0]}))
+                step("consolidate.edit_begin", lambda: c.send("consolidate.edit_begin", {"placement": pl[0]}))
+                step("consolidate.state",  lambda: c.send("consolidate.state"))
+                step("consolidate.edit_cancel", lambda: c.send("consolidate.edit_cancel"))
+                step("consolidate.unmake", lambda: c.send("consolidate.unmake", {"placement": pl[0]}))
+
+    # absent from bare `help`, and `help name=` names the canonical command an alias points to.
+    helped = step("help",     lambda: c.send("help"))
+    if helped:
+        check("definition.* absent from help",
+              not any(cmd["name"].startswith("definition.") for cmd in helped["commands"]),
+              "an old alias leaked into the bare listing")
+    aliased_help = step("help name=definition.make", lambda: c.send("help", {"name": "definition.make"}))
+    if aliased_help:
+        check("definition.make alias_of consolidate.make",
+              aliased_help.get("alias_of") == "consolidate.make", aliased_help)
 
     # --- the format notice and export (an asynchronous render)
     step("project.schema",    lambda: c.send("project.schema"))

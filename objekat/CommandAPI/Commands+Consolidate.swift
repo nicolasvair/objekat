@@ -11,7 +11,7 @@ extension CommandRegistry {
 
     func registerConsolidateCommands() {
 
-        register("definition.list",
+        register("consolidate.list",
                  summary: "Consolidated object definitions and their instances.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             let definitions = vm.consolidateDefinitions.values.sorted { $0.name < $1.name }.map { def -> JSONValue in
@@ -34,7 +34,7 @@ extension CommandRegistry {
             return .object(["definitions": .array(definitions), "count": .int(definitions.count)])
         }
 
-        register("definition.make",
+        register("consolidate.make",
                  summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id.",
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
@@ -52,13 +52,13 @@ extension CommandRegistry {
             }
             guard vm.consolidateFolder != nil else {
                 throw CommandError(code: .invalid_state,
-                                   message: "save the project first (samples/objects/ is required)")
+                                   message: "save the project first (samples/consolidate/ is required)")
             }
             guard !vm.isBaking(id) else {
                 throw CommandError(code: .invalid_state, message: "a render is already running on this object")
             }
             let alsoLink = p.raw["also_link"] == nil ? [] : try p.uuids("also_link")
-            let jobID = JobRegistry.shared.begin(command: "definition.make")
+            let jobID = JobRegistry.shared.begin(command: "consolidate.make")
             if object.isGroup {
                 vm.consolidate(groupID: id, alsoLinkIDs: alsoLink)
             } else {
@@ -72,7 +72,7 @@ extension CommandRegistry {
             return .object(["job_id": .string(jobID)])
         }
 
-        register("definition.state",
+        register("consolidate.state",
                  summary: "Consolidated object editing in progress (the open stack).") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             return .object([
@@ -84,7 +84,7 @@ extension CommandRegistry {
             ])
         }
 
-        register("definition.edit_begin",
+        register("consolidate.edit_begin",
                  summary: "Opens an instance for editing: its original content is restored in "
                         + "place, and the other instances become its live mirror.",
                  params: [ParamSpec("placement", "uuid", "Instance to open.")],
@@ -105,7 +105,7 @@ extension CommandRegistry {
                             "depth": .int(vm.consolidateEditStack.count)])
         }
 
-        register("definition.edit_commit",
+        register("consolidate.edit_commit",
                  summary: "Commits the edit in progress: re-bakes the definition and propagates it "
                         + "to every instance (asynchronous). Returns a job_id.",
                  undo: .handled) { _ in
@@ -113,7 +113,7 @@ extension CommandRegistry {
             guard vm.isEditingConsolidate else {
                 throw CommandError(code: .invalid_state, message: "no edit in progress")
             }
-            let jobID = JobRegistry.shared.begin(command: "definition.edit_commit")
+            let jobID = JobRegistry.shared.begin(command: "consolidate.edit_commit")
             vm.closeConsolidate()
             CommandAdapters.followBake(jobID, in: vm) {
                 .object(["editing": .bool(vm.isEditingConsolidate)])
@@ -121,7 +121,7 @@ extension CommandRegistry {
             return .object(["job_id": .string(jobID)])
         }
 
-        register("definition.edit_cancel",
+        register("consolidate.edit_cancel",
                  summary: "Abandons the edit in progress and puts the instance back as it was.",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
@@ -133,7 +133,7 @@ extension CommandRegistry {
                             "depth": .int(vm.consolidateEditStack.count)])
         }
 
-        register("definition.detach",
+        register("consolidate.unmake",
                  summary: "Detaches an instance: it becomes an ordinary object again, with its "
                         + "content restored, and stops following the definition.",
                  params: [ParamSpec("placement", "uuid", "Instance to detach.")],
@@ -148,5 +148,18 @@ extension CommandRegistry {
             return .object(["placement": .string(placementID.uuidString),
                             "still_linked": .bool(vm.find(id: placementID)?.isConsolidateInstance ?? false)])
         }
+
+        // MARK: - Hidden aliases (@see plan_consolidate.md, décision Q1)
+        //
+        // The family was `definition.*` before this rename; every script written against it keeps
+        // working, transparently, through `execute`. Absent from bare `help`'s listing — a script
+        // discovering the API fresh should only ever be offered the new names.
+        registerAlias("definition.list", for: "consolidate.list")
+        registerAlias("definition.make", for: "consolidate.make")
+        registerAlias("definition.state", for: "consolidate.state")
+        registerAlias("definition.edit_begin", for: "consolidate.edit_begin")
+        registerAlias("definition.edit_commit", for: "consolidate.edit_commit")
+        registerAlias("definition.edit_cancel", for: "consolidate.edit_cancel")
+        registerAlias("definition.detach", for: "consolidate.unmake")
     }
 }

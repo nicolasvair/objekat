@@ -193,6 +193,11 @@ final class CommandRegistry {
     }
 
     private(set) var commands: [String: Command] = [:]
+    /// Old command name → canonical name it now resolves to. A hidden compatibility door: absent
+    /// from bare `help`'s listing (it never touches `commands`), resolved transparently by
+    /// `execute`, and named explicitly by `help name:` (`alias_of`) so a script upgrading its own
+    /// calls can find the new name without guessing.
+    private(set) var aliases: [String: String] = [:]
     private var didBootstrap = false
 
     /// Armed during a `batch`: the sub-commands then do NOT lay down their own undo entry,
@@ -208,6 +213,14 @@ final class CommandRegistry {
                   handler: @escaping @MainActor (CommandParams) async throws -> JSONValue) {
         commands[name] = Command(name: name, summary: summary, params: params,
                                  undo: undo, handler: handler)
+    }
+
+    /// Registers `oldName` as a hidden alias of `canonicalName`, which must already be (or must
+    /// later be) registered. `execute` resolves it transparently; `help` with no argument never
+    /// lists it, and `help name: oldName` answers the canonical command's own `jsonObject` plus
+    /// `alias_of`.
+    func registerAlias(_ oldName: String, for canonicalName: String) {
+        aliases[oldName] = canonicalName
     }
 
     /// Populates the registry. Idempotent: callable from the app as from some future headless mode
@@ -240,6 +253,15 @@ final class CommandRegistry {
                                     "Detail only this command.")]) { p in
             let all = CommandRegistry.shared.commands
             if let name = try p.optionalString("name") {
+                // An alias resolves to its target's own description, with `alias_of` naming the
+                // canonical command a script should call from now on.
+                if let canonical = CommandRegistry.shared.aliases[name] {
+                    guard let cmd = all[canonical], var obj = cmd.jsonObject.objectValue else {
+                        throw CommandError(code: .not_found, message: "unknown command: \(name)")
+                    }
+                    obj["alias_of"] = .string(canonical)
+                    return .object(obj)
+                }
                 guard let cmd = all[name] else {
                     throw CommandError(code: .not_found, message: "unknown command: \(name)")
                 }
@@ -257,7 +279,10 @@ final class CommandRegistry {
     /// and every error is a typed `CommandError`.
     func execute(name: String, params: CommandParams) async throws -> JSONValue {
         bootstrap()
-        guard let command = commands[name] else {
+        // An alias is resolved transparently: the caller sees the same behaviour as the
+        // canonical name, undo policy included.
+        let resolvedName = aliases[name] ?? name
+        guard let command = commands[resolvedName] else {
             throw CommandError(code: .unknown_command, message: "unknown command: \(name)")
         }
 
