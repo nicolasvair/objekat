@@ -237,6 +237,20 @@ final class WaveformCache {
             // Keyed by where the DECODED region actually starts, not the request: widening can
             // pull `lo` back into the slot before the one the request itself fell in.
             let storeKey = RegionKey(path: filePath, slot: Self.slot(for: region.startTime))
+            // A key ALREADY HOLDING a region is the ordinary case, not the exception: a region is
+            // about as wide as the slot it is filed under, so two requests a scroll apart land in
+            // the same slot and the second replaces the first. That replacement frees the first
+            // one's memory — and the byte count has to hear about it. Left out, `regionBytesTotal`
+            // only ever grows, crosses `regionByteCap` on memory nothing is holding, and from then
+            // on `evictRegionsIfNeeded` throws away every region it is handed, including the one
+            // just decoded: a self-feeding loop whose signature is an eviction for every decode
+            // (measured before this line existed: 18 705 of each at 10 000 px/s, where the regions
+            // actually resident came to 15 MB against a 48 MB cap).
+            if let replaced = sampleRegions[storeKey] {
+                let freed = replaced.samples.count * MemoryLayout<Float>.stride
+                regionBytesTotal -= freed
+                WaveformCacheMeter.record { $0.regionBytesInMemory -= freed }
+            }
             sampleRegions[storeKey] = region
             regionBytesTotal += bytes
             regionRecency.removeAll { $0 == storeKey }
