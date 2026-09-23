@@ -272,7 +272,7 @@ That is end-of-process noise, with no effect on the result.
 | family | what it covers |
 |---|---|
 | `app.*` | version, current project, engine state, dialogue policy, journal |
-| `project.*` | new, open, save, save as, serialised state, the snap, the format notice |
+| `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position) |
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
@@ -840,6 +840,40 @@ Nothing of a render exists while it **prepares**: the engine's tap is only remad
 is really launched, and only zeroed when its graph is built, so it still answers the previous
 export's shape in between. `peaks_filled` is 0 throughout that phase rather than the last render's
 count.
+
+### Saving a copy with the audio files
+
+`project.save_copy {path}` is the menu's "Save a copy with audio files…" without its panel: `path`
+is the capsule's **folder** (created if absent), and the manifest inside is named after it
+(`/x/My copy/` → `/x/My copy/My copy.json`). The command **waits for the last write** before it
+answers — no job, no polling:
+
+```json
+{"cmd": "project.save_copy", "params": {"path": "/tmp/capsule"}}
+→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.json",
+   "copied_files": 3, "missing": []}
+```
+
+What goes in is what the project **plays**, and nothing more. The source files are copied into
+`samples/sources/` (de-duplicated by name). The consolidated objects are carried by transitive
+closure through their sidecars (a consolidated object nested in another one comes along), each wave
+copied from **wherever it is actually read** — `samples/consolidate/`, the legacy
+`samples/objects/`, or another project's folder — into the capsule's `samples/consolidate/`, with
+its sidecar rewritten to name the capsule's paths. The copy is therefore what **normalises** a
+project from before the consolidate rename: the capsule never has a `samples/objects/`. Orphan
+waves (older revisions, a consolidation undone) and definitions without an instance stay behind.
+The `.wfc` caches of the included files travel along when they exist.
+
+It copies the project **as it is in memory**, unsaved changes included. The current project is not
+touched: it stays the open one, with the same path and the same dirty flag — this is not a Save As.
+
+- `missing`: what could not be carried (an absent source, a sidecar, a definition); the copy still
+  succeeds and those links are left as they were.
+- A write failure throws `invalid_state` with `details.errors`; the capsule is then incomplete.
+- `invalid_state` too if `path` is the current project's own folder: a copy onto itself would
+  remove each wave before copying it from itself.
+- The end-of-copy report goes through the dialogue policy like any other (`app.dialogs` under a
+  script, a modal under `ask`).
 
 ### Missing files, and repairing a link
 

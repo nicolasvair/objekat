@@ -14,6 +14,20 @@ import AppKit
 // objects) → they are collected by transitive closure so that the recipient can open AND edit
 // everything.
 
+/// What a finished "Save a copy" did — handed to `performSaveCopy`'s completion.
+struct SaveCopyReport {
+    /// The capsule's manifest (`<folder>/<folder>.json`).
+    let projectFile: URL
+    /// Files copied (sources + consolidated waves; the regenerable `.wfc` caches are not counted).
+    let copiedFiles: Int
+    /// What the capsule could not carry (absent source, sidecar or definition) — the copy still
+    /// succeeded, those links are left as they were.
+    let missing: [String]
+    /// Write failures. Non-empty = the capsule is incomplete.
+    let errors: [String]
+    var succeeded: Bool { errors.isEmpty }
+}
+
 extension EditViewModel {
 
     /// Menu entry point: "Save a copy with audio files…".
@@ -39,8 +53,12 @@ extension EditViewModel {
     ///
     /// Internal (and not private): this is the AppKit-free heart of "Save a copy", the one external
     /// driving will call directly, skipping the panel but not a single line of the copying
-    /// logic.
-    func performSaveCopy(to destFolder: URL) {
+    /// logic (`project.save_copy`).
+    ///
+    /// `completion` is called on the main thread once EVERY write is over, after the final alert
+    /// (which itself goes through the dialogue policy) — it is what lets the API wait for the end
+    /// instead of guessing it.
+    func performSaveCopy(to destFolder: URL, completion: ((SaveCopyReport) -> Void)? = nil) {
         // The manifest bears the folder's name and nothing more: "My Project copy/My Project copy.json".
         let folderName = EditViewModel.projectDisplayName(for: destFolder)
         let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
@@ -214,6 +232,9 @@ extension EditViewModel {
         } catch {
             copyAlert(success: false,
                       info: L("saveCopy.encodeFailed", error.localizedDescription))
+            completion?(SaveCopyReport(projectFile: projectFileURL, copiedFiles: 0,
+                                       missing: missing,
+                                       errors: [error.localizedDescription]))
             return
         }
 
@@ -261,6 +282,9 @@ extension EditViewModel {
                                    info: L("saveCopy.writeErrors") + "\n"
                                         + self.truncatedList(ioErrors))
                 }
+                completion?(SaveCopyReport(projectFile: projectFileURL,
+                                           copiedFiles: fileCopies.count,
+                                           missing: missing, errors: ioErrors))
             }
         }
     }

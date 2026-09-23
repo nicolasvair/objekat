@@ -149,6 +149,47 @@ extension CommandRegistry {
             return .object(["path": .string(url.path), "name": .string(vm.projectName)])
         }
 
+        register("project.save_copy",
+                 summary: "\"Save a copy with audio files\" without the panel: writes a SELF-CONTAINED "
+                        + "capsule into the given folder — the manifest (named after the folder), "
+                        + "the source files it plays in samples/sources/, and the consolidated "
+                        + "objects it actually uses in samples/consolidate/ (wherever they were "
+                        + "read from; orphan waves and old revisions are left out). Waits for the "
+                        + "last write before answering. The current project is untouched: it stays "
+                        + "the open one, with the same path and dirty flag.",
+                 params: [ParamSpec("path", "string",
+                                    "The capsule's FOLDER (created if absent). Must not be the "
+                                  + "current project's own folder.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let path = try p.string("path")
+            let dest = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+            // Copying a project onto itself would have each consolidated wave removed and then
+            // copied from… itself: the capsule's destination can never be the source folder.
+            if let folder = vm.projectFolder,
+               folder.standardizedFileURL.resolvingSymlinksInPath().path
+                   == dest.resolvingSymlinksInPath().path {
+                throw CommandError(code: .invalid_state,
+                                   message: "the copy's folder is the project's own folder: \(dest.path)")
+            }
+            let report: SaveCopyReport = await withCheckedContinuation { cont in
+                vm.performSaveCopy(to: dest) { cont.resume(returning: $0) }
+            }
+            let payload: [String: JSONValue] = [
+                "path": .string(dest.path),
+                "manifest": .string(report.projectFile.path),
+                "copied_files": .int(report.copiedFiles),
+                "missing": .array(report.missing.map { .string($0) }),
+            ]
+            guard report.succeeded else {
+                var details = payload
+                details["errors"] = .array(report.errors.map { .string($0) })
+                throw CommandError(code: .invalid_state,
+                                   message: "the copy is incomplete: \(report.errors.count) write error(s)",
+                                   details: .object(details))
+            }
+            return .object(payload)
+        }
+
         register("project.get_state",
                  summary: "The current session, serialised (the same document as the project file).") { _ in
             let vm = try CommandContext.shared.requireViewModel()
