@@ -1178,6 +1178,63 @@ What has landed since mid-August, in order:
   alone, so two sources sharing a file name share a cache file and invalidate each other:
   pre-existing, out of scope, worth knowing the day an unexplained recompute appears.
 
+- **Automation points are selected by rectangle, and transformed as a block** (22-23 September 2026,
+  merged into `main` on the 23rd) — a curve was read point by point, so halving a crescendo or
+  tightening a gesture in time meant taking every point by hand: deciding on a NUMBER where the ear
+  only asked for a RATIO. One draws round a portion now and transforms it whole, with the eight
+  grips the timeline's other surfaces already have.
+  **The clause everything is shaped around: the transform is NON-DESTRUCTIVE.** The factor is
+  re-read on EVERY FRAME from the ORIGINAL points captured when the grip was taken, never composed
+  onto the current state, and the clamp is an OUTPUT clamp, per point. That is what lets a selection
+  be pushed up while one of its points already sits on the ceiling — that one stays, the others rise
+  — and then come back exactly where it started. Composing onto the current state would crush the
+  curve against the bound and leave it there, and the symptom would be invisible for one frame and
+  permanent after two.
+  **The box is not a frame, it is a DIAL** — one box for the whole selection, hugging the material
+  in X and covering the ROWS in Y. `boxFactor` is a ratio of PIXELS between the pulled edge and the
+  anchored one: it reads no point, is 1 at rest, 0 on the anchor and passes 1 unbounded. That
+  dissolves two cases that would otherwise be code — no division by a null distance, and a row lying
+  flat on its bound does not move on its own (`v' = 0 × k = 0`) while its neighbours rise. The
+  anchoring is SEMANTIC and per row, so ONE `Request` travels to every row speaking in proportions:
+  "the same proportions, never the same values" became a type rather than a discipline.
+  **A pre-existing bug repaired on the way**, and it is the one to remember:
+  `updateAutomationPoints` clamped `t` to zero across the WHOLE lane rather than on the points
+  touched, so moving a single point on an object cropped at the left piled silently onto zero
+  everything waiting behind the edge — material `AutomationPoint` and `shifted(by:)` both declare
+  legitimate (@see the negative-time convention). Clamping time belongs to the GESTURE, which alone
+  knows where the bound is. With it came `updateAutomationRows`, which is not a convenience:
+  `pushAutomation` pushes ALL of an object's curves, so N rows mutated one by one cost N × M engine
+  writes per frame on a gesture running at screen speed.
+  Two decisions worth keeping. **ONE `DragGesture`** — the marquee and the transform are MODES of
+  the one that existed, concurrent `DragGesture`s firing about half the time on macOS (@see the
+  permanent points). And the ORDER of `beginDrag`'s branching is half the feature: grip, then point,
+  then line, then a marquee — the grip tested BEFORE the row, a bottom grip being able to fall a
+  pixel outside the band. `beginAutomationEdit` is SKIPPED for a marquee (selecting changes nothing
+  and must not leave an empty undo entry), the snap applies to the GRIP'S TARGET and never to the
+  points one by one (otherwise the curve's internal rhythm leaves for the grid), and a FLAT
+  rectangle is accepted — a deliberate divergence from `SynopticMarquee`, argued in the code:
+  sweeping along a row is the most natural gesture there is and that is exactly what it produces.
+  Points are addressed by STORAGE INDEX and not by an id of their own, as the whole existing API
+  already does; the price is paid in one place and in full — the selection is PURGED at any
+  structural change, undo included, where it is dropped wholesale rather than pruned (an index that
+  survives does not name a vanished point, it names a DIFFERENT one).
+  Verified, on the base it was merged onto and not the one it was written against: Debug build with
+  no new warning; `tools/test_automation_transform.swift` 56 assertions all pass;
+  `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py` 58,
+  `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing, no orphans.
+  **NOT ONE GESTURE HAS BEEN MADE.** Nothing seen on screen, nothing felt, and no suite can reach it
+  — the command API still has no `automation.*` family, so nothing headless can lay a point and read
+  back what it is worth (the oldest debt in this memo, and this is the third entry to name it).
+  What the 56 assertions prove is the ARITHMETIC of the box, the half with no model behind it.
+  Unverified: the marquee's veil, the eight grips and their cursors, which grip a pixel at the
+  band's edge belongs to, ⇧ and ⌘ adding and flipping, and the drag itself.
+  **The two readings that decide**: a curve carrying a point ALREADY ON THE CEILING, pushed up by
+  the top grip and brought back, three times running — it must return exactly where it started, and
+  that is the non-destructive clause, the one thing a single composed frame would silently break.
+  And a selection on an object CROPPED AT THE LEFT whose points sit at negative times behind the
+  edge — they must STAY behind it and not pile onto zero, which is the pre-existing bug above and
+  the reason it was repaired here.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
