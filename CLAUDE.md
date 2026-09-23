@@ -1249,6 +1249,16 @@ What has landed since mid-August, in order:
   selection during a drag; it inverts the SNAP, as everywhere else in the band. Points are
   addressed by STORAGE INDEX, as the whole existing API already does; the price is paid in one
   place and in full — the selection is PURGED at any structural change, undo included.
+  **⌥ is what tells LOOKING from EDITING over a curve, on the wheel as on the drag** (23
+  September). The wheel bent whatever segment the pointer rested on with no modifier at all, so
+  scrolling to READ the timeline edited it — and by accident far more often than on purpose. The
+  drag had always told the two apart (plain = move a point, ⌥ = bend the segment); the wheel now
+  reads the same key, and without it is not swallowed at all. One key, one meaning, whatever the
+  hand is doing. And **a passage traced in the band puts the caret on its start**: playback reads
+  `viewModel.cursorPosition` and nothing else (@see `ObjekatSession.play`), so the band — the only
+  surface that made a time selection without moving the cursor — let one select a stretch of curve
+  and then hear somewhere else. It now ends on `onSeekToTime(range.lowerBound)`, as the timeline's
+  own rubber band does, and at the END of the drag only: the cursor is not something to drag about.
   Verified: Debug build clean; `tools/test_automation_transform.swift` 62 assertions;
   `scenario_families.py` 185 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py`
   58, `smoke.jsonl` clean; i18n 433 keys, three languages, nothing missing.
