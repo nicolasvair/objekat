@@ -25,7 +25,92 @@ struct SaveCopyReport {
     let missing: [String]
     /// Write failures. Non-empty = the capsule is incomplete.
     let errors: [String]
+    /// Set when the destination was REFUSED (nothing read, nothing written).
+    var destinationProblem: SaveCopyDestinationProblem? = nil
     var succeeded: Bool { errors.isEmpty }
+}
+
+/// Why a folder cannot receive a copy of the project: it overlaps a folder the copy READS from.
+///
+/// The copy writes into the destination with "remove what is there, then copy": on a destination
+/// that IS the source (or overlaps it) the removal falls on the very file about to be copied — a
+/// consolidated wave deleted, then copied from… nothing. That is how a copy onto the project's
+/// own folder erased its consolidated waves. The folder is refused up front, before anything is
+/// read or written.
+struct SaveCopyDestinationProblem: Equatable {
+    enum Overlap: Equatable {
+        /// The destination IS a folder the copy reads from.
+        case sameFolder
+        /// The destination lies INSIDE such a folder (e.g. `<project>/samples/`).
+        case insideSource
+        /// The destination CONTAINS such a folder (e.g. the project's parent folder, whose
+        /// `samples/` would then be the project's own).
+        case containsSource
+    }
+    let overlap: Overlap
+    /// The folder the copy reads from that the destination overlaps.
+    let source: URL
+    /// True when `source` is the project's own folder; false for the folder of an OLDER project
+    /// the consolidated waves are still read from (the Q3 fallback, after a Save As).
+    let sourceIsProject: Bool
+
+    /// For the API (English, stable wording — the code is what a script branches on).
+    var apiMessage: String {
+        let what = sourceIsProject ? "the project's own folder"
+                                   : "a folder the project still reads consolidated waves from"
+        switch overlap {
+        case .sameFolder:     return "the copy's folder is \(what): \(source.path)"
+        case .insideSource:   return "the copy's folder is inside \(what): \(source.path)"
+        case .containsSource: return "the copy's folder contains \(what): \(source.path)"
+        }
+    }
+
+    /// For the alert (localised).
+    var localizedInfo: String {
+        guard sourceIsProject else { return L("saveCopy.error.destination.readFolder", source.path) }
+        switch overlap {
+        case .sameFolder:     return L("saveCopy.error.destination.same", source.path)
+        case .insideSource:   return L("saveCopy.error.destination.inside", source.path)
+        case .containsSource: return L("saveCopy.error.destination.contains", source.path)
+        }
+    }
+}
+
+/// Folder identity that holds on a case-insensitive volume, through symbolic links and through
+/// Unicode normalisation: two URLs name the same folder when the FILE SYSTEM says so (its resource
+/// identifier), never because two strings compare equal — `/tmp/P` vs `/private/tmp/p` vs a link
+/// to it are one and the same folder on APFS, and a string comparison misses all three.
+enum FolderIdentity {
+
+    /// The file-system identity of an EXISTING item (symbolic links resolved), nil if absent.
+    static func identifier(_ url: URL) -> NSObject? {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+        guard FileManager.default.fileExists(atPath: resolved.path) else { return nil }
+        return (try? resolved.resourceValues(forKeys: [.fileResourceIdentifierKey]))?
+            .fileResourceIdentifier as? NSObject
+    }
+
+    /// `url` and each of its ancestors up to `/`, symbolic links resolved on the existing part.
+    /// A path that does not exist yet (a copy's new folder) is walked from its deepest existing
+    /// ancestor: that is where it WILL be created.
+    static func existingChain(_ url: URL) -> [URL] {
+        var u = url.standardizedFileURL
+        let fm = FileManager.default
+        while !fm.fileExists(atPath: u.path), u.path != "/" { u = u.deletingLastPathComponent() }
+        u = u.resolvingSymlinksInPath()
+        var chain = [u]
+        while u.path != "/" {
+            u = u.deletingLastPathComponent()
+            chain.append(u)
+        }
+        return chain
+    }
+
+    /// True if `a` and `b` are the same existing file or folder.
+    static func same(_ a: URL, _ b: URL) -> Bool {
+        guard let ia = identifier(a), let ib = identifier(b) else { return false }
+        return ia.isEqual(ib)
+    }
 }
 
 extension EditViewModel {
@@ -42,8 +127,59 @@ extension EditViewModel {
         panel.canCreateDirectories = true
         panel.begin { [weak self] response in
             guard let self, response == .OK, let dest = panel.url else { return }
+            // `performSaveCopy` refuses an overlapping destination itself (with the alert): the
+            // panel happily offers the project's own folder, and "Replace" on it was a data loss.
             self.performSaveCopy(to: dest)
         }
+    }
+
+    // MARK: - Where a copy may NOT go
+
+    /// The folders the copy READS from and must therefore never write into: the project's folder,
+    /// plus the project folder of every consolidated wave read from elsewhere (the Q3 fallback — a
+    /// Save As leaves the waves in the OLD project's folder until the next re-bake).
+    func saveCopySourceFolders() -> [URL] {
+        var out: [URL] = []
+        if let projectFolder { out.append(projectFolder) }
+        for (defID, def) in consolidateDefinitions {
+            guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { continue }
+            // `<project>/samples/<consolidate|objects>` → `<project>`; any other layout → the folder itself.
+            let samples = folder.deletingLastPathComponent()
+            let root = samples.lastPathComponent == "samples" ? samples.deletingLastPathComponent() : folder
+            if !out.contains(where: { FolderIdentity.same($0, root) || $0.standardizedFileURL == root.standardizedFileURL }) {
+                out.append(root)
+            }
+        }
+        return out
+    }
+
+    /// nil if `dest` may receive a copy; otherwise the first overlap found with a folder the copy
+    /// reads from (@see SaveCopyDestinationProblem). Identity is the FILE SYSTEM's, so a different
+    /// case, a symbolic link or `/tmp` vs `/private/tmp` are all seen through (@see FolderIdentity).
+    func saveCopyDestinationProblem(_ dest: URL) -> SaveCopyDestinationProblem? {
+        let destChain = FolderIdentity.existingChain(dest)
+        let destExists = FileManager.default.fileExists(
+            atPath: dest.standardizedFileURL.resolvingSymlinksInPath().path)
+        for (n, source) in saveCopySourceFolders().enumerated() {
+            guard let sourceID = FolderIdentity.identifier(source) else { continue }
+            let isProject = n == 0 && projectFolder != nil
+            // dest == source, or dest (or where it will be created) under source.
+            for (i, ancestor) in destChain.enumerated() {
+                guard let id = FolderIdentity.identifier(ancestor), id.isEqual(sourceID) else { continue }
+                return SaveCopyDestinationProblem(overlap: (i == 0 && destExists) ? .sameFolder : .insideSource,
+                                                  source: source, sourceIsProject: isProject)
+            }
+            // source under dest (only an existing dest can contain anything).
+            if destExists, let destID = FolderIdentity.identifier(dest) {
+                for ancestor in FolderIdentity.existingChain(source).dropFirst() {
+                    if let id = FolderIdentity.identifier(ancestor), id.isEqual(destID) {
+                        return SaveCopyDestinationProblem(overlap: .containsSource, source: source,
+                                                          sourceIsProject: isProject)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Carrying it out
@@ -62,6 +198,16 @@ extension EditViewModel {
         // The manifest bears the folder's name and nothing more: "My Project copy/My Project copy.json".
         let folderName = EditViewModel.projectDisplayName(for: destFolder)
         let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
+
+        // A destination overlapping a folder the copy reads from is refused BEFORE anything is
+        // read or written: the "remove, then copy" of step 7 would otherwise delete the very
+        // files it is about to copy (the consolidated waves of the project's own folder).
+        if let problem = saveCopyDestinationProblem(destFolder) {
+            notify(L("saveCopy.error.destination.title"), problem.localizedInfo)
+            completion?(SaveCopyReport(projectFile: projectFileURL, copiedFiles: 0, missing: [],
+                                       errors: [problem.apiMessage], destinationProblem: problem))
+            return
+        }
 
         // Destination folders. The copy NORMALISES: every consolidated wave lands in
         // `samples/consolidate/`, wherever it was actually read from (cas E1/E6) — the copy is in
@@ -251,7 +397,12 @@ extension EditViewModel {
                 catch { ioErrors.append(L("saveCopy.error.folder", dir.lastPathComponent,
                                           error.localizedDescription)) }
             }
+            // The last line of defence, below the folder check: a destination file that IS its
+            // source (a clip whose source already sits in the destination's samples/sources/,
+            // reached through another spelling of the same path) is left alone — removing it
+            // "to replace it" would delete the one copy there is. It is already where it belongs.
             for (src, dst) in fileCopies {
+                if FolderIdentity.same(src, dst) { continue }
                 do {
                     if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
                     try fm.copyItem(at: src, to: dst)
@@ -261,6 +412,7 @@ extension EditViewModel {
             }
             // Waveform caches: regenerable → a failure does not invalidate the copy (silent).
             for (src, dst) in waveformCopies {
+                if FolderIdentity.same(src, dst) { continue }
                 if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
                 try? fm.copyItem(at: src, to: dst)
             }

@@ -7499,6 +7499,121 @@
         }
       }
     },
+    "saveCopy.error.destination.contains": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chosen folder contains the project's folder (%@). Choose a folder that does not contain the project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta elegida contiene la carpeta del proyecto (%@). Elija una carpeta que no contenga el proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier choisi contient le dossier du projet (%@). Choisissez un dossier qui ne contient pas le projet."
+          }
+        }
+      }
+    },
+    "saveCopy.error.destination.inside": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chosen folder is inside the project's folder (%@). Choose a folder outside the project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta elegida está dentro de la carpeta del proyecto (%@). Elija una carpeta fuera del proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier choisi se trouve à l'intérieur du dossier du projet (%@). Choisissez un dossier en dehors du projet."
+          }
+        }
+      }
+    },
+    "saveCopy.error.destination.readFolder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chosen folder overlaps %@, a folder the project still reads consolidated files from (that of a project it came from through “Save As”). The copy would erase them. Choose another folder."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta elegida se solapa con %@, una carpeta de la que el proyecto aún lee archivos consolidados (la de un proyecto del que procede mediante «Guardar como»). La copia los borraría. Elija otra carpeta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier choisi recoupe %@, un dossier d'où le projet lit encore des fichiers consolidés (celui d'un projet dont il est issu par « Enregistrer sous »). La copie les effacerait. Choisissez un autre dossier."
+          }
+        }
+      }
+    },
+    "saveCopy.error.destination.same": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The chosen folder is the project's own folder (%@). The copy would replace the very files it copies and erase them. Choose another folder."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carpeta elegida es la del propio proyecto (%@). La copia reemplazaría los archivos que copia y los borraría. Elija otra carpeta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le dossier choisi est celui du projet (%@). La copie remplacerait les fichiers qu'elle copie et les effacerait. Choisissez un autre dossier."
+          }
+        }
+      }
+    },
+    "saveCopy.error.destination.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The copy cannot be saved here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede guardar la copia aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d'enregistrer la copie ici"
+          }
+        }
+      }
+    },
     "saveCopy.error.folder": {
       "extractionState": "manual",
       "localizations": {

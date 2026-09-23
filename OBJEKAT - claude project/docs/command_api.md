@@ -870,8 +870,14 @@ touched: it stays the open one, with the same path and the same dirty flag — t
 - `missing`: what could not be carried (an absent source, a sidecar, a definition); the copy still
   succeeds and those links are left as they were.
 - A write failure throws `invalid_state` with `details.errors`; the capsule is then incomplete.
-- `invalid_state` too if `path` is the current project's own folder: a copy onto itself would
-  remove each wave before copying it from itself.
+- `bad_params` (with `details.source`) if `path` overlaps a folder the copy **reads** from — the
+  project's own folder, a folder inside it, a folder containing it, or the folder of an older
+  project whose consolidated waves are still read (after a Save As). A copy there would remove each
+  wave before copying it from itself: that was a real data loss through the menu. Identity is the
+  file system's, so another case (APFS), a symbolic link, `..` or `/tmp` vs `/private/tmp` are all
+  seen through. The refusal is the menu's own and records its alert. Nothing is read or written.
+- A source file that already sits exactly where the copy would put it (an unsaved project playing
+  `<dest>/samples/sources/x.wav`) is left in place, never removed "to be replaced".
 - The end-of-copy report goes through the dialogue policy like any other (`app.dialogs` under a
   script, a modal under `ask`).
 

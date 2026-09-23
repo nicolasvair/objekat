@@ -578,6 +578,13 @@ try:
         check("X  B12: deconsolidating C after the Save As (sidecar via Q3)",
               r["still_linked"] is False, r)
         cmd("edit.undo")
+        # BUG 1, the Q3 side: C's wave is still READ from the OLD folder, so that folder is a
+        # source of any copy too — copying onto it would erase the wave C plays.
+        src12_before = fingerprint(SRC12)
+        refused(lambda: cmd("project.save_copy", path=SRC12),
+                "BUG1 save_copy onto the OLD folder the waves are still read from → refused",
+                "bad_params", "still reads consolidated waves from")
+        check("BUG1 the old folder untouched by the refusal", fingerprint(SRC12) == src12_before)
         cmd("project.save")
         cmd("project.open", path=os.path.join(DST12, "b12dst.json"))
         cmd("wait_idle", timeout_ms=30000)
@@ -631,8 +638,56 @@ try:
         # A little unsaved change: the copy carries the project as it is in MEMORY.
         cmd("object.set_gain", ids=[ids["pc"]], db=-3)
         info_before = cmd("app.info")
+
+        # ── BUG 1 (data loss, pre-existing): a copy onto the project's own folder erased its
+        # consolidated waves — step 7's "remove the destination, then copy" fell on the source.
+        # Every overlap is refused, by FILE-SYSTEM identity, whatever the spelling.
+        section("BUG 1 — save_copy onto / into / around the project's folder")
+        leg_before = fingerprint(LEG)
+        cmd("app.dialogs", clear=True)
         refused(lambda: cmd("project.save_copy", path=LEG),
-                "X  save_copy onto the project's own folder refused", "invalid_state")
+                "BUG1 save_copy onto the project's own folder → bad_params", "bad_params", "own folder")
+        dlg = cmd("app.dialogs")
+        check("BUG1 the refusal is the MENU's own (its alert is recorded, naming the folder)",
+              dlg["count"] == 1 and LEG in dlg["dialogs"][0]["info"], dlg)
+        refused(lambda: cmd("project.save_copy", path=LEG + "/"),
+                "BUG1 …with a trailing slash", "bad_params", "own folder")
+        refused(lambda: cmd("project.save_copy", path=os.path.join(LEG, "samples", "..")),
+                "BUG1 …through '..'", "bad_params", "own folder")
+        if LEG.startswith("/private/tmp/"):
+            refused(lambda: cmd("project.save_copy", path=LEG[len("/private"):]),
+                    "BUG1 …spelt /tmp/… (a symbolic link in the path)", "bad_params", "own folder")
+        LINK = os.path.join(ROOT, "link-to-legacy")
+        os.symlink(LEG, LINK)
+        refused(lambda: cmd("project.save_copy", path=LINK),
+                "BUG1 …through a symbolic link to it", "bad_params", "own folder")
+        swapped = os.path.join(os.path.dirname(LEG), os.path.basename(LEG).upper())
+        if os.path.exists(swapped):   # a case-insensitive volume (APFS by default)
+            refused(lambda: cmd("project.save_copy", path=swapped),
+                    "BUG1 …spelt in another case (case-insensitive volume)", "bad_params", "own folder")
+        else:
+            print("info  case-sensitive volume: the other-case spelling is another folder, not tested")
+        refused(lambda: cmd("project.save_copy", path=os.path.join(LEG, "samples")),
+                "BUG1 into an existing folder INSIDE the project → refused", "bad_params", "inside")
+        refused(lambda: cmd("project.save_copy", path=os.path.join(LEG, "samples", "consolidate")),
+                "BUG1 into samples/consolidate/ itself → refused", "bad_params", "inside")
+        refused(lambda: cmd("project.save_copy", path=os.path.join(LEG, "new copy")),
+                "BUG1 into a NEW folder inside the project → refused", "bad_params", "inside")
+        refused(lambda: cmd("project.save_copy", path=os.path.join(LINK, "new copy")),
+                "BUG1 into a new folder inside, through the link → refused", "bad_params", "inside")
+        refused(lambda: cmd("project.save_copy", path=ROOT),
+                "BUG1 into a folder CONTAINING the project → refused", "bad_params", "contains")
+        check("BUG1 nothing created inside the project", not os.path.exists(os.path.join(LEG, "new copy")))
+        check("BUG1 the project's files untouched by every refusal (waves still there)",
+              fingerprint(LEG) == leg_before
+              and os.path.isfile(os.path.join(CONS, d14[ids["a"]]["wave"]))
+              and os.path.isfile(os.path.join(OBJ, d14[ids["c"]]["wave"])),
+              set(fingerprint(LEG).items()) ^ set(leg_before.items()))
+        os.remove(LINK)
+        info_mid = cmd("app.info")
+        check("BUG1 the refusals leave the project as it was (path, dirty)",
+              info_mid["project_path"] == info_before["project_path"]
+              and info_mid["dirty"] == info_before["dirty"], (info_before, info_mid))
         CAP = os.path.join(ROOT, "capsule")
         r = cmd("project.save_copy", path=CAP)
         check("B14: save_copy answers, nothing missing",
@@ -683,6 +738,28 @@ try:
             cmd("project.new")
         finally:
             os.rename(HIDDEN, LEG)
+
+        # ── BUG 1, the last line of defence: a SOURCE file already sitting where the copy would
+        # put it. An unsaved project has no folder to refuse, and the destination is legitimate —
+        # but the "remove, then copy" of its own source used to delete the only copy there is.
+        section("BUG 1 — a source already in the destination (never-saved project)")
+        DS = os.path.join(ROOT, "dsrc")
+        os.makedirs(os.path.join(DS, "samples", "sources"))
+        own = os.path.join(DS, "samples", "sources", "bip.wav")
+        shutil.copy(BIP, own)
+        size = os.path.getsize(own)
+        cmd("project.new")
+        cmd("object.add", path=own, lane=0, start=0.0)
+        spelt = DS[len("/private"):] if DS.startswith("/private/tmp/") else DS
+        r = cmd("project.save_copy", path=spelt)
+        check("BUG1 the copy goes through (nothing missing)", r["missing"] == [], r)
+        check("BUG1 the source that was already in place survived the copy",
+              os.path.isfile(own) and os.path.getsize(own) == size,
+              os.path.exists(own) and os.path.getsize(own))
+        capdoc = read_json(r["manifest"])
+        check("BUG1 the copy names it, relative, where it is",
+              [o["kind"].get("filePath") for o in walk_objects(capdoc["items"])]
+              == ["samples/sources/bip.wav"], capdoc["items"])
 
         cmd("project.new")
         print("\nPhase A was %s." % ("FORGED with the new build" if forged else "made by the OLD build"))

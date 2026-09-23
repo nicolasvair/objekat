@@ -158,21 +158,22 @@ extension CommandRegistry {
                         + "last write before answering. The current project is untouched: it stays "
                         + "the open one, with the same path and dirty flag.",
                  params: [ParamSpec("path", "string",
-                                    "The capsule's FOLDER (created if absent). Must not be the "
-                                  + "current project's own folder.")]) { p in
+                                    "The capsule's FOLDER (created if absent). Must not be, lie "
+                                  + "inside, or contain the current project's folder (bad_params).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
             let dest = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-            // Copying a project onto itself would have each consolidated wave removed and then
-            // copied from… itself: the capsule's destination can never be the source folder.
-            if let folder = vm.projectFolder,
-               folder.standardizedFileURL.resolvingSymlinksInPath().path
-                   == dest.resolvingSymlinksInPath().path {
-                throw CommandError(code: .invalid_state,
-                                   message: "the copy's folder is the project's own folder: \(dest.path)")
-            }
             let report: SaveCopyReport = await withCheckedContinuation { cont in
                 vm.performSaveCopy(to: dest) { cont.resume(returning: $0) }
+            }
+            // Copying a project onto itself would have each consolidated wave removed and then
+            // copied from… itself: `performSaveCopy` refuses a destination overlapping a folder
+            // the copy reads from — the same one, one inside it, or one containing it — by
+            // file-system identity (case, symbolic links, /private seen through). The refusal is
+            // the MENU's own, alert included: the API goes through it rather than beside it.
+            if let problem = report.destinationProblem {
+                throw CommandError(code: .bad_params, message: problem.apiMessage,
+                                   details: .object(["source": .string(problem.source.path)]))
             }
             let payload: [String: JSONValue] = [
                 "path": .string(dest.path),
