@@ -80,6 +80,31 @@ extension EditViewModel {
         if selectedAutomationPoints != refs { selectedAutomationPoints = refs }
     }
 
+    // MARK: - The two kinds of lane
+
+    /// The display lanes that are automation rows.
+    var automationLanes: Set<Int> { Set(automationRowsOnScreen().map(\.lane)) }
+
+    /// What a display lane IS. There are exactly two kinds, and every lane is one of them.
+    enum LaneKind { case objects, automation }
+
+    func laneKind(_ lane: Int) -> LaneKind {
+        automationLanes.contains(lane) ? .automation : .objects
+    }
+
+    /// A set of lanes cut down to ONE kind.
+    ///
+    /// A TIME SELECTION NEVER MIXES an object's lane with a curve's row, and the kind is decided by
+    /// where the gesture STARTED. Not a restriction for tidiness: the two answer the same keys
+    /// differently — ⌘C copies objects or a passage of automation, ⌫ deletes clips or points — and
+    /// a selection holding both would have to pick one and silently drop the other. A rubber band
+    /// dragged across the timeline over a few objects whose bands happen to be open would then
+    /// quietly turn into an automation selection.
+    func confine(_ lanes: Set<Int>, to kind: LaneKind) -> Set<Int> {
+        let auto = automationLanes
+        return kind == .automation ? lanes.intersection(auto) : lanes.subtracting(auto)
+    }
+
     /// Is the keyboard talking to an automation band? A zone holding NO point still answers YES,
     /// and that is why this reads the ROWS and not the points: an EMPTY stretch is a thing one
     /// copies — to wipe the same stretch elsewhere — and walks across the rows with the arrows.

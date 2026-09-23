@@ -136,6 +136,9 @@ struct AutomationBandView: View {
     /// and its grips have to show the moment the hand comes anywhere over it; `hoverPoint` /
     /// `hoverLine` are nil in a row's dead space, which is precisely where one aims a grip.
     @State private var hoverRowIndex: Int? = nil
+    /// Where the hand is, in the band's coordinates. The hovered ROW is not enough to decide
+    /// whether the grips show: a row crosses the whole band, and the zone is a rectangle inside it.
+    @State private var hoverAt: CGPoint? = nil
 
     /// One row under a transform: which curve, which of its points, and what the WHOLE lane was.
     /// The lane whole and not just the selected points, exactly as `BandDrag.origPoints` already
@@ -228,7 +231,7 @@ struct AutomationBandView: View {
                     // the timeline goes through the tracking view's `mouseExited`. This `.ended`
                     // can arrive AFTER the hover that succeeds it — it would take its claim away
                     // from it.
-                    case .ended:         clearHover(); hoverRowIndex = nil
+                    case .ended:         clearHover(); hoverRowIndex = nil; hoverAt = nil
                     }
                 }
                 .contextMenu { newLaneMenu }
@@ -576,9 +579,13 @@ struct AutomationBandView: View {
     /// instant one took hold of one.
     private func showsHandles(box: CGRect) -> Bool {
         if let d = drag, case .transform = d.mode { return true }
-        guard let hr = hoverRowIndex else { return false }
-        let top = geo.rowTop(hr)
-        return top + rowHeight > box.minY && top < box.maxY
+        // OVER THE ZONE, and not merely on a row it happens to cross. A row runs the whole width
+        // of the band, so the old reading lit the grips up with the hand several screens away from
+        // the box — eight white squares appearing for a hand that is nowhere near them.
+        // `handleGrab` of margin, so that reaching for a corner FROM OUTSIDE does not put them out
+        // the moment one leaves the rectangle by a pixel.
+        guard let p = hoverAt else { return false }
+        return box.insetBy(dx: -geo.handleGrab, dy: -geo.handleGrab).contains(p)
     }
 
     /// A white halo laid on the PORTION OF LINE the gesture would move, and nothing else: the
@@ -681,6 +688,7 @@ struct AutomationBandView: View {
         // `hoverLine` are both nil — is precisely where one aims one.
         let inRow = geo.rowIndex(atY: p.y)
         if hoverRowIndex != inRow { hoverRowIndex = inRow }
+        hoverAt = p
 
         // A GRIP answers before everything else, in the same order `beginDrag` branches in: a
         // cursor that did not say "grip" where the grip is would promise a gesture the click then
@@ -817,13 +825,30 @@ struct AutomationBandView: View {
             }
         }
 
+        // ⇧ and ⌘ — and the caret — are the TIMELINE'S rules, called here rather than written
+        // again: a curve's row is a display lane of the same numbering, so "extend from the
+        // anchor" and "toggle this lane" mean there exactly what they mean one row higher
+        // (@see EditViewModel.handleTimeSelectionClick). It answers true only when it has made a
+        // RANGE; a plain click carries on below.
+        let lane = bandTopLane + (geo.rowIndex(atY: p.y) ?? 0)
+        let tapT = viewModel.snapTime(max(0, bandStartTime + p.x / pixelsPerSecond))
+        let mods = NSEvent.modifierFlags
+        if viewModel.handleTimeSelectionClick(
+            lane: lane, time: tapT,
+            shift: mods.contains(.shift), cmd: mods.contains(.command),
+            allowsRange: true, onMoveCursor: { onSeekToTime($0) }) {
+            viewModel.select(object.id, additive: false)
+            return
+        }
+
         // A plain click: it selects the carrying object (the inspector follows), and consumes the
         // click so that it does not fall through onto the timeline's canvas.
         //
-        // It also drops the point selection. Clicking in the void is how one lets go of a
-        // selection everywhere else in the timeline, and a box left standing over points nothing
-        // points at any more would go on taking ⌫ from the objects.
+        // It also drops whatever was taken — the points AND the passage. Clicking in the void is
+        // how one lets go of a selection everywhere else in the timeline, and a frame left
+        // standing over matter nothing points at any more would go on taking ⌫ from the objects.
         viewModel.clearAutomationPointSelection()
+        if viewModel.timeSelection != nil { viewModel.timeSelection = nil }
         viewModel.select(object.id, additive: false)
         // ... and it moves the cursor, exactly as a click on a lane does. A curve is read against
         // the moment it plays at, so the one thing one comes here to do with a bare click is to go

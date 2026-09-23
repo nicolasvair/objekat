@@ -814,13 +814,26 @@ extension TimelineView {
             state.currentLane = max(0, Int((endY - rulerHeight) / laneStep))
             viewModel.caretLane = nil
 
+            // A rubber band traced HERE means OBJECTS, so the rows of any automation band it
+            // sweeps across are dropped: a selection never mixes the two kinds (@see
+            // EditViewModel.confine). Without this, dragging over a few objects whose bands happen
+            // to be open would quietly turn the selection into one of automation points, and ⌘C
+            // would copy a curve instead of the clips under the hand.
+            var sel = state.selection
+            sel.lanes = viewModel.confine(sel.lanes, to: .objects)
+            guard !sel.lanes.isEmpty else {
+                viewModel.timeSelection = nil
+                if phase == .ended { timeSelectionDrag = nil } else { timeSelectionDrag = state }
+                return
+            }
+
             if phase == .ended {
-                viewModel.timeSelection = state.selection
-                selectInDisplayLanes(state.selection)
-                onMoveCursor(max(0, state.selection.timeRange.lowerBound))
+                viewModel.timeSelection = sel
+                selectInDisplayLanes(sel)
+                onMoveCursor(max(0, sel.timeRange.lowerBound))
                 timeSelectionDrag = nil
             } else {
-                viewModel.timeSelection = state.selection
+                viewModel.timeSelection = sel
                 timeSelectionDrag = state
             }
             return

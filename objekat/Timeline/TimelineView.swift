@@ -669,11 +669,15 @@ struct TimelineView: View {
                             rowHeight: blockHeight,
                             bandStartTime: r.minX / pixelsPerSecond,
                             onSeekToTime: { t in
-                                // The ruler's own contract, word for word (@see moveCursorFromRuler):
-                                // the grey line over its whole height, no caret on a lane — the
-                                // click was aimed at a curve, not at a row of the timeline.
+                                // It no longer takes the caret away, and that is the change a
+                                // curve's row being a DISPLAY LANE brings: a click here is a click
+                                // on a lane like any other, so it leaves a point of insertion
+                                // behind it, and the arrows and ⌘V have somewhere to start from.
+                                // The band lays that caret itself, just before calling this
+                                // (@see AutomationBandView.handleTap); clearing it here would undo
+                                // the very gesture that asked for it. A RANGE has no caret, and
+                                // the branches that make one drop it on their own.
                                 let st = viewModel.snapTime(max(0, t))
-                                viewModel.caretLane = nil
                                 if !isPlaying { viewModel.engine?.seek(to: st) }
                                 onMoveCursor(st)
                             }
@@ -3117,15 +3121,10 @@ struct TimelineView: View {
 
     // A rubber-band selection in display-lane space.
     // It replaces viewModel.selectClipsIn (which compares base lanes) everywhere in TimelineView.
+    /// The rule itself lives on the view-model, where the shared click rules can reach it
+    /// (@see EditViewModel.selectObjectsInDisplayLanes). This stays so the call sites read the same.
     func selectInDisplayLanes(_ sel: TimeSelection) {
-        let t1 = sel.timeRange.lowerBound
-        let t2 = sel.timeRange.upperBound
-        viewModel.selectedIDs = Set(
-            viewModel.laneEntries
-                .filter { sel.lanes.contains($0.displayLane) }
-                .filter { $0.absStart >= t1 && $0.absStart + $0.item.duration <= t2 }
-                .map    { $0.item.id }
-        )
+        viewModel.selectObjectsInDisplayLanes(sel)
     }
 }
 
