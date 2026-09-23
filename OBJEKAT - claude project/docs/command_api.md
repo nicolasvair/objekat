@@ -73,6 +73,21 @@ help {"name": "…"}      → the detail of a single one
 repository copies the list out — a duplicated list diverges at the first addition, and nobody
 notices before a call fails.
 
+**Hidden aliases.** A command family renamed keeps its old names answering, transparently —
+today that is the `consolidate.*` family, whose names were `definition.*` before 24 September
+2026. `execute` resolves an alias to its target before dispatch, so behaviour and undo policy are
+identical either way; a bare `help` never lists an alias (a script discovering the API fresh is
+only ever offered the current name), and `help {"name": "definition.make"}` answers
+`consolidate.make`'s own description with an added `"alias_of": "consolidate.make"`, which is how
+a script can find the name to move to. Nothing else in the repository is aliased at the moment.
+
+The rename only ever touches what a reader sees — commands, labels, error messages. The
+`consolidate.*` family's own response fields, and the session's JSON keys, are a DATA CONTRACT
+and keep their historical names on purpose: `consolidate.list`'s `definitions` / `placements`,
+`consolidate.state`'s `definition`, `perf.census`'s `object_definitions` / `object_instances`, and
+the session file's `definitionID` / `objectDefinitions` / `dependsOn[].definitionID` (@see
+`SessionSchema`). A script written against any of these needs no change.
+
 ---
 
 ## Undo is carried by the bus
@@ -108,7 +123,7 @@ scanning). So a read launched just after a write can observe an intermediate sta
 {"cmd": "wait_idle", "params": {"timeout_ms": 5000, "settle_ms": 0}}
 ```
 
-Quiescence **reads the existing state** (`freezingIDs`, `recomputingDefinitionIDs`,
+Quiescence **reads the existing state** (`bakingIDs`, `recomputingConsolidateIDs`,
 `isCascadingRebake`, `isScanning`, the pending debounced work) instead of instrumenting the
 hot paths: no counter to unbalance. In exchange, **the engine's deferred work
 stays invisible** — that would take modifying `OBJEngineCore`. Hence `settle_ms`: a grace delay to
@@ -120,10 +135,10 @@ saying what it was waiting for cannot be diagnosed.
 ### Jobs
 
 Long commands return a `job_id` at once rather than lie about unfinished
-work: `plugin.scan`, `definition.make`, `definition.edit_commit`.
+work: `plugin.scan`, `consolidate.make`, `consolidate.edit_commit`.
 
 ```json
-{"cmd": "definition.make", "params": {"id": "…"}}      → {"job_id": "job-1"}
+{"cmd": "consolidate.make", "params": {"id": "…"}}      → {"job_id": "job-1"}
 {"cmd": "job.wait", "params": {"id": "job-1", "timeout_ms": 30000}}
 ```
 
@@ -266,7 +281,7 @@ That is end-of-process noise, with no effect on the result.
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
-| `definition.*` | reusable sound objects: creation, editing, detaching |
+| `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
 | `export.*` | render the mix into a file, follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
 | `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
@@ -905,10 +920,10 @@ beginning of the file. `object.replace_source` answers `clamped: true` when eith
 consumes, `[source_offset, source_offset + duration × speed]`, so the speed counts and the playback
 direction does not. A length that cannot be read clamps nothing at all.
 
-Two refusals worth branching on: `object.replace_source` on an **instance of a sound object** is
-`invalid_state` (it reads its definition's wave, and the next re-bake would silently put that wave
-back), and so is pointing a clip at the file it already reads. Everything else missing — the object,
-the file, the folder — is `not_found`.
+Two refusals worth branching on: `object.replace_source` on an **instance of a consolidated
+object** is `invalid_state` (it reads its definition's wave, and the next re-bake would silently
+put that wave back), and so is pointing a clip at the file it already reads. Everything else
+missing — the object, the file, the folder — is `not_found`.
 
 **`volumeOffline` is not `absent`**: a path under a `/Volumes/<name>` that is not mounted says the
 file is on a disk in a drawer, not that it is lost. The app watches the mount notifications and

@@ -15,8 +15,11 @@ source, not a translation.
 
 | French | English | Spanish | note |
 |---|---|---|---|
-| objet sonore | sound object | objeto sonoro | the central concept: a baked content laid down in N instances |
-| définition | definition | definición | the recorded content, shared by every instance |
+| objet sonore | sound object | objeto sonoro | the GENERIC term: any object on the timeline (clip, group, aux, MIDI), in Schaeffer's sense — the type `SoundObject`, unchanged |
+| consolider | consolidate | consolidar | bake a sub-tree once and lay it down as N linked instances |
+| dé-consolider | deconsolidate | desconsolidar | detach one instance: it becomes an ordinary, independent object again |
+| objet consolidé (« consolidé ») | consolidated object | objeto consolidado | the thing consolidating creates: shared content laid down in N instances |
+| définition (d'un consolidé) | definition | definición | the recorded content, shared by every instance |
 | exemplaire | instance | ejemplar | one occurrence of a definition in the timeline |
 | baker / baké | bake / baked | renderizar / renderizado | the render that freezes a sub-tree into a wave |
 | sonothèque | sound library | sonoteca | the audio file browser |
@@ -56,7 +59,6 @@ source, not a translation.
 | solo tenu / temporaire | held / temporary solo | solo mantenido / temporal |  |
 | lever un solo | clear a solo | levantar un solo |  |
 | délier / relier | unlink / link | desvincular / vincular | for linked plugin instances |
-| détacher | detach | separar | for an instance being made independent |
 | réglages | settings | ajustes |  |
 | carte son | audio device | tarjeta de sonido |  |
 | fréquence d'échantillonnage | sample rate | frecuencia de muestreo |  |
@@ -68,7 +70,13 @@ source, not a translation.
   contract. Their descriptions and their error messages are in English **and are never
   localised** — a script must not depend on the language of the machine that hosts it.
 - The keys of the session file (`<name>.json`): changing them would break existing projects.
-- The names of the folders created on disk (`samples/`, `objects/`, `waveforms/`, `Objekat/`).
+  In particular `definitionID` and `objectDefinitions` keep their historical name on disk even
+  though the concept they name is called "consolidated" everywhere else, code and screen alike
+  (@see SessionSchema).
+- The names of the folders created on disk (`samples/`, `consolidate/`, `waveforms/`, `Objekat/`).
+  A consolidated object's wave and sidecar are written to `samples/consolidate/`; a project saved
+  before this folder existed keeps its own in `samples/objects/`, which the app still reads —
+  nothing is migrated automatically.
 - The tool labels (`Edit`, `Vol.`, `Pan`, `Aux`, `Cut`): their INITIAL is the shortcut's
   key. Translating the word would move the letter, and the shortcut would no longer be readable in the name.
 - The units: dB, dBFS, Hz, kHz, ms, st, %, BPM.
