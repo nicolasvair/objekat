@@ -607,7 +607,10 @@ try:
             check("B13: the commit fails cleanly — app alive, A still revision 0, edit still open",
                   alive["has_document"] and d13[ids["a"]]["revision"] == 0
                   and cmd("consolidate.state")["editing"], (j, d13[ids["a"]]))
-            check("B13: the failure is REPORTED (dialogue journal)", dlg["count"] >= 1, dlg)
+            check("B13: the failure is REPORTED, naming samples/consolidate/ (not a bare "
+                  "'render failed')",
+                  dlg["count"] >= 1
+                  and any("samples/consolidate/" in x["info"] for x in dlg["dialogs"]), dlg)
             print("info  B13 dialogue(s): %s" % [(x["title"], x["info"]) for x in dlg["dialogs"]])
             r = cmd("consolidate.edit_cancel")
             check("B13: edit_cancel afterwards closes cleanly", r["depth"] == 0, r)

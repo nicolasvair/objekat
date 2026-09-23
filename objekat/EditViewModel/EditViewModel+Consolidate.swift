@@ -46,10 +46,13 @@ extension EditViewModel {
     /// `closeConsolidate` on an OLD project (whose `samples/consolidate/` has never existed) would
     /// otherwise fail its render with no folder to write into. A no-op, cheaply, once the folder
     /// exists. Called before EVERY consolidate render.
-    @discardableResult
-    func ensureConsolidateFolder() -> Bool {
-        guard let folder = consolidateFolder else { return false }
-        return (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil
+    ///
+    /// THROWS rather than answering a Bool (cas E17): on a read-only volume the folder cannot be
+    /// made, and the caller must stop THERE and say why — letting the render go on only fails
+    /// later with a bare "render failed, see the console" that names nothing the user can act on.
+    func ensureConsolidateFolder() throws {
+        guard let folder = consolidateFolder else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
     /// The path of the sidecar (the original editable sub-tree) associated with a definition's current wave.
@@ -377,8 +380,14 @@ extension EditViewModel {
             completion(false); return
         }
         // Cas E3: an old project may never have had samples/consolidate/ — create it before the
-        // render that is about to write the new revision's wave there.
-        ensureConsolidateFolder()
+        // render that is about to write the new revision's wave there. Cas E17: if it cannot be
+        // made (read-only volume), the re-bake is given up before anything reaches the engine.
+        do {
+            try ensureConsolidateFolder()
+        } catch {
+            NSLog("[OBJECT] headless rebake \(defID): samples/consolidate/ cannot be created — \(error.localizedDescription)")
+            completion(false); return
+        }
 
         // Fresh ids (zero timeline collision) + child refs pointing at the CURRENT waves.
         let restored = refreshConsolidateReferences(in: deepFreshCopy(original))
@@ -891,8 +900,16 @@ extension EditViewModel {
         guard let folder = consolidateFolder else { return }
         guard !isBaking(placementID) else { return }
         // Cas E3: an old project may never have had samples/consolidate/ — create it before the
-        // render about to write the new revision's wave there.
-        ensureConsolidateFolder()
+        // render about to write the new revision's wave there. Cas E17: a read-only volume stops
+        // the commit HERE, with the reason; the session stays open (nothing has been torn down yet),
+        // so the user can still cancel, or fix the permissions and commit again.
+        do {
+            try ensureConsolidateFolder()
+        } catch {
+            bakeAlert(L("consolidate.error.closeFailed.title"),
+                      L("consolidate.error.folderFailed.info", error.localizedDescription))
+            return
+        }
 
         // Perf: covers the SYNCHRONOUS part only. The re-bake that follows
         // is asynchronous and journals itself separately (`[PERF] bake …`), except in the "no
