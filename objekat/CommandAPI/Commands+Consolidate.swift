@@ -1,20 +1,20 @@
 import Foundation
 
-// MARK: - Sound objects (reusable definitions)
+// MARK: - Consolidated objects (reusable definitions)
 
-/// A sound object is a subtree BAKED once (wave + sidecar in `samples/objects/`) and laid down
+/// A consolidated object is a subtree BAKED once (wave + sidecar in `samples/objects/`) and laid down
 /// as N linked instances: editing one updates them all. The bake is ASYNCHRONOUS — the engine
 /// renders the submix in the background — so every command that starts one returns a `job_id`
 /// rather than lying about work that isn't finished. `job.wait` or `wait_idle` closes the loop.
 ///
 extension CommandRegistry {
 
-    func registerDefinitionCommands() {
+    func registerConsolidateCommands() {
 
         register("definition.list",
-                 summary: "Sound object definitions and their instances.") { _ in
+                 summary: "Consolidated object definitions and their instances.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            let definitions = vm.objectDefinitions.values.sorted { $0.name < $1.name }.map { def -> JSONValue in
+            let definitions = vm.consolidateDefinitions.values.sorted { $0.name < $1.name }.map { def -> JSONValue in
                 .object([
                     "id": .string(def.id.uuidString),
                     "name": .string(def.name),
@@ -26,8 +26,8 @@ extension CommandRegistry {
                     "muted": .bool(def.isMuted),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
-                    "stale": .bool(vm.isDefinitionStale(def.id)),
-                    "placements": .array(vm.placementIDs(forDefinition: def.id)
+                    "stale": .bool(vm.isConsolidateStale(def.id)),
+                    "placements": .array(vm.placementIDs(forConsolidate: def.id)
                         .map { .string($0.uuidString) }),
                 ])
             }
@@ -35,7 +35,7 @@ extension CommandRegistry {
         }
 
         register("definition.make",
-                 summary: "Turns an object into a reusable sound object (asynchronous bake). Returns a job_id.",
+                 summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id.",
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
                                     "Other objects to replace with a linked instance.")],
@@ -47,10 +47,10 @@ extension CommandRegistry {
             guard let object = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
-            guard !object.isObjectInstance else {
-                throw CommandError(code: .invalid_state, message: "already an instance of a sound object")
+            guard !object.isConsolidateInstance else {
+                throw CommandError(code: .invalid_state, message: "already an instance of a consolidated object")
             }
-            guard vm.objectsFolder != nil else {
+            guard vm.consolidateFolder != nil else {
                 throw CommandError(code: .invalid_state,
                                    message: "save the project first (samples/objects/ is required)")
             }
@@ -60,27 +60,27 @@ extension CommandRegistry {
             let alsoLink = p.raw["also_link"] == nil ? [] : try p.uuids("also_link")
             let jobID = JobRegistry.shared.begin(command: "definition.make")
             if object.isGroup {
-                vm.makeObject(fromGroupID: id, alsoLinkIDs: alsoLink)
+                vm.consolidate(groupID: id, alsoLinkIDs: alsoLink)
             } else {
                 // A lone clip is first wrapped in a one-item group: that wrapper is what carries
                 // fades and live sends on the instance.
-                vm.makeObjectWrappingClip(clipID: id, alsoLinkIDs: alsoLink)
+                vm.consolidateWrappingClip(clipID: id, alsoLinkIDs: alsoLink)
             }
             CommandAdapters.followBake(jobID, in: vm) {
-                .object(["definitions": .int(vm.objectDefinitions.count)])
+                .object(["definitions": .int(vm.consolidateDefinitions.count)])
             }
             return .object(["job_id": .string(jobID)])
         }
 
         register("definition.state",
-                 summary: "Sound object editing in progress (the open stack).") { _ in
+                 summary: "Consolidated object editing in progress (the open stack).") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             return .object([
-                "editing": .bool(vm.isEditingObject),
-                "definition": .stringOrNull(vm.editingDefinitionID?.uuidString),
+                "editing": .bool(vm.isEditingConsolidate),
+                "definition": .stringOrNull(vm.editingConsolidateID?.uuidString),
                 "placement": .stringOrNull(vm.editingPlacementID?.uuidString),
-                // The stack has more than one level when a sound object is opened INSIDE another.
-                "depth": .int(vm.objectEditStack.count),
+                // The stack has more than one level when a consolidated object is opened INSIDE another.
+                "depth": .int(vm.consolidateEditStack.count),
             ])
         }
 
@@ -91,18 +91,18 @@ extension CommandRegistry {
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let placementID = try p.uuid("placement")
-            guard let placement = vm.find(id: placementID), placement.isObjectInstance else {
+            guard let placement = vm.find(id: placementID), placement.isConsolidateInstance else {
                 throw CommandError(code: .not_found,
                                    message: "unknown instance: \(placementID.uuidString)")
             }
-            vm.openObject(viaPlacementID: placementID)
+            vm.openConsolidate(viaPlacementID: placementID)
             guard vm.editingPlacementID == placementID else {
                 throw CommandError(code: .invalid_state,
                                    message: "opening refused (sidecar unreadable, or a render is running)")
             }
             return .object(["placement": .string(placementID.uuidString),
-                            "definition": .stringOrNull(vm.editingDefinitionID?.uuidString),
-                            "depth": .int(vm.objectEditStack.count)])
+                            "definition": .stringOrNull(vm.editingConsolidateID?.uuidString),
+                            "depth": .int(vm.consolidateEditStack.count)])
         }
 
         register("definition.edit_commit",
@@ -110,13 +110,13 @@ extension CommandRegistry {
                         + "to every instance (asynchronous). Returns a job_id.",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            guard vm.isEditingObject else {
+            guard vm.isEditingConsolidate else {
                 throw CommandError(code: .invalid_state, message: "no edit in progress")
             }
             let jobID = JobRegistry.shared.begin(command: "definition.edit_commit")
-            vm.closeObject()
+            vm.closeConsolidate()
             CommandAdapters.followBake(jobID, in: vm) {
-                .object(["editing": .bool(vm.isEditingObject)])
+                .object(["editing": .bool(vm.isEditingConsolidate)])
             }
             return .object(["job_id": .string(jobID)])
         }
@@ -125,12 +125,12 @@ extension CommandRegistry {
                  summary: "Abandons the edit in progress and puts the instance back as it was.",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            guard vm.isEditingObject else {
+            guard vm.isEditingConsolidate else {
                 throw CommandError(code: .invalid_state, message: "no edit in progress")
             }
-            vm.cancelObjectEdit()
-            return .object(["editing": .bool(vm.isEditingObject),
-                            "depth": .int(vm.objectEditStack.count)])
+            vm.cancelConsolidateEdit()
+            return .object(["editing": .bool(vm.isEditingConsolidate),
+                            "depth": .int(vm.consolidateEditStack.count)])
         }
 
         register("definition.detach",
@@ -140,13 +140,13 @@ extension CommandRegistry {
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let placementID = try p.uuid("placement")
-            guard let placement = vm.find(id: placementID), placement.isObjectInstance else {
+            guard let placement = vm.find(id: placementID), placement.isConsolidateInstance else {
                 throw CommandError(code: .not_found,
                                    message: "unknown instance: \(placementID.uuidString)")
             }
-            vm.detachFromDefinition(placementID: placementID)
+            vm.deconsolidate(placementID: placementID)
             return .object(["placement": .string(placementID.uuidString),
-                            "still_linked": .bool(vm.find(id: placementID)?.isObjectInstance ?? false)])
+                            "still_linked": .bool(vm.find(id: placementID)?.isConsolidateInstance ?? false)])
         }
     }
 }

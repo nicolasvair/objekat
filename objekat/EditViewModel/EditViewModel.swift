@@ -11,7 +11,7 @@ import SwiftUI
 /// until the next turn of the main thread's loop, where the SwiftUI re-evaluation has
 /// normally taken place; it does not tell layout, rendering and compositing apart. Silent under 1 ms.
 ///
-/// It is this separation that cleared SwiftUI over the opening of a sound object (model
+/// It is this separation that cleared SwiftUI over the opening of a consolidated object (model
 /// 3019 ms against 481 ms of frame, the model being on its own an AU instantiation). To be
 /// reused before accusing the view: the reflex is expensive when it is wrong.
 @MainActor
@@ -139,60 +139,60 @@ final class EditViewModel {
     /// What the policy settled without showing it — otherwise removing the modals would come to
     /// replacing a freeze with a silence. Bounded, purgeable. See EditViewModel+Dialogs.
     var dialogJournal: [DialogRecord] = []
-    /// The project's sound-object registry: an instance (`SoundObject.definitionID`)
-    /// resolves its content through this UID. See EditViewModel+Objects.
-    var objectDefinitions: [UUID: ObjectDefinition] = [:]
+    /// The project's consolidated registry: an instance (`SoundObject.consolidateID`)
+    /// resolves its content through this UID. See EditViewModel+Consolidate.
+    var consolidateDefinitions: [UUID: ConsolidateDefinition] = [:]
     /// The definitions whose AUTOMATIC re-bake (a transitive cascade after a dependency has
     /// changed) is UNDER WAY in the background. Drives a "recomputing" indicator on their
     /// instances, replacing the manual "Refresh" action. See
-    /// EditViewModel+Objects (`cascadeRebakeStaleFixpoint`).
-    var recomputingDefinitionIDs: Set<UUID> = []
+    /// EditViewModel+Consolidate (`cascadeRebakeStaleFixpoint`).
+    var recomputingConsolidateIDs: Set<UUID> = []
     /// The definitions one of whose instances has just been RESYNCHRONISED (a re-bake finished: a
     /// transitive cascade or a closing propagated to the other instances). Drives a transient ✓
     /// (~15 s) on their instances, taking over from the recomputing spinner. See
-    /// EditViewModel+Objects (`markDefinitionResynced`).
-    var recentlyResyncedDefinitionIDs: Set<UUID> = []
+    /// EditViewModel+Consolidate (`markConsolidateResynced`).
+    var recentlyResyncedConsolidateIDs: Set<UUID> = []
     /// The ✓'s clearing deadline per definition: guarantees a full duration even if several
     /// re-bakes overlap (each marking pushes the deadline back; the clearing only happens
-    /// if the current deadline is reached). See `markDefinitionResynced`.
+    /// if the current deadline is reached). See `markConsolidateResynced`.
     @ObservationIgnored var resyncedBadgeDeadline: [UUID: Date] = [:]
-    /// The stack of NESTED sound-object openings: opening a sound object B located INSIDE a
-    /// sound object A already open stacks a child session on the parent. The top = the "current"
+    /// The stack of NESTED consolidated openings: opening a consolidated object B located INSIDE a
+    /// consolidated object A already open stacks a child session on the parent. The top = the "current"
     /// session (the one closing/cancelling resolves, whose content is materialised
-    /// and watched). Empty = no object open. See EditViewModel+Objects.
-    var objectEditStack: [ObjectEditSession] = []
+    /// and watched). Empty = no object open. See EditViewModel+Consolidate.
+    var consolidateEditStack: [ConsolidateEditSession] = []
 
     /// The definition/instance of the CURRENT session (the top of the stack), or nil if no object is
     /// open — they drive the closing/cancelling UI and the mirror indicator.
-    var editingDefinitionID: UUID? { objectEditStack.last?.defID }
-    var editingPlacementID: UUID? { objectEditStack.last?.placementID }
+    var editingConsolidateID: UUID? { consolidateEditStack.last?.defID }
+    var editingPlacementID: UUID? { consolidateEditStack.last?.placementID }
     /// A snapshot of the EXACT instance before materialisation (the current session) — restored as it is by
-    /// `cancelObjectEdit`, independently of the other edits made in the meantime elsewhere
+    /// `cancelConsolidateEdit`, independently of the other edits made in the meantime elsewhere
     /// in the project (unlike a generic undo).
     var editingOriginalPlacement: SoundObject? {
-        get { objectEditStack.last?.originalPlacement }
-        set { if !objectEditStack.isEmpty { objectEditStack[objectEditStack.count - 1].originalPlacement = newValue } }
+        get { consolidateEditStack.last?.originalPlacement }
+        set { if !consolidateEditStack.isEmpty { consolidateEditStack[consolidateEditStack.count - 1].originalPlacement = newValue } }
     }
 
-    // MARK: A sound object's live mirror
+    // MARK: A consolidated object's live mirror
     //
-    // A CLOSED sound object is baked: all of its instances read one wave. OPEN it is LIVE:
+    // A CLOSED consolidated object is baked: all of its instances read one wave. OPEN it is LIVE:
     // the content is materialised on the instance opened and the OTHERS become mirrors of it,
     // put back in their own place — they all refer to the same origin, with no render at all.
     // Every mutation of the sub-tree being edited (structure, fades, gain, speed, plugins, live knob
-    // params) arms the debounced re-mirroring. See EditViewModel+Objects
+    // params) arms the debounced re-mirroring. See EditViewModel+Consolidate
     // (`scheduleLiveMirror`). The driving state is below (@ObservationIgnored: purely
     // mechanical, it must not invalidate the views).
 
     /// True when at least one other instance follows the open object live — drives the indicator
     /// carried by the origin.
-    var hasLiveMirrors: Bool { !(objectEditStack.last?.mirrorSnapshots.isEmpty ?? true) }
+    var hasLiveMirrors: Bool { !(consolidateEditStack.last?.mirrorSnapshots.isEmpty ?? true) }
     /// The pending debounce before laying the mirrors again.
     @ObservationIgnored var liveMirrorWorkItem: DispatchWorkItem? = nil
     /// Suspends the arming of the re-mirroring (a session opening, a closing/cancel under way).
     @ObservationIgnored var liveMirrorSuppressed: Bool = false
     /// True while a transitive re-bake cascade is running (a re-entrance guard). See
-    /// EditViewModel+Objects (`cascadeRebakeStaleFixpoint`).
+    /// EditViewModel+Consolidate (`cascadeRebakeStaleFixpoint`).
     @ObservationIgnored var isCascadingRebake: Bool = false
     /// The definitions whose re-bake FAILED during the current cascade: excluded from the selection
     /// so as not to pick them again in a loop (they stay out of date). Reset at every
@@ -1019,10 +1019,10 @@ final class EditViewModel {
         didSet {
             updateWindowTitle()
             // The central way through: almost every audio mutation ends with `isDirty =
-            // true`. While a sound object is open, this arms the re-mirroring of the other
+            // true`. While a consolidated object is open, this arms the re-mirroring of the other
             // instances. LIVE knob movements (outside the model) are caught as well through
-            // the engine's parameter listening. See EditViewModel+Objects.
-            if editingDefinitionID != nil { scheduleLiveMirror() }
+            // the engine's parameter listening. See EditViewModel+Consolidate.
+            if editingConsolidateID != nil { scheduleLiveMirror() }
         }
     }
     var projectName: String = L("project.untitled") {
@@ -1072,16 +1072,16 @@ final class EditViewModel {
     func renameObject(id: UUID, label: String) {
         let newLabel = label.isEmpty ? nil : label
         var targets: Set<UUID> = [id]
-        let defID = find(id: id)?.definitionID
+        let defID = find(id: id)?.consolidateID
         if let defID {
-            targets.formUnion(placementIDs(forDefinition: defID))
+            targets.formUnion(placementIDs(forConsolidate: defID))
         }
         pushUndo()
         for tid in targets {
             update(id: tid) { $0.label = newLabel }
         }
         // The DEFINITION's name follows too (it stayed frozen until the next re-bake).
-        if let defID, let newLabel { objectDefinitions[defID]?.name = newLabel }
+        if let defID, let newLabel { consolidateDefinitions[defID]?.name = newLabel }
         isDirty = true
     }
 

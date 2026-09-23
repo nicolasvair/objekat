@@ -162,13 +162,13 @@ extension CommandAdapters {
                  "velocity": .int(note.velocity)])
     }
 
-    // MARK: Sound object bakes
+    // MARK: Consolidated object bakes
 
     /// Follows an asynchronous bake and closes the job when it is done.
     ///
     /// The view-model offers no public completion block: the render announces itself through
     /// `bakingIDs` (a lock taken before the engine call, released in its completion) and through
-    /// `recomputingDefinitionIDs` for cascading re-bakes. So we watch those same flags — the ones
+    /// `recomputingConsolidateIDs` for cascading re-bakes. So we watch those same flags — the ones
     /// `wait_idle` already reads — rather than instrumenting the view-model for the API alone.
     static func followBake(_ jobID: String, in vm: EditViewModel,
                            result: @escaping @MainActor () -> JSONValue) {
@@ -177,7 +177,7 @@ extension CommandAdapters {
             // and concluding "nothing in flight" on the first pass would end the job before it began.
             try? await Task.sleep(for: .milliseconds(50))
             while !vm.bakingIDs.isEmpty
-                    || !vm.recomputingDefinitionIDs.isEmpty
+                    || !vm.recomputingConsolidateIDs.isEmpty
                     || vm.isCascadingRebake {
                 try? await Task.sleep(for: .milliseconds(50))
             }

@@ -187,7 +187,7 @@ extension EditViewModel {
                                   timeSigDenominator: timeSigDenominator,
                                   gridMode: gridMode,
                                   snapEnabled: snapEnabled,
-                                  objectDefinitions: objectDefinitions.isEmpty ? nil : Array(objectDefinitions.values),
+                                  consolidateDefinitions: consolidateDefinitions.isEmpty ? nil : Array(consolidateDefinitions.values),
                                   viewport: currentViewport,
                                   markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                                   comments: comments.isEmpty ? nil : comments)
@@ -242,10 +242,10 @@ extension EditViewModel {
         selectedIDs = []
         undoStack = []
         redoStack = []
-        objectDefinitions = [:]
+        consolidateDefinitions = [:]
         markerLanes = []
         comments = []
-        objectEditStack.removeAll()
+        consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil
         loopModeEnabled = false
@@ -309,7 +309,7 @@ extension EditViewModel {
 
     /// TRANSIENT session state to purge when changing project (a new project or a
     /// load): the clipboard (pasting across projects would insert objects with dangling stemID /
-    /// auxID / definitionID), the note selection, the bakes under way (their
+    /// auxID / consolidateID), the note selection, the bakes under way (their
     /// completions find the object gone and give up cleanly) and the UI states of the
     /// piano rolls (keys = UUIDs of the old project).
     private func resetTransientSessionState() {
@@ -330,7 +330,7 @@ extension EditViewModel {
         soloAudibleObjectIDs = []
         audibility = AudibilitySnapshot()   // otherwise solo roots from the previous project
                                             // would survive in the silence rule
-        resetObjectEditSession()   // stops the listening on the params + the re-mirroring pending
+        resetConsolidateEditSession()   // stops the listening on the params + the re-mirroring pending
         pianoRollBasePitchByClip = [:]
         pianoRollCropByClip = [:]
         pianoRollCropOffsetByClip = [:]
@@ -430,12 +430,12 @@ extension EditViewModel {
         selectedIDs = []
         undoStack = []
         redoStack = []
-        objectDefinitions = Dictionary(uniqueKeysWithValues: (doc.objectDefinitions ?? []).map { ($0.id, $0) })
+        consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
         // The annotations: restored as they are, with nothing to reconcile — no engine object
         // stands behind a marker or a comment.
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
-        objectEditStack.removeAll()
+        consolidateEditStack.removeAll()
         resetTransientSessionState()
 
         // Tempo / time signature / grid mode: RESTORED data → pushed to the engine with no remap

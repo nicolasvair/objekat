@@ -122,23 +122,23 @@ extension EditViewModel {
         list.map { ProjectPaths.rewritingClipPaths($0) { ProjectPaths.resolved($0, projectFolder: folder) } }
     }
 
-    // MARK: - Sound-object sidecars
+    // MARK: - Consolidated sidecars
 
-    /// Encodes a sound object's editable sub-tree, paths made portable. `folder` is the
+    /// Encodes a consolidated object's editable sub-tree, paths made portable. `folder` is the
     /// PROJECT folder (not `samples/objects/`): the relative-path convention is the same
     /// as in the version file.
     ///
     /// The automation laid on the sub-tree's ROOT is SHARED OUT along the way: what the render
     /// bakes in stays, what belongs to the instance goes — @see
-    /// `SoundObject.asObjectDefinition`, which carries the rule. It is applied here because this
+    /// `SoundObject.asConsolidateDefinition`, which carries the rule. It is applied here because this
     /// is the ONE WAY THROUGH for every sidecar write (creation, closing an edit,
     /// a headless re-bake, saving a copy): a single site to hold, instead of a definition
     /// that would leave carrying an instance's automation as soon as one more write path
     /// was added. Idempotent: re-encoding an already read sidecar removes nothing more.
-    func encodedObjectSidecar(_ subtree: SoundObject, projectFolder folder: URL?) throws -> Data {
+    func encodedConsolidateSidecar(_ subtree: SoundObject, projectFolder folder: URL?) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let definition = subtree.asObjectDefinition
+        let definition = subtree.asConsolidateDefinition
         guard let folder else { return try enc.encode(definition) }
         return try enc.encode(ProjectPaths.rewritingClipPaths(definition) {
             ProjectPaths.portable($0, projectFolder: folder)
@@ -146,7 +146,7 @@ extension EditViewModel {
     }
 
     /// Decodes a sidecar and makes its paths absolute in the CURRENT project.
-    func decodedObjectSidecar(_ data: Data, projectFolder folder: URL?) throws -> SoundObject {
+    func decodedConsolidateSidecar(_ data: Data, projectFolder folder: URL?) throws -> SoundObject {
         let subtree = try JSONDecoder().decode(SoundObject.self, from: data)
         guard let folder else { return subtree }
         return ProjectPaths.rewritingClipPaths(subtree) {

@@ -19,12 +19,12 @@ struct GroupBlockView: View {
     /// and a red clip nobody can see is a red clip nobody reads. It is its own statement and not a
     /// claim about itself — the group's file is not gone, a group names none.
     var containsMissingFile: Bool = false
-    /// True if this block is a SOUND OBJECT currently open for editing. Opening one materialises
+    /// True if this block is a CONSOLIDATED OBJECT currently open for editing. Opening one materialises
     /// its content, so its `kind` genuinely becomes `.group` for the duration and this view is
-    /// what draws it — but what one opened was a sound object and still is, so its glyph must not
+    /// what draws it — but what one opened was a consolidated object and still is, so its glyph must not
     /// turn into a folder and back. Only the view model knows (@see
-    /// `EditViewModel.isInObjectEditStack`); a block is pure presentation and is told.
-    var isOpenObject: Bool = false
+    /// `EditViewModel.isInConsolidateEditStack`); a block is pure presentation and is told.
+    var isOpenConsolidate: Bool = false
     let displayLane: Int         // a virtual lane (after expanded groups have shifted things)
     let scrollOffsetX: CGFloat
     let viewportWidth: CGFloat
@@ -51,9 +51,9 @@ struct GroupBlockView: View {
     var isRenaming: Bool = false
     var isBaking: Bool = false
     /// True when OTHER instances are following this group live (a live mirror, for the length of
-    /// the opening) — a small discreet indicator, not in the way. See EditViewModel+Objects.
+    /// the opening) — a small discreet indicator, not in the way. See EditViewModel+Consolidate.
     var isPreviewing: Bool = false
-    /// True if THIS (materialised) group is the OPEN sound object: it shows the cancel button (✕).
+    /// True if THIS (materialised) group is the OPEN consolidated object: it shows the cancel button (✕).
     /// The click is resolved geometrically by the parent canvas (TimelineView+TapHandler).
     var isEditing: Bool = false
     var onRename: (String?) -> Void = { _ in }
@@ -229,14 +229,14 @@ struct GroupBlockView: View {
                 VStack {
                     HStack(spacing: 0) {
                         // The glyph that was always here, now saying WHICH kind rather than
-                        // always "folder": an open sound object is drawn by this view (its `kind`
+                        // always "folder": an open consolidated object is drawn by this view (its `kind`
                         // really does become `.group` while open) and must not read as a folder.
                         // Its size and its spacing are left exactly as they were — they are what
                         // the band was laid out around — and only the COLOUR changes: tinted with
                         // the block's own colour it was decoration beside the name, and it says
                         // the same kind of thing the name says, so it is coloured like the name
                         // (black, red and haloed when the file is gone).
-                        Image(systemName: ObjectKindIcon.name(for: group, isOpenObject: isOpenObject))
+                        Image(systemName: ObjectKindIcon.name(for: group, isOpenConsolidate: isOpenConsolidate))
                             .font(.system(size: 10, weight: .medium))
                             .blockIconStyle(missingFile: containsMissingFile)
                             .padding(.leading, 6)
@@ -290,7 +290,7 @@ struct GroupBlockView: View {
                 }
             }
 
-            // An OPEN sound object (a materialised group): a cancel button (✕) at the top right,
+            // An OPEN consolidated object (a materialised group): a cancel button (✕) at the top right,
             // preceded by the preview spinner during a live auto-bake. WITHOUT a veil.
             // The click on ✕ is detected geometrically by the canvas (the top-right zone).
             if isEditing && !isBaking {
@@ -312,7 +312,7 @@ struct GroupBlockView: View {
                 }
                 .allowsHitTesting(false)
             } else if isPreviewing && !isBaking {
-                // A sound object's live mirror UNDER WAY outside the current opening frame
+                // A consolidated object's live mirror UNDER WAY outside the current opening frame
                 // (a residual case): a small discreet spinner, not in the way.
                 VStack {
                     HStack {

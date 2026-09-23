@@ -287,9 +287,9 @@ extension EditViewModel {
     }
 
     func addPlugin(objectID: UUID, available: AvailablePlugin) {
-        // Plugins ARE allowed on a sound-object instance: they apply to the baked
+        // Plugins ARE allowed on a consolidated instance: they apply to the baked
         // submix, and stay proper to THAT instance. On opening as on detaching,
-        // they are carried over AFTER the restored internal plugins (see openObject / detachFromDefinition).
+        // they are carried over AFTER the restored internal plugins (see openConsolidate / deconsolidate).
         guard chainPlugins(objectID) != nil, engine != nil else { return }
         let plug = ObjectPlugin(id: UUID(), name: available.name,
                                 manufacturer: available.manufacturer,

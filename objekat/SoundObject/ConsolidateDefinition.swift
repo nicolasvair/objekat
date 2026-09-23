@@ -1,26 +1,34 @@
 import Foundation
 
-// MARK: - A dependency on a sound object definition
+// MARK: - A dependency on a consolidated object definition
 
 /// A definition captured in a bake (that of another definition), at the revision in force at the
-/// time of capture. See `ObjectDefinition.dependsOn` and `EditViewModel.isStale`.
-struct ObjectDependency: Codable, Equatable {
-    var definitionID: UUID
+/// time of capture. See `ConsolidateDefinition.dependsOn` and `EditViewModel.isStale`.
+struct ConsolidateDependency: Codable, Equatable {
+    var consolidateID: UUID
     var revision: Int
+
+    // Codable was synthesised (no explicit CodingKeys) before this struct's Swift identifier was
+    // "consolidated" — an explicit mapping is now required, otherwise the synthesised key would
+    // follow the property and silently start writing "consolidateID" instead of the
+    // "definitionID" every dependsOn[] entry on disk already carries (cas E7).
+    enum CodingKeys: String, CodingKey {
+        case consolidateID = "definitionID", revision
+    }
 }
 
-// MARK: - Sound object definition
+// MARK: - Consolidated object definition
 
-/// The content shared by a 'sound object': a group reused at N places on the timeline
-/// (`SoundObject.definitionID`), where changing the content in one place updates it everywhere.
+/// The content shared by a 'consolidated object': a group reused at N places on the timeline
+/// (`SoundObject.consolidateID`), where changing the content in one place updates it everywhere.
 /// Each instance stays a normal, independent `SoundObject` (its own position, fades, gain/pan,
 /// plugins) — only the deep content referenced here is shared.
 ///
 /// The original editable subtree (internal children/plugins for a group, or simply the clip for
 /// simple content) lives in a `<wave-without-ext>_objectstate.json` sidecar, next to the wave.
 /// `revision` is bumped on every re-bake and drives the freshness detection of the definitions
-/// that depend on it (see EditViewModel+Objects).
-struct ObjectDefinition: Codable, Identifiable, Equatable {
+/// that depend on it (see EditViewModel+Consolidate).
+struct ConsolidateDefinition: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
     var wave: String       // file name of the current baked wave, in samples/objects/
@@ -28,18 +36,18 @@ struct ObjectDefinition: Codable, Identifiable, Equatable {
     var wasGroup: Bool     // the definition is a group (visual rendering: rounded corners)
     /// Mix values SHARED by every synced instance (the source of truth). An instance that switches
     /// an attribute to 'independent' (`SoundObject.independentAttrs`) stops following these values.
-    /// See EditViewModel+Objects (`propagateLinkedAttr`).
+    /// See EditViewModel+Consolidate (`propagateLinkedAttr`).
     var volume: Float = 0  // dB
     var pan: Float = 0
     var isMuted: Bool = false
     /// Other definitions captured in THIS bake, at their revision in force at bake time.
-    /// Used to detect the staleness of a 'group' definition that itself holds a sound object
+    /// Used to detect the staleness of a 'group' definition that itself holds a consolidated object
     /// (`EditViewModel.isStale`).
-    var dependsOn: [ObjectDependency] = []
+    var dependsOn: [ConsolidateDependency] = []
 
     init(id: UUID, name: String, wave: String, revision: Int = 0, wasGroup: Bool = false,
          volume: Float = 0, pan: Float = 0, isMuted: Bool = false,
-         dependsOn: [ObjectDependency] = []) {
+         dependsOn: [ConsolidateDependency] = []) {
         self.id = id
         self.name = name
         self.wave = wave
@@ -65,6 +73,6 @@ struct ObjectDefinition: Codable, Identifiable, Equatable {
         volume    = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 0
         pan       = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
         isMuted   = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
-        dependsOn = try c.decodeIfPresent([ObjectDependency].self, forKey: .dependsOn) ?? []
+        dependsOn = try c.decodeIfPresent([ConsolidateDependency].self, forKey: .dependsOn) ?? []
     }
 }

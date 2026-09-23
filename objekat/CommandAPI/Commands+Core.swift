@@ -362,7 +362,7 @@ extension CommandRegistry {
             // The file's size, recorded at the moment it is laid down: it is what settles two
             // homonyms the day this link breaks and a folder is swept for it (@see
             // EditViewModel+Relink, SoundObject.fileSize). Read here and at the timeline's drop,
-            // the two doors an EXTERNAL file comes in by — the internal waves of a sound object
+            // the two doors an EXTERNAL file comes in by — the internal waves of a consolidated object
             // are relinked by their relative path and never go missing.
             object.fileSize = EditViewModel.fileSize(atPath: path)
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
@@ -691,7 +691,7 @@ enum CommandAdapters {
             "muted": .bool(item.isMuted),
             "parent": .stringOrNull(entry.parentID?.uuidString),
         ]
-        if let defID = item.definitionID { payload["definition"] = .string(defID.uuidString) }
+        if let defID = item.consolidateID { payload["definition"] = .string(defID.uuidString) }
         if let stemID = item.stemID { payload["stem"] = .string(stemID.uuidString) }
         if case .clip(let filePath, _, _, _, _) = item.kind { payload["file"] = .string(filePath) }
         // Whether this object's source file was found at the last scan. A dictionary lookup, no

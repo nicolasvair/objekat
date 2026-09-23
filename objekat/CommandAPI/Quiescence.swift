@@ -3,13 +3,13 @@ import Foundation
 /// Quiescence detection: "has the model finished working?"
 ///
 /// Without it, every script is non-deterministic: the view-model defers a great deal of work
-/// (debouncing the sound-object mirror, cascading re-bakes, definition bakes with completion
+/// (debouncing the consolidated mirror, cascading re-bakes, definition bakes with completion
 /// blocks), and a read command issued right after a mutation command would observe an
 /// in-between state.
 ///
 /// AN IMPLEMENTATION CHOICE — the plan called for a `beginWork`/`endWork` counter placed in each
 /// deferred-work site. On inspection, that counter would have duplicated state that ALREADY
-/// EXISTS: the view-model publishes `bakingIDs`, `recomputingDefinitionIDs`, `isCascadingRebake`
+/// EXISTS: the view-model publishes `bakingIDs`, `recomputingConsolidateIDs`, `isCascadingRebake`
 /// and `isScanning`, and keeps its debounce `DispatchWorkItem` at hand. We READ them rather than
 /// instrument — so zero changes to the hot paths, and above all no risk of an unbalanced
 /// counter (one `endWork` forgotten on an error branch would block `wait_idle` for ever, a far
@@ -34,20 +34,20 @@ enum Quiescence {
 
         if let vm = CommandContext.shared.viewModel {
             // `bakingIDs` carries an ancestor's name: freezing is no longer a user action (the menu
-            // entries were removed), but the RENDER LOCK it introduced still serves — sound objects are
+            // entries were removed), but the RENDER LOCK it introduced still serves — consolidated objects are
             // what arm it now, for the time of a definition bake or a placement re-bake. So the label
             // says what actually happens: "freeze in progress" would no longer teach anyone anything.
             if !vm.bakingIDs.isEmpty {
-                reasons.append("sound object render running (\(vm.bakingIDs.count))")
+                reasons.append("consolidated object render running (\(vm.bakingIDs.count))")
             }
-            if !vm.recomputingDefinitionIDs.isEmpty {
-                reasons.append("sound object re-bake (\(vm.recomputingDefinitionIDs.count))")
+            if !vm.recomputingConsolidateIDs.isEmpty {
+                reasons.append("consolidated object re-bake (\(vm.recomputingConsolidateIDs.count))")
             }
             if vm.isCascadingRebake {
                 reasons.append("cascading re-bake")
             }
             if vm.liveMirrorWorkItem != nil {
-                reasons.append("sound object mirror debounce")
+                reasons.append("consolidated object mirror debounce")
             }
             // An export started FROM THE PANEL creates no job: without this test, `wait_idle` would
             // call itself idle while a render is writing a file.

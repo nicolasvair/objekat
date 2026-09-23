@@ -42,7 +42,7 @@ enum RelinkUI {
     ///
     /// - **Replace is always available on a sound**, missing or not: "I have re-edited that file
     ///   outside" is an edit, not an accident (@see CONTRACTS, decision 1). It is withheld from an
-    ///   INSTANCE of a sound object, whose content is not its own — `replaceSource` refuses one,
+    ///   INSTANCE of a consolidated object, whose content is not its own — `replaceSource` refuses one,
     ///   and an item that can only fail is worse than no item. It is also the one flag only ONE of
     ///   the two menus reads: the item lives in the sound list (@see `addRelinkItems`).
     /// - **Repair only when the file is actually gone**, since there is nothing to repair
@@ -71,7 +71,7 @@ enum RelinkUI {
             let reason = vm.missingReason(for: object)
             let offline = reason == .volumeOffline
             offlineVolume = offline ? RelinkUI.volumeName(of: object.filePath) : nil
-            canReplace = object.isClip && object.definitionID == nil
+            canReplace = object.isClip && object.consolidateID == nil
             canRepair = reason != nil && !offline
             canSweepFolder = vm.missingFileCount > 0
         }
@@ -97,7 +97,7 @@ enum RelinkUI {
         // built with: a menu is built, then shown, and what it was built from can have moved.
         let targets = objectIDs.filter { id in
             guard let object = vm.find(id: id) else { return false }
-            return object.isClip && object.definitionID == nil && !object.filePath.isEmpty
+            return object.isClip && object.consolidateID == nil && !object.filePath.isEmpty
         }
         guard let first = targets.first, let firstObject = vm.find(id: first) else { return }
         let oldPaths = Set(targets.compactMap { vm.find(id: $0)?.filePath }.filter { !$0.isEmpty })
@@ -430,7 +430,7 @@ struct RelinkContextMenuItems: View {
         guard selected.count > 1, selected.contains(object.id) else { return [object.id] }
         return viewModel.allClips.compactMap { clip -> UUID? in
             guard selected.contains(clip.id), clip.isClip,
-                  clip.definitionID == nil else { return nil }
+                  clip.consolidateID == nil else { return nil }
             return clip.id
         }
     }

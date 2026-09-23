@@ -261,7 +261,7 @@ extension EditViewModel {
             lc.automation = autoL
             lc.markers    = markL
             lc.sourceOffset = offsets.left
-            // derivedCopy: sends/chain gains/sound-object link inherited.
+            // derivedCopy: sends/chain gains/consolidated link inherited.
             let rc = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: child.fadeOut,
@@ -433,7 +433,7 @@ extension EditViewModel {
 
     @discardableResult
     func _splitInternal(id: UUID, atTime splitTime: Double) -> UUID? {
-        // An instance of a sound object IS a clip: the split is allowed. Both halves
+        // An instance of a consolidated object IS a clip: the split is allowed. Both halves
         // stay linked to the same definition. NB: detaching one half restores the WHOLE
         // original sub-tree (the sidecar stands for the whole), positioned at the start of the half — so it
         // can overrun. An accepted behaviour.
@@ -473,7 +473,7 @@ extension EditViewModel {
             engine.updateFade(in: leftFadeIn, fadeOut: leftFadeOut, forID: id.uuidString)
 
             let rightFadeOut = min(original.fadeOut, original.duration - splitRel)
-            // derivedCopy: the right half inherits the sends/chain gains/sound-object link
+            // derivedCopy: the right half inherits the sends/chain gains/consolidated link
             // (it stays an instance of the same definition). The left clip keeps the original
             // (its engine instances intact); the right-hand piece gets plugins cloned with
             // the state captured live, for a split identical in sound.
@@ -547,7 +547,7 @@ extension EditViewModel {
             leftChild.sourceOffset = offsets.left
 
             let rightID = UUID()
-            // derivedCopy: sends/chain gains/sound-object link inherited by the right half.
+            // derivedCopy: sends/chain gains/consolidated link inherited by the right half.
             let rightChild = child.derivedCopy(
                 id: rightID,
                 startTime: splitTime,

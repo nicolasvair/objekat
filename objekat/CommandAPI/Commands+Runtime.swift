@@ -28,7 +28,7 @@ extension CommandRegistry {
                  Runs a sequence of commands under A SINGLE undo. With coalesce=true, the \
                  flattening cache is rebuilt ONCE on the way out — but the commands in the \
                  batch then see the lane cache as it was at the START of the batch, and those \
-                 that read it (duplicate, groups, auxes, MIDI, sound objects, time selection) \
+                 that read it (duplicate, groups, auxes, MIDI, consolidated objects, time selection) \
                  do NOTHING without saying so. Only turn it on for a batch of pure, \
                  independent writes.
                  """,
@@ -49,7 +49,7 @@ extension CommandRegistry {
             // A CAUTIOUS default, settled after measuring: under coalescing, `laneEntries` is frozen
             // and any command that reads it works from a stale snapshot. Seen at runtime: a coalesced
             // `object.duplicate` returns "ok, failed=0" and duplicates nothing. And that cache is read
-            // in some 100 places — selection, cut, clipboard, groups, auxes, MIDI, sound objects, solo
+            // in some 100 places — selection, cut, clipboard, groups, auxes, MIDI, consolidated objects, solo
             // — that is, nearly every family still to come. A batch must be RIGHT by default and fast
             // on request, never the other way round: coalescing saves one cache rebuild, and costs a
             // command that lies.
@@ -141,7 +141,7 @@ extension CommandRegistry {
                 maxDepth = max(maxDepth, entry.depth)
                 sendCount += item.sends.count
                 noteCount += item.midiNotes.count
-                if item.isObjectInstance { instanceCount += 1 }
+                if item.isConsolidateInstance { instanceCount += 1 }
                 for plugin in item.plugins + item.instruments {
                     if plugin.isRack { rackCount += 1 } else { pluginCount += 1 }
                 }
@@ -153,7 +153,7 @@ extension CommandRegistry {
                 "objects_total": .int(vm.laneEntries.count),
                 "max_group_depth": .int(maxDepth),
                 "stems": .int(vm.stems.count),
-                "object_definitions": .int(vm.objectDefinitions.count),
+                "object_definitions": .int(vm.consolidateDefinitions.count),
                 "object_instances": .int(instanceCount),
                 "plugins": .int(pluginCount),
                 "racks": .int(rackCount),

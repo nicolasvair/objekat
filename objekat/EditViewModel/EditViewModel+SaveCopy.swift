@@ -60,7 +60,7 @@ extension EditViewModel {
         var missing: [String] = []
 
         func discover(_ o: SoundObject) {
-            if let defID = o.definitionID {
+            if let defID = o.consolidateID {
                 referencedDefIDs.insert(defID)
                 return   // an instance reads the baked wave; the recursion goes through the definition
             }
@@ -81,15 +81,15 @@ extension EditViewModel {
         var processedDefs: Set<UUID> = []
         while let defID = referencedDefIDs.subtracting(processedDefs).first {
             processedDefs.insert(defID)
-            guard let def = objectDefinitions[defID] else {
+            guard let def = consolidateDefinitions[defID] else {
                 missing.append(L("saveCopy.missingDefinition", String(defID.uuidString.prefix(8))))
                 continue
             }
-            if let original = readObjectSidecar(def.wave, definition: defID) {
+            if let original = readConsolidateSidecar(def.wave, definition: defID) {
                 objectSidecars[defID] = original
                 discover(original)
             } else {
-                missing.append(objectSidecarName(def.wave))
+                missing.append(consolidateSidecarName(def.wave))
             }
         }
 
@@ -144,7 +144,7 @@ extension EditViewModel {
         //    capsule's samples/consolidate/. The copy is what normalises a mixed project.
         if projectFolder != nil {
             for defID in processedDefs {
-                guard let def = objectDefinitions[defID],
+                guard let def = consolidateDefinitions[defID],
                       let srcFolder = consolidateReadFolder(forWave: def.wave, definition: defID) else { continue }
                 let srcWave = srcFolder.appendingPathComponent(def.wave)
                 if fm.fileExists(atPath: srcWave.path) {
@@ -160,7 +160,7 @@ extension EditViewModel {
         //    the copy's sources/ (through `pathMap`). Applied to the items AND to each sidecar.
         func rewrite(_ o: SoundObject) -> SoundObject {
             var n = o
-            if let defID = o.definitionID, let def = objectDefinitions[defID],
+            if let defID = o.consolidateID, let def = consolidateDefinitions[defID],
                case .clip(_, let so, let fd, let sr, let rev) = o.kind {
                 n.kind = .clip(filePath: consolidateDst.appendingPathComponent(def.wave).path,
                                sourceOffset: so, fileDuration: fd, speedRatio: sr, isReversed: rev)
@@ -185,24 +185,24 @@ extension EditViewModel {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         for (defID, original) in objectSidecars {
-            guard let def = objectDefinitions[defID],
-                  let data = try? encodedObjectSidecar(rewrite(original), projectFolder: destFolder)
+            guard let def = consolidateDefinitions[defID],
+                  let data = try? encodedConsolidateSidecar(rewrite(original), projectFolder: destFolder)
             else { continue }
-            sidecarWrites.append((objectSidecarURL(forWave: def.wave, in: consolidateDst), data))
+            sidecarWrites.append((consolidateSidecarURL(forWave: def.wave, in: consolidateDst), data))
         }
 
         // 6) The project document: items (with captured plugin states) rewritten + the definition
         //    registry filtered down to the closure (orphan definitions are dropped).
         let rewrittenItems = portableItems(itemsWithCapturedPluginStates().map(rewrite),
                                            projectFolder: destFolder)
-        let closureDefs = processedDefs.compactMap { objectDefinitions[$0] }
+        let closureDefs = processedDefs.compactMap { consolidateDefinitions[$0] }
         let doc = ProjectDocument(items: rewrittenItems,
                                   stems: stems,
                                   tempo: tempo,
                                   timeSigNumerator: timeSigNumerator,
                                   timeSigDenominator: timeSigDenominator,
                                   gridMode: gridMode,
-                                  objectDefinitions: closureDefs.isEmpty ? nil : closureDefs,
+                                  consolidateDefinitions: closureDefs.isEmpty ? nil : closureDefs,
                                   // The annotations travel with the copy: they name nothing outside
                                   // the project, so there is nothing to rewrite in them — but a
                                   // capsule that lost the notes written on it would be a poor copy.
@@ -267,15 +267,15 @@ extension EditViewModel {
 
     // MARK: - Reading the source sidecars (the project's current folders)
 
-    private func readObjectSidecar(_ wave: String, definition defID: UUID? = nil) -> SoundObject? {
+    private func readConsolidateSidecar(_ wave: String, definition defID: UUID? = nil) -> SoundObject? {
         // Cas E4: read where the wave was actually found, not assumed to be the write folder.
         guard let folder = consolidateReadFolder(forWave: wave, definition: defID) else { return nil }
-        let url = objectSidecarURL(forWave: wave, in: folder)
+        let url = consolidateSidecarURL(forWave: wave, in: folder)
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? decodedObjectSidecar(data, projectFolder: projectFolder)
+        return try? decodedConsolidateSidecar(data, projectFolder: projectFolder)
     }
 
-    private func objectSidecarName(_ wave: String) -> String {
+    private func consolidateSidecarName(_ wave: String) -> String {
         "\((wave as NSString).deletingPathExtension)_objectstate.json"
     }
 

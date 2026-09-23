@@ -50,20 +50,20 @@ struct SoundBlockView: View {
     var sendRows: [SendRow] = []
     var isRenaming: Bool = false
     var isBaking: Bool = false
-    /// True if this sound object bake captures content that is now stale
-    /// (`EditViewModel.isStale`) — a warning badge, see EditViewModel+Objects.
+    /// True if this consolidated object bake captures content that is now stale
+    /// (`EditViewModel.isStale`) — a warning badge, see EditViewModel+Consolidate.
     var isStale: Bool = false
     /// True when OTHER instances are following this object live (a live mirror, for the length of
-    /// the opening) — a small discreet indicator, not in the way. See EditViewModel+Objects.
+    /// the opening) — a small discreet indicator, not in the way. See EditViewModel+Consolidate.
     var isPreviewing: Bool = false
     /// True while this placement's definition is being re-baked AUTOMATICALLY in the background
     /// (a transitive cascade after a dependency changed). It replaces the frozen 'stale' flag with
-    /// a transient indicator. See EditViewModel+Objects.cascadeRebakeStaleFixpoint.
+    /// a transient indicator. See EditViewModel+Consolidate.cascadeRebakeStaleFixpoint.
     var isRecomputing: Bool = false
     /// True briefly (~15 s) after an instance has just been RESYNCED (the re-bake finished)
-    /// — a transient ✓ taking over from the spinner. See EditViewModel.recentlyResyncedDefinitionIDs.
+    /// — a transient ✓ taking over from the spinner. See EditViewModel.recentlyResyncedConsolidateIDs.
     var isResynced: Bool = false
-    /// True if THIS instance is the OPEN sound object (the top of the stack): it shows the cancel
+    /// True if THIS instance is the OPEN consolidated object (the top of the stack): it shows the cancel
     /// button (✕) next to the live indicator. The click is resolved geometrically by the parent
     /// canvas (TimelineView+TapHandler), and the block stays pure presentation.
     var isEditing: Bool = false
@@ -297,14 +297,14 @@ struct SoundBlockView: View {
                     .allowsHitTesting(false)
             }
 
-            // A SOUND OBJECT instance: an indigo border (plus a link icon on the label).
-            if object.isObjectInstance {
+            // A CONSOLIDATED OBJECT instance: an indigo border (plus a link icon on the label).
+            if object.isConsolidateInstance {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(Color.indigo.opacity(isSelected ? 0.95 : 0.6), lineWidth: 1.5)
                     .allowsHitTesting(false)
             }
 
-            // A freshness badge: this sound object bake captures content that is now stale.
+            // A freshness badge: this consolidated object bake captures content that is now stale.
             // Hidden during the automatic re-bake (`isRecomputing`) → the flag becomes
             // transient (the spinner below) instead of 'sticking'.
             if isStale && !isRecomputing {
@@ -350,7 +350,7 @@ struct SoundBlockView: View {
                 .allowsHitTesting(false)
             }
 
-            // An OPEN sound object: a cancel button (✕) at the top right, preceded by
+            // An OPEN consolidated object: a cancel button (✕) at the top right, preceded by
             // the preview spinner during a live auto-bake. WITHOUT a veil — the object stays editable.
             // The click on ✕ is detected geometrically by the canvas (the top-right zone).
             if isEditing && !isBaking {
@@ -399,16 +399,16 @@ struct SoundBlockView: View {
             if blockWidth >= 30 {
                 VStack {
                     HStack(spacing: 3) {
-                        // The glyph that used to be drawn for a SOUND OBJECT only, and now says
+                        // The glyph that used to be drawn for a CONSOLIDATED OBJECT only, and now says
                         // the kind of every block — which is what ties this timeline to the list
                         // on the left, where the same symbol names the same object.
                         //
-                        // `waveform.circle` for a sound object is what was already here, so the
+                        // `waveform.circle` for a consolidated object is what was already here, so the
                         // list adopted the timeline's word rather than the reverse. Its size and
                         // weight are untouched, the band having been laid out around them. The
-                        // COLOUR is what changes: `LinkColor.soundObject` made it a purple badge
+                        // COLOUR is what changes: `LinkColor.consolidate` made it a purple badge
                         // saying "this one is special", where the glyph now says what EVERY block
-                        // is and belongs with the name it introduces. The sound-object identity
+                        // is and belongs with the name it introduces. The consolidated identity
                         // has not been lost with the purple — the shape itself carries it, the
                         // circle being exactly what tells it from a plain `waveform`, and the
                         // links between instances are drawn as lines in the selection anyway

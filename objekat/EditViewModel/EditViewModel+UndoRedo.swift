@@ -47,7 +47,7 @@ extension EditViewModel {
         pluginStateCaptureCount = 0
         let snapshot = EditSnapshot(items: itemsWithCapturedPluginStates(),
                                     stems: stemsWithCapturedPluginStates(),
-                                    objectDefinitions: objectDefinitions,
+                                    consolidateDefinitions: consolidateDefinitions,
                                     tempo: tempo,
                                     timeSigNumerator: timeSigNumerator,
                                     timeSigDenominator: timeSigDenominator,
@@ -152,8 +152,8 @@ extension EditViewModel {
         // difference; letting go costs one rectangle.
         clearAutomationPointSelection()
 
-        if let snapDefs = snapshot.objectDefinitions {
-            objectDefinitions = snapDefs
+        if let snapDefs = snapshot.consolidateDefinitions {
+            consolidateDefinitions = snapDefs
         }
 
         // A REBUILT aux is a new clip on the engine side: the send of a KEPT sender
@@ -195,7 +195,7 @@ extension EditViewModel {
     /// restored) can be pushed without destroying the object: position, duration, lane, source offset,
     /// fades, volume/pan/mute, MIDI notes, and the purely visual fields. As soon as anything else
     /// differs — file, speed, playback direction, plugins, instrument, chain gains, stem,
-    /// sends, sound-object link, a group's composition — `false` is returned: the object will be
+    /// sends, consolidated link, a group's composition — `false` is returned: the object will be
     /// rebuilt as before.
     ///
     /// The method is deliberately "by subtraction": only the recoverable fields are copied into a

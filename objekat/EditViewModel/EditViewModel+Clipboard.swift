@@ -102,8 +102,8 @@ extension EditViewModel {
     }
 
     /// A deep copy (a new id) through `derivedCopy`: the copy inherits ALL the mix/routing/identity
-    /// attributes (sends, chain gains, baseBPM, sound-object link…) — a copy
-    /// of a sound-object instance stays an instance of the same definition.
+    /// attributes (sends, chain gains, baseBPM, consolidated link…) — a copy
+    /// of a consolidated instance stays an instance of the same definition.
     /// The sends INTERNAL to the sub-tree are rewired onto the copies (@see remappingSends).
     func makeCopy(_ item: SoundObject, startTime: Double, lane: Int) -> SoundObject {
         var idMap: [UUID: UUID] = [:]
@@ -346,7 +346,7 @@ extension EditViewModel {
             switch entry.item.kind {
 
             case .clip(let fp, let so, let fd, let sr, let rev):
-                // The sound-object link is ALWAYS kept (even trimmed): any piece of an
+                // The consolidated link is ALWAYS kept (even trimmed): any piece of an
                 // instance stays linked to its definition (consistent with the split).
                 fragments.append(entry.item.derivedCopy(
                     startTime: fragStart, duration: fragEnd - fragStart,
@@ -717,7 +717,7 @@ extension EditViewModel {
                     pushFadeCurveTree(left)
                     updated.append(left)
 
-                    // derivedCopy: the right half inherits the sends/chain gains/sound-object
+                    // derivedCopy: the right half inherits the sends/chain gains/consolidated
                     // link (a piece of an instance stays linked to its definition).
                     // The right half picks the cut up at `cutLo` AND THEN jumps the hole: its
                     // curves rebase on its real start, `cutHi`.

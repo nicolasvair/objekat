@@ -289,17 +289,17 @@ struct MidiNote: Identifiable, Codable, Equatable {
     }
 }
 
-// MARK: - A sound object's attribute links
+// MARK: - A consolidated object's attribute links
 
-/// The mix attributes of a sound object instance (`definitionID`) that have been switched to
+/// The mix attributes of a consolidated object instance (`consolidateID`) that have been switched to
 /// INDEPENDENT, that is, detached from the shared value the definition carries. Empty (the
 /// default) = all synced: changing the attribute on one instance propagates it to every other.
-/// Not applicable to an unlinked object. See EditViewModel+Objects (`propagateLinkedAttr`/`setAttrSynced`).
-struct ObjectAttrLinks: OptionSet, Codable {
+/// Not applicable to an unlinked object. See EditViewModel+Consolidate (`propagateLinkedAttr`/`setAttrSynced`).
+struct ConsolidateAttrLinks: OptionSet, Codable {
     let rawValue: Int
-    static let volume = ObjectAttrLinks(rawValue: 1 << 0)
-    static let pan    = ObjectAttrLinks(rawValue: 1 << 1)
-    static let mute   = ObjectAttrLinks(rawValue: 1 << 2)
+    static let volume = ConsolidateAttrLinks(rawValue: 1 << 0)
+    static let pan    = ConsolidateAttrLinks(rawValue: 1 << 1)
+    static let mute   = ConsolidateAttrLinks(rawValue: 1 << 2)
 }
 
 // MARK: - SoundObject
@@ -390,14 +390,14 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// `.clip` on purpose: adding a parameter there would touch every construction site of the
     /// case, about twenty of them, for a field only the relink reads.
     var fileSize: Int64? = nil
-    /// Non-nil ⇒ this placement is an INSTANCE of a sound object: its `kind` reads the current wave
-    /// of the definition `EditViewModel.objectDefinitions[definitionID]`. Everything else (position,
+    /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
+    /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
-    /// content is shared by every instance. See EditViewModel+Objects.
-    var definitionID: UUID? = nil
+    /// content is shared by every instance. See EditViewModel+Consolidate.
+    var consolidateID: UUID? = nil
     /// Mix attributes (volume/pan/mute) detached from the definition for THIS instance only.
-    /// Empty = all synced (the default). No effect if `definitionID == nil`.
-    var independentAttrs: ObjectAttrLinks = []
+    /// Empty = all synced (the default). No effect if `consolidateID == nil`.
+    var independentAttrs: ConsolidateAttrLinks = []
     /// An AUX or GROUP marked 'infinite': no more start/end, it spans the WHOLE project and becomes
     /// a 'normal' processing bus (a reverb live from the start to the end, say). Not applicable to
     /// clips/MIDI (always false). One infinite per lane (see EditViewModel).
@@ -418,8 +418,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var loopRangeStart: Double? = nil
     var loopRangeEnd: Double? = nil
 
-    /// True if this object is an instance of a sound object (baked, tied to a definition).
-    var isObjectInstance: Bool { definitionID != nil }
+    /// True if this object is an instance of a consolidated object (baked, tied to a definition).
+    var isConsolidateInstance: Bool { consolidateID != nil }
     /// True if the object CAN be made infinite (an aux or a group only).
     var canBeInfinite: Bool { isAux || isGroup }
     /// True if the object CAN be looped: an audio clip NOT reversed, a group NOT infinite (an
@@ -836,7 +836,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     ///
     /// The invariant that follows, and which has to be preserved: re-editing then re-baking a
     /// definition does not wipe out a rendered instance's own automation.
-    var asObjectDefinition: SoundObject {
+    var asConsolidateDefinition: SoundObject {
         guard !automation.isEmpty || !automationTouchOrder.isEmpty else { return self }
         var copy = self
         copy.automation = automation.filter { automationTargetIsBakedIntoRender($0.param) }
@@ -847,7 +847,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     }
 
     /// The root's curves that survive being rendered to a wave: those whose carrier stays live on
-    /// the baked clip. The exact complement of what `asObjectDefinition` keeps — the same boundary,
+    /// the baked clip. The exact complement of what `asConsolidateDefinition` keeps — the same boundary,
     /// read from the other side.
     var automationSurvivingBake: [AutomationLane] {
         automation.filter { !$0.points.isEmpty && !automationTargetIsBakedIntoRender($0.param) }
@@ -917,8 +917,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
          plugins: [ObjectPlugin] = [], instruments: [ObjectPlugin] = [],
          label: String? = nil, colorIndex: Int? = nil,
          sends: [AuxSend] = [], baseBPM: Double? = nil,
-         definitionID: UUID? = nil,
-         independentAttrs: ObjectAttrLinks = [],
+         consolidateID: UUID? = nil,
+         independentAttrs: ConsolidateAttrLinks = [],
          chainInGainDb: Float = 0, chainOutGainDb: Float = 0,
          pianoRollOpen: Bool = false,
          automation: [AutomationLane] = [],
@@ -947,7 +947,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.colorIndex = colorIndex
         self.sends      = sends
         self.baseBPM    = baseBPM
-        self.definitionID = definitionID
+        self.consolidateID = consolidateID
         self.independentAttrs = independentAttrs
         self.chainInGainDb  = chainInGainDb
         self.chainOutGainDb = chainOutGainDb
@@ -1018,7 +1018,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     plugins: plugins, instruments: instruments,
                     label: label, colorIndex: colorIndex,
                     sends: sends, baseBPM: baseBPM,
-                    definitionID: definitionID,
+                    consolidateID: consolidateID,
                     independentAttrs: independentAttrs,
                     chainInGainDb: chainInGainDb, chainOutGainDb: chainOutGainDb,
                     automation: inherited.compactMap { lane in
@@ -1068,9 +1068,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case id, startTime, duration, lane, volume, pan, fadeIn, fadeOut
         case fadeInCurve, fadeOutCurve
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
-        case chainInGainDb, chainOutGainDb, pianoRollOpen, definitionID, independentAttrs
+        case chainInGainDb, chainOutGainDb, pianoRollOpen, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
         case loopRangeStart, loopRangeEnd, markers, fileSize
+        // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
+        // "definitionID" — a data contract, not a name a reader sees, and every session on disk
+        // already carries it under that key (cas E7: rename the code, never the key).
+        case consolidateID = "definitionID"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1096,7 +1100,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(colorIndex, forKey: .colorIndex)
         if !sends.isEmpty { try c.encode(sends, forKey: .sends) }
         try c.encodeIfPresent(baseBPM, forKey: .baseBPM)
-        try c.encodeIfPresent(definitionID, forKey: .definitionID)
+        try c.encodeIfPresent(consolidateID, forKey: .consolidateID)
         if !independentAttrs.isEmpty { try c.encode(independentAttrs, forKey: .independentAttrs) }
         if chainInGainDb  != 0 { try c.encode(chainInGainDb,  forKey: .chainInGainDb) }
         if chainOutGainDb != 0 { try c.encode(chainOutGainDb, forKey: .chainOutGainDb) }
@@ -1138,8 +1142,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         colorIndex = try c.decodeIfPresent(Int.self,    forKey: .colorIndex)
         sends      = try c.decodeIfPresent([AuxSend].self, forKey: .sends) ?? []
         baseBPM    = try c.decodeIfPresent(Double.self, forKey: .baseBPM)
-        definitionID = try c.decodeIfPresent(UUID.self, forKey: .definitionID)
-        independentAttrs = try c.decodeIfPresent(ObjectAttrLinks.self, forKey: .independentAttrs) ?? []
+        consolidateID = try c.decodeIfPresent(UUID.self, forKey: .consolidateID)
+        independentAttrs = try c.decodeIfPresent(ConsolidateAttrLinks.self, forKey: .independentAttrs) ?? []
         chainInGainDb  = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb)  ?? 0
         chainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
         pianoRollOpen  = try c.decodeIfPresent(Bool.self, forKey: .pianoRollOpen) ?? false

@@ -1,8 +1,8 @@
 import Foundation
 
-/// A sound-object editing session (an element of `EditViewModel.objectEditStack`). Opening a
-/// nested sound object stacks a child session; closing/cancelling pops it and picks the parent up again.
-struct ObjectEditSession: Identifiable {
+/// A consolidated editing session (an element of `EditViewModel.consolidateEditStack`). Opening a
+/// nested consolidated object stacks a child session; closing/cancelling pops it and picks the parent up again.
+struct ConsolidateEditSession: Identifiable {
     /// The definition being edited.
     let defID: UUID
     /// The materialised placement (its content replaces this placement in `items` for the length of the session).
@@ -25,12 +25,12 @@ struct ObjectEditSession: Identifiable {
 
 extension EditViewModel {
 
-    // MARK: - Sound objects (content reusable in N places)
+    // MARK: - Consolidated objects (content reusable in N places)
 
     /// The project's `samples/consolidate/` folder (nil as long as the project has not been
-    /// saved) — where a NEW bake is written. A sound object requires a saved project: it needs a
+    /// saved) — where a NEW bake is written. A consolidated object requires a saved project: it needs a
     /// stable place on disk for its baked wave + its sidecar.
-    var objectsFolder: URL? {
+    var consolidateFolder: URL? {
         projectFolder.map { ConsolidateFolders.consolidateFolder(projectFolder: $0) }
     }
 
@@ -43,17 +43,17 @@ extension EditViewModel {
     /// Creates `samples/consolidate/` if it is not there yet (cas E3, critical): the ENGINE never
     /// creates it on its own when rendering (`renderObjectToFileAsync`, `OBJEngineCore.mm`), and
     /// only the FIRST creation of a definition used to create the folder — a headless re-bake or a
-    /// `closeObject` on an OLD project (whose `samples/consolidate/` has never existed) would
+    /// `closeConsolidate` on an OLD project (whose `samples/consolidate/` has never existed) would
     /// otherwise fail its render with no folder to write into. A no-op, cheaply, once the folder
     /// exists. Called before EVERY consolidate render.
     @discardableResult
     func ensureConsolidateFolder() -> Bool {
-        guard let folder = objectsFolder else { return false }
+        guard let folder = consolidateFolder else { return false }
         return (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil
     }
 
     /// The path of the sidecar (the original editable sub-tree) associated with a definition's current wave.
-    func objectSidecarURL(forWave wave: String, in folder: URL) -> URL {
+    func consolidateSidecarURL(forWave wave: String, in folder: URL) -> URL {
         let base = (wave as NSString).deletingPathExtension
         return folder.appendingPathComponent("\(base)_objectstate.json")
     }
@@ -64,9 +64,9 @@ extension EditViewModel {
     /// fallback (retained, cas E5): a Save As to a new folder leaves the instances' absolute
     /// `filePath` pointing at the OLD project's folder, which is where the wave (and its sidecar)
     /// actually still are. Empty if `defID` is nil or has no placement with a resolvable clip path.
-    private func consolidateFallbackDirs(forDefinition defID: UUID?) -> [URL] {
+    private func consolidateFallbackDirs(forConsolidate defID: UUID?) -> [URL] {
         guard let defID else { return [] }
-        for pid in placementIDs(forDefinition: defID) {
+        for pid in placementIDs(forConsolidate: defID) {
             guard let obj = find(id: pid), case .clip(let fp, _, _, _, _) = obj.kind, !fp.isEmpty else { continue }
             return [URL(fileURLWithPath: fp).deletingLastPathComponent()]
         }
@@ -82,33 +82,33 @@ extension EditViewModel {
     func consolidateReadFolder(forWave wave: String, definition defID: UUID? = nil) -> URL? {
         guard let projectFolder else { return nil }
         if let found = ConsolidateFolders.resolve(wave: wave, projectFolder: projectFolder,
-                                                   extraDirs: consolidateFallbackDirs(forDefinition: defID),
+                                                   extraDirs: consolidateFallbackDirs(forConsolidate: defID),
                                                    fileExists: { FileManager.default.fileExists(atPath: $0.path) }) {
             return found
         }
-        return objectsFolder
+        return consolidateFolder
     }
 
     /// `wave`'s full URL, wherever it is actually found (cas E1/E4/E5) — the read-side
-    /// counterpart of appending `def.wave` onto `objectsFolder` outright, which only ever looked
+    /// counterpart of appending `def.wave` onto `consolidateFolder` outright, which only ever looked
     /// in the write folder and so missed a wave still sitting in `samples/objects/`.
-    func consolidateWaveURL(_ wave: String, forDefinition defID: UUID? = nil) -> URL? {
+    func consolidateWaveURL(_ wave: String, forConsolidate defID: UUID? = nil) -> URL? {
         consolidateReadFolder(forWave: wave, definition: defID)?.appendingPathComponent(wave)
     }
 
-    /// An instance's definition, if `definitionID` points at a known entry of the registry.
-    func definition(for object: SoundObject) -> ObjectDefinition? {
-        guard let did = object.definitionID else { return nil }
-        return objectDefinitions[did]
+    /// An instance's definition, if `consolidateID` points at a known entry of the registry.
+    func consolidateDefinition(for object: SoundObject) -> ConsolidateDefinition? {
+        guard let did = object.consolidateID else { return nil }
+        return consolidateDefinitions[did]
     }
 
     /// Every placement (top-level + nested in groups) that references `defID`,
     /// `excluding` aside. Used by the propagation (content after a re-bake, synchronised colour).
-    func placementIDs(forDefinition defID: UUID, excluding: UUID? = nil) -> [UUID] {
+    func placementIDs(forConsolidate defID: UUID, excluding: UUID? = nil) -> [UUID] {
         func walk(_ list: [SoundObject]) -> [UUID] {
             var found: [UUID] = []
             for o in list {
-                if o.definitionID == defID, o.id != excluding { found.append(o.id) }
+                if o.consolidateID == defID, o.id != excluding { found.append(o.id) }
                 if case .group(let ch, _) = o.kind { found += walk(ch) }
             }
             return found
@@ -116,14 +116,14 @@ extension EditViewModel {
         return walk(items)
     }
 
-    /// True if `object` is a sound-object instance LINKED to at least one other placement
+    /// True if `object` is a consolidated instance LINKED to at least one other placement
     /// (the same definition).
     func hasLinkedSiblings(_ object: SoundObject) -> Bool {
-        guard let defID = object.definitionID else { return false }
-        return !placementIDs(forDefinition: defID, excluding: object.id).isEmpty
+        guard let defID = object.consolidateID else { return false }
+        return !placementIDs(forConsolidate: defID, excluding: object.id).isEmpty
     }
 
-    /// True if the current selection holds at least one sound object linked to other
+    /// True if the current selection holds at least one consolidated object linked to other
     /// instances → arms the overlay of purple lines in the timeline (LinkOverlay).
     var hasSelectedLinkedObject: Bool {
         selectedIDs.contains { id in
@@ -136,17 +136,17 @@ extension EditViewModel {
 
     /// True if `attr` (volume/pan/mute) of `obj` follows the common value of its definition:
     /// `obj` is a linked instance AND has not detached that attribute.
-    func isAttrSynced(_ obj: SoundObject, _ attr: ObjectAttrLinks) -> Bool {
-        obj.isObjectInstance && !obj.independentAttrs.contains(attr)
+    func isAttrSynced(_ obj: SoundObject, _ attr: ConsolidateAttrLinks) -> Bool {
+        obj.isConsolidateInstance && !obj.independentAttrs.contains(attr)
     }
 
     /// Propagates `attr` (volume/pan/mute) from the instance `objectID` to its definition and
     /// to every other instance still synchronised for that attribute. To be called AFTER writing
     /// the new value onto `objectID` (the volume/pan/mute setters already do so).
     /// A no-op if `objectID` is not a linked instance synchronised for `attr`.
-    func propagateLinkedAttr(_ attr: ObjectAttrLinks, from objectID: UUID) {
+    func propagateLinkedAttr(_ attr: ConsolidateAttrLinks, from objectID: UUID) {
         guard let src = find(id: objectID), isAttrSynced(src, attr),
-              let defID = src.definitionID, var def = objectDefinitions[defID] else { return }
+              let defID = src.consolidateID, var def = consolidateDefinitions[defID] else { return }
 
         switch attr {
         case .volume: def.volume  = src.volume
@@ -154,9 +154,9 @@ extension EditViewModel {
         case .mute:   def.isMuted = src.isMuted
         default: break
         }
-        objectDefinitions[defID] = def
+        consolidateDefinitions[defID] = def
 
-        for tid in placementIDs(forDefinition: defID, excluding: objectID) {
+        for tid in placementIDs(forConsolidate: defID, excluding: objectID) {
             guard let other = find(id: tid), isAttrSynced(other, attr) else { continue }
             update(id: tid) { o in
                 switch attr {
@@ -174,12 +174,12 @@ extension EditViewModel {
     /// - `synced == false`: detaches the attribute (it keeps its current value, frozen in place).
     /// - `synced == true` : reattaches the attribute → realigns the instance's value on the
     ///   definition's and pushes it to the engine.
-    func setAttrSynced(_ attr: ObjectAttrLinks, _ synced: Bool, forPlacement id: UUID) {
-        guard let obj = find(id: id), obj.isObjectInstance else { return }
+    func setAttrSynced(_ attr: ConsolidateAttrLinks, _ synced: Bool, forPlacement id: UUID) {
+        guard let obj = find(id: id), obj.isConsolidateInstance else { return }
         guard obj.independentAttrs.contains(attr) == synced else { return }   // already in the state wanted
         pushUndo()
         if synced {
-            let def = obj.definitionID.flatMap { objectDefinitions[$0] }
+            let def = obj.consolidateID.flatMap { consolidateDefinitions[$0] }
             update(id: id) { o in
                 o.independentAttrs.remove(attr)
                 if let def {
@@ -201,62 +201,62 @@ extension EditViewModel {
     // MARK: - Staleness
 
     /// Walks `subtree` and its descendants and returns the set of definitions this bake
-    /// depends on, at their CURRENT revision: every descendant that is itself a sound-object
-    /// instance (`definitionID`). Called at bake time — see EditViewModel+Bake.
-    func collectObjectDependencies(_ subtree: SoundObject) -> [ObjectDependency] {
+    /// depends on, at their CURRENT revision: every descendant that is itself a consolidated
+    /// instance (`consolidateID`). Called at bake time — see EditViewModel+Bake.
+    func collectConsolidateDependencies(_ subtree: SoundObject) -> [ConsolidateDependency] {
         var revisionByID: [UUID: Int] = [:]
         func record(_ defID: UUID, _ revision: Int) {
             revisionByID[defID] = max(revisionByID[defID] ?? 0, revision)
         }
         func walk(_ o: SoundObject) {
-            if let defID = o.definitionID, let rev = objectDefinitions[defID]?.revision {
+            if let defID = o.consolidateID, let rev = consolidateDefinitions[defID]?.revision {
                 record(defID, rev)
             }
             if case .group(let ch, _) = o.kind { ch.forEach(walk) }
         }
         walk(subtree)
-        return revisionByID.map { ObjectDependency(definitionID: $0.key, revision: $0.value) }
+        return revisionByID.map { ConsolidateDependency(consolidateID: $0.key, revision: $0.value) }
     }
 
     /// True if the instance `id` captures a content whose source definition has since been
     /// updated — its baked wave no longer reflects the current content. Drives the display
     /// of a badge in the timeline.
     func isStale(_ id: UUID) -> Bool {
-        guard let obj = find(id: id), let defID = obj.definitionID,
-              let def = objectDefinitions[defID] else { return false }
+        guard let obj = find(id: id), let defID = obj.consolidateID,
+              let def = consolidateDefinitions[defID] else { return false }
         return def.dependsOn.contains { dep in
-            (objectDefinitions[dep.definitionID]?.revision ?? dep.revision) > dep.revision
+            (consolidateDefinitions[dep.consolidateID]?.revision ?? dep.revision) > dep.revision
         }
     }
 
-    /// Refreshes a STALE instance (its DEFINITION itself holds another sound object
+    /// Refreshes a STALE instance (its DEFINITION itself holds another consolidated object
     /// that has since been updated — the recursive case, an object inside an object). Opens the definition
-    /// (materialising with an already refreshed content, see `openObject`) then closes it
+    /// (materialising with an already refreshed content, see `openConsolidate`) then closes it
     /// immediately, with no intervention from the user. No effect on an up-to-date instance.
     func refreshStalePlacement(_ placementID: UUID) {
-        guard let placement = find(id: placementID), placement.isObjectInstance,
-              isStale(placementID), !isEditingObject else { return }
-        let defID = placement.definitionID
-        openObject(viaPlacementID: placementID)
-        guard editingDefinitionID == defID else { return }
-        closeObject()
+        guard let placement = find(id: placementID), placement.isConsolidateInstance,
+              isStale(placementID), !isEditingConsolidate else { return }
+        let defID = placement.consolidateID
+        openConsolidate(viaPlacementID: placementID)
+        guard editingConsolidateID == defID else { return }
+        closeConsolidate()
     }
 
     /// Recursively refreshes the filePath/fileDuration of `subtree` and of every one of its descendants
     /// that references a definition, so that they reflect its CURRENT revision.
     /// Used by the restoration from a sidecar (opening, detaching, mirroring), which
     /// may hold references to a revision now out of date.
-    func refreshObjectReferences(in subtree: SoundObject) -> SoundObject {
+    func refreshConsolidateReferences(in subtree: SoundObject) -> SoundObject {
         var o = subtree
-        if let defID = o.definitionID, let def = objectDefinitions[defID],
+        if let defID = o.consolidateID, let def = consolidateDefinitions[defID],
            case .clip(_, let so, _, let sr, let rev) = o.kind,
-           let wav = consolidateWaveURL(def.wave, forDefinition: defID) {
+           let wav = consolidateWaveURL(def.wave, forConsolidate: defID) {
             let waveLen = audioFileDuration(wav) ?? 0
             o.kind = .clip(filePath: wav.path, sourceOffset: so, fileDuration: waveLen,
                            speedRatio: sr, isReversed: rev)
         }
         if case .group(let children, let isExpanded) = o.kind {
-            o.kind = .group(children: children.map { refreshObjectReferences(in: $0) }, isExpanded: isExpanded)
+            o.kind = .group(children: children.map { refreshConsolidateReferences(in: $0) }, isExpanded: isExpanded)
         }
         return o
     }
@@ -275,10 +275,10 @@ extension EditViewModel {
     /// True if the definition `defID` is out of date: at least one captured dependency points at a
     /// revision lower than that dependency's CURRENT revision. A dependency that has gone is
     /// ignored (no ghosts). The "definition" version of `isStale` (which works on a placement).
-    func isDefinitionStale(_ defID: UUID) -> Bool {
-        guard let def = objectDefinitions[defID] else { return false }
+    func isConsolidateStale(_ defID: UUID) -> Bool {
+        guard let def = consolidateDefinitions[defID] else { return false }
         return def.dependsOn.contains { dep in
-            guard let cur = objectDefinitions[dep.definitionID]?.revision else { return false }
+            guard let cur = consolidateDefinitions[dep.consolidateID]?.revision else { return false }
             return cur > dep.revision
         }
     }
@@ -287,7 +287,7 @@ extension EditViewModel {
     /// definition. A no-op during an editing session (a materialised/watched definition is not
     /// touched) — it will be relaunched when the stack empties. Idempotent.
     func cascadeRebakeStaleFixpoint() {
-        guard !isEditingObject, !isCascadingRebake, objectsFolder != nil else { return }
+        guard !isEditingConsolidate, !isCascadingRebake, consolidateFolder != nil else { return }
         isCascadingRebake = true
         cascadeFailedDefs.removeAll()
         cascadeRebakeCount = 0
@@ -302,20 +302,20 @@ extension EditViewModel {
     /// (a transitive cascade or a closing propagated to the other instances). Robust to
     /// overlapping markings: the deadline is pushed back and the clearing only happens once it is reached
     /// (otherwise a re-bake during the display would cut the ✓ short).
-    func markDefinitionResynced(_ defID: UUID) {
+    func markConsolidateResynced(_ defID: UUID) {
         let deadline = Date().addingTimeInterval(Self.resyncedBadgeDuration)
         resyncedBadgeDeadline[defID] = deadline
-        recentlyResyncedDefinitionIDs.insert(defID)
+        recentlyResyncedConsolidateIDs.insert(defID)
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.resyncedBadgeDuration + 0.05) { [weak self] in
             guard let self, let due = self.resyncedBadgeDeadline[defID], Date() >= due else { return }
             self.resyncedBadgeDeadline[defID] = nil
-            self.recentlyResyncedDefinitionIDs.remove(defID)
+            self.recentlyResyncedConsolidateIDs.remove(defID)
         }
     }
 
     /// Ends the cascade cleanly (empties the indicator + the guards).
     private func endCascadeRebake() {
-        recomputingDefinitionIDs.removeAll()
+        recomputingConsolidateIDs.removeAll()
         cascadeFailedDefs.removeAll()
         isCascadingRebake = false
     }
@@ -325,27 +325,27 @@ extension EditViewModel {
     private func processNextStaleRebake() {
         // An editing session has (re)opened during the cascade → it is suspended cleanly; the
         // next emptying of the stack will relaunch the fixed point.
-        guard !isEditingObject else { endCascadeRebake(); return }
+        guard !isEditingConsolidate else { endCascadeRebake(); return }
         // A safety ceiling against loops (abnormal cyclic dependencies).
-        guard cascadeRebakeCount < max(8, objectDefinitions.count * 3) else {
+        guard cascadeRebakeCount < max(8, consolidateDefinitions.count * 3) else {
             NSLog("[OBJECT] cascade: iteration ceiling reached — stopping")
             endCascadeRebake(); return
         }
         // Those out of date and still workable (the failures are excluded so as not to loop).
-        let stale = objectDefinitions.keys.filter { isDefinitionStale($0) && !cascadeFailedDefs.contains($0) }
+        let stale = consolidateDefinitions.keys.filter { isConsolidateStale($0) && !cascadeFailedDefs.contains($0) }
         // "Dependencies first": only re-bake a definition if none of its dependencies is
         // still out of date (otherwise it would be re-baked with a stale child). An anti-deadlock fallback:
         // if only mutually dependent out-of-date ones are left (a cycle — abnormal), the first is taken.
         let next = stale.first { defID in
-            let deps = objectDefinitions[defID]?.dependsOn.map(\.definitionID) ?? []
-            return !deps.contains { isDefinitionStale($0) && !cascadeFailedDefs.contains($0) }
+            let deps = consolidateDefinitions[defID]?.dependsOn.map(\.consolidateID) ?? []
+            return !deps.contains { isConsolidateStale($0) && !cascadeFailedDefs.contains($0) }
         } ?? stale.first
         guard let target = next else { endCascadeRebake(); return }
         cascadeRebakeCount += 1
-        recomputingDefinitionIDs.insert(target)
-        rebakeDefinitionInBackground(target) { [weak self] ok in
+        recomputingConsolidateIDs.insert(target)
+        rebakeConsolidateInBackground(target) { [weak self] ok in
             guard let self else { return }
-            self.recomputingDefinitionIDs.remove(target)
+            self.recomputingConsolidateIDs.remove(target)
             if !ok { self.cascadeFailedDefs.insert(target) }   // no longer picked again: avoids the loop
             // The fixed point: re-baking `target` may have made its parents out of date → re-evaluate.
             self.processNextStaleRebake()
@@ -358,8 +358,8 @@ extension EditViewModel {
     /// wave/sidecar/dependsOn) and propagates to all of its placements. The engine temporary is muted
     /// (its ObjGain fader at -96, bypassed at render time) so as to stay silent in live playback, then
     /// taken down. Asynchronous: `completion(true)` on success.
-    private func rebakeDefinitionInBackground(_ defID: UUID, completion: @escaping (Bool) -> Void) {
-        guard let engine, let def = objectDefinitions[defID], let folder = objectsFolder else {
+    private func rebakeConsolidateInBackground(_ defID: UUID, completion: @escaping (Bool) -> Void) {
+        guard let engine, let def = consolidateDefinitions[defID], let folder = consolidateFolder else {
             completion(false); return
         }
         // Cas E4: read the sidecar where the CURRENT wave was actually found (samples/consolidate/
@@ -367,11 +367,11 @@ extension EditViewModel {
         guard let readFolder = consolidateReadFolder(forWave: def.wave, definition: defID) else {
             completion(false); return
         }
-        let sidecar = objectSidecarURL(forWave: def.wave, in: readFolder)
+        let sidecar = consolidateSidecarURL(forWave: def.wave, in: readFolder)
         let original: SoundObject
         do {
             let data = try Data(contentsOf: sidecar)
-            original = try decodedObjectSidecar(data, projectFolder: projectFolder)
+            original = try decodedConsolidateSidecar(data, projectFolder: projectFolder)
         } catch {
             NSLog("[OBJECT] headless rebake \(defID): unreadable sidecar (\(sidecar.lastPathComponent)) — skipped")
             completion(false); return
@@ -381,7 +381,7 @@ extension EditViewModel {
         ensureConsolidateFolder()
 
         // Fresh ids (zero timeline collision) + child refs pointing at the CURRENT waves.
-        let restored = refreshObjectReferences(in: deepFreshCopy(original))
+        let restored = refreshConsolidateReferences(in: deepFreshCopy(original))
 
         // Instantiates in the engine ALONE (not in `items`) and mutes so as to stay silent live.
         syncAdd(restored)
@@ -402,7 +402,7 @@ extension EditViewModel {
             guard let self else { completion(false); return }
             self.removeFromEngine(restored)   // takes the engine temporary down
             // The project was closed/changed during the render → give up (do not write into another registry).
-            guard self.objectsFolder == folder, self.objectDefinitions[defID] != nil else {
+            guard self.consolidateFolder == folder, self.consolidateDefinitions[defID] != nil else {
                 completion(false); return
             }
             guard ok else {
@@ -410,9 +410,9 @@ extension EditViewModel {
                 completion(false); return
             }
             // The new sidecar (child refs up to date; the original ids/plugins preserved).
-            let newSidecar = self.objectSidecarURL(forWave: wav.lastPathComponent, in: folder)
+            let newSidecar = self.consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
             do {
-                try self.encodedObjectSidecar(self.refreshObjectReferences(in: original),
+                try self.encodedConsolidateSidecar(self.refreshConsolidateReferences(in: original),
                                               projectFolder: self.projectFolder)
                     .write(to: newSidecar, options: .atomic)
             } catch {
@@ -421,16 +421,16 @@ extension EditViewModel {
                 completion(false); return
             }
             let waveLen = self.audioFileDuration(wav) ?? (renderEnd - renderStart)
-            let prev = self.objectDefinitions[defID]
-            self.objectDefinitions[defID] = ObjectDefinition(
+            let prev = self.consolidateDefinitions[defID]
+            self.consolidateDefinitions[defID] = ConsolidateDefinition(
                 id: defID, name: prev?.name ?? restored.displayName, wave: wav.lastPathComponent,
                 revision: nextRevision, wasGroup: prev?.wasGroup ?? restored.isGroup,
                 volume: prev?.volume ?? restored.volume, pan: prev?.pan ?? restored.pan,
                 isMuted: prev?.isMuted ?? restored.isMuted,
-                dependsOn: self.collectObjectDependencies(restored))
+                dependsOn: self.collectConsolidateDependencies(restored))
             // Propagates the new wave to ALL the placements of this definition (model + engine).
-            self.propagateDefinitionUpdate(defID: defID, exceptPlacementID: UUID())
-            self.markDefinitionResynced(defID)   // a transient ✓ on the resynchronised placements
+            self.propagateConsolidateUpdate(defID: defID, exceptPlacementID: UUID())
+            self.markConsolidateResynced(defID)   // a transient ✓ on the resynchronised placements
             self.isDirty = true
             NSLog("[OBJECT] headless rebake \(defID) → \(wav.lastPathComponent) (revision \(nextRevision))")
             completion(true)
@@ -444,22 +444,22 @@ extension EditViewModel {
         }
     }
 
-    // MARK: - Creating a sound object ("make object")
+    // MARK: - Creating a consolidated object ("make object")
 
-    /// Turns an existing GROUP into a sound object, IN THE BACKGROUND: the submix is rendered into a
+    /// Turns an existing GROUP into a consolidated object, IN THE BACKGROUND: the submix is rendered into a
     /// wave (the fader/window bypassed, the user FX baked — @see EditViewModel+Bake), an
-    /// `ObjectDefinition` is recorded in the project registry and
+    /// `ConsolidateDefinition` is recorded in the project registry and
     /// the object is replaced IN PLACE (the same id) by a placement referencing it
-    /// (`definitionID`). The fader/pan/window/fades stay LIVE on the instance. The
+    /// (`consolidateID`). The fader/pan/window/fades stay LIVE on the instance. The
     /// original sub-tree (FX included) goes into the definition's sidecar — that is what
-    /// OPENING the object (`openObject`) re-edits.
+    /// OPENING the object (`openConsolidate`) re-edits.
     /// `alsoLinkIDs`: other objects (a multiple selection with IDENTICAL CONTENT) to turn into
-    /// instances of the SAME definition, without re-baking them (see `replaceSelectionWithObjects`).
-    func makeObject(fromGroupID groupID: UUID, alsoLinkIDs: [UUID] = []) {
+    /// instances of the SAME definition, without re-baking them (see `consolidateSelectionAsLinkedInstances`).
+    func consolidate(groupID groupID: UUID, alsoLinkIDs: [UUID] = []) {
         guard let engine, let group = find(id: groupID), group.isGroup,
-              !group.isObjectInstance else { return }
+              !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
-        guard let folder = objectsFolder else {
+        guard let folder = consolidateFolder else {
             bakeAlert(L("object.error.saveFirst.title"),
                         L("object.error.saveFirst.info"))
             return
@@ -487,7 +487,7 @@ extension EditViewModel {
                            start: renderStart, end: renderEnd) { [weak self] ok in
             guard let self else { return }
             self.bakingIDs.remove(groupID)
-            self.finishMakeObject(objectID: groupID, ok: ok, wav: wav, folder: folder,
+            self.finishConsolidate(objectID: groupID, ok: ok, wav: wav, folder: folder,
                                             defID: defID, original: original,
                                             sourceOffset: sourceOffset,
                                             renderStart: renderStart, renderEnd: renderEnd,
@@ -495,60 +495,23 @@ extension EditViewModel {
         }
     }
 
-    /// Turns an existing plain CLIP into a sound object (the same machinery as
-    /// `makeObject(fromGroupID:)`, see that method).
-    func makeObject(fromClipID clipID: UUID) {
-        guard let engine, let clip = find(id: clipID), (clip.isClip || clip.isMIDI),
-              !clip.isObjectInstance else { return }
-        guard !isBaking(clipID) else { return }
-        guard let folder = objectsFolder else {
-            bakeAlert(L("object.error.saveFirst.title"),
-                        L("object.error.saveFirst.info"))
-            return
-        }
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        } catch {
-            bakeAlert(L("object.error.makeFailed.title"),
-                        L("object.error.folderFailed.info", error.localizedDescription))
-            return
-        }
-
-        let original = withCapturedPluginStates(clip)
-        let defID = UUID()
-        let base  = "\(bakeSafeName(clip.displayName))_\(defID.uuidString.prefix(8))"
-        let wav   = folder.appendingPathComponent("\(base).wav")
-        let renderStart = clip.startTime
-        let renderEnd   = clip.startTime + clip.duration
-
-        bakingIDs.insert(clipID)
-        engine.renderClip(toFileAsync: clipID.uuidString, filePath: wav.path,
-                          start: renderStart, end: renderEnd) { [weak self] ok in
-            guard let self else { return }
-            self.bakingIDs.remove(clipID)
-            self.finishMakeObject(objectID: clipID, ok: ok, wav: wav, folder: folder,
-                                            defID: defID, original: original,
-                                            sourceOffset: 0, renderStart: renderStart, renderEnd: renderEnd)
-        }
-    }
-
-    /// "Create a sound object" on a LONE CLIP/MIDI: a design decision — a sound object is
+    /// "Create a consolidated object" on a LONE CLIP/MIDI: a design decision — a consolidated object is
     /// ALWAYS a group. So the clip is first wrapped in a group of one (the existing grouping
     /// primitive, which preserves the nesting: a sub-group if the clip is already inside
-    /// a group, a top-level group otherwise), and then that group is turned into a sound object.
-    func makeObjectWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = []) {
+    /// a group, a top-level group otherwise), and then that group is turned into a consolidated object.
+    func consolidateWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = []) {
         guard let clip = find(id: clipID), (clip.isClip || clip.isMIDI),
-              !clip.isObjectInstance, !isBaking(clipID) else { return }
-        guard objectsFolder != nil else {
+              !clip.isConsolidateInstance, !isBaking(clipID) else { return }
+        guard consolidateFolder != nil else {
             bakeAlert(L("object.error.saveFirst.title"),
                         L("object.error.saveFirst.info"))
             return
         }
-        // A LONE object: its fade must live ON the sound object (group level, live/editable) and
+        // A LONE object: its fade must live ON the consolidated object (group level, live/editable) and
         // not stay baked into the wav from the clip. Rendering the group bypasses the group's
         // window/fade (→ not baked, it stays live on the placement) but bakes the fade of a CHILD clip.
         // So the fade is moved clip → wrapper group BEFORE the render. (In a multiple selection, the
-        // creation goes through makeObject(fromGroupID:) and the clips' fades stay
+        // creation goes through consolidate(groupID:) and the clips' fades stay
         // inside — unchanged behaviour.)
         let fadeIn  = clip.fadeIn
         let fadeOut = clip.fadeOut
@@ -556,7 +519,7 @@ extension EditViewModel {
         // is lost in the transformation — the child clip is baked into the wav and its routing to
         // the aux destroyed (rendering the submix does not capture the aux send). So it is moved onto the
         // wrapper group BEFORE the render: the placement will inherit a LIVE send from it (rewired by
-        // syncSends in finishMakeObject). The wrapper's window matches the clip's →
+        // syncSends in finishConsolidate). The wrapper's window matches the clip's →
         // the aux stays overlapped, and the send keeps its meaning.
         let sends = clip.sends
 
@@ -585,20 +548,20 @@ extension EditViewModel {
             if let w = find(id: wrapper.id) { syncSends(w) }
         }
 
-        makeObject(fromGroupID: wrapper.id, alsoLinkIDs: alsoLinkIDs)
+        consolidate(groupID: wrapper.id, alsoLinkIDs: alsoLinkIDs)
     }
 
-    // MARK: - Creating N sound objects from a multiple selection
+    // MARK: - Creating N consolidated objects from a multiple selection
 
-    /// The elements of a multiple selection on which "Create a sound object" makes sense:
+    /// The elements of a multiple selection on which "Create a consolidated object" makes sense:
     /// clips, MIDI and groups, never an object instance (already an object), never an
     /// infinite bus (no window to render), and never an element ALREADY CONTAINED in another
     /// selected element — that one leaves with its parent, and baking it separately would duplicate it.
     /// A stable order (left → right, then lane) so that the render queue is predictable.
-    func objectCreationTargets() -> [UUID] {
+    func consolidateTargets() -> [UUID] {
         let objs = selectedIDs.compactMap { find(id: $0) }
         let eligible = objs.filter { o in
-            (o.isGroup || o.isClip || o.isMIDI) && !o.isObjectInstance && !o.isInfiniteBus
+            (o.isGroup || o.isClip || o.isMIDI) && !o.isConsolidateInstance && !o.isInfiniteBus
         }
         let ids = Set(eligible.map(\.id))
         return eligible
@@ -607,26 +570,26 @@ extension EditViewModel {
             .map(\.id)
     }
 
-    /// "Create N sound objects": ONE sound object per selected element, each with ITS
-    /// own definition. To be distinguished from `replaceSelectionWithObjects`, reserved for strictly
+    /// "Create N consolidated objects": ONE consolidated object per selected element, each with ITS
+    /// own definition. To be distinguished from `consolidateSelectionAsLinkedInstances`, reserved for strictly
     /// identical copies, which bakes once and links the others to the same definition.
     ///
     /// The renders follow one another IN SERIES, never in parallel: each bake clones the Edit and
     /// rewrites the tree on completion (wrapping in a group, swapping to a placement). Launching the
     /// next before the previous has finished would have it work on a tree in the middle of changing.
-    func makeObjectsFromSelection() async {
-        guard objectsFolder != nil else {
+    func consolidateEachInSelection() async {
+        guard consolidateFolder != nil else {
             bakeAlert(L("object.error.saveFirst.title"),
                         L("object.error.saveFirst.info"))
             return
         }
-        for id in objectCreationTargets() {
+        for id in consolidateTargets() {
             // Re-resolved on each round: the previous round may have moved/wrapped the element.
-            guard let o = find(id: id), !o.isObjectInstance, !isBaking(id) else { continue }
+            guard let o = find(id: id), !o.isConsolidateInstance, !isBaking(id) else { continue }
             if o.isGroup {
-                makeObject(fromGroupID: id)
+                consolidate(groupID: id)
             } else if o.isClip || o.isMIDI {
-                makeObjectWrappingClip(clipID: id)
+                consolidateWrappingClip(clipID: id)
             } else {
                 continue
             }
@@ -643,20 +606,20 @@ extension EditViewModel {
         }
     }
 
-    // MARK: - Replacing an identical multiple selection with N sound objects
+    // MARK: - Replacing an identical multiple selection with N consolidated objects
 
     /// The case of a plain wav copy-and-paste: returns N if the selection (≥ 2) is a batch of strictly
     /// identical AUDIO clips (the same file, the same trim/speed/direction, the same volume / pan /
     /// mute / fades / stem / colour / sends, with no plugin). The position (startTime / lane) may
     /// differ — that is precisely what marks them out as copies. nil otherwise → the option is hidden.
-    func uniformClipSelectionForObject() -> Int? {
-        guard objectsFolder != nil else { return nil }
+    func uniformClipSelectionForConsolidate() -> Int? {
+        guard consolidateFolder != nil else { return nil }
         let objs = selectedIDs.compactMap { find(id: $0) }
         guard objs.count >= 2, objs.count == selectedIDs.count, let ref = objs.first else { return nil }
 
         // Plain audio clips only, with no processing, not already instances.
         func eligible(_ o: SoundObject) -> Bool {
-            o.isClip && !o.isObjectInstance
+            o.isClip && !o.isConsolidateInstance
                 && o.plugins.isEmpty && o.instruments.isEmpty
                 && o.chainInGainDb == 0 && o.chainOutGainDb == 0
         }
@@ -676,22 +639,22 @@ extension EditViewModel {
             && a.sends == b.sends
     }
 
-    /// "Replace with N sound objects": bakes ONE of the clips into a definition, and turns
+    /// "Replace with N consolidated objects": bakes ONE of the clips into a definition, and turns
     /// the others into linked instances (with no re-bake). Does nothing if the selection is no longer a batch
     /// of identical clips (it is re-checked).
-    func replaceSelectionWithObjects() {
-        guard uniformClipSelectionForObject() != nil else { return }
+    func consolidateSelectionAsLinkedInstances() {
+        guard uniformClipSelectionForConsolidate() != nil else { return }
         let ordered = selectedIDs.compactMap { find(id: $0) }.sorted {
             $0.startTime != $1.startTime ? $0.startTime < $1.startTime : $0.lane < $1.lane
         }
         guard let source = ordered.first else { return }
         let others = ordered.dropFirst().map(\.id)
-        makeObjectWrappingClip(clipID: source.id, alsoLinkIDs: Array(others))
+        consolidateWrappingClip(clipID: source.id, alsoLinkIDs: Array(others))
     }
 
     /// The common completion (group or clip), on the main thread: sidecar + recording the
     /// definition + taking down the live version + swapping to a referencing placement (the SAME id).
-    private func finishMakeObject(objectID: UUID, ok: Bool, wav: URL, folder: URL,
+    private func finishConsolidate(objectID: UUID, ok: Bool, wav: URL, folder: URL,
                                             defID: UUID, original: SoundObject,
                                             sourceOffset: Double, renderStart: Double, renderEnd: Double,
                                             alsoLinkIDs: [UUID] = []) {
@@ -700,15 +663,15 @@ extension EditViewModel {
             bakeAlert(L("object.error.renderFailed.title"), L("object.error.seeConsole.info"))
             return
         }
-        guard let live = find(id: objectID), !live.isObjectInstance else {
+        guard let live = find(id: objectID), !live.isConsolidateInstance else {
             NSLog("[OBJECT] object \(objectID) gone during the render — orphan wave")
             try? FileManager.default.removeItem(at: wav)
             return
         }
 
-        let sidecar = objectSidecarURL(forWave: wav.lastPathComponent, in: folder)
+        let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
-            try encodedObjectSidecar(original, projectFolder: projectFolder)
+            try encodedConsolidateSidecar(original, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
             bakeAlert(L("object.error.makeFailed2.title"),
@@ -721,11 +684,11 @@ extension EditViewModel {
         removeFromEngine(live)
 
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
-        objectDefinitions[defID] = ObjectDefinition(
+        consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
             revision: 0, wasGroup: live.isGroup,
             volume: live.volume, pan: live.pan, isMuted: live.isMuted,
-            dependsOn: collectObjectDependencies(original))
+            dependsOn: collectConsolidateDependencies(original))
 
         // Automation: what the render has BAKED IN goes with the content (the children's curves
         // leave with them into the sidecar, those of the root's user FX are in the wave);
@@ -739,7 +702,7 @@ extension EditViewModel {
             stemID: live.stemID, plugins: [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
             sends: live.sends, baseBPM: nil,
-            definitionID: defID,
+            consolidateID: defID,
             automationTouchOrder: live.automationTouchOrder,
             kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
                         speedRatio: 1.0, isReversed: false))
@@ -763,7 +726,7 @@ extension EditViewModel {
         // keeps its own position/lane/gain/pan/fades/sends — only the deep content is shared.
         var linked: [UUID] = [placement.id]
         for oid in alsoLinkIDs where oid != placement.id {
-            guard let other = find(id: oid), !other.isObjectInstance else { continue }
+            guard let other = find(id: oid), !other.isConsolidateInstance else { continue }
             removeFromEngine(other)
             var inst = SoundObject(
                 id: other.id, startTime: other.startTime, duration: other.duration,
@@ -772,7 +735,7 @@ extension EditViewModel {
                 stemID: other.stemID, plugins: [],
                 label: other.label ?? other.displayName, colorIndex: other.colorIndex,
                 sends: other.sends, baseBPM: nil,
-                definitionID: defID,
+                consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,
                 kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
                             speedRatio: 1.0, isReversed: false))
@@ -795,61 +758,61 @@ extension EditViewModel {
 
         selectedIDs = Set(linked)
         isDirty = true
-        NSLog("[OBJECT] object \(objectID) turned into the sound object \(defID) → \(wav.lastPathComponent)"
+        NSLog("[OBJECT] object \(objectID) turned into the consolidated object \(defID) → \(wav.lastPathComponent)"
               + (linked.count > 1 ? " (+\(linked.count - 1) linked instances)" : ""))
     }
 
-    // MARK: - Opening / closing a sound object
+    // MARK: - Opening / closing a consolidated object
 
-    /// True if at least one sound object is OPEN (a non-empty session stack).
-    var isEditingObject: Bool { !objectEditStack.isEmpty }
+    /// True if at least one consolidated object is OPEN (a non-empty session stack).
+    var isEditingConsolidate: Bool { !consolidateEditStack.isEmpty }
 
     /// True if `id` is the placement of an editing session (at any level of the stack).
-    func isInObjectEditStack(_ id: UUID) -> Bool {
-        objectEditStack.contains { $0.placementID == id }
+    func isInConsolidateEditStack(_ id: UUID) -> Bool {
+        consolidateEditStack.contains { $0.placementID == id }
     }
 
     /// True if `id` is an instance in a live MIRROR: it follows an origin edited elsewhere and
     /// has no life of its own for the length of the session. Neither editable nor detachable — both
     /// would start from its content, which will be rewritten at the next mirroring pass.
     func isLiveMirror(_ id: UUID) -> Bool {
-        objectEditStack.contains { $0.mirrorSnapshots[id] != nil }
+        consolidateEditStack.contains { $0.mirrorSnapshots[id] != nil }
     }
 
-    /// OPENS the sound object referenced by `placementID`: it leaves
+    /// OPENS the consolidated object referenced by `placementID`: it leaves
     /// the baked regime and moves to the LIVE regime. Its sub-tree (from the sidecar) is
     /// materialised in the place of THIS placement, and the other instances become
     /// mirrors of it — they stop reading the wave and play the same content, put back in their own place. The
-    /// return to the wave happens at CLOSING (`closeObject`, a new bake) or at
-    /// the cancel (`cancelObjectEdit`, with the wave unchanged). If a session is already running,
-    /// editing a NESTED sound object stacks a child session (the mirrors always follow
+    /// return to the wave happens at CLOSING (`closeConsolidate`, a new bake) or at
+    /// the cancel (`cancelConsolidateEdit`, with the wave unchanged). If a session is already running,
+    /// editing a NESTED consolidated object stacks a child session (the mirrors always follow
     /// the top of the stack).
-    func openObject(viaPlacementID placementID: UUID) {
-        guard let placement = find(id: placementID), let defID = placement.definitionID,
-              let def = objectDefinitions[defID] else { return }
+    func openConsolidate(viaPlacementID placementID: UUID) {
+        guard let placement = find(id: placementID), let defID = placement.consolidateID,
+              let def = consolidateDefinitions[defID] else { return }
         guard !isBaking(placementID) else { return }
         // Nesting is allowed, but a placement already present in the stack is not reopened — nor is
         // a mirrored instance, which is only the reflection of an origin already open.
-        guard !isInObjectEditStack(placementID), !isLiveMirror(placementID) else { return }
+        guard !isInConsolidateEditStack(placementID), !isLiveMirror(placementID) else { return }
         // Cas E4: the sidecar is read where the wave was actually FOUND (consolidate/ or the
         // legacy objects/), not assumed to be the write folder.
         guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { return }
 
-        let sidecar = objectSidecarURL(forWave: def.wave, in: folder)
+        let sidecar = consolidateSidecarURL(forWave: def.wave, in: folder)
         let original: SoundObject
         do {
             let data = try Data(contentsOf: sidecar)
-            original = try decodedObjectSidecar(data, projectFolder: projectFolder)
+            original = try decodedConsolidateSidecar(data, projectFolder: projectFolder)
         } catch {
             bakeAlert(L("object.error.editFailed.title"),
                         L("object.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
             return
         }
 
-        // A sound-object descendant of the sub-tree may have a definition more recent than the one
+        // A consolidated descendant of the sub-tree may have a definition more recent than the one
         // captured at the last bake of THIS definition (staleness) → it is reopened on the UP-TO-DATE
         // content for editing.
-        var restored = refreshObjectReferences(in: restoredSubtree(from: original, alignedTo: placement))
+        var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
 
         // The baked content may carry plugins absent from this machine: materialising it would
         // remove them (compileRack) and the object would be heard without its effects. We warn BEFORE
@@ -864,8 +827,8 @@ extension EditViewModel {
 
         pushUndo()
         // Opening for editing must make the CONTENT visible and clickable — in particular the
-        // NESTED sound objects that will be re-edited in their turn (a child session). A group
-        // is created/transformed FOLDED (isExpanded == false, see makeObject) and
+        // NESTED consolidated objects that will be re-edited in their turn (a child session). A group
+        // is created/transformed FOLDED (isExpanded == false, see consolidate) and
         // `restoredSubtree` reproduces that state faithfully → materialised folded, its children do not
         // come out in `laneEntries` (buildLaneEntries only recurses if isExpanded) and so are
         // not hit-testable. So the expansion is forced at opening.
@@ -875,13 +838,13 @@ extension EditViewModel {
 
         // Suspends the tracking of the PARENT session (if there is one) before stacking the child:
         // the engine watch only watches one sub-tree at a time → it will be re-installed on
-        // the child by `armObjectEditParamWatch`, and reinstalled on the parent when it is popped.
+        // the child by `armConsolidateEditParamWatch`, and reinstalled on the parent when it is popped.
         liveMirrorWorkItem?.cancel(); liveMirrorWorkItem = nil
 
         // Stacks the session. Captures the state of the plugins BELONGING to the placement (live stateXML) BEFORE
         // the removeFromEngine: the snapshot serves to restore them identically at closing as at
         // a cancel (they belong to the placement, not to the content being edited).
-        objectEditStack.append(ObjectEditSession(defID: defID, placementID: placementID,
+        consolidateEditStack.append(ConsolidateEditSession(defID: defID, placementID: placementID,
                                                  originalPlacement: withCapturedPluginStates(placement),
                                                  openedSubtree: restored))
 
@@ -901,12 +864,12 @@ extension EditViewModel {
         installLiveMirrors()
         selectedIDs = [placementID]
         isDirty = true
-        armObjectEditParamWatch()
-        UIPerf.measureFrom(tOpen, "open the sound object")
+        armConsolidateEditParamWatch()
+        UIPerf.measureFrom(tOpen, "open the consolidated object")
     }
 
     /// A stable signature of a sub-tree (a JSON encoding with sorted keys) to detect a
-    /// modification between the opening and the closing of a sound object. `nil` if
+    /// modification between the opening and the closing of a consolidated object. `nil` if
     /// the encoding fails → treated as "different" (we re-bake, on the safe side).
     private func subtreeSignature(_ o: SoundObject) -> Data? {
         let enc = JSONEncoder()
@@ -915,17 +878,17 @@ extension EditViewModel {
         // not to the definition. Without this, setting the instance's gain curve while
         // editing its content would trigger a re-bake — hence one revision and one wave more —
         // for a rigorously identical file.
-        return try? enc.encode(o.asObjectDefinition)
+        return try? enc.encode(o.asConsolidateDefinition)
     }
 
     /// Confirms the edit under way: re-bakes the materialised sub-tree (the same pipeline as
-    /// `makeObject`), a new revision of the definition (a new wave + sidecar),
+    /// `consolidate`), a new revision of the definition (a new wave + sidecar),
     /// then propagates the new content to every OTHER placement that references it. The render is
-    /// asynchronous — `editingDefinitionID` stays laid down until the end.
-    func closeObject() {
-        guard let defID = editingDefinitionID, let placementID = editingPlacementID,
-              let engine, let live = find(id: placementID), let def = objectDefinitions[defID] else { return }
-        guard let folder = objectsFolder else { return }
+    /// asynchronous — `editingConsolidateID` stays laid down until the end.
+    func closeConsolidate() {
+        guard let defID = editingConsolidateID, let placementID = editingPlacementID,
+              let engine, let live = find(id: placementID), let def = consolidateDefinitions[defID] else { return }
+        guard let folder = consolidateFolder else { return }
         guard !isBaking(placementID) else { return }
         // Cas E3: an old project may never have had samples/consolidate/ — create it before the
         // render about to write the new revision's wave there.
@@ -935,13 +898,13 @@ extension EditViewModel {
         // is asynchronous and journals itself separately (`[PERF] bake …`), except in the "no
         // modification" case just below, which closes like a cancel.
         let tClose = CFAbsoluteTimeGetCurrent()
-        defer { UIPerf.measureFrom(tClose, "close the sound object (synchronous part)") }
+        defer { UIPerf.measureFrom(tClose, "close the consolidated object (synchronous part)") }
 
         // An optimisation: if the content (structure + internal mix + plugin state) is identical to
         // the one materialised AT OPENING, the official wave already reflects exactly that sub-tree.
         // No point re-rendering → it closes like a cancel (restoring the linked placement on the
         // current wave, with no new revision and no render).
-        if let opened = objectEditStack.last?.openedSubtree,
+        if let opened = consolidateEditStack.last?.openedSubtree,
            let sigOpen = subtreeSignature(opened),
            let sigNow = subtreeSignature(withCapturedPluginStates(live)),
            sigOpen == sigNow {
@@ -950,13 +913,13 @@ extension EditViewModel {
             // belongs to the instance and may have been edited during the session (it is amputated
             // from the signature, deliberately — @see subtreeSignature). Restoring it from the opening
             // snapshot would give back the curve just erased.
-            cancelObjectEdit(keepingRootAutomation: true)
+            cancelConsolidateEdit(keepingRootAutomation: true)
             return
         }
 
         // Cuts the parameter listening and the pending re-mirroring. The mirrors themselves stay in
         // place for the length of the render (they play the right content); they become baked instances
-        // again in finishCloseObject, once the official wave is written.
+        // again in finishCloseConsolidate, once the official wave is written.
         teardownLiveMirroring()
 
         let original = withCapturedPluginStates(live)
@@ -982,7 +945,7 @@ extension EditViewModel {
         let completion: (Bool) -> Void = { [weak self] ok in
             guard let self else { return }
             self.bakingIDs.remove(placementID)
-            self.finishCloseObject(defID: defID, placementID: placementID, ok: ok,
+            self.finishCloseConsolidate(defID: defID, placementID: placementID, ok: ok,
                                                   wav: wav, folder: folder, original: original,
                                                   nextRevision: nextRevision, sourceOffset: sourceOffset,
                                                   renderStart: renderStart, renderEnd: renderEnd)
@@ -996,13 +959,13 @@ extension EditViewModel {
         }
     }
 
-    private func finishCloseObject(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
+    private func finishCloseConsolidate(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
                                                    folder: URL, original: SoundObject, nextRevision: Int,
                                                    sourceOffset: Double, renderStart: Double, renderEnd: Double) {
         guard let engine else { return }
         guard ok else {
             bakeAlert(L("object.error.renderFailed.title"), L("object.error.seeConsole.info"))
-            armObjectEditParamWatch()   // the session stays open → the listening is relaunched
+            armConsolidateEditParamWatch()   // the session stays open → the listening is relaunched
             return
         }
         guard let live = find(id: placementID) else {
@@ -1011,15 +974,15 @@ extension EditViewModel {
             return
         }
 
-        let sidecar = objectSidecarURL(forWave: wav.lastPathComponent, in: folder)
+        let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
-            try encodedObjectSidecar(original, projectFolder: projectFolder)
+            try encodedConsolidateSidecar(original, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
             bakeAlert(L("object.error.closeFailed.title"),
                         L("object.error.sidecarWrite.info", error.localizedDescription))
             try? FileManager.default.removeItem(at: wav)
-            armObjectEditParamWatch()   // the same: the session is still open
+            armConsolidateEditParamWatch()   // the same: the session is still open
             return
         }
 
@@ -1034,20 +997,20 @@ extension EditViewModel {
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
         // Editing the CONTENT does not touch the common mix: the volume/pan/mute of the
         // previous definition are carried over (falling back on the placement if it has gone).
-        let prev = objectDefinitions[defID]
-        objectDefinitions[defID] = ObjectDefinition(
+        let prev = consolidateDefinitions[defID]
+        consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
             revision: nextRevision, wasGroup: live.isGroup,
             volume: prev?.volume ?? live.volume, pan: prev?.pan ?? live.pan,
             isMuted: prev?.isMuted ?? live.isMuted,
-            dependsOn: collectObjectDependencies(original))
+            dependsOn: collectConsolidateDependencies(original))
 
         removeFromEngine(live)
         // The mix (volume/pan/mute), the state of the attribute links AND the plugins belonging to the
         // placement belong to the PLACEMENT, not to the content being edited: they are restored from
         // the snapshot taken when the edit was opened (otherwise the sub-tree's internal volume would be
         // adopted, out of step with the definition — and the placement's plugins were lost,
-        // though propagateDefinitionUpdate does keep them on the OTHER
+        // though propagateConsolidateUpdate does keep them on the OTHER
         // placements).
         let snap = editingOriginalPlacement
         var placement = SoundObject(
@@ -1057,7 +1020,7 @@ extension EditViewModel {
             stemID: live.stemID, plugins: snap?.plugins ?? [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
             sends: live.sends, baseBPM: nil,
-            definitionID: defID,
+            consolidateID: defID,
             independentAttrs: snap?.independentAttrs ?? [],
             automationTouchOrder: live.automationTouchOrder,
             kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
@@ -1083,9 +1046,9 @@ extension EditViewModel {
 
         // Pops the current session then propagates the new official wave to the OTHER placements.
         // If a parent session remains (a nested edit), it is picked up again; otherwise everything is cut.
-        if !objectEditStack.isEmpty { objectEditStack.removeLast() }
-        propagateDefinitionUpdate(defID: defID, exceptPlacementID: placement.id)
-        markDefinitionResynced(defID)   // a transient ✓ on the OTHER resynchronised instances
+        if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
+        propagateConsolidateUpdate(defID: defID, exceptPlacementID: placement.id)
+        markConsolidateResynced(defID)   // a transient ✓ on the OTHER resynchronised instances
         resumeParentObjectEditAfterPop()
 
         selectedIDs = [placement.id]
@@ -1102,12 +1065,12 @@ extension EditViewModel {
     /// with no modification of the content, which comes through here to avoid a pointless re-bake: those
     /// curves belong to the instance, not to the content being edited, and giving them back their
     /// opening state would resurrect an automation just erased.
-    func cancelObjectEdit(keepingRootAutomation: Bool = false) {
+    func cancelConsolidateEdit(keepingRootAutomation: Bool = false) {
         // Cuts the listening and the pending re-mirroring, then gives the other instances back their
         // baked clip: their snapshot IS the state from before the session, there is nothing to recompute.
-        let defID = editingDefinitionID
+        let defID = editingConsolidateID
         let tCancel = CFAbsoluteTimeGetCurrent()   // perf, @see UIPerf
-        defer { UIPerf.measureFrom(tCancel, "cancel the sound object's opening") }
+        defer { UIPerf.measureFrom(tCancel, "cancel the consolidated object's opening") }
         teardownLiveMirroring()
         restoreLiveMirrors()
 
@@ -1116,13 +1079,13 @@ extension EditViewModel {
               let engine, let current = find(id: placementID) else {
             // An inconsistent session: at least put the other instances back on the official wave
             // (a mirror may have resisted the restoration), pop and pick the parent up again.
-            if let defID { propagateDefinitionUpdate(defID: defID, exceptPlacementID: editingPlacementID ?? UUID()) }
-            if !objectEditStack.isEmpty { objectEditStack.removeLast() }
+            if let defID { propagateConsolidateUpdate(defID: defID, exceptPlacementID: editingPlacementID ?? UUID()) }
+            if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
             resumeParentObjectEditAfterPop()
             return
         }
 
-        // The same boundary as at closing with a render (@see finishCloseObject): what survives the
+        // The same boundary as at closing with a render (@see finishCloseConsolidate): what survives the
         // wave leaves with the instance, the rest falls with the content that carried it.
         var restored = originalPlacement
         if keepingRootAutomation {
@@ -1146,7 +1109,7 @@ extension EditViewModel {
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).
 
         // Pops the current session; picks the parent up again (a nested edit) or cuts everything.
-        if !objectEditStack.isEmpty { objectEditStack.removeLast() }
+        if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
         resumeParentObjectEditAfterPop()
         selectedIDs = [placementID]
         isDirty = true
@@ -1156,7 +1119,7 @@ extension EditViewModel {
     /// is not empty — otherwise cuts the whole apparatus. The teardown of the popped session (the end
     /// of the listening + the pending re-mirroring cancelled) has already happened in the caller.
     private func resumeParentObjectEditAfterPop() {
-        guard isEditingObject else {
+        guard isEditingConsolidate else {
             // No session left: future arming is allowed again.
             liveMirrorSuppressed = false
             // The closing that has just finished may have made out of date the definitions holding
@@ -1166,7 +1129,7 @@ extension EditViewModel {
         }
         // A parent session takes over: its content may have changed through the nested edit
         // just closed → the listening is reinstalled and its mirrors are laid again.
-        armObjectEditParamWatch()
+        armConsolidateEditParamWatch()
         scheduleLiveMirror()
     }
 
@@ -1174,11 +1137,11 @@ extension EditViewModel {
     /// references `defID` after a re-bake. No audio recomputation: only the engine clip is
     /// recreated on the new file (as free as reading a different wav — that is
     /// the whole point of sharing).
-    private func propagateDefinitionUpdate(defID: UUID, exceptPlacementID: UUID) {
-        guard let def = objectDefinitions[defID], let folder = objectsFolder else { return }
+    private func propagateConsolidateUpdate(defID: UUID, exceptPlacementID: UUID) {
+        guard let def = consolidateDefinitions[defID], let folder = consolidateFolder else { return }
         let wav = folder.appendingPathComponent(def.wave)
         let waveLen = audioFileDuration(wav) ?? 0
-        applyDefinitionWave(defID: defID, waveURL: wav, waveLen: waveLen, excluding: exceptPlacementID)
+        applyConsolidateWave(defID: defID, waveURL: wav, waveLen: waveLen, excluding: exceptPlacementID)
     }
 
     /// The lane of the TRACK carrying an object: that of its group if it is nested (its own lane is
@@ -1193,9 +1156,9 @@ extension EditViewModel {
     /// as a normal read — that is the whole point of the baked regime.
     /// The instances still in a live mirror are ignored (they are not `.clip`s):
     /// `restoreLiveMirrors` has normally already given them back their clip before the call.
-    private func applyDefinitionWave(defID: UUID, waveURL: URL, waveLen: Double, excluding: UUID?) {
+    private func applyConsolidateWave(defID: UUID, waveURL: URL, waveLen: Double, excluding: UUID?) {
         guard let engine else { return }
-        for tid in placementIDs(forDefinition: defID, excluding: excluding) {
+        for tid in placementIDs(forConsolidate: defID, excluding: excluding) {
             guard let obj = find(id: tid),
                   case .clip(_, let so, _, let sr, let rev) = obj.kind else { continue }
             removeFromEngine(obj)
@@ -1220,7 +1183,7 @@ extension EditViewModel {
 
     // MARK: - The live mirror (the other instances play the content being edited)
     //
-    // A sound object has two regimes. CLOSED, it is baked: all of its instances read the same
+    // A consolidated object has two regimes. CLOSED, it is baked: all of its instances read the same
     // wave, and N instances cost only one file read each. OPEN for editing, it
     // is LIVE: the content is materialised on the instance being edited, and the OTHERS become
     // mirrors of it — the same sub-tree, put back at their position, with their mix. So they all
@@ -1228,7 +1191,7 @@ extension EditViewModel {
     //
     // It is the ContainerClip that makes this regime possible: a group is ONE clip, hence a content
     // that can be laid identically elsewhere. The CPU cost does not blow up because only
-    // one sound object is open at a time, and because each track's CombiningNode only handles a
+    // one consolidated object is open at a time, and because each track's CombiningNode only handles a
     // container where it crosses the current block.
     //
     // A mirror is FOLDED: it is looked at, not edited. `buildLaneEntries` only descends
@@ -1253,7 +1216,7 @@ extension EditViewModel {
     /// (Re)installs the engine parameter listening for the current session: a LIVE knob
     /// movement does not go through the model, so it would never arm the re-mirroring without this.
     /// Idempotent (called again when plugins have been added).
-    private func armObjectEditParamWatch() {
+    private func armConsolidateEditParamWatch() {
         guard let placementID = editingPlacementID, let live = find(id: placementID) else { return }
         engine?.onObjectEditParamChanged = { [weak self] in
             // The engine's parameter listeners fire on the message thread (= main); we
@@ -1271,7 +1234,7 @@ extension EditViewModel {
     /// parameter callback. A no-op outside a session or if the arming is suspended (an opening/closing/cancel
     /// under way).
     func scheduleLiveMirror() {
-        guard isEditingObject, !liveMirrorSuppressed else { return }
+        guard isEditingConsolidate, !liveMirrorSuppressed else { return }
         liveMirrorWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refreshLiveMirrors() }
         liveMirrorWorkItem = work
@@ -1287,9 +1250,9 @@ extension EditViewModel {
         // mirrors already laid (rewritten on each pass). An instance lodged under one of them has
         // no existence of its own. `$0 != tid`: a mirror stays its own target, otherwise it would
         // never be refreshed again.
-        var roots = objectEditStack.map(\.placementID)
-        roots += objectEditStack.flatMap { $0.mirrorSnapshots.keys }
-        return placementIDs(forDefinition: defID, excluding: origin).filter { tid in
+        var roots = consolidateEditStack.map(\.placementID)
+        roots += consolidateEditStack.flatMap { $0.mirrorSnapshots.keys }
+        return placementIDs(forConsolidate: defID, excluding: origin).filter { tid in
             !roots.contains { $0 != tid && isSelfOrDescendant(tid, of: $0) }
         }
     }
@@ -1298,8 +1261,8 @@ extension EditViewModel {
     /// from before (the baked clip, with its own FX) is set aside in the session: that is what
     /// will be given back to them at closing as at a cancel.
     private func installLiveMirrors() {
-        guard !objectEditStack.isEmpty,
-              let defID = editingDefinitionID,
+        guard !consolidateEditStack.isEmpty,
+              let defID = editingConsolidateID,
               let placementID = editingPlacementID,
               let live = find(id: placementID) else { return }
 
@@ -1310,7 +1273,7 @@ extension EditViewModel {
         }
         guard !snapshots.isEmpty else { return }
 
-        objectEditStack[objectEditStack.count - 1].mirrorSnapshots = snapshots
+        consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots = snapshots
         // Perf: each mirror laid redoes a removeFromEngine +
         // syncAdd, hence rebuilds an engine sub-tree. It is linear in the number
         // of instances — the item to watch when a definition is heavily placed.
@@ -1319,7 +1282,7 @@ extension EditViewModel {
             applyLiveMirror(to: tid, alignedTo: snap, from: live, defID: defID)
         }
         let mirrorsMs = (CFAbsoluteTimeGetCurrent() - tMirrors) * 1000
-        objectEditStack[objectEditStack.count - 1].lastMirrorSignature =
+        consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature =
             subtreeSignature(withCapturedPluginStates(live))
         NSLog("[OBJECT] session \(defID): \(snapshots.count) instance(s) in a live mirror")
         if mirrorsMs >= 1 {
@@ -1331,14 +1294,14 @@ extension EditViewModel {
     /// Lays the mirrors again on the origin's current content (a debounced pass).
     private func refreshLiveMirrors() {
         liveMirrorWorkItem = nil
-        guard isEditingObject, !liveMirrorSuppressed, !objectEditStack.isEmpty,
-              let defID = editingDefinitionID,
+        guard isEditingConsolidate, !liveMirrorSuppressed, !consolidateEditStack.isEmpty,
+              let defID = editingConsolidateID,
               let placementID = editingPlacementID,
               let engine, let live = find(id: placementID) else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.
-        var snapshots = objectEditStack[objectEditStack.count - 1].mirrorSnapshots
+        var snapshots = consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots
         let known = snapshots.count
         for tid in liveMirrorTargets(defID: defID, origin: placementID) where snapshots[tid] == nil {
             guard let target = find(id: tid), case .clip = target.kind else { continue }
@@ -1357,7 +1320,7 @@ extension EditViewModel {
         // engine sub-tree (and re-instantiate their plugins) for an identical result.
         if snapshots.count == known,
            let sig = signature,
-           sig == objectEditStack[objectEditStack.count - 1].lastMirrorSignature {
+           sig == consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature {
             return
         }
 
@@ -1367,11 +1330,11 @@ extension EditViewModel {
         liveMirrorSuppressed = true
         defer { liveMirrorSuppressed = false }
 
-        objectEditStack[objectEditStack.count - 1].mirrorSnapshots = snapshots
+        consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots = snapshots
         for (tid, snap) in snapshots {
             applyLiveMirror(to: tid, alignedTo: snap, from: live, defID: defID)
         }
-        objectEditStack[objectEditStack.count - 1].lastMirrorSignature = signature
+        consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature = signature
     }
 
     /// Lays (or lays again) the origin's content onto `targetID`, aligned on `snapshot` — the
@@ -1383,10 +1346,10 @@ extension EditViewModel {
                                  from live: SoundObject, defID: UUID) {
         guard let engine else { return }
 
-        var mirror = refreshObjectReferences(in: restoredSubtree(from: live, alignedTo: snapshot))
+        var mirror = refreshConsolidateReferences(in: restoredSubtree(from: live, alignedTo: snapshot))
         // `restoredSubtree` cuts the link (that is what detaching expects); here the instance
         // stays an instance — a link halo, synchronised attributes, a return to the wave at closing.
-        mirror.definitionID = defID
+        mirror.consolidateID = defID
         // The FX belonging to the instance apply AFTER the content, as when detaching.
         mirror.plugins = mirror.plugins + snapshot.plugins
         if case .group(let children, _) = mirror.kind {
@@ -1408,8 +1371,8 @@ extension EditViewModel {
     /// Called at closing as at a cancel, BEFORE the undo point: without this, undoing a
     /// closing would resurrect N live copies of the content, orphans of any session.
     private func restoreLiveMirrors() {
-        guard let engine, !objectEditStack.isEmpty else { return }
-        let snapshots = objectEditStack[objectEditStack.count - 1].mirrorSnapshots
+        guard let engine, !consolidateEditStack.isEmpty else { return }
+        let snapshots = consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots
         guard !snapshots.isEmpty else { return }
 
         let tRestore = CFAbsoluteTimeGetCurrent()   // perf, @see UIPerf
@@ -1433,8 +1396,8 @@ extension EditViewModel {
             NSLog("[PERF] %d mirror(s) back to the baked clip: %.0f ms",
                   snapshots.count, restoreMs)
         }
-        objectEditStack[objectEditStack.count - 1].mirrorSnapshots  = [:]
-        objectEditStack[objectEditStack.count - 1].lastMirrorSignature = nil
+        consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots  = [:]
+        consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature = nil
     }
 
     /// Cuts the parameter listening and the pending re-mirroring. Does NOT touch the mirrors already laid:
@@ -1446,15 +1409,15 @@ extension EditViewModel {
         engine?.endObjectEditParamWatch()
     }
 
-    /// Cuts all sound-object session activity. To be called on a project reset/close
+    /// Cuts all consolidated session activity. To be called on a project reset/close
     /// (the editing state is already reset by the caller, the mirrors leave with `items`).
-    func resetObjectEditSession() {
+    func resetConsolidateEditSession() {
         teardownLiveMirroring()
         liveMirrorSuppressed = false
         // Cuts any re-bake cascade under way (the renders in flight will finish but
         // `processNextStaleRebake` will stop: nothing out of date in the new registry).
-        recomputingDefinitionIDs.removeAll()
-        recentlyResyncedDefinitionIDs.removeAll()
+        recomputingConsolidateIDs.removeAll()
+        recentlyResyncedConsolidateIDs.removeAll()
         resyncedBadgeDeadline.removeAll()
         cascadeFailedDefs.removeAll()
         isCascadingRebake = false
@@ -1467,24 +1430,24 @@ extension EditViewModel {
     /// editable content (clip / group / MIDI, from the definition's sidecar) — like
     /// opening an edit, but with NO session: the object becomes an ordinary clip/group/MIDI
     /// again, fully modifiable, with no link. The other instances go on sharing
-    /// the definition normally. The user can then "Create a sound object" again
-    /// if they wish. The inverse of the link created by `makeObject` / copy-and-pasting an instance.
-    func detachFromDefinition(placementID: UUID) {
-        guard let engine, let placement = find(id: placementID), placement.isObjectInstance,
-              let defID = placement.definitionID, let def = objectDefinitions[defID] else { return }
+    /// the definition normally. The user can then "Create a consolidated object" again
+    /// if they wish. The inverse of the link created by `consolidate` / copy-and-pasting an instance.
+    func deconsolidate(placementID: UUID) {
+        guard let engine, let placement = find(id: placementID), placement.isConsolidateInstance,
+              let defID = placement.consolidateID, let def = consolidateDefinitions[defID] else { return }
         // Detaching a nested instance DURING the editing of a parent is allowed (it is a
         // plain modification of the parent's content); only detaching a placement that
         // is itself an editing session under way is forbidden.
-        guard !isBaking(placementID), !isInObjectEditStack(placementID),
+        guard !isBaking(placementID), !isInConsolidateEditStack(placementID),
               !isLiveMirror(placementID) else { return }
         // Cas E4: read where the wave was actually found.
         guard let folder = consolidateReadFolder(forWave: def.wave, definition: defID) else { return }
 
-        let sidecar = objectSidecarURL(forWave: def.wave, in: folder)
+        let sidecar = consolidateSidecarURL(forWave: def.wave, in: folder)
         let original: SoundObject
         do {
             let data = try Data(contentsOf: sidecar)
-            original = try decodedObjectSidecar(data, projectFolder: projectFolder)
+            original = try decodedConsolidateSidecar(data, projectFolder: projectFolder)
         } catch {
             bakeAlert(L("object.error.detachFailed.title"),
                         L("object.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
@@ -1502,10 +1465,10 @@ extension EditViewModel {
         let wrapperPlugins = withCapturedPluginStates(placement).plugins
 
         // The original sub-tree aligned on the placement's LIVE window/position, fresh ids everywhere,
-        // internal references refreshed (a sound-object descendant may have been updated
-        // since the last bake). `restoredSubtree` already sets definitionID to nil on the
+        // internal references refreshed (a consolidated descendant may have been updated
+        // since the last bake). `restoredSubtree` already sets consolidateID to nil on the
         // result.
-        var restored = refreshObjectReferences(in: restoredSubtree(from: original, alignedTo: placement))
+        var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
         restored.plugins = restored.plugins + wrapperPlugins
 
         removeFromEngine(placement)

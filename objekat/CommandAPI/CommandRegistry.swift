@@ -226,7 +226,7 @@ final class CommandRegistry {
         registerPluginCommands()
         registerAuxCommands()
         registerMIDICommands()
-        registerDefinitionCommands()
+        registerConsolidateCommands()
         registerExportCommands()
         registerTimeSelectionCommands()
         registerCrossfadeCommands()
@@ -279,7 +279,7 @@ final class CommandRegistry {
             // the snapshot `pushUndo` has just paid for.
             let beforeItems = vm.items
             let beforeStems = vm.stems
-            let beforeDefs  = vm.objectDefinitions
+            let beforeDefs  = vm.consolidateDefinitions
             let beforeDirty = vm.isDirty
             let beforeRedo  = vm.redoStack
 
@@ -288,7 +288,7 @@ final class CommandRegistry {
             func rollbackUndoIfUnchanged() {
                 guard vm.items == beforeItems,
                       vm.stems == beforeStems,
-                      vm.objectDefinitions == beforeDefs else { return }
+                      vm.consolidateDefinitions == beforeDefs else { return }
                 _ = vm.undoStack.popLast()
                 vm.isDirty = beforeDirty
                 // `pushUndo` empties the redo stack: a no-op must not cost the pending redo. (The
