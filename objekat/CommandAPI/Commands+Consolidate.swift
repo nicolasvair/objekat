@@ -2,7 +2,8 @@ import Foundation
 
 // MARK: - Consolidated objects (reusable definitions)
 
-/// A consolidated object is a subtree BAKED once (wave + sidecar in `samples/objects/`) and laid down
+/// A consolidated object is a subtree BAKED once (wave + sidecar in `samples/consolidate/`, or the
+/// legacy `samples/objects/` for a project from before the rename) and laid down
 /// as N linked instances: editing one updates them all. The bake is ASYNCHRONOUS — the engine
 /// renders the submix in the background — so every command that starts one returns a `job_id`
 /// rather than lying about work that isn't finished. `job.wait` or `wait_idle` closes the loop.
@@ -14,7 +15,12 @@ extension CommandRegistry {
         register("consolidate.list",
                  summary: "Consolidated object definitions and their instances.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            let definitions = vm.consolidateDefinitions.values.sorted { $0.name < $1.name }.map { def -> JSONValue in
+            // Sorted by name, then by id: two definitions routinely share a name (every clip
+            // consolidated from `bip.wav` is called "bip.wav"), and the registry is a dictionary —
+            // without the tie-break two identical reads could list them in different orders.
+            let definitions = vm.consolidateDefinitions.values.sorted {
+                ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString)
+            }.map { def -> JSONValue in
                 .object([
                     "id": .string(def.id.uuidString),
                     "name": .string(def.name),
@@ -39,7 +45,7 @@ extension CommandRegistry {
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
                                     "Other objects to replace with a linked instance.")],
-                 // The bake pushes its own undo when it commits (`finishMakeSharedDefinition`).
+                 // The bake pushes its own undo when it commits (`finishConsolidate`).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             _ = try CommandContext.shared.requireEngine()
