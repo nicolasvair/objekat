@@ -184,6 +184,11 @@ struct AutomationBandView: View {
         /// The last known cursor position: it allows REPLAYING the gesture without a mouse movement,
         /// when ⌘ flips the snap along the way.
         var last: CGPoint
+        /// What the grip is asking for RIGHT NOW — written on every step of a `.transform`, and
+        /// read by the drawing alone. The gesture does not consult it: the transformation still
+        /// recomputes from the originals, and a request read back would be the first link of the
+        /// feedback loop `transformBox` exists to prevent.
+        var live: AutomationTransform.Request? = nil
     }
 
     var body: some View {
@@ -307,14 +312,35 @@ struct AutomationBandView: View {
         return out
     }
 
-    /// The box the grips belong to. FROZEN during a transform (@see BandDrag.Mode.transform): a
-    /// box recomputed from points the gesture is itself moving runs away under the hand — the
-    /// classic exponential blow-up of a scale by grip — and the grips would leave the fingers
-    /// holding them. Everywhere else it follows the material, which is what makes a group move
-    /// read as carrying the box along.
+    /// The box that MEASURES. FROZEN during a transform (@see BandDrag.Mode.transform): a box
+    /// recomputed from points the gesture is itself moving runs away under the hand — the classic
+    /// exponential blow-up of a scale by grip. Everywhere else it follows the material, which is
+    /// what makes a group move read as carrying the box along.
+    ///
+    /// It is also the box the HIT TEST and the cursor read, both of which happen outside a drag,
+    /// where frozen and live are the same thing.
     private func transformBox() -> CGRect? {
         if let d = drag, case .transform(_, _, let box) = d.mode { return box }
         return geo.selectionBox(selectedRows())
+    }
+
+    /// The box that is DRAWN, as four corners: the frozen box put through the request the hand is
+    /// making. Splitting it from the one above is what stops the rectangle letting go of the
+    /// fingers holding it — the pulled edge lands ON the pointer, since `k` is by definition the
+    /// ratio that takes it there (@see AutomationTransform.drawnQuad).
+    ///
+    /// Outside a transform it is the plain rectangle's four corners, so the drawing has one path
+    /// and not two.
+    private func transformQuad() -> [CGPoint]? {
+        guard let box = transformBox() else { return nil }
+        guard let d = drag, case .transform = d.mode, let req = d.live else {
+            return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                    CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
+        }
+        let g = geo
+        return AutomationTransform.drawnQuad(req, box: box,
+                                             t0: g.t(atX: box.minX), t1: g.t(atX: box.maxX),
+                                             xOfT: { g.x(ofT: $0) })
     }
 
     /// The selection's TIME envelope, taken from the points FROZEN at the grab rather than read
@@ -448,9 +474,14 @@ struct AutomationBandView: View {
                             Gradient(colors: [.white.opacity(0.32), .white.opacity(0)]),
                             center: c, startRadius: 0, endRadius: hr))
             }
-            let r = idx == held ? 4.0 : 2.5
+            // A point RESTING is barely there — small and translucent. It is a handle, not
+            // matter: the curve is what one reads, and a row of solid dots competes with the line
+            // it is supposed to describe. It comes up to full only when it has something to say —
+            // hovered (it will answer the click), held (it is following the mouse), or taken.
+            let speaks = idx == held || idx == hovered || selected.contains(idx)
+            let r = idx == held ? 4.0 : 2.0
             ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                     with: .color(tint))
+                     with: .color(tint.opacity(speaks ? 0.95 : 0.4)))
             if idx == held {
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                            with: .color(.white.opacity(0.8)), lineWidth: 1)
@@ -482,14 +513,17 @@ struct AutomationBandView: View {
             return
         }
 
-        guard let box = transformBox() else { return }
+        guard let box = transformBox(), let quad = transformQuad() else { return }
         // The OUTLINE shows as soon as a selection exists: it is what says the eight grips are
         // somewhere to be had. The GRIPS themselves only show when the hand is over the box —
         // eight white squares standing permanently on a sixteen-pixel row would read as matter.
-        ctx.stroke(Path(box), with: .color(.white.opacity(0.45)),
+        var outline = Path()
+        outline.addLines(quad)
+        outline.closeSubpath()
+        ctx.stroke(outline, with: .color(.white.opacity(0.45)),
                    style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         guard showsHandles(box: box) else { return }
-        for (_, c) in AutomationBandGeometry.handleCenters(of: box) {
+        for c in AutomationTransform.quadHandles(quad) {
             let s = 2.5
             let square = CGRect(x: c.x - s, y: c.y - s, width: s * 2, height: s * 2)
             ctx.fill(Path(square), with: .color(.white.opacity(0.92)))
@@ -902,6 +936,7 @@ struct AutomationBandView: View {
                 // snapping each of them would flatten the curve's internal rhythm onto the grid.
                 targetT: snappedT(atX: location.x),
                 fineTune: NSEvent.modifierFlags.contains(.shift))
+            drag?.live = req
             viewModel.applyAutomationTransform(
                 objectID: object.id,
                 rows: trows.map { (param: $0.param, indices: $0.indices, original: $0.origPoints) },

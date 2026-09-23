@@ -222,26 +222,92 @@ enum AutomationTransform {
     ///   `timeFactor`). A negative factor mirrors, and the mirror is another gesture.
     static func apply(_ r: Request, to samples: [AutomationSample]) -> [AutomationSample] {
         samples.map { s in
-            var factor = r.valueK
-            if let skew = r.skew {
-                let span = skew.oppositeT - skew.pulledT
-                // A selection with NO time extent (one point, or several at the same instant): the
-                // gradient has nowhere to run, so a corner degenerates into a flat scale — full
-                // everywhere. Stated rather than divided through, which would give a NaN.
-                let u = abs(span) < 1e-12 ? 0 : bounded((s.t - skew.pulledT) / span, 0, 1)
-                factor = r.valueK + (1 - r.valueK) * u
-            }
-            let raw = r.anchorHigh ? 1 - (1 - s.n) * factor : s.n * factor
-            var t = s.t
-            switch r.time {
-            case .none:                        break
-            case .shift(let d):                t = s.t + d
-            case .scale(let anchor, let k):    t = anchor + (s.t - anchor) * k
-            }
-            // No bound on `t` here, on purpose and in step with `updateAutomationPoints`: a
-            // negative time is matter hidden behind the object's left edge, not an error.
-            return AutomationSample(t: t, n: bounded(raw, 0, 1))
+            let f   = factor(r, atT: s.t)
+            let raw = r.anchorHigh ? 1 - (1 - s.n) * f : s.n * f
+            // No bound on `t`, on purpose and in step with `updateAutomationPoints`: a negative
+            // time is matter hidden behind the object's left edge, not an error.
+            return AutomationSample(t: movedT(r, s.t), n: bounded(raw, 0, 1))
         }
+    }
+
+    /// The vertical factor AT AN INSTANT: `valueK` everywhere, except under a corner, where it
+    /// runs from `valueK` on the pulled edge to 1 on the opposite one.
+    ///
+    /// Split out of `apply` because the BOX THE EYE FOLLOWS has to read the very same number
+    /// (@see `drawnQuad`). Two copies of this gradient would come apart on the day one of them
+    /// gains a bound, and the symptom — a box agreeing with the points everywhere but under a
+    /// corner — is the kind one looks at for a long time before believing.
+    static func factor(_ r: Request, atT t: Double) -> Double {
+        guard let skew = r.skew else { return r.valueK }
+        let span = skew.oppositeT - skew.pulledT
+        // A selection with NO time extent (one point, or several at the same instant): the
+        // gradient has nowhere to run, so a corner degenerates into a flat scale — full
+        // everywhere. Stated rather than divided through, which would give a NaN.
+        let u = abs(span) < 1e-12 ? 0 : bounded((t - skew.pulledT) / span, 0, 1)
+        return r.valueK + (1 - r.valueK) * u
+    }
+
+    /// Where an instant lands. Split out for the same reason as `factor`, and used on the BOX'S
+    /// OWN EDGES, which are not points of the material.
+    static func movedT(_ r: Request, _ t: Double) -> Double {
+        switch r.time {
+        case .none:                     return t
+        case .shift(let d):             return t + d
+        case .scale(let anchor, let k): return anchor + (t - anchor) * k
+        }
+    }
+
+    // MARK: - The box the eye follows
+
+    /// The box AS DRAWN while a grip is held — four corners, clockwise from the top left.
+    ///
+    /// The box that MEASURES is frozen at the grab and must stay so: a dial read off its own
+    /// output runs away under the hand, which is the classic blow-up of a scale by grip (@see
+    /// `AutomationBandView.transformBox`). But a frozen box drawn is a box that lets go of the
+    /// fingers holding it — one pulls a grip and the rectangle stays behind. So the MEASURE and
+    /// the DRAWING are separated: the pixels are still read against the frozen box, and what is
+    /// drawn is that same box put through the transformation the hand is asking for.
+    ///
+    /// Nothing here is bounded, deliberately. `k` past the pulled edge is how a selection already
+    /// against the ceiling raises the rest (@see `boxFactor`), and the box escaping its row is the
+    /// only thing that SAYS SO on screen while the points pile up at the bound. A clamp would hide
+    /// exactly what the eye needs to see to make sense of what the points are doing.
+    ///
+    /// `t0` / `t1` are the instants of the box's own EDGES — not the selection's time envelope.
+    /// The two differ on a selection with no extent, whose box is widened to a grabbable width
+    /// (@see `AutomationBandGeometry.boxMinSide`); read from the envelope, that box would collapse
+    /// to a line the moment it was drawn.
+    static func drawnQuad(_ r: Request, box: CGRect, t0: Double, t1: Double,
+                          xOfT: (Double) -> Double) -> [CGPoint] {
+        let x0 = xOfT(movedT(r, t0))
+        let x1 = xOfT(movedT(r, t1))
+        // In pixels y runs DOWNWARDS, so normalised 1 is `minY`: anchoring high anchors the TOP
+        // edge and pulls the bottom one.
+        let anchorY = r.anchorHigh ? box.minY : box.maxY
+        let pulledY = r.anchorHigh ? box.maxY : box.minY
+        let yL = anchorY + (pulledY - anchorY) * factor(r, atT: t0)
+        let yR = anchorY + (pulledY - anchorY) * factor(r, atT: t1)
+        // A corner tilts the pulled edge — `factor` differs at the two ends — so the shape is a
+        // TRAPEZIUM and not a rectangle. That is not a flourish: the slant IS the gradient the
+        // corner applies, and a rectangle there would claim a uniform scale the points do not get.
+        return r.anchorHigh
+            ? [CGPoint(x: x0, y: box.minY), CGPoint(x: x1, y: box.minY),
+               CGPoint(x: x1, y: yR),       CGPoint(x: x0, y: yL)]
+            : [CGPoint(x: x0, y: yL),       CGPoint(x: x1, y: yR),
+               CGPoint(x: x1, y: box.maxY), CGPoint(x: x0, y: box.maxY)]
+    }
+
+    /// The eight grips of a quadrilateral: its corners, and the middle of each side. On a
+    /// rectangle it gives `AutomationBandGeometry.handleCenters` back, pixel for pixel — which is
+    /// what lets the drawing follow a tilted box without the hit test, which knows only rectangles,
+    /// having to learn anything.
+    static func quadHandles(_ q: [CGPoint]) -> [CGPoint] {
+        guard q.count == 4 else { return [] }
+        let mid = { (a: CGPoint, b: CGPoint) in
+            CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        }
+        return [q[0], mid(q[0], q[1]), q[1], mid(q[0], q[3]),
+                mid(q[1], q[2]), q[3], mid(q[3], q[2]), q[2]]
     }
 
     // MARK: - What a rectangle takes

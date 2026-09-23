@@ -404,6 +404,128 @@ enum AutomationTransformTest {
           AutomationTransform.touching(CGRect(x: 0, y: 40, width: 100, height: 60),
                                        points: laid, inset: 4) == [0, 1, 2, 3])
 
+    // MARK: - The box the eye follows
+    //
+    // The box that MEASURES is frozen at the grab; the one DRAWN is that same box put through the
+    // request. These assertions are what says the two agree — that the drawn edge lands on the
+    // pointer, and that it tilts under a corner exactly as the points do.
+
+    // A box one row tall, from x = 100 to x = 300, and a pixel mapping of 100 px per second so the
+    // figures can be read by hand: t = 1 at the left edge, t = 3 at the right.
+    let box   = CGRect(x: 100, y: 40, width: 200, height: 16)
+    let xOfT: (Double) -> Double = { $0 * 100 }
+    let (bt0, bt1) = (1.0, 3.0)
+
+    do {
+        let q = AutomationTransform.drawnQuad(AutomationTransform.Request(),
+                                              box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("at rest the drawn box IS the box",
+              nears(q.map { Double($0.x) }, [100, 300, 300, 100]) && nears(q.map { Double($0.y) }, [40, 40, 56, 56]),
+              "k = 1 and no time change must give the frozen rectangle back")
+    }
+
+    do {
+        // The top grip, pointer 8 px above the box's top edge. `boxFactor` reads the ratio, and the
+        // drawn edge has to land back exactly under the finger — that IS the property, the whole
+        // complaint being a rectangle that stays behind while the points leave.
+        let k = AutomationTransform.boxFactor(pulled: 40, opposite: 56, pointer: 32)
+        let r = AutomationTransform.request(.top, span: .init(t0: bt0, t1: bt1),
+                                            verticalK: k, targetT: 0, fineTune: false)
+        let q = AutomationTransform.drawnQuad(r, box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("the pulled edge lands ON the pointer",
+              near(q[0].y, 32) && near(q[1].y, 32),
+              "k = \(k): the top edge should be back at the pointer's own y")
+        check("... and the anchored edge has not moved",
+              near(q[2].y, 56) && near(q[3].y, 56))
+        check("... nor has X, a vertical grip not touching time",
+              nears(q.map { Double($0.x) }, [100, 300, 300, 100]))
+    }
+
+    do {
+        // Past the pulled edge: the box escapes its row. Deliberate, and the only thing on screen
+        // that says why the points have stopped moving (they clamp, it does not).
+        let k = AutomationTransform.boxFactor(pulled: 40, opposite: 56, pointer: 8)
+        let r = AutomationTransform.request(.top, span: .init(t0: bt0, t1: bt1),
+                                            verticalK: k, targetT: 0, fineTune: false)
+        let q = AutomationTransform.drawnQuad(r, box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("over-travel is SHOWN, not clamped",
+              near(q[0].y, 8),
+              "the drawn box must be free to leave the row the points are pinned in")
+    }
+
+    do {
+        // A bottom grip anchors the TOP: in pixels y runs downwards, so this is the one place the
+        // normalised reading and the drawn one are mirror images. Worth its own assertion.
+        let k = AutomationTransform.boxFactor(pulled: 56, opposite: 40, pointer: 48)
+        let r = AutomationTransform.request(.bottom, span: .init(t0: bt0, t1: bt1),
+                                            verticalK: k, targetT: 0, fineTune: false)
+        let q = AutomationTransform.drawnQuad(r, box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("a bottom grip pulls the bottom and pins the top",
+              near(q[0].y, 40) && near(q[1].y, 40) && near(q[2].y, 48) && near(q[3].y, 48))
+    }
+
+    do {
+        // A corner. The pulled edge tilts: full factor on the corner held, nothing at the far end.
+        let k = AutomationTransform.boxFactor(pulled: 40, opposite: 56, pointer: 32)
+        let r = AutomationTransform.request(.topLeft, span: .init(t0: bt0, t1: bt1),
+                                            verticalK: k, targetT: 0, fineTune: false)
+        let q = AutomationTransform.drawnQuad(r, box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("a corner draws a TRAPEZIUM: held end on the pointer",
+              near(q[0].y, 32), "the top-left corner is the one being pulled")
+        check("... and the far end untouched",
+              near(q[1].y, 40), "at the opposite edge a corner's factor is 1 by definition")
+        check("the drawn slant IS the gradient the points get",
+              near(AutomationTransform.factor(r, atT: 2.0), 1.25)
+                && near(q[0].y + (q[1].y - q[0].y) / 2, 36),
+              "mid-span the gradient is halfway between 1.5 and 1, and 56 - 16 * 1.25 = 36")
+    }
+
+    do {
+        // A horizontal grip. In X the box hugs the material, so the pulled edge follows the hand —
+        // and here the DRAWN edge has to move, which it could not do while the box was frozen.
+        let r = AutomationTransform.request(.right, span: .init(t0: bt0, t1: bt1),
+                                            verticalK: 1, targetT: 5, fineTune: false)
+        let q = AutomationTransform.drawnQuad(r, box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        check("a time grip carries the drawn edge with it",
+              nears(q.map { Double($0.x) }, [100, 500, 500, 100]),
+              "t1 = 3 pulled onto 5, the left edge anchored")
+        check("... and leaves the height alone",
+              nears(q.map { Double($0.y) }, [40, 40, 56, 56]))
+    }
+
+    do {
+        // The eight grips of a tilted box. On a rectangle they must come back to the corners and
+        // the middles of the sides — the hit test knows rectangles only, and it is this identity
+        // that lets the drawing tilt without it having to learn anything.
+        let q = AutomationTransform.drawnQuad(AutomationTransform.Request(),
+                                              box: box, t0: bt0, t1: bt1, xOfT: xOfT)
+        let drawn = AutomationTransform.quadHandles(q)
+        let hit   = [CGPoint(x: 100, y: 40), CGPoint(x: 200, y: 40), CGPoint(x: 300, y: 40),
+                     CGPoint(x: 100, y: 48), CGPoint(x: 300, y: 48),
+                     CGPoint(x: 100, y: 56), CGPoint(x: 200, y: 56), CGPoint(x: 300, y: 56)]
+        check("on a rectangle the drawn grips ARE the ones the hit test uses",
+              drawn.count == 8
+                && zip(drawn, hit).allSatisfy { near($0.x, $1.x) && near($0.y, $1.y) },
+              "same order as AutomationBandGeometry.handleCenters")
+    }
+
+    do {
+        // The factor split out of `apply` has to be the SAME number `apply` uses, or the box and
+        // the points come apart under a corner — the one place they could disagree unnoticed.
+        let k = AutomationTransform.boxFactor(pulled: 40, opposite: 56, pointer: 24)
+        let r = AutomationTransform.request(.bottomRight, span: .init(t0: 0, t1: 4),
+                                            verticalK: k, targetT: 0, fineTune: false)
+        let src = samples([(0, 0.5), (2, 0.5), (4, 0.5)])
+        let out = AutomationTransform.apply(r, to: src)
+        let byFactor = src.map { s -> Double in
+            let f = AutomationTransform.factor(r, atT: s.t)
+            return min(max(1 - (1 - s.n) * f, 0), 1)
+        }
+        check("`factor` and `apply` are the same arithmetic",
+              nears(values(out), byFactor),
+              "the extraction must be behaviour-preserving, corner included")
+    }
+
     // MARK: -
 
     print("")
