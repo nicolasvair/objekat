@@ -221,7 +221,11 @@ struct AutomationBandView: View {
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 3)
                         .onChanged { handleDragChanged($0) }
-                        .onEnded   { _ in settleZoneAfterTransform(); drag = nil; readout = nil; clearHover() }
+                        .onEnded   { _ in
+                            settleZoneAfterTransform()
+                            seekToTracedZone()
+                            drag = nil; readout = nil; clearHover()
+                        }
                 )
                 .onContinuousHover { phase in
                     guard drag == nil else { return }
@@ -1197,6 +1201,21 @@ struct AutomationBandView: View {
         }
         return sel.map { TransformRow(param: $0.ref, row: $0.row,
                                       indices: $0.indices, origPoints: $0.points) }
+    }
+
+    /// A passage just traced puts the cursor on its START — so space plays from there, which is
+    /// what a time selection does everywhere else in the timeline (its own rubber band ends on
+    /// `onMoveCursor(sel.timeRange.lowerBound)`, and playback reads the cursor and nothing else,
+    /// @see ObjekatSession.play). The band was the one surface that traced a passage and left the
+    /// playhead where it happened to be, so one selected a stretch of curve and then heard
+    /// somewhere else.
+    ///
+    /// At the END of the drag, not on every step: the cursor is not something to drag about, and
+    /// the timeline moves it at the same moment.
+    private func seekToTracedZone() {
+        guard let d = drag, case .timeZone = d.mode, let z = viewModel.timeSelection,
+              rows.indices.contains(where: { z.lanes.contains(bandTopLane + $0) }) else { return }
+        onSeekToTime(z.timeRange.lowerBound)
     }
 
     /// A sideways grip stretches the passage, and the FRAME has to land where the matter did —

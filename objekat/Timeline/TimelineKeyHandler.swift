@@ -83,13 +83,20 @@ extension TimelineView {
                 return nil
             }
 
-            // MARK: Automation curvature (the wheel on a segment)
+            // MARK: Automation curvature (⌥ + the wheel on a segment)
             // An alternative to ⌥dragging, and the only gesture of the band that does not go through
             // SwiftUI: there is no 'wheel' gesture on SwiftUI's side, and this monitor already has the
             // hover position. Independent of the active tool: an open band is an editing surface in
             // its own right. The wheel is only swallowed on a segment that really can be bent —
             // elsewhere in the band, it goes on scrolling the timeline.
-            if let hit = self.automationCurveHit(at: pos) {
+            //
+            // ⌥ IS REQUIRED, exactly as the drag requires it (@see AutomationBandView.beginDrag,
+            // where `option` is what tells a curvature from a segment being moved). Without it,
+            // scrolling to look at the timeline BENT whatever segment the pointer happened to be
+            // resting on — a destructive edit from a gesture meant to navigate, and one the hand
+            // never asked for. One modifier, one meaning: ⌥ over a curve bends it, whatever the
+            // hand is doing.
+            if flags.contains(.option), let hit = self.automationCurveHit(at: pos) {
                 hs.automationScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
                 let steps = Int(hs.automationScrollAccumulator.rounded())
                 if steps != 0 {
