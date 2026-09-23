@@ -460,15 +460,15 @@ extension EditViewModel {
               !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
         guard let folder = consolidateFolder else {
-            bakeAlert(L("object.error.saveFirst.title"),
-                        L("object.error.saveFirst.info"))
+            bakeAlert(L("consolidate.error.saveFirst.title"),
+                        L("consolidate.error.saveFirst.info"))
             return
         }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
-            bakeAlert(L("object.error.makeFailed.title"),
-                        L("object.error.folderFailed.info", error.localizedDescription))
+            bakeAlert(L("consolidate.error.failed.title"),
+                        L("consolidate.error.folderFailed.info", error.localizedDescription))
             return
         }
 
@@ -503,8 +503,8 @@ extension EditViewModel {
         guard let clip = find(id: clipID), (clip.isClip || clip.isMIDI),
               !clip.isConsolidateInstance, !isBaking(clipID) else { return }
         guard consolidateFolder != nil else {
-            bakeAlert(L("object.error.saveFirst.title"),
-                        L("object.error.saveFirst.info"))
+            bakeAlert(L("consolidate.error.saveFirst.title"),
+                        L("consolidate.error.saveFirst.info"))
             return
         }
         // A LONE object: its fade must live ON the consolidated object (group level, live/editable) and
@@ -579,8 +579,8 @@ extension EditViewModel {
     /// next before the previous has finished would have it work on a tree in the middle of changing.
     func consolidateEachInSelection() async {
         guard consolidateFolder != nil else {
-            bakeAlert(L("object.error.saveFirst.title"),
-                        L("object.error.saveFirst.info"))
+            bakeAlert(L("consolidate.error.saveFirst.title"),
+                        L("consolidate.error.saveFirst.info"))
             return
         }
         for id in consolidateTargets() {
@@ -660,7 +660,7 @@ extension EditViewModel {
                                             alsoLinkIDs: [UUID] = []) {
         guard let engine else { return }
         guard ok else {
-            bakeAlert(L("object.error.renderFailed.title"), L("object.error.seeConsole.info"))
+            bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
             return
         }
         guard let live = find(id: objectID), !live.isConsolidateInstance else {
@@ -674,8 +674,8 @@ extension EditViewModel {
             try encodedConsolidateSidecar(original, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
-            bakeAlert(L("object.error.makeFailed2.title"),
-                        L("object.error.sidecarWrite.info", error.localizedDescription))
+            bakeAlert(L("consolidate.error.failed2.title"),
+                        L("consolidate.error.sidecarWrite.info", error.localizedDescription))
             try? FileManager.default.removeItem(at: wav)
             return
         }
@@ -804,8 +804,8 @@ extension EditViewModel {
             let data = try Data(contentsOf: sidecar)
             original = try decodedConsolidateSidecar(data, projectFolder: projectFolder)
         } catch {
-            bakeAlert(L("object.error.editFailed.title"),
-                        L("object.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
+            bakeAlert(L("consolidate.error.editFailed.title"),
+                        L("consolidate.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
             return
         }
 
@@ -818,7 +818,7 @@ extension EditViewModel {
         // remove them (compileRack) and the object would be heard without its effects. We warn BEFORE
         // opening — hence before the pushUndo, since the cancel must leave nothing behind it.
         guard confirmMissingPluginsBeforeOpening(
-            restored, what: L("object.missingPlugins.what", placement.displayName)) else { return }
+            restored, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
 
         // Perf: t0 AFTER the guards and the reading of the sidecar — what is wanted is
         // the cost of the gesture, not that of the resolution's I/O. The `[PERF] snapshot` of the pushUndo
@@ -964,7 +964,7 @@ extension EditViewModel {
                                                    sourceOffset: Double, renderStart: Double, renderEnd: Double) {
         guard let engine else { return }
         guard ok else {
-            bakeAlert(L("object.error.renderFailed.title"), L("object.error.seeConsole.info"))
+            bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
             armConsolidateEditParamWatch()   // the session stays open → the listening is relaunched
             return
         }
@@ -979,8 +979,8 @@ extension EditViewModel {
             try encodedConsolidateSidecar(original, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
-            bakeAlert(L("object.error.closeFailed.title"),
-                        L("object.error.sidecarWrite.info", error.localizedDescription))
+            bakeAlert(L("consolidate.error.closeFailed.title"),
+                        L("consolidate.error.sidecarWrite.info", error.localizedDescription))
             try? FileManager.default.removeItem(at: wav)
             armConsolidateEditParamWatch()   // the same: the session is still open
             return
@@ -1449,15 +1449,15 @@ extension EditViewModel {
             let data = try Data(contentsOf: sidecar)
             original = try decodedConsolidateSidecar(data, projectFolder: projectFolder)
         } catch {
-            bakeAlert(L("object.error.detachFailed.title"),
-                        L("object.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
+            bakeAlert(L("consolidate.error.deconsolidateFailed.title"),
+                        L("consolidate.error.sidecarRead.info", sidecar.lastPathComponent, error.localizedDescription))
             return
         }
 
         // The same warning as at opening for editing: detaching materialises the content, hence
         // loses the plugins this machine has not got (see confirmMissingPluginsBeforeOpening).
         guard confirmMissingPluginsBeforeOpening(
-            original, what: L("object.missingPlugins.what", placement.displayName)) else { return }
+            original, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
 
         pushUndo()
         // The plugins BELONGING to the placement (added after the transformation, applying to the baked

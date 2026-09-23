@@ -1220,6 +1220,305 @@
         }
       }
     },
+    "consolidate.error.closeFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not close"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo cerrar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Échec de la fermeture"
+          }
+        }
+      }
+    },
+    "consolidate.error.deconsolidateFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not deconsolidate"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo desconsolidar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dé-consolidation impossible"
+          }
+        }
+      }
+    },
+    "consolidate.error.editFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not edit"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo editar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Édition impossible"
+          }
+        }
+      }
+    },
+    "consolidate.error.failed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not consolidate"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo consolidar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidation impossible"
+          }
+        }
+      }
+    },
+    "consolidate.error.failed2.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidation failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidación fallida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Échec de la consolidation"
+          }
+        }
+      }
+    },
+    "consolidate.error.folderFailed.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not create samples/consolidate/: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo crear samples/consolidate/: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Création de samples/consolidate/ échouée : %@"
+          }
+        }
+      }
+    },
+    "consolidate.error.renderFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Render failed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Render fallido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Échec du rendu"
+          }
+        }
+      }
+    },
+    "consolidate.error.saveFirst.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidating needs a project folder (samples/consolidate/)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidar necesita una carpeta de proyecto (samples/consolidate/)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolider demande un dossier projet (samples/consolidate/)."
+          }
+        }
+      }
+    },
+    "consolidate.error.saveFirst.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save the project first"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda primero el proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrez d'abord le projet"
+          }
+        }
+      }
+    },
+    "consolidate.error.seeConsole.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the console for details."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consulta la consola para más detalles."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voir la console pour les détails."
+          }
+        }
+      }
+    },
+    "consolidate.error.sidecarRead.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidecar missing or unreadable:\n%@\n%@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidecar ausente o ilegible:\n%@\n%@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidecar introuvable ou illisible :\n%@\n%@"
+          }
+        }
+      }
+    },
+    "consolidate.error.sidecarWrite.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not write the sidecar: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo escribir el sidecar: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écriture du sidecar échouée : %@"
+          }
+        }
+      }
+    },
+    "consolidate.missingPlugins.what": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The consolidated object “%@”"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El objeto consolidado «%@»"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'objet consolidé « %@ »"
+          }
+        }
+      }
+    },
     "dialog.dirty.discard": {
       "extractionState": "manual",
       "localizations": {
@@ -4693,6 +4992,98 @@
         }
       }
     },
+    "menu.context.consolidate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidate"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolider"
+          }
+        }
+      }
+    },
+    "menu.context.consolidate.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Freezes the content into a reusable sound; double-click to reopen and edit it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Congela el contenido en un sonido reutilizable; doble clic para reabrirlo y editarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fige le contenu en un son réutilisable ; double-clic pour le rouvrir et l'éditer."
+          }
+        }
+      }
+    },
+    "menu.context.consolidateEach": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidate %d objects separately"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidar %d objetos por separado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolider %d objets séparément"
+          }
+        }
+      }
+    },
+    "menu.context.consolidateLinked": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidate as %d linked instances"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidar en %d ejemplares vinculados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolider en %d exemplaires liés"
+          }
+        }
+      }
+    },
     "menu.context.createAuxClip": {
       "extractionState": "manual",
       "localizations": {
@@ -4739,25 +5130,48 @@
         }
       }
     },
-    "menu.context.detachInstance": {
+    "menu.context.deconsolidate": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Detach this instance"
+            "value": "Deconsolidate"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Separar este ejemplar"
+            "value": "Desconsolidar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Détacher cet exemplaire"
+            "value": "Dé-consolider"
+          }
+        }
+      }
+    },
+    "menu.context.deconsolidate.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This instance becomes an ordinary, editable object again; the other instances stay consolidated."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este ejemplar vuelve a ser un objeto normal y editable; los demás ejemplares siguen consolidados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cet exemplaire redevient un objet ordinaire et modifiable ; les autres exemplaires restent consolidés."
           }
         }
       }
@@ -4873,52 +5287,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rendre infini"
-          }
-        }
-      }
-    },
-    "menu.context.makeObject": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create sound object"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Crear objeto sonoro"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Créer objet sonore"
-          }
-        }
-      }
-    },
-    "menu.context.makeObjects": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create %d sound objects"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Crear %d objetos sonoros"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Créer %d objets sonores"
           }
         }
       }
@@ -5149,29 +5517,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remplacer le fichier de %d sons…"
-          }
-        }
-      }
-    },
-    "menu.context.replaceWithObjects": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Replace with %d sound objects"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reemplazar por %d objetos sonoros"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remplacer par %d objets sonores"
           }
         }
       }
@@ -5544,282 +5889,6 @@
         }
       }
     },
-    "object.error.closeFailed.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not close"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo cerrar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Échec de la fermeture"
-          }
-        }
-      }
-    },
-    "object.error.detachFailed.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not detach"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo separar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Détachement impossible"
-          }
-        }
-      }
-    },
-    "object.error.editFailed.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not edit"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo editar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Édition impossible"
-          }
-        }
-      }
-    },
-    "object.error.folderFailed.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not create samples/objects/: %@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo crear samples/objects/: %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Création de samples/objects/ échouée : %@"
-          }
-        }
-      }
-    },
-    "object.error.makeFailed.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not transform"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo transformar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Transformation impossible"
-          }
-        }
-      }
-    },
-    "object.error.makeFailed2.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Transform failed"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Transformación fallida"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Échec de la transformation"
-          }
-        }
-      }
-    },
-    "object.error.renderFailed.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Render failed"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Render fallido"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Échec du rendu"
-          }
-        }
-      }
-    },
-    "object.error.saveFirst.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A sound object needs a project folder (samples/objects/)."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un objeto sonoro necesita una carpeta de proyecto (samples/objects/)."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'objet sonore a besoin d'un dossier projet (samples/objects/)."
-          }
-        }
-      }
-    },
-    "object.error.saveFirst.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save the project first"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guarda primero el proyecto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrez d'abord le projet"
-          }
-        }
-      }
-    },
-    "object.error.seeConsole.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "See the console for details."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consulta la consola para más detalles."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Voir la console pour les détails."
-          }
-        }
-      }
-    },
-    "object.error.sidecarRead.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidecar missing or unreadable:\n%@\n%@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidecar ausente o ilegible:\n%@\n%@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidecar introuvable ou illisible :\n%@\n%@"
-          }
-        }
-      }
-    },
-    "object.error.sidecarWrite.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not write the sidecar: %@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo escribir el sidecar: %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Écriture du sidecar échouée : %@"
-          }
-        }
-      }
-    },
     "object.kind.aux": {
       "extractionState": "manual",
       "localizations": {
@@ -5885,29 +5954,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "MIDI"
-          }
-        }
-      }
-    },
-    "object.missingPlugins.what": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The sound object “%@”"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El objeto sonoro «%@»"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'objet sonore « %@ »"
           }
         }
       }
@@ -7499,25 +7545,25 @@
         }
       }
     },
-    "saveCopy.missingDefinition": {
+    "saveCopy.missingConsolidate": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "missing sound object definition (%@)"
+            "value": "missing consolidated object (%@)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "definición de objeto sonoro ausente (%@)"
+            "value": "objeto consolidado ausente (%@)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "définition d'objet sonore manquante (%@)"
+            "value": "consolidé manquant (%@)"
           }
         }
       }
@@ -7528,19 +7574,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Creates a self-contained folder holding the project and every audio file it needs (sources, sound objects), without the unused ones."
+            "value": "Creates a self-contained folder holding the project and every audio file it needs (sources, consolidated objects), without the unused ones."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Crea una carpeta autónoma con el proyecto y todos los archivos de audio necesarios (fuentes, objetos sonoros), sin los archivos sin usar."
+            "value": "Crea una carpeta autónoma con el proyecto y todos los archivos de audio necesarios (fuentes, objetos consolidados), sin los archivos sin usar."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Crée un dossier autonome contenant le projet et tous les fichiers audio nécessaires (sources, objets sonores), sans les fichiers inutilisés."
+            "value": "Crée un dossier autonome contenant le projet et tous les fichiers audio nécessaires (sources, objets consolidés), sans les fichiers inutilisés."
           }
         }
       }
@@ -8419,6 +8465,75 @@
         }
       }
     },
+    "synoptic.consolidate.attrIndependent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linked consolidated object, independent attribute — double-click to sync it again"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objeto consolidado vinculado, atributo independiente — doble clic para volver a sincronizarlo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objet consolidé lié, attribut indépendant — double-clic pour le resynchroniser"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.attrSynced": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linked consolidated object, synced attribute — double-click to make it independent"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objeto consolidado vinculado, atributo sincronizado — doble clic para volverlo independiente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objet consolidé lié, attribut synchronisé — double-clic pour le rendre indépendant"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.linked": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linked consolidated object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objeto consolidado vinculado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objet consolidé lié"
+          }
+        }
+      }
+    },
     "synoptic.demo.legend": {
       "extractionState": "manual",
       "localizations": {
@@ -8954,19 +9069,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open to edit"
+            "value": "Consolidated: double-click the object to edit it"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abrir para editar"
+            "value": "Consolidado: doble clic en el objeto para editarlo"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ouvrir pour éditer"
+            "value": "Consolidé : double-clic sur l'objet pour l'éditer"
           }
         }
       }
@@ -9289,75 +9404,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Solo temporaire — clic pour le tenir"
-          }
-        }
-      }
-    },
-    "synoptic.soundObject.attrIndependent": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked sound object, independent attribute — double-click to sync it again"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objeto sonoro vinculado, atributo independiente — doble clic para volver a sincronizarlo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objet sonore lié, attribut indépendant — double-clic pour le resynchroniser"
-          }
-        }
-      }
-    },
-    "synoptic.soundObject.attrSynced": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked sound object, synced attribute — double-click to make it independent"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objeto sonoro vinculado, atributo sincronizado — doble clic para volverlo independiente"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objet sonore lié, attribut synchronisé — double-clic pour le rendre indépendant"
-          }
-        }
-      }
-    },
-    "synoptic.soundObject.linked": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked sound object"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objeto sonoro vinculado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Objet sonore lié"
           }
         }
       }

@@ -1367,7 +1367,7 @@ struct ClipMixZoneView: View {
                     Image(systemName: "waveform.circle")
                         .font(.system(size: 17))
                         .foregroundStyle(LinkColor.consolidate)
-                        .help(L("synoptic.soundObject.linked"))
+                        .help(L("synoptic.consolidate.linked"))
                 }
                 Spacer(minLength: 0)
                 // Each attribute: the value, then (tight to the right) its link icon.
@@ -1418,8 +1418,8 @@ struct ClipMixZoneView: View {
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { actions.onToggleAttrSync?(attr) }
             .help(synced
-                  ? L("synoptic.soundObject.attrSynced")
-                  : L("synoptic.soundObject.attrIndependent"))
+                  ? L("synoptic.consolidate.attrSynced")
+                  : L("synoptic.consolidate.attrIndependent"))
     }
 
     private var muteButton: some View {

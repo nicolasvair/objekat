@@ -1054,15 +1054,15 @@ extension TimelineView {
                     bakeItem.isEnabled = false
                     menu.addItem(bakeItem)
                 } else {
-                    // 'Make object': it captures the submix into a definition reusable elsewhere in the
+                    // 'Consolidate': it captures the submix into a definition reusable elsewhere in the
                     // project (see EditViewModel+Consolidate). In a multiple selection, the option only appears
-                    // if it is an identical copy-paste (→ 'Replace with N consolidated objects'), otherwise it is
+                    // if it is an identical copy-paste (→ 'Consolidate as N linked instances'), otherwise it is
                     // hidden (see hasClip).
                     if hit.selectedIDs.count >= 2 {
                         if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
                             let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
                             proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.replaceWithObjects", n),
+                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
                                                 action: #selector(MenuActionProxy.run), keyEquivalent: "")
                             it.target = pr
                             menu.addItem(it)
@@ -1075,6 +1075,7 @@ extension TimelineView {
                                                     action: #selector(MenuActionProxy.run),
                                                     keyEquivalent: "")
                         objectItem.target = ps
+                        objectItem.toolTip = L("menu.context.consolidate.help")
                         menu.addItem(objectItem)
                     }
                 }
@@ -1082,15 +1083,16 @@ extension TimelineView {
                 let sid = instance.id
                 let baking = MainActor.assumeIsolated { vm.isBaking(sid) }
                 // OPENING a consolidated object goes through the DOUBLE CLICK (open / close); the right click
-                // only keeps 'Detach this instance' (which materialises the instance as an independent
+                // only keeps 'Deconsolidate' (which materialises the instance as an independent
                 // editable clip/group). It stays possible while a parent is open.
                 let editable = !baking
                 let pd = MenuActionProxy { Task { @MainActor in vm.deconsolidate(placementID: sid) } }
                 proxies.append(pd)
-                let dItem = NSMenuItem(title: L("menu.context.detachInstance"),
+                let dItem = NSMenuItem(title: L("menu.context.deconsolidate"),
                                       action: #selector(MenuActionProxy.run), keyEquivalent: "")
                 dItem.target = pd
                 dItem.isEnabled = editable
+                dItem.toolTip = L("menu.context.deconsolidate.help")
                 menu.addItem(dItem)
 
                 // No more manual 'Refresh' action: stale definitions are re-baked AUTOMATICALLY in the
@@ -1144,14 +1146,14 @@ extension TimelineView {
                         bi.isEnabled = false
                         menu.addItem(bi)
                     } else if count >= 2 {
-                        // A multiple selection: 'Replace with N consolidated objects' only appears if it is a
+                        // A multiple selection: 'Consolidate as N linked instances' only appears if it is a
                         // strictly identical copy-paste (the same wav, the same settings) — one definition,
                         // N linked instances. 'Create N consolidated objects', for its part, holds for any
                         // selection: one INDEPENDENT object per element.
                         if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
                             let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
                             proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.replaceWithObjects", n),
+                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
                                                 action: #selector(MenuActionProxy.run), keyEquivalent: "")
                             it.target = pr
                             menu.addItem(it)
@@ -1164,6 +1166,7 @@ extension TimelineView {
                         let si = NSMenuItem(title: L("menu.context.consolidate"),
                                             action: #selector(MenuActionProxy.run), keyEquivalent: "")
                         si.target = ps
+                        si.toolTip = L("menu.context.consolidate.help")
                         menu.addItem(si)
                     }
                 }
@@ -1275,7 +1278,7 @@ private func addConsolidateEachItem(menu: NSMenu, proxies: inout [MenuActionProx
     guard !targets.contains(where: { vm.isBaking($0) }) else { return }
     let p = MenuActionProxy { Task { @MainActor in await vm.consolidateEachInSelection() } }
     proxies.append(p)
-    let item = NSMenuItem(title: L("menu.context.makeObjects", targets.count),
+    let item = NSMenuItem(title: L("menu.context.consolidateEach", targets.count),
                           action: #selector(MenuActionProxy.run), keyEquivalent: "")
     item.target = p
     menu.addItem(item)

@@ -82,7 +82,7 @@ extension EditViewModel {
         while let defID = referencedDefIDs.subtracting(processedDefs).first {
             processedDefs.insert(defID)
             guard let def = consolidateDefinitions[defID] else {
-                missing.append(L("saveCopy.missingDefinition", String(defID.uuidString.prefix(8))))
+                missing.append(L("saveCopy.missingConsolidate", String(defID.uuidString.prefix(8))))
                 continue
             }
             if let original = readConsolidateSidecar(def.wave, definition: defID) {
