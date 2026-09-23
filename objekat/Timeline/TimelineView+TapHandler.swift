@@ -80,6 +80,12 @@ extension TimelineView {
         // selection there. It answers the click itself — it selects its object and moves the
         // cursor (@see AutomationBandView.handleTap) — which is why nothing here has to.
         if openAutomationBandContains(point) { return }
+        // Past that guard the click is OUTSIDE every band, and that is the only place the automation
+        // point selection may be let go of. NOT at the door with `clearPluginSelection` above,
+        // deliberately: the bands own their clicks but nothing guarantees the order in which
+        // SwiftUI delivers a band's tap and the canvas's, so a purge laid before the guard could
+        // wipe, one frame later, the very selection the band had just made.
+        viewModel.clearAutomationPointSelection()
         // A real click in the timeline → we leave the piano-roll context (⌘A goes back to selecting
         // clips).
         viewModel.focusedMidiClipID = nil

@@ -232,6 +232,31 @@ struct AutomationLane: Codable, Equatable, Identifiable {
     var sortedPoints: [AutomationPoint] { points.sorted { $0.t < $1.t } }
 }
 
+/// ONE point, named across the whole project: whose object, which curve, which storage slot.
+///
+/// Addressed by STORAGE INDEX and not by an id of its own, and that is a decision rather than a
+/// shortcut. The whole existing API already addresses points that way
+/// (`removeAutomationPoint(at:)`, `adjustAutomationCurvature(at:)`, and
+/// `AutomationBandGeometry.ordered`, whose comment calls the storage index "the only stable
+/// identifier of a point during a gesture"); a curve can carry hundreds of points, each of which
+/// would gain a UUID in the session file and a migration behind it; and the storage is NEVER
+/// re-sorted — the invariant is already written above `AutomationLane.points`.
+///
+/// The price is paid in one place and has to be paid there in full: a selection MUST be purged at
+/// every STRUCTURAL change, because an index that survives a point being added or removed now
+/// names somebody else. @see EditViewModel.clearAutomationPointSelection and its callers.
+struct AutomationPointRef: Hashable {
+    let objectID: UUID
+    let param: ParamRef
+    let index: Int
+
+    init(objectID: UUID, param: ParamRef, index: Int) {
+        self.objectID = objectID
+        self.param = param
+        self.index = index
+    }
+}
+
 // MARK: - Transformations of a curve under the editing gestures
 //
 // Storing time RELATIVE to the start of the object (@see AutomationPoint) makes moving, changing

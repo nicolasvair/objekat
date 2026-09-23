@@ -357,6 +357,14 @@ extension TimelineView {
                 if vm.pluginSurfaceHasKeyboard {
                     DispatchQueue.main.async { vm.removeSelectedPlugins() }   // internal undo push
                 }
+                // An AUTOMATION band: points selected ⇒ ⌫ takes the points, not the object. Its
+                // place relative to the MIDI branch below is never arbitrated in practice — the
+                // two selections are held exclusive by `setAutomationPointSelection`, so both can
+                // never be non-empty at once — but it has to be WRITTEN somewhere all the same,
+                // and here beside its neighbour is where one will look.
+                else if !vm.selectedAutomationPoints.isEmpty {
+                    DispatchQueue.main.async { vm.deleteSelectedAutomationPoints() }  // internal undo push
+                }
                 // The piano roll: if notes are selected, we delete them (NOT the clip).
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
                 else if !vm.selectedMidiNoteIDs.isEmpty {
@@ -406,6 +414,7 @@ extension TimelineView {
                 DispatchQueue.main.async {
                     vm.selectIDs([])
                     vm.selectedMidiNoteIDs.removeAll()
+                    vm.clearAutomationPointSelection()
                     vm.activeTool = .toolSelection
                     vm.isToolPermanent = true
                     vm.heldToolKeyCode = nil

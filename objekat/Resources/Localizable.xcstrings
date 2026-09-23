@@ -231,6 +231,98 @@
         }
       }
     },
+    "automation.scaleReadout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "×%.2f"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "×%.2f"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "×%.2f"
+          }
+        }
+      }
+    },
+    "automation.skewReadout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "skew ×%.2f"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sesgo ×%.2f"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "biais ×%.2f"
+          }
+        }
+      }
+    },
+    "automation.timeShiftReadout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%+.3f s"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%+.3f s"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%+.3f s"
+          }
+        }
+      }
+    },
+    "automation.timeStretchReadout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "time ×%.2f"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tiempo ×%.2f"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "durée ×%.2f"
+          }
+        }
+      }
+    },
     "aux.defaultLabel": {
       "extractionState": "manual",
       "localizations": {

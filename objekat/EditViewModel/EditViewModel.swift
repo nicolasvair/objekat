@@ -89,6 +89,18 @@ final class EditViewModel {
     /// The MIDI notes selected in the open piano rolls (ids of `MidiNote`, unique across every
     /// clip). Independent of `selectedIDs` (which carries the clips/groups).
     var selectedMidiNoteIDs: Set<UUID> = []
+    /// The automation points selected in the open bands. EXCLUSIVE with `selectedMidiNoteIDs`: ⌫
+    /// must have exactly one thing in front of it (@see setAutomationPointSelection).
+    ///
+    /// It lives HERE and not in `AutomationBandView` for a reason that is not a matter of taste: a
+    /// band is built under `if let r = automationBandRect(for: entry), isEntryVisible(entry)`
+    /// (@see TimelineView), so a `@State` of its own is DESTROYED the moment the object leaves the
+    /// viewport — a selection that evaporates on a scroll is a bug nothing can catch up with. And
+    /// the keyboard monitor, which runs ahead of the responder chain, sees only the view-model
+    /// (@see TimelineKeyHandler) — which is exactly why `selectedMidiNoteIDs` is here too. What
+    /// stays in the view is the TRANSIENT state of the gesture: the rectangle being drawn, the
+    /// original points, the frozen box.
+    var selectedAutomationPoints: Set<AutomationPointRef> = []
     /// The last MIDI clip whose piano roll received a click: the current "piano-roll context".
     /// Lets ⌘A select every note of that clip even with no note selection
     /// active. Reset to nil as soon as a click lands elsewhere in the timeline. Pure UI.
