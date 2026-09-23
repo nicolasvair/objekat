@@ -175,22 +175,34 @@ extension EditViewModel {
         return try encodedSession(projectFolder: folder)
     }
 
+    /// THE session document, for every writer (a save, `project.get_state`, "Save a copy"): only
+    /// the items and the definitions differ from one writer to the other (paths rewritten, registry
+    /// filtered), and they are the only parameters. Everything else — tempo, grid, snap, viewport,
+    /// annotations — is read HERE, once: "Save a copy" used to build its own document and silently
+    /// dropped the snap and the viewport (the initialiser's defaults are nil), and a field added
+    /// later would have been dropped the same way.
+    func projectDocument(items: [SoundObject],
+                         consolidateDefinitions defs: [ConsolidateDefinition]) -> ProjectDocument {
+        ProjectDocument(items: items,
+                        stems: stems,
+                        tempo: tempo,
+                        timeSigNumerator: timeSigNumerator,
+                        timeSigDenominator: timeSigDenominator,
+                        gridMode: gridMode,
+                        snapEnabled: snapEnabled,
+                        consolidateDefinitions: defs.isEmpty ? nil : defs,
+                        viewport: currentViewport,
+                        markerLanes: markerLanes.isEmpty ? nil : markerLanes,
+                        comments: comments.isEmpty ? nil : comments)
+    }
+
     /// Serialises the current session (with refreshed plugin states) into JSON. The paths of the
     /// files that live in the project folder are written RELATIVE to `folder` (the folder
     /// this version file lands in): moving the folder breaks no link.
     /// See `ProjectPaths`.
     func encodedSession(projectFolder folder: URL) throws -> Data {
-        let doc = ProjectDocument(items: portableItems(itemsWithCapturedPluginStates(), projectFolder: folder),
-                                  stems: stems,
-                                  tempo: tempo,
-                                  timeSigNumerator: timeSigNumerator,
-                                  timeSigDenominator: timeSigDenominator,
-                                  gridMode: gridMode,
-                                  snapEnabled: snapEnabled,
-                                  consolidateDefinitions: consolidateDefinitions.isEmpty ? nil : Array(consolidateDefinitions.values),
-                                  viewport: currentViewport,
-                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
-                                  comments: comments.isEmpty ? nil : comments)
+        let doc = projectDocument(items: portableItems(itemsWithCapturedPluginStates(), projectFolder: folder),
+                                  consolidateDefinitions: Array(consolidateDefinitions.values))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(doc)

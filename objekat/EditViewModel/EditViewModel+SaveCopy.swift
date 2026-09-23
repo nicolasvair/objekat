@@ -360,18 +360,10 @@ extension EditViewModel {
         let rewrittenItems = portableItems(itemsWithCapturedPluginStates().map(rewrite),
                                            projectFolder: destFolder)
         let closureDefs = processedDefs.compactMap { consolidateDefinitions[$0] }
-        let doc = ProjectDocument(items: rewrittenItems,
-                                  stems: stems,
-                                  tempo: tempo,
-                                  timeSigNumerator: timeSigNumerator,
-                                  timeSigDenominator: timeSigDenominator,
-                                  gridMode: gridMode,
-                                  consolidateDefinitions: closureDefs.isEmpty ? nil : closureDefs,
-                                  // The annotations travel with the copy: they name nothing outside
-                                  // the project, so there is nothing to rewrite in them — but a
-                                  // capsule that lost the notes written on it would be a poor copy.
-                                  markerLanes: markerLanes.isEmpty ? nil : markerLanes,
-                                  comments: comments.isEmpty ? nil : comments)
+        // The SAME document as a save (@see projectDocument): snap, viewport, tempo, grid and the
+        // annotations travel with the copy — only the items (paths rewritten) and the registry
+        // (filtered down to the closure: orphan definitions are dropped) are the copy's own.
+        let doc = projectDocument(items: rewrittenItems, consolidateDefinitions: closureDefs)
         let projectData: Data
         do {
             projectData = try encoder.encode(doc)

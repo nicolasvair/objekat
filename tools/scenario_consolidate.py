@@ -32,6 +32,7 @@ an instance that only exists in the legacy folder, a copy onto the project's own
 Then the pre-existing bugs fixed on 2026-09-24, each checked STRICTLY (a failure counts):
   • BUG 1 — "Save a copy" onto / into / around the project's folder erased its consolidated waves;
   • BUG 2 — undoing a commit gave back the content as a detached group (commit, cancel, nested);
+  • BUG 3 — the copy dropped `snapEnabled` and `viewport`.
 
 Exit: 0 if every assertion passes, 1 otherwise.
 """
@@ -628,6 +629,12 @@ try:
 
         # ── B14 ──────────────────────────────────────────────────────────────────────────────
         section("B14 — project.save_copy of a mixed project")
+        # BUG 3: a viewport that is not the default one, so that its survival means something.
+        man = read_json(ids["manifest"])
+        VP = {"pixelsPerSecond": 137.5, "blockHeight": 53.0, "scrollX": 211.0, "scrollY": 17.0}
+        man["viewport"] = VP
+        with open(ids["manifest"], "w", encoding="utf-8") as fh:
+            json.dump(man, fh, indent=2, sort_keys=True)
         cmd("project.open", path=ids["manifest"])      # B5's state: A, B in consolidate/, C in objects/
         cmd("wait_idle", timeout_ms=30000)
         d14 = defs_by_id(cmd)
@@ -687,6 +694,10 @@ try:
         check("BUG1 the refusals leave the project as it was (path, dirty)",
               info_mid["project_path"] == info_before["project_path"]
               and info_mid["dirty"] == info_before["dirty"], (info_before, info_mid))
+        # BUG 3: the snap off (a project setting, saved with it) — the copy used to drop it.
+        cmd("project.set_snap", enabled=False)
+        st_before = cmd("project.get_state")
+        print("info  viewport in memory after opening: %s" % st_before.get("viewport"))
         CAP = os.path.join(ROOT, "capsule")
         r = cmd("project.save_copy", path=CAP)
         check("B14: save_copy answers, nothing missing",
@@ -711,6 +722,23 @@ try:
         check("B14: no path of the original project nor of the source left in the capsule",
               not leaks, leaks)
         capdoc = read_json(os.path.join(CAP, "capsule.json"))
+        check("BUG3 the copy keeps snapEnabled (false)", capdoc.get("snapEnabled") is False,
+              capdoc.get("snapEnabled"))
+        check("BUG3 the copy keeps the viewport, as it is in memory",
+              capdoc.get("viewport") is not None and capdoc.get("viewport") == st_before.get("viewport"),
+              (capdoc.get("viewport"), st_before.get("viewport")))
+        # The ZOOM is the model's; the SCROLL is restored by the TimelineView once its content is in
+        # place (`pendingViewRestore`) — there is no view without a window, so headless it reads 0.
+        # The copy writes what memory holds, as a save does (checked just above).
+        zoom = lambda v: {k: (v or {}).get(k) for k in ("pixelsPerSecond", "blockHeight")}
+        check("BUG3 …whose zoom is the one the project was opened with",
+              zoom(capdoc.get("viewport")) == zoom(VP), (capdoc.get("viewport"), VP))
+        same_keys = [k for k in ("tempo", "timeSigNumerator", "timeSigDenominator", "gridMode",
+                                 "stems", "version") if capdoc.get(k) != st_before.get(k)]
+        check("BUG3 every other session setting identical to a save's", not same_keys,
+              [(k, capdoc.get(k), st_before.get(k)) for k in same_keys])
+        missing_keys = sorted(set(st_before) - set(capdoc))
+        check("BUG3 the copy has every top-level key a save has", not missing_keys, missing_keys)
         pc_cap = [o for o in walk_objects(capdoc["items"]) if o["id"] == ids["pc"]]
         check("B14: the unsaved change travelled (C at -3 dB)",
               pc_cap and abs(pc_cap[0]["volume"] + 3) < 1e-6, pc_cap)
@@ -722,6 +750,10 @@ try:
             cmd("wait_idle", timeout_ms=30000)
             check("B14: capsule reopened with the original gone — missing_files empty",
                   cmd("project.missing_files")["path_count"] == 0)
+            st_cap = cmd("project.get_state")
+            check("BUG3 the reopened capsule is off the grid, at the original's zoom",
+                  st_cap.get("snapEnabled") is False and zoom(st_cap.get("viewport")) == zoom(VP),
+                  (st_cap.get("snapEnabled"), st_cap.get("viewport")))
             dc = defs_by_id(cmd)
             check("B14: the capsule lists the 3 definitions", set(dc) == set(d14), dc)
             r = cmd("consolidate.edit_begin", placement=ids["pb"])
