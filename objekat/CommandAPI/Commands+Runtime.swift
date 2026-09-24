@@ -337,9 +337,10 @@ extension CommandRegistry {
         ])
     }
 
-    /// Min / median / max / mean. The median rather than the mean alone: a first cold
-    /// iteration (waveform caches, plugins to instantiate) crushes the mean and would hide
-    /// the steady state, the only one worth comparing between two versions.
+    /// Min / median / p95 / p99 / max / mean. The median rather than the mean alone: a first
+    /// cold iteration (waveform caches, plugins to instantiate) crushes the mean and would hide
+    /// the steady state, the only one worth comparing between two versions. The tail
+    /// percentiles are nearest-rank (@see FrameStats), meaningful from a few dozen repeats.
     private static func statistics(_ samples: [Double]) -> JSONValue {
         guard !samples.isEmpty else { return .null }
         let sorted = samples.sorted()
@@ -349,6 +350,8 @@ extension CommandRegistry {
         return .object([
             "min": .number((sorted.first ?? 0).rounded(toPlaces: 3)),
             "median": .number(median.rounded(toPlaces: 3)),
+            "p95": .number((FrameStats.percentile(sorted, 95) ?? 0).rounded(toPlaces: 3)),
+            "p99": .number((FrameStats.percentile(sorted, 99) ?? 0).rounded(toPlaces: 3)),
             "max": .number((sorted.last ?? 0).rounded(toPlaces: 3)),
             "mean": .number((samples.reduce(0, +) / Double(samples.count)).rounded(toPlaces: 3)),
             "samples": .array(samples.map { .number($0.rounded(toPlaces: 3)) }),

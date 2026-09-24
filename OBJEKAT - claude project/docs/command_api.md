@@ -180,6 +180,116 @@ instance has no interface; `available: true` with a `paths` count otherwise.
 
 ---
 
+## Synthetic navigation and frame measurement (`view.*`, `input.*`, `perf.frames.*`)
+
+What these commands are for: **comparing** how the timeline behaves under a scroll or a zoom
+in two situations (50 objects against 500, one build against the next). They report raw
+distributions and never a verdict.
+
+**UI mode only.** Every command in this family needs the timeline on screen. In `--headless`
+there is nothing to scroll and nothing is drawn, so they answer `invalid_state`. By default
+each gesture brings the window to the front (`activate: true`); with `activate: false` the
+gesture refuses a window that is not key. While a gesture runs, keep your hands off the
+trackpad and the mouse: any real event the monitors see during it sets `contaminated: true`
+(with `real_events_seen`).
+
+### The hand's own path
+
+A gesture is not a call into the view model. Each command builds real `CGEvent`s: continuous
+pixel scrolls with their `began/changed/ended` phases and optional momentum, or keyDown/keyUp
+with modifiers. It dates every event on a schedule kept by a dedicated thread, and posts it
+through `NSApp.postEvent`. So the events go through the same local `NSEvent` monitors
+(`TimelineKeyHandler`) and the same `NSScrollView` as a finger's, including the timeline's
+dead zone, its axis lock and the scroll view's own deceleration.
+
+Three facts the implementation depends on, all found by measurement:
+
+- **`CGEvent.postToPid` never delivers** (macOS 15). The `cgevent` route is kept only so that
+  `input.selftest` can go on reporting it. `post` is the working route and the default.
+- An `NSEvent` built from a `CGEvent` has **no window** unless the event carries one: its
+  `window` is nil and the scroll view ignores it, even though the monitors see it. Two fields
+  fix this: the raw `CGEventField` 51 (the window number `NSEvent(cgEvent:)` reads) and the
+  location in the window, set through the private `CGEventSetWindowLocation` (resolved with
+  `dlsym`, and skipped silently if it is ever missing). **These are private API.** If a
+  future macOS breaks them, `input.selftest` is the first thing to fail.
+- AppKit reads a pixel scroll's deltas as **integer points**. The shapes therefore carry the
+  rounding error forward from one event to the next, so the total matches what was requested.
+  The **timestamps matter** too: the scroll view uses them for its velocity, so an event left
+  undated travels differently (1503 px against 2200 for the same swipe).
+
+`input.selftest` sends a 40 pt swipe on every route and then brings the view back. For each
+route it reports whether every event was seen, whether the phases came through, whether the
+deltas were precise and whether the view moved. Later gestures use the first route that passes
+(`auto`).
+
+**Hover (option B).** A modifier+scroll zoom only applies while the pointer is over the
+timeline, and a synthetic event cannot move the real cursor. So `input.scroll` / `input.zoom`
+first **lay a hover** through a test hook (`TrackerView.simulateHover`) at `x`, `y` (viewport
+points, centre by default), using the same `onHover` path the tracking area uses.
+`hover: false` leaves that out: a ⇧-scroll then zooms nothing, exactly as for a hand off the
+timeline. `input.hover {x, y}` or `{leave: true}` sets or clears it by hand.
+
+**Settle.** A command answers only once the view is **at rest**: every posted event has been
+seen, and then the scroll offset, pps and block height have stayed the same for 150 ms (4 s at
+most). The scroll view keeps coasting for about 0.5 s after the last event. `settle_ms` says how
+long that took, and `view_after` is read after it.
+
+### The commands
+
+| command | what it does |
+|---|---|
+| `view.state` | `pps`, `block_height`, `scroll_x/y` (read from the view itself), `model_scroll_x/y`, viewport and content size, `visible_time`, `window_key`, `app_active` |
+| `view.set` | puts `pps` / `block_height` / `scroll_x` / `scroll_y` directly, not a gesture: the starting point of a measurement |
+| `input.scroll` | `direction` (`up/down/left/right`) + `distance_px`, or raw `dx`/`dy`; `style: trackpad` (`duration_ms`, `rate_hz`, `momentum`) or `wheel` (`notches`, `interval_ms`); `modifiers` |
+| `input.zoom` | `factor`, `axis` (`horizontal/vertical`), `via: shift_scroll` (the timeline's law, e^(0.01·dx), e^(0.012·dy) vertically) or `keys` (`t`/`r` = ×/÷1.5, ⇧ for vertical); answers `requested_factor`, `achieved_factor`, `presses` |
+| `input.key` | `key`, `modifiers`, `repeat`, `interval_ms`, `hold_ms`; `claimed` / `claimed_by` says whether a text field or a `KeyboardClaim` owner took it before the timeline |
+| `input.hover` | lays or clears the hover (see above) |
+| `input.record.start` / `.stop` | records what the timeline's monitors see (real or synthetic), with `t` relative to the first event |
+| `input.replay` | replays a recording through the same pump (`speed` stretches time) |
+| `input.scenario` | `steps: [{cmd, params} | {wait_ms}]`, measured as a whole plus a report per step (the steps' own `measure` is forced off) |
+| `input.selftest` | see above |
+| `perf.frames.start` / `.stop` | a frame recording wrapped around anything, for long tests (`samples: true` adds every interval) |
+
+Shared parameters of the gestures: `x`, `y`, `route`, `activate`, `hover`, `measure`
+(default true), `samples`. Every gesture answers `route`, `events_posted`, `events_seen`,
+`pump_duration_ms`, `pump_max_lateness_ms`, `settle_ms`, `contaminated`, `view_before`,
+`view_after`, `frames` and `build` (`debug`/`release`: Debug draws the timeline up to ×40
+slower, so never compare across the two).
+
+### The frame report
+
+A `CADisplayLink` on the timeline's own view gives one tick per refresh of **that** screen. The
+expected interval is read from the link (`targetTimestamp - timestamp`) and never assumed to be
+16.7 ms, since ProMotion screens run at 120 Hz. A `CFRunLoopObserver` measures how long each turn
+of the main run loop stayed busy, which explains *why* a frame came late. Fields: `frames`,
+`duration_ms`, `expected_frame_ms`, `refresh_hz`, `fps_mean`, `frame_ms` (count / p50 / p95 /
+p99 / max / mean), `late_frames` (intervals of 2 frames or more), `dropped_frames_est`,
+`hitch_ms_per_s`, `main_busy_ms` (a distribution), `main_busy_total_ms`. Each recording is also an
+`OSSignposter` interval (subsystem `com.objekat.perf`), so it can be viewed in Instruments.
+
+### Variance, measured (24 September 2026)
+
+- A plain swipe lands on the **same pixel 5 times out of 6**, and one event away otherwise
+  (1090 / 1077).
+- A ⇧-zoom falls short of the requested factor by at most the timeline's 3-point dead zone
+  (×1.954 for ×2). The keys are exact.
+- Replaying a recording lands on the **same zoom**. The scroll lands within ±3.5 % when the
+  swipe had momentum, in steps of exactly one finger event. The pump's schedule is exact to a
+  millisecond or two, so the spread comes from the scroll view folding one event into a
+  different frame, and a hand is subject to that too.
+
+### The tools
+
+- `tools/scenario_navigation.py SOCKET`: 43 assertions (the selftest, the directions,
+  repeatability, the ⇧-zoom law, no hover means no zoom, the keys, record → replay, perf.frames,
+  scenario).
+- `tools/bench_navigation.py SOCKET --label L --out F.json [--repeat N]`, then
+  `--compare A.json B.json`: the same eight-step walk (scroll in four directions, zoom in and
+  out on each axis), each step started from the same view, keeping the median of each metric.
+  It warns when the two runs come from different builds.
+
+---
+
 ## Dialogues: not freezing a script on a modal
 
 An `NSAlert.runModal()` waits for a click nobody will make. Hence an explicit policy,

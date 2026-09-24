@@ -22,6 +22,7 @@ extension TimelineView {
         }
 
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             guard let pos = hs.position else { return event }
 
             // Read at EVERY event, never captured: the header grows and shrinks with the marker
@@ -825,6 +826,7 @@ extension TimelineView {
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             if event.type == .flagsChanged {
                 let held = event.modifierFlags.contains(.command)
                 let opt  = event.modifierFlags.contains(.option)

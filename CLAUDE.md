@@ -1371,6 +1371,38 @@ What has landed since mid-August, in order:
   session; the "no window on the headless pid" check of the plan; and everything the previous
   entry lists as never seen or heard.
 
+- **Scroll and zoom driven by script, and the frames they cost** (24 September 2026, on `main`)
+  — `view.*`, `input.*`, `perf.frames.*`: a scroll or zoom from a script now goes the hand's
+  own way, through real `CGEvent`s posted with `NSApp.postEvent`, so it passes the timeline's
+  `NSEvent` monitors, the dead zone, the axis lock and the scroll view's deceleration. A
+  `CADisplayLink` on the timeline's view and a run-loop observer then measure what it cost.
+  There are no thresholds and no verdicts: the reports give distributions, meant for comparing
+  two situations. Pinch was left out because ⇧+scroll does the same. The contract and the
+  measured variance are in `command_api.md` ("Synthetic navigation"). Three facts found along the
+  way, because they apply beyond this feature:
+  1. **`postToPid` never delivers** on macOS 15.
+  2. **An `NSEvent` made from a `CGEvent` has no window** unless raw field 51 and the private
+     `CGEventSetWindowLocation` are set. Without them the monitors see the event but the view
+     never moves. This is **private API**, and `input.selftest` is the canary for it.
+  3. **A synthetic event's timestamp changes how far it scrolls**: the same swipe travelled
+     1503 px undated and 2200 px dated.
+
+  The ⇧-zoom needs a hover. A synthetic event cannot move the cursor, so a test hook lays the
+  hover (`TrackerView.simulateHover`). Every gesture answers only once the view is at rest.
+  **UI mode only**: in headless mode these commands answer `invalid_state`.
+  Verified with no screen: Debug and Release builds with no new warning;
+  `tools/scenario_navigation.py`, 43 assertions ALL PASS against a Release instance in UI mode;
+  `smoke.jsonl` clean. A first comparison with `tools/bench_navigation.py` (Release, 1 object
+  against 480), which **the numbers say and no one has yet looked at**:
+  - **zooming is what gives way**: horizontal zoom falls from 117 to 14.5 fps, with frame p95
+    8 → 159 ms and busy p95 ×16–32. Vertical zoom falls to 25 fps.
+  - scrolling holds its p95 but adds 11–12 late frames per horizontal pass, which look like
+    ~120 ms stalls. The unconfirmed suspect is the 512 px notches of `cullScrollX`.
+
+  **Not seen, not felt**: whether a real trackpad gesture, recorded with `input.record.*` and
+  then replayed, feels like the original. The only recordings made so far were of synthetic
+  events.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

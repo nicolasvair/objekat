@@ -244,6 +244,7 @@ final class CommandRegistry {
         registerTimeSelectionCommands()
         registerCrossfadeCommands()
         registerMarkerCommands()
+        registerViewCommands()
     }
 
     private func registerIntrospection() {

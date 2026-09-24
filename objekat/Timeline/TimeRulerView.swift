@@ -526,6 +526,22 @@ struct HoverTracker: NSViewRepresentable {
             dropCursorClaim()
         }
 
+        /// The test door of `input.hover` (@see InputSynth): what `mouseMoved` / `mouseExited` do,
+        /// minus the mouse. A synthetic scroll does not feed the tracking area, and the timeline
+        /// only zooms under a hover — so a script sets it here. `point` is in this view's own
+        /// (canvas) coordinates; nil = the pointer has left.
+        func simulateHover(at point: CGPoint?) {
+            if let point {
+                lastLocation = convert(point, to: nil)
+                onHover?(point)
+                syncCursorClaim()
+            } else {
+                lastLocation = nil
+                onHover?(nil)
+                dropCursorClaim()
+            }
+        }
+
         // MARK: - Claiming the cursor from AppKit
         //
         // With no claimant for the point under the mouse, AppKit puts the arrow back on every window
