@@ -92,7 +92,7 @@ extension EditViewModel {
             engine.assignObjects([group.id.uuidString], toStemID: sid.uuidString)
         }
 
-        if group.needsChainCompile { syncPlugins(group) }
+        if group.needsChainCompile { scheduleChainCompile(.plugins(group)) }
         // The sends of the group ITSELF (a group can send towards an aux). Idempotent; if
         // the target aux does not exist yet (a full rebuild), addSend is a no-op and
         // resyncAllSends rewires at the end of the load/undo.

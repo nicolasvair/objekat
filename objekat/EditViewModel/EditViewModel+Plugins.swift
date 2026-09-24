@@ -312,7 +312,10 @@ extension EditViewModel {
 
     /// (Re)pushes the MIDI clip's instrument to the engine (slot index 0, outside the FX rack). Step A: a
     /// single instrument — the first of `instruments` is taken. Empty ⇒ removes the engine instrument.
-    func syncInstruments(_ object: SoundObject) {
+    /// - Parameter rewireLinks: false only while `ProjectLoader` drains `deferredChainCompiles`
+    ///   itself (it calls `rewireLinkGroups()` once, after the whole queue). Every other caller
+    ///   keeps the original, immediate behaviour (default true).
+    func syncInstruments(_ object: SoundObject, rewireLinks: Bool = true) {
         guard let engine else { return }
         if let inst = object.instruments.first {
             var info: [String: Any] = [
@@ -333,7 +336,7 @@ extension EditViewModel {
             // MIDI clip with no FX never went through `syncPlugins`, the only caller of the rewiring,
             // and reopening the project left the link silent. Idempotent, and the siblings not yet
             // instantiated are caught up by the next pass (the same contract as syncPlugins).
-            if inst.linkGroupID != nil { rewireLinkGroups() }
+            if rewireLinks, inst.linkGroupID != nil { rewireLinkGroups() }
         } else {
             engine.removeInstrument(forObjectID: object.id.uuidString)
         }
@@ -847,7 +850,10 @@ extension EditViewModel {
         transferPlugins([pluginID], from: sourceObjectID, to: targetObjectID, mode: .copy)
     }
 
-    func syncPlugins(_ object: SoundObject) {
+    /// - Parameter rewireLinks: false only when the caller is draining `deferredChainCompiles`
+    ///   itself and will call `rewireLinkGroups()` ONCE after the whole queue — every other
+    ///   caller keeps the original, immediate behaviour (default true).
+    func syncPlugins(_ object: SoundObject, rewireLinks: Bool = true) {
         guard engine != nil else { return }
         // Recompiles the rack from the model (project loading, paste, split, groups).
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
@@ -855,6 +861,42 @@ extension EditViewModel {
         compileRack(objectID: object.id, plugins: object.plugins,
                     chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
-        rewireLinkGroups()
+        if rewireLinks { rewireLinkGroups() }
+    }
+
+    // MARK: - Deferred chain/instrument compiles (project loading)
+
+    /// One entry of the queue a project load fills instead of compiling on the spot — the whole
+    /// point of deferring is to let `ProjectLoader` drive the plugin phase (progress, breathing
+    /// the run loop) rather than have every `syncAdd` recompile inline. An instrument is its OWN
+    /// case (not folded into `.plugins`): instantiating a VSTi is the single most expensive step
+    /// measured (1.2–5.2 s), so the progress bar must be able to name it and weigh it apart from
+    /// an FX chain (@see project_load_progress_plan).
+    enum DeferredChainCompile {
+        case plugins(SoundObject)
+        case instrument(SoundObject)
+    }
+
+    /// Replaces every direct `syncPlugins`/`syncInstruments` call made while an object is (re)added
+    /// to the engine (`engineAddClip`, `engineAddMidiClip`, `engineAddAux`, `syncAddGroup`): queues
+    /// the compile when a load is in flight, compiles immediately otherwise. The single door so
+    /// that no call site can forget the queue and compile "a little bit during loading" by accident.
+    func scheduleChainCompile(_ entry: DeferredChainCompile) {
+        if deferredChainCompiles != nil {
+            deferredChainCompiles?.append(entry)
+        } else {
+            applyChainCompile(entry, rewireLinks: true)
+        }
+    }
+
+    /// Executes one queued entry. `rewireLinks` is false while `ProjectLoader` drains the whole
+    /// queue (it calls `rewireLinkGroups()` itself, once, after the last entry).
+    func applyChainCompile(_ entry: DeferredChainCompile, rewireLinks: Bool) {
+        switch entry {
+        case .plugins(let object):
+            syncPlugins(object, rewireLinks: rewireLinks)
+        case .instrument(let object):
+            syncInstruments(object, rewireLinks: rewireLinks)
+        }
     }
 }

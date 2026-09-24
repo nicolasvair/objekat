@@ -1049,6 +1049,44 @@ final class EditViewModel {
     /// a load it stays nil → normal editing (adding a plugin) does not alert here.
     var missingPluginCapture: Set<String>? = nil
 
+    /// `nil` outside a project load — every `scheduleChainCompile` call then falls straight
+    /// through to the immediate, synchronous compile, UNCHANGED from before this queue existed.
+    /// Only `EditViewModel+ProjectLoad` sets it to `[]` for the duration of the structure phase and
+    /// drains it itself in the plugin phase, calling `rewireLinkGroups()` ONCE at the end of the
+    /// whole file rather than after every individual compile. @see EditViewModel+Plugins.swift,
+    /// EditViewModel+ProjectLoad.swift
+    var deferredChainCompiles: [DeferredChainCompile]? = nil
+
+    /// Progress of a project load in flight — `nil` = not loading. Read by `ProjectLoadOverlay`
+    /// and by `project.load_status`; PER SESSION (an instance property, not a singleton), so a
+    /// future multi-project-tabs session gets one each. @see EditViewModel+ProjectLoad.swift
+    var loadState: ProjectLoadState? = nil
+
+    /// The anti-reentrance guard (step 4 of project_load_progress_plan): true for exactly the
+    /// span `loadState` is non-nil. Read by the keyboard/scroll/pinch handlers, the File menu, the
+    /// transport (`ObjekatSession.play`/`togglePause`), `applicationShouldTerminate` and
+    /// `CommandRegistry.execute` before acting.
+    var isLoadingProject: Bool { loadState != nil }
+
+    /// The last load's outcome (nil before the first one this session) — read by
+    /// `project.load_status` once `loadState` has gone back to nil, so a caller driving
+    /// `project.open {"async": true}` can tell success from failure/cancellation without racing
+    /// the moment `loadState` disappears.
+    var lastProjectLoad: ProjectLoadOutcome? = nil
+
+    /// Set by `ObjekatSession.start()`: called right before a load tears the previous project's
+    /// engine state down. Exists to fix a bug the plan flagged — `engine?.stop()` alone stops the
+    /// ENGINE, but only `ObjekatSession.stop()` also clears `session.isPlaying`, so a project
+    /// reopened while playing kept showing ▶ although the sound had actually stopped.
+    var projectLoadWillBeginHook: (() -> Void)? = nil
+
+    /// A load just finished with plugins the engine could not resolve — held here rather than
+    /// alerted straight away, so `ProjectLoadOverlay` can flush it once it has actually faded out
+    /// (the plan: "l'alerte plugins manquants apparaît APRÈS disparition du voile"). A 0.5 s
+    /// fallback in `performFinalize` flushes it on its own if nothing observes the overlay
+    /// (headless, no window, or a load too fast to ever show one).
+    var pendingMissingPluginsReport: Set<String>? = nil
+
     /// A perf note: the number of plugin states re-read from the engine during the capture under way.
     /// Reset by `currentSnapshot`, which journals it with the time spent — an AU's `getState`
     /// (a binary chunk + XML + string copies) is not free, and the capture sweeps
@@ -1379,7 +1417,7 @@ final class EditViewModel {
         }
         // Compiles as well when the chain holds ONLY trim gains (with no plugin):
         // otherwise the synoptic's trims were never reapplied on loading/pasting.
-        if object.needsChainCompile { syncPlugins(object) }
+        if object.needsChainCompile { scheduleChainCompile(.plugins(object)) }
     }
 
     /// Adds a `.midiClip` object to the engine: ContainerClip + a child MIDI clip + the instrument
@@ -1399,7 +1437,7 @@ final class EditViewModel {
         data.fadeOut      = object.fadeOut
         data.sourceOffset = 0
         engine.addMidiClip(data, withID: object.id.uuidString)
-        syncInstruments(object)
+        scheduleChainCompile(.instrument(object))
         syncMidiNotes(object)
         // An object freshly created with the loop already active (paste/duplication): `addMidiClip`
         // never lays the loop range, only `updateLoopEnabled`/`updateLoopRange` normally
@@ -1415,7 +1453,7 @@ final class EditViewModel {
                                   loopRangeStart: 0, loopRangeEnd: 0,
                                   forID: object.id.uuidString)
         }
-        if object.needsChainCompile { syncPlugins(object) }
+        if object.needsChainCompile { scheduleChainCompile(.plugins(object)) }
     }
 
     /// (Re)pushes the MIDI clip's notes to the engine (replacing the MidiList). Timing in BEATS.
@@ -1441,7 +1479,7 @@ final class EditViewModel {
         engine.updateVolume(engineVolume(for: object), pan: object.pan,
                             forID: object.id.uuidString)
         syncAuxWindow(object)
-        if object.needsChainCompile { syncPlugins(object) }
+        if object.needsChainCompile { scheduleChainCompile(.plugins(object)) }
     }
 
     /// The "infinite" window end pushed to the engine for an infinite bus: a very large value (s)
