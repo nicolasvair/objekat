@@ -2261,7 +2261,12 @@ struct TimelineView: View {
                         lc.draw(resolvedLabel(item.displayName,
                                               icon: ObjectKindIcon.name(for: item),
                                               missing: missing),
-                                at: CGPoint(x: x + leading, y: y + 3), anchor: .topLeading)
+                                // y + 1, not the old + 3: the rich views (groups, consolidated,
+                                // MIDI, a selected clip) lay the name at the top of the block, and
+                                // the 3 px read as a margin only plain sounds had. The 1 px is the
+                                // rich row's centring: its 13 pt glyph is a touch taller than the
+                                // 12 pt name this single run is measured on.
+                                at: CGPoint(x: x + leading, y: y + 1), anchor: .topLeading)
                     }
                 }
         }

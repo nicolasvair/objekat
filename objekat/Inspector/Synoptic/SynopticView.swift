@@ -1446,7 +1446,9 @@ struct AudioFileZoneView: View {
                                      parse: { TempoText.parse($0) },
                                      help: L("help.drag.bpm"),
                                      onBegin: { actions.onBeginSpeedEdit?() },
-                                     onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) })
+                                     onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) },
+                                     // ⌫ / double-click: back to the wav's own BPM (speed 1).
+                                     onReset: { actions.onBeginSpeedEdit?(); actions.onSetSpeed?(1.0) })
                     } else {
                         Text(verbatim: "—")
                             .font(.system(size: 10, weight: .medium)).monospacedDigit()
@@ -1455,7 +1457,11 @@ struct AudioFileZoneView: View {
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)))
                     }
 
+                    // Never squeezed: the two BPM fields widen with their text, and without this
+                    // the unit was what gave way — shrinking, then gone.
                     Text(verbatim: "bpm").font(.system(size: 9)).foregroundStyle(.secondary)
+                        .fixedSize()
+                        .layoutPriority(1)
                 }
             }
             .padding(.horizontal, 10).padding(.top, 8)
