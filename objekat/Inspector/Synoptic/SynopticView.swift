@@ -848,9 +848,10 @@ struct PluginDragPreview: View {
     let plugin: SynopticPlugin
     var dragCount: Int = 1
 
-    /// Wider than a card: the modifier legend has to be READ, not truncated at 9 pt.
-    private let width = max(SynopticLayout.cardW, 210)
-    private let minHeight: CGFloat = 44
+    /// The size of a card: the preview is the card being carried, nothing more — the modifiers
+    /// are explained by the band at the bottom of the timeline, not here.
+    private let width = SynopticLayout.cardW
+    private let height: CGFloat = 32
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -867,15 +868,10 @@ struct PluginDragPreview: View {
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
                     .padding(.trailing, dragCount > 1 ? 28 : 0)   // clear of the +N-1 badge
-                Text(L("synoptic.drag.legend"))
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
             if dragCount > 1 {
                 Text(verbatim: "+\(dragCount - 1)")   // the OTHER plugins carried along, not N copies of this one
@@ -887,9 +883,7 @@ struct PluginDragPreview: View {
                     .padding(6)
             }
         }
-        .frame(width: width)
-        .frame(minHeight: minHeight)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: width, height: height)
     }
 }
 

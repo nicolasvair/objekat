@@ -8695,29 +8695,6 @@
         }
       }
     },
-    "synoptic.drag.legend": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "drag: move · ⌥ copy · ⌘ copy linked (other object)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "arrastrar: mover · ⌥ copiar · ⌘ copiar vinculado (otro objeto)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "glisser : déplacer · ⌥ copier · ⌘ copier lié (autre objet)"
-          }
-        }
-      }
-    },
     "synoptic.infinite": {
       "extractionState": "manual",
       "localizations": {
