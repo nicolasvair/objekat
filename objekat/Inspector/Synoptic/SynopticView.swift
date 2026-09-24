@@ -1197,6 +1197,39 @@ struct AudioFileZoneView: View {
     let actions: SynopticActions
     @State private var bpmBaseText: String = ""
     @FocusState private var baseFocused: Bool
+    /// Same fallback as `TransportView`'s tempo field, and for the same reason: ⌘↑/⌘↓ risk being
+    /// eaten by the text view's own "move to beginning/end of document" binding before
+    /// `onKeyPress` ever sees them.
+    @State private var baseCommandArrowMonitor: Any?
+
+    private static let baseBpmFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    private static let baseBpmCharWidth: CGFloat =
+        ("0" as NSString).size(withAttributes: [.font: baseBpmFont]).width
+
+    private func baseBpmFieldWidth(for text: String) -> CGFloat {
+        let chars = max(2, text.count)
+        return CGFloat(chars) * Self.baseBpmCharWidth + 6
+    }
+
+    private func nudgeBaseBPM(by delta: Double) {
+        let current = file.baseBPM ?? 0
+        let next = TempoText.rounded(max(0.0001, current + delta))
+        actions.onSetBaseBPM?(next)
+    }
+
+    private func installBaseCommandArrowMonitorIfNeeded() {
+        guard baseCommandArrowMonitor == nil else { return }
+        baseCommandArrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard baseFocused, event.modifierFlags.contains(.command),
+                  event.keyCode == 125 || event.keyCode == 126 else { return event }
+            nudgeBaseBPM(by: event.keyCode == 126 ? 0.1 : -0.1)
+            return nil
+        }
+    }
+
+    private func removeBaseCommandArrowMonitor() {
+        if let m = baseCommandArrowMonitor { NSEvent.removeMonitor(m); baseCommandArrowMonitor = nil }
+    }
 
     private var semis: Double { 12 * log2(max(1e-6, file.speedRatio)) }
     private var targetBPM: Double? { file.baseBPM.map { $0 * file.speedRatio } }
@@ -1276,7 +1309,7 @@ struct AudioFileZoneView: View {
                     Spacer(minLength: 0)
 
                     TextField(text: $bpmBaseText) { Text(verbatim: "—") }
-                        .frame(width: 34).multilineTextAlignment(.center)
+                        .frame(width: baseBpmFieldWidth(for: bpmBaseText)).multilineTextAlignment(.center)
                         .font(.system(size: 10, design: .monospaced))
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 3).padding(.vertical, 2)
@@ -1284,6 +1317,18 @@ struct AudioFileZoneView: View {
                         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
                         .focused($baseFocused)
                         .onSubmit { commitBase() }
+                        .onChange(of: baseFocused) { _, focused in
+                            if focused { installBaseCommandArrowMonitorIfNeeded() }
+                            else { removeBaseCommandArrowMonitor() }
+                        }
+                        .onDisappear { removeBaseCommandArrowMonitor() }
+                        .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                            let step: Double = press.modifiers.contains(.command) ? 0.1
+                                : press.modifiers.contains(.shift) ? 10
+                                : 1
+                            nudgeBaseBPM(by: press.key == .upArrow ? step : -step)
+                            return .handled
+                        }
                         .help(L("synoptic.wavBPM"))
 
                     Image(systemName: "arrow.right")
@@ -1319,8 +1364,7 @@ struct AudioFileZoneView: View {
     private func syncBaseText() {
         guard !baseFocused else { return }
         if let base = file.baseBPM {
-            let r = base.rounded()
-            bpmBaseText = abs(base - r) < 0.5 ? String(Int(r)) : String(format: "%.1f", base)
+            bpmBaseText = TempoText.display(base)
         } else {
             bpmBaseText = ""
         }
@@ -1329,7 +1373,8 @@ struct AudioFileZoneView: View {
     private func commitBase() {
         let t = bpmBaseText.trimmingCharacters(in: .whitespaces)
         if t.isEmpty { actions.onSetBaseBPM?(nil) }
-        else if let v = Double(t), v > 0 { actions.onSetBaseBPM?(v) }
+        else if let v = TempoText.parse(t), v > 0 { actions.onSetBaseBPM?(v) }
+        syncBaseText()
     }
 }
 

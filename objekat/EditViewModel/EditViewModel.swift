@@ -623,7 +623,7 @@ final class EditViewModel {
     /// UI entry point (the BPM field, the ↑/↓ arrows) goes through here; writing to
     /// `tempo` directly stays reserved for loading and for restoring a snapshot.
     func applyTempo(_ bpm: Double) {
-        let clamped = max(20, min(300, bpm))
+        let clamped = TempoText.rounded(max(20, min(300, bpm)))
         guard clamped != tempo else { return }
         pushUndo()
         tempo = clamped

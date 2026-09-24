@@ -14,20 +14,49 @@ struct TransportView: View {
 
     @State private var bpmText: String = "120"
     @FocusState private var bpmFocused: Bool
+    /// Fallback for ⌘↑/⌘↓ while the field editor holds first responder: macOS binds Cmd+Up/Down
+    /// to "move to beginning/end of document" in a text view, which can eat the event before
+    /// SwiftUI's `onKeyPress` ever sees it. Active only while `bpmFocused`, and only for that
+    /// exact combination — plain and ⇧ arrows are left to `onKeyPress` below.
+    @State private var bpmCommandArrowMonitor: Any?
 
     private var remaining: Double { max(0, totalDuration - playheadPosition) }
 
     private func commitBPM() {
-        let normalized = bpmText.replacingOccurrences(of: ",", with: ".")
-        if let v = Double(normalized) {
-            // applyTempo: clamps, pushes the undo and marks the project as modified.
+        if let v = TempoText.parse(bpmText) {
+            // applyTempo: clamps, rounds, pushes the undo and marks the project as modified.
             viewModel.applyTempo(v)
         }
-        bpmText = bpmDisplay(viewModel.tempo)
+        bpmText = TempoText.display(viewModel.tempo)
     }
 
-    private func bpmDisplay(_ bpm: Double) -> String {
-        bpm == bpm.rounded() ? "\(Int(bpm))" : String(format: "%.1f", bpm)
+    private func nudgeTempo(by delta: Double) {
+        viewModel.applyTempo(TempoText.rounded(viewModel.tempo + delta))
+        bpmText = TempoText.display(viewModel.tempo)
+    }
+
+    private static let bpmFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    private static let bpmCharWidth: CGFloat = ("0" as NSString).size(withAttributes: [.font: bpmFont]).width
+
+    /// Width follows the content: `decimals` up to 4 places can widen the field well past the
+    /// old fixed 26 pt, and a bare "120" should not carry that room permanently.
+    private func bpmFieldWidth(for text: String) -> CGFloat {
+        let chars = max(2, text.count)
+        return CGFloat(chars) * Self.bpmCharWidth + 8
+    }
+
+    private func installBpmCommandArrowMonitorIfNeeded() {
+        guard bpmCommandArrowMonitor == nil else { return }
+        bpmCommandArrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard bpmFocused, event.modifierFlags.contains(.command),
+                  event.keyCode == 125 || event.keyCode == 126 else { return event }
+            nudgeTempo(by: event.keyCode == 126 ? 0.1 : -0.1)
+            return nil
+        }
+    }
+
+    private func removeBpmCommandArrowMonitor() {
+        if let m = bpmCommandArrowMonitor { NSEvent.removeMonitor(m); bpmCommandArrowMonitor = nil }
     }
 
     var body: some View {
@@ -99,39 +128,41 @@ struct TransportView: View {
             // Tempo
             HStack(spacing: 3) {
                 TextField(noLabel, text: $bpmText)
-                    .frame(width: 26)
+                    .frame(width: bpmFieldWidth(for: bpmText))
                     .multilineTextAlignment(.trailing)
                     .font(.system(size: 11, design: .monospaced))
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 4)
                     .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
                     .focused($bpmFocused)
+                    .help(L("transport.tempo.help"))
                     .onSubmit {
                         commitBPM()
                         bpmFocused = false
                     }
                     .onChange(of: bpmFocused) { _, focused in
-                        if !focused { commitBPM() }
-                        else { bpmText = bpmDisplay(viewModel.tempo) }
+                        if !focused {
+                            commitBPM()
+                            removeBpmCommandArrowMonitor()
+                        } else {
+                            bpmText = TempoText.display(viewModel.tempo)
+                            installBpmCommandArrowMonitorIfNeeded()
+                        }
                     }
                     // The field follows the model EVEN when it has focus: at launch, AppKit gives first
                     // responder to the window's first text field (this one), and the old `if !bpmFocused`
                     // guard then froze '120'; on opening a project, losing focus committed that 120 over
                     // the saved tempo.
                     .onChange(of: viewModel.tempo) { _, newTempo in
-                        bpmText = bpmDisplay(newTempo)
+                        bpmText = TempoText.display(newTempo)
                     }
-                    .onAppear { bpmText = bpmDisplay(viewModel.tempo) }
-                    .onKeyPress(.upArrow) {
-                        let step = NSEvent.modifierFlags.contains(.shift) ? 10.0 : 1.0
-                        viewModel.applyTempo(viewModel.tempo + step)
-                        bpmText = bpmDisplay(viewModel.tempo)
-                        return .handled
-                    }
-                    .onKeyPress(.downArrow) {
-                        let step = NSEvent.modifierFlags.contains(.shift) ? 10.0 : 1.0
-                        viewModel.applyTempo(viewModel.tempo - step)
-                        bpmText = bpmDisplay(viewModel.tempo)
+                    .onAppear { bpmText = TempoText.display(viewModel.tempo) }
+                    .onDisappear { removeBpmCommandArrowMonitor() }
+                    .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                        let step: Double = press.modifiers.contains(.command) ? 0.1
+                            : press.modifiers.contains(.shift) ? 10
+                            : 1
+                        nudgeTempo(by: press.key == .upArrow ? step : -step)
                         return .handled
                     }
             }
