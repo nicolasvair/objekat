@@ -111,6 +111,7 @@ extension EditViewModel {
             update(id: m.id) { $0.stemID = nil }
         }
         stems.removeAll { $0.id == id }
+        renumberDefaultStemNames()
 
         // Deleting a MUTED stem left its objects silent: the bus no longer exists, so the
         // composition has to be redone for everybody (and the snapshot purged of that stem).
@@ -225,7 +226,25 @@ extension EditViewModel {
         pushUndo()
         let stem = stems.remove(at: from)
         stems.insert(stem, at: toIndex)
+        renumberDefaultStemNames()
         isDirty = true
+    }
+
+    /// A stem still wearing its default name ("Stem N", given by the toolbar's "+" after its
+    /// position) keeps following its position: after a reorder or a deletion it becomes
+    /// "Stem <new number>". A name the user typed is never touched. The Main is out of scope.
+    /// No undo push of its own: always called inside a mutation that has already pushed one.
+    func renumberDefaultStemNames() {
+        for i in stems.indices.dropFirst() where Self.isDefaultStemName(stems[i].name) {
+            let name = "Stem \(i + 1)"
+            if stems[i].name != name { stems[i].name = name }
+        }
+    }
+
+    static func isDefaultStemName(_ name: String) -> Bool {
+        guard name.hasPrefix("Stem ") else { return false }
+        let digits = name.dropFirst(5)
+        return !digits.isEmpty && digits.allSatisfy(\.isASCII) && digits.allSatisfy(\.isNumber)
     }
 
     // MARK: - Mixer (increment 1): the gain + meter of the stems and of the master
