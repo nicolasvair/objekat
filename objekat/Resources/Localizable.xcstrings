@@ -8695,6 +8695,29 @@
         }
       }
     },
+    "synoptic.drag.legend": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "drag: move · ⌥ copy · ⌘ copy linked"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arrastrar: mover · ⌥ copiar · ⌘ copiar vinculado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "glisser : déplacer · ⌥ copier · ⌘ copier lié"
+          }
+        }
+      }
+    },
     "synoptic.infinite": {
       "extractionState": "manual",
       "localizations": {
@@ -9161,19 +9184,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click: open plugin"
+            "value": "Double-click: open the plugin · drag: move (⌥ copy, ⌘ linked copy)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic: abrir plugin"
+            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar, ⌘ copia vinculada)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic : ouvrir plugin"
+            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée)"
           }
         }
       }
@@ -9575,19 +9598,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel."
+            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy, ⌘ linked copy)."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo."
+            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar, ⌘ copia vinculada)."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle."
+            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie, ⌘ copie liée)."
           }
         }
       }
@@ -10048,6 +10071,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Solo (S maintenu) — clic sur un objet = l'ajouter / le retirer de l'écoute"
+          }
+        }
+      }
+    },
+    "transport.tempo.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
           }
         }
       }
