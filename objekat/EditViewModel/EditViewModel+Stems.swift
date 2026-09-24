@@ -208,6 +208,26 @@ extension EditViewModel {
         for id in selectedIDs { assignStem(objectID: id, stemID: stemID) }
     }
 
+    // MARK: - Reordering the bar
+
+    /// Moves a stem to `toIndex` in `stems` (the order the toolbar, the popover numbers and
+    /// every "digit + N" shortcut all read straight off — @see StemReorder for the drag's own
+    /// arithmetic). The Main (`stems[0]`) can neither be moved nor be a target: it is what every
+    /// other rule in the app (`removeStem`, `applySnapshot`'s `dropFirst`, loading) already
+    /// assumes stays first. No-op if `id` names the Main, if `toIndex` falls outside
+    /// `1...stems.count - 1`, or if it names the position the stem is already at.
+    func moveStem(id: UUID, toIndex: Int) {
+        guard id != mainStemID,
+              let from = stems.firstIndex(where: { $0.id == id }), from != 0,
+              (1...(stems.count - 1)).contains(toIndex),
+              from != toIndex
+        else { return }
+        pushUndo()
+        let stem = stems.remove(at: from)
+        stems.insert(stem, at: toIndex)
+        isDirty = true
+    }
+
     // MARK: - Mixer (increment 1): the gain + meter of the stems and of the master
 
     /// The 0..1 (peak) level at the bus's output, to be polled for the meter. Main = the general output (master).

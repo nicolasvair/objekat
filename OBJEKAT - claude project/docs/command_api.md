@@ -387,7 +387,7 @@ That is end-of-process noise, with no effect on the result.
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
-| `stem.*` | list, create, delete, rename, recolour, assign, gain, mute, routing to the Main, level |
+| `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |

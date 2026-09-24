@@ -88,6 +88,25 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString), "color_index": .int(index)])
         }
 
+        register("stem.move",
+                 summary: "Reorders the bar: moves a stem to `index` (the Main is never a target).",
+                 params: [ParamSpec("id", "uuid", "Stem to move."),
+                          ParamSpec("index", "int", "New position, 1...stem count - 1 (0 = the Main).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try CommandAdapters.existingStem(try p.uuid("id"), in: vm)
+            guard id != vm.mainStemID else {
+                throw CommandError(code: .invalid_state, message: "the Main cannot be moved")
+            }
+            let index = try p.int("index")
+            guard (1...(vm.stems.count - 1)).contains(index) else {
+                throw CommandError(code: .bad_params,
+                                   message: "index out of range: \(index) (1...\(vm.stems.count - 1))")
+            }
+            vm.moveStem(id: id, toIndex: index)
+            return .object(["stems": .array(vm.stems.map { .string($0.id.uuidString) })])
+        }
+
         register("stem.assign",
                  summary: "Assigns objects to a stem (a group's children follow).",
                  params: [ParamSpec("stem", "uuid", "Receiving stem."),

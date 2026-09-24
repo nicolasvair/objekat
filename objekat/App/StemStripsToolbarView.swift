@@ -17,6 +17,18 @@ struct StemStripsToolbarView: View {
 
     @State private var levels: [UUID: Float] = [:]
     @State private var openStemID: UUID? = nil
+    // Reordering the bar by drag. `liveFrames` tracks every strip's X-range continuously
+    // (`onGeometryChange`, in the bar's own "stemBar" coordinate space); `frozenOrder` /
+    // `frozenFrames` are a SNAPSHOT of that, taken the instant a drag starts and held for its
+    // whole duration — reordering live as the pointer crosses a midpoint would move the very
+    // frame the pointer is being compared against (@see StemReorder). `previewOrder` is what the
+    // bar actually shows while a drag is under way; nil the rest of the time, meaning "read
+    // straight off `viewModel.stems`".
+    @State private var liveFrames: [UUID: CGRect] = [:]
+    @State private var dragStemID: UUID? = nil
+    @State private var frozenOrder: [Stem] = []
+    @State private var frozenFrames: [CGRect] = []
+    @State private var previewOrder: [Stem]? = nil
     // Stems DETACHED from the Main that have gone past 0 dBFS: they stay 'on alert' (a blinking
     // red LED) until acknowledged by clicking the LED. Latched here (it survives the bar being
     // rebuilt).
@@ -48,7 +60,7 @@ struct StemStripsToolbarView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in
+            ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in
                 StemStripButton(
                     stem: stem,
                     isMain: stem.id == viewModel.mainStemID,
@@ -59,10 +71,22 @@ struct StemStripsToolbarView: View {
                     blinkOn: blinkOn,
                     isDropTarget: dropTargetStemID == stem.id,
                     dropLinkAt: dropLinksStemID == stem.id ? dropLinkPoint : nil,
+                    isBeingDragged: dragStemID == stem.id,
                     onClearClip: { clippedStems.remove(stem.id) }
                 ) {
                     openStemID = (openStemID == stem.id) ? nil : stem.id
                 }
+                .onGeometryChange(for: CGRect.self,
+                                   of: { $0.frame(in: .named("stemBar")) }) { frame in
+                    liveFrames[stem.id] = frame
+                }
+                // The Main never moves and is never a target (@see EditViewModel.moveStem): a
+                // gesture that practically never recognises (an unreachable `minimumDistance`)
+                // rather than a real one that would always refuse — kept the same TYPE as the
+                // real gesture via `AnyGesture` so the ternary below type-checks.
+                .gesture(stem.id == viewModel.mainStemID
+                         ? AnyGesture(DragGesture(minimumDistance: .greatestFiniteMagnitude))
+                         : stemDragGesture(for: stem))
                 .overlay(StemColorMenuOverlay(viewModel: viewModel, stemID: stem.id))
                 // A plugin card dragged onto the STRIP joins that bus's chain. The strip is the
                 // only place a bus can be aimed at with the hand: a stem has no block of its own
@@ -113,6 +137,8 @@ struct StemStripsToolbarView: View {
             .buttonStyle(.plain)
             .help(L("stem.add.help"))
         }
+        .coordinateSpace(.named("stemBar"))
+        .animation(.easeInOut(duration: 0.15), value: previewOrder)
         .onReceive(vuPoll) { _ in
             pollTick &+= 1
             // VU ballistics (the PPM/VU standard): an almost instant attack — the engine already returns
@@ -137,6 +163,46 @@ struct StemStripsToolbarView: View {
             // Forgets stems deleted since (which avoids a phantom alert).
             clippedStems.formIntersection(Set(viewModel.stems.map(\.id)))
         }
+    }
+
+    // MARK: - Reordering the bar by drag
+
+    private func stemDragGesture(for stem: Stem) -> AnyGesture<DragGesture.Value> {
+        AnyGesture(
+            DragGesture(minimumDistance: 4, coordinateSpace: .named("stemBar"))
+                .onChanged { value in handleStemDragChanged(stem, pointerX: value.location.x) }
+                .onEnded { value in handleStemDragEnded(stem, pointerX: value.location.x) }
+        )
+    }
+
+    /// The first `onChanged` of a gesture freezes the order and the frames it will be judged
+    /// against for the rest of the drag (@see `StemReorder` — reordering live as the pointer
+    /// crosses a midpoint would move the very frame being compared against), and closes any open
+    /// popover (a popover is another window, and would otherwise sit open over a bar that no
+    /// longer matches it). Every following call only recomputes the PREVIEW.
+    private func handleStemDragChanged(_ stem: Stem, pointerX: CGFloat) {
+        if dragStemID != stem.id {
+            dragStemID = stem.id
+            openStemID = nil
+            frozenOrder = viewModel.stems
+            frozenFrames = frozenOrder.map { liveFrames[$0.id] ?? .zero }
+        }
+        guard let from = frozenOrder.firstIndex(where: { $0.id == stem.id }) else { return }
+        let target = StemReorder.targetIndex(pointerX: pointerX, frames: frozenFrames, dragged: from)
+        var order = frozenOrder
+        let moved = order.remove(at: from)
+        order.insert(moved, at: target)
+        previewOrder = order
+    }
+
+    /// ONE `moveStem` (one undo point), computed from the same frozen frames the whole drag was
+    /// previewed against — not from `previewOrder`, which has already been reshuffled and would
+    /// give `StemReorder` the wrong ranks to count.
+    private func handleStemDragEnded(_ stem: Stem, pointerX: CGFloat) {
+        defer { dragStemID = nil; previewOrder = nil }
+        guard let from = frozenOrder.firstIndex(where: { $0.id == stem.id }) else { return }
+        let target = StemReorder.targetIndex(pointerX: pointerX, frames: frozenFrames, dragged: from)
+        viewModel.moveStem(id: stem.id, toIndex: target)
     }
 }
 
@@ -219,6 +285,10 @@ private struct StemStripButton: View {
     /// feedback, in its own layer.
     var dropLinkAt: CGPoint? = nil
     private var dropWillLink: Bool { dropLinkAt != nil }
+    /// This strip is the one currently being reordered by drag (@see
+    /// `StemStripsToolbarView.handleStemDragChanged`): dimmed, with an accent border, while its
+    /// PREVIEW slot elsewhere in the bar shows where it would land.
+    var isBeingDragged: Bool = false
     var onClearClip: () -> Void = {}
     let action: () -> Void
 
@@ -243,40 +313,41 @@ private struct StemStripButton: View {
     private static var vuScaleHelp: String { L("stem.vu.scaleHelp") }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let number {
-                    Text(verbatim: "\(number)")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                Text(isMain ? L("stem.main.name") : stem.name)
-                    .font(.system(size: 11, weight: isMain ? .semibold : .medium))
-                    .lineLimit(1)
-                    .strikethrough(stem.muted, color: .secondary)
-                // A muted bus (the 'N + M' shortcut): the dot is replaced by a 'muted' icon.
-                if stem.muted {
-                    Image(systemName: "speaker.slash.fill")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                } else {
-                    StemVuDot(level: level)
-                        .help(Self.vuScaleHelp)
-                }
+        HStack(spacing: 5) {
+            if let number {
+                Text(verbatim: "\(number)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
-            .opacity(stem.muted ? 0.5 : 1)
-            .padding(.horizontal, Self.hPadding).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6)
-                // Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same
-                // level of translucency on a dark background, the colour no longer collapses towards
-                // black and stays recognisable as the same hue as in the timeline.
-                .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(dropWillLink ? LinkColor.plugin
-                                : (isDropTarget || isOpen ? Color.accentColor : tint.opacity(0.55)),
-                              lineWidth: isDropTarget ? 2 : (isOpen ? 1.5 : 1)))
+            Text(isMain ? L("stem.main.name") : stem.name)
+                .font(.system(size: 11, weight: isMain ? .semibold : .medium))
+                .lineLimit(1)
+                .strikethrough(stem.muted, color: .secondary)
+            // A muted bus (the 'N + M' shortcut): the dot is replaced by a 'muted' icon.
+            if stem.muted {
+                Image(systemName: "speaker.slash.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            } else {
+                StemVuDot(level: level)
+                    .help(Self.vuScaleHelp)
+            }
         }
-        .buttonStyle(.plain)
+        .opacity(stem.muted ? 0.5 : 1)
+        .padding(.horizontal, Self.hPadding).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6)
+            // Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same
+            // level of translucency on a dark background, the colour no longer collapses towards
+            // black and stays recognisable as the same hue as in the timeline.
+            .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
+        .overlay(RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(dropWillLink ? LinkColor.plugin
+                            : (isBeingDragged || isDropTarget || isOpen ? Color.accentColor : tint.opacity(0.55)),
+                          lineWidth: isBeingDragged || isDropTarget ? 2 : (isOpen ? 1.5 : 1)))
+        .opacity(isBeingDragged ? 0.6 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .accessibilityAddTraits(.isButton)
         // The number is the keyboard shortcut's; it is missing beyond 9, where there is none left.
         .help(L("stem.strip.help", isMain ? L("stem.main.name") : stem.name)
               + (number.map { " \($0)" } ?? "")
