@@ -278,6 +278,16 @@ final class CommandRegistry {
 
     /// Runs a command by name. Every output is structured: the returned value is the `result`,
     /// and every error is a typed `CommandError`.
+    /// The only commands a script may still call while a project is loading (step 4 of
+    /// project_load_progress_plan): reading the app's state, watching the load itself, waiting for
+    /// it to finish, and reading the dialogues it may have journalled. Everything else answers
+    /// `invalid_state` rather than racing a model the load is still rewriting from under it.
+    /// `project.cancel_load` is an ADDITION to the plan's own list (`app.info`,
+    /// `project.load_status`, `wait_idle`, `app.dialogs`) — needed to verify the Annuler button
+    /// headlessly at all; flag if this extra surface is not wanted.
+    private static let allowedDuringProjectLoad: Set<String> =
+        ["app.info", "project.load_status", "wait_idle", "app.dialogs", "project.cancel_load"]
+
     func execute(name: String, params: CommandParams) async throws -> JSONValue {
         bootstrap()
         // An alias is resolved transparently: the caller sees the same behaviour as the
@@ -285,6 +295,10 @@ final class CommandRegistry {
         let resolvedName = aliases[name] ?? name
         guard let command = commands[resolvedName] else {
             throw CommandError(code: .unknown_command, message: "unknown command: \(name)")
+        }
+        if CommandContext.shared.viewModel?.isLoadingProject == true,
+           !Self.allowedDuringProjectLoad.contains(resolvedName) {
+            throw CommandError(code: .invalid_state, message: "project loading")
         }
 
         switch command.undo {

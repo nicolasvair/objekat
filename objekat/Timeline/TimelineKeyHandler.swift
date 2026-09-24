@@ -23,6 +23,9 @@ extension TimelineView {
 
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
+            // The anti-reentrance guard (step 4): no zoom/value-scroll while a project load owns
+            // the model.
+            if vm.isLoadingProject { return event }
             guard let pos = hs.position else { return event }
 
             // Read at EVERY event, never captured: the header grows and shrinks with the marker
@@ -212,6 +215,8 @@ extension TimelineView {
         let hs = hoverState
 
         magnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { event in
+            // The anti-reentrance guard (step 4): no pinch-zoom while a project load owns the model.
+            if vm.isLoadingProject { return event }
             // Like the wheel: only a pinch over the timeline zooms it.
             guard hs.position != nil else { return event }
 
@@ -324,6 +329,11 @@ extension TimelineView {
         //  - the end-of-chain relay of a plugin window (@see setPluginKeyFallback),
         //    for the keys the plugin did NOT consume.
         let handleKeyDown: (NSEvent) -> NSEvent? = { event in
+            // The anti-reentrance guard (step 4): a project load owns the model for its whole
+            // duration — letting the key through untouched rather than swallowing it, so a
+            // keystroke meant for nothing in particular (Cmd+Z on an empty-looking timeline, say)
+            // does not read as consumed either.
+            if vm.isLoadingProject { return event }
             if isTextInput() { return event }
             // Let a LEFT-HAND PANEL or a value box handle its own keys when it holds the claim.
             // This monitor runs inside `NSApp.sendEvent`, ahead of the responder chain, so a

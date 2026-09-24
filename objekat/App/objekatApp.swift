@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let vm = viewModel else { return .terminateNow }
+        // The anti-reentrance guard (step 4): quitting mid-load would tear the engine down while
+        // `applyProjectDocument` still owns it (the `ReallocationInhibitor`, the deferred-compile
+        // queue) — refused outright rather than risking a half-loaded project on the next launch.
+        guard !vm.isLoadingProject else { return .terminateCancel }
         return vm.confirmSaveBeforeQuit() ? .terminateNow : .terminateCancel
     }
 
@@ -104,11 +108,19 @@ struct objekatApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
+            // The anti-reentrance guard (step 4): every entry that touches the document, the engine
+            // or the transport is disabled for the span of a load — `isLoadingProject` reads
+            // `viewModel.loadState`, an `@Observable` property, so the menu regreys itself with no
+            // extra plumbing.
             CommandGroup(replacing: .newItem) {
                 Button(L("menu.file.newProject")) { viewModel.newProject() }
                     .keyboardShortcut("n", modifiers: [.command])
-                Button(L("menu.file.open")) { viewModel.loadProject() }
+                    .disabled(viewModel.isLoadingProject)
+                Button(L("menu.file.open")) {
+                    Task { await viewModel.loadProjectAsyncFromPanel() }
+                }
                     .keyboardShortcut("o", modifiers: [.command])
+                    .disabled(viewModel.isLoadingProject)
                 Menu(L("menu.file.recentProjects")) {
                     if viewModel.recentProjects.isEmpty {
                         Button(L("menu.file.noRecentItems")) {}
@@ -116,7 +128,7 @@ struct objekatApp: App {
                     } else {
                         ForEach(viewModel.recentProjects, id: \.self) { url in
                             Button(EditViewModel.projectDisplayName(for: url)) {
-                                viewModel.openRecentProject(url)
+                                Task { await viewModel.openRecentProjectAsync(url) }
                             }
                         }
                         Divider()
@@ -125,20 +137,25 @@ struct objekatApp: App {
                         }
                     }
                 }
+                .disabled(viewModel.isLoadingProject)
             }
             CommandGroup(replacing: .saveItem) {
                 Button(L("menu.file.save")) { viewModel.save() }
                     .keyboardShortcut("s", modifiers: [.command])
+                    .disabled(viewModel.isLoadingProject)
                 Button(L("menu.file.saveAs")) { viewModel.saveAs() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(viewModel.isLoadingProject)
                 Button(L("menu.file.saveCopyWithAudio")) {
                     viewModel.saveCopyWithAudioFiles()
                 }
+                    .disabled(viewModel.isLoadingProject)
                 Divider()
                 // Mix export: opens the settings panel; the render that follows runs in the background
                 // (@see EditViewModel+Export).
                 Button(L("menu.file.export")) { viewModel.openExportPanel() }
                     .keyboardShortcut("e", modifiers: [.command])
+                    .disabled(viewModel.isLoadingProject)
             }
             // THE 'SCRIPTS' MENU — entries declared by the manifests in
             // `~/Library/Application Support/Objekat/Plugins/`. Each entry launches a SEPARATE PROCESS
@@ -151,6 +168,7 @@ struct objekatApp: App {
                     ForEach(scripts.plugins) { plugin in
                         scriptMenu(for: plugin)
                     }
+                    .disabled(viewModel.isLoadingProject)
                 }
                 Divider()
                 Button(L("menu.scripts.openFolder")) {
@@ -159,7 +177,9 @@ struct objekatApp: App {
                                                              withIntermediateDirectories: true)
                     NSWorkspace.shared.open(folder)
                 }
+                .disabled(viewModel.isLoadingProject)
                 Button(L("menu.scripts.reload")) { scripts.reload() }
+                    .disabled(viewModel.isLoadingProject)
             }
         }
 

@@ -33,6 +33,13 @@ enum Quiescence {
         var reasons: [String] = []
 
         if let vm = CommandContext.shared.viewModel {
+            // A project load (@see EditViewModel+ProjectLoad): most commands already answer
+            // `invalid_state` for as long as it runs (CommandRegistry.execute), but `wait_idle`
+            // itself is one of the few let through — it is precisely how an `async: true`
+            // `project.open` is awaited from here.
+            if vm.isLoadingProject {
+                reasons.append("project loading")
+            }
             // `bakingIDs` carries an ancestor's name: freezing is no longer a user action (the menu
             // entries were removed), but the RENDER LOCK it introduced still serves — consolidated objects are
             // what arm it now, for the time of a consolidate bake or a placement re-bake. So the label

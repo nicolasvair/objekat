@@ -51,6 +51,10 @@ final class ObjekatSession {
     /// the view's `.onAppear` as from a windowless launch.
     func start() {
         viewModel.engine = engine
+        // Fixes the bug flagged by project_load_progress_plan: a project load stops the engine
+        // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
+        // left the transport showing ▶ although the sound had already stopped.
+        viewModel.projectLoadWillBeginHook = { [weak self] in self?.stop() }
         guard playheadTimer == nil else { return }
         // `.common` mode — and not the default one: without it, the playhead freezes while tracking
         // a menu or scrolling. It was already the mode of the view's `Timer.publish`, and keeping it
@@ -99,6 +103,10 @@ final class ObjekatSession {
     /// with "s" has to keep filtering the whole playback, otherwise pressing space would break it
     /// at the very moment one wants to hear it.
     func play() {
+        // The anti-reentrance guard (step 4): a project load owns the engine and the transport for
+        // its whole duration — starting playback mid-load would race `applyProjectDocument`'s own
+        // `engine?.stop()`/rebuild.
+        guard !viewModel.isLoadingProject else { return }
         pausedAt = nil   // a plain playback starts from the cursor, not from the pause
         playheadPosition = viewModel.cursorPosition
         engine.seek(to: playheadPosition)
@@ -111,6 +119,7 @@ final class ObjekatSession {
     /// must a plain stop; only the playhead differs between the two (the cursor vs. where it was
     /// cut).
     func togglePause() {
+        guard !viewModel.isLoadingProject else { return }
         if isPlaying {
             engine.stop()
             isPlaying = false
