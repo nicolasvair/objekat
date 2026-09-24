@@ -111,6 +111,10 @@ struct ContentView: View {
                 .frame(minWidth: 420)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The progress overlay of a project load (step 6, project_load_progress_plan): drawn
+            // on top of the content zone only — the transport bar above stays legible, if inert
+            // (its own controls guard `isLoadingProject` where it matters, @see ObjekatSession).
+            .overlay { ProjectLoadOverlay(viewModel: viewModel) }
         }
         .frame(minWidth: 700, minHeight: 420)
         // The export panel: a compact sheet, placed high in the window — the timeline stays visible
