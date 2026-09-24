@@ -2,18 +2,18 @@ import SwiftUI
 
 /// The progress overlay shown while a project is loading — step 6 of project_load_progress_plan.
 ///
-/// Same family as `ExportProgressBar`/`ExportPanelView`, but a VEIL rather than a strip: unlike an
-/// export, which leaves the app usable, a load owns the model and the engine for its whole
-/// duration (step 4's anti-reentrance guard) — nothing behind the veil can be touched anyway, so
-/// the veil says so rather than pretending otherwise. It sits over the CONTENT zone only (below
+/// Same family as `ExportProgressBar`/`ExportPanelView`, but a centred card over the content rather
+/// than a strip: unlike an export, which leaves the app usable, a load owns the model and the
+/// engine for its whole duration (step 4's anti-reentrance guard) — nothing behind it can be
+/// touched anyway, and its clear layer takes the clicks. It sits over the CONTENT zone only (below
 /// the transport bar), placed by `ContentView` as an `.overlay` on the `HSplitView` — drawn on
 /// top, it absorbs every click by itself, with no `.allowsHitTesting` needed.
 ///
 /// The veil is laid AT ONCE, with no fade-in (user decision, 24 September 2026): the old 300 ms
 /// grace let the teardown and the new project's first objects flash in the clear before the blur
 /// came down. Once shown it stays for at least 300 ms — a flash the eye cannot read would be worse
-/// than a veil held a beat too long — and it fades OUT over 150 ms. Half as blurred as the
-/// thinnest system material: the material at half opacity over the content.
+/// than a veil held a beat too long — and it fades OUT over 150 ms. There is no blur: tried (the
+/// system material, whole or partial) and dropped as serving no purpose.
 struct ProjectLoadOverlay: View {
     @Bindable var viewModel: EditViewModel
 
@@ -21,17 +21,16 @@ struct ProjectLoadOverlay: View {
     @State private var pendingShowWork: DispatchWorkItem?
     @State private var shownAt: Date?
 
-    /// How much of the blur is kept (user decision: half as blurred).
-    private static let veilStrength: Double = 0.5
     private static let minVisible: TimeInterval = 0.3
     private static let fadeDuration: TimeInterval = 0.15
 
     var body: some View {
         ZStack {
             if showOverlay {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(Self.veilStrength)
+                // No blur (user decision, 24 September 2026: it served no purpose) — a clear layer
+                // that still absorbs every click, the content staying in plain view behind the card.
+                Color.clear
+                    .contentShape(Rectangle())
                     .ignoresSafeArea()
                     .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 card
