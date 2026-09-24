@@ -219,6 +219,15 @@ extension View {
     func onDragIf(_ provider: (() -> NSItemProvider)?) -> some View {
         if let provider { self.onDrag(provider) } else { self }
     }
+
+    /// Same as `onDragIf(_:)`, with a custom drag image instead of AppKit's default "grabbed
+    /// view" snapshot — used by a plugin card, whose default preview (the bare name, cropped to
+    /// its label's own frame) said nothing about what dropping it does.
+    @ViewBuilder
+    func onDragIf<Preview: View>(_ provider: (() -> NSItemProvider)?,
+                                  @ViewBuilder preview: () -> Preview) -> some View {
+        if let provider { self.onDrag(provider, preview: preview) } else { self }
+    }
 }
 
 // MARK: - Signal view (pure rendering)
@@ -349,6 +358,7 @@ struct SynopticView: View {
                     onToggleBypass: { actions.onToggleBypass(c.plugin.id) },
                     onRemove: { actions.onRemove(c.plugin.id) },
                     dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
+                    dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
                     onDropPlugin: actions.onDropOntoCard.map { f in { dragged, copy in f(c.plugin.id, dragged, copy) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
@@ -670,6 +680,10 @@ struct SynopticCardView: View {
     let onToggleBypass: () -> Void
     let onRemove: () -> Void
     var dragProvider: (() -> NSItemProvider)? = nil
+    /// How many plugins this drag actually carries — the same count `dragProvider`'s own payload
+    /// carries (a card taken FROM the selection drags the whole selection, one taken from outside
+    /// drags itself alone), so the preview's "×N" badge never disagrees with what a drop receives.
+    var dragCount: Int = 1
     /// Dropping ANOTHER plugin on this card (the branch's axis): `(draggedPluginID, copy)`.
     /// `copy` = ⌥ held. nil = the card does not receive (the demo).
     var onDropPlugin: ((_ draggedPluginID: UUID, _ copy: Bool) -> Void)? = nil
@@ -729,7 +743,9 @@ struct SynopticCardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { (onOpenEditor ?? onSelect)() }
-                        .onDragIf(dragProvider)
+                        .onDragIf(dragProvider) {
+                            PluginDragPreview(plugin: plugin, dragCount: dragCount)
+                        }
                         .help(L("synoptic.openPlugin"))
 
                     // 🔗 — the link toggle. Linked: a solid badge, tinted by the group's colour.
@@ -820,6 +836,55 @@ struct SynopticCardView: View {
                         delegate: PluginDropDelegate(isTargeted: $dropTargeted,
                                                      onDrop: onDropPlugin))
         }
+    }
+}
+
+/// The image AppKit shows under the pointer while a plugin card is being dragged, in place of its
+/// default "grabbed view" snapshot — the bare name cropped to its own label frame, which said
+/// nothing about what letting go does. Rendered OUTSIDE the view hierarchy (AppKit snapshots it
+/// once, off to the side), hence explicit colours throughout rather than anything that leans on
+/// an ancestor's environment.
+struct PluginDragPreview: View {
+    let plugin: SynopticPlugin
+    var dragCount: Int = 1
+
+    private let width = SynopticLayout.cardW
+    private let height: CGFloat = 44
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(plugin.color, lineWidth: 1.5)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(plugin.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                Text(L("synoptic.drag.legend"))
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if dragCount > 1 {
+                Text(verbatim: "×\(dragCount)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(plugin.color))
+                    .padding(6)
+            }
+        }
+        .frame(width: width, height: height)
     }
 }
 
