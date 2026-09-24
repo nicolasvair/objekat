@@ -4463,52 +4463,6 @@
         }
       }
     },
-    "inspector.field.semitones": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Semitones"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Semitonos"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Demi-tons"
-          }
-        }
-      }
-    },
-    "inspector.field.speed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Speed"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Velocidad"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vitesse"
-          }
-        }
-      }
-    },
     "inspector.field.volume": {
       "extractionState": "manual",
       "localizations": {
@@ -4532,71 +4486,25 @@
         }
       }
     },
-    "inspector.section.sends": {
+    "inspector.reverse.mixed": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sends"
+            "value": "Mixed reverse — one click reverses every sound"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Envíos"
+            "value": "Inversión mixta — un clic invierte todos los sonidos"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Envois"
-          }
-        }
-      }
-    },
-    "inspector.section.settings": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Settings"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ajustes"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Réglages"
-          }
-        }
-      }
-    },
-    "inspector.section.stem": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stem"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stem"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stem"
+            "value": "Inversion mixte — un clic inverse tous les sons"
           }
         }
       }
@@ -4620,29 +4528,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d objets"
-          }
-        }
-      }
-    },
-    "inspector.speed.disabledByGroup": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Disabled: the selection contains a group"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desactivado: la selección contiene un grupo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Désactivé : la sélection contient un groupe"
           }
         }
       }

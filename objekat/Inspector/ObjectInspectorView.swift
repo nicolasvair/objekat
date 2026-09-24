@@ -31,6 +31,11 @@ struct ObjectInspectorView: View {
     // per aux (the key being the auxID), the same logic as relVolume/volRelative.
     @State private var relSend: [UUID: Double] = [:]
     @State private var sendRelative: [UUID: Bool] = [:]
+    /// The wav-BPM field of a multiple selection: the shared base, empty when they differ.
+    @State private var multiBaseBPMText: String = ""
+    /// The target-BPM box has been moved during this selection: every sound now shares it, so it
+    /// shows a value rather than '≠'.
+    @State private var multiTargetTouched: Bool = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -94,21 +99,25 @@ struct ObjectInspectorView: View {
     }
 
     // MARK: - Multiple selection
+    //
+    // The same reading as a single object, top to bottom: WHAT is selected (the items, drawn as
+    // small blocks of the timeline — colour, corners, glyph, name), then the zones of the signal
+    // view in their own order — audio file, clip mix, sends, stems — with the same controls and
+    // the same gestures. What differs is only what a batch needs: the 'rel.' badge when the values
+    // differ (a delta preserving the differences), and a count when a zone concerns only part of
+    // the selection ('audio file (3/5)': the speed only reaches the sounds).
 
     private var multiSelectionContent: some View {
-        // A single column: the selected sounds at the top, the settings (mix, stem, sends)
-        // underneath. Vertical scrolling only.
         ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 12) {
-                selectionListColumn
-                Divider()
-                multiMixColumn
-                Divider()
-                multiStemSelector
-                if !viewModel.selectionSendAuxes().isEmpty {
-                    Divider()
-                    multiSendsColumn
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("inspector.selection.count", selectedObjects.count))
+                    .font(.caption).foregroundStyle(.secondary)
+                selectionItems
+                    .padding(.bottom, 4)
+                if !selectedSounds.isEmpty { multiAudioFileZone }
+                multiClipZone
+                if !viewModel.selectionSendAuxes().isEmpty { multiSendsZone }
+                multiStemsZone
             }
             .padding(12)
             .frame(width: multiColumnWidth, alignment: .topLeading)
@@ -119,39 +128,496 @@ struct ObjectInspectorView: View {
         .onChange(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
     }
 
-    /// The width of the single multiple-selection column: a little wider than the single-object
-    /// columns so as to give the 'label … box' rows some air.
-    private let multiColumnWidth: CGFloat = 260
+    /// The width of the single multiple-selection column: the signal view's own zone width and a
+    /// little more, so the zones read at the size they have for one object.
+    private let multiColumnWidth: CGFloat = 280
 
-    // Left column: the list of clips / groups concerned plus their values.
-    private var selectionListColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(L("inspector.selection.count", selectedObjects.count))
-                .font(.caption).foregroundStyle(.secondary)
+    /// Up to this many items, one block per row with its values under it; beyond, the blocks
+    /// flow and wrap — thirty rows would push the zones out of the dock.
+    private let multiItemRowsLimit = 12
 
-            ForEach(selectedObjects) { obj in
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(viewModel.stemColor(for: obj.id).opacity(0.8))
-                            .frame(width: 8, height: 8)
-                        Image(systemName: isGroup(obj) ? "rectangle.3.group" : "waveform")
-                            .font(.system(size: 9)).foregroundStyle(.secondary)
-                        Text(obj.displayName)
-                            .font(.caption).lineLimit(1).truncationMode(.middle)
-                    }
-                    Text(itemValueSummary(obj))
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 14)
-                    if let sends = itemSendSummary(obj) {
-                        Text(sends)
+    // MARK: Items
+
+    @ViewBuilder
+    private var selectionItems: some View {
+        if selectedObjects.count <= multiItemRowsLimit {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(selectedObjects) { obj in
+                    VStack(alignment: .leading, spacing: 1) {
+                        itemBlock(obj, fill: true)
+                        Text(itemValueSummary(obj))
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundStyle(.tertiary)
-                            .lineLimit(1).truncationMode(.tail)
-                            .padding(.leading, 14)
+                            .padding(.leading, 6)
+                        if let sends = itemSendSummary(obj) {
+                            Text(sends)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1).truncationMode(.tail)
+                                .padding(.leading, 6)
+                        }
                     }
                 }
+            }
+        } else {
+            ItemFlowLayout(spacing: 4) {
+                ForEach(selectedObjects) { obj in
+                    itemBlock(obj, fill: false)
+                        .help(itemValueSummary(obj))
+                }
+            }
+        }
+    }
+
+    /// One item, drawn as its timeline block is: a white base under the stem (or custom) colour at
+    /// the SELECTED opacity, the block's border, its corners (square-ish for a sound or a MIDI
+    /// clip, round for a group or an aux — `blockCornerRadius`, scaled to a 22 px block), then the
+    /// kind glyph and the name, black, red for a missing file.
+    /// Click = this one alone; ⌘-click = out of (or into) the selection — the timeline's own rule.
+    private func itemBlock(_ obj: SoundObject, fill: Bool) -> some View {
+        let color = obj.customColor ?? viewModel.stemColor(for: obj.id)
+        let round = obj.blockCornerRadius >= 20
+        let shape = RoundedRectangle(cornerRadius: round ? 9 : 3)
+        let missing = viewModel.isMissing(obj)
+        return HStack(spacing: 4) {
+            Image(systemName: ObjectKindIcon.name(for: obj,
+                                                  isOpenConsolidate: viewModel.isInConsolidateEditStack(obj.id)))
+                .font(.system(size: 10, weight: .bold))
+                .blockIconStyle(missingFile: missing)
+            Text(obj.displayName)
+                .font(.system(size: 11, weight: .medium))
+                .blockNameStyle(missingFile: missing)
+                .lineLimit(1).truncationMode(.middle)
+            if obj.isMuted {
+                Image(systemName: "speaker.slash.fill")
+                    .font(.system(size: 8)).foregroundStyle(Color.black.opacity(0.5))
+            }
+        }
+        .padding(.horizontal, round ? 8 : 5)
+        .frame(height: 22)
+        .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
+        .background(shape.fill(color.opacity(0.55)))
+        .background(shape.fill(Color.white))
+        .overlay(shape.strokeBorder(color.opacity(0.9), lineWidth: 1.5))
+        .contentShape(shape)
+        .onTapGesture {
+            viewModel.select(obj.id, additive: NSEvent.modifierFlags.contains(.command))
+        }
+    }
+
+    // MARK: Zones (the signal view's, @see AudioFileZoneView / ClipMixZoneView / SendsZoneView / StemsZoneView)
+
+    /// A zone's frame: the signal view's rounded rectangle, dashed for a branch (the sends).
+    private func zone<C: View>(dashed: Bool = false, @ViewBuilder _ content: () -> C) -> some View {
+        content()
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.35),
+                              style: StrokeStyle(lineWidth: 1, dash: dashed ? [4, 3] : [])))
+    }
+
+    private func zoneTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1).fixedSize()
+    }
+
+    /// The 'rel.' badge: the box moves every value by the same delta, the differences are kept.
+    @ViewBuilder
+    private func relBadge(_ relative: Bool) -> some View {
+        if relative {
+            Text(L("inspector.badge.relative"))
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 3).padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.12)))
+                .help(L("inspector.badge.relative.help"))
+        }
+    }
+
+    /// A toggle pill of the signal view (loop / reverse): on = accent, off = grey, and a MIXED
+    /// selection half-lit — the click then turns it on for everyone.
+    private func pill(_ text: String, on: Bool?, action: @escaping () -> Void) -> some View {
+        let lit = on ?? false
+        return Button(action: action) {
+            Text(text)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(lit ? Color.white : Color.secondary)
+                .padding(.horizontal, 6).frame(height: 16)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(lit ? Color.accentColor
+                          : (on == nil ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.18))))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // 'audio file': speed / semitones for the SOUNDS of the selection; reverse and bpm only when
+    // every item is one (a group, an aux or a MIDI clip has no file to reverse or to stretch).
+    private var multiAudioFileZone: some View {
+        let sounds = selectedSounds
+        let allSounds = sounds.count == selectedObjects.count
+        return zone {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 4) {
+                    zoneTitle(L("synoptic.audioFile"))
+                    if !allSounds {
+                        Text(verbatim: "(\(sounds.count)/\(selectedObjects.count))")
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
+                    relBadge(speedRelative)
+                    Spacer(minLength: 0)
+                    if allSounds {
+                        pill(L("synoptic.reverse.label"), on: uniformReversed) {
+                            let target = !(uniformReversed ?? false)
+                            viewModel.edit {
+                                for o in sounds where o.isReversed != target {
+                                    viewModel.updateReversed(id: o.id, reversed: target)
+                                }
+                            }
+                        }
+                        .help(uniformReversed == nil ? L("inspector.reverse.mixed")
+                              : (uniformReversed! ? L("synoptic.reverse.on") : L("synoptic.reverse.off")))
+                    }
+                }
+                HStack(spacing: 6) {
+                    DragValueBox(
+                        value: relSemis,
+                        format: { v in
+                            speedRelative ? String(format: "×%.2f", pow(2.0, v / 12.0))
+                                          : String(format: "%.2f×", pow(2.0, v / 12.0))
+                        },
+                        range: -48...48, pointsPerStep: 6, snap: false, width: 52, keyStep: 1,
+                        parse: { Double($0.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "×", with: "").replacingOccurrences(of: "x", with: "")).map { 12 * log2(max(1e-6, $0)) } },
+                        help: L("help.drag.speed"),
+                        onBegin: { viewModel.pushUndo() },
+                        onChange: { new in
+                            applySpeedDeltaSemis(new - relSemis)
+                            relSemis = new
+                        },
+                        onReset: { resetSpeedSelected() }
+                    )
+                    DragValueBox(
+                        value: relSemis,
+                        format: { v in
+                            let r = v.rounded()
+                            if abs(v - r) < 0.05 { return r == 0 ? "0 st" : String(format: "%+.0f st", r) }
+                            return String(format: "%+.1f st", v)
+                        },
+                        range: -48...48, pointsPerStep: 6, snap: true, width: 48, keyStep: 1,
+                        help: L("help.drag.semitones"),
+                        onBegin: { viewModel.pushUndo() },
+                        onChange: { new in
+                            applySpeedDeltaSemis(new - relSemis)
+                            relSemis = new
+                        },
+                        onReset: { resetSpeedSelected() }
+                    )
+                    Spacer(minLength: 0)
+                    if allSounds { multiBPMFields(sounds) }
+                }
+            }
+        }
+    }
+
+    /// The wav's BPM → the target BPM, as for one object. The wav field SETS every sound's base
+    /// (empty = clears it); the target puts EVERY sound on that tempo (speed = target / base) —
+    /// the batch's most useful gesture, aligning takes of different tempos at once. It needs a base
+    /// on every sound, a dash otherwise; mixed targets read '≠' until moved.
+    @ViewBuilder
+    private func multiBPMFields(_ sounds: [SoundObject]) -> some View {
+        TextField(text: $multiBaseBPMText) { Text(verbatim: uniformBaseBPM == nil && sounds.contains { $0.baseBPM != nil } ? "≠" : "—") }
+            .frame(width: max(22, CGFloat(max(2, multiBaseBPMText.count)) * 6.2 + 6))
+            .multilineTextAlignment(.center)
+            .font(.system(size: 10, design: .monospaced))
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 3).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
+            .onSubmit { commitMultiBaseBPM(sounds) }
+            .help(L("synoptic.wavBPM"))
+        Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(.tertiary)
+        let bases = sounds.compactMap { o in o.baseBPM.flatMap { $0 > 0 ? $0 : nil } }
+        if bases.count == sounds.count, let first = sounds.first, let firstBase = first.baseBPM {
+            DragValueBox(
+                value: firstBase * first.speedRatio,
+                format: { uniformTargetBPM == nil && !multiTargetTouched ? "≠" : TempoText.display(TempoText.rounded($0)) },
+                range: 20...400, pointsPerStep: 2, width: 38,
+                keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
+                fitsContent: true,
+                parse: { TempoText.parse($0) },
+                help: L("help.drag.bpm"),
+                onBegin: { viewModel.pushUndo(); multiTargetTouched = true },
+                onChange: { new in
+                    let target = TempoText.rounded(new)
+                    for o in sounds { if let b = o.baseBPM, b > 0 { viewModel.updateSpeed(id: o.id, ratio: target / b) } }
+                    refreshSpeedBaseline()
+                },
+                onReset: { resetSpeedSelected() }
+            )
+        } else {
+            Text(verbatim: "—")
+                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .frame(width: 38, height: 18)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)))
+        }
+        Text(verbatim: "bpm").font(.system(size: 9)).foregroundStyle(.secondary)
+            .fixedSize().layoutPriority(1)
+    }
+
+    private func commitMultiBaseBPM(_ sounds: [SoundObject]) {
+        let t = multiBaseBPMText.trimmingCharacters(in: .whitespaces)
+        let bpm: Double? = t.isEmpty ? nil : TempoText.parse(t).flatMap { $0 > 0 ? $0 : nil }
+        guard t.isEmpty || bpm != nil else { syncMultiBaseBPMText(); return }
+        viewModel.edit { for o in sounds { viewModel.updateBaseBPM(id: o.id, bpm: bpm) } }
+        syncMultiBaseBPMText()
+    }
+
+    private func syncMultiBaseBPMText() {
+        multiBaseBPMText = uniformBaseBPM.map { TempoText.display($0) } ?? ""
+    }
+
+    // 'clip' (the mix): pan, volume and mute on one line, as for one object.
+    private var multiClipZone: some View {
+        zone {
+            VStack(alignment: .leading, spacing: 6) {
+                // The signal view's own title when every item is of one kind; a mixed selection
+                // has no single word for it and shows none.
+                if let key = uniformMixKindKey {
+                    zoneTitle(L(key))
+                }
+                HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 3) { Text(L("inspector.field.pan")).font(.system(size: 9)).foregroundStyle(.secondary); relBadge(panRelative) }
+                        multiPanBox
+                    }
+                    Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 3) { Text(L("inspector.field.volume")).font(.system(size: 9)).foregroundStyle(.secondary); relBadge(volRelative) }
+                        HStack(spacing: 4) {
+                            multiVolumeBox
+                            multiMuteButton
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var uniformMixKindKey: String? {
+        let keys = Set(selectedObjects.map { o in
+            o.isGroup ? "synoptic.mix.kind.group" : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip")
+        })
+        return keys.count == 1 ? keys.first : nil
+    }
+
+    private var multiVolumeBox: some View {
+        DragValueBox(
+            value: relVolume,
+            format: { v in
+                if volRelative { return v <= -96 ? "-∞" : String(format: "%+.0f dB", v) }
+                return v <= -96 ? "-∞ dB" : String(format: "%.0f dB", v)
+            },
+            range: -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
+            help: L("help.drag.volume"),
+            // Touching the control: the fader becomes the 'future automation' row of EVERY object
+            // in the batch, without any value having to move.
+            onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .volume) } },
+            onBegin: { viewModel.pushUndo() },
+            onChange: { new in
+                viewModel.adjustVolumeDB(Float(new - relVolume))
+                relVolume = new
+            },
+            onReset: {
+                viewModel.edit { viewModel.resetVolumeSelected() }
+                relVolume = 0; volRelative = false
+            }
+        )
+    }
+
+    /// The mute of the whole selection: lit when every item is muted, half-lit when some are.
+    private var multiMuteButton: some View {
+        let muted = selectedObjects.filter(\.isMuted).count
+        let all = !selectedObjects.isEmpty && muted == selectedObjects.count
+        return Button { viewModel.edit { viewModel.toggleMuteSelected() } } label: {
+            Image(systemName: all ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(all ? Color.white : (muted > 0 ? Color.red : Color.secondary))
+                .frame(width: 20, height: 18)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(all ? Color.red : (muted > 0 ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18))))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.35)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("common.mute"))
+    }
+
+    private var multiPanBox: some View {
+        DragValueBox(
+            value: relPan,
+            format: { p in
+                // The RELATIVE mode shows a travel, not a position — but in the SAME unit as
+                // the absolute one, and as the direct entry, which parses a percentage
+                // (`parse` below divides by 100). It read `-0.50` where one types 50 and
+                // where the row above says `+3 dB`: a unit shown in one place and hidden in
+                // the other is a number one has to translate before trusting it.
+                if panRelative {
+                    let pct = Int((p * 100).rounded())
+                    return pct == 0 ? "0%" : String(format: "%+d%%", pct)
+                }
+                return abs(p) < 0.01 ? "C" : (p < 0 ? "L \(Int((-p*100).rounded()))%" : "R \(Int((p*100).rounded()))%")
+            },
+            // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
+            // tenths rather than halving them.
+            range: -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
+            parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
+            help: L("help.drag.pan"),
+            onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
+            onBegin: {
+                viewModel.pushUndo()
+                panAnchors = viewModel.panSnapshot()
+                panOrigin = relPan
+            },
+            onChange: { new in
+                // The box's own value is brought onto the detent BEFORE it is shown, or the
+                // display would read 13 % over a model that the gesture has put on 10 %:
+                // `relPan` is a local accumulator, nothing reads the objects back into it
+                // during a drag. Quantising it does not compound — DragValueBox works from
+                // the travel since the gesture's start, never from the value it last wrote.
+                let stepped = Double(EditViewModel.detentedPan(Float(new)))
+                viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
+                relPan = stepped
+            },
+            onReset: {
+                viewModel.edit { viewModel.resetPanSelected() }
+                relPan = 0; panRelative = false
+            }
+        )
+    }
+
+    // 'aux' (the sends, dashed: a branch leaving the trunk): one row per aux the selection
+    // overlaps, the signal view's row shape — arrow, name, level, power.
+    private var multiSendsZone: some View {
+        zone(dashed: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                zoneTitle(L("synoptic.zone.aux"))
+                ForEach(viewModel.selectionSendAuxes()) { aux in
+                    multiSendRow(aux)
+                }
+            }
+        }
+    }
+
+    private func multiSendRow(_ aux: SoundObject) -> some View {
+        let rel = sendRelative[aux.id] ?? false
+        let auxLabel = aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded()))
+        let ids = viewModel.selectedSenders(toAux: aux.id)
+        let enabledCount = ids.filter { viewModel.isSendEnabled(from: $0, to: aux.id) }.count
+        let allOn = !ids.isEmpty && enabledCount == ids.count
+        return HStack(spacing: 6) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(enabledCount > 0 ? Color.accentColor : Color.secondary.opacity(0.6))
+                .frame(width: 14)
+            Text(auxLabel)
+                .font(.system(size: 10)).lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(enabledCount > 0 ? .primary : .secondary)
+            relBadge(rel)
+            Spacer(minLength: 4)
+            DragValueBox(
+                value: relSend[aux.id] ?? Double(sendMinDb),
+                format: { v in
+                    if rel { return v <= Double(sendMinDb) ? "−∞" : String(format: "%+.0f dB", v) }
+                    return sendLevelString(Float(v))
+                },
+                range: Double(sendMinDb)...Double(sendMaxDb),
+                pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                help: L("help.drag.send"),
+                onBegin: { viewModel.pushUndo() },
+                onChange: { new in
+                    let old = relSend[aux.id] ?? Double(sendMinDb)
+                    if rel { viewModel.adjustSendLevelSelected(toAux: aux.id, deltaDb: Float(new - old)) }
+                    else   { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: Float(new)) }
+                    relSend[aux.id] = new
+                },
+                onReset: {
+                    viewModel.edit { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: sendMinDb) }
+                    relSend[aux.id] = Double(sendMinDb); sendRelative[aux.id] = false
+                }
+            )
+            .opacity(enabledCount > 0 ? 1 : 0.5)
+            Button {
+                viewModel.edit { viewModel.setSendEnabledSelected(toAux: aux.id, enabled: !allOn) }
+            } label: {
+                let tint: Color = enabledCount > 0 ? Color.accentColor : Color.secondary
+                Image(systemName: "power")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(tint)
+                    .frame(width: 18, height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4)
+                        .fill(tint.opacity(allOn ? 0.18 : 0.08)))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(tint.opacity(allOn ? 0.45 : 0.25),
+                                      style: StrokeStyle(lineWidth: 1, dash: allOn || enabledCount == 0 ? [] : [2, 2])))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("common.mute"))
+        }
+        .frame(height: SynopticLayout.sendRowH)
+    }
+
+    // 'stems': the destination, one menu. The background takes the current stem's colour; a mixed
+    // selection shows 'Multiple values' on a neutral background. Each item is prefixed with its
+    // keyboard shortcut number (1 = Main, 2 = the 2nd stem…).
+    private var multiStemsZone: some View {
+        let current = uniformStemID                                   // nil = mixed values
+        let isMain  = current != nil && current == viewModel.mainStemID
+        let stemObj = current.flatMap { id in viewModel.stems.first { $0.id == id } }
+        let tint: Color = current == nil ? Color.secondary : (stemObj?.color ?? .secondary)
+        let label: String = current == nil ? L("inspector.stem.mixedValues")
+                                            : (isMain ? L("stem.main.name") : (stemObj?.name ?? "—"))
+        return zone {
+            HStack(spacing: 8) {
+                zoneTitle(L("synoptic.zone.stems"))
+                Menu {
+                    ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in
+                        let itemIsMain = stem.id == viewModel.mainStemID
+                        let prefix = idx < 9 ? "\(idx + 1)  " : ""
+                        let name = itemIsMain ? L("stem.main.name") : stem.name
+                        // A `String` and not a literal: the literal would be a `LocalizedStringKey`,
+                        // and Xcode's extraction would harvest the "%@%@" of the interpolation.
+                        let title = "\(prefix)\(name)"
+                        Button {
+                            viewModel.edit { viewModel.assignStemSelected(stemID: stem.id) }
+                        } label: {
+                            if current == stem.id { Label(title, systemImage: "checkmark") }
+                            else { Text(verbatim: title) }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(label)
+                            .font(.caption)
+                            .lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 7))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(tint.opacity(0.22)))
+                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(tint.opacity(0.5)))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
             }
         }
     }
@@ -164,7 +630,7 @@ struct ObjectInspectorView: View {
         let p = viewModel.liveAutomationValue(.pan,    on: o.id) ?? o.pan
         let vol = v <= -96 ? "-∞" : "\(Int(v.rounded()))dB"
         let pan = abs(p) < 0.01 ? "C" : (p < 0 ? "L\(Int(-p*100))" : "R\(Int(p*100))")
-        if isGroup(o) { return "\(vol) · \(pan)" }
+        if !o.isClip { return "\(vol) · \(pan)" }
         return "\(vol) · \(pan) · " + String(format: "×%.2f", o.speedRatio)
     }
 
@@ -178,260 +644,6 @@ struct ObjectInspectorView: View {
         return parts.isEmpty ? nil : "→ " + parts.joined(separator: " · ")
     }
 
-    // Stem: a compact 'batch' assignment selector. The background takes the current stem's
-    // colour (a visual identity consistent with the stem bar). If the selection is mixed, the
-    // button shows 'Multiple values' on a neutral background. Each item of the menu is prefixed
-    // with its keyboard shortcut number (1 = Main, 2 = the 2nd stem…).
-    private var multiStemSelector: some View {
-        let current = uniformStemID                                   // nil = mixed values
-        let isMain  = current != nil && current == viewModel.mainStemID
-        let stemObj = current.flatMap { id in viewModel.stems.first { $0.id == id } }
-        // The Main has a colour like the other buses (the accent blue by default, recolourable):
-        // only a MIXED selection stays neutral.
-        let tint: Color = current == nil ? Color.secondary : (stemObj?.color ?? .secondary)
-        let label: String = current == nil ? L("inspector.stem.mixedValues")
-                                            : (isMain ? L("stem.main.name") : (stemObj?.name ?? "—"))
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(L("inspector.section.stem")).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-
-            Menu {
-                ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in
-                    let itemIsMain = stem.id == viewModel.mainStemID
-                    let prefix = idx < 9 ? "\(idx + 1)  " : ""
-                    let name = itemIsMain ? L("stem.main.name") : stem.name
-                    // A `String` and not a literal: the literal would be a `LocalizedStringKey`,
-                    // and Xcode's extraction would harvest the "%@%@" of the interpolation.
-                    let title = "\(prefix)\(name)"
-                    Button {
-                        viewModel.edit { viewModel.assignStemSelected(stemID: stem.id) }
-                    } label: {
-                        if current == stem.id { Label(title, systemImage: "checkmark") }
-                        else { Text(verbatim: title) }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(label)
-                        .font(.caption)
-                        .lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 8).frame(height: 22)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 5).fill(tint.opacity(0.22)))
-                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(tint.opacity(0.5)))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-        }
-    }
-
-    // A unified Volume / Pan / Speed / Semitones column.
-    //
-    // Relative 'batch' editing (one delta applied to the whole selection) but through the SAME
-    // graphical boxes as the single-object inspector (DragValueBox): drag ↑/↓, arrow keys, direct
-    // typing, double click = reset. The 'rel.' badge signals that the differences between objects
-    // are preserved (relative mode) rather than one absolute value shared.
-    private var multiMixColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(L("inspector.section.settings")).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-
-            // Volume plus grouped mute (mute = a toggle over the whole selection).
-            batchRow(L("inspector.field.volume"), relative: volRelative) {
-                HStack(spacing: 6) {
-                    DragValueBox(
-                        value: relVolume,
-                        format: { v in
-                            if volRelative { return v <= -96 ? "-∞" : String(format: "%+.0f dB", v) }
-                            return v <= -96 ? "-∞ dB" : String(format: "%.0f dB", v)
-                        },
-                        range: -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
-                        help: L("help.drag.volume"),
-                        // Touching the control: the fader becomes the 'future automation' row of EVERY object
-                        // in the batch, without any value having to move.
-                        onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .volume) } },
-                        onBegin: { viewModel.pushUndo() },
-                        onChange: { new in
-                            viewModel.adjustVolumeDB(Float(new - relVolume))
-                            relVolume = new
-                        },
-                        onReset: {
-                            viewModel.edit { viewModel.resetVolumeSelected() }
-                            relVolume = 0; volRelative = false
-                        }
-                    )
-                    Toggle(isOn: Binding(
-                        get: { !selectedObjects.isEmpty && selectedObjects.allSatisfy(\.isMuted) },
-                        set: { _ in viewModel.edit { viewModel.toggleMuteSelected() } }
-                    )) { Text(verbatim: "M") }
-                    .toggleStyle(.button)
-                    .controlSize(.mini)
-                    .tint(.red)
-                    .frame(width: 24)
-                }
-            }
-
-            batchRow(L("inspector.field.pan"), relative: panRelative) {
-                DragValueBox(
-                    value: relPan,
-                    format: { p in
-                        // The RELATIVE mode shows a travel, not a position — but in the SAME unit as
-                        // the absolute one, and as the direct entry, which parses a percentage
-                        // (`parse` below divides by 100). It read `-0.50` where one types 50 and
-                        // where the row above says `+3 dB`: a unit shown in one place and hidden in
-                        // the other is a number one has to translate before trusting it.
-                        if panRelative {
-                            let pct = Int((p * 100).rounded())
-                            return pct == 0 ? "0%" : String(format: "%+d%%", pct)
-                        }
-                        return abs(p) < 0.01 ? "C" : (p < 0 ? "L \(Int((-p*100).rounded()))%" : "R \(Int((p*100).rounded()))%")
-                    },
-                    // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
-                    // tenths rather than halving them.
-                    range: -1...1, pointsPerStep: 80, snap: false, width: 56, keyStep: 0.1,
-                    parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
-                    help: L("help.drag.pan"),
-                    onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
-                    onBegin: {
-                        viewModel.pushUndo()
-                        panAnchors = viewModel.panSnapshot()
-                        panOrigin = relPan
-                    },
-                    onChange: { new in
-                        // The box's own value is brought onto the detent BEFORE it is shown, or the
-                        // display would read 13 % over a model that the gesture has put on 10 %:
-                        // `relPan` is a local accumulator, nothing reads the objects back into it
-                        // during a drag. Quantising it does not compound — DragValueBox works from
-                        // the travel since the gesture's start, never from the value it last wrote.
-                        let stepped = Double(EditViewModel.detentedPan(Float(new)))
-                        viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
-                        relPan = stepped
-                    },
-                    onReset: {
-                        viewModel.edit { viewModel.resetPanSelected() }
-                        relPan = 0; panRelative = false
-                    }
-                )
-            }
-
-            Divider().padding(.vertical, 2)
-
-            // Speed / semitones: disabled if a group is part of the selection
-            // (the same boxes as the 'audio file' area of the single-object inspector).
-            Group {
-                batchRow(L("inspector.field.speed"), relative: speedRelative) {
-                    DragValueBox(
-                        value: relSemis,
-                        format: { String(format: "%.2f×", pow(2.0, $0 / 12.0)) },
-                        range: -48...48, pointsPerStep: 6, snap: false, width: 56, keyStep: 1,
-                        parse: { Double($0.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "×", with: "").replacingOccurrences(of: "x", with: "")).map { 12 * log2(max(1e-6, $0)) } },
-                        help: L("help.drag.speed"),
-                        onBegin: { viewModel.pushUndo() },
-                        onChange: { new in
-                            applySpeedDeltaSemis(new - relSemis)
-                            relSemis = new
-                        },
-                        onReset: { resetSpeedSelected() }
-                    )
-                }
-
-                batchRow(L("inspector.field.semitones"), relative: speedRelative) {
-                    DragValueBox(
-                        value: relSemis,
-                        format: { v in
-                            let r = v.rounded()
-                            if abs(v - r) < 0.05 { return r == 0 ? "0 st" : String(format: "%+.0f st", r) }
-                            return String(format: "%+.1f st", v)
-                        },
-                        range: -48...48, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
-                        help: L("help.drag.semitones"),
-                        onBegin: { viewModel.pushUndo() },
-                        onChange: { new in
-                            applySpeedDeltaSemis(new - relSemis)
-                            relSemis = new
-                        },
-                        onReset: { resetSpeedSelected() }
-                    )
-                }
-            }
-            .opacity(selectionHasGroup ? 0.4 : 1)
-            .disabled(selectionHasGroup)
-            // `helpIf` and not `help`: an empty tooltip on this Group would override those of the
-            // Speed / Semitones boxes it contains. @see helpIf
-            .helpIf(selectionHasGroup ? L("inspector.speed.disabledByGroup") : nil)
-        }
-    }
-
-    /// One row of a 'batch' setting: the label (+ a 'rel.' badge if relative) on the left, the box on the right.
-    private func batchRow<C: View>(_ label: String, relative: Bool,
-                                   @ViewBuilder _ control: () -> C) -> some View {
-        HStack(spacing: 8) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1).truncationMode(.middle)
-            if relative {
-                Text(L("inspector.badge.relative"))
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 3).padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.12)))
-                    .help(L("inspector.badge.relative.help"))
-            }
-            Spacer(minLength: 8)
-            control()
-        }
-    }
-
-    // Sends column: one checkbox plus one graphical box per aux overlapping the selection.
-    // Relative if the levels differ from one object to another (preserving the differences), absolute otherwise.
-    private var multiSendsColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(L("inspector.section.sends")).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            ForEach(viewModel.selectionSendAuxes()) { aux in
-                let rel = sendRelative[aux.id] ?? false
-                let auxLabel = aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded()))
-                batchRow(auxLabel, relative: rel) {
-                    HStack(spacing: 6) {
-                        Toggle(noLabel, isOn: Binding(
-                            get: {
-                                let ids = viewModel.selectedSenders(toAux: aux.id)
-                                return !ids.isEmpty && ids.allSatisfy { viewModel.isSendEnabled(from: $0, to: aux.id) }
-                            },
-                            set: { on in viewModel.edit { viewModel.setSendEnabledSelected(toAux: aux.id, enabled: on) } }
-                        ))
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-
-                        DragValueBox(
-                            value: relSend[aux.id] ?? Double(sendMinDb),
-                            format: { v in
-                                if rel { return v <= Double(sendMinDb) ? "−∞" : String(format: "%+.0f dB", v) }
-                                return sendLevelString(Float(v))
-                            },
-                            range: Double(sendMinDb)...Double(sendMaxDb),
-                            pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
-                            help: L("help.drag.send"),
-                            onBegin: { viewModel.pushUndo() },
-                            onChange: { new in
-                                let old = relSend[aux.id] ?? Double(sendMinDb)
-                                if rel { viewModel.adjustSendLevelSelected(toAux: aux.id, deltaDb: Float(new - old)) }
-                                else   { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: Float(new)) }
-                                relSend[aux.id] = new
-                            },
-                            onReset: {
-                                viewModel.edit { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: sendMinDb) }
-                                relSend[aux.id] = Double(sendMinDb); sendRelative[aux.id] = false
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Multiple-selection helpers
 
     private var selectedObjects: [SoundObject] {
@@ -440,17 +652,14 @@ struct ObjectInspectorView: View {
             .sorted { $0.startTime < $1.startTime }
     }
 
-    private var selectionHasGroup: Bool {
-        selectedObjects.contains { isGroup($0) }
+    /// The SOUNDS of the selection — the audio clips, the only objects with a file to play faster,
+    /// to reverse or to give a tempo. A group, an aux or a MIDI clip is left out of the speed.
+    private var selectedSounds: [SoundObject] {
+        selectedObjects.filter(\.isClip)
     }
 
     private var selectedClipIDs: [UUID] {
-        selectedObjects.filter { !isGroup($0) }.map(\.id)
-    }
-
-    private func isGroup(_ o: SoundObject) -> Bool {
-        if case .group = o.kind { return true }
-        return false
+        selectedSounds.map(\.id)
     }
 
     /// Applies a pitch delta (in semitones) to each clip of the selection,
@@ -493,9 +702,35 @@ struct ObjectInspectorView: View {
     }
 
     private var uniformSemis: Double? {
-        let vals = selectedObjects.filter { !isGroup($0) }.map(\.speedRatio)
+        let vals = selectedSounds.map(\.speedRatio)
         guard let f = vals.first, vals.allSatisfy({ abs($0 - f) < 1e-6 }) else { return nil }
         return 12 * log2(f)
+    }
+
+    /// true / false when every sound agrees, nil when they differ (the pill then half-lit).
+    private var uniformReversed: Bool? {
+        let vals = selectedSounds.map(\.isReversed)
+        guard let f = vals.first, vals.allSatisfy({ $0 == f }) else { return nil }
+        return f
+    }
+
+    private var uniformBaseBPM: Double? {
+        let vals = selectedSounds.map(\.baseBPM)
+        guard let f = vals.first, let v = f, vals.allSatisfy({ $0 == f }) else { return nil }
+        return v
+    }
+
+    /// The tempo every sound plays at (base × speed), nil if they differ or one has no base.
+    private var uniformTargetBPM: Double? {
+        let vals = selectedSounds.map { o in o.baseBPM.map { TempoText.rounded($0 * o.speedRatio) } }
+        guard let f = vals.first, let v = f, vals.allSatisfy({ $0 == f }) else { return nil }
+        return v
+    }
+
+    /// After the target BPM has moved every speed: the speed boxes read the new state.
+    private func refreshSpeedBaseline() {
+        if let s = uniformSemis { relSemis = s; speedRelative = false }
+        else { relSemis = 0; speedRelative = true }
     }
 
     private func refreshMultiBaselines() {
@@ -505,8 +740,9 @@ struct ObjectInspectorView: View {
         if let p = uniformPan { relPan = Double(p); panRelative = false }
         else { relPan = 0; panRelative = true }
 
-        if let s = uniformSemis { relSemis = s; speedRelative = false }
-        else { relSemis = 0; speedRelative = true }
+        refreshSpeedBaseline()
+        syncMultiBaseBPMText()
+        multiTargetTouched = false
 
         relSend.removeAll(); sendRelative.removeAll()
         for aux in viewModel.selectionSendAuxes() {
@@ -530,5 +766,38 @@ struct ObjectInspectorView: View {
                 .font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The blocks of a large selection, flowing left to right and wrapping — a row per block would
+/// push the zones out of the dock past a dozen items.
+private struct ItemFlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        return CGSize(width: proposal.width ?? rows.width, height: rows.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = arrange(width: bounds.width, subviews: subviews)
+        for (i, p) in rows.origins.enumerated() {
+            subviews[i].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y),
+                              proposal: ProposedViewSize(rows.sizes[i]))
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews)
+        -> (origins: [CGPoint], sizes: [CGSize], width: CGFloat, height: CGFloat) {
+        var origins: [CGPoint] = [], sizes: [CGSize] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxX: CGFloat = 0
+        for sv in subviews {
+            var sz = sv.sizeThatFits(.unspecified)
+            sz.width = min(sz.width, width)
+            if x > 0, x + sz.width > width { x = 0; y += rowH + spacing; rowH = 0 }
+            origins.append(CGPoint(x: x, y: y)); sizes.append(sz)
+            x += sz.width + spacing; rowH = max(rowH, sz.height); maxX = max(maxX, x - spacing)
+        }
+        return (origins, sizes, maxX, y + rowH)
     }
 }
