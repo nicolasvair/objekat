@@ -1045,6 +1045,12 @@ struct OBJRenderChain {
     // INC 2 — veilleur de latence (PDC à chaud) + dernière signature de latence observée.
     std::unique_ptr<OBJLatencyWatcher>                    _latencyWatcher;
     double                                                _lastLatencySignature;  // <0 = non initialisée
+
+    // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
+    // -endBulkLoad. Tant qu'il vit, l'Edit n'alloue aucun nouveau graphe de lecture — chaque
+    // compileUserRackForObjectID: appelé pendant la file de plugins différés se contente de
+    // modifier la PluginList, sans reconstruction. @see EditViewModel+ProjectLoad.
+    std::unique_ptr<te::TransportControl::ReallocationInhibitor> _bulkLoadInhibitor;
     // Un compile de rack vient d'avoir lieu : il a DÉJÀ demandé une reconstruction, donc le
     // changement de latence qui en découle est déjà compensé. Le prochain tic du veilleur doit
     // absorber la nouvelle signature sans reconstruire une deuxième fois (cf. checkLatencyAndRebuild).
@@ -1250,6 +1256,34 @@ static BOOL gOBJAudioDisabled = NO;
         _lastLatencySignature = sig;
         _edit->restartPlayback();
     }
+}
+
+// Barre de progression au chargement de projet (@see EditViewModel+ProjectLoad). Pendant toute la
+// durée d'un chargement, la file de compiles différés appelle compileUserRackForObjectID: une fois
+// par objet/instrument — chacun se termine par un restartPlayback() (cf. plus haut) qui, sans
+// l'inhibiteur, réallouerait le graphe de lecture à CHAQUE plugin. ReallocationInhibitor rend ces
+// appels inoffensifs : la PluginList est modifiée normalement, seule l'allocation du graphe est
+// différée jusqu'à -endBulkLoad.
+- (void)beginBulkLoad {
+    if (!_edit || _bulkLoadInhibitor) return;   // ré-entrance refusée : une paire stricte, jamais imbriquée
+    // Le veilleur de latence lirait un signal en pleine reconstruction du projet (moitié ancien,
+    // moitié nouveau) et déclencherait sa propre reconstruction au tic suivant — sans compter que
+    // l'inhibiteur la rendrait de toute façon inopérante tant qu'il vit.
+    if (_latencyWatcher) _latencyWatcher->stopTimer();
+    _bulkLoadInhibitor = std::make_unique<te::TransportControl::ReallocationInhibitor>(_edit->getTransport());
+}
+
+- (void)endBulkLoad {
+    if (!_bulkLoadInhibitor) return;
+    _bulkLoadInhibitor.reset();   // lève l'inhibition : le graphe peut de nouveau être réalloué
+    if (_edit) {
+        _edit->getTransport().ensureContextAllocated();
+        _edit->restartPlayback();   // LA seule reconstruction pour tout ce que le chargement a changé
+    }
+    // Nouvelle baseline : la reconstruction ci-dessus vient de compenser la latence du projet
+    // fraîchement chargé, le tic suivant ne doit pas la comparer à celle de l'ANCIEN projet.
+    _lastLatencySignature = -1.0;
+    if (_latencyWatcher) _latencyWatcher->startTimer(250);
 }
 
 // MARK: - Cache plugins

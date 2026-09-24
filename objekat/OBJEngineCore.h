@@ -545,6 +545,16 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (double)currentPlaybackPosition;
 - (BOOL)isCurrentlyPlaying;
 
+// Chargement de projet en masse : inhibe la réallocation du graphe de lecture (te::TransportControl::
+// ReallocationInhibitor) et suspend le veilleur de latence pendant toute la durée du chargement, pour
+// que les dizaines/centaines de compileUserRackForObjectID: qui suivent n'en déclenchent chacun une
+// reconstruction partielle. Appels EMBOÎTABLES en théorie mais utilisés en PAIRE STRICTE (jamais
+// imbriqués) par EditViewModel+ProjectLoad ; `endBulkLoad` réaffirme le contexte et relance la
+// lecture UNE SEULE FOIS, à la fin. Aucun patch du sous-module Tracktion : ReallocationInhibitor est
+// une API publique déjà exposée par tracktion_TransportControl.h.
+- (void)beginBulkLoad;
+- (void)endBulkLoad;
+
 // Tempo et signature temporelle
 - (double)getTempo;
 - (void)setTempo:(double)bpm;                        // remap=YES (compat init)
