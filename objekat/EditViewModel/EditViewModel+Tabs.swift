@@ -109,7 +109,7 @@ extension EditViewModel {
     /// freshly opened file, can leave its own opinion on `isDirty` — the parked value must win).
     func restoreParkedProject(_ parked: ParkedProject) async {
         _ = await applyProjectDocumentAsync(parked.doc, displayName: parked.projectName,
-                                            cancellable: false)
+                                            cancellable: false, preservingClipboard: true)
 
         projectURL = parked.projectURL
         projectName = parked.projectName

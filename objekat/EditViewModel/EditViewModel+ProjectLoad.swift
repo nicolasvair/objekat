@@ -157,12 +157,20 @@ extension EditViewModel {
     /// Everything from the annotations through arming the deferred-compile queue and replacing
     /// `items` — but NOT the `syncAdd` loop itself, which the caller drives one item at a time so it
     /// can report progress and breathe between them.
-    private func performStructureSetup(_ doc: ProjectDocument) {
+    /// `preservingClipboard`: tabs INC2 — a tab SWITCH is not a change of project as far as the
+    /// clipboard is concerned (@see Workspace.restoreParkedProject and
+    /// `resetTransientSessionState`'s own doc comment): the cross-project clipboard lives on
+    /// `Workspace`, outside this state entirely, but the LOCAL `clipboard`/`midiNotesClipboard`
+    /// still needs to survive the reload underneath it, or an intra-tab paste right after
+    /// switching back would find nothing. Every other caller (a genuine New/Open) leaves this
+    /// false: pasting the OLD document's ids into a truly different one is exactly the dangling
+    /// stemID/auxID/consolidateID corruption this reset exists to prevent.
+    private func performStructureSetup(_ doc: ProjectDocument, preservingClipboard: Bool = false) {
         consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
         consolidateEditStack.removeAll()
-        resetTransientSessionState()
+        resetTransientSessionState(preservingClipboard: preservingClipboard)
 
         isRestoringTransport = true
         if let t = doc.tempo { tempo = t }
@@ -366,7 +374,8 @@ extension EditViewModel {
     ///   `true` otherwise. Never throws — a decode failure is the caller's (`loadProjectAsync`).
     @discardableResult
     func runProjectLoadAsync(_ doc: ProjectDocument, displayName: String?,
-                             cancellable: Bool = true) async -> Bool {
+                             cancellable: Bool = true,
+                             preservingClipboard: Bool = false) async -> Bool {
         let plan = buildLoadPlan(for: doc)
         let startedAt = Date()
         var phaseStart = startedAt
@@ -389,7 +398,7 @@ extension EditViewModel {
         loadState?.fraction = min(1, done / plan.total)
         await breathIfNeeded(&lastBreath)
 
-        performStructureSetup(doc)
+        performStructureSetup(doc, preservingClipboard: preservingClipboard)
         for item in items {
             addTopLevelItemToEngine(item)
             done += ProjectLoadWeight.structurePerObject * Double(1 + descendantCount(item))

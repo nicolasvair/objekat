@@ -431,11 +431,22 @@ extension EditViewModel {
     /// auxID / consolidateID), the note selection, the bakes under way (their
     /// completions find the object gone and give up cleanly) and the UI states of the
     /// piano rolls (keys = UUIDs of the old project).
-    func resetTransientSessionState() {
+    /// `preservingClipboard`: tabs INC2 — a tab SWITCH reloads this same VM's state underneath the
+    /// hand exactly like a load does, but it is not a change of project as far as the LOCAL
+    /// clipboard goes: `Workspace.restoreParkedProject` passes `true` here so that switching away
+    /// and back still finds what was copied. `CrossProjectImport` is what makes this safe now —
+    /// a paste into a DIFFERENT tab never trusts these ids as they stand, it remaps them
+    /// (@see EditViewModel+CrossProjectPaste.swift). Every other caller (a genuine New/Open)
+    /// leaves this false, and the danger the original comment names is exactly why: pasting the
+    /// OLD document's ids into a truly different one, with no remap, is the corruption this reset
+    /// exists to prevent.
+    func resetTransientSessionState(preservingClipboard: Bool = false) {
         selectedAnnotation = nil
         clearAutomationPointSelection()
-        clipboard = nil
-        midiNotesClipboard = nil
+        if !preservingClipboard {
+            clipboard = nil
+            midiNotesClipboard = nil
+        }
         selectedMidiNoteIDs = []
         focusedMidiClipID = nil
         bakingIDs = []
@@ -550,8 +561,10 @@ extension EditViewModel {
     /// answered while it runs. See `EditViewModel+ProjectLoad.swift`.
     @discardableResult
     func applyProjectDocumentAsync(_ doc: ProjectDocument, displayName: String? = nil,
-                                   cancellable: Bool = true) async -> Bool {
-        await runProjectLoadAsync(doc, displayName: displayName, cancellable: cancellable)
+                                   cancellable: Bool = true,
+                                   preservingClipboard: Bool = false) async -> Bool {
+        await runProjectLoadAsync(doc, displayName: displayName, cancellable: cancellable,
+                                  preservingClipboard: preservingClipboard)
     }
 
     /// Shows a confirmation listing the plugins the engine could not load during
