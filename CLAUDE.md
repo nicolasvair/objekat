@@ -1483,6 +1483,69 @@ What has landed since mid-August, in order:
   and no tool here drives a native macOS window, so none of this could be attempted, headless or
   otherwise — it needs the user's own screen.
 
+- **Tabs, INC2 — cross-project paste** (25 September 2026, on `main`) — copying in one tab and
+  pasting in another goes through `CrossProjectImport.plan(clipboard, target)`, a PURE function
+  that reads only what the clipboard already froze and mutates nothing on the target side. The
+  danger it exists for: **V1/V2 project versions share UUIDs** (a Save-As-derived version, or two
+  tabs opened on the same file's two revisions), and the ordinary plugin-cloning path
+  (`copiedPlugins`, `EditViewModel+Plugins.swift`) reads `engine?.getPluginStateXML(p.id)` off the
+  LIVE engine and rewrites the original via `update(id:)` — both keyed by an id a clipboard object
+  can share with an unrelated object in the paste target, which would silently corrupt it. So
+  `CrossProjectImport` is "cold": every plugin (leaf, rack voice or instrument) is rebuilt only
+  from `ObjectPlugin.stateXML` as the clipboard captured it at copy time
+  (`withCapturedPluginStates`, taken while the source's engine was still live) — the target's
+  engine and its `items` are never touched by the plan itself.
+  Fresh ids for every object, plugin, and MIDI note; automation follows through a `ParamRef`
+  remap built alongside. **Plugin links stay internal to the pasted batch**: a `linkGroupID` is
+  remapped to a NEW group scoped to this paste, never attached to a target-side group and never
+  invented for a plugin that had none (no "link by default" backfill on a cross-project paste,
+  unlike some intra-project gestures). **Sends**: to an aux that rides along inside the batch, the
+  send is remapped and kept; to one that does not, the send AND its automation are dropped
+  outright — nothing dangling survives. **Everything lands on Main**, no stem carried over, no
+  dialogue. **A consolidated object is always a NEW definition** with a fresh id, `dependsOn`
+  remapped recursively for nesting, and its wave stays read from the ORIGIN project's folder — a
+  new `consolidateOriginFolders: [UUID: URL]` map on `EditViewModel`, transient and unpersisted,
+  feeds the existing `consolidateFallbackDirs` "Q3" resolver. **Media is never copied**: a clip's
+  file path stays absolute, pointing at its source project. **MIDI keeps its musical measures and
+  beats as they were** — no tempo conversion, even across two projects at different tempi.
+  Placement reuses the ordinary paste primitives (`add`/`addChild`/`resyncAllSends`/
+  `resolveOverlaps`) and pushes no undo point of its own — `pasteCrossProjectPlan` mirrors
+  `paste()`'s own doctrine there, so the single undo point comes for free from whatever already
+  wraps the call (`vm.edit { }`, or the command bus's `undo: .bus`).
+  **The mechanism, in three small pieces.** `EditViewModel` gained two hooks
+  (`clipboardDidChangeHook`, `crossProjectPasteHook`), the same shape as the existing
+  `saveAsURLConflictCheck`: it knows nothing about tabs, so `Workspace` is what decides whether a
+  paste is genuinely cross-project. `copySelected()` calls the first hook once its local
+  `clipboard` is set, letting `Workspace` hoist a `CrossProjectClipboardRecord` (origin tab id,
+  tempo, and a `CrossProjectImport.Clipboard`) OUTSIDE that tab's own state. `paste()` calls the
+  second hook FIRST, before it ever looks at its own `clipboard`; if the active tab differs from
+  the record's origin, `Workspace` calls `pasteCrossProjectPlan` and the ordinary path never runs.
+  Intra-project paste (no hook, or the hook declining) is byte-for-byte what it always was.
+  This rides on tabs INC1's `preservingClipboard` plumbing (`resetTransientSessionState` /
+  `performStructureSetup` / `runProjectLoadAsync` / `applyProjectDocumentAsync`, only
+  `Workspace.restoreParkedProject` passing `true`): without it, switching tabs would already have
+  emptied the local clipboard before any of this ever ran.
+  Verified with no screen: a Debug build, **0 new warning** against the 1518 baseline (a `git
+  stash`/diff confirmed the apparent +1 was a line-number shift, not a real one);
+  `tools/test_cross_project_import.swift`, 26/26 assertions, standalone (fresh ids, V1/V2-safe
+  link remapping never colliding with a target's own group, no link backfill, stems forced to
+  Main, dangling sends removed with their automation, consolidated objects becoming new
+  definitions with `dependsOn` remapped recursively, MIDI musical times preserved, and a
+  pure-function/no-mutation check); `tools/scenario_cross_paste.py`, a real `project.save_as` +
+  `tab.open` fork reproducing the exact UUID collision end to end, 31/31 assertions, including the
+  target's own plugin surviving untouched at a colliding id and the paste landing as ONE undo
+  step. Full non-regression, each against its OWN fresh headless instance: `smoke.jsonl` clean,
+  `scenario_families.py` 191 OK, `scenario_markers.py` ALL PASS, `scenario_plugin_selection.py`
+  58, `scenario_plugin_state_undo.py` 5 ALL PASS, `scenario_relink.py` ALL PASS,
+  `scenario_export_preview.py` 35 OK, `scenario_consolidate.py` 137 ALL PASS, `scenario_tabs.py`
+  47 ALL PASS; i18n 461 keys, no orphans (no new visible string — the feature adds no UI of its
+  own yet); no window on any headless pid used.
+  **Not seen, not felt, and there is no path to it from here**: there is no HAND gesture for any
+  of this yet — no menu entry, no keyboard path a person would use to copy in one tab and paste in
+  another, only the command-API/clipboard-object route the scenario drives. Nothing about the
+  actual on-screen paste position, the overlap resolution it triggers, or a V1/V2 collision made
+  by hand (Save As, then editing both copies side by side) has been read on a real screen.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
