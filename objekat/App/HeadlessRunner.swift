@@ -17,9 +17,11 @@ enum HeadlessRunner {
         // (hence before the engine is built, which the session does).
         app.finishLaunching()
 
-        let session = ObjekatSession()
+        let workspace = Workspace()
+        let session = workspace.session
         session.start()
         CommandContext.shared.session = session
+        CommandContext.shared.workspace = workspace
 
         // With no window, nobody will click a modal: leaving it on `.ask` would freeze the process
         // at the first warning. `assume_yes` moves things ALONG (which is the point of an automated

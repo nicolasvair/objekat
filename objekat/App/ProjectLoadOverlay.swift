@@ -100,11 +100,15 @@ struct ProjectLoadOverlay: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(L("common.cancel")) { viewModel.requestCancelProjectLoad() }
-                .controlSize(.small)
-                // One click is enough: honoured at the next safe point, between two plugin
-                // compiles — a second click would only ask the same thing twice.
-                .disabled(viewModel.loadState?.cancelRequested == true)
+            // A tab switch (tabs INC1) is not a discardable choice for the user to back out of —
+            // `cancellable == false` hides the button rather than showing one that does nothing.
+            if viewModel.loadState?.cancellable != false {
+                Button(L("common.cancel")) { viewModel.requestCancelProjectLoad() }
+                    .controlSize(.small)
+                    // One click is enough: honoured at the next safe point, between two plugin
+                    // compiles — a second click would only ask the same thing twice.
+                    .disabled(viewModel.loadState?.cancelRequested == true)
+            }
         }
         .padding(20)
         .frame(width: 320)

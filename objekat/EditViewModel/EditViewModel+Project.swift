@@ -88,12 +88,14 @@ extension EditViewModel {
     /// The project's `waveforms/` folder (nil as long as the project has not been saved).
     var waveformsFolder: URL? { projectFolder.map { waveformsDir(in: $0) } }
 
-    private func waveformsDir(in folder: URL) -> URL {
+    private static func waveformsDir(in folder: URL) -> URL {
         folder.appendingPathComponent("waveforms", isDirectory: true)
     }
-    private func samplesDir(in folder: URL) -> URL {
+    private static func samplesDir(in folder: URL) -> URL {
         folder.appendingPathComponent("samples", isDirectory: true)
     }
+    private func waveformsDir(in folder: URL) -> URL { Self.waveformsDir(in: folder) }
+    private func samplesDir(in folder: URL) -> URL { Self.samplesDir(in: folder) }
 
     /// The display name of a version file: strips the manifest's extension.
     private func displayName(for fileURL: URL) -> String {
@@ -151,7 +153,8 @@ extension EditViewModel {
     /// folder to create gets decided. Separated from the panel so that external driving takes
     /// EXACTLY the same path as the menu — a single naming rule, so no drift is
     /// possible between what the interface does and what a script does.
-    func saveAs(to chosen: URL) {
+    @discardableResult
+    func saveAs(to chosen: URL) -> Bool {
         let parent = chosen.deletingLastPathComponent()
         // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
         // `test/test.json`, the manifest bearing the project's name and nothing else.
@@ -164,7 +167,14 @@ extension EditViewModel {
             fileURL = parent.appendingPathComponent(base, isDirectory: true)
                 .appendingPathComponent(fileName)
         }
-        writeSession(to: fileURL)
+        // Tabs (INC1): writing over a file another tab already has open would silently orphan
+        // whatever that tab still holds in memory the next time IT saves — refused here, before a
+        // single byte is written, rather than diagnosed after the fact.
+        if saveAsURLConflictCheck?(fileURL) == true {
+            notify(L("tabs.saveAs.alreadyOpen.title"), L("tabs.saveAs.alreadyOpen.message"))
+            return false
+        }
+        return writeSession(to: fileURL)
     }
 
     /// A folder is an Objekat project if it holds `waveforms/`, which `writeSession` lays for
@@ -229,10 +239,7 @@ extension EditViewModel {
     func writeSession(to fileURL: URL) -> Bool {
         do {
             let folder = fileURL.deletingLastPathComponent()
-            let fm = FileManager.default
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try fm.createDirectory(at: waveformsDir(in: folder), withIntermediateDirectories: true)
-            try fm.createDirectory(at: samplesDir(in: folder), withIntermediateDirectories: true)
+            try Self.createProjectTree(in: folder)
             try encodedSession(projectFolder: folder).write(to: fileURL, options: .atomic)
             projectURL = fileURL
             projectName = displayName(for: fileURL)
@@ -242,6 +249,29 @@ extension EditViewModel {
         } catch {
             return false
         }
+    }
+
+    /// Guarantees a project folder's tree (itself, `waveforms/`, `samples/`) — the half of
+    /// `writeSession` that has nothing to do with the view-model's own state, shared with
+    /// `writeDocument`.
+    private static func createProjectTree(in folder: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try fm.createDirectory(at: waveformsDir(in: folder), withIntermediateDirectories: true)
+        try fm.createDirectory(at: samplesDir(in: folder), withIntermediateDirectories: true)
+    }
+
+    /// Writes an ALREADY-BUILT document to disk (the project tree, then the JSON) with NO effect
+    /// on any view-model's state — the door used to save a PARKED tab (Workspace, tabs INC1) that
+    /// is not the active project: `writeSession` stays the door for the active one (it also
+    /// updates `projectURL`/`projectName`/`isDirty`, none of which make sense for a tab nobody is
+    /// looking at). Same tree, same JSON shape (pretty, sorted keys) — one definition either way.
+    static func writeDocument(_ doc: ProjectDocument, to fileURL: URL, projectFolder folder: URL) throws {
+        try createProjectTree(in: folder)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(doc)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     /// Empties the current project and starts again from a new one.
@@ -337,15 +367,23 @@ extension EditViewModel {
     /// (a script's `project.open {"async": false}`, which is also the DEFAULT — the contract stays
     /// unchanged). See `loadProjectAsync(from:)` for the breathing twin the menu and an
     /// `async: true` open use instead.
+    /// Reads and decodes a version file, resolving its internal paths (samples/consolidate, the
+    /// legacy samples/objects, samples/sources) ABSOLUTE in the project's own folder — the half of
+    /// `loadProject(from:)` / `loadProjectAsync(from:)` with no view-model state and no engine
+    /// apply, so a caller can decode a candidate file BEFORE deciding anything about it (the
+    /// Workspace, tabs INC1, decodes before parking the current tab — a decode failure this way
+    /// never touches the tab already open). See `ProjectPaths.resolved`.
+    func decodeProjectDocument(at url: URL) throws -> ProjectDocument {
+        let data = try Data(contentsOf: url)
+        var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
+        doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
+        return doc
+    }
+
     @discardableResult
     func loadProject(from url: URL) -> Bool {
         do {
-            let data = try Data(contentsOf: url)
-            var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
-            // Internal paths (samples/consolidate, the legacy samples/objects, samples/sources)
-            // made absolute IN this project folder: that is what makes the folder movable, and
-            // what catches up projects predating portability. See `ProjectPaths.resolved`.
-            doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
+            let doc = try decodeProjectDocument(at: url)
             applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
             projectURL = url
             projectName = displayName(for: url)
@@ -367,9 +405,7 @@ extension EditViewModel {
     @discardableResult
     func loadProjectAsync(from url: URL) async -> Bool {
         do {
-            let data = try Data(contentsOf: url)
-            var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
-            doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
+            let doc = try decodeProjectDocument(at: url)
             let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url))
             lastProjectLoad?.path = url.path
             guard ok else { return false }
@@ -427,7 +463,9 @@ extension EditViewModel {
     /// true = safe to quit (a clean project, saved, or the loss accepted).
     func confirmSaveBeforeQuit() -> Bool { confirmDiscardIfDirty(titleKey: "dialog.dirty.title.quit") }
 
-    private func confirmDiscardIfDirty(titleKey: String = "dialog.dirty.title.continue") -> Bool {
+    /// Internal (not private) since tabs INC1: the Workspace's `replaceActive(with:)` (Cmd+O) goes
+    /// through the SAME guard as New/Open, one definition either way.
+    func confirmDiscardIfDirty(titleKey: String = "dialog.dirty.title.continue") -> Bool {
         guard isDirty else { return true }
         switch askDirtyDecision(titleKey: titleKey) {
         case .save:
@@ -511,8 +549,9 @@ extension EditViewModel {
     /// them (and between every plugin compile) so the overlay can be drawn and `project.load_status`
     /// answered while it runs. See `EditViewModel+ProjectLoad.swift`.
     @discardableResult
-    func applyProjectDocumentAsync(_ doc: ProjectDocument, displayName: String? = nil) async -> Bool {
-        await runProjectLoadAsync(doc, displayName: displayName)
+    func applyProjectDocumentAsync(_ doc: ProjectDocument, displayName: String? = nil,
+                                   cancellable: Bool = true) async -> Bool {
+        await runProjectLoadAsync(doc, displayName: displayName, cancellable: cancellable)
     }
 
     /// Shows a confirmation listing the plugins the engine could not load during

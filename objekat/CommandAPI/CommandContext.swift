@@ -14,6 +14,11 @@ final class CommandContext {
 
     /// Weak: the context must not keep alive a session the app has let go of.
     weak var session: ObjekatSession?
+    /// Tabs (INC 1). `viewModel`/`engine` below stay `session`'s — the ACTIVE tab's, by
+    /// construction, since a switch always goes through `session` itself — `workspace` is read
+    /// only by the `tab.*` command family and by `Quiescence` (a tab switch under way counts as
+    /// "still busy").
+    weak var workspace: Workspace?
 
     var viewModel: EditViewModel? { session?.viewModel }
     var engine: OBJEngineCore? { session?.engine }

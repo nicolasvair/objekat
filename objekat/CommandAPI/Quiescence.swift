@@ -65,6 +65,11 @@ enum Quiescence {
                 reasons.append("plugin scan")
             }
         }
+        // Tabs (INC 1): the span between parking the outgoing tab and the incoming one's load
+        // actually starting, where `vm.isLoadingProject` above is still false.
+        if CommandContext.shared.workspace?.isSwitching == true {
+            reasons.append("tab switch")
+        }
 
         let jobs = JobRegistry.shared.runningJobIDs()
         if !jobs.isEmpty {

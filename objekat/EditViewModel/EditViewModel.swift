@@ -1080,6 +1080,12 @@ final class EditViewModel {
     /// reopened while playing kept showing ▶ although the sound had actually stopped.
     var projectLoadWillBeginHook: (() -> Void)? = nil
 
+    /// Set by `Workspace` (tabs INC1): true if the candidate URL is already the file of an OTHER
+    /// tab — `saveAs(to:)` refuses rather than write, which would silently orphan whatever that
+    /// tab still has in memory the next time IT saves. `EditViewModel` knows nothing about tabs
+    /// itself, hence a hook rather than an import.
+    var saveAsURLConflictCheck: ((URL) -> Bool)? = nil
+
     /// A load just finished with plugins the engine could not resolve — held here rather than
     /// alerted straight away, so `ProjectLoadOverlay` can flush it once it has actually faded out
     /// (the plan: "l'alerte plugins manquants apparaît APRÈS disparition du voile"). A 0.5 s

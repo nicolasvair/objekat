@@ -245,6 +245,7 @@ final class CommandRegistry {
         registerCrossfadeCommands()
         registerMarkerCommands()
         registerViewCommands()
+        registerTabCommands()
     }
 
     private func registerIntrospection() {
@@ -286,7 +287,8 @@ final class CommandRegistry {
     /// `project.load_status`, `wait_idle`, `app.dialogs`) — needed to verify the Annuler button
     /// headlessly at all; flag if this extra surface is not wanted.
     private static let allowedDuringProjectLoad: Set<String> =
-        ["app.info", "project.load_status", "wait_idle", "app.dialogs", "project.cancel_load"]
+        ["app.info", "project.load_status", "wait_idle", "app.dialogs", "project.cancel_load",
+         "tab.list"]
 
     func execute(name: String, params: CommandParams) async throws -> JSONValue {
         bootstrap()

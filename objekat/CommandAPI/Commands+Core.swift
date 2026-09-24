@@ -37,6 +37,12 @@ extension CommandRegistry {
                 // The API's own answers stay in English whatever happens.
                 "language": .string(Localization.current),
             ]
+            // Tabs (INC1): present whenever a workspace is attached — a windowed launch always has
+            // one (a single tab counts), a windowless one only once `Workspace()` has been built.
+            if let workspace = context.workspace {
+                info["tab_count"] = .int(workspace.tabs.count)
+                info["active_tab"] = .string(workspace.activeTabID.uuidString)
+            }
             if let vm {
                 info["project_name"] = .string(vm.projectName)
                 info["project_path"] = .stringOrNull(vm.projectURL?.path)
@@ -123,6 +129,22 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
             let url = URL(fileURLWithPath: path)
+            // Tabs (INC1): this file may already be open in ANOTHER tab — switch to it rather than
+            // load a second copy into the active one. The historical, tabs-unaware contract is kept
+            // for everything else (reopening the ACTIVE tab's own file still reloads it in place).
+            if let workspace = CommandContext.shared.workspace,
+               let existing = workspace.tabs.first(where: { tab in
+                   guard let existingURL = workspace.url(for: tab),
+                         let a = FolderIdentity.identifier(existingURL),
+                         let b = FolderIdentity.identifier(url) else { return false }
+                   return a.isEqual(b)
+               }), existing.id != workspace.activeTabID {
+                if case .failure(let e) = await workspace.select(existing.id) {
+                    throw e.commandError
+                }
+                return .object(["path": .string(path), "already_open": .bool(true),
+                                "tab": .string(existing.id.uuidString)])
+            }
             if try p.bool("async", or: false) {
                 // Set synchronously, BEFORE the task is even scheduled: `Task {}` only ENQUEUES,
                 // it does not run inline, so a `project.load_status` sent right after this
@@ -214,6 +236,12 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
             let url = URL(fileURLWithPath: path)
+            // Tabs (INC1): writing over a file another tab already has open would silently orphan
+            // whatever that tab still holds in memory the next time IT saves.
+            if CommandContext.shared.workspace?.isURLOpenElsewhere(url) == true {
+                throw CommandError(code: .invalid_state,
+                                   message: "already open in another tab: \(path)")
+            }
             guard vm.writeSession(to: url) else {
                 throw CommandError(code: .invalid_state, message: "could not write: \(url.path)")
             }

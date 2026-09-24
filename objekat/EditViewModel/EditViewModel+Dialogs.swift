@@ -111,8 +111,15 @@ extension EditViewModel {
     /// for would be the opposite of predictable driving. The explicit path already exists for
     /// anyone who wants the other meaning (`save`, then the operation).
     func askDirtyDecision(titleKey: String) -> DirtyDecision {
+        askDirtyDecision(titleKey: titleKey, name: projectName)
+    }
+
+    /// The same guard, naming a project OTHER than the active one — the door `Workspace.confirmQuit`
+    /// (tabs INC1) uses for an INACTIVE modified tab: `self` is the single view-model/engine, so its
+    /// own `projectName` is the ACTIVE tab's, never the parked one being asked about.
+    func askDirtyDecision(titleKey: String, name: String) -> DirtyDecision {
         let title = L(titleKey)
-        let info = L("dialog.dirty.info", projectName)
+        let info = L("dialog.dirty.info", name)
         switch dialogPolicy {
         case .assumeYes:
             recordDialog(title, info, answer: "don't save")

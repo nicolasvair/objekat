@@ -63,6 +63,7 @@ source, not a translation.
 | carte son | audio device | tarjeta de sonido |  |
 | fréquence d'échantillonnage | sample rate | frecuencia de muestreo |  |
 | latence / taille du buffer | latency / buffer size | latencia / tamaño del búfer |  |
+| onglet | tab | pestaña | onglet de projet |
 
 ## What does not get translated
 

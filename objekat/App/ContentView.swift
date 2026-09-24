@@ -10,6 +10,10 @@ struct ContentView: View {
     /// The view OBSERVES the session, it does not own it: the transport state has to outlive the
     /// view and stay readable from outside (see ObjekatSession).
     @Bindable var session: ObjekatSession
+    /// Project tabs (INC 1) — observed for the tab strip alone; every gesture beneath it keeps
+    /// reading `session`/`viewModel` exactly as before, a tab switch being nothing more than the
+    /// SAME session pointed at a different document.
+    var workspace: Workspace
     /// Read-only shorthands — the body of the view goes on saying `engine` and `viewModel`, which
     /// keeps this file's diff down to what really changes.
     private var engine: OBJEngineCore { session.engine }
@@ -49,6 +53,13 @@ struct ContentView: View {
             // like a freeze. @see ExportProgressBar
             ExportProgressBar(viewModel: viewModel)
                 .animation(.easeOut(duration: 0.15), value: viewModel.exportJob?.phase)
+
+            // Project tabs (INC 1): a bar that costs nothing to look at with a single project open
+            // — it simply is not there.
+            if workspace.tabs.count >= 2 {
+                WorkspaceTabBar(workspace: workspace)
+                Divider()
+            }
 
             Divider()
 
@@ -266,5 +277,6 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(session: ObjekatSession())
+    let workspace = Workspace()
+    ContentView(session: workspace.session, workspace: workspace)
 }

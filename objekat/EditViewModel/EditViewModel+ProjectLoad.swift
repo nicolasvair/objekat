@@ -39,6 +39,12 @@ struct ProjectLoadState: Equatable {
     /// `project.cancel_load`); consumed at the next SAFE point, between two plugin compiles —
     /// never mid-compile, an AU half-instantiated being worse than one instantiated for nothing.
     var cancelRequested: Bool = false
+    /// False for a load that must run to completion with no way out for the user — a TAB SWITCH
+    /// (tabs INC1, `Workspace.select`/`restoreParkedProject`): unlike Cmd+O, there is no "cancel"
+    /// that makes sense there, since the tab being switched TO is not a discardable choice, it is
+    /// where the hand is going. `ProjectLoadOverlay` hides its Annuler button when this is false,
+    /// and `requestCancelProjectLoad` becomes a no-op.
+    var cancellable: Bool = true
 }
 
 /// The outcome of the last load, kept once `loadState` has gone back to `nil` — the one thing a
@@ -75,6 +81,7 @@ extension EditViewModel {
     /// fully synchronous path (`applyProjectDocument`/`loadProject(from:)`), which never checks it —
     /// there is no run loop turn in which a click could have set it anyway.
     func requestCancelProjectLoad() {
+        guard loadState?.cancellable != false else { return }
         loadState?.cancelRequested = true
     }
 
@@ -358,14 +365,16 @@ extension EditViewModel {
     /// - Returns: `false` on cancellation (the project is then left EMPTY, not half-loaded);
     ///   `true` otherwise. Never throws — a decode failure is the caller's (`loadProjectAsync`).
     @discardableResult
-    func runProjectLoadAsync(_ doc: ProjectDocument, displayName: String?) async -> Bool {
+    func runProjectLoadAsync(_ doc: ProjectDocument, displayName: String?,
+                             cancellable: Bool = true) async -> Bool {
         let plan = buildLoadPlan(for: doc)
         let startedAt = Date()
         var phaseStart = startedAt
         var done = 0.0
         var lastBreath = Date.distantPast
         loadState = ProjectLoadState(phase: .teardown, fraction: 0,
-                                     projectName: displayName ?? projectName, startedAt: startedAt)
+                                     projectName: displayName ?? projectName, startedAt: startedAt,
+                                     cancellable: cancellable)
         engine?.beginBulkLoad()
         // The first breath happens BEFORE the teardown's own (blocking) work — the same reasoning
         // as the export panel's deferred launch (`EditViewModel+Export.runExport`): the veil is laid

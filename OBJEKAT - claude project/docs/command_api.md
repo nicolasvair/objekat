@@ -223,6 +223,68 @@ testing cannot reach it. Each phase's own duration is logged as `[LOAD] <phase> 
 plugin phase adds `, <n> plugins`), plus `[LOAD] total <ms> ms` at the end
 (`[LOAD] cancelled after <ms> ms` on a cancellation) — English, machine-facing, not through `L()`.
 
+### Tabs (`tab.*`) — several projects, one engine
+
+**One `OBJEngineCore`, one `EditViewModel`, several project documents taking turns being the
+active one.** A per-tab engine was ruled out: `OBJEngineCore`'s callbacks are
+`__unsafe_unretained`, so a second instance — or tearing the one there is down and rebuilding it —
+is exactly the crash the project's engine rule exists to prevent. A tab switch is therefore always
+the same three moves: park the outgoing document, load the incoming one through the very door a
+project opening uses (non-cancellable), unpark what it carried (undo history, selection, cursor,
+caret, time selection, loop, viewport).
+
+**The context stays the ACTIVE tab.** Every command outside this family — `object.*`, `plugin.*`,
+`transport.*`, `project.get_state`… — keeps reading and writing the session exactly as before;
+`tab.*` is the only door onto the workspace itself. `app.info` carries `tab_count` and
+`active_tab` alongside its usual fields.
+
+```json
+{"cmd": "tab.list"}
+→ {"tabs": [{"id": "…", "index": 1, "name": "Mix 1", "path": "/…/Mix 1.json",
+             "dirty": false, "active": true},
+            {"id": "…", "index": 2, "name": "Untitled", "path": null,
+             "dirty": true, "active": false}],
+   "count": 2}
+
+{"cmd": "tab.new"}                          → the new tab's own object (as above), now active
+{"cmd": "tab.select", "params": {"index": 2}}   → that tab's object, now active
+{"cmd": "tab.select", "params": {"id": "…"}}    → same, by id
+
+{"cmd": "tab.open", "params": {"path": "/…/Other.json"}}
+→ {…, "already_open": false}        // opened in a NEW tab
+→ {…, "already_open": true}         // was already open elsewhere: switched to it instead
+
+{"cmd": "tab.close"}                             // the active tab, if clean
+→ {"ok": true}
+{"cmd": "tab.close", "params": {"discard": true}}   // even if modified
+{"cmd": "tab.close", "params": {"id": "…", "discard": true}}   // a specific, inactive tab
+```
+
+`tab.select`/`tab.close` accept `id` (from `tab.list`) or a 1-based `index` in the SAME order
+`tab.list` shows. `tab.close` on the last remaining tab, or on a modified tab without
+`"discard": true`, answers `invalid_state`. A switch refused because a render, an export or a
+consolidated-object edit is under way (`tab.select`/`tab.new`/`tab.open` all check this BEFORE
+touching anything, so a refusal never half-parks a tab) also answers `invalid_state`, naming the
+reason in English (`"tab switch refused: an export is running"`, …) — the same four conditions
+`Quiescence.inFlight()` already reports for `wait_idle`.
+
+Two commands outside this family are tabs-AWARE without becoming part of it, for backward
+compatibility: `project.open` on a path already open in ANOTHER tab switches to that tab instead
+of loading a second copy (`{"already_open": true, "tab": "…"}`, everything else unchanged —
+reopening the ACTIVE tab's own file still reloads it in place, exactly as before tabs existed);
+`project.save_as` onto a path another tab already has open answers `invalid_state` rather than
+write over it (writing there would silently orphan whatever that other tab still holds in memory
+the next time IT saves).
+
+`tab.list` is one of the few commands still answered while a project is loading (alongside
+`app.info`, `wait_idle`, `app.dialogs`, `project.load_status`, `project.cancel_load`) — the tab
+strip itself must stay readable through a switch. `wait_idle`'s `in_flight` names `"tab switch"`
+for the short span between parking the outgoing tab and the incoming one's own load actually
+starting, which `project loading` alone does not cover.
+
+All `tab.*` commands carry undo policy `.none`: switching, opening or closing a tab is a WORKSPACE
+operation, with nothing an `EditSnapshot` has anything to say about.
+
 ### Measurement
 
 `perf.measure` separates `model_ms` (the model's work) from `frame_ms` (the time during which
