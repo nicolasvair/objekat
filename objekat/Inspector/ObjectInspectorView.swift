@@ -36,6 +36,13 @@ struct ObjectInspectorView: View {
     /// The target-BPM box has been moved during this selection: every sound now shares it, so it
     /// shows a value rather than '≠'.
     @State private var multiTargetTouched: Bool = false
+    /// The selection's volumes / pans right after the box's OWN last write: a change that lands on
+    /// exactly this is the box's echo, anything else came from elsewhere and is read back.
+    @State private var volOwnWrite: [UUID: Float]? = nil
+    @State private var panOwnWrite: [UUID: Float]? = nil
+    /// A send box's gesture: every level as it stood at the start, and the box's value then.
+    @State private var sendAnchors: [UUID: Float] = [:]
+    @State private var sendOrigin: Double = 0
 
     var body: some View {
         HStack(spacing: 0) {
@@ -104,8 +111,8 @@ struct ObjectInspectorView: View {
     // small blocks of the timeline — colour, corners, glyph, name), then the zones of the signal
     // view in their own order — audio file, clip mix, sends, stems — with the same controls and
     // the same gestures. What differs is only what a batch needs: the 'rel.' badge when the values
-    // differ (a delta preserving the differences), and a count when a zone concerns only part of
-    // the selection ('audio file (3/5)': the speed only reaches the sounds).
+    // differ (a delta preserving the differences), and a zone that does not make sense for every
+    // item is simply absent (the audio file needs a selection of sounds only).
 
     private var multiSelectionContent: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -114,7 +121,9 @@ struct ObjectInspectorView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 selectionItems
                     .padding(.bottom, 4)
-                if !selectedSounds.isEmpty { multiAudioFileZone }
+                if !selectedSounds.isEmpty && selectedSounds.count == selectedObjects.count {
+                    multiAudioFileZone
+                }
                 multiClipZone
                 if !viewModel.selectionSendAuxes().isEmpty { multiSendsZone }
                 multiStemsZone
@@ -126,45 +135,24 @@ struct ObjectInspectorView: View {
         // the shared value if it is uniform (absolute mode), otherwise 0 (relative mode).
         .onAppear { refreshMultiBaselines() }
         .onChange(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
+        // What moves the values from ELSEWHERE — v/p + ↑/↓, the wheel, the Pan tool, an undo —
+        // is read back into the boxes; the boxes' own writes are recognised and left alone.
+        .onChange(of: volumeSignature) { old, new in resyncVolume(old, new) }
+        .onChange(of: panSignature) { old, new in resyncPan(old, new) }
     }
 
     /// The width of the single multiple-selection column: the signal view's own zone width and a
     /// little more, so the zones read at the size they have for one object.
     private let multiColumnWidth: CGFloat = 280
 
-    /// Up to this many items, one block per row with its values under it; beyond, the blocks
-    /// flow and wrap — thirty rows would push the zones out of the dock.
-    private let multiItemRowsLimit = 12
-
     // MARK: Items
 
-    @ViewBuilder
+    /// The items flow and wrap, a block each; what they are worth is in the tooltip.
     private var selectionItems: some View {
-        if selectedObjects.count <= multiItemRowsLimit {
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(selectedObjects) { obj in
-                    VStack(alignment: .leading, spacing: 1) {
-                        itemBlock(obj, fill: true)
-                        Text(itemValueSummary(obj))
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 6)
-                        if let sends = itemSendSummary(obj) {
-                            Text(sends)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1).truncationMode(.tail)
-                                .padding(.leading, 6)
-                        }
-                    }
-                }
-            }
-        } else {
-            ItemFlowLayout(spacing: 4) {
-                ForEach(selectedObjects) { obj in
-                    itemBlock(obj, fill: false)
-                        .help(itemValueSummary(obj))
-                }
+        ItemFlowLayout(spacing: 4) {
+            ForEach(selectedObjects) { obj in
+                itemBlock(obj)
+                    .help(itemValueSummary(obj) + (itemSendSummary(obj).map { "\n" + $0 } ?? ""))
             }
         }
     }
@@ -174,7 +162,7 @@ struct ObjectInspectorView: View {
     /// clip, round for a group or an aux — `blockCornerRadius`, scaled to a 22 px block), then the
     /// kind glyph and the name, black, red for a missing file.
     /// Click = this one alone; ⌘-click = out of (or into) the selection — the timeline's own rule.
-    private func itemBlock(_ obj: SoundObject, fill: Bool) -> some View {
+    private func itemBlock(_ obj: SoundObject) -> some View {
         let color = obj.customColor ?? viewModel.stemColor(for: obj.id)
         let round = obj.blockCornerRadius >= 20
         let shape = RoundedRectangle(cornerRadius: round ? 9 : 3)
@@ -188,14 +176,13 @@ struct ObjectInspectorView: View {
                 .font(.system(size: 11, weight: .medium))
                 .blockNameStyle(missingFile: missing)
                 .lineLimit(1).truncationMode(.middle)
-            if obj.isMuted {
-                Image(systemName: "speaker.slash.fill")
-                    .font(.system(size: 8)).foregroundStyle(Color.black.opacity(0.5))
-            }
+            // Always laid out, shown only when muted: a mute must not reflow the whole bunch.
+            Image(systemName: "speaker.slash.fill")
+                .font(.system(size: 8)).foregroundStyle(Color.black.opacity(0.5))
+                .opacity(obj.isMuted ? 1 : 0)
         }
         .padding(.horizontal, round ? 8 : 5)
         .frame(height: 22)
-        .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
         .background(shape.fill(color.opacity(0.55)))
         .background(shape.fill(Color.white))
         .overlay(shape.strokeBorder(color.opacity(0.9), lineWidth: 1.5))
@@ -255,33 +242,26 @@ struct ObjectInspectorView: View {
         .buttonStyle(.plain)
     }
 
-    // 'audio file': speed / semitones for the SOUNDS of the selection; reverse and bpm only when
-    // every item is one (a group, an aux or a MIDI clip has no file to reverse or to stretch).
+    // 'audio file': shown only when EVERY item is a sound — a group, an aux or a MIDI clip has
+    // no file to speed up, reverse or give a tempo.
     private var multiAudioFileZone: some View {
         let sounds = selectedSounds
-        let allSounds = sounds.count == selectedObjects.count
         return zone {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 4) {
                     zoneTitle(L("synoptic.audioFile"))
-                    if !allSounds {
-                        Text(verbatim: "(\(sounds.count)/\(selectedObjects.count))")
-                            .font(.system(size: 10)).foregroundStyle(.tertiary)
-                    }
                     relBadge(speedRelative)
                     Spacer(minLength: 0)
-                    if allSounds {
-                        pill(L("synoptic.reverse.label"), on: uniformReversed) {
-                            let target = !(uniformReversed ?? false)
-                            viewModel.edit {
-                                for o in sounds where o.isReversed != target {
-                                    viewModel.updateReversed(id: o.id, reversed: target)
-                                }
+                    pill(L("synoptic.reverse.label"), on: uniformReversed) {
+                        let target = !(uniformReversed ?? false)
+                        viewModel.edit {
+                            for o in sounds where o.isReversed != target {
+                                viewModel.updateReversed(id: o.id, reversed: target)
                             }
                         }
-                        .help(uniformReversed == nil ? L("inspector.reverse.mixed")
-                              : (uniformReversed! ? L("synoptic.reverse.on") : L("synoptic.reverse.off")))
                     }
+                    .help(uniformReversed == nil ? L("inspector.reverse.mixed")
+                          : (uniformReversed! ? L("synoptic.reverse.on") : L("synoptic.reverse.off")))
                 }
                 HStack(spacing: 6) {
                     DragValueBox(
@@ -317,7 +297,7 @@ struct ObjectInspectorView: View {
                         onReset: { resetSpeedSelected() }
                     )
                     Spacer(minLength: 0)
-                    if allSounds { multiBPMFields(sounds) }
+                    multiBPMFields(sounds)
                 }
             }
         }
@@ -422,7 +402,9 @@ struct ObjectInspectorView: View {
                 if volRelative { return v <= -96 ? "-∞" : String(format: "%+.0f dB", v) }
                 return v <= -96 ? "-∞ dB" : String(format: "%.0f dB", v)
             },
-            range: -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
+            // Relative: at most +40 dB up per gesture (already enormous), enough down to take
+            // anything to −∞; each object is clamped on its own.
+            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
             help: L("help.drag.volume"),
             // Touching the control: the fader becomes the 'future automation' row of EVERY object
             // in the batch, without any value having to move.
@@ -431,6 +413,7 @@ struct ObjectInspectorView: View {
             onChange: { new in
                 viewModel.adjustVolumeDB(Float(new - relVolume))
                 relVolume = new
+                volOwnWrite = volumeSignature
             },
             onReset: {
                 viewModel.edit { viewModel.resetVolumeSelected() }
@@ -474,7 +457,7 @@ struct ObjectInspectorView: View {
             },
             // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
             // tenths rather than halving them.
-            range: -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
+            range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
             parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
             help: L("help.drag.pan"),
             onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
@@ -492,6 +475,7 @@ struct ObjectInspectorView: View {
                 let stepped = Double(EditViewModel.detentedPan(Float(new)))
                 viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
                 relPan = stepped
+                panOwnWrite = panSignature
             },
             onReset: {
                 viewModel.edit { viewModel.resetPanSelected() }
@@ -532,17 +516,32 @@ struct ObjectInspectorView: View {
             DragValueBox(
                 value: relSend[aux.id] ?? Double(sendMinDb),
                 format: { v in
-                    if rel { return v <= Double(sendMinDb) ? "−∞" : String(format: "%+.0f dB", v) }
+                    if rel { return String(format: "%+.0f dB", v) }
                     return sendLevelString(Float(v))
                 },
-                range: Double(sendMinDb)...Double(sendMaxDb),
+                // Relative: the whole span in both directions, so a send at −∞ can be brought up
+                // to 0 dB by the same travel that takes another from −6 to its +6 ceiling — each
+                // send is clamped on its own, from where it stood when the gesture began.
+                range: rel ? -Double(sendMaxDb - sendMinDb)...Double(sendMaxDb - sendMinDb)
+                           : Double(sendMinDb)...Double(sendMaxDb),
                 pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
                 help: L("help.drag.send"),
-                onBegin: { viewModel.pushUndo() },
+                onBegin: {
+                    viewModel.pushUndo()
+                    sendAnchors = Dictionary(uniqueKeysWithValues:
+                        viewModel.selectedSendersWithFreeLevel(toAux: aux.id)
+                            .map { ($0, viewModel.sendLevel(from: $0, to: aux.id)) })
+                    sendOrigin = relSend[aux.id] ?? (rel ? 0 : Double(sendMinDb))
+                },
                 onChange: { new in
-                    let old = relSend[aux.id] ?? Double(sendMinDb)
-                    if rel { viewModel.adjustSendLevelSelected(toAux: aux.id, deltaDb: Float(new - old)) }
-                    else   { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: Float(new)) }
+                    if rel {
+                        // From the ANCHORS, never from the stored values: a send pinned at +6 by
+                        // the way up comes back to where it was on the way down.
+                        let d = Float(new - sendOrigin)
+                        for (id, a) in sendAnchors { viewModel.setSendLevel(from: id, to: aux.id, levelDb: a + d) }
+                    } else {
+                        viewModel.setSendLevelSelected(toAux: aux.id, levelDb: Float(new))
+                    }
                     relSend[aux.id] = new
                 },
                 onReset: {
@@ -733,6 +732,39 @@ struct ObjectInspectorView: View {
         else { relSemis = 0; speedRelative = true }
     }
 
+    private var volumeSignature: [UUID: Float] {
+        Dictionary(uniqueKeysWithValues: selectedObjects.map { ($0.id, $0.volume) })
+    }
+
+    private var panSignature: [UUID: Float] {
+        Dictionary(uniqueKeysWithValues: selectedObjects.map { ($0.id, $0.pan) })
+    }
+
+    /// The volumes moved and the box did not do it (v + ↑/↓, the wheel, an undo…): a shared value
+    /// is shown as it is; differing values keep the box relative and add what the FIRST item
+    /// travelled — the same delta the keyboard gave everyone. A change of selection is left to
+    /// `refreshMultiBaselines`.
+    private func resyncVolume(_ old: [UUID: Float], _ new: [UUID: Float]) {
+        guard Set(old.keys) == Set(new.keys), new != volOwnWrite else { return }
+        if let v = uniformVolume { relVolume = Double(v); volRelative = false; return }
+        if volRelative, let ref = selectedObjects.first?.id, let a = old[ref], let b = new[ref] {
+            relVolume += Double(b - a)
+        } else {
+            relVolume = 0; volRelative = true
+        }
+    }
+
+    /// @see resyncVolume — the same reading for the pan.
+    private func resyncPan(_ old: [UUID: Float], _ new: [UUID: Float]) {
+        guard Set(old.keys) == Set(new.keys), new != panOwnWrite else { return }
+        if let p = uniformPan { relPan = Double(p); panRelative = false; return }
+        if panRelative, let ref = selectedObjects.first?.id, let a = old[ref], let b = new[ref] {
+            relPan += Double(b - a)
+        } else {
+            relPan = 0; panRelative = true
+        }
+    }
+
     private func refreshMultiBaselines() {
         if let v = uniformVolume { relVolume = Double(v); volRelative = false }
         else { relVolume = 0; volRelative = true }
@@ -740,6 +772,7 @@ struct ObjectInspectorView: View {
         if let p = uniformPan { relPan = Double(p); panRelative = false }
         else { relPan = 0; panRelative = true }
 
+        volOwnWrite = nil; panOwnWrite = nil
         refreshSpeedBaseline()
         syncMultiBaseBPMText()
         multiTargetTouched = false

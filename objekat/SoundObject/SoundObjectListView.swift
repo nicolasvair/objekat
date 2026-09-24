@@ -134,6 +134,7 @@ struct SoundObjectListView: View {
         SoundListRowView(
             row: row,
             isSelected: viewModel.isSelected(row.id),
+            isDimmed: !viewModel.selectedIDs.isEmpty && !viewModel.isSelected(row.id),
             isMissing: viewModel.isMissing(row.object),
             isExpanded: row.object.isExpanded,
             isOpenConsolidate: viewModel.isInConsolidateEditStack(row.id),
@@ -395,6 +396,8 @@ private struct SoundListRowView: View {
 
     let row: SoundListRow
     let isSelected: Bool
+    /// Something is selected and this row is not: it steps back so the selection reads at a glance.
+    let isDimmed: Bool
     let isMissing: Bool
     let isExpanded: Bool
     /// Open for editing — @see `ObjectKindIcon.name(for:isOpenConsolidate:)`.
@@ -454,6 +457,8 @@ private struct SoundListRowView: View {
             .padding(.vertical, 4)
         }
         .background(stemColor.opacity(isSelected ? 0.55 : 0.30))
+        .saturation(isDimmed ? 0 : 1)
+        .opacity(isDimmed ? 0.5 : 1)
     }
 
     @ViewBuilder
