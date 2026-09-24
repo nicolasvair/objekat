@@ -384,8 +384,8 @@ enum SynopticLayout {
     static let midiZoneH: CGFloat = cardH + 34   // the 'MIDI' title + the card + margins
     static let audioZoneW: CGFloat = 244         // the 'audio file' zone (1× / st / bpm on one line)
     static let audioZoneH: CGFloat = 58
-    static let clipZoneW: CGFloat = 196          // the 'clip' zone (pan / volume / mute on one line)
-    static let clipZoneWWide: CGFloat = 300      // the same plus the attribute link icons (a linked consolidated object)
+    static let clipZoneW: CGFloat = 224          // the 'clip' zone (pan / volume / mute on one line)
+    static let clipZoneWWide: CGFloat = 328      // the same plus the attribute link icons (a linked consolidated object)
     static let clipZoneH: CGFloat = 36
 
     // The 'stems' zone (output): a title plus the stem's drop-down menu, on one line.

@@ -1517,9 +1517,13 @@ struct ClipMixZoneView: View {
 
             // Title plus pan / volume / mute on ONE line (saving height).
             HStack(spacing: 6) {
+                // Never wrapped (like the 'bpm' unit): the zone widens instead (@see clipZoneW).
                 Text(mix.title)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .layoutPriority(1)
                 // A 'linked consolidated object' marker (the attributes below carry a link icon).
                 if mix.attrLinks != nil {
                     Image(systemName: "waveform.circle")
