@@ -237,15 +237,14 @@ struct GroupBlockView: View {
                         // the same kind of thing the name says, so it is coloured like the name
                         // (black, red and haloed when the file is gone).
                         Image(systemName: ObjectKindIcon.name(for: group, isOpenConsolidate: isOpenConsolidate))
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: TimelineLabelMetrics.groupIconSize, weight: .medium))
                             .blockIconStyle(missingFile: containsMissingFile)
-                            .padding(.leading, 6)
 
                         Spacer().frame(width: 4)
 
                         if isRenaming {
                             TextField(noLabel, text: $editLabel)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: MissingFileLabel.size, weight: .medium))
                                 .foregroundStyle(.black)
                                 .textFieldStyle(.plain)
                                 .focused($renameFocused)
@@ -279,6 +278,7 @@ struct GroupBlockView: View {
                                 .padding(.trailing, 6)
                         }
                     }
+                    .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
                     Spacer()
                 }
                 .allowsHitTesting(isRenaming)

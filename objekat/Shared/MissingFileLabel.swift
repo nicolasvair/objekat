@@ -23,8 +23,10 @@ enum MissingFileLabel {
     /// IDENTITIES (stems, objects, plugins), never a state, so it has no entry to borrow.
     static let color = Color.red
     /// The alarm is the ordinary size in bold, not a bigger glyph: the name band is 20 % of a
-    /// block's height, and a larger size would be clipped rather than read.
-    static let size: CGFloat = 10
+    /// block's height, and a larger size would be clipped rather than read. Bumped 10 → 12 on
+    /// 24 September 2026 (+2 pt everywhere, a user decision) — still well inside the band at the
+    /// project's default block height (121.5 pt × 0.20 ≈ 24 pt).
+    static let size: CGFloat = 12
     static let weight: Font.Weight = .bold
     static let normalWeight: Font.Weight = .medium
 

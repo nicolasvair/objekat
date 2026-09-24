@@ -38,12 +38,16 @@ enum ObjectKindIcon {
     /// The size the `Canvas` draws it at — and ONLY the `Canvas`.
     ///
     /// The three rich views deliberately keep the size and the spacing their band was laid out
-    /// around (10 pt in `GroupBlockView`, 11 pt bold in `SoundBlockView`, each with its own
-    /// padding), because those were tuned against the band and not against each other. What is
+    /// around (`TimelineLabelMetrics.groupIconSize` = 12 pt in `GroupBlockView`,
+    /// `TimelineLabelMetrics.clipIconSize` = 13 pt bold in `SoundBlockView`,
+    /// `TimelineLabelMetrics.infiniteBusIconSize` = 12 pt in `InfiniteBusBandView`, each with its
+    /// own padding), because those were tuned against the band and not against each other. What is
     /// shared between the five readers is the SYMBOL and the COLOUR — the two things that would
     /// make an object read as one kind here and another kind there. A size is a matter of layout,
     /// and layout is local; a glyph is a matter of meaning, and meaning is not.
-    static let canvasSize: CGFloat = 9
+    /// Bumped 9 → 11 on 24 September 2026, along with the rich views' own icon sizes
+    /// (@see `TimelineLabelMetrics`) — +2 pt everywhere, a user decision.
+    static let canvasSize: CGFloat = 11
 }
 
 extension View {

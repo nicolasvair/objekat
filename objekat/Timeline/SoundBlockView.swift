@@ -414,11 +414,11 @@ struct SoundBlockView: View {
                         // links between instances are drawn as lines in the selection anyway
                         // (@see LinkOverlay in TimelineView).
                         Image(systemName: ObjectKindIcon.name(for: object))
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: TimelineLabelMetrics.clipIconSize, weight: .bold))
                             .blockIconStyle(missingFile: isMissingFile)
                         if isRenaming {
                             TextField(noLabel, text: $editLabel)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: MissingFileLabel.size, weight: .medium))
                                 .foregroundStyle(.black)
                                 .textFieldStyle(.plain)
                                 .focused($renameFocused)
@@ -442,12 +442,13 @@ struct SoundBlockView: View {
                         }
                         if object.isMuted {
                             Text(L("common.muteBadge"))
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.red)
                                 .lineLimit(1)
                         }
                     }
-                    .padding(.horizontal, 6)
+                    .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
+                    .padding(.trailing, 6)
                     Spacer()
                 }
                 .allowsHitTesting(isRenaming)

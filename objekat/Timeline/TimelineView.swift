@@ -2252,10 +2252,15 @@ struct TimelineView: View {
                             lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
                                                  radius: MissingFileLabel.haloRadius, x: 0, y: 0))
                         }
+                        // Same rule as the rich views: the name starts 5 px past the fade-in
+                        // triangle, or 8 px with none, computed here (outside `needsFade`) since
+                        // the label can show with no fade at all.
+                        let leading = TimelineLabelMetrics.leading(fadeInPx: item.fadeIn * pixelsPerSecond,
+                                                                    blockWidth: w)
                         lc.draw(resolvedLabel(item.displayName,
                                               icon: ObjectKindIcon.name(for: item),
                                               missing: missing),
-                                at: CGPoint(x: x + 6, y: y + 3), anchor: .topLeading)
+                                at: CGPoint(x: x + leading, y: y + 3), anchor: .topLeading)
                     }
                 }
         }
