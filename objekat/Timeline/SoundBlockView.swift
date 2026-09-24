@@ -449,6 +449,7 @@ struct SoundBlockView: View {
                     }
                     .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
                     .padding(.trailing, 6)
+                    .padding(.top, TimelineLabelMetrics.topInset)
                     Spacer()
                 }
                 .allowsHitTesting(isRenaming)

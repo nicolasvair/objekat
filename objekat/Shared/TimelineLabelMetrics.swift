@@ -15,6 +15,13 @@ enum TimelineLabelMetrics {
     /// `InfiniteBusBandView`'s icon: 10 → 12.
     static let infiniteBusIconSize: CGFloat = 12
 
+    /// The gap above a block's icon+name, the same for every kind of block (user decision,
+    /// 24 September 2026: 3 px for all — plain sounds had it, groups / consolidated / MIDI did not).
+    static let topInset: CGFloat = 3
+    /// The batched Canvas draws glyph+name as ONE run measured on the 12 pt name, where the rich
+    /// row is centred on its taller 13 pt glyph: this nudge puts both names on the same line.
+    static let canvasCentring: CGFloat = 1
+
     /// Where a block's name starts, in px local to the block: 5 px past the end of the fade-in
     /// triangle so the icon+name never sit ON the fade's wash, 8 px with no fade at all (the old
     /// fixed inset), and never past `blockWidth - 36` — the room the meta summary, the mute badge

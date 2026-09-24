@@ -279,6 +279,7 @@ struct GroupBlockView: View {
                         }
                     }
                     .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
+                    .padding(.top, TimelineLabelMetrics.topInset)
                     Spacer()
                 }
                 .allowsHitTesting(isRenaming)
