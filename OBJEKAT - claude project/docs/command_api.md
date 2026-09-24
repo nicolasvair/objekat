@@ -160,6 +160,73 @@ Runs a sequence under **a single undo**.
 > Coalescing gains one cache rebuild; it costs a command that lies.
 > Only turn it on for a batch of **pure independent writes**.
 
+### Loading a project — progress, cancellation, reentrance
+
+`project.open`'s contract is unchanged: by default it waits for the whole load (teardown,
+structure, plugins, stems/routing, finalise) before answering, exactly as before the progress
+overlay existed.
+
+```json
+{"cmd": "project.open", "params": {"path": "/…/Project.json"}}
+→ {"path": "…", "name": "Project", "object_count": 42}
+```
+
+Pass `"async": true` to get an immediate answer instead, and follow the load with
+`project.load_status` and/or `wait_idle`:
+
+```json
+{"cmd": "project.open", "params": {"path": "/…/Project.json", "async": true}}
+→ {"path": "…", "status": "loading"}
+
+{"cmd": "project.load_status"}
+→ {"loading": true, "phase": "plugins", "fraction": 0.62,
+   "project_name": "Project", "elapsed_ms": 1840,
+   "plugin_index": 7, "plugin_total": 11, "current_plugin": "Saturn 2"}
+
+{"cmd": "wait_idle", "params": {"timeout_ms": 30000}}   // also blocks on a load in flight
+```
+
+`fraction` is **monotonic** over the whole load (0…1); the weights behind it are fixed
+(`0.05`/object, `1` per FX chain compiled, `2` per instrument, `2` for teardown-per-plugin and
+finalise) and are **never learned or remembered** from one load to the next. `phase` is one of
+`teardown`, `structure`, `plugins`, `stems_routing`, `finalize`; `plugin_index`/`plugin_total`/
+`current_plugin` are only present during `plugins`. Once the load is over, `loading` goes back to
+`false` and a `last_load` object appears (`success`, `cancelled`, `duration_ms`, `path`, and
+`error` on a decode failure) — read it if a poll arrives after the load has already ended.
+
+**While a project is loading, almost every other command answers `invalid_state` ("project
+loading")** — the model is being rewritten under it. The only exceptions: `app.info`,
+`project.load_status`, `wait_idle`, `app.dialogs`, and `project.cancel_load` (below). `wait_idle`'s
+`in_flight` also names `"project loading"` explicitly.
+
+`project.cancel_load` requests that a load in flight stop at its next SAFE point — between two
+plugin compiles, never mid-compile — and settle on an empty, coherent project (the same teardown
+`project.new` uses). It is an addition to the command surface made to verify the overlay's Annuler
+button headlessly; it was not in the original plan's own list of API changes.
+
+```json
+{"cmd": "project.cancel_load"}   → {"ok": true}
+```
+
+Internally, the engine's graph reallocation is inhibited for the whole of a load
+(`OBJEngineCore.beginBulkLoad`/`endBulkLoad`, a thin wrapper around Tracktion's own
+`TransportControl::ReallocationInhibitor` — no engine patch). **Measured caveat (24 September
+2026)**: `ReallocationInhibitor::isAllowedToReallocate()` is only consulted by two call sites in
+the whole engine (`ARAFileReader.cpp`, `AudioClipBase.cpp`'s auto-tempo/pitch path) — not by the
+general node-graph-rebuild machinery `[GRAPH] rebuild #N` logs from. So the inhibitor does NOT
+gate every rebuild the way the plan assumed; measured with `--headless --no-audio`, a load still
+produces a handful of `[GRAPH] rebuild` events (always of a trivial 2-node
+`PlayHeadPositionNode`+`SummingNode` graph, identical whatever the project's real size — the
+placeholder graph `--no-audio` builds with no device attached, `perf.census`'s own `engine_nodes`
+answering `null` in the same mode). What IS verified: the deferred queue itself works (dozens of
+FX/instrument compiles run back to back with `plugin_index`/`plugin_total` advancing correctly,
+`rewireLinkGroups()` called once at the end) and no per-object partial UI/engine rebuild blocks
+the run loop mid-load. Whether the REAL per-track graph (only built with an audio device attached)
+rebuilds once or several times during a load remains **unverified with no screen** — headless
+testing cannot reach it. Each phase's own duration is logged as `[LOAD] <phase> <ms> ms` (the
+plugin phase adds `, <n> plugins`), plus `[LOAD] total <ms> ms` at the end
+(`[LOAD] cancelled after <ms> ms` on a cancellation) — English, machine-facing, not through `L()`.
+
 ### Measurement
 
 `perf.measure` separates `model_ms` (the model's work) from `frame_ms` (the time during which

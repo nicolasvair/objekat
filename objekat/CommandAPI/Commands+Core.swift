@@ -107,18 +107,89 @@ extension CommandRegistry {
         }
 
         register("project.open",
-                 summary: "Opens a project manifest (`<name>.json`).",
-                 params: [ParamSpec("path", "string", "Path to the project file.")]) { p in
+                 summary: "Opens a project manifest (`<name>.json`). The contract is unchanged: "
+                        + "by default this waits for the whole load (structure, plugins, stems) "
+                        + "before answering, exactly as before the progress overlay existed. Pass "
+                        + "`async: true` to get an immediate answer instead and follow the load "
+                        + "with project.load_status / wait_idle — the only two commands (besides "
+                        + "app.info and app.dialogs) that still answer while it runs; every other "
+                        + "command answers invalid_state ('project loading').",
+                 params: [ParamSpec("path", "string", "Path to the project file."),
+                          ParamSpec("async", "bool", required: false,
+                                    "true = return immediately (default false: wait for completion).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
             guard FileManager.default.fileExists(atPath: path) else {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
-            guard vm.loadProject(from: URL(fileURLWithPath: path)) else {
+            let url = URL(fileURLWithPath: path)
+            if try p.bool("async", or: false) {
+                // Set synchronously, BEFORE the task is even scheduled: `Task {}` only ENQUEUES,
+                // it does not run inline, so a `project.load_status` sent right after this
+                // handler returns could otherwise read `loading: false` for one round trip —
+                // exactly the non-monotonic reading the plan's tests check against.
+                vm.loadState = ProjectLoadState(phase: .teardown, fraction: 0,
+                                                projectName: EditViewModel.projectDisplayName(for: url),
+                                                startedAt: Date())
+                Task { @MainActor in await vm.loadProjectAsync(from: url) }
+                return .object(["path": .string(path), "status": .string("loading")])
+            }
+            // The run loop is confirmed alive here (this handler only runs once the command server
+            // is serving, hence `app.run()` has been entered) — the breathing path is used even in
+            // the default, awaited case, so a synchronous `project.open` also shows the overlay,
+            // answers wait_idle correctly meanwhile, and the whole thing plays through
+            // `beginBulkLoad`/`endBulkLoad` exactly once.
+            guard await vm.loadProjectAsync(from: url) else {
                 throw CommandError(code: .invalid_state, message: "could not read the project: \(path)")
             }
             return .object(["path": .string(path), "name": .string(vm.projectName),
                             "object_count": .int(vm.laneEntries.count)])
+        }
+
+        register("project.load_status",
+                 summary: "Progress of a project load — the only command (besides app.info, "
+                        + "wait_idle and app.dialogs) that still answers while one runs. "
+                        + "'loading' false with no 'last_load' means nothing has been loaded (or "
+                        + "attempted) yet this session.",
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            var payload: [String: JSONValue] = ["loading": .bool(vm.isLoadingProject)]
+            if let s = vm.loadState {
+                payload["phase"] = .string(s.phase.rawValue)
+                payload["fraction"] = .number(s.fraction)
+                payload["project_name"] = .string(s.projectName)
+                payload["elapsed_ms"] = .int(Int(Date().timeIntervalSince(s.startedAt) * 1000))
+                if s.phase == .plugins {
+                    payload["plugin_index"] = .int(s.pluginIndex)
+                    payload["plugin_total"] = .int(s.pluginTotal)
+                    payload["current_plugin"] = .stringOrNull(s.currentPluginName)
+                }
+            }
+            if let last = vm.lastProjectLoad {
+                var lastPayload: [String: JSONValue] = [
+                    "success": .bool(last.success),
+                    "cancelled": .bool(last.cancelled),
+                    "duration_ms": .int(last.durationMs),
+                    "path": .stringOrNull(last.path),
+                ]
+                if let msg = last.errorMessage { lastPayload["error"] = .string(msg) }
+                payload["last_load"] = .object(lastPayload)
+            }
+            return .object(payload)
+        }
+
+        register("project.cancel_load",
+                 summary: "Requests that a load in flight stop at its next safe point (between two "
+                        + "plugin compiles) and settle on an empty project. No effect if nothing is "
+                        + "loading. Added for headless verification of the Annuler button "
+                        + "(project_load_progress_plan) — flag if this was not wanted as API surface.",
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard vm.isLoadingProject else {
+                throw CommandError(code: .invalid_state, message: "no project load in progress")
+            }
+            vm.requestCancelProjectLoad()
+            return .object(["ok": .bool(true)])
         }
 
         register("project.save",
