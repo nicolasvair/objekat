@@ -47,17 +47,74 @@ final class Workspace {
         let alreadyOpen: Bool
     }
 
+    /// Tabs INC2 (cross-project paste) — what `copySelected()` leaves behind is hoisted HERE, with
+    /// the context that only survives as long as the tab it came from is the active one: which tab,
+    /// the project's own folder (media/consolidated waves are never copied, they stay read from
+    /// there — @see `EditViewModel.consolidateOriginFolders`) and the tempo (kept for completeness;
+    /// `CrossProjectImport.plan` itself does NOT convert MIDI times by tempo, on purpose — musical
+    /// beats travel as-is). Captured EAGERLY, at copy time, because `EditViewModel.clipboard` is a
+    /// single field shared by every tab (there is only one `EditViewModel` — @see the file header):
+    /// by the time a paste lands in a DIFFERENT tab, that field's own `consolidateID`s would no
+    /// longer resolve against `session.viewModel.consolidateDefinitions`, which has since become
+    /// the TARGET project's own dictionary.
+    private struct CrossProjectClipboardRecord {
+        let originTabID: UUID
+        let originTempo: Double
+        let clipboard: CrossProjectImport.Clipboard
+    }
+    private var crossProjectClipboard: CrossProjectClipboardRecord?
+
     init() {
         session = ObjekatSession()
         let firstID = UUID()
         activeTabID = firstID
         tabs = [WorkspaceTab(id: firstID, parked: nil,
                              name: session.viewModel.projectName, url: nil, cachedDirty: false)]
-        // `EditViewModel` knows nothing about tabs — this is the one wire crossing that boundary,
-        // for `saveAs(to:)` alone (@see `EditViewModel.saveAsURLConflictCheck`).
+        // `EditViewModel` knows nothing about tabs — these are the wires crossing that boundary:
+        // `saveAsURLConflictCheck` (INC1) for `saveAs(to:)`, and the two INC2 clipboard hooks below.
         session.viewModel.saveAsURLConflictCheck = { [weak self] url in
             self?.isURLOpenElsewhere(url) ?? false
         }
+        session.viewModel.clipboardDidChangeHook = { [weak self] in
+            self?.captureCrossProjectClipboard()
+        }
+        session.viewModel.crossProjectPasteHook = { [weak self] in
+            self?.attemptCrossProjectPaste() ?? false
+        }
+    }
+
+    /// `EditViewModel.clipboardDidChangeHook`: freezes the clipboard `copySelected()` just set,
+    /// alongside the origin context above. A no-op if the copy somehow left no clipboard behind
+    /// (should not happen — `copySelected()` calls the hook only after setting one — kept as a
+    /// guard rather than an assumption).
+    private func captureCrossProjectClipboard() {
+        let vm = session.viewModel
+        guard let cb = vm.clipboard else { return }
+        // An unsaved project has no folder yet: a cross-project paste of a plain clip still works
+        // (its `filePath` is already absolute), only a CONSOLIDATED object's media could fail to
+        // resolve on the far side — an accepted, narrow edge case rather than a reason to refuse
+        // the copy outright.
+        let folder = vm.projectFolder ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let clipboard = CrossProjectImport.Clipboard(
+            clips: cb.clips,
+            comments: cb.comments,
+            consolidateDefinitions: vm.consolidateDefinitions,
+            originFolder: folder,
+            originTime: cb.originTime,
+            originLane: cb.originLane)
+        crossProjectClipboard = CrossProjectClipboardRecord(originTabID: activeTabID,
+                                                            originTempo: vm.tempo,
+                                                            clipboard: clipboard)
+    }
+
+    /// `EditViewModel.crossProjectPasteHook`: declines (`false`) whenever there is nothing hoisted
+    /// yet, OR the active tab IS the clipboard's own origin — the ordinary, same-tab paste, which
+    /// must go on being handled by `paste()` itself, unchanged. Only a genuine cross-tab paste
+    /// takes this branch, and it fully replaces `paste()`'s own body for that call.
+    private func attemptCrossProjectPaste() -> Bool {
+        guard let record = crossProjectClipboard, record.originTabID != activeTabID else { return false }
+        session.viewModel.pasteCrossProjectPlan(record.clipboard)
+        return true
     }
 
     // MARK: - Reading a tab (live for the active one, cached for a parked one)

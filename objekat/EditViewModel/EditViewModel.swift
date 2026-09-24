@@ -1086,6 +1086,25 @@ final class EditViewModel {
     /// itself, hence a hook rather than an import.
     var saveAsURLConflictCheck: ((URL) -> Bool)? = nil
 
+    /// Tabs INC2 (cross-project paste, @see `EditViewModel+CrossProjectPaste.swift`). `Workspace`
+    /// owns the actual cross-project clipboard (hoisted out of this tab's local one, with its
+    /// origin tab/project/tempo attached) — `EditViewModel` knows nothing about tabs, hence hooks
+    /// rather than an import, exactly like `saveAsURLConflictCheck` above.
+    /// Called at the END of `copySelected()`, once `clipboard` has just been set: lets `Workspace`
+    /// snapshot it, with origin context, into its own cross-project record.
+    var clipboardDidChangeHook: (() -> Void)? = nil
+    /// Called at the TOP of `paste()`, before it ever looks at the LOCAL `clipboard` — returns
+    /// `true` when it fully handled the paste itself (the active tab differs from the clipboard's
+    /// origin tab), in which case `paste()` does nothing more; `false`/`nil` lets `paste()` go on
+    /// exactly as it always has (the ordinary, same-tab case, UNCHANGED).
+    var crossProjectPasteHook: (() -> Bool)? = nil
+    /// Cross-project paste (tabs INC2) fallback folders for a consolidated object's wave, keyed by
+    /// the FRESH `consolidateID` a paste just minted — @see `ConsolidateFolders.resolve(extraDirs:)`
+    /// and `consolidateFallbackDirs`. Transient, never persisted: media stays at its ORIGIN
+    /// project's folder, never copied, so a reload of the pasted-into project could not resolve it
+    /// from `projectFolder` alone.
+    var consolidateOriginFolders: [UUID: URL] = [:]
+
     /// A load just finished with plugins the engine could not resolve — held here rather than
     /// alerted straight away, so `ProjectLoadOverlay` can flush it once it has actually faded out
     /// (the plan: "l'alerte plugins manquants apparaît APRÈS disparition du voile"). A 0.5 s

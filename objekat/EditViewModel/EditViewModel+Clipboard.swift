@@ -220,6 +220,9 @@ extension EditViewModel {
             lanes: nil,
             comments: entries.flatMap { commentsInSubtree(of: $0.item.id) }
         )
+        // Tabs INC2: lets `Workspace` hoist this clipboard, with its origin context, into its own
+        // cross-project record — a no-op outside a multi-tab session (nil hook).
+        clipboardDidChangeHook?()
     }
 
     func cutSelected() {
@@ -233,6 +236,11 @@ extension EditViewModel {
     /// - With a time selection: the selection's lanes (preserving the relative offsets),
     ///   starting from the beginning of the selection.
     func paste() {
+        // Tabs INC2: a paste aimed at a DIFFERENT tab than the one the clipboard was copied from
+        // goes through `CrossProjectImport` instead — `Workspace` alone knows whether that is the
+        // case, hence the hook. Intra-project paste (the ordinary case, no hook or the hook
+        // declining) is UNCHANGED below.
+        if crossProjectPasteHook?() == true { return }
         guard let cb = clipboard else { return }
         let snapshot = laneEntries
 

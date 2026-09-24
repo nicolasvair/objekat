@@ -75,11 +75,18 @@ extension EditViewModel {
     /// actually still are. Empty if `defID` is nil or has no placement with a resolvable clip path.
     private func consolidateFallbackDirs(forConsolidate defID: UUID?) -> [URL] {
         guard let defID else { return [] }
+        // Tabs INC2: a consolidated object just pasted from ANOTHER project's tab keeps its wave
+        // at that project's OWN folder — never copied (@see CrossProjectImport, memory
+        // `project_multi_project_tabs_plan`). Tried first: a placement's own clip path (the
+        // pre-existing Q3 fallback, just below) proves nothing about a definition with no clip yet.
+        var dirs: [URL] = []
+        if let origin = consolidateOriginFolders[defID] { dirs.append(origin) }
         for pid in placementIDs(forConsolidate: defID) {
             guard let obj = find(id: pid), case .clip(let fp, _, _, _, _) = obj.kind, !fp.isEmpty else { continue }
-            return [URL(fileURLWithPath: fp).deletingLastPathComponent()]
+            dirs.append(URL(fileURLWithPath: fp).deletingLastPathComponent())
+            break
         }
-        return []
+        return dirs
     }
 
     /// The folder `wave` is ACTUALLY found in — cas E4: a sidecar has to be read where the wave
