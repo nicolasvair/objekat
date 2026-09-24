@@ -1089,6 +1089,11 @@ struct DragValueBox: View {
     var width: CGFloat = 56
     /// Not applied to the keyboard's ↑/↓ arrows.
     var keyStep: Double = 1
+    /// ↑/↓ with ⌘ / with ⇧ (nil = same as `keyStep`). The tempo boxes: ⌘ ±0.1, ⇧ ±10.
+    var fineKeyStep: Double? = nil
+    var coarseKeyStep: Double? = nil
+    /// true = the box follows the length of what it shows (`width` becomes a minimum).
+    var fitsContent: Bool = false
     /// Reads a direct keyboard entry (nil = refuse). By default: a plain number.
     var parse: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
     var help: String = ""
@@ -1114,6 +1119,22 @@ struct DragValueBox: View {
     private func clamp(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
 
     private func bump(_ delta: Double) { onTouch?(); onBegin?(); onChange(clamp(value + delta)) }
+
+    private func keyStep(for modifiers: EventModifiers) -> Double {
+        if modifiers.contains(.command), let f = fineKeyStep { return f }
+        if modifiers.contains(.shift), let c = coarseKeyStep { return c }
+        return keyStep
+    }
+
+    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+
+    /// The box's width: fixed, or measured on the text shown (typing or value) when it fits content.
+    private var boxWidth: CGFloat {
+        guard fitsContent else { return width }
+        let text = typing ?? format(value)
+        let w = (text as NSString).size(withAttributes: [.font: Self.valueFont]).width
+        return max(width, ceil(w) + 12)
+    }
 
     /// NSDeleteCharacter — what the ⌫ key actually TYPES on macOS.
     private static let deleteCharacter: Character = "\u{7F}"
@@ -1182,7 +1203,7 @@ struct DragValueBox: View {
         }
         .font(.system(size: 10, weight: .medium)).monospacedDigit()
         .foregroundStyle(.primary)
-        .frame(width: width, height: 18)
+        .frame(width: boxWidth, height: 18)
         .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
         .overlay(RoundedRectangle(cornerRadius: 4)
             .strokeBorder((isFocused ? Color.accentColor : Color.secondary).opacity(isFocused ? 0.9 : 0.45),
@@ -1228,8 +1249,8 @@ struct DragValueBox: View {
             guard typing == nil else { return .ignored }   // typing under way → leave it to the TextField
             if Self.isResetKey(press) { onReset?(); return .handled }
             switch press.key {
-            case .upArrow:   bump(keyStep);  return .handled
-            case .downArrow: bump(-keyStep); return .handled
+            case .upArrow:   bump(keyStep(for: press.modifiers));  return .handled
+            case .downArrow: bump(-keyStep(for: press.modifiers)); return .handled
             default:
                 guard let ch = press.characters.first,
                       ch.isNumber || ch == "-" || ch == "." || ch == "," else {
@@ -1400,13 +1421,17 @@ struct AudioFileZoneView: View {
                         .font(.system(size: 8)).foregroundStyle(.tertiary)
 
                     if let base = file.baseBPM, base > 0 {
+                        // Same rules as the wav BPM field and the transport tempo: up to 4 decimals shown
+                        // only when needed, ',' or '.', ⌘↑/↓ ±0.1, ⇧ ±10, width follows the text.
                         DragValueBox(value: targetBPM ?? base,
-                                     format: { String(format: "%.0f", $0) },
+                                     format: { TempoText.display(TempoText.rounded($0)) },
                                      range: 20...400, pointsPerStep: 2, width: 38,
-                                     keyStep: 1,
+                                     keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
+                                     fitsContent: true,
+                                     parse: { TempoText.parse($0) },
                                      help: L("help.drag.bpm"),
                                      onBegin: { actions.onBeginSpeedEdit?() },
-                                     onChange: { actions.onSetSpeed?($0 / base) })
+                                     onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) })
                     } else {
                         Text(verbatim: "—")
                             .font(.system(size: 10, weight: .medium)).monospacedDigit()

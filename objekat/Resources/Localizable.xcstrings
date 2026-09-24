@@ -3181,19 +3181,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (after the speed change) — drag / ↑/↓"
+            "value": "BPM (after the speed change) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓"
+            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (après modification de vitesse) — drag / ↑/↓"
+            "value": "BPM (après modification de vitesse) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
           }
         }
       }
@@ -9575,19 +9575,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM of the wav"
+            "value": "BPM of the wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM del wav"
+            "value": "BPM del wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM du wav"
+            "value": "BPM du wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
           }
         }
       }
