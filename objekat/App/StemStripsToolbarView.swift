@@ -312,7 +312,20 @@ private struct StemStripButton: View {
     /// and for the other buses: it is the same scale, and the same LED to acknowledge.
     private static var vuScaleHelp: String { L("stem.vu.scaleHelp") }
 
-    var body: some View {
+    // Pulled out of `body`: a border that used to be computed inline, folding a drag-reorder
+    // state into an already three-way ternary, pushed the type-checker over its time budget.
+    private var borderColor: Color {
+        if dropWillLink { return LinkColor.plugin }
+        if isBeingDragged || isDropTarget || isOpen { return Color.accentColor }
+        return tint.opacity(0.55)
+    }
+    private var borderWidth: CGFloat {
+        if isBeingDragged || isDropTarget { return 2 }
+        return isOpen ? 1.5 : 1
+    }
+
+    @ViewBuilder
+    private var nameRow: some View {
         HStack(spacing: 5) {
             if let number {
                 Text(verbatim: "\(number)")
@@ -333,21 +346,23 @@ private struct StemStripButton: View {
                     .help(Self.vuScaleHelp)
             }
         }
-        .opacity(stem.muted ? 0.5 : 1)
-        .padding(.horizontal, Self.hPadding).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6)
-            // Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same
-            // level of translucency on a dark background, the colour no longer collapses towards
-            // black and stays recognisable as the same hue as in the timeline.
-            .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(dropWillLink ? LinkColor.plugin
-                            : (isBeingDragged || isDropTarget || isOpen ? Color.accentColor : tint.opacity(0.55)),
-                          lineWidth: isBeingDragged || isDropTarget ? 2 : (isOpen ? 1.5 : 1)))
-        .opacity(isBeingDragged ? 0.6 : 1)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
-        .accessibilityAddTraits(.isButton)
+    }
+
+    var body: some View {
+        nameRow
+            .opacity(stem.muted ? 0.5 : 1)
+            .padding(.horizontal, Self.hPadding).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6)
+                // Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same
+                // level of translucency on a dark background, the colour no longer collapses towards
+                // black and stays recognisable as the same hue as in the timeline.
+                .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(borderColor, lineWidth: borderWidth))
+            .opacity(isBeingDragged ? 0.6 : 1)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(.isButton)
         // The number is the keyboard shortcut's; it is missing beyond 9, where there is none left.
         .help(L("stem.strip.help", isMain ? L("stem.main.name") : stem.name)
               + (number.map { " \($0)" } ?? "")
