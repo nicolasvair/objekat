@@ -9,10 +9,11 @@ import SwiftUI
 /// the transport bar), placed by `ContentView` as an `.overlay` on the `HSplitView` — drawn on
 /// top, it absorbs every click by itself, with no `.allowsHitTesting` needed.
 ///
-/// Two timings, deliberately asymmetric: the veil only appears if the load is still running after
-/// 300 ms (most loads never show it at all), but once shown it stays for AT LEAST 300 ms more —
-/// a flash the eye cannot read would be worse than a veil held a beat too long. Both edges fade
-/// over 150 ms.
+/// The veil is laid AT ONCE, with no fade-in (user decision, 24 September 2026): the old 300 ms
+/// grace let the teardown and the new project's first objects flash in the clear before the blur
+/// came down. Once shown it stays for at least 300 ms — a flash the eye cannot read would be worse
+/// than a veil held a beat too long — and it fades OUT over 150 ms. Half as blurred as the
+/// thinnest system material: the material at half opacity over the content.
 struct ProjectLoadOverlay: View {
     @Bindable var viewModel: EditViewModel
 
@@ -20,7 +21,8 @@ struct ProjectLoadOverlay: View {
     @State private var pendingShowWork: DispatchWorkItem?
     @State private var shownAt: Date?
 
-    private static let appearDelay: TimeInterval = 0.3
+    /// How much of the blur is kept (user decision: half as blurred).
+    private static let veilStrength: Double = 0.5
     private static let minVisible: TimeInterval = 0.3
     private static let fadeDuration: TimeInterval = 0.15
 
@@ -29,8 +31,11 @@ struct ProjectLoadOverlay: View {
             if showOverlay {
                 Rectangle()
                     .fill(.ultraThinMaterial)
+                    .opacity(Self.veilStrength)
                     .ignoresSafeArea()
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 card
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity))
             }
         }
         .animation(.easeInOut(duration: Self.fadeDuration), value: showOverlay)
@@ -48,14 +53,16 @@ struct ProjectLoadOverlay: View {
         }
     }
 
+    /// Synchronous, in the same transaction as `isLoadingProject` flipping: the veil is on screen
+    /// from the load's very first frame (the loader breathes before its teardown for exactly that).
     private func armShow() {
         pendingShowWork?.cancel()
-        let work = DispatchWorkItem {
+        pendingShowWork = nil
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) {
             showOverlay = true
             shownAt = Date()
         }
-        pendingShowWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.appearDelay, execute: work)
     }
 
     private func armHide() {

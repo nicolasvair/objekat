@@ -368,9 +368,9 @@ extension EditViewModel {
                                      projectName: displayName ?? projectName, startedAt: startedAt)
         engine?.beginBulkLoad()
         // The first breath happens BEFORE the teardown's own (blocking) work — the same reasoning
-        // as the export panel's deferred launch (`EditViewModel+Export.runExport`): the state is on
-        // screen for the overlay's 300 ms threshold to actually start counting from a drawn frame,
-        // not from a value nobody has painted yet.
+        // as the export panel's deferred launch (`EditViewModel+Export.runExport`): the veil is laid
+        // at once (@see ProjectLoadOverlay), and this breath is what lets it be DRAWN before the old
+        // project starts coming apart underneath.
         await breathIfNeeded(&lastBreath)
 
         performTeardown()
