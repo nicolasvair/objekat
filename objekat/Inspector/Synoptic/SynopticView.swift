@@ -878,7 +878,7 @@ struct PluginDragPreview: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if dragCount > 1 {
-                Text(verbatim: "×\(dragCount)")
+                Text(verbatim: "+\(dragCount - 1)")   // the OTHER plugins carried along, not N copies of this one
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.white)
                     .padding(.horizontal, 6)
