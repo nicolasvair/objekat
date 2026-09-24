@@ -682,7 +682,7 @@ struct SynopticCardView: View {
     var dragProvider: (() -> NSItemProvider)? = nil
     /// How many plugins this drag actually carries — the same count `dragProvider`'s own payload
     /// carries (a card taken FROM the selection drags the whole selection, one taken from outside
-    /// drags itself alone), so the preview's "×N" badge never disagrees with what a drop receives.
+    /// drags itself alone), so the preview's "+N-1" badge never disagrees with what a drop receives.
     var dragCount: Int = 1
     /// Dropping ANOTHER plugin on this card (the branch's axis): `(draggedPluginID, copy)`.
     /// `copy` = ⌥ held. nil = the card does not receive (the demo).
@@ -866,7 +866,7 @@ struct PluginDragPreview: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
-                    .padding(.trailing, dragCount > 1 ? 28 : 0)   // clear of the ×N badge
+                    .padding(.trailing, dragCount > 1 ? 28 : 0)   // clear of the +N-1 badge
                 Text(L("synoptic.drag.legend"))
                     .font(.system(size: 9))
                     .foregroundStyle(Color.secondary)
