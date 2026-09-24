@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - The signal view's layout engine (VERTICAL)
 //
@@ -22,6 +23,21 @@ enum SynopticLayout {
     static let plusW: CGFloat = 20         // the diameter of a '+' zone
     static let plusGap: CGFloat = 12       // the space before the '+' zone at the end of a series
     static let gainBandH: CGFloat = 30     // the band reserved for the mute plus end-of-branch dB gain of a parallel branch (under the branches)
+
+    /// A card's width: wide enough for its whole name and its link badge, from `cardW` (the old
+    /// fixed width, which truncated a name beside the badge to a few letters) up to the
+    /// 'audio file' zone's width at the head of the chain — never wider than that header.
+    /// Measured on the card's own name font; the rest is the card's fixed chrome (on/off button,
+    /// paddings, ✕, and the badge when there is one). @see SynopticCardView.
+    static func cardWidth(for p: SynopticPlugin) -> CGFloat {
+        let nameW = ceil((p.name as NSString).size(withAttributes: [.font: cardNameFont]).width)
+        let hasBadge = p.isLinked || p.isLinkDetached
+        // on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack so the tail never ellipsises
+        let chrome: CGFloat = 26 + 16 + 15 + (hasBadge ? 24 : 0) + 4
+        return min(audioZoneW, max(cardW, nameW + chrome))
+    }
+
+    static let cardNameFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
     /// A rectangle the size of a card, centred on `(cx, cy)`: it serves as a drop preview.
     static func cardFrame(_ cx: CGFloat, _ cy: CGFloat) -> CGRect {
@@ -107,8 +123,8 @@ enum SynopticLayout {
 
     static func measure(_ node: SynopticNode) -> CGSize {
         switch node.kind {
-        case .plugin:
-            return CGSize(width: cardW, height: cardH)
+        case .plugin(let p):
+            return CGSize(width: cardWidth(for: p), height: cardH)
 
         case .series(let a):
             // An empty series: we reserve the height of one card slot so that the '+' sits AT THE
@@ -141,10 +157,11 @@ enum SynopticLayout {
         switch node.kind {
 
         case .plugin(let p):
-            let frame = CGRect(origin: origin, size: CGSize(width: cardW, height: cardH))
+            let w = cardWidth(for: p)
+            let frame = CGRect(origin: origin, size: CGSize(width: w, height: cardH))
             var pl = Placement(size: frame.size,
-                               entry: CGPoint(x: origin.x + cardW / 2, y: origin.y),
-                               exit: CGPoint(x: origin.x + cardW / 2, y: origin.y + cardH))
+                               entry: CGPoint(x: origin.x + w / 2, y: origin.y),
+                               exit: CGPoint(x: origin.x + w / 2, y: origin.y + cardH))
             pl.cards = [CardPlacement(plugin: p, frame: frame)]
             return pl
 

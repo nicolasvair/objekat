@@ -981,8 +981,11 @@ struct TimelineView: View {
 
                 // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
                 if let loc = viewModel.pluginLinkDropLocation {
+                    // ABOVE the carried card, not beside the cursor: the drag image is drawn by the
+                    // system over every window, so a badge under it is simply hidden — at +18/-18 it
+                    // sat inside the card and was never seen.
                     LinkBadge(color: LinkColor.plugin)
-                        .position(x: loc.x + 18, y: loc.y - 18)
+                        .position(x: loc.x, y: loc.y - PluginDragPreview.height / 2 - 14)
                         .allowsHitTesting(false)
                         .zIndex(3)
                 }

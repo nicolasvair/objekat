@@ -595,7 +595,8 @@ struct SynopticView: View {
                         // another instance (⌘-drop) and unlinks with a click.
                         onUnlink: actions.onUnlink.map { f in { f(inst.id) } },
                         onRelink: actions.onRelink.map { f in { f(inst.id) } },
-                        linkSiblingCount: actions.linkSiblingCount?(inst.id) ?? 0
+                        linkSiblingCount: actions.linkSiblingCount?(inst.id) ?? 0,
+                        width: slot.width
                     )
                     .frame(width: slot.width, height: slot.height)
                     .position(x: slot.midX, y: slot.midY)
@@ -696,7 +697,10 @@ struct SynopticCardView: View {
     @State private var dropTargeted = false
     @State private var dropHintID = UUID()
 
-    private let cardW = SynopticLayout.cardW
+    /// nil = sized on its own name (@see SynopticLayout.cardWidth); the MIDI zone's instrument
+    /// slot passes its fixed width.
+    var width: CGFloat? = nil
+    private var cardW: CGFloat { width ?? SynopticLayout.cardWidth(for: plugin) }
     private let cardH = SynopticLayout.cardH
 
     private let toggleW: CGFloat = 26
@@ -737,7 +741,7 @@ struct SynopticCardView: View {
                 HStack(spacing: 6) {
                     // NAME — the ONLY drag area (reorder / move) plus a double click for the editor
                     Text(plugin.name)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Font(SynopticLayout.cardNameFont))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .foregroundStyle(plugin.isEnabled ? .primary : .secondary)
@@ -850,10 +854,12 @@ struct PluginDragPreview: View {
     let plugin: SynopticPlugin
     var dragCount: Int = 1
 
-    /// The size of a card: the preview is the card being carried, nothing more — the modifiers
-    /// are explained by the band at the bottom of the timeline, not here.
-    private let width = SynopticLayout.cardW
-    private let height: CGFloat = 32
+    /// The size of the card being carried (its name whole, @see SynopticLayout.cardWidth),
+    /// nothing more — the modifiers are explained by the band at the bottom of the timeline.
+    private var width: CGFloat { SynopticLayout.cardWidth(for: plugin) }
+    /// Shared with the drop targets' link badge, which must be laid OUTSIDE this card: the drag
+    /// image is drawn by the system above every window, so nothing of ours can sit on top of it.
+    static let height: CGFloat = 32
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -864,16 +870,12 @@ struct PluginDragPreview: View {
                         .strokeBorder(plugin.color, lineWidth: 1.5)
                 )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(1)
-                    .padding(.trailing, dragCount > 1 ? 28 : 0)   // clear of the +N-1 badge
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            Text(plugin.name)
+                .font(Font(SynopticLayout.cardNameFont))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .padding(.horizontal, dragCount > 1 ? 30 : 10)   // symmetric: clear of the +N-1 badge, still centred
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
             if dragCount > 1 {
                 Text(verbatim: "+\(dragCount - 1)")   // the OTHER plugins carried along, not N copies of this one
@@ -885,7 +887,7 @@ struct PluginDragPreview: View {
                     .padding(6)
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: width, height: Self.height)
     }
 }
 

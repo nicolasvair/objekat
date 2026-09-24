@@ -393,9 +393,12 @@ private struct StemStripButton: View {
             GeometryReader { geo in
                 if let p = dropLinkAt {
                     let r = Self.linkBadgeSize / 2
+                    // Below the strip rather than on it: the carried card (the system's drag image,
+                    // over every window) covers the strip's whole height around the cursor, so a
+                    // badge kept inside the strip was always hidden under it.
                     LinkBadge(color: LinkColor.plugin, size: 8)
-                        .position(x: min(max(p.x + 14, r), max(r, geo.size.width - r)),
-                                  y: min(max(p.y - 14, r), max(r, geo.size.height - r)))
+                        .position(x: min(max(p.x, r), max(r, geo.size.width - r)),
+                                  y: p.y + PluginDragPreview.height / 2 + r + 4)
                 }
             }
             .allowsHitTesting(false)
