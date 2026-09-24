@@ -221,6 +221,48 @@ enum WaveformPeaksTest {
     check("sampleEnvelope entirely before the array's start is (0, 0)",
           WaveformPeaks.sampleEnvelope(sine, from: -50, to: -10) == PeakPair(lo: 0, hi: 0))
 
+    // MARK: - WaveformPeaks.peakEnvelope (the crop-in bug)
+
+    // One loud block among quiet ones: the transient a crop-in used to make vanish. At ~7 blocks
+    // per pixel, EVERY phase of the pixel grid against the block grid must still see it —
+    // shifting the phase is exactly what changing `sourceOffset` does.
+    var spiky = [PeakPair](repeating: PeakPair(lo: -0.05, hi: 0.05), count: 700)
+    spiky[353] = PeakPair(lo: -0.9, hi: 0.95)
+    var everyPhaseSeesIt = true
+    for step in 0..<20 {
+        let phase = Double(step) / 20 * 7
+        var seen = false
+        var a = phase
+        while a < 700 {
+            let e = WaveformPeaks.peakEnvelope(spiky, from: a, to: a + 7)
+            if e.hi == 0.95 && e.lo == -0.9 { seen = true }
+            a += 7
+        }
+        if !seen { everyPhaseSeesIt = false }
+    }
+    check("peakEnvelope: an isolated transient survives every pixel phase (crop-in)", everyPhaseSeesIt)
+
+    check("peakEnvelope: union over the blocks touched",
+          WaveformPeaks.peakEnvelope(spiky, from: 350.5, to: 353.2) == PeakPair(lo: -0.9, hi: 0.95))
+    check("peakEnvelope: a span ending exactly on a boundary does not enter the next block",
+          WaveformPeaks.peakEnvelope(spiky, from: 350, to: 353) == PeakPair(lo: -0.05, hi: 0.05))
+    check("peakEnvelope: under one block per pixel, straddling a boundary takes both",
+          WaveformPeaks.peakEnvelope(spiky, from: 352.8, to: 353.1) == PeakPair(lo: -0.9, hi: 0.95))
+    check("peakEnvelope: under one block per pixel, inside one block reads that block",
+          WaveformPeaks.peakEnvelope(spiky, from: 352.2, to: 352.7) == PeakPair(lo: -0.05, hi: 0.05))
+    check("peakEnvelope: order of from/to does not matter (reverse)",
+          WaveformPeaks.peakEnvelope(spiky, from: 353.2, to: 350.5) == PeakPair(lo: -0.9, hi: 0.95))
+    check("peakEnvelope: zero-width span reads its block",
+          WaveformPeaks.peakEnvelope(spiky, from: 353.5, to: 353.5) == PeakPair(lo: -0.9, hi: 0.95))
+    check("peakEnvelope: empty array is (0, 0)",
+          WaveformPeaks.peakEnvelope([], from: 0, to: 3) == PeakPair(lo: 0, hi: 0))
+    check("peakEnvelope: entirely past the end is (0, 0)",
+          WaveformPeaks.peakEnvelope(spiky, from: 700, to: 705) == PeakPair(lo: 0, hi: 0))
+    check("peakEnvelope: entirely before the start is (0, 0)",
+          WaveformPeaks.peakEnvelope(spiky, from: -9, to: -2) == PeakPair(lo: 0, hi: 0))
+    check("peakEnvelope: partly outside is clamped, not zeroed",
+          WaveformPeaks.peakEnvelope(spiky, from: 698.5, to: 703) == PeakPair(lo: -0.05, hi: 0.05))
+
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {
         print("FAILURES:")

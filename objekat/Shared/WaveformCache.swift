@@ -65,6 +65,28 @@ final class WaveformCache {
     }
 
     private var cache: [String: Entry] = [:]
+
+    /// Coarser levels DERIVED in memory from the coarsest stored one (10/s and 1/s out of 100/s),
+    /// never written: the `.wfc` format and `loadFromDisk`'s density check stay exactly as they
+    /// are. They exist because the drawing takes the UNION of every block a pixel covers (@see
+    /// `WaveformPeaks.peakEnvelope`) — at 1 px/s the 100/s level is 100 blocks per pixel per lane
+    /// per frame, where point sampling used to read one. A tenth of a level's weight, computed
+    /// once per file. Ordered coarse → fine, like `Entry.densities`.
+    private var overviewLevels: [String: [(density: Double, peaks: [PeakPair])]] = [:]
+
+    /// The one door onto `cache`: the overview levels follow every entry stored.
+    private func store(_ entry: Entry, for filePath: String) {
+        cache[filePath] = entry
+        overviewLevels[filePath] = Self.overviews(of: entry)
+    }
+
+    private nonisolated static func overviews(of entry: Entry) -> [(density: Double, peaks: [PeakPair])] {
+        guard let base = entry.peaks.first, !base.isEmpty, let d0 = entry.densities.first, d0 > 0 else { return [] }
+        return [100, 10].compactMap { ratio -> (density: Double, peaks: [PeakPair])? in
+            guard base.count / ratio >= 2 else { return nil }
+            return (d0 / Double(ratio), WaveformPeaks.decimate(base, ratio: ratio))
+        }
+    }
     private var inFlight: Set<String> = []
 
     /// A decoded region's key. Keying on the PATH alone was enough while the samples mode only
@@ -153,6 +175,10 @@ final class WaveformCache {
     // pixelsPerSecond: pixels shown per second on screen.
     func peaks(for filePath: String, pixelsPerSecond: Double) -> [PeakPair]? {
         guard let entry = cache[filePath], entry.duration > 0 else { return nil }
+        // Zoomed far out: a derived overview level (@see `overviewLevels`).
+        if let overviews = overviewLevels[filePath] {
+            for level in overviews where level.density >= pixelsPerSecond { return level.peaks }
+        }
         // The first level whose density (peaks/sec) covers the requested PPS
         for (i, density) in entry.densities.enumerated() {
             if density >= pixelsPerSecond || i == entry.densities.count - 1 {
@@ -341,7 +367,7 @@ final class WaveformCache {
                     stats.peakBytesInMemory += Self.peakByteSize(cached)
                 }
                 await MainActor.run {
-                    self.cache[filePath] = cached
+                    self.store(cached, for: filePath)
                     self.inFlight.remove(filePath)
                     WaveformCacheMeter.record { $0.inFlight -= 1 }
                 }
@@ -364,7 +390,7 @@ final class WaveformCache {
             let target = await MainActor.run { self.writeTarget(for: filePath) }
             if let target { Self.writeToDisk(result, path: filePath, dir: target) }
             await MainActor.run {
-                self.cache[filePath] = result
+                self.store(result, for: filePath)
                 self.inFlight.remove(filePath)
                 WaveformCacheMeter.record { $0.inFlight -= 1 }
             }

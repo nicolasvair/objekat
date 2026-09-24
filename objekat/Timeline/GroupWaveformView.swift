@@ -117,7 +117,6 @@ struct GroupWaveformView: View {
             let vScale = mid * WaveformShaping.linearGain(dB: Float(waveformDisplayDB))
             // A muted group (on its own block) = a greyed-out composite.
             let fillColor = rootMuted ? Color.gray.opacity(0.4) : stemColor.opacity(0.55)
-            func clampY(_ y: Double) -> Double { min(h, max(0, y)) }
 
             // The visible window in the block's local coordinates (x=0 = the block's left edge).
             let margin: CGFloat = 2
@@ -178,13 +177,10 @@ struct GroupWaveformView: View {
                 let mods  = inst.mods
                 let shift = inst.shift
                 guard case .clip(let filePath, let sourceOffset, _, let speedRatio, let isReversed) = child.kind,
-                      let peaks = waveformCache.peaks(for: filePath, pixelsPerSecond: pixelsPerSecond),
                       let fileDuration = waveformCache.duration(for: filePath),
-                      fileDuration > 0,
-                      !peaks.isEmpty
+                      fileDuration > 0
                 else { continue }
 
-                let n = peaks.count
                 let relStart = child.startTime - groupStartTime + shift
                 // The instance's bounds ∩ the containers' windows ∩ the visible window.
                 let xStart = max(max(0, Int(inst.winLo * pixelsPerSecond)), visStart)
@@ -196,35 +192,62 @@ struct GroupWaveformView: View {
                 let loopPeriod = (child.loopEnabled && !isReversed && fileDuration > sourceOffset)
                     ? fileDuration - sourceOffset : nil
 
-                // The amplitude (a raw peak × the composed modifiers) for one local pixel.
-                func sample(_ i: Int, hi: Bool) -> Double {
+                // The file time at a local pixel's left edge (the child's own loop folded in).
+                func fileTime(_ i: Int) -> Double {
                     let timeInChild = Double(i) / pixelsPerSecond - relStart
-                    var fileTime = WaveformShaping.sourceTime(
+                    var t = WaveformShaping.sourceTime(
                         localTime: timeInChild, sourceOffset: sourceOffset,
                         duration: child.duration, speedRatio: speedRatio, isReversed: isReversed)
-                    if let period = loopPeriod, period > 0, fileTime >= fileDuration {
-                        fileTime = sourceOffset + (fileTime - sourceOffset).truncatingRemainder(dividingBy: period)
+                    if let period = loopPeriod, period > 0, t >= fileDuration {
+                        t = sourceOffset + (t - sourceOffset).truncatingRemainder(dividingBy: period)
                     }
-                    let fraction = fileTime / fileDuration
-                    guard fraction >= 0, fraction < 1 else { return 0 }
-                    let idx = min(Int(fraction * Double(n)), n - 1)
-                    let raw = Double(hi ? peaks[idx].hi : peaks[idx].lo)
+                    return t
+                }
+                // A column's file span, unfolded — @see WaveformDrawing.appendPeaksFill.
+                let srcStep = (isReversed ? -speedRatio : speedRatio) / pixelsPerSecond
+
+                // The file window on screen, for the samples region past the threshold — the SAME
+                // path a top-level clip takes, which is the whole point: the composite used to read
+                // peaks only, capped at 1 000/s, and showed steps where the clip was smooth. Under
+                // the child's own loop the folded times are not monotonic, so the window is the
+                // span actually visited, measured rather than taken from the two ends.
+                var window: (lo: Double, hi: Double)? = nil
+                if pixelsPerSecond >= WaveformCache.sampleModeThreshold {
+                    var lo = Double.infinity, hi = -Double.infinity
+                    if loopPeriod != nil {
+                        for i in xStart...xEnd {
+                            let a = fileTime(i)
+                            lo = min(lo, a, a + srcStep); hi = max(hi, a, a + srcStep)
+                        }
+                    } else {
+                        let a = fileTime(xStart), b = fileTime(xEnd) + srcStep
+                        lo = min(a, b); hi = max(a, b)
+                    }
+                    window = (lo, hi)
+                }
+                guard let source = WaveformDrawing.envelopeSource(
+                    waveformCache: waveformCache, filePath: filePath,
+                    pixelsPerSecond: pixelsPerSecond, window: window) else { continue }
+
+                var path = Path()
+                WaveformDrawing.appendEnvelopeFill(
+                    to: &path, from: xStart, through: xEnd,
+                    x: { Double($0) }, y0: 0, h: h, mid: mid, vScale: vScale) { i in
+                    let a = fileTime(i)
+                    let e = source.envelope(fileA: a, fileB: a + srcStep)
                     // The ORIGINAL position (before the repeat offset) for the fades: the repeated
                     // pattern replays the same gain envelope, not a fade reset on it.
                     let t = groupStartTime + Double(i) / pixelsPerSecond - shift
-                    return raw * WaveformShaping.combinedMultiplier(mods, atAbsTime: t)
+                    let m = WaveformShaping.combinedMultiplier(mods, atAbsTime: t)
+                    return (Double(e.lo) * m, Double(e.hi) * m)
                 }
-
-                var path = Path()
-                path.move(to: CGPoint(x: Double(xStart), y: mid))
-                for i in xStart...xEnd {
-                    path.addLine(to: CGPoint(x: Double(i), y: clampY(mid - sample(i, hi: true) * vScale)))
-                }
-                for i in stride(from: xEnd, through: xStart, by: -1) {
-                    path.addLine(to: CGPoint(x: Double(i), y: clampY(mid - sample(i, hi: false) * vScale)))
-                }
-                path.closeSubpath()
                 ctx.fill(path, with: .color(fillColor))
+                // Under one sample per pixel the envelope degenerates to a line (lo == hi, @see
+                // WaveformPeaks.sampleEnvelope): a fill with no area draws nothing, so the outline
+                // carries it — what the clip's own stroke does in WaveformDrawing.draw.
+                if let r = source.region, r.sampleRate * abs(srcStep) < 2 {   // the same rule as WaveformDrawing.draw
+                    ctx.stroke(path, with: .color(fillColor), lineWidth: 1)
+                }
             }
 
             if looping {

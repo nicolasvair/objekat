@@ -1,4 +1,5 @@
 import Foundation
+import Accelerate
 
 // The arithmetic of a peak mipmap, with no model behind it — in the spirit of `SendColumns` /
 // `SynopticMarquee` / `PianoRollFraming` / `ComposedName` / `CutSelection`, so it can be compiled
@@ -116,6 +117,58 @@ enum PeakQuantisation {
 }
 
 extension WaveformPeaks {
+    /// `PeakPair`'s layout as vDSP needs it: `lo` then `hi`, no padding.
+    nonisolated static let peakPairIsInterleaved: Bool =
+        MemoryLayout<PeakPair>.stride == 2 * MemoryLayout<Float>.stride
+        && MemoryLayout<PeakPair>.offset(of: \PeakPair.hi) == MemoryLayout<Float>.stride
+
+    /// The (lo, hi) of the PEAK BLOCKS a single pixel covers, `from`/`to` given as FRACTIONAL block
+    /// indices into `p` (file time × blocks per second — the caller converts), in either order.
+    ///
+    /// The union of EVERY block the span touches, never one of them. The drawing used to read the
+    /// single block under the pixel's left edge, which is point sampling: the level is picked so
+    /// that a pixel covers one block or more (@see `WaveformCache.peaks(for:pixelsPerSecond:)` —
+    /// at 150 px/s that is ~7 blocks of the 1 000/s level per pixel), so six blocks out of seven
+    /// were never looked at. An isolated transient then showed or vanished depending on the
+    /// PHASE between the pixel grid and the block grid — which is exactly what a crop-in moves
+    /// (a new `sourceOffset` shifts every pixel's start by a fraction of a block), hence big peaks
+    /// disappearing on a trim. Straddling a boundary with less than a block per pixel takes both
+    /// blocks too: a peak block is already an envelope, and widening by one block at worst is
+    /// invisible where losing a transient is not.
+    ///
+    /// (0, 0) on an empty array or a span entirely outside it; a span partly outside is clamped.
+    nonisolated static func peakEnvelope(_ p: [PeakPair], from: Double, to: Double) -> PeakPair {
+        let n = p.count
+        guard n > 0 else { return PeakPair(lo: 0, hi: 0) }
+        let a = min(from, to), b = max(from, to)
+        guard b >= 0, a < Double(n) else { return PeakPair(lo: 0, hi: 0) }
+        let first = max(0, Int(a.rounded(.down)))
+        // `ceil(b) - 1` is the last block the span actually ENTERS (b exactly on a boundary does
+        // not enter the next one); never before `first`, a zero-width span still reads its block.
+        let last = min(n - 1, max(first, Int(b.rounded(.up)) - 1))
+        guard last > first else { return p[first] }
+        var lo: Float = 0, hi: Float = 0
+        // `PeakPair` is two `Float`s, so the array reads as interleaved lo/hi at stride 2
+        // (checked by `peakPairIsInterleaved`, a loop otherwise).
+        if peakPairIsInterleaved {
+            p.withUnsafeBufferPointer { buf in
+                buf.withMemoryRebound(to: Float.self) { f in
+                    let base = f.baseAddress! + 2 * first
+                    let count = vDSP_Length(last - first + 1)
+                    vDSP_minv(base, 2, &lo, count)
+                    vDSP_maxv(base + 1, 2, &hi, count)
+                }
+            }
+        } else {
+            lo = p[first].lo; hi = p[first].hi
+            for i in (first + 1)...last {
+                if p[i].lo < lo { lo = p[i].lo }
+                if p[i].hi > hi { hi = p[i].hi }
+            }
+        }
+        return PeakPair(lo: lo, hi: hi)
+    }
+
     /// The (lo, hi) of the samples a single pixel covers, `from`/`to` given as FRACTIONAL sample
     /// indices into `s` (not seconds — the caller has already multiplied by the sample rate).
     ///
@@ -148,11 +201,12 @@ extension WaveformPeaks {
         let lo0 = max(0, Int(from.rounded(.down)))
         let hi0 = min(n - 1, Int(to.rounded(.up)))
         guard lo0 <= hi0 else { return PeakPair(lo: 0, hi: 0) }
-        var lo = s[lo0]
-        var hi = s[lo0]
-        for i in (lo0 + 1)...hi0 {
-            if s[i] < lo { lo = s[i] }
-            if s[i] > hi { hi = s[i] }
+        var lo: Float = 0, hi: Float = 0
+        s.withUnsafeBufferPointer { p in
+            let base = p.baseAddress! + lo0
+            let count = vDSP_Length(hi0 - lo0 + 1)
+            vDSP_minv(base, 1, &lo, count)
+            vDSP_maxv(base, 1, &hi, count)
         }
         return PeakPair(lo: lo, hi: hi)
     }
