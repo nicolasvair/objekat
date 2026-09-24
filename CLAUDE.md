@@ -1403,6 +1403,86 @@ What has landed since mid-August, in order:
   then replayed, feels like the original. The only recordings made so far were of synthetic
   events.
 
+- **Tabs, INC1 — several projects, ONE engine** (24 September 2026, on `main`) — the absolute rule
+  the whole design answers to: there is exactly one `OBJEngineCore` in this process, its callbacks
+  are `__unsafe_unretained`, and it is never destroyed nor duplicated. So a tab is not a second
+  session — it is a **parked document** the one `EditViewModel` and the one engine take turns
+  showing. `Workspace` (new, `App/Workspace.swift`) owns the session and the tab list;
+  `EditViewModel`/`ObjekatSession` know nothing about tabs at all — `parkProject()` /
+  `restoreParkedProject(_:)` / `tabSwitchBlocker` (new, `EditViewModel+Tabs.swift`) are the only
+  three points of contact. A switch is always the same three moves: park the outgoing document
+  (its `ProjectDocument`, undo/redo stacks, selection, caret, loop, viewport — everything a
+  document needs carried between the file and the screen), load the incoming one through the
+  SAME door a project opening already uses (`applyProjectDocumentAsync`, made non-cancellable for
+  this call — `EditViewModel+ProjectLoad.swift` gained `ProjectLoadState.cancellable` for it, and
+  `ProjectLoadOverlay` hides its Cancel button accordingly), then unpark what it carried. No
+  engine patch, no second `OBJEngineCore`, no "warm" tab.
+  **A switch is refused, not queued**, the same four reasons `tabSwitchBlocker` already reads off
+  existing `@Observable` flags: a project loading, an export running, a bake/consolidate render in
+  flight, or a consolidated object open for editing — refusing is simpler than making any of those
+  four cope with the ground moving under them mid-gesture, and it is what a script sees as
+  `invalid_state`. `Quiescence` gained one more reason (`workspace.isSwitching`) so `wait_idle`
+  covers a tab switch exactly as it covers a load.
+  **A file already open in another tab is not opened twice.** `tab.open` (always a NEW tab) and
+  `project.open` (the historical, tabs-unaware door — replaces the ACTIVE tab's document, as
+  before) both check every other tab's URL by FILE-SYSTEM IDENTITY (`FolderIdentity`, already used
+  by `project.save_copy`'s own destination guard) before doing any work: a match switches to that
+  tab instead (`already_open: true`) rather than loading a second copy that would silently orphan
+  whatever the first tab holds in memory. `project.save_as` refuses the same way
+  (`EditViewModel.saveAsURLConflictCheck`, the one hook `EditViewModel` needed to ask `Workspace`
+  a question without knowing it exists) — writing over a file another tab already has open would
+  orphan that tab the next time IT saves.
+  **Closing never destroys silently.** `discard` must be explicitly `true` to close a tab carrying
+  unsaved changes (checked on the ACTIVE tab's live `isDirty`, or on an inactive tab's PARKED
+  `isDirty` — both read the same way, one function), and the last tab never closes — the app
+  always shows one project or more, never zero. `WorkspaceTabBar`'s own ✕ found the sharp edge
+  here during implementation: an inactive tab's dirty-close must ask the SAME confirmation an
+  active one's does, only the save mechanism differing (the active tab's own `save()`/`saveAs()`;
+  an inactive one with a path writes its parked document directly via the new
+  `EditViewModel.writeDocument(_:to:projectFolder:)`; one with no path yet is switched to, so the
+  hand can Save As in the flesh) — a first draft silently discarded any dirty INACTIVE tab, which
+  would have been real data loss.
+  **⌘T new tab, ⌘W close tab, ⌃⇥ / ⌃⇧⇥ next/previous, ⌘1…9 go to tab** — verified beforehand to
+  collide with NOTHING (a static `grep` across every `keyboardShortcut` / `keyEquivalent` /
+  `addLocalMonitorForEvents` in the app, then an empirical `NSApp.mainMenu` dump confirming no
+  existing item answers to any of them; the "Window" menu had only Minimize/Zoom/Bring-All-to-
+  Front). ⌘W falls back to the OS's own `performClose` whenever the key window is not the document
+  window (a plugin editor, a panel) or there is only one tab — closing a tool window must not be
+  read as a request to close the project. The bar itself (`WorkspaceTabBar`, new) shows only at
+  two tabs or more, so a single-project session looks exactly as it always has.
+  **One simplification against the plan, flagged rather than silently made**: the plan called for
+  a new `documentSessionID: UUID` on the parked/restored state, to let stale UI caches know a
+  reload happened underneath them. `EditViewModel.projectLoadToken` (existing, already bumped on
+  every load — sync or async, `restoreParkedProject`'s call to `applyProjectDocumentAsync`
+  included — and already read by `TimelineView.onChange` to reset sticky state) already IS that
+  invalidation signal; adding a second one next to it would have been a duplicate with nothing to
+  distinguish it by.
+  Session format, command contract and on-disk layout are UNCHANGED — a tab is pure runtime state,
+  nothing new is written to a project file. New commands: `tab.list` / `tab.new` / `tab.select`
+  (`id` or 1-based `index`) / `tab.close` (`discard`) / `tab.open`; `app.info` gains `tab_count` /
+  `active_tab`; `project.open` and `project.save_as` gained the tabs-aware behaviour above.
+  Verified with no screen: a from-scratch clean Debug build, **1518 warnings before and after**
+  (the documented baseline, confirmed by an exact recount — 0 new); `tools/scenario_tabs.py` (new),
+  47 assertions, ALL PASS — the sequence above end to end, including a round trip through another
+  tab and back proving `project.get_state` comes back byte-identical (modulo a plugin's internal
+  Tracktion `EditItemID`, reassigned by every graph rebuild and unrelated to anything a user or the
+  API's own stable `plugin.id` can see), two undos afterwards restoring the object to its exact
+  original position, and playback stopping on a switch. Full non-regression, each against its OWN
+  fresh headless instance (a stale instance was found to leak state between unrelated scenario
+  runs — pre-existing, not a tabs regression, worth remembering next time two scenarios are chained
+  on one process): `smoke.jsonl` clean, `scenario_families.py` 191 OK, `scenario_markers.py` ALL
+  PASS, `scenario_plugin_selection.py` 58, `scenario_plugin_state_undo.py` 5 ALL PASS,
+  `scenario_relink.py` ALL PASS, `scenario_export_preview.py` 35 OK, `scenario_consolidate.py` ALL
+  PASS; i18n 461 keys, no orphans; `CGWindowListCopyWindowInfo` on every headless pid used: no
+  window, throughout.
+  **Not seen, not felt, and there is no path to it from here**: every pixel and every gesture — the
+  bar itself, the dirty dot, a tab's name truncating, ⌘T/⌘W/⌃⇥/⌃⇧⇥/⌘1…9 under a real hand, the
+  per-tab viewport actually restoring scroll and zoom on screen, quitting with two modified tabs
+  (one of them untitled), and a plugin editor open in one tab closing cleanly when the hand
+  switches away from it. No Accessibility/Automation permission is available in this environment
+  and no tool here drives a native macOS window, so none of this could be attempted, headless or
+  otherwise — it needs the user's own screen.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
