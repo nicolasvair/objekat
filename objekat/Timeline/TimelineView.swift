@@ -1071,6 +1071,7 @@ struct TimelineView: View {
             VStack(spacing: 6) {
                 cheatsheetOverlay
                 fileDropHintOverlay
+                pluginDropHUD
                 moveDragHUD
                 fadeDragHUD
                 crossfadeDragHUD
@@ -2521,6 +2522,41 @@ struct TimelineView: View {
         .padding(.horizontal, 8).padding(.vertical, 3)
         .foregroundStyle(on ? Color.white : Color.secondary)
         .background(on ? Color.accentColor : Color.primary.opacity(0.09), in: Capsule())
+    }
+
+    /// The same band as the object move, for a plugin card being dragged (@see PluginDropHint):
+    /// what a release would do NOW, and the two modifiers lit as they are held. Shown only while
+    /// the card hovers a place that takes it — a system drag has no other signal to be read.
+    /// Within a chain (the synoptic's cards and cables), ⌘ does not link: the chip is replaced
+    /// by a line saying where it does.
+    @ViewBuilder
+    private var pluginDropHUD: some View {
+        if let s = PluginDropHint.shared.state {
+            HStack(spacing: 7) {
+                Image(systemName: s.isLink ? "link"
+                                  : s.isCopy ? "plus.square.on.square"
+                                  : "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(s.isLink ? LinkColor.plugin : Color.accentColor)
+                Text(s.isLink ? L("hud.pluginDrop.linkedCopy")
+                     : s.isCopy ? L("hud.move.copy") : L("hud.move.move"))
+                    .font(.system(size: 11, weight: .bold))
+                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy, locked: false)
+                if s.context == .host {
+                    modifierChip("⌘", L("hud.pluginDrop.chip.link"), on: s.isLink, locked: false)
+                } else {
+                    Text(L("hud.pluginDrop.sameChainNoLink"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)   // it must never intercept the drop
+        }
     }
 
     /// The cheat sheet (a tool key or a modifier held) — see ShortcutCheatsheet.

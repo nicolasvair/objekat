@@ -694,6 +694,7 @@ struct SynopticCardView: View {
     var linkSiblingCount: Int = 0
 
     @State private var dropTargeted = false
+    @State private var dropHintID = UUID()
 
     private let cardW = SynopticLayout.cardW
     private let cardH = SynopticLayout.cardH
@@ -834,6 +835,7 @@ struct SynopticCardView: View {
                 .contentShape(Rectangle())
                 .onDrop(of: [.plainText],
                         delegate: PluginDropDelegate(isTargeted: $dropTargeted,
+                                                     hintKey: "card:\(dropHintID.uuidString)",
                                                      onDrop: onDropPlugin))
         }
     }
@@ -895,6 +897,7 @@ struct CableDropView: View {
     let previewFrame: CGRect  // the PREVIEW shown on hover (card-sized, on the cable)
     let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
     @State private var targeted = false
+    @State private var dropHintID = UUID()
 
     var body: some View {
         // The target covers the whole `rect` (easy to aim at) but stays invisible; only a
@@ -904,7 +907,9 @@ struct CableDropView: View {
             .frame(width: rect.width, height: rect.height)
             .contentShape(Rectangle())
             .onDrop(of: [.plainText],
-                    delegate: PluginDropDelegate(isTargeted: $targeted, onDrop: onDrop))
+                    delegate: PluginDropDelegate(isTargeted: $targeted,
+                                                 hintKey: "cable:\(dropHintID.uuidString)",
+                                                 onDrop: onDrop))
             .overlay(alignment: .topLeading) {
                 if targeted {
                     RoundedRectangle(cornerRadius: 6)
@@ -926,16 +931,27 @@ struct CableDropView: View {
 /// .copy/.move operation depending on ⌥ so as to show the right cursor; the copy is reread at the drop.
 private struct PluginDropDelegate: DropDelegate {
     let isTargeted: Binding<Bool>
+    /// This target's key for the band at the bottom of the timeline (@see PluginDropHint):
+    /// one per card / cable, since neighbours overlap their enter and exit.
+    let hintKey: String
     let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
 
     func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
-    func dropEntered(info: DropInfo) { isTargeted.wrappedValue = true }
-    func dropExited(info: DropInfo)  { isTargeted.wrappedValue = false }
+    func dropEntered(info: DropInfo) {
+        isTargeted.wrappedValue = true
+        PluginDropHint.shared.present(hintKey, context: .sameChain)
+    }
+    func dropExited(info: DropInfo) {
+        isTargeted.wrappedValue = false
+        PluginDropHint.shared.leave(hintKey)
+    }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
+        PluginDropHint.shared.present(hintKey, context: .sameChain)
+        return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
     }
     func performDrop(info: DropInfo) -> Bool {
         isTargeted.wrappedValue = false
+        PluginDropHint.shared.leave(hintKey)
         guard let p = info.itemProviders(for: [.plainText]).first else { return false }
         let copy = NSEvent.modifierFlags.contains(.option)
         p.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in

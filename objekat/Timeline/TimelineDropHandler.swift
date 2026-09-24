@@ -62,6 +62,7 @@ struct TimelineDropDelegate: DropDelegate {
         onDropHover?(true)
         let providers = info.itemProviders(for: types)
         if providers.contains(where: dragCarriesPlugin) {
+            PluginDropHint.shared.present("timeline", context: .host)
             let f = NSEvent.modifierFlags
             onLinkIndicator(f.contains(.command) ? info.location : nil)
             return DropProposal(operation: PluginDrop.operation(for: f))
@@ -77,12 +78,14 @@ struct TimelineDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         onDropHover?(false)
+        PluginDropHint.shared.leave("timeline")
         onLinkIndicator(nil)
         onFileHintEnd()
     }
 
     func performDrop(info: DropInfo) -> Bool {
         onDropHover?(false)
+        PluginDropHint.shared.leave("timeline")
         onLinkIndicator(nil)
         // resolved yet on entry, which happens depending on the drag's source).
         // The mode is read BEFORE the band closes, in handleDrop: here we merely hand over, and

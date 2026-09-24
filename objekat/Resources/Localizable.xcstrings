@@ -3750,6 +3750,75 @@
         }
       }
     },
+    "hud.pluginDrop.chip.link": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "copy linked"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "copiar vinculado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "copier lié"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.linkedCopy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LINKED COPY"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIA VINCULADA"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIE LIÉE"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.sameChainNoLink": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ links only onto another object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ vincula solo hacia otro objeto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ lie seulement vers un autre objet"
+          }
+        }
+      }
+    },
     "hud.selection.samples": {
       "extractionState": "manual",
       "localizations": {

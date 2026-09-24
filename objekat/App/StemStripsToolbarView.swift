@@ -239,21 +239,33 @@ private struct StemStripDropDelegate: DropDelegate {
         NSEvent.modifierFlags.contains(.command) ? info.location : nil
     }
 
-    func dropEntered(info: DropInfo) { onHover(true, linkPoint(info)) }
+    /// The band at the bottom of the timeline (@see PluginDropHint), under this strip's own key.
+    private var hintKey: String { "strip:\(stemID.uuidString)" }
+
+    func dropEntered(info: DropInfo) {
+        onHover(true, linkPoint(info))
+        if carriesPlugin(info) { PluginDropHint.shared.present(hintKey, context: .host) }
+    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard carriesPlugin(info) else {
             onHover(false, nil)
+            PluginDropHint.shared.leave(hintKey)
             return DropProposal(operation: .forbidden)
         }
         onHover(true, linkPoint(info))
+        PluginDropHint.shared.present(hintKey, context: .host)
         return DropProposal(operation: PluginDrop.operation(for: NSEvent.modifierFlags))
     }
 
-    func dropExited(info: DropInfo) { onHover(false, nil) }
+    func dropExited(info: DropInfo) {
+        onHover(false, nil)
+        PluginDropHint.shared.leave(hintKey)
+    }
 
     func performDrop(info: DropInfo) -> Bool {
         onHover(false, nil)
+        PluginDropHint.shared.leave(hintKey)
         guard let provider = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries)
         else { return false }
         PluginDrop.receive(provider, in: viewModel) { stemID }
