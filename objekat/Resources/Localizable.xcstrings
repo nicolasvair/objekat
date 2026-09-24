@@ -8701,19 +8701,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "drag: move · ⌥ copy · ⌘ copy linked"
+            "value": "drag: move · ⌥ copy · ⌘ copy linked (other object)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "arrastrar: mover · ⌥ copiar · ⌘ copiar vinculado"
+            "value": "arrastrar: mover · ⌥ copiar · ⌘ copiar vinculado (otro objeto)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "glisser : déplacer · ⌥ copier · ⌘ copier lié"
+            "value": "glisser : déplacer · ⌥ copier · ⌘ copier lié (autre objet)"
           }
         }
       }
@@ -9184,19 +9184,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click: open the plugin · drag: move (⌥ copy, ⌘ linked copy)"
+            "value": "Double-click: open the plugin · drag: move (⌥ copy, ⌘ linked copy to another object)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar, ⌘ copia vinculada)"
+            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée)"
+            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
           }
         }
       }
@@ -9598,19 +9598,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy, ⌘ linked copy)."
+            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy, ⌘ linked copy to another object)."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar, ⌘ copia vinculada)."
+            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar, ⌘ copia vinculada a otro objeto)."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie, ⌘ copie liée)."
+            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie, ⌘ copie liée vers un autre objet)."
           }
         }
       }

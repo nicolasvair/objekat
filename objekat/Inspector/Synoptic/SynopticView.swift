@@ -848,8 +848,9 @@ struct PluginDragPreview: View {
     let plugin: SynopticPlugin
     var dragCount: Int = 1
 
-    private let width = SynopticLayout.cardW
-    private let height: CGFloat = 44
+    /// Wider than a card: the modifier legend has to be READ, not truncated at 9 pt.
+    private let width = max(SynopticLayout.cardW, 210)
+    private let minHeight: CGFloat = 44
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -865,10 +866,12 @@ struct PluginDragPreview: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
+                    .padding(.trailing, dragCount > 1 ? 28 : 0)   // clear of the ×N badge
                 Text(L("synoptic.drag.legend"))
                     .font(.system(size: 9))
                     .foregroundStyle(Color.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -884,7 +887,9 @@ struct PluginDragPreview: View {
                     .padding(6)
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: width)
+        .frame(minHeight: minHeight)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
