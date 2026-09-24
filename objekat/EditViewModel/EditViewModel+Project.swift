@@ -67,6 +67,19 @@ extension EditViewModel {
         loadProject(from: url)
     }
 
+    /// The breathing twin of `openRecentProject(_:)` — the menu's own entry point, so the overlay
+    /// shows for a recent project exactly as it does for a freshly browsed one.
+    func openRecentProjectAsync(_ url: URL) async {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            removeRecentProject(url)
+            notify(L("project.notFound.title"),
+                   L("project.notFound.info", url.lastPathComponent))
+            return
+        }
+        guard confirmDiscardIfDirty() else { return }
+        await loadProjectAsync(from: url)
+    }
+
     // MARK: - Saving / loading a project
 
     /// The current project folder: the parent of the active version file.
@@ -299,6 +312,31 @@ extension EditViewModel {
         }
     }
 
+    /// The breathing twin of `loadProject()` — the menu's "Open…" entry point, so opening from the
+    /// panel shows the same overlay as opening a recent project or through `project.open`.
+    func loadProjectAsyncFromPanel() async {
+        guard confirmDiscardIfDirty() else { return }
+        let panel = NSOpenPanel()
+        panel.title = L("project.open.title")
+        panel.allowedContentTypes = [.json]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        let url: URL? = await withCheckedContinuation { continuation in
+            panel.begin { response in
+                continuation.resume(returning: response == .OK ? panel.url : nil)
+            }
+        }
+        guard let url else { return }
+        await loadProjectAsync(from: url)
+    }
+
+    /// The fully SYNCHRONOUS path: no run loop is breathed on, so this is the only one safe to call
+    /// before `app.run()` (HeadlessRunner's `--project`, which has none yet to breathe on) — and
+    /// the one every other caller reaches for when it does not need the progress overlay either
+    /// (a script's `project.open {"async": false}`, which is also the DEFAULT — the contract stays
+    /// unchanged). See `loadProjectAsync(from:)` for the breathing twin the menu and an
+    /// `async: true` open use instead.
     @discardableResult
     func loadProject(from url: URL) -> Bool {
         do {
@@ -308,7 +346,7 @@ extension EditViewModel {
             // made absolute IN this project folder: that is what makes the folder movable, and
             // what catches up projects predating portability. See `ProjectPaths.resolved`.
             doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
-            applyProjectDocument(doc)
+            applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
             projectURL = url
             projectName = displayName(for: url)
             isDirty = false
@@ -319,12 +357,45 @@ extension EditViewModel {
         }
     }
 
+    /// The breathing twin of `loadProject(from:)`: same reading and the same result, but the
+    /// document is applied through `applyProjectDocumentAsync`, which yields the run loop between
+    /// phases (and, in the plugin phase, between every compile) so `ProjectLoadOverlay` can be
+    /// drawn and `project.load_status` answered while it runs. Only safe where the run loop is
+    /// confirmed alive — the menu (a window is open) and `project.open {"async": true}` /
+    /// the plain awaited path once the command server is serving (both imply `app.run()` has
+    /// already been entered). NEVER call this from `HeadlessRunner`'s pre-`app.run()` opening.
+    @discardableResult
+    func loadProjectAsync(from url: URL) async -> Bool {
+        do {
+            let data = try Data(contentsOf: url)
+            var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
+            doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
+            let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url))
+            lastProjectLoad?.path = url.path
+            guard ok else { return false }
+            projectURL = url
+            projectName = displayName(for: url)
+            isDirty = false
+            recordRecentProject(url)
+            return true
+        } catch {
+            // Clears `loadState` even though `applyProjectDocumentAsync` was never reached: the
+            // `async: true` API path sets a PLACEHOLDER `loadState` synchronously before this
+            // function is even scheduled (@see project.open), and a decode failure here must not
+            // leave `isLoadingProject` stuck true forever.
+            loadState = nil
+            lastProjectLoad = ProjectLoadOutcome(path: url.path, success: false,
+                                                 errorMessage: String(describing: error), durationMs: 0)
+            return false
+        }
+    }
+
     /// TRANSIENT session state to purge when changing project (a new project or a
     /// load): the clipboard (pasting across projects would insert objects with dangling stemID /
     /// auxID / consolidateID), the note selection, the bakes under way (their
     /// completions find the object gone and give up cleanly) and the UI states of the
     /// piano rolls (keys = UUIDs of the old project).
-    private func resetTransientSessionState() {
+    func resetTransientSessionState() {
         selectedAnnotation = nil
         clearAutomationPointSelection()
         clipboard = nil
@@ -425,117 +496,29 @@ extension EditViewModel {
         }
     }
 
-    func applyProjectDocument(_ doc: ProjectDocument) {
-        // Arms the collection of the plugins that cannot be found: every FX chain recompilation
-        // triggered below (clips, groups, stem buses) will drop into it the plugins the
-        // engine does not resolve. A single summary is shown at the end of loading.
-        missingPluginCapture = []
-        engine?.stop()
-        for stem in stems where stem.id != mainStemID {
-            let memberIDs = allClips.filter { $0.stemID == stem.id }.map { $0.id.uuidString }
-            engine?.disbandStemBus(stem.id.uuidString, memberIDs: memberIDs)
-        }
-        // Clean the engine through the top-level items (handles clips AND groups/ContainerClips).
-        for item in items { removeFromEngine(item) }
-        items = []
-        stems = []
-        selectedIDs = []
-        undoStack = []
-        redoStack = []
-        consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
-        // The annotations: restored as they are, with nothing to reconcile — no engine object
-        // stands behind a marker or a comment.
-        markerLanes = doc.markerLanes ?? []
-        comments = doc.comments ?? []
-        consolidateEditStack.removeAll()
-        resetTransientSessionState()
+    /// The synchronous façade this always was — UNCHANGED in contract for every existing caller.
+    /// The body now lives in `EditViewModel+ProjectLoad.swift` (`runProjectLoad`), split into
+    /// phases with a fixed progress weighting, the FX/instrument compiles DEFERRED to their own
+    /// phase, and the engine's graph reallocation inhibited for the whole of it. `displayName` is
+    /// what `ProjectLoadOverlay` and `project.load_status` show WHILE it runs — `loadProject(from:)`
+    /// knows it before the document is even decoded, `applyProjectDocument`/`project.get_state`'s
+    /// other, name-less callers fall back on the current `projectName`.
+    func applyProjectDocument(_ doc: ProjectDocument, displayName: String? = nil) {
+        runProjectLoad(doc, displayName: displayName)
+    }
 
-        // Tempo / time signature / grid mode: RESTORED data → pushed to the engine with no remap
-        // and without marking the project modified (the document's positions are the authority).
-        isRestoringTransport = true
-        if let t = doc.tempo { tempo = t }
-        if let n = doc.timeSigNumerator { timeSigNumerator = n }
-        if let d = doc.timeSigDenominator { timeSigDenominator = d }
-        isRestoringTransport = false
-        if let g = doc.gridMode { gridMode = g }
-        // The snap as the project was left. An older file has no key and opens WITH the snap, which
-        // is also where the app starts: the default is 'on', what is restored is a deliberate 'off'.
-        snapEnabled = doc.snapEnabled ?? true
-
-        // The view (H/V zoom + visible area): applied as saved. The scroll cannot
-        // be set here (it belongs to the ScrollView) → dropped into `pendingViewRestore`,
-        // which the TimelineView consumes once the content is in place.
-        if let vp = doc.viewport {
-            pixelsPerSecond = max(1, vp.pixelsPerSecond)
-            blockHeight     = max(16, vp.blockHeight)
-            pendingViewRestore = vp
-        }
-
-        if let docStems = doc.stems, !docStems.isEmpty {
-            stems = docStems
-        } else {
-            stems = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
-        }
-        // Declares the Main's new key to the engine (routes the master FX chain + purges the old one).
-        engine?.setMasterStemKey(mainStemID.uuidString)
-
-        items = doc.items
-
-        // Rebuild the engine from the top-level items: syncAdd recursively handles
-        // the .clips (a direct AudioTrack) and the .groups (ContainerClip + children).
-        for item in items {
-            syncAdd(item)
-            switch item.kind {
-            case .clip, .midiClip:
-                engine?.updateFade(in: item.fadeIn, fadeOut: item.fadeOut,
-                                   forID: item.id.uuidString)
-            default: break
-            }
-            // The fades of the clips that are children of a group are applied in syncAddGroup.
-        }
-        for stem in stems.dropFirst() {
-            engine?.createStemBus(stem.id.uuidString)
-            let clipIDs = allClips.filter { $0.stemID == stem.id }.map { $0.id.uuidString }
-            let groupIDs = items.compactMap { item -> String? in
-                guard case .group = item.kind, item.stemID == stem.id else { return nil }
-                return item.id.uuidString
-            }
-            let memberIDs = clipIDs + groupIDs
-            if !memberIDs.isEmpty {
-                engine?.assignObjects(memberIDs, toStemID: stem.id.uuidString)
-            }
-        }
-        resyncAllSends()   // every aux now exists → wire the saved sends
-        syncStemGains()    // reapplies the remembered bus levels (mixer)
-        syncStemPlugins()  // reapplies the remembered bus FX chains (stems + master)
-        syncStemRouting()  // reapplies the remembered routing to the Main (detached buses)
-        refreshAudibility()  // remembered bus mutes → a composed silence on every object
-
-        // The content is in place: the timeline can rearm the length of its canvas (@see
-        // projectLoadToken). To be done AFTER `items`, otherwise it would rearm on the old content.
-        projectLoadToken &+= 1
-
-        // The files the clips name are asked about ONCE, here: `items` is in place and the engine
-        // has been fed, so the answer is about the project that is actually open. It has to happen
-        // AFTER `resolvedItems` has made the internal paths absolute (@see loadProject(from:)),
-        // otherwise every sample living in the project folder would read as gone. From now on
-        // nothing touches the disk again until a relink or a volume moves — the drawing side reads
-        // `missingPaths` and nothing else. See EditViewModel+MissingFiles.
-        rescanMissingFiles()
-        // And the watch on the volumes, which is what makes `.volumeOffline` mend itself when the
-        // drive comes back. Idempotent: every later opening finds it already laid.
-        armMissingFileWatch()
-
-        // End of loading: if plugins were missing, warn the user (once only).
-        let missing = missingPluginCapture ?? []
-        missingPluginCapture = nil
-        if !missing.isEmpty { reportMissingPlugins(missing) }
+    /// The breathing twin: same phases, same result on the model, but yields the run loop between
+    /// them (and between every plugin compile) so the overlay can be drawn and `project.load_status`
+    /// answered while it runs. See `EditViewModel+ProjectLoad.swift`.
+    @discardableResult
+    func applyProjectDocumentAsync(_ doc: ProjectDocument, displayName: String? = nil) async -> Bool {
+        await runProjectLoadAsync(doc, displayName: displayName)
     }
 
     /// Shows a confirmation listing the plugins the engine could not load during
     /// the opening (the user has not installed them). They have already been removed from the objects
     /// concerned by `compileRack` — the rest of the project opens normally.
-    private func reportMissingPlugins(_ names: Set<String>) {
+    func reportMissingPlugins(_ names: Set<String>) {
         let sorted = names.sorted()
         // Deferred: lets the project's window refresh before the modal (loading is often
         // triggered from the completion of an NSOpenPanel).
