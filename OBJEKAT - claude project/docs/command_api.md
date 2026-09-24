@@ -210,19 +210,15 @@ button headlessly; it was not in the original plan's own list of API changes.
 
 Internally, the engine's graph reallocation is inhibited for the whole of a load
 (`OBJEngineCore.beginBulkLoad`/`endBulkLoad`, a thin wrapper around Tracktion's own
-`TransportControl::ReallocationInhibitor` — no engine patch). **Measured caveat (24 September
-2026)**: `ReallocationInhibitor::isAllowedToReallocate()` is only consulted by two call sites in
-the whole engine (`ARAFileReader.cpp`, `AudioClipBase.cpp`'s auto-tempo/pitch path) — not by the
-general node-graph-rebuild machinery `[GRAPH] rebuild #N` logs from. So the inhibitor does NOT
-gate every rebuild the way the plan assumed; measured with `--headless --no-audio`, a load still
-produces a handful of `[GRAPH] rebuild` events (always of a trivial 2-node
-`PlayHeadPositionNode`+`SummingNode` graph, identical whatever the project's real size — the
-placeholder graph `--no-audio` builds with no device attached, `perf.census`'s own `engine_nodes`
-answering `null` in the same mode). What IS verified: the deferred queue itself works (dozens of
-FX/instrument compiles run back to back with `plugin_index`/`plugin_total` advancing correctly,
-`rewireLinkGroups()` called once at the end) and no per-object partial UI/engine rebuild blocks
-the run loop mid-load. Whether the REAL per-track graph (only built with an audio device attached)
-rebuilds once or several times during a load remains **unverified with no screen** — headless
+`TransportControl::ReallocationInhibitor` — no engine patch). How it gates, read in the
+source (24 September 2026): every rebuild request (`Edit::restartPlayback` → its debounce timer →
+`TransportControl::editHasChanged`) checks `reallocationInhibitors` first and, while one lives,
+only sets `isDelayedChangePending`; `endBulkLoad` then reallocates once
+(`ensureContextAllocated` + `restartPlayback`). (`isAllowedToReallocate()` being called from only
+two places is beside the point: `editHasChanged` reads the counter directly.) With
+`--headless --no-audio` the `[GRAPH] rebuild` log only shows a trivial 2-node placeholder graph
+(no device attached, `perf.census.engine_nodes` = null), so the real per-track graph's single
+rebuild is established by reading the code, not measured — headless
 testing cannot reach it. Each phase's own duration is logged as `[LOAD] <phase> <ms> ms` (the
 plugin phase adds `, <n> plugins`), plus `[LOAD] total <ms> ms` at the end
 (`[LOAD] cancelled after <ms> ms` on a cancellation) — English, machine-facing, not through `L()`.
