@@ -40,9 +40,18 @@ enum UIPerf {
 final class EditViewModel {
     var items: [SoundObject] = [] {
         didSet {
+            // Lazy and unconditional (batch or not): rebuilt by the next reader, never stale.
+            crossfadePartnersCache = nil
+            findIndex = nil
+            findsSinceMutation = 0
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
         }
     }
+    /// @see find(id:) — `nil` = not built since the last change to `items`.
+    @ObservationIgnored var findIndex: [UUID: SoundObject]? = nil
+    @ObservationIgnored var findsSinceMutation = 0
+    /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
+    @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
@@ -1320,7 +1329,30 @@ final class EditViewModel {
 
     // MARK: - Recursive helpers
 
+    /// A walk of the tree, O(N) — until the same `items` has been searched a few times in a row;
+    /// from then on an index answers in O(1) until the next change. The timeline asks for every
+    /// block on every render (`stemColor(for:)`…), which made a render O(N²): ~200 ms of frozen
+    /// window after a cut on a 1 250-object project. The threshold keeps the old cost where
+    /// `find` alternates with mutations (a loop of `update` + `find`), which would otherwise
+    /// rebuild an index per iteration for a single read.
     func find(id: UUID) -> SoundObject? {
+        // Read through the observable property, index or not: a view that finds its object here
+        // must keep depending on `items` (the index itself is @ObservationIgnored).
+        let roots = items
+        if let findIndex { return findIndex[id] }
+        findsSinceMutation += 1
+        if findsSinceMutation > 8 {
+            var index: [UUID: SoundObject] = [:]
+            func add(_ arr: [SoundObject]) {
+                for item in arr {
+                    index[item.id] = item
+                    if case .group(let children, _) = item.kind { add(children) }
+                }
+            }
+            add(roots)
+            findIndex = index
+            return index[id]
+        }
         func search(in arr: [SoundObject]) -> SoundObject? {
             for item in arr {
                 if item.id == id { return item }
@@ -1329,7 +1361,7 @@ final class EditViewModel {
             }
             return nil
         }
-        return search(in: items)
+        return search(in: roots)
     }
 
     @discardableResult

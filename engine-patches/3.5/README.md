@@ -285,7 +285,11 @@ Checked as still biting: `develop` still had the linear `std::find`.
   reads it. A measuring probe that kills the process it measures — and worse, kills it anywhere,
   long afterwards, poisoning the diagnosis of every other Debug crash. A mutex now covers the
   statics AND the two writes. Debug only (`OBJ_GRAPH_PROFILE` follows `JUCE_DEBUG`).
-
+- `0033` — **no more `findClipForID` per plugin on a rebuild.** `createNodeForPlugin` only asks
+  "is this plugin on a clip?", and `getOwnerClip()` answered by searching the whole Edit for the
+  clip — O(N) per plugin, O(N²) per rebuild, since every object's chain lives on its clip's
+  plugin list. `Clip::isClipState (parent)` gives the same answer in O(1). PERREO WUB 2: 75 % of
+  the rebuild's time, i.e. most of the interface freeze on a cut during playback.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

@@ -1,0 +1,40 @@
+From cd620e0c59104c8f70a15c9adf913bd97fe8ff3d Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 25 Sep 2026 10:19:47 +0200
+Subject: [PATCH] =?UTF-8?q?perf(graph)=20:=20plus=20de=20findClipForID=20p?=
+ =?UTF-8?q?ar=20plugin=20=C3=A0=20la=20reconstruction?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+createNodeForPlugin ne demande que « ce plugin est-il sur un clip ? » ;
+getOwnerClip() y répondait en cherchant le clip dans tout l'Edit (O(N) par
+plugin, O(N²) la reconstruction). Clip::isClipState (parent) donne la même
+réponse en O(1). PERREO WUB 2 : 75 % du temps de reconstruction.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../playback/graph/tracktion_EditNodeBuilder.cpp           | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index dbc77f2b3ca..4fc6fe8f22d 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -1558,7 +1558,12 @@ std::unique_ptr<tracktion::graph::Node> createNodeForPlugin (Plugin& plugin, con
+     const bool usesSidechain = plugin.getSidechainSourceID().isValid();
+ 
+     if (! usesSidechain)
+-        if (plugin.getOwnerTrack() != nullptr || plugin.getOwnerClip() != nullptr)
++        // OBJEKAT — `Clip::isClipState (parent)` plutôt que `getOwnerClip() != nullptr` : on ne
++        // demande ici QUE « ce plugin est-il sur un clip ? », et getOwnerClip répond en cherchant
++        // le clip dans tout l'Edit (findClipForID, O(N)) — O(N²) sur la reconstruction, 75 % de
++        // son temps sur PERREO WUB 2 (la chaîne de chaque objet vit sur la plugin-list de son
++        // clip). Le test sur l'arbre de valeurs donne la même réponse en O(1).
++        if (plugin.getOwnerTrack() != nullptr || Clip::isClipState (plugin.state.getParent()))
+             maxNumChannels = effectivePluginChannels;
+ 
+     // If the input has fewer channels than the plugin expects, pre-convert (e.g. mono→stereo)
+-- 
+2.50.1 (Apple Git-155)
+

@@ -79,6 +79,14 @@ extension EditViewModel {
     @discardableResult
     func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
         guard !ids.isEmpty else { return [] }
+        // While playing, the cut is HEARD: the left half would go quiet at once while the right
+        // one — its plugins still to instantiate, then the 120 ms damper on graph rebuilds —
+        // enters the graph much later (a hole of 170-220 ms on a heavy project, more with UADx).
+        // The engine holds the windows back and rebuilds right away at the end: the whole object
+        // plays until the handover (one block of silence remains: the shortened clip's reader
+        // starts cold in the new graph). Stopped, this does nothing.
+        engine?.beginPlaybackEdit()
+        defer { engine?.endPlaybackEdit() }
         pushUndo()
         // The crossfades the cut objects are in, noted while they still stand — and this one
         // cannot simply be wrapped like a move (@see withCrossfadeRefit), because a split hands
@@ -194,6 +202,8 @@ extension EditViewModel {
         guard let sel = timeSelection else { return }
         let t1 = sel.timeRange.lowerBound, t2 = sel.timeRange.upperBound
         guard t2 > t1 + 0.001 else { return }
+        engine?.beginPlaybackEdit()           // @see cut(ids:atTime:keeping:)
+        defer { engine?.endPlaybackEdit() }
         pushUndo()
         var didSplit = false
         // The RIGHT bound first: the left half keeps the original id, so the second cut

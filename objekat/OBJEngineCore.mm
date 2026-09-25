@@ -11,6 +11,7 @@
 #include "OBJWindowFadePlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
+#include "OBJAudioProbe.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -910,6 +911,11 @@ struct OBJRenderChain {
 
 @implementation OBJEngineCore {
     std::unique_ptr<te::Engine> _engine;
+    OBJAudioProbe* _audioProbe;   // DIAGNOSTIC, possédé par le DeviceManager (@see OBJAudioProbe.h)
+    std::vector<std::pair<uint64_t, std::string>> _audioProbeMarks;
+    // @see beginPlaybackEdit — fenêtres retenues pendant une coupe en lecture.
+    int _playbackEditDepth;
+    std::unordered_map<std::string, std::array<double, 4>> _heldWindows;
     std::unique_ptr<te::Edit>   _edit;
 
     // UUID string → pointeurs Tracktion (valides tant que _edit est vivant)
@@ -1119,6 +1125,11 @@ static BOOL gOBJAudioDisabled = NO;
         // test sans sortie audio.
         _engine->getDeviceManager().initialise(0, gOBJAudioDisabled ? 0 : 2);
         [self logDefaultWaveOutput];
+        if (getenv("OBJ_AUDIO_PROBE") != nullptr) {
+            auto probe = std::make_unique<OBJAudioProbe>(_engine->getDeviceManager());
+            _audioProbe = probe.get();
+            _engine->getDeviceManager().setGlobalOutputAudioProcessor(std::move(probe));
+        }
         _renderCompletions = [NSMutableDictionary dictionary];
         _exportCompletions = [NSMutableDictionary dictionary];
         _pluginEditorsFloating = true;
@@ -1264,6 +1275,55 @@ static BOOL gOBJAudioDisabled = NO;
 // l'inhibiteur, réallouerait le graphe de lecture à CHAQUE plugin. ReallocationInhibitor rend ces
 // appels inoffensifs : la PluginList est modifiée normalement, seule l'allocation du graphe est
 // différée jusqu'à -endBulkLoad.
+- (void)beginPlaybackEdit {
+    if (_playbackEditDepth > 0 || (_edit && _edit->getTransport().isPlaying()))
+        ++_playbackEditDepth;
+}
+
+- (void)endPlaybackEdit {
+    if (_playbackEditDepth == 0 || --_playbackEditDepth > 0) return;
+    // D'abord le graphe qui contient les nouvelles pièces (et leurs plugins, déjà instanciés),
+    // PUIS les fenêtres : jusque-là l'ancien graphe joue encore l'objet entier.
+    // Par l'amortisseur de l'Edit, pas directement par le transport : la coupe y a déjà armé
+    // une reconstruction (restartPlayback), et un editHasChanged() direct la laissait partir
+    // ~120 ms plus tard — un graphe identique, reconstruit une seconde fois sur le thread
+    // principal (~70 ms sur PERREO WUB 2, un second gel de l'interface). On (ré)arme puis on
+    // vide : UNE reconstruction, maintenant, et plus rien en attente.
+    if (_edit && _edit->getTransport().isPlaying()) {
+        _edit->restartPlayback();
+        _edit->dispatchPendingUpdatesSynchronously();
+    }
+    for (auto& [key, w] : _heldWindows)
+        if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end())
+            if (auto* p = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
+                p->setWindow(w[0], w[1], w[2], w[3]);
+    _heldWindows.clear();
+}
+
+- (BOOL)audioProbeReset {
+    if (!_audioProbe) return NO;
+    _audioProbe->reset();
+    _audioProbeMarks.clear();
+    return YES;
+}
+
+- (void)audioProbeMark:(NSString*)label {
+    _audioProbeMarks.emplace_back(mach_absolute_time(), std::string(label.UTF8String ?: ""));
+}
+
+- (BOOL)audioProbeDumpToPath:(NSString*)path {
+    if (!_audioProbe) return NO;
+    mach_timebase_info_data_t tb; mach_timebase_info(&tb);
+    auto ms = [&](uint64_t t) { return (double) t * tb.numer / tb.denom / 1.0e6; };
+    juce::String out;
+    out << "sr," << _engine->getDeviceManager().getSampleRate() << "\n";
+    for (auto& m : _audioProbeMarks)
+        out << "mark," << juce::String(ms(m.first), 3) << "," << juce::String::fromUTF8(m.second.c_str()) << "\n";
+    for (auto& e : _audioProbe->snapshot())
+        out << "blk," << juce::String(ms(e.hostTime), 3) << "," << e.peak << "," << e.cpu << "," << e.numSamples << "\n";
+    return juce::File(juce::String::fromUTF8(path.UTF8String)).replaceWithText(out);
+}
+
 - (void)beginBulkLoad {
     if (!_edit || _bulkLoadInhibitor) return;   // ré-entrance refusée : une paire stricte, jamais imbriquée
     // Le veilleur de latence lirait un signal en pleine reconstruction du projet (moitié ancien,
@@ -1692,6 +1752,10 @@ static te::Track* objOwningTrack(te::Clip& clip) {
     startSecs = juce::jmax(0.0, startSecs);
     fadeIn    = juce::jmax(0.0, fadeIn - headCut);
 
+    if (_playbackEditDepth > 0) {
+        _heldWindows[key] = { startSecs, endSecs, fadeIn, fadeOut };
+        return;
+    }
     if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
         w->setWindow(startSecs, endSecs, fadeIn, fadeOut);
 }
@@ -1703,11 +1767,24 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 // branche USE_DYNAMIC_OFFSET_CONTAINER_CLIP de createNodeForContainerClip, abandonnée à
 // l'étape 1. Les enfants passent maintenant par createNodeForClips → createNodeForAudioClip,
 // le chemin ordinaire, donc la lecture inversée y marche comme sur une piste.
+// Le proxy ne sert ici qu'à deux choses : décoder un format compressé (MP3, FLAC…) et relancer
+// la lecture une fois le rendu inversé prêt — le time-stretch est désactivé et le pitch est
+// mort (cf. MARK: - Reverse). Partout ailleurs il ne fait qu'une chose : après chaque changement
+// du clip, son minuteur (AudioClipBase::timerCallback) finit par restartPlayback, soit un SECOND
+// rebuild complet du graphe sur le thread principal (~70 ms sur PERREO WUB 2), qui gelait
+// l'interface une deuxième fois après chaque coupe en lecture. À rappeler quand l'inversion change.
+static void updateProxyUse(te::AudioClipBase& clip) {
+    const te::AudioFile original(clip.edit.engine, clip.getOriginalFile());
+    const bool needed = clip.getIsReversed() || original.getInfo().needsCachedProxy;
+    if (clip.canUseProxy() != needed) clip.setUsesProxy(needed);
+}
+
 static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::ClipPosition& pos,
                                double speed, bool reversed) {
     clip->setAutoTempo(false);
     clip->setTimeStretchMode(te::TimeStretcher::disabled);
     if (reversed) clip->setIsReversed(true);
+    updateProxyUse(*clip);
     if (speed != 1.0) clip->setSpeedRatio(speed);
     clip->setPosition(pos);   // EN DERNIER : les appels ci-dessus redimensionnent le clip
 }
@@ -2466,7 +2543,10 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
     // Le reverse passe par le proxy, jadis interdit dans un groupe. Cette interdiction venait
     // de la branche USE_DYNAMIC_OFFSET_CONTAINER_CLIP, abandonnée à l'étape 1 : un enfant de
     // container emprunte désormais createNodeForAudioClip comme un clip de piste.
+    // Proxy AVANT d'inverser : c'est lui qui relance la lecture une fois le rendu prêt.
+    if (reversed) clipIt->second->setUsesProxy(true);
     clipIt->second->setIsReversed(reversed ? true : false);
+    updateProxyUse(*clipIt->second);
 }
 
 - (void)updateSpeedRatio:(double)ratio forID:(NSString*)uuid {

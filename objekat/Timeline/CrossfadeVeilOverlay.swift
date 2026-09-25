@@ -343,14 +343,15 @@ extension TimelineView {
         // The zone as it is being DRAWN and not as the model holds it: while a move is displacing
         // one of the pair the shared span is already shrinking, and the punched-out base has to
         // shrink with it or the neighbour's waveform would go on being hidden under nothing.
-        if let n = viewModel.seamNeighbour(of: item.id, onRight: false),
-           viewModel.crossfadeZone(leftID: n, rightID: item.id) != nil,
+        // The partners come from a cache built once per change of the model (@see
+        // crossfadePartners): this runs for every block on every frame.
+        let partners = viewModel.crossfadePartners(of: item.id)
+        if let n = partners?.left,
            let z = viewModel.projectedCrossfade(leftID: n, rightID: item.id,
                                                 placement: dragPlacement) {
             lead = (z.end - z.start) * pixelsPerSecond
         }
-        if let n = viewModel.seamNeighbour(of: item.id, onRight: true),
-           viewModel.crossfadeZone(leftID: item.id, rightID: n) != nil,
+        if let n = partners?.right,
            let z = viewModel.projectedCrossfade(leftID: item.id, rightID: n,
                                                 placement: dragPlacement) {
             trail = (z.end - z.start) * pixelsPerSecond

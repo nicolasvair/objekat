@@ -4,7 +4,9 @@ import Combine
 
 struct TransportView: View {
     @Binding var isPlaying: Bool
-    let playheadPosition: Double
+    /// A READER, not a value: the playhead moves 20 times a second, and a value here would make
+    /// every tick rebuild this bar AND its parent (@see PlayheadTimeText, ContentView).
+    let playheadPosition: () -> Double
     let totalDuration: Double
     @Bindable var viewModel: EditViewModel
     let onPlay: () -> Void
@@ -19,8 +21,6 @@ struct TransportView: View {
     /// SwiftUI's `onKeyPress` ever sees it. Active only while `bpmFocused`, and only for that
     /// exact combination — plain and ⇧ arrows are left to `onKeyPress` below.
     @State private var bpmCommandArrowMonitor: Any?
-
-    private var remaining: Double { max(0, totalDuration - playheadPosition) }
 
     private func commitBPM() {
         if let v = TempoText.parse(bpmText) {
@@ -88,7 +88,7 @@ struct TransportView: View {
                     : nil
             )
 
-            Text(formatPosition(playheadPosition))
+            PlayheadTimeText(position: playheadPosition, format: Self.formatPosition)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 // Its own width past 9:59 (a minute digit more), the old one as a floor so the
@@ -215,12 +215,22 @@ struct TransportView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func formatPosition(_ seconds: Double) -> String {
+    private func formatPosition(_ seconds: Double) -> String { Self.formatPosition(seconds) }
+
+    static func formatPosition(_ seconds: Double) -> String {
         let m = Int(seconds) / 60
         let s = Int(seconds) % 60
         let cs = Int((seconds.truncatingRemainder(dividingBy: 1)) * 100)
         return String(format: "%d:%02d.%02d", m, s, cs)
     }
+}
+
+/// The playhead's time, the only thing in the bar that reads it: each tick redraws this text and
+/// nothing else.
+private struct PlayheadTimeText: View {
+    let position: () -> Double
+    let format: (Double) -> String
+    var body: some View { Text(verbatim: format(position())) }
 }
 
 private enum ZoomHandleAxis { case horizontal, vertical }

@@ -41,7 +41,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             TransportView(
                 isPlaying: $session.isPlaying,
-                playheadPosition: session.playheadPosition,
+                playheadPosition: { session.playheadPosition },
                 totalDuration: viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0,
                 viewModel: viewModel,
                 onPlay: { session.play() },
@@ -104,7 +104,7 @@ struct ContentView: View {
 
                 TimelineView(
                     viewModel: viewModel,
-                    playheadPosition: session.playheadPosition,
+                    playheadPosition: { session.playheadPosition },
                     selectionCursor: viewModel.cursorPosition,
                     isPlaying: session.isPlaying,
                     isPaused: session.pausedAt != nil,

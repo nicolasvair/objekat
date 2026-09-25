@@ -553,6 +553,18 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // lecture UNE SEULE FOIS, à la fin. Aucun patch du sous-module Tracktion : ReallocationInhibitor est
 // une API publique déjà exposée par tracktion_TransportControl.h.
 - (void)beginBulkLoad;
+// DIAGNOSTIC (OBJ_AUDIO_PROBE) : rappels audio horodatés + pic + CPU du mix final. NO sans sonde.
+// Une coupe PENDANT LA LECTURE, encadrée (emboîtable ; sans effet à l'arrêt). Entre les deux,
+// les fenêtres d'objet (ObjWindowFade, un paramètre LIVE) sont retenues : raccourcir la moitié
+// gauche la ferait taire tout de suite, alors que la droite n'est pas encore dans le graphe —
+// le temps d'instancier ses plugins (~50 ms pour un UADx) plus la reconstruction. `end`
+// reconstruit le graphe tout de suite (au lieu des 120 ms de l'amortisseur) puis pose les
+// fenêtres : l'objet entier joue jusqu'à la passation.
+- (void)beginPlaybackEdit;
+- (void)endPlaybackEdit;
+- (BOOL)audioProbeReset;
+- (void)audioProbeMark:(NSString*)label;
+- (BOOL)audioProbeDumpToPath:(NSString*)path;
 - (void)endBulkLoad;
 
 // Tempo et signature temporelle
