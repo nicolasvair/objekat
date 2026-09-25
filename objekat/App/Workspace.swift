@@ -156,6 +156,31 @@ final class Workspace {
         }
     }
 
+    // MARK: - Reordering
+
+    /// Moves tab `id` so that it ends up at 0-based `destination` in `tabs` (clamped to the
+    /// strip's bounds) — the tab bar's drag and `tab.move` both come through here, and nothing
+    /// else changes: the ACTIVE tab stays the active one (it is named by id, never by position),
+    /// no document is parked or loaded, the engine is not told. Everything that reads a tab BY
+    /// POSITION — ⌘1…9, ⌃⇥ / ⌃⇧⇥, `tab.select {index}` — reads `tabs` at the moment it is used,
+    /// so it follows the new order with nothing to update.
+    ///
+    /// Refused while a switch is under way, and that is not caution for its own sake: `select`
+    /// resolves the target's INDEX before its `await` and writes through it afterwards, so a
+    /// reorder landing inside that await would hand the incoming tab's `parked = nil` to
+    /// whichever tab had slid into the slot. The export / render / consolidate-edit blockers are
+    /// NOT consulted — a reorder touches no document, so there is nothing for them to protect.
+    @discardableResult
+    func moveTab(_ id: UUID, to destination: Int) -> Result<Void, TabError> {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return .failure(.notFound) }
+        if isSwitching { return .failure(.blocked(reasonKey: "tabs.switch.refused.loading")) }
+        let to = max(0, min(tabs.count - 1, destination))
+        guard to != from else { return .success(()) }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
+        return .success(())
+    }
+
     // MARK: - Switching
 
     /// Brings tab `id` to the front. A no-op returning success straight away if it already is.

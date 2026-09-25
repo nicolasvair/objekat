@@ -254,6 +254,9 @@ caret, time selection, loop, viewport).
 → {…, "already_open": false}        // opened in a NEW tab
 → {…, "already_open": true}         // was already open elsewhere: switched to it instead
 
+{"cmd": "tab.move", "params": {"index": 3, "to": 1}}   → the moved tab's object, "index": 1
+{"cmd": "tab.move", "params": {"id": "…", "to": 2}}    // same, by id
+
 {"cmd": "tab.close"}                             // the active tab, if clean
 → {"ok": true}
 {"cmd": "tab.close", "params": {"discard": true}}   // even if modified
@@ -267,6 +270,16 @@ consolidated-object edit is under way (`tab.select`/`tab.new`/`tab.open` all che
 touching anything, so a refusal never half-parks a tab) also answers `invalid_state`, naming the
 reason in English (`"tab switch refused: an export is running"`, …) — the same four conditions
 `Quiescence.inFlight()` already reports for `wait_idle`.
+
+`tab.move` is the tab bar's drag-to-reorder without the hand: the tab named by `id`/`index` ends
+up at the 1-based position `to` (`1…count`, anything else is `bad_params`), the others closing up
+around it. It changes the ORDER and nothing else — the active tab stays the active one, no
+document is parked or loaded — and everything that names a tab by position (`index` here,
+⌘1…9, ⌃⇥ / ⌃⇧⇥ in the app) reads the new order straight away. Moving a tab to where it already
+is succeeds and changes nothing. It is not refused by an export, a render or a
+consolidated-object edit (a reorder touches no document); it IS refused, `invalid_state`, during
+the short span of a tab switch itself, when the workspace is between parking one document and
+restoring another.
 
 Two commands outside this family are tabs-AWARE without becoming part of it, for backward
 compatibility: `project.open` on a path already open in ANOTHER tab switches to that tab instead

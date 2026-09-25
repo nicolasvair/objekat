@@ -217,6 +217,52 @@ with ObjekatClient(SOCK, timeout=180) as c:
     check("tab.select {index:1} lands on the first tab in list order",
           tabs()[0]["id"] == order[0]["id"] and tabs()[0]["active"] is True)
 
+    # ── tab.move: the ORDER changes, and nothing else ───────────────────────
+    # A third tab so a move has neighbours to close up around it. It is created active (a
+    # switch), then left in place while the other two are moved around it.
+    t_move = cmd("tab.new")
+    cmd("wait_idle", timeout_ms=10000)
+    before = tabs()
+    ids = [t["id"] for t in before]
+    active_id = [t["id"] for t in before if t["active"]][0]
+    dirty_before = {t["id"]: t["dirty"] for t in before}
+    check("tab.move setup: three tabs, the new one last and active",
+          len(ids) == 3 and ids[2] == t_move["id"] and active_id == t_move["id"])
+
+    moved = cmd("tab.move", index=3, to=1)
+    check("tab.move {index:3, to:1} answers with the tab at its new index",
+          moved["id"] == ids[2] and moved["index"] == 1)
+    check("tab.move: the others close up behind it",
+          [t["id"] for t in tabs()] == [ids[2], ids[0], ids[1]])
+    check("tab.move: the active tab is still the active one",
+          [t["id"] for t in tabs() if t["active"]] == [active_id])
+    check("tab.move: no dirty flag moved",
+          {t["id"]: t["dirty"] for t in tabs()} == dirty_before)
+
+    cmd("tab.move", id=ids[0], to=3)
+    check("tab.move {id, to:3}: to the end",
+          [t["id"] for t in tabs()] == [ids[2], ids[1], ids[0]])
+    cmd("tab.move", id=ids[1], to=2)
+    check("tab.move onto its own position: nothing changes",
+          [t["id"] for t in tabs()] == [ids[2], ids[1], ids[0]])
+
+    cmd("tab.select", index=3)
+    cmd("wait_idle", timeout_ms=10000)
+    check("tab.select {index:3} reads the NEW order",
+          [t["id"] for t in tabs() if t["active"]] == [ids[0]])
+
+    for bad in (0, 4):
+        try:
+            cmd("tab.move", id=ids[0], to=bad)
+            check("tab.move to=%d: refused" % bad, False, "it went through")
+        except ObjekatError as e:
+            check("tab.move to=%d: refused" % bad, e.code == "bad_params", e.code)
+
+    cmd("tab.close", id=t_move["id"], discard=True)   # inactive by now: closes synchronously
+    cmd("tab.move", id=ids[0], to=1)
+    check("tab.move teardown: the two tabs, back in their original order",
+          [t["id"] for t in tabs()] == [ids[0], ids[1]])
+
     # ── playback stops on a switch ───────────────────────────────────────────
     cmd("tab.select", id=tab_a_id)
     cmd("transport.play")

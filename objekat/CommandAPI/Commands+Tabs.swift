@@ -85,6 +85,29 @@ extension CommandRegistry {
             }
         }
 
+        register("tab.move",
+                 summary: "Moves a tab — by 'id' or 1-based 'index' — to the 1-based position 'to' "
+                        + "in the strip. The active tab stays active; only the order changes.",
+                 params: [ParamSpec("id", "string", required: false, "The tab's id."),
+                          ParamSpec("index", "int", required: false, "1-based position (tab.list order)."),
+                          ParamSpec("to", "int", "1-based position the tab ends up at.")],
+                 undo: .none) { p in
+            let workspace = try self.requireWorkspace()
+            let id = try self.resolveTabID(p, workspace)
+            let to = try p.int("to")
+            guard to >= 1, to <= workspace.tabs.count else {
+                throw CommandError(code: .bad_params,
+                                   message: "parameter 'to': out of range (1...\(workspace.tabs.count))")
+            }
+            switch workspace.moveTab(id, to: to - 1) {
+            case .success:
+                let idx = workspace.tabs.firstIndex { $0.id == id }!
+                return self.tabJSON(workspace, workspace.tabs[idx], index: idx)
+            case .failure(let error):
+                throw error.commandError
+            }
+        }
+
         register("tab.close",
                  summary: "Closes a tab (the active one if 'id'/'index' is omitted). The last tab "
                         + "never closes. 'discard' (default false) must be true to close a tab "
