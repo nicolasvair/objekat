@@ -70,6 +70,9 @@ private enum ProjectLoadWeight {
     /// `RunLoop.main.perform` round trip, and breathing on every single one would slow the load
     /// down for a bar nobody can see move that fast anyway.
     static let breathIntervalMs: Double = 30
+    /// Work time allowed after a breath, as a multiple of what that breath cost (@see
+    /// `breathIfNeeded`): 2 = redrawing takes at most a third of the load.
+    static let breathWorkRatio: Double = 2
 }
 
 extension EditViewModel {
@@ -359,12 +362,25 @@ extension EditViewModel {
     /// `Task.yield()`, which the plan's measurements found insufficient: a yield hands control back
     /// to the concurrency executor, not to AppKit's own run loop, and `ProjectLoadOverlay` needs a
     /// real pass through `.common` to actually get drawn between two engine calls.
-    private func breathIfNeeded(_ lastBreath: inout Date) async {
-        guard Date().timeIntervalSince(lastBreath) * 1000 > ProjectLoadWeight.breathIntervalMs else { return }
-        lastBreath = Date()
+    ///
+    /// `nextBreath` is the earliest moment the NEXT breath may happen, and it is set when a breath
+    /// ENDS, never when it starts. A breath is not cheap: it redraws the whole window (the timeline
+    /// stays visible under the veil), ~70 ms on a 1 250-object project in Release. Counted from
+    /// its start, a breath longer than the interval made every following step breathe again at
+    /// once — the load then spent most of its time redrawing (PERREO WUB 2, Release: 10.7 s →
+    /// 3.8 s with both rules). The work allowed between two breaths also grows with what the last one cost
+    /// (`breathWorkRatio`), so redrawing never takes more than a third of the load, however heavy
+    /// the window gets; the bar still moves several times a second.
+    private func breathIfNeeded(_ nextBreath: inout Date) async {
+        guard Date() >= nextBreath else { return }
+        let started = Date()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             RunLoop.main.perform(inModes: [.common]) { continuation.resume() }
         }
+        let ended = Date()
+        let cost = ended.timeIntervalSince(started)
+        nextBreath = ended.addingTimeInterval(max(ProjectLoadWeight.breathIntervalMs / 1000,
+                                                  cost * ProjectLoadWeight.breathWorkRatio))
     }
 
     /// Same phases as `runProjectLoad`, byte for byte — only interleaved with `breathIfNeeded` so
@@ -380,7 +396,7 @@ extension EditViewModel {
         let startedAt = Date()
         var phaseStart = startedAt
         var done = 0.0
-        var lastBreath = Date.distantPast
+        var nextBreath = Date.distantPast
         loadState = ProjectLoadState(phase: .teardown, fraction: 0,
                                      projectName: displayName ?? projectName, startedAt: startedAt,
                                      cancellable: cancellable)
@@ -389,21 +405,21 @@ extension EditViewModel {
         // as the export panel's deferred launch (`EditViewModel+Export.runExport`): the veil is laid
         // at once (@see ProjectLoadOverlay), and this breath is what lets it be DRAWN before the old
         // project starts coming apart underneath.
-        await breathIfNeeded(&lastBreath)
+        await breathIfNeeded(&nextBreath)
 
         performTeardown()
         phaseStart = logLoadPhase(.teardown, since: phaseStart)
         done += ProjectLoadWeight.teardownPerPlugin * Double(plan.oldPluginCount)
         loadState?.phase = .structure
         loadState?.fraction = min(1, done / plan.total)
-        await breathIfNeeded(&lastBreath)
+        await breathIfNeeded(&nextBreath)
 
         performStructureSetup(doc, preservingClipboard: preservingClipboard)
         for item in items {
             addTopLevelItemToEngine(item)
             done += ProjectLoadWeight.structurePerObject * Double(1 + descendantCount(item))
             loadState?.fraction = min(1, done / plan.total)
-            await breathIfNeeded(&lastBreath)
+            await breathIfNeeded(&nextBreath)
         }
         wireStemBuses()
         phaseStart = logLoadPhase(.structure, since: phaseStart)
@@ -422,7 +438,7 @@ extension EditViewModel {
                 loadState?.currentPluginName = drained.name
                 loadState?.fraction = min(1, done / plan.total)
             }
-            await breathIfNeeded(&lastBreath)
+            await breathIfNeeded(&nextBreath)
         }
 
         if cancelled {
@@ -449,7 +465,7 @@ extension EditViewModel {
         performStemsRouting()
         done += ProjectLoadWeight.stemPlugin * Double(plan.stemPluginCount)
         loadState?.fraction = min(1, done / plan.total)
-        await breathIfNeeded(&lastBreath)
+        await breathIfNeeded(&nextBreath)
         phaseStart = logLoadPhase(.stemsRouting, since: phaseStart)
 
         loadState?.phase = .finalize
