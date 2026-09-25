@@ -91,12 +91,16 @@ struct TransportView: View {
             Text(formatPosition(playheadPosition))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .leading)
+                // Its own width past 9:59 (a minute digit more), the old one as a floor so the
+                // bar does not breathe below it.
+                .fixedSize()
+                .frame(minWidth: 52, alignment: .leading)
 
             Text(verbatim: "/ \(formatPosition(totalDuration))")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.tertiary)
-                .frame(width: 60, alignment: .leading)
+                .fixedSize()
+                .frame(minWidth: 60, alignment: .leading)
 
             Divider().frame(height: 20)
 

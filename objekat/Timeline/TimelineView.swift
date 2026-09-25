@@ -132,7 +132,7 @@ struct TimelineView: View {
     /// The length the content really takes (plus some room to manoeuvre). Deliberately free of the
     /// zoom: it is what `stickyTotalDuration` is measured against, and a length that changed with
     /// every wheel notch would have the canvas growing and shrinking under the hand.
-    private var contentDuration: Double { max(60, contentEnd + 10) }
+    private var contentDuration: Double { max(EditViewModel.newProjectSpan, contentEnd + 10) }
 
     /// Empty room kept to the RIGHT of the last object, as a fraction of the window: one goes on
     /// scrolling and zooming out until that object's end sits 40 % of the way across, with the
@@ -166,7 +166,7 @@ struct TimelineView: View {
     private var totalDuration: Double {
         max(max(contentDuration, stickyTotalDuration), contentEnd + rightHeadroom)
     }
-    @State private var stickyTotalDuration: Double = 60
+    @State private var stickyTotalDuration: Double = EditViewModel.newProjectSpan
 
     /// The total width of the timeline's content (px). It serves as the width of an infinite bus,
     /// which takes up its whole lane (it 'processes the whole project'). Reachable by the extensions (hit-tests).
@@ -1174,6 +1174,18 @@ struct TimelineView: View {
         // scroll is reclamped straight after, otherwise the ScrollView stays beyond the new canvas
         // and shows emptiness outside the content (which the slightest zoom made disappear).
         .onChange(of: viewModel.projectLoadToken) { resetStickyDuration() }
+        // A new project: 60 s long and 60 s on screen, from zero. The old project's zoom would
+        // otherwise survive — a scale made to fit 2:30 leaves the one-minute canvas short of the
+        // window, the ruler stopping part-way across.
+        .onChange(of: viewModel.pendingNewProjectFrame) { _, pending in
+            guard pending else { return }
+            resetStickyDuration()
+            viewModel.pixelsPerSecond = clampZoom(Double(viewportWidth) / EditViewModel.newProjectSpan)
+            DispatchQueue.main.async {
+                scrollTo(x: 0, y: 0)
+                viewModel.pendingNewProjectFrame = false
+            }
+        }
     }
 
     // MARK: - Cursor

@@ -365,11 +365,6 @@ struct ObjectInspectorView: View {
     private var multiClipZone: some View {
         zone {
             VStack(alignment: .leading, spacing: 6) {
-                // The signal view's own title when every item is of one kind; a mixed selection
-                // has no single word for it and shows none.
-                if let key = uniformMixKindKey {
-                    zoneTitle(L(key))
-                }
                 HStack(spacing: 6) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 3) { Text(L("inspector.field.pan")).font(.system(size: 9)).foregroundStyle(.secondary); relBadge(panRelative) }
@@ -386,13 +381,6 @@ struct ObjectInspectorView: View {
                 }
             }
         }
-    }
-
-    private var uniformMixKindKey: String? {
-        let keys = Set(selectedObjects.map { o in
-            o.isGroup ? "synoptic.mix.kind.group" : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip")
-        })
-        return keys.count == 1 ? keys.first : nil
     }
 
     private var multiVolumeBox: some View {

@@ -319,6 +319,8 @@ extension EditViewModel {
         projectName = L("project.untitled")
         isDirty = false
         projectLoadToken &+= 1   // the canvas rearmed on emptiness (@see projectLoadToken)
+        pendingViewRestore = nil
+        pendingNewProjectFrame = true
         // Empties the missing-file verdict with the rest: the paths of the project just closed
         // belong to nothing any more, and a stale entry would have `project.missing_files` report
         // broken files in an empty project. Costs nothing here — there are no clips left to ask

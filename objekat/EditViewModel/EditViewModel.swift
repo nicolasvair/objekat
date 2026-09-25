@@ -565,6 +565,12 @@ final class EditViewModel {
     /// full), laid down by the export window when the I/O markers are set. The TimelineView
     /// applies it then sets it back to nil — the same protocol as `pendingViewRestore`.
     var pendingRangeReveal: ClosedRange<Double>? = nil
+    /// A NEW project: the timeline frames exactly its first `newProjectSpan` seconds, from the
+    /// start, whatever zoom and scroll the previous project left behind. Applied by the view,
+    /// then set back to false — the same protocol as `pendingViewRestore`.
+    var pendingNewProjectFrame: Bool = false
+    /// What a new project shows, and the length its timeline starts at.
+    static let newProjectSpan: Double = 60
 
     /// The DISPLAY row the timeline must bring into view: the caret or the time selection has just
     /// walked onto it under ↑ / ↓ (@see stepCaretLane, stepTimeSelectionLanes), and a point of
