@@ -1586,6 +1586,18 @@ What has landed since mid-August, in order:
   Swift tests, the scenarios (tabs, consolidate, export-preview, waveform-cache in UI mode), and the
   eye/ear list the commits' own messages give — above all the stereo drawing at +24 dB and across
   the 3 000 px/s threshold, and a cold launch by double-click on a `.objekat`.
+  **Settled on 26 September 2026, on a Mac, and merged into `main`**: a Debug build passes first
+  time; `test_tab_reorder.swift` 38 and `test_waveform_peaks.swift` 96 pass; `scenario_tabs.py` 58,
+  `scenario_export_preview.py` 62 (the solo's export+RMS block included), `scenario_families.py` 191,
+  all headless; Spotlight types a saved `.objekat` as `org.labelpeche.objekat.session`, so the
+  Info.plist merge holds. **A defect found, NOT fixed**: the binary exec'd DIRECTLY (not through
+  LaunchServices) opens NO window at all, even with no argument — `main` before the merge opens one
+  launched the same way, and `open -n objekat.app` does open one. The prime suspect is
+  `CFBundleDocumentTypes`: with a document type declared, AppKit seems to wait for the launch's
+  Apple event before asking for the untitled window, and a bare exec sends none. It may reach
+  Xcode's ⌘R; to be read there first. Until then, UI-mode test launches go through
+  `open -n … --args --api --no-recent --socket=…`. And `project.save_as` over the API takes its
+  path LITERALLY (no `.objekat` appended) — the machine's door, consistent, worth knowing.
 
 ### What is owed
 
