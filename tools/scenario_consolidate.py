@@ -123,7 +123,7 @@ def read_json(path):
 def text_files(folder):
     for dirpath, _, filenames in os.walk(folder):
         for f in filenames:
-            if f.endswith(".json"):
+            if f.endswith((".json", ".objekat")):
                 p = os.path.join(dirpath, f)
                 with open(p, encoding="utf-8") as fh:
                     yield p, fh.read()
@@ -534,8 +534,26 @@ try:
         section("B11 — a new project")
         FRESH = os.path.join(ROOT, "fresh")
         cmd("project.save_as", path=os.path.join(FRESH, "fresh.json"))
-        job_wait(cmd, cmd("consolidate.make", id=cid))
+        # The filling circle's data, read while the render runs: `consolidate.state.renders`
+        # answers what the circle SHOWS. A short bip may finish between two polls, so the only
+        # claims are the ones that hold whatever the timing: every reading names a bake, stays
+        # inside 0…1 and never goes back, and nothing is left once the job is done.
+        mk = cmd("consolidate.make", id=cid)
+        readings = []
+        deadline = time.time() + 60
+        while time.time() < deadline and cmd("job.status", id=mk["job_id"])["state"] == "running":
+            readings += cmd("consolidate.state")["renders"]
+            time.sleep(0.02)
+        job_wait(cmd, mk)
         cmd("wait_idle", timeout_ms=30000)
+        progresses = [r["progress"] for r in readings if r.get("progress") is not None]
+        check("X  render progress: only bakes, within 0…1, never going back",
+              all(r.get("kind") == "bake" for r in readings)
+              and all(0.0 <= p <= 1.0 for p in progresses)
+              and all(a <= b for a, b in zip(progresses, progresses[1:])),
+              readings)
+        check("X  render progress: nothing left once the job is done",
+              cmd("consolidate.state")["renders"] == [], cmd("consolidate.state"))
         d = list(defs_by_id(cmd).values())
         fc = os.path.join(FRESH, "samples", "consolidate")
         check("B11: the wave and its sidecar land in samples/consolidate/",
@@ -701,7 +719,7 @@ try:
         CAP = os.path.join(ROOT, "capsule")
         r = cmd("project.save_copy", path=CAP)
         check("B14: save_copy answers, nothing missing",
-              r["manifest"] == os.path.join(CAP, "capsule.json") and r["missing"] == []
+              r["manifest"] == os.path.join(CAP, "capsule.objekat") and r["missing"] == []
               and r["copied_files"] == 4, r)
         info_after = cmd("app.info")
         check("B14: the current project is untouched (path, dirty)",
@@ -721,7 +739,7 @@ try:
         leaks = [p for p, t in text_files(CAP) if LEG in t or os.path.dirname(BIP) in t]
         check("B14: no path of the original project nor of the source left in the capsule",
               not leaks, leaks)
-        capdoc = read_json(os.path.join(CAP, "capsule.json"))
+        capdoc = read_json(os.path.join(CAP, "capsule.objekat"))
         check("BUG3 the copy keeps snapEnabled (false)", capdoc.get("snapEnabled") is False,
               capdoc.get("snapEnabled"))
         check("BUG3 the copy keeps the viewport, as it is in memory",
@@ -746,7 +764,7 @@ try:
         HIDDEN = LEG + "-hidden"
         os.rename(LEG, HIDDEN)
         try:
-            cmd("project.open", path=os.path.join(CAP, "capsule.json"))
+            cmd("project.open", path=os.path.join(CAP, "capsule.objekat"))
             cmd("wait_idle", timeout_ms=30000)
             check("B14: capsule reopened with the original gone — missing_files empty",
                   cmd("project.missing_files")["path_count"] == 0)

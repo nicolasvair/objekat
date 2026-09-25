@@ -138,8 +138,14 @@ final class Workspace {
     /// installs, since writing there from here would silently orphan whatever the other tab has in
     /// memory the next time it saves.
     func isURLOpenElsewhere(_ candidate: URL) -> Bool {
+        isURLOpen(candidate, inTabOtherThan: activeTabID)
+    }
+
+    /// The same question asked on behalf of ANY tab — the Save As a closing PARKED tab owes
+    /// (`settleUnsavedChanges`) must not land on a file the active tab, or a third one, holds.
+    private func isURLOpen(_ candidate: URL, inTabOtherThan excluded: UUID) -> Bool {
         guard let candidateID = FolderIdentity.identifier(candidate) else { return false }
-        for tab in tabs where tab.id != activeTabID {
+        for tab in tabs where tab.id != excluded {
             guard let existing = url(for: tab), let existingID = FolderIdentity.identifier(existing)
             else { continue }
             if existingID.isEqual(candidateID) { return true }
@@ -154,6 +160,31 @@ final class Workspace {
             else { return false }
             return id.isEqual(target)
         }
+    }
+
+    // MARK: - Reordering
+
+    /// Moves tab `id` so that it ends up at 0-based `destination` in `tabs` (clamped to the
+    /// strip's bounds) — the tab bar's drag and `tab.move` both come through here, and nothing
+    /// else changes: the ACTIVE tab stays the active one (it is named by id, never by position),
+    /// no document is parked or loaded, the engine is not told. Everything that reads a tab BY
+    /// POSITION — ⌘1…9, ⌃⇥ / ⌃⇧⇥, `tab.select {index}` — reads `tabs` at the moment it is used,
+    /// so it follows the new order with nothing to update.
+    ///
+    /// Refused while a switch is under way, and that is not caution for its own sake: `select`
+    /// resolves the target's INDEX before its `await` and writes through it afterwards, so a
+    /// reorder landing inside that await would hand the incoming tab's `parked = nil` to
+    /// whichever tab had slid into the slot. The export / render / consolidate-edit blockers are
+    /// NOT consulted — a reorder touches no document, so there is nothing for them to protect.
+    @discardableResult
+    func moveTab(_ id: UUID, to destination: Int) -> Result<Void, TabError> {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return .failure(.notFound) }
+        if isSwitching { return .failure(.blocked(reasonKey: "tabs.switch.refused.loading")) }
+        let to = max(0, min(tabs.count - 1, destination))
+        guard to != from else { return .success(()) }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: to)
+        return .success(())
     }
 
     // MARK: - Switching
@@ -189,7 +220,12 @@ final class Workspace {
         await vm.restoreParkedProject(targetParked)
         vm.engine?.endHoldingParkedPlugins()
         vm.engine?.expireParkedPlugins(forTab: id.uuidString)
-        tabs[targetIdx].parked = nil
+        // Looked up AGAIN, never through `targetIdx`: the strip is not frozen during the await
+        // (a ✕ on another tab, a reorder), and an index read before it could name another tab
+        // by now — whose parked document this line would then throw away.
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[i].parked = nil
+        }
         activeTabID = id
         return .success(())
     }
@@ -226,6 +262,10 @@ final class Workspace {
     /// The last tab never closes (the app always shows exactly one project or more, never zero).
     @discardableResult
     func close(_ id: UUID, discard: Bool) -> Result<Void, TabError> {
+        // Not while a switch is under way, for `moveTab`'s reason: the switch holds tabs it is
+        // about to write back, and a tab taken out from under it would leave `activeTabID`
+        // naming nothing.
+        if isSwitching { return .failure(.blocked(reasonKey: "tabs.switch.refused.loading")) }
         guard tabs.count > 1 else { return .failure(.lastTab) }
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return .failure(.notFound) }
 
@@ -346,43 +386,192 @@ final class Workspace {
         return ok ? .success(()) : .failure(.loadFailed)
     }
 
-    // MARK: - Quitting
+    // MARK: - Opening from outside the app
 
-    /// `AppDelegate.applicationShouldTerminate`'s door: the active tab goes through the existing
-    /// `confirmSaveBeforeQuit()` (unchanged), then every INACTIVE tab still carrying unsaved
-    /// changes is asked about in turn, by NAME (`askDirtyDecision(titleKey:name:)`) since `self` —
-    /// the one view-model — only knows the ACTIVE tab's own `projectName`.
-    func confirmQuit() -> NSApplication.TerminateReply {
+    /// Sessions handed over from OUTSIDE (a double-click in the Finder, a file dropped on the Dock
+    /// icon, `open -a`), waiting their turn. A queue and not a `Task` per file: the Finder hands
+    /// over a multiple selection in one go, and two loads started side by side would have the
+    /// second refused by the first (`tabSwitchBlocker` — a project loading). One at a time, in the
+    /// order given. `@ObservationIgnored`: nothing draws it, and an observed queue would invalidate
+    /// the tab bar at every file for nothing.
+    @ObservationIgnored private var outsideOpenQueue: [URL] = []
+    @ObservationIgnored private var isDrainingOutsideOpens = false
+
+    /// The door `AppDelegate.application(_:open:)` and the window's `onOpenURL` both go through —
+    /// both, because which of the two SwiftUI actually calls for a document handed over by the
+    /// Finder is not something this code can settle by reading (@see the AppDelegate). A file
+    /// already queued is not queued twice, and one that arrives by both roads anyway finds its own
+    /// tab already open the second time, which `open(url:inNewTab:)` answers by merely selecting
+    /// it: harmless either way.
+    func openFromOutside(_ urls: [URL]) {
+        for url in urls.map(\.standardizedFileURL) where !outsideOpenQueue.contains(url) {
+            outsideOpenQueue.append(url)
+        }
+        guard !isDrainingOutsideOpens, !outsideOpenQueue.isEmpty else { return }
+        isDrainingOutsideOpens = true
+        Task { [weak self] in
+            guard let self else { return }
+            while !self.outsideOpenQueue.isEmpty {
+                let url = self.outsideOpenQueue.removeFirst()
+                await self.openOneFromOutside(url)
+            }
+            self.isDrainingOutsideOpens = false
+        }
+    }
+
+    /// One session from outside. The rules are `open(url:inNewTab:)`'s — the same file is never
+    /// opened twice (a tab already showing it is brought forward instead), and a new tab is what a
+    /// double-click means — with ONE exception: an untouched "Untitled" tab (no file, not
+    /// modified, empty) is REUSED rather than left behind. That is the ordinary case of a cold
+    /// launch by a double-click (the app starts on a blank project, then the file arrives), and a
+    /// blank tab beside every project opened that way would be one more thing to close by hand.
+    /// Every refusal and failure is SAID (`notify`): nobody asked this from a menu that could grey
+    /// itself out, the hand is in the Finder and would otherwise see nothing happen.
+    private func openOneFromOutside(_ url: URL) async {
         let vm = session.viewModel
-        guard !vm.isLoadingProject else { return .terminateCancel }
-        guard vm.confirmSaveBeforeQuit() else { return .terminateCancel }
+        // At a cold launch the file can arrive before the window's `onAppear` has wired the engine
+        // to the document (@see ContentView) — a load with no engine attached lays a model nothing
+        // plays. `start()` is idempotent, so calling it here costs nothing the second time.
+        session.start()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            vm.notify(L("project.notFound.title"), L("project.notFound.info", url.lastPathComponent))
+            return
+        }
+        // The in-place path of `open(url:inNewTab: false)` has no guard of its own (the menus that
+        // reach it are greyed out while busy); this door is not a menu, so it asks here.
+        if let reason = vm.tabSwitchBlocker {
+            vm.notify(L("tabs.switch.refused.title"), L(reason))
+            return
+        }
+        let untouched = vm.projectURL == nil && !vm.isDirty && vm.items.isEmpty
+        switch await open(url: url, inNewTab: !untouched) {
+        case .success, .failure(.cancelled):
+            return
+        case .failure(.loadFailed):
+            // In place (`untouched`), false means ONE thing: a load the hand cancelled from the
+            // overlay (that path stays cancellable) — a decision, not a failure. In a NEW tab the
+            // load is not cancellable, so false there is a real failure, and it is said.
+            if !untouched {
+                vm.notify(L("project.openFailed.title"), L("project.openFailed.info", url.lastPathComponent))
+            }
+        case .failure(.blocked(let reasonKey)):
+            vm.notify(L("tabs.switch.refused.title"), L(reasonKey))
+        case .failure:
+            // `.decodeFailed` above all: a file with the right extension and the wrong content.
+            vm.notify(L("project.openFailed.title"), L("project.openFailed.info", url.lastPathComponent))
+        }
+    }
 
-        for tab in tabs where tab.id != activeTabID {
-            guard let parked = tab.parked, parked.isDirty else { continue }
-            switch vm.askDirtyDecision(titleKey: "dialog.dirty.title.quit", name: parked.projectName) {
-            case .discard:
-                continue
-            case .save:
-                if let url = parked.projectURL {
-                    do {
-                        try EditViewModel.writeDocument(parked.doc, to: url,
-                                                        projectFolder: url.deletingLastPathComponent())
-                    } catch {
-                        return .terminateCancel
-                    }
-                } else {
-                    // No file yet: switching to it and opening "Save as" needs the run loop and a
-                    // panel, neither available synchronously here — the quit is cancelled and the
-                    // user finishes the save (now on screen) before asking to quit again.
-                    let tabID = tab.id
-                    Task { [weak self] in
-                        guard let self else { return }
-                        _ = await self.select(tabID)
-                        self.session.viewModel.saveAs()
-                    }
-                    return .terminateCancel
-                }
-            case .cancel:
+    // MARK: - Unsaved changes: closing a tab, quitting
+
+    /// THE question a tab carrying unsaved changes is asked before it goes away. ⌘W, the strip's
+    /// ✕ and ⌘Q all come through here, so the three show ONE dialogue — the project's name, and
+    /// Save / Don't Save / Cancel, `askDirtyDecision`'s own — where there were three hand-written
+    /// copies of it, each saving its own way.
+    ///
+    /// true = the tab may go: it was clean, it was saved, or its changes were explicitly thrown
+    /// away. false = it stays: Cancel, a Save As panel dismissed, or a write that FAILED — the
+    /// paths this replaced read a failed write as a green light (`save()` swallows the error) and
+    /// closed the tab, or quit, behind it.
+    ///
+    /// Synchronous on purpose, the Save As panel included (run MODALLY, where the menu's own
+    /// `saveAs()` uses `begin`): `applicationShouldTerminate` needs its answer now, and a tab that
+    /// has not been switched to never has to be — the panel writes the PARKED document, so a quit
+    /// no longer has to cancel itself, bring an untitled tab to the front and wait for a second ⌘Q.
+    ///
+    /// Never reaches a panel without a hand: under `dialogPolicy` ≠ `.ask` the question answers
+    /// "don't save" or "cancel" by itself, and `hasInterface` guards the panel besides. The API's
+    /// `tab.close` does not come here at all — its `discard` contract stays the script's own.
+    func settleUnsavedChanges(of id: UUID, titleKey: String) -> Bool {
+        guard let tab = tabs.first(where: { $0.id == id }), isDirty(for: tab) else { return true }
+        let name = displayName(for: tab)
+        switch session.viewModel.askDirtyDecision(titleKey: titleKey, name: name) {
+        case .cancel:  return false
+        case .discard: return true
+        case .save:    return saveBeforeLeaving(id, name: name)
+        }
+    }
+
+    /// The "Save" half of `settleUnsavedChanges`, for the active tab (the ordinary `writeSession`)
+    /// as for a parked one (its document written as it was parked). A tab with no file yet goes
+    /// through Save As — same panel, same naming rule, same refusal to land on a file another tab
+    /// holds as the menu's. Every failure is SAID, since the answer false keeps a tab open, or
+    /// the app running, that the hand had just asked to close.
+    private func saveBeforeLeaving(_ id: UUID, name: String) -> Bool {
+        let vm = session.viewModel
+        let isActive = id == activeTabID
+        let knownURL = isActive ? vm.projectURL : tabs.first(where: { $0.id == id })?.parked?.projectURL
+        let target: URL
+        if let knownURL {
+            target = knownURL
+        } else {
+            guard vm.hasInterface else { return false }
+            let panel = EditViewModel.makeSaveAsPanel(projectURL: nil, projectName: name)
+            guard panel.runModal() == .OK, let chosen = panel.url else { return false }
+            target = EditViewModel.saveAsFileURL(for: chosen)
+            if isURLOpen(target, inTabOtherThan: id) {
+                vm.notify(L("tabs.saveAs.alreadyOpen.title"), L("tabs.saveAs.alreadyOpen.message"))
+                return false
+            }
+        }
+        let written = isActive ? vm.writeSession(to: target) : writeParkedTab(id, to: target)
+        if !written {
+            vm.notify(L("tabs.saveTab.failed.title"), L("dialog.dirty.saveFailed.info", name))
+        }
+        return written
+    }
+
+    /// Writes a PARKED tab's document to `fileURL` and brings its parked state up to date (file,
+    /// name, clean) — so a quit cancelled at a LATER tab's question leaves this one showing what
+    /// is really on disk, and the next question about it is not asked for nothing. The paths are
+    /// made portable against the destination folder, exactly as `writeSession` writes the active
+    /// tab's: the parked document keeps the model's absolute paths, and a file written with them
+    /// would break the day its folder moved.
+    private func writeParkedTab(_ id: UUID, to fileURL: URL) -> Bool {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }), let parked = tabs[idx].parked
+        else { return false }
+        let vm = session.viewModel
+        let folder = fileURL.deletingLastPathComponent()
+        var doc = parked.doc
+        doc.items = vm.portableItems(doc.items, projectFolder: folder)
+        do {
+            try EditViewModel.writeDocument(doc, to: fileURL, projectFolder: folder)
+        } catch {
+            return false
+        }
+        tabs[idx].parked?.projectURL = fileURL
+        tabs[idx].parked?.projectName = EditViewModel.projectDisplayName(for: fileURL)
+        tabs[idx].parked?.isDirty = false
+        vm.recordRecentProject(fileURL)
+        return true
+    }
+
+    /// Closing a tab by HAND — ⌘W and the strip's ✕, one door. A switch that would be refused is
+    /// said BEFORE the question rather than after it: asking, saving, then finding the tab cannot
+    /// close after all (an export running) would leave the hand wondering what its answer did.
+    func closeWithConfirmation(_ id: UUID) {
+        let vm = session.viewModel
+        if isSwitching {
+            vm.notify(L("tabs.switch.refused.title"), L("tabs.switch.refused.loading"))
+            return
+        }
+        if id == activeTabID, let reason = vm.tabSwitchBlocker {
+            vm.notify(L("tabs.switch.refused.title"), L(reason))
+            return
+        }
+        guard settleUnsavedChanges(of: id, titleKey: "dialog.dirty.title.closeTab") else { return }
+        _ = close(id, discard: true)
+    }
+
+    /// `AppDelegate.applicationShouldTerminate`'s door: EVERY tab carrying unsaved changes is
+    /// asked about in turn — the one on screen first, then the others in the strip's order, each
+    /// by NAME since only one of them is on screen. Cancel at any question, or a save that did not
+    /// happen, and nothing quits; the tabs already saved on the way stay saved.
+    func confirmQuit() -> NSApplication.TerminateReply {
+        guard !session.viewModel.isLoadingProject, !isSwitching else { return .terminateCancel }
+        let order = [activeTabID] + tabs.map(\.id).filter { $0 != activeTabID }
+        for id in order {
+            guard settleUnsavedChanges(of: id, titleKey: "dialog.dirty.title.quit") else {
                 return .terminateCancel
             }
         }

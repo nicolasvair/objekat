@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import Accelerate
 import Observation
 
 // A mipmap of audio peaks at several resolutions, defined in peaks per second
@@ -44,24 +45,37 @@ final class WaveformCache {
     // compiled and asserted standalone (`tools/test_waveform_peaks.swift`).
 
     struct Entry {
-        var peaks: [[PeakPair]]      // one array per level
+        /// One `PeakLanes` per level: `peaks[level][lane][block]`. Every level has the same number
+        /// of lanes — one, or two for a stereo source (@see `WaveformPeaks.laneCount`).
+        var peaks: [PeakLanes]
         var densities: [Double]      // the effective peaks/second of each level (a snapshot at build time)
         var duration: Double
         var sampleRate: Double
+
+        /// How many stacked waveforms this file is drawn in. `nonisolated`: read by the detached
+        /// load and by the `.wfc` writer, both off the main actor by design.
+        nonisolated var laneCount: Int { max(1, peaks.first?.count ?? 1) }
     }
 
-    // A region of samples decoded on demand (deep zoom): per sample, the value of the channel
-    // with the LARGEST MAGNITUDE, sign kept (@see decodeRegion — not a mono mixdown, which a
-    // stereo pair in phase opposition can silence outright).
+    // A region of samples decoded on demand (deep zoom), ONE ARRAY PER LANE, in step with the
+    // peaks: a stereo file's two channels as they are, anything else in a single lane holding,
+    // per sample, the value of the channel with the LARGEST MAGNITUDE, sign kept (@see
+    // decodeRegion — not a mono mixdown, which a pair in phase opposition can silence outright).
     // We NEVER keep the whole PCM in RAM: only a small window around the view,
     // evicted when zooming out or looking at another file.
     struct SampleRegion {
-        var startTime: Double        // file time (s) of the 1st sample of `samples`
+        var startTime: Double        // file time (s) of the 1st sample of each lane
         var endTime: Double          // file time (s) covered (exclusive)
-        var samples: [Float]
+        var lanes: [[Float]]         // one array per lane, all the same length
         var sampleRate: Double
-        /// Index into `samples` for a given file time (may fall outside the bounds).
+        /// Index into a lane for a given file time (may fall outside the bounds).
         func index(forFileTime t: Double) -> Int { Int((t - startTime) * sampleRate) }
+        /// What the region holds in RAM — the unit `regionByteCap` is counted in. A stereo region
+        /// weighs twice a mono one of the same span, and the cap is deliberately NOT doubled with
+        /// it: it is a memory bound, so a viewport full of stereo files simply keeps half the
+        /// seconds resident (the need measured at 40 lanes and 10 000 px/s, before lanes existed,
+        /// was 15 MB against 48 — still inside the cap at twice that).
+        var byteCount: Int { lanes.reduce(0) { $0 + $1.count } * MemoryLayout<Float>.stride }
     }
 
     private var cache: [String: Entry] = [:]
@@ -72,7 +86,7 @@ final class WaveformCache {
     /// `WaveformPeaks.peakEnvelope`) — at 1 px/s the 100/s level is 100 blocks per pixel per lane
     /// per frame, where point sampling used to read one. A tenth of a level's weight, computed
     /// once per file. Ordered coarse → fine, like `Entry.densities`.
-    private var overviewLevels: [String: [(density: Double, peaks: [PeakPair])]] = [:]
+    private var overviewLevels: [String: [(density: Double, peaks: PeakLanes)]] = [:]
 
     /// The one door onto `cache`: the overview levels follow every entry stored.
     private func store(_ entry: Entry, for filePath: String) {
@@ -80,11 +94,13 @@ final class WaveformCache {
         overviewLevels[filePath] = Self.overviews(of: entry)
     }
 
-    private nonisolated static func overviews(of entry: Entry) -> [(density: Double, peaks: [PeakPair])] {
-        guard let base = entry.peaks.first, !base.isEmpty, let d0 = entry.densities.first, d0 > 0 else { return [] }
-        return [100, 10].compactMap { ratio -> (density: Double, peaks: [PeakPair])? in
-            guard base.count / ratio >= 2 else { return nil }
-            return (d0 / Double(ratio), WaveformPeaks.decimate(base, ratio: ratio))
+    private nonisolated static func overviews(of entry: Entry) -> [(density: Double, peaks: PeakLanes)] {
+        guard let base = entry.peaks.first, let lane0 = base.first, !lane0.isEmpty,
+              let d0 = entry.densities.first, d0 > 0 else { return [] }
+        return [100, 10].compactMap { ratio -> (density: Double, peaks: PeakLanes)? in
+            guard lane0.count / ratio >= 2 else { return nil }
+            // Each lane folded on its own: the lanes share one block grid, so they stay in step.
+            return (d0 / Double(ratio), base.map { WaveformPeaks.decimate($0, ratio: ratio) })
         }
     }
     private var inFlight: Set<String> = []
@@ -171,9 +187,9 @@ final class WaveformCache {
         return dir
     }
 
-    // Returns the peaks of the level best suited to the current zoom.
+    // Returns the peaks of the level best suited to the current zoom, one array per lane.
     // pixelsPerSecond: pixels shown per second on screen.
-    func peaks(for filePath: String, pixelsPerSecond: Double) -> [PeakPair]? {
+    func peaks(for filePath: String, pixelsPerSecond: Double) -> PeakLanes? {
         guard let entry = cache[filePath], entry.duration > 0 else { return nil }
         // Zoomed far out: a derived overview level (@see `overviewLevels`).
         if let overviews = overviewLevels[filePath] {
@@ -190,6 +206,9 @@ final class WaveformCache {
 
     func duration(for filePath: String) -> Double? { cache[filePath]?.duration }
     func sampleRate(for filePath: String) -> Double? { cache[filePath]?.sampleRate }
+    /// How many stacked waveforms this file is drawn in — 1 while it is not analysed yet, so
+    /// nothing splits a block before there is anything to put in a second lane.
+    func laneCount(for filePath: String) -> Int { cache[filePath]?.laneCount ?? 1 }
 
     /// The region of samples covering [fileStart, fileEnd] if it is already decoded.
     /// Otherwise starts the windowed decode in the background and returns nil
@@ -254,7 +273,7 @@ final class WaveformCache {
 
             regionInFlight[requestKey] = nil
             guard let region else { return }
-            let bytes = region.samples.count * MemoryLayout<Float>.stride
+            let bytes = region.byteCount
             WaveformCacheMeter.record { stats in
                 stats.regionsDecoded += 1
                 stats.regionDecodeSeconds += CFAbsoluteTimeGetCurrent() - decodeStart
@@ -273,7 +292,7 @@ final class WaveformCache {
             // (measured before this line existed: 18 705 of each at 10 000 px/s, where the regions
             // actually resident came to 15 MB against a 48 MB cap).
             if let replaced = sampleRegions[storeKey] {
-                let freed = replaced.samples.count * MemoryLayout<Float>.stride
+                let freed = replaced.byteCount
                 regionBytesTotal -= freed
                 WaveformCacheMeter.record { $0.regionBytesInMemory -= freed }
             }
@@ -288,7 +307,7 @@ final class WaveformCache {
     private func evictRegionsIfNeeded() {
         while regionBytesTotal > Self.regionByteCap, let victim = regionRecency.popLast() {
             if let region = sampleRegions[victim] {
-                let bytes = region.samples.count * MemoryLayout<Float>.stride
+                let bytes = region.byteCount
                 WaveformCacheMeter.record { stats in
                     stats.regionsEvicted += 1
                     stats.regionBytesInMemory -= bytes
@@ -299,7 +318,7 @@ final class WaveformCache {
         }
     }
 
-    /// Decodes ONLY the [startTime, endTime] window of the file (a mono mixdown).
+    /// Decodes ONLY the [startTime, endTime] window of the file, one array per lane.
     private nonisolated static func decodeRegion(path: String, startTime: Double,
                                                  endTime: Double, sampleRate sr: Double) -> SampleRegion? {
         let url = URL(fileURLWithPath: path)
@@ -319,25 +338,39 @@ final class WaveformCache {
               let channels = buffer.floatChannelData
         else { return nil }
         let channelCount = Int(format.channelCount)
+        guard channelCount > 0 else { return nil }
         let n = Int(buffer.frameLength)
-        var samples = [Float](repeating: 0, count: n)
-        // The channel of LARGEST MAGNITUDE speaks for each sample, SIGN KEPT: a max would
-        // rectify the shape, and it is always the loudest channel that should be heard here —
-        // its min/max per pixel is exactly the union `computeMipmap` draws for the peaks levels,
-        // so the two paths agree either side of the samples-mode threshold.
-        for i in 0..<n {
-            var best = channels[0][i]
-            var bestMag = abs(best)
-            for c in 1..<channelCount {
-                let v = channels[c][i]
-                let mag = abs(v)
-                if mag > bestMag { best = v; bestMag = mag }
+        let laneCount = WaveformPeaks.laneCount(channelCount: channelCount)
+        var lanes: [[Float]] = []
+        lanes.reserveCapacity(laneCount)
+        if laneCount == channelCount {
+            // One lane per channel (mono, stereo): each channel as it is — the same split the
+            // peaks were computed with (@see decodeChunked), so the two paths agree either side
+            // of the samples-mode threshold, lane by lane.
+            for c in 0..<channelCount {
+                lanes.append(Array(UnsafeBufferPointer(start: channels[c], count: n)))
             }
-            samples[i] = best
+        } else {
+            // Several channels in ONE lane (@see `WaveformPeaks.laneCount` for why): the channel
+            // of LARGEST MAGNITUDE speaks for each sample, SIGN KEPT — a max would rectify the
+            // shape. Its min/max per pixel is exactly the union `decodeChunked` folds into that
+            // same single lane for the peaks levels.
+            var samples = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                var best = channels[0][i]
+                var bestMag = abs(best)
+                for c in 1..<channelCount {
+                    let v = channels[c][i]
+                    let mag = abs(v)
+                    if mag > bestMag { best = v; bestMag = mag }
+                }
+                samples[i] = best
+            }
+            lanes.append(samples)
         }
         return SampleRegion(startTime: Double(startFrame) / format.sampleRate,
                             endTime: Double(startFrame + AVAudioFramePosition(n)) / format.sampleRate,
-                            samples: samples, sampleRate: format.sampleRate)
+                            lanes: lanes, sampleRate: format.sampleRate)
     }
 
     func load(filePath: String) {
@@ -365,6 +398,7 @@ final class WaveformCache {
                     stats.mipmapsReadFromDisk += 1
                     stats.diskReadSeconds += CFAbsoluteTimeGetCurrent() - diskStart
                     stats.peakBytesInMemory += Self.peakByteSize(cached)
+                    if cached.laneCount > 1 { stats.stereoMipmaps += 1 }
                 }
                 await MainActor.run {
                     self.store(cached, for: filePath)
@@ -386,6 +420,7 @@ final class WaveformCache {
                 stats.mipmapsComputed += 1
                 stats.mipmapComputeSeconds += CFAbsoluteTimeGetCurrent() - computeStart
                 stats.peakBytesInMemory += Self.peakByteSize(result)
+                if result.laneCount > 1 { stats.stereoMipmaps += 1 }
             }
             let target = await MainActor.run { self.writeTarget(for: filePath) }
             if let target { Self.writeToDisk(result, path: filePath, dir: target) }
@@ -405,8 +440,11 @@ final class WaveformCache {
     /// Deliberately `MemoryLayout<PeakPair>` (Float), not `QuantisedPeakPair`: this gauges what
     /// sits in RAM, and only the `.wfc` on disk is quantised — the entry this walks was just
     /// decoded BACK to Float by `loadFromDisk`, or was never quantised at all (`computeMipmap`).
+    /// Every lane counts: a stereo file weighs twice a mono one of the same length.
     private nonisolated static func peakByteSize(_ entry: Entry) -> Int {
-        entry.peaks.reduce(0) { $0 + $1.count * MemoryLayout<PeakPair>.stride }
+        entry.peaks.reduce(0) { total, level in
+            level.reduce(total) { $0 + $1.count * MemoryLayout<PeakPair>.stride }
+        }
     }
 
     /// Bounds how many mipmaps are computed AT ONCE. Not a thread count — the cooperative pool
@@ -443,15 +481,18 @@ final class WaveformCache {
     private nonisolated static func computeMipmap(path: String) async -> Entry {
         let densities = effectiveDensitiesPerSecond
         let url = URL(fileURLWithPath: path)
+        // A failure entry keeps the SHAPE of a real one — one level per density, one (empty) lane
+        // per level — so `laneCount` and every reader below see a well-formed entry that simply
+        // holds nothing (@see isUsable).
         guard let audioFile = try? AVAudioFile(forReading: url), let finestDensity = densities.last else {
-            return Entry(peaks: densities.map { _ in [] }, densities: densities,
+            return Entry(peaks: densities.map { _ in [[]] }, densities: densities,
                          duration: 0, sampleRate: 0)
         }
         let format = audioFile.processingFormat
         let total = Int(audioFile.length)
         let duration = Double(audioFile.length) / format.sampleRate
         guard total > 0 else {
-            return Entry(peaks: densities.map { _ in [] }, densities: densities,
+            return Entry(peaks: densities.map { _ in [[]] }, densities: densities,
                          duration: duration, sampleRate: format.sampleRate)
         }
 
@@ -461,7 +502,7 @@ final class WaveformCache {
         await computeGate.release()
 
         guard let finest else {
-            return Entry(peaks: densities.map { _ in [] }, densities: densities,
+            return Entry(peaks: densities.map { _ in [[]] }, densities: densities,
                          duration: duration, sampleRate: format.sampleRate)
         }
 
@@ -470,84 +511,38 @@ final class WaveformCache {
         // (one per density) became one decode plus two cheap folds over an already-reduced array
         // (×2.4 measured on the peak stage; @see WaveformPeaks.decimate for the invariant that
         // makes the cascade exact: folding by 10 twice lands on the same blocks as folding by
-        // 100 once).
-        var levels = [finest]
+        // 100 once). Each lane folds on its own, over the one block grid they all share.
+        var levels: [PeakLanes] = [finest]
         for i in stride(from: densities.count - 2, through: 0, by: -1) {
             let ratio = WaveformPeaks.foldRatio(fine: densities[i + 1], coarse: densities[i])
-            levels.append(WaveformPeaks.decimate(levels[levels.count - 1], ratio: ratio))
+            levels.append(levels[levels.count - 1].map { WaveformPeaks.decimate($0, ratio: ratio) })
         }
         levels.reverse()   // back to coarse → fine, matching `densities`' own order
 
         return Entry(peaks: levels, densities: densities, duration: duration, sampleRate: format.sampleRate)
     }
 
-    /// The finest level's blocks, filled while the file streams past in chunks. Keeps the
-    /// in-progress block's (lo, hi) across chunk boundaries — a block is almost always far
-    /// narrower than `chunkFrames` (4.8 frames at 10 000 peaks/s and 48 kHz), so it WILL straddle
-    /// a boundary, at most one block per boundary. Skipping that carry would draw a false notch
-    /// every `chunkFrames` worth of file — about once every 5.5 s.
-    private nonisolated struct LevelAccumulator {
-        let count: Int
-        private let step: Double
-        private let total: Int
-        private var peaks: [PeakPair]
-        private var blockIndex = 0
-        private var blockEnd: Int
-        private var lo: Float = 0
-        private var hi: Float = 0
-
-        init(density: Double, duration: Double, total: Int) {
-            count = max(1, Int((density * duration).rounded()))
-            step = Double(total) / Double(count)
-            self.total = total
-            peaks = [PeakPair](repeating: PeakPair(lo: 0, hi: 0), count: count)
-            blockEnd = min(Int(step), total)
-        }
-
-        /// `absoluteFrame` must arrive in strictly increasing order across the whole file — the
-        /// one assumption that turns this into a single streaming pass instead of a second scan.
-        mutating func add(absoluteFrame: Int, lo v0: Float, hi v1: Float) {
-            while absoluteFrame >= blockEnd, blockIndex < count {
-                peaks[blockIndex] = PeakPair(lo: lo, hi: hi)
-                blockIndex += 1
-                lo = 0; hi = 0
-                blockEnd = blockIndex < count ? min(Int(Double(blockIndex + 1) * step), total) : blockEnd
-            }
-            guard blockIndex < count else { return }
-            if v0 < lo { lo = v0 }
-            if v1 > hi { hi = v1 }
-        }
-
-        /// Closes whatever block is still open once the last chunk has been folded in — nothing
-        /// past the final frame ever reaches `blockEnd`, since the last block's end is the file's
-        /// own end.
-        mutating func finish() -> [PeakPair] {
-            while blockIndex < count {
-                peaks[blockIndex] = PeakPair(lo: lo, hi: hi)
-                blockIndex += 1
-                lo = 0; hi = 0
-            }
-            return peaks
-        }
-    }
-
-    /// The UNION of every channel's own envelope (lo = the lowest minimum, hi = the highest
-    /// maximum, each end taking whichever channel reaches furthest on ITS side), never a
-    /// mixdown. The envelope must show what comes out LOUDEST: summing channels can halve matter
-    /// that sits on one of them alone, and in phase opposition can cancel it outright — drawing
-    /// silence over real signal. @see decodeRegion for the samples-mode twin of this rule (its
-    /// min/max per pixel is exactly this union). RAW values, no normalisation.
+    /// The finest level's blocks, one array per LANE (@see `PeakLaneAccumulator`, which does the
+    /// folding and is asserted on its own). A STEREO file keeps its two channels apart, one lane
+    /// each, drawn as two stacked waveforms. Any other file has ONE lane holding the UNION of every
+    /// channel's own envelope (lo = the lowest minimum, hi = the highest maximum, each end taking
+    /// whichever channel reaches furthest on ITS side), never a mixdown: summing channels can halve
+    /// matter that sits on one of them alone, and in phase opposition can cancel it outright —
+    /// drawing silence over real signal (@see `WaveformPeaks.laneCount` for why three channels and
+    /// more are not split). @see decodeRegion for the samples-mode twin of this rule. RAW values,
+    /// no normalisation.
     ///
     /// Only the FINEST level is decoded from the raw file (@see computeMipmap for why). nil on a
     /// read failure partway through — a partial mipmap would be indistinguishable from a
     /// complete one once written to disk.
     private nonisolated static func decodeChunked(audioFile: AVAudioFile, total: Int, channelCount: Int,
-                                                   duration: Double, density: Double) -> [PeakPair]? {
+                                                   duration: Double, density: Double) -> PeakLanes? {
         guard channelCount > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat,
                                             frameCapacity: AVAudioFrameCount(chunkFrames))
         else { return nil }
-        var level = LevelAccumulator(density: density, duration: duration, total: total)
+        var level = PeakLaneAccumulator(density: density, duration: duration, total: total,
+                                        laneCount: WaveformPeaks.laneCount(channelCount: channelCount))
 
         var framesRead = 0
         while framesRead < total {
@@ -558,15 +553,15 @@ final class WaveformCache {
             else { return nil }
             let n = Int(buffer.frameLength)
             guard n > 0 else { break }
-            for j in 0..<n {
-                var frameLo = channels[0][j]
-                var frameHi = frameLo
-                for c in 1..<channelCount {
-                    let v = channels[c][j]
-                    if v < frameLo { frameLo = v }
-                    if v > frameHi { frameHi = v }
-                }
-                level.add(absoluteFrame: framesRead + j, lo: frameLo, hi: frameHi)
+            // The accumulator cuts the chunk at block boundaries and asks for each segment's
+            // extrema, channel by channel: vDSP over a run of samples, where the loop this
+            // replaced compared every sample of every channel by hand.
+            level.add(startFrame: framesRead, frameCount: n, channelCount: channelCount) { c, from, count in
+                var lo: Float = 0, hi: Float = 0
+                let base = UnsafePointer<Float>(channels[c] + from)
+                vDSP_minv(base, 1, &lo, vDSP_Length(count))
+                vDSP_maxv(base, 1, &hi, vDSP_Length(count))
+                return PeakPair(lo: lo, hi: hi)
             }
             framesRead += n
         }
@@ -580,10 +575,11 @@ final class WaveformCache {
     // so as to invalidate it if the source changes (since the name no longer encodes it).
     // Binary format (little-endian):
     //   "WFC1" | version u32 | sampleRate f64 | duration f64
-    //   | fileSize u64 | mtime f64 | levelCount u32
-    //   per level: density f64 | count u32
-    //   then, per level: count × QuantisedPeakPair(lo i16, hi i16) as a raw dump
-    // We do NOT persist `samples` (regenerable, enormous) — see the roadmap.
+    //   | fileSize u64 | mtime f64 | laneCount u32 | levelCount u32
+    //   per level: density f64 | count u32            (every lane of a level has `count` blocks)
+    //   then, per level, per lane (lane 0 = left first): count × QuantisedPeakPair(lo i16, hi i16)
+    //   as a raw dump
+    // We do NOT persist the sample regions (regenerable, enormous) — see the roadmap.
 
     private nonisolated static let magic = Array("WFC1".utf8)
     // Not `private`: `perf.waveforms` reports it, so a script can tell a stale `.wfc` on disk
@@ -591,7 +587,13 @@ final class WaveformCache {
     // 2 → 3: the peak dump quantises to signed 16-bit (@see PeakQuantisation) instead of raw
     // float32 — a v2 file fails the version check below and is silently recomputed (@see
     // `loadFromDisk`'s own note: a cache's only obligation is to never lie, not to migrate).
-    nonisolated static let formatVersion: UInt32 = 3
+    // 3 → 4: a stereo source keeps its two channels as two LANES (@see `WaveformPeaks.laneCount`)
+    // and the header says how many lanes follow. A v3 file holds the merged envelope of a stereo
+    // file, which would draw ONE waveform where two are now expected: rejected by the same check
+    // and recomputed once per project. A stereo `.wfc` weighs twice a mono one of the same length.
+    // The lane POLICY is part of this format — changing `laneCount(channelCount:)` needs a bump
+    // here too, or a file written under the old rule would be read under the new one.
+    nonisolated static let formatVersion: UInt32 = 4
 
     /// The cache file name for a source: basename + '.wfc'.
     private nonisolated static func cacheFileName(path: String) -> String {
@@ -609,9 +611,21 @@ final class WaveformCache {
     /// True if the entry really carries a waveform. When the file could not be decoded,
     /// `computeMipmap` returns a FAILURE entry (length 0 and one empty level per density):
     /// it has the right shape but holds nothing. Since `peaks` is not empty in the array sense
-    /// (it has one element per level), the only reliable measure is the length.
+    /// (it has one element per level, one lane per level), the only reliable measure is the
+    /// length — of the blocks, inside the lanes.
     private nonisolated static func isUsable(_ entry: Entry) -> Bool {
-        entry.duration > 0 && entry.peaks.contains { !$0.isEmpty }
+        entry.duration > 0 && entry.peaks.contains { level in level.contains { !$0.isEmpty } }
+    }
+
+    /// Every level carries the same lanes, and every lane of a level the same number of blocks —
+    /// what the header's single `count` per level promises. Always true of what `computeMipmap`
+    /// builds; checked rather than assumed at the one place a broken promise would be persisted.
+    private nonisolated static func lanesAreConsistent(_ entry: Entry) -> Bool {
+        let lanes = entry.laneCount
+        guard lanes <= WaveformPeaks.maxLanes else { return false }
+        return entry.peaks.allSatisfy { level in
+            level.count == lanes && level.allSatisfy { $0.count == level[0].count }
+        }
     }
 
     private nonisolated static func writeToDisk(_ entry: Entry, path: String, dir: URL) {
@@ -619,7 +633,7 @@ final class WaveformCache {
         // (the source's identity does match) and the clip would stay without a waveform for ever
         // — while playback, which goes through the engine and not through AVFoundation, keeps
         // working. So a failure stays in memory only, and the next session tries again.
-        guard isUsable(entry), let id = fileIdentity(path: path) else { return }
+        guard isUsable(entry), lanesAreConsistent(entry), let id = fileIdentity(path: path) else { return }
         var data = Data()
         func appendU32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
         func appendU64(_ v: UInt64) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
@@ -631,18 +645,21 @@ final class WaveformCache {
         appendF64(entry.duration)
         appendU64(id.size)
         appendF64(id.mtime)
+        appendU32(UInt32(entry.laneCount))
         appendU32(UInt32(entry.peaks.count))
         for (i, level) in entry.peaks.enumerated() {
             appendF64(entry.densities[i])
-            appendU32(UInt32(level.count))
+            appendU32(UInt32(level.first?.count ?? 0))   // the lanes share it (@see lanesAreConsistent)
         }
         // Quantised to signed 16-bit on the way to disk ONLY (@see QuantisedPeakPair) — the
         // in-memory `entry.peaks` handed to the caller stays Float throughout, untouched here.
         // Same little-endian assumption as the header above, now explicit: `Int16`'s own byte
         // layout on every platform this project builds for.
         for level in entry.peaks {
-            let quantised = level.map(PeakQuantisation.encode)
-            quantised.withUnsafeBytes { data.append(contentsOf: $0) }
+            for lane in level {
+                let quantised = lane.map(PeakQuantisation.encode)
+                quantised.withUnsafeBytes { data.append(contentsOf: $0) }
+            }
         }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: dir.appendingPathComponent(cacheFileName(path: path)), options: .atomic)
@@ -682,8 +699,12 @@ final class WaveformCache {
               let duration = readF64(),
               let fileSize = readU64(),
               let mtime = readF64(),
+              let laneCountU32 = readU32(),
               let levelCount = readU32()
         else { return nil }
+        // A lane count nothing writes is a corrupt header, not a format to guess at.
+        let laneCount = Int(laneCountU32)
+        guard (1...WaveformPeaks.maxLanes).contains(laneCount) else { return nil }
 
         // Invalidation: has the source changed since the cache was written?
         guard let id = fileIdentity(path: path), id.size == fileSize, id.mtime == mtime
@@ -703,17 +724,22 @@ final class WaveformCache {
         // The dump on disk is `QuantisedPeakPair` (i16, i16); decoded back to `Float` HERE, once
         // per file at load — negligible next to the audio decode this cache exists to avoid
         // (@see PeakQuantisation, and `writeToDisk`'s own note on the write side).
-        var peaks: [[PeakPair]] = []
+        var peaks: [PeakLanes] = []
         for c in counts {
-            let byteCount = c * MemoryLayout<QuantisedPeakPair>.stride
-            guard let d = readBytes(byteCount) else { return nil }
-            var quantised = [QuantisedPeakPair](repeating: QuantisedPeakPair(lo: 0, hi: 0), count: c)
-            if c > 0 {
-                _ = quantised.withUnsafeMutableBytes { dst in
-                    d.copyBytes(to: dst.bindMemory(to: UInt8.self))
+            var level: PeakLanes = []
+            level.reserveCapacity(laneCount)
+            for _ in 0..<laneCount {
+                let byteCount = c * MemoryLayout<QuantisedPeakPair>.stride
+                guard let d = readBytes(byteCount) else { return nil }
+                var quantised = [QuantisedPeakPair](repeating: QuantisedPeakPair(lo: 0, hi: 0), count: c)
+                if c > 0 {
+                    _ = quantised.withUnsafeMutableBytes { dst in
+                        d.copyBytes(to: dst.bindMemory(to: UInt8.self))
+                    }
                 }
+                level.append(quantised.map(PeakQuantisation.decode))
             }
-            peaks.append(quantised.map(PeakQuantisation.decode))
+            peaks.append(level)
         }
         let entry = Entry(peaks: peaks, densities: densities, duration: duration,
                           sampleRate: sampleRate)

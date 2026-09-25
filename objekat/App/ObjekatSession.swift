@@ -33,6 +33,29 @@ final class ObjekatSession {
     /// really looping.
     var tracktionLoopActive = false
 
+    /// The position the transport's time readout shows — and it is NOT `playheadPosition`.
+    ///
+    /// WHY — the readout used to read the playhead, and the playhead only moves under the tick
+    /// (which returns at once while stopped) or at the transport's own doors (`play`, `stop`,
+    /// `seek`). A click in the timeline, the ruler or an automation band moves the CURSOR and
+    /// nothing else, so while stopped the readout sat on wherever the last stop had left it, and
+    /// only caught up on the next play: the one number meant to say "you are here" answered the
+    /// question one gesture late. The same went for everything else that moves the cursor
+    /// (the arrows, a paste's seek request, a project opening at 0, a tab switch restoring its
+    /// own cursor).
+    ///
+    /// The answer is to READ the right value rather than to copy the cursor into the playhead:
+    /// stopped, the cursor IS where one is (it is where play starts, @see `play`); playing, the
+    /// playhead is; paused, the playhead held at the pause is, since that is the muted red line
+    /// the timeline still draws and where ⇧space resumes. A computed read of three observed
+    /// properties costs nothing while stopped — no timer, no `onChange`, no hook in the dozen
+    /// places that move the cursor — and the observation tracking of the ONE view that calls it
+    /// (@see TransportView's `PlayheadTimeText`) is what makes a cursor move redraw that text,
+    /// and only that text, at once.
+    var displayedPosition: Double {
+        (isPlaying || pausedAt != nil) ? playheadPosition : viewModel.cursorPosition
+    }
+
     /// The playhead's refresh rate. Unchanged (50 ms).
     private static let playheadInterval: TimeInterval = 0.05
     private var playheadTimer: Timer?

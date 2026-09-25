@@ -21,6 +21,10 @@ nonisolated struct WaveformCacheStats: Sendable {
     var mipmapComputeSeconds = 0.0
     var mipmapsReadFromDisk = 0
     var diskReadSeconds = 0.0
+    /// Of the mipmaps above (computed or read), how many carry TWO lanes — a stereo source drawn
+    /// as two stacked waveforms (@see `WaveformPeaks.laneCount`). What lets a script tell a stereo
+    /// file from a mono one without a screen.
+    var stereoMipmaps = 0
     var mipmapsWritten = 0
     var bytesWritten = 0
     var regionsDecoded = 0

@@ -1588,6 +1588,29 @@
         }
       }
     },
+    "dialog.dirty.saveFailed.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project “%@” could not be saved, so nothing was closed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar el proyecto «%@»: no se ha cerrado nada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le projet « %@ » n'a pas pu être sauvegardé : rien n'a été fermé."
+          }
+        }
+      }
+    },
     "dialog.dirty.title.closeTab": {
       "extractionState": "manual",
       "localizations": {
@@ -1606,7 +1629,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enregistrer avant de fermer cet onglet ?"
+            "value": "Sauvegarder avant de fermer cet onglet ?"
           }
         }
       }
@@ -6805,6 +6828,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ouvrir un projet"
+          }
+        }
+      }
+    },
+    "project.openFailed.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file “%@” could not be read as an OBJEKAT project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El archivo «%@» no se pudo leer como un proyecto de OBJEKAT."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier « %@ » n'a pas pu être lu comme un projet OBJEKAT."
+          }
+        }
+      }
+    },
+    "project.openFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not open the project"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo abrir el proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d'ouvrir le projet"
           }
         }
       }

@@ -408,6 +408,9 @@ extension EditViewModel {
         // Instantiates in the engine ALONE (not in `items`) and mutes so as to stay silent live.
         syncAdd(restored)
         engine.updateVolume(-96, pan: restored.pan, forID: restored.id.uuidString)
+        // The circle on the instances is keyed by the DEFINITION; the engine renders the
+        // temporary. @see EditViewModel+RenderProgress
+        recomputeRenderKeys[defID] = restored.id
 
         let nextRevision = def.revision + 1
         let base = "\(bakeSafeName(def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
@@ -422,6 +425,7 @@ extension EditViewModel {
 
         let finish: (Bool) -> Void = { [weak self] ok in
             guard let self else { completion(false); return }
+            self.recomputeRenderKeys[defID] = nil
             self.removeFromEngine(restored)   // takes the engine temporary down
             // The project was closed/changed during the render → give up (do not write into another registry).
             guard self.consolidateFolder == folder, self.consolidateDefinitions[defID] != nil else {

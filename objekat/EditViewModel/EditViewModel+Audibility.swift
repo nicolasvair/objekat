@@ -17,6 +17,27 @@ import Foundation
 // are already silenced by the solo's filtering, and the group stays DISPLAYED muted (its mute still
 // holds for them, and it will fall silent again as soon as the solo is lifted).
 //
+// The same path is opened IN TIME, and for the same reason. A group's window cuts its content
+// (the ContainerClip's span, then the ObjWindowFade at the tail of its chain), and a child can
+// perfectly well hang outside it — a window is a FRAME laid over absolute positions, not a crop of
+// the children. So a child soloed from the caret's row or from the selection, where it sits past
+// its group's edge, was asked for and stayed SILENT: the one gesture that says "I want to hear
+// THIS" answered with nothing, and nothing on screen said why. A muted ancestor was already
+// reopened by the direct solo; a bounded one was not, and it is the same stifling. So for as long
+// as the direct solo lasts, the windows of the groups it goes through are pushed OPEN — exactly
+// the window an infinite group gets, the container following its children and no fade — and put
+// back as soon as the solo moves off them (@see soloOpensWindow, resyncSoloOpenedWindows).
+//
+// Three limits, all deliberate. It is the ENGINE's window only: the model is not touched, so
+// nothing is dirtied, nothing enters the undo, nothing is saved, and the block keeps drawing the
+// window one set. A LOOPING group keeps its window: its window is a porthole onto a pattern, not
+// an edge (@see [[loop-item-plan]]) — opening it would stop the repeat and play the raw children
+// once, which is not "the same thing, with more of it" but another sound. And an INHERITED solo
+// opens nothing, for the reason it wakes no mute: soloing a group or a stem is asking to hear it
+// as it is, window included. What the opening costs is stated too: while a child is soloed, its
+// ancestors' own FADES are not heard (a fade belongs to an edge, and the edge is gone for the
+// time of the solo) — the child's own fades, and the groups' faders and FX, still are.
+//
 // The two mutes are a DISJUNCTION, not an order: neither of them can un-mute the other,
 // so there is nothing to arbitrate between them. The only real arbitration is the solo's, and it
 // turns on a distinction: "direct" = the object is itself in the solo's roots (confirmed
@@ -136,6 +157,10 @@ extension EditViewModel {
                 anc = parentGroup(for: a.id)
             }
         }
+        // Read BEFORE the snapshot is replaced: the windows to touch are the ones whose status
+        // CHANGES, and only those — re-laying a window moves a ContainerClip, which costs a graph
+        // rebuild, so a solo retouched by a click must not re-push every group of the project.
+        let previouslyOpened = audibility.soloRootAncestors
         audibility = AudibilitySnapshot(
             soloRoots:         roots,
             soloActive:        hasAnySolo,
@@ -143,7 +168,60 @@ extension EditViewModel {
             mutedStemIDs:      Set(stems.filter { $0.muted && $0.id != mainStemID }.map(\.id)),
             soloRootAncestors: ancestors
         )
+        // The ORDER around the faders is the point, and it runs opposite ways for the two
+        // directions. The window's gate (the ObjWindowFade at the tail) moves the instant it is
+        // written, the faders too: so a window is CLOSED before the faders give the group's other
+        // children their level back, and OPENED only after the faders have silenced them — either
+        // way round, the neighbours sitting outside the edge could sound for the few milliseconds
+        // of the cut's ramp (@see OBJGainPlugin.muteRampSeconds), the one thing a solo must never
+        // do. (The container's own span waits for a graph rebuild and is slower still, which only
+        // makes the opening safer.)
+        let closing = previouslyOpened.subtracting(ancestors)
+        let opening = ancestors.subtracting(previouslyOpened)
+        if !closing.isEmpty { resyncSoloOpenedWindows(closing) }
         applyAudibilityToEngine()
+        if !opening.isEmpty { resyncSoloOpenedWindows(opening) }
+    }
+
+    // MARK: A direct solo opens the windows on its way (@see the header of this file)
+
+    /// True if a direct solo is holding `obj`'s window OPEN on the engine side right now: a group
+    /// the path to a direct solo goes through (`soloRootAncestors`, the same set that reopens a
+    /// muted ancestor's fader) — unless it LOOPS, its window being a porthole onto a pattern and not
+    /// an edge — and an aux such a group hosts. The aux follows its host because it is part of the
+    /// inside that was just opened: the soloed child is heard WITH its send (@see
+    /// recomputeSoloAudible), and a return cut at its own bounds would give back the dry half only
+    /// of what was asked for. Its other senders are already at -96 dB, post-fader, so opening it
+    /// lets through nothing but the soloed child's share.
+    ///
+    /// Read by `syncGroupWindow` and `syncAuxWindow` — the only two doors a window goes through —
+    /// so a move, a crop or a fade change made DURING the solo keeps the window open instead of
+    /// quietly closing it again. An infinite object is open anyway and answers false here: it
+    /// needs nothing from the solo.
+    func soloOpensWindow(of obj: SoundObject) -> Bool {
+        guard hasAnySolo, !obj.isInfinite else { return false }
+        switch obj.kind {
+        case .group:
+            return audibility.soloRootAncestors.contains(obj.id) && !obj.loopEnabled
+        case .aux:
+            guard let host = parentGroup(for: obj.id) else { return false }
+            return soloOpensWindow(of: host)
+        default:
+            return false
+        }
+    }
+
+    /// Re-pushes the window of each group in `groupIDs` and of the auxes it hosts directly, which
+    /// is where `soloOpensWindow` changes its answer when a group enters or leaves the solo's path.
+    /// Through the ordinary doors and nothing else: they read the rule themselves. An id that no
+    /// longer names a group (deleted, undone, dissolved since) is skipped — its engine object went
+    /// with it.
+    func resyncSoloOpenedWindows(_ groupIDs: Set<UUID>) {
+        for id in groupIDs {
+            guard let group = find(id: id), case .group(let children, _) = group.kind else { continue }
+            syncGroupWindow(group)
+            for child in children where child.isAux { syncAuxWindow(child) }
+        }
     }
 
     /// Reapplies the composition to ALL the objects — groups and auxes included, their faders are

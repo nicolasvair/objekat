@@ -70,7 +70,7 @@ source, not a translation.
 - The API's command names and their arguments: they are already in English and form a
   contract. Their descriptions and their error messages are in English **and are never
   localised** — a script must not depend on the language of the machine that hosts it.
-- The keys of the session file (`<name>.json`): changing them would break existing projects.
+- The keys of the session file (`<name>.objekat`, `<name>.json` before 25 September 2026): changing them would break existing projects.
   In particular `definitionID` and `objectDefinitions` keep their historical name on disk even
   though the concept they name is called "consolidated" everywhere else, code and screen alike
   (@see SessionSchema).

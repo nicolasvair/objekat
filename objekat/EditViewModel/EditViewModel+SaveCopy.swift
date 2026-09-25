@@ -16,7 +16,7 @@ import AppKit
 
 /// What a finished "Save a copy" did — handed to `performSaveCopy`'s completion.
 struct SaveCopyReport {
-    /// The capsule's manifest (`<folder>/<folder>.json`).
+    /// The capsule's manifest (`<folder>/<folder>.objekat`).
     let projectFile: URL
     /// Files copied (sources + consolidated waves; the regenerable `.wfc` caches are not counted).
     let copiedFiles: Int
@@ -195,9 +195,11 @@ extension EditViewModel {
     /// (which itself goes through the dialogue policy) — it is what lets the API wait for the end
     /// instead of guessing it.
     func performSaveCopy(to destFolder: URL, completion: ((SaveCopyReport) -> Void)? = nil) {
-        // The manifest bears the folder's name and nothing more: "My Project copy/My Project copy.json".
+        // The manifest bears the folder's name and nothing more: "My Project copy/My Project
+        // copy.objekat" — a copy is a NEW name, so it takes the current extension whatever the
+        // original's was (@see SessionFile).
         let folderName = EditViewModel.projectDisplayName(for: destFolder)
-        let projectFileURL = destFolder.appendingPathComponent("\(folderName).json")
+        let projectFileURL = destFolder.appendingPathComponent(SessionFile.fileName(for: folderName))
 
         // A destination overlapping a folder the copy reads from is refused BEFORE anything is
         // read or written: the "remove, then copy" of step 7 would otherwise delete the very

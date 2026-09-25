@@ -45,7 +45,9 @@ import Foundation
 // The engine has no notion of solo: it is emulated by pushing -96 dB onto the objects that have to be
 // silenced. What "have to" means is NOT decided here: solo is only one of the layers of
 // listening, composed with the mutes by EditViewModel+Audibility — that is where to read why
-// a direct solo beats a mute and an inherited solo does not. `soloedIDs` lives outside the `items`
+// a direct solo beats a mute and an inherited solo does not, and why it also beats the WINDOW of
+// the groups it goes through (a child soloed past its group's edge is heard, not cut: the solo
+// holds the engine's window open for as long as it lasts). `soloedIDs` lives outside the `items`
 // model (session state, not persisted, outside undo) — like the bus mute, solo is a transient
 // listening state.
 

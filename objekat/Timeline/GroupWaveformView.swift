@@ -234,7 +234,12 @@ struct GroupWaveformView: View {
                     to: &path, from: xStart, through: xEnd,
                     x: { Double($0) }, y0: 0, h: h, mid: mid, vScale: vScale) { i in
                     let a = fileTime(i)
-                    let e = source.envelope(fileA: a, fileB: a + srcStep)
+                    // MERGED, even for a stereo child: the composite stays ONE silhouette. It is
+                    // many clips laid over each other at half opacity, and its band is the group's
+                    // — a left/right split there would stack every child's left over every other
+                    // child's, a picture of no channel anybody hears. The clip's own block is where
+                    // its two lanes are read (@see WaveformDrawing.appendLanesFill).
+                    let e = source.mergedEnvelope(fileA: a, fileB: a + srcStep)
                     // The ORIGINAL position (before the repeat offset) for the fades: the repeated
                     // pattern replays the same gain envelope, not a fade reset on it.
                     let t = groupStartTime + Double(i) / pixelsPerSecond - shift

@@ -140,7 +140,12 @@ final class EditViewModel {
     /// The objects whose BAKE (a background render) is UNDER WAY: a soft lock. The sub-tree
     /// stays live and playable, but creating/opening/detaching/dissolving is blocked while
     /// the render runs. Emptied in the render's completion. See EditViewModel+Bake.
-    var bakingIDs: Set<UUID> = []
+    /// The `didSet` arms (or stops) the poll that fills the render's circle — here rather than at
+    /// each insert/remove, which are spread over the bake's several entry points and completions.
+    /// @see EditViewModel+RenderProgress
+    var bakingIDs: Set<UUID> = [] {
+        didSet { updateRenderProgressPolling() }
+    }
     /// The dialogue policy: what the view-model does when it has to ask a question or
     /// report something. `.ask` (the default) = the historical behaviour, the modal shows.
     /// External driving switches it for the length of a command. See EditViewModel+Dialogs.
@@ -155,7 +160,22 @@ final class EditViewModel {
     /// changed) is UNDER WAY in the background. Drives a "recomputing" indicator on their
     /// instances, replacing the manual "Refresh" action. See
     /// EditViewModel+Consolidate (`cascadeRebakeStaleFixpoint`).
-    var recomputingConsolidateIDs: Set<UUID> = []
+    /// The same `didSet` as `bakingIDs`, for the same circle. @see EditViewModel+RenderProgress
+    var recomputingConsolidateIDs: Set<UUID> = [] {
+        didSet { updateRenderProgressPolling() }
+    }
+    /// For each definition being re-baked automatically, the id of the ENGINE TEMPORARY that is
+    /// actually rendered (`rebakeConsolidateInBackground` instantiates the sidecar under fresh
+    /// ids): the indicator is keyed by the definition, the engine knows only the temporary.
+    /// Laid before the render, removed in its completion. @see pollRenderProgress
+    @ObservationIgnored var recomputeRenderKeys: [UUID: UUID] = [:]
+    /// How far each consolidated render on screen has got, read by the filling circle on the
+    /// blocks. A `let` holding its OWN observable object, so that the ten ticks a second reach the
+    /// circles and not the timeline's body. @see RenderProgressStore
+    let renderProgress = RenderProgressStore()
+    /// The timer reading the engine's render progress while `bakingIDs` or
+    /// `recomputingConsolidateIDs` is non-empty. @see updateRenderProgressPolling
+    @ObservationIgnored var renderProgressTimer: Timer? = nil
     /// The definitions one of whose instances has just been RESYNCHRONISED (a re-bake finished: a
     /// transitive cascade or a closing propagated to the other instances). Drives a transient ✓
     /// (~15 s) on their instances, taking over from the recomputing spinner. See
@@ -1551,9 +1571,11 @@ final class EditViewModel {
 
     /// Pushes the aux's bounds (window) + fades: fadeIn = the entry gate, fadeOut = the tail (exit).
     /// An aux marked INFINITE ignores start/end: a [0, ∞) window, with no fades → a bus always active.
+    /// So does an aux hosted by a group a direct solo is holding open, for as long as it holds it:
+    /// the soloed child is heard WITH its send (@see soloOpensWindow).
     func syncAuxWindow(_ object: SoundObject) {
         guard case .aux = object.kind else { return }
-        if object.isInfinite {
+        if object.isInfinite || soloOpensWindow(of: object) {
             engine?.updateAuxWindow(object.id.uuidString,
                                     start: 0, end: Self.infiniteWindowEnd,
                                     fadeIn: 0, fadeOut: 0)

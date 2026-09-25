@@ -50,6 +50,10 @@ struct GroupBlockView: View {
     var sendRows: [SendRow] = []
     var isRenaming: Bool = false
     var isBaking: Bool = false
+    /// Where the bake's filling circle reads how far the render has got. Its own observable
+    /// object, handed down untouched: only `RenderProgressRing` reads it, so a tick of the render
+    /// re-evaluates the circle and not this block. nil = the indeterminate spinner, as before.
+    var renderProgress: RenderProgressStore? = nil
     /// True when OTHER instances are following this group live (a live mirror, for the length of
     /// the opening) — a small discreet indicator, not in the way. See EditViewModel+Consolidate.
     var isPreviewing: Bool = false
@@ -325,13 +329,18 @@ struct GroupBlockView: View {
                 .allowsHitTesting(false)
             }
 
-            // A BAKE UNDER WAY (a background render): a veil plus a spinner plus a render icon.
+            // A BAKE UNDER WAY (a background render): a veil plus a circle filling as the render
+            // advances (@see RenderProgressRing) plus a render icon.
             if isBaking {
                 RoundedRectangle(cornerRadius: 20)
                     .fill(Color.black.opacity(0.28))
                     .allowsHitTesting(false)
                 HStack(spacing: 5) {
-                    ProgressView().controlSize(.small)
+                    if let renderProgress {
+                        RenderProgressRing(store: renderProgress, key: group.id, diameter: 14)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                     if blockWidth >= 80 {
                         Image(systemName: "waveform")
                             .font(.system(size: 10, weight: .bold))

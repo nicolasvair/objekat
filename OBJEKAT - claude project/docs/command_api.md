@@ -144,6 +144,16 @@ work: `plugin.scan`, `consolidate.make`, `consolidate.edit_commit`.
 
 `job.status`, `job.list` complete the set.
 
+**How far a consolidated render has got.** While a bake runs, `consolidate.state` answers
+`renders`: one entry per render in flight, `{"kind": "bake", "object": …, "progress": …}` for a
+bake or a commit (the object wearing the veil), `{"kind": "rebake", "definition": …, "progress":
+…}` for a cascade's automatic re-bake (keyed by the definition, whose instances all show it).
+`progress` is 0…1, rounded to the hundredth, `null` until the engine has answered for that render,
+and it is the value the filling circle on the block DRAWS — the one store the circles read, not a
+second reading of the engine. The list is empty once no render runs. It is the engine's own
+`EditRenderer` count (the export's), polled at 10 Hz, so a render shorter than a tick may never
+show a reading at all.
+
 ### `batch`
 
 Runs a sequence under **a single undo**.
@@ -167,7 +177,7 @@ structure, plugins, stems/routing, finalise) before answering, exactly as before
 overlay existed.
 
 ```json
-{"cmd": "project.open", "params": {"path": "/…/Project.json"}}
+{"cmd": "project.open", "params": {"path": "/…/Project.objekat"}}
 → {"path": "…", "name": "Project", "object_count": 42}
 ```
 
@@ -175,7 +185,7 @@ Pass `"async": true` to get an immediate answer instead, and follow the load wit
 `project.load_status` and/or `wait_idle`:
 
 ```json
-{"cmd": "project.open", "params": {"path": "/…/Project.json", "async": true}}
+{"cmd": "project.open", "params": {"path": "/…/Project.objekat", "async": true}}
 → {"path": "…", "status": "loading"}
 
 {"cmd": "project.load_status"}
@@ -240,7 +250,7 @@ caret, time selection, loop, viewport).
 
 ```json
 {"cmd": "tab.list"}
-→ {"tabs": [{"id": "…", "index": 1, "name": "Mix 1", "path": "/…/Mix 1.json",
+→ {"tabs": [{"id": "…", "index": 1, "name": "Mix 1", "path": "/…/Mix 1.objekat",
              "dirty": false, "active": true},
             {"id": "…", "index": 2, "name": "Untitled", "path": null,
              "dirty": true, "active": false}],
@@ -250,9 +260,12 @@ caret, time selection, loop, viewport).
 {"cmd": "tab.select", "params": {"index": 2}}   → that tab's object, now active
 {"cmd": "tab.select", "params": {"id": "…"}}    → same, by id
 
-{"cmd": "tab.open", "params": {"path": "/…/Other.json"}}
+{"cmd": "tab.open", "params": {"path": "/…/Other.objekat"}}
 → {…, "already_open": false}        // opened in a NEW tab
 → {…, "already_open": true}         // was already open elsewhere: switched to it instead
+
+{"cmd": "tab.move", "params": {"index": 3, "to": 1}}   → the moved tab's object, "index": 1
+{"cmd": "tab.move", "params": {"id": "…", "to": 2}}    // same, by id
 
 {"cmd": "tab.close"}                             // the active tab, if clean
 → {"ok": true}
@@ -267,6 +280,16 @@ consolidated-object edit is under way (`tab.select`/`tab.new`/`tab.open` all che
 touching anything, so a refusal never half-parks a tab) also answers `invalid_state`, naming the
 reason in English (`"tab switch refused: an export is running"`, …) — the same four conditions
 `Quiescence.inFlight()` already reports for `wait_idle`.
+
+`tab.move` is the tab bar's drag-to-reorder without the hand: the tab named by `id`/`index` ends
+up at the 1-based position `to` (`1…count`, anything else is `bad_params`), the others closing up
+around it. It changes the ORDER and nothing else — the active tab stays the active one, no
+document is parked or loaded — and everything that names a tab by position (`index` here,
+⌘1…9, ⌃⇥ / ⌃⇧⇥ in the app) reads the new order straight away. Moving a tab to where it already
+is succeeds and changes nothing. It is not refused by an export, a render or a
+consolidated-object edit (a reorder touches no document); it IS refused, `invalid_state`, during
+the short span of a tab switch itself, when the workspace is between parking one document and
+restoring another.
 
 Two commands outside this family are tabs-AWARE without becoming part of it, for backward
 compatibility: `project.open` on a path already open in ANOTHER tab switches to that tab instead
@@ -294,6 +317,12 @@ distinction is the heart of the project's measuring method. `perf.census` counts
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.
+`stereo_mipmaps` counts, among the mipmaps computed or read, those that carry TWO lanes — a
+stereo source, drawn as two stacked waveforms (left above, right below); a mono file and a file
+of three channels or more carry one. A stereo file weighs twice a mono one in
+`peak_bytes_in_memory`, in `bytes_written` and in `region_bytes_in_memory`. Format version 4
+(since 25 September 2026) is the one that stores the lanes; a v3 `.wfc` is rejected and
+recomputed once.
 It answers even with no project open — the counters are process-wide statics — and `reset: true`
 zeroes them first, for a bench that wants to measure from a known zero.
 
@@ -444,7 +473,7 @@ run loop. So the app is indeed there, simply invisible (`.prohibited`), with no 
 
 ```bash
 objekat.app/Contents/MacOS/objekat --headless --no-audio --no-recent \
-    --project=/path/project.json --exec=scenario.jsonl
+    --project=/path/project.objekat --exec=scenario.jsonl
 objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 ```
 
@@ -508,11 +537,12 @@ That is end-of-process noise, with no effect on the result.
 |---|---|
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
-| `transport.*` | play, stop, seek, state (including the **displayed** position) |
+| `transport.*` | play, stop, seek, state (including the **displayed** position: `playhead` is the red line, `displayed` what the time readout shows — the playhead while playing or paused, the cursor while stopped) |
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
+| `solo.*` | the confirmed solo: read, set / unset objects, clear — and which windows a direct solo holds open |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
@@ -997,6 +1027,29 @@ to its own id, and, if it was selected, to its own selection too. Same rule as a
 (@see "DIVIDING the matter" above): the selection follows the matter, and a ripple does not touch
 it when the object it is given was not selected to begin with.
 
+### Solo, and the windows it holds open
+
+`solo.set` puts objects into the **confirmed** solo layer (`on: false` takes them out), exactly as
+the inspector's solo button does, one object at a time through the same door; `ids` defaults to the
+selection. `solo.clear` is Esc: every solo off, confirmed and temporary. `solo.get` reads the state
+without changing it. The three answer the same object: `active`, `confirmed`, `stems`, `temporary`
+(`null` unless the "s" key is being held — a script holds no key, so it can read that layer but
+never lay it), `audible` (the closure the dimming reads) and `opened_windows`. Undo policy `none`:
+a solo is a listening state, outside the undo and never saved.
+
+`opened_windows` is the half of the rule no fader shows. A group's window cuts its content, and a
+child can hang past it (a window is a frame over absolute positions, not a crop of the children).
+A **direct** solo — the object itself among the roots — is heard whatever stands in its way: the
+mute of a group it goes through (since 24 August) and, since 25 September, that group's **window**:
+for as long as the solo lasts, the engine window of every group on the path is pushed open the way
+an infinite group's is, together with the auxes those groups host, and put back when the solo
+moves off. The model's window is not touched — `object.get` still answers the bounds that were
+set. Two exceptions: a **looping** group keeps its window (a porthole onto a pattern, not an edge),
+and an **inherited** solo opens nothing — soloing a group or a stem is asking to hear it as it is,
+window included. The cost: while a child is soloed, its ancestors' own fades are not heard, a fade
+belonging to the edge the solo has lifted. `tools/scenario_export_preview.py` re-reads the rendered
+files to prove the engine followed.
+
 ### Export
 
 `export.run` returns a `job_id`: the render runs on its own thread, and `job.wait` closes the
@@ -1080,12 +1133,12 @@ count.
 
 `project.save_copy {path}` is the menu's "Save a copy with audio files…" without its panel: `path`
 is the capsule's **folder** (created if absent), and the manifest inside is named after it
-(`/x/My copy/` → `/x/My copy/My copy.json`). The command **waits for the last write** before it
+(`/x/My copy/` → `/x/My copy/My copy.objekat`). The command **waits for the last write** before it
 answers — no job, no polling:
 
 ```json
 {"cmd": "project.save_copy", "params": {"path": "/tmp/capsule"}}
-→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.json",
+→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.objekat",
    "copied_files": 3, "missing": []}
 ```
 
@@ -1208,9 +1261,36 @@ boot volume never reads as offline.
 `tools/scenario_relink.py` asserts all of the above against a running instance, making and moving
 its own wav files on disk.
 
+### The session file: `.objekat`, which is JSON
+
+A session is written as `<name>.objekat` since 25 September 2026 — **the content is the same JSON
+it always was**. The extension exists so that the file belongs to OBJEKAT: the app's `Info.plist`
+exports the type `org.labelpeche.objekat.session` (conforming to `public.json`, so anything that
+reads JSON still reads it) and claims it as its owner, which is what makes a double-click in the
+Finder open the session in OBJEKAT rather than in a text editor. One definition in the code,
+`SessionFile` (`objekat/EditViewModel/SessionFile.swift`), which the plist must stay in step with.
+
+- **A legacy `<name>.json` still opens** — from File › Open (the panel accepts both), from
+  "Recent projects", through `project.open` / `tab.open` / `--project=`. It is never renamed
+  behind the user's back: `project.save` (and ⌘S) write where they read, so a `.json` stays a
+  `.json` until somebody gives it a NEW name.
+- **A new name takes `.objekat`**: the menu's Save As (the name typed is a plain name, the
+  extension is laid by the app) and `project.save_copy`'s manifest (`<folder>.objekat`).
+- **The API writes the path it is given**, whatever its extension, as it always has:
+  `project.save_as {"path": "/x/session.json"}` writes `session.json`. Scripts that name their
+  files `*.json` keep working unchanged.
+- The name shown for a project strips ONE of the two extensions, in any case: `Mix.objekat` and
+  `Mix.json` are both "Mix", and a `p.objekat.json` stays "p.objekat".
+- **Opening from the Finder** (double-click, a file dropped on the Dock icon, `open -a`) follows
+  `tab.open`'s rules: the same file is never opened twice (its tab is brought forward), and it opens
+  in a NEW tab — except over an untouched "Untitled" tab (no file, not modified, empty), which is
+  reused, the ordinary case of a cold launch by a double-click. A refusal (a load, an export under
+  way…) or an unreadable file is reported by an alert, the hand being in the Finder. There is no
+  command for it: it is AppKit's own door, and `tab.open` already is its scripted equivalent.
+
 ### Reading a project without the app
 
-Every manifest (`<name>.json`) carries its own notice, under the `_readme` key, **at the head of the file**:
+Every manifest (`<name>.objekat`, or `<name>.json` before 25 September 2026) carries its own notice, under the `_readme` key, **at the head of the file**:
 the keys are sorted on writing and "_" comes before the lowercase letters, so it falls first
 under a reader's eye — human or model. It says the essential of what the file does not show:
 that `items` is a tree, that the times are in seconds **except MIDI, in musical time**,

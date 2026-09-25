@@ -102,17 +102,25 @@ extension EditViewModel {
         Self.projectDisplayName(for: fileURL)
     }
 
-    /// The NAME of a project as it is shown and typed: with no ".json" — the extension is an
-    /// internal matter of the manifest, never something the user names. Strips THAT suffix and
-    /// no other, in particular never a path extension of its own making: "Mix 1.2" is a name,
-    /// not a file with a ".2" extension.
+    /// The NAME of a project as it is shown and typed: with no ".objekat" (nor the legacy
+    /// ".json") — the extension is an internal matter of the manifest, never something the user
+    /// names. Strips THOSE suffixes and no other, in particular never a path extension of its own
+    /// making: "Mix 1.2" is a name, not a file with a ".2" extension. One suffix at most, and in
+    /// any case (the Finder matches an extension regardless of case, so "Mix.OBJEKAT" is a
+    /// session too): a project somebody called "p.objekat" and saved as "p.objekat.json" keeps
+    /// the name it was given.
     /// Shared by the window title, the panel and the "Recent projects" menu, so that one
-    /// project has one name everywhere.
+    /// project has one name everywhere. @see SessionFile
     static func projectDisplayName(for url: URL) -> String {
         let name = url.lastPathComponent
-        guard name.hasSuffix(".json") else { return name }
-        let base = String(name.dropLast(".json".count))
-        return base.isEmpty ? name : base
+        for ext in SessionFile.strippedExtensions {
+            guard let suffix = name.range(of: ".\(ext)",
+                                          options: [.anchored, .backwards, .caseInsensitive])
+            else { continue }
+            let base = String(name[..<suffix.lowerBound])
+            return base.isEmpty ? name : base
+        }
+        return name
     }
 
     /// Saves into the active version if there is one, otherwise "Save as".
@@ -127,17 +135,13 @@ extension EditViewModel {
 
     /// Save as: the user chooses the NAME + the location of the project.
     /// A project is a FOLDER, so what is typed here is a plain name — "My Project", never
-    /// "My Project.objekat": no content type is imposed on the panel, and the ".json" of the
+    /// "My Project.objekat": no content type is imposed on the panel, and the ".objekat" of the
     /// manifest is laid by `saveAs(to:)`, which is the only one to know about it.
-    /// If the destination is already an Objekat project folder → only the JSON is written there
+    /// If the destination is already an Objekat project folder → only the manifest is written there
     /// (several versions can live side by side, sharing samples/ and waveforms/).
     /// Otherwise → a project folder named after what was typed is created and written into.
     func saveAs() {
-        let panel = NSSavePanel()
-        panel.title = L("project.saveAs.title")
-        panel.nameFieldStringValue = projectURL.map { Self.projectDisplayName(for: $0) }
-            ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
-        panel.canCreateDirectories = true
+        let panel = Self.makeSaveAsPanel(projectURL: projectURL, projectName: projectName)
         panel.begin { [weak self] response in
             guard let self, response == .OK, let chosen = panel.url else { return }
             // The panel is sent away FIRST: as long as it is on screen the document window is not
@@ -155,18 +159,7 @@ extension EditViewModel {
     /// possible between what the interface does and what a script does.
     @discardableResult
     func saveAs(to chosen: URL) -> Bool {
-        let parent = chosen.deletingLastPathComponent()
-        // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
-        // `test/test.json`, the manifest bearing the project's name and nothing else.
-        let base = Self.projectDisplayName(for: chosen)
-        let fileName = "\(base).json"
-        let fileURL: URL
-        if isObjekatProjectFolder(parent) {
-            fileURL = parent.appendingPathComponent(fileName)
-        } else {
-            fileURL = parent.appendingPathComponent(base, isDirectory: true)
-                .appendingPathComponent(fileName)
-        }
+        let fileURL = Self.saveAsFileURL(for: chosen)
         // Tabs (INC1): writing over a file another tab already has open would silently orphan
         // whatever that tab still holds in memory the next time IT saves — refused here, before a
         // single byte is written, rather than diagnosed after the fact.
@@ -177,11 +170,41 @@ extension EditViewModel {
         return writeSession(to: fileURL)
     }
 
+    /// The "Save as" panel, as the menu shows it — title, suggested name, folder creation. Static
+    /// so the one other door that has to ask for a path, the save a CLOSING tab owes when it never
+    /// had a file (`Workspace.settleUnsavedChanges`, which may be saving a tab that is not the
+    /// active one, hence not `self`'s own name), shows the very same panel rather than a copy of it.
+    static func makeSaveAsPanel(projectURL: URL?, projectName: String) -> NSSavePanel {
+        let panel = NSSavePanel()
+        panel.title = L("project.saveAs.title")
+        panel.nameFieldStringValue = projectURL.map { projectDisplayName(for: $0) }
+            ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
+        panel.canCreateDirectories = true
+        return panel
+    }
+
+    /// Where "Save as" writes for what the panel handed back — the naming rule, alone, so the
+    /// active tab (`saveAs(to:)`) and a parked one (`Workspace`) cannot name a project two ways.
+    static func saveAsFileURL(for chosen: URL) -> URL {
+        let parent = chosen.deletingLastPathComponent()
+        // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
+        // `test/test.objekat`, the manifest bearing the project's name and nothing else. A NEW
+        // name always takes the current extension — Save As on a legacy `test.json` writes
+        // `test.objekat` beside it and leaves the old file alone (@see SessionFile).
+        let base = projectDisplayName(for: chosen)
+        let fileName = SessionFile.fileName(for: base)
+        if isObjekatProjectFolder(parent) {
+            return parent.appendingPathComponent(fileName)
+        }
+        return parent.appendingPathComponent(base, isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
     /// A folder is an Objekat project if it holds `waveforms/`, which `writeSession` lays for
-    /// every project — so the test catches them all. A bare `*.json` is deliberately NOT a sign:
-    /// any folder holding some `package.json` would then pass for a project, and "Save as" would
-    /// write into it instead of making the folder.
-    private func isObjekatProjectFolder(_ folder: URL) -> Bool {
+    /// every project — so the test catches them all, legacy `.json` projects included. A bare
+    /// `*.json` is deliberately NOT a sign: any folder holding some `package.json` would then pass
+    /// for a project, and "Save as" would write into it instead of making the folder.
+    private static func isObjekatProjectFolder(_ folder: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: waveformsDir(in: folder).path,
                                               isDirectory: &isDir) && isDir.boolValue
@@ -329,12 +352,12 @@ extension EditViewModel {
     }
 
     /// Opens a version file: you navigate into the project folder and
-    /// pick the "<project> V<n>.json" wanted.
+    /// pick the "<project> V<n>.objekat" wanted — or a legacy "….json", which still opens.
     func loadProject() {
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = SessionFile.openableContentTypes
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -350,7 +373,7 @@ extension EditViewModel {
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = SessionFile.openableContentTypes
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -485,7 +508,15 @@ extension EditViewModel {
             // A known file → a synchronous write, and we carry on. Otherwise the panel has to be
             // gone through, and it is asynchronous: we give up the current operation (false) rather
             // than risk seeing it run before the user has chosen where to write.
-            if projectURL != nil { save(); return true }
+            // And a write that FAILS is not a save: `save()` swallows the error, so carrying on
+            // behind it would throw away exactly the changes the user just asked to keep.
+            if let url = projectURL {
+                guard writeSession(to: url) else {
+                    notify(L("tabs.saveTab.failed.title"), L("dialog.dirty.saveFailed.info", projectName))
+                    return false
+                }
+                return true
+            }
             saveAs()
             return false
         case .discard:

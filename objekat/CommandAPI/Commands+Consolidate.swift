@@ -79,14 +79,33 @@ extension CommandRegistry {
         }
 
         register("consolidate.state",
-                 summary: "Consolidated object editing in progress (the open stack).") { _ in
+                 summary: "Consolidated object editing in progress (the open stack), and the "
+                        + "consolidated renders running with their progress (0…1).") { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            // The consolidated renders running, each with the fraction its filling circle SHOWS
+            // (@see RenderProgressStore) — the store the circles read, not a second reading of
+            // the engine, so what a script asserts is what the eye would see. `progress` is null
+            // until the engine's first answer for that render. A bake names the OBJECT wearing the
+            // veil; an automatic re-bake names the DEFINITION, whose instances all fill in step.
+            func progress(_ key: UUID) -> JSONValue {
+                guard let f = vm.renderProgress.fraction(for: key) else { return .null }
+                return .number(f)
+            }
+            let bakes: [JSONValue] = vm.bakingIDs.sorted { $0.uuidString < $1.uuidString }.map { id in
+                .object(["kind": .string("bake"), "object": .string(id.uuidString),
+                         "progress": progress(id)])
+            }
+            let rebakes: [JSONValue] = vm.recomputingConsolidateIDs.sorted { $0.uuidString < $1.uuidString }.map { defID in
+                .object(["kind": .string("rebake"), "definition": .string(defID.uuidString),
+                         "progress": progress(defID)])
+            }
             return .object([
                 "editing": .bool(vm.isEditingConsolidate),
                 "definition": .stringOrNull(vm.editingConsolidateID?.uuidString),
                 "placement": .stringOrNull(vm.editingPlacementID?.uuidString),
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
+                "renders": .array(bakes + rebakes),
             ])
         }
 

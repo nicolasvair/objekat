@@ -205,6 +205,7 @@ extension CommandRegistry {
                 "mipmap_compute_seconds": .number(stats.mipmapComputeSeconds),
                 "mipmaps_read_from_disk": .int(stats.mipmapsReadFromDisk),
                 "disk_read_seconds": .number(stats.diskReadSeconds),
+                "stereo_mipmaps": .int(stats.stereoMipmaps),
                 "mipmaps_written": .int(stats.mipmapsWritten),
                 "bytes_written": .int(stats.bytesWritten),
                 "region_decodes": .int(stats.regionsDecoded),
