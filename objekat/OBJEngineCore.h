@@ -190,6 +190,12 @@
                           end:(double)endSecs
                    completion:(void(^)(BOOL ok))completion;
 
+// Avancement (0…1) du bake EN COURS de cet objet — l'identifiant passé à renderGroupToFileAsync: /
+// renderClipToFileAsync:. -1 si le moteur ne connaît aucun rendu de cet objet (pas encore lancé,
+// déjà terminé). À poller depuis le thread principal pour un indicateur déterminé : c'est le
+// même compteur que `exportProgress`, tenu par l'EditRenderer.
+- (float)renderProgressForObject:(NSString*)objectID;
+
 // MARK: - Export — rendu du MIX COMPLET
 //
 // Rend la sortie générale de l'Edit — toutes les pistes, tous les bus de stems, chaîne de

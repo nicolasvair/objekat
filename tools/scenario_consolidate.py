@@ -534,8 +534,26 @@ try:
         section("B11 — a new project")
         FRESH = os.path.join(ROOT, "fresh")
         cmd("project.save_as", path=os.path.join(FRESH, "fresh.json"))
-        job_wait(cmd, cmd("consolidate.make", id=cid))
+        # The filling circle's data, read while the render runs: `consolidate.state.renders`
+        # answers what the circle SHOWS. A short bip may finish between two polls, so the only
+        # claims are the ones that hold whatever the timing: every reading names a bake, stays
+        # inside 0…1 and never goes back, and nothing is left once the job is done.
+        mk = cmd("consolidate.make", id=cid)
+        readings = []
+        deadline = time.time() + 60
+        while time.time() < deadline and cmd("job.status", id=mk["job_id"])["state"] == "running":
+            readings += cmd("consolidate.state")["renders"]
+            time.sleep(0.02)
+        job_wait(cmd, mk)
         cmd("wait_idle", timeout_ms=30000)
+        progresses = [r["progress"] for r in readings if r.get("progress") is not None]
+        check("X  render progress: only bakes, within 0…1, never going back",
+              all(r.get("kind") == "bake" for r in readings)
+              and all(0.0 <= p <= 1.0 for p in progresses)
+              and all(a <= b for a, b in zip(progresses, progresses[1:])),
+              readings)
+        check("X  render progress: nothing left once the job is done",
+              cmd("consolidate.state")["renders"] == [], cmd("consolidate.state"))
         d = list(defs_by_id(cmd).values())
         fc = os.path.join(FRESH, "samples", "consolidate")
         check("B11: the wave and its sidecar land in samples/consolidate/",

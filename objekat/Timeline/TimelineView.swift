@@ -1973,6 +1973,8 @@ struct TimelineView: View {
                                 ? viewModel.sendRows(for: object.id) : [],
             isRenaming:       viewModel.renamingID == object.id,
             isBaking:         viewModel.isBaking(object.id),
+            // A `let` of the view-model: reading it here tracks nothing. @see RenderProgressStore
+            renderProgress:   viewModel.renderProgress,
             isStale:          object.isConsolidateInstance && viewModel.isStale(object.id),
             isPreviewing:     viewModel.hasLiveMirrors && viewModel.editingPlacementID == object.id,
             isRecomputing:    object.consolidateID.map { viewModel.recomputingConsolidateIDs.contains($0) } ?? false,
@@ -2335,6 +2337,7 @@ struct TimelineView: View {
                                 ? viewModel.sendRows(for: group.id) : [],
             isRenaming:      viewModel.renamingID == group.id,
             isBaking:      viewModel.isBaking(group.id),
+            renderProgress: viewModel.renderProgress,
             isPreviewing:    viewModel.hasLiveMirrors && viewModel.editingPlacementID == group.id,
             isEditing:       viewModel.editingPlacementID == group.id,
             onRename: { label in

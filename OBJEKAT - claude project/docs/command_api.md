@@ -144,6 +144,16 @@ work: `plugin.scan`, `consolidate.make`, `consolidate.edit_commit`.
 
 `job.status`, `job.list` complete the set.
 
+**How far a consolidated render has got.** While a bake runs, `consolidate.state` answers
+`renders`: one entry per render in flight, `{"kind": "bake", "object": …, "progress": …}` for a
+bake or a commit (the object wearing the veil), `{"kind": "rebake", "definition": …, "progress":
+…}` for a cascade's automatic re-bake (keyed by the definition, whose instances all show it).
+`progress` is 0…1, rounded to the hundredth, `null` until the engine has answered for that render,
+and it is the value the filling circle on the block DRAWS — the one store the circles read, not a
+second reading of the engine. The list is empty once no render runs. It is the engine's own
+`EditRenderer` count (the export's), polled at 10 Hz, so a render shorter than a tick may never
+show a reading at all.
+
 ### `batch`
 
 Runs a sequence under **a single undo**.

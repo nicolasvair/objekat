@@ -50,6 +50,10 @@ struct SoundBlockView: View {
     var sendRows: [SendRow] = []
     var isRenaming: Bool = false
     var isBaking: Bool = false
+    /// Where the bake's filling circle reads how far the render has got. Its own observable
+    /// object, handed down untouched: only `RenderProgressRing` reads it, so a tick of the render
+    /// re-evaluates the circle and not this block. nil = the indeterminate spinner, as before.
+    var renderProgress: RenderProgressStore? = nil
     /// True if this consolidated object bake captures content that is now stale
     /// (`EditViewModel.isStale`) — a warning badge, see EditViewModel+Consolidate.
     var isStale: Bool = false
@@ -322,12 +326,18 @@ struct SoundBlockView: View {
             }
 
             // The definition's AUTOMATIC re-bake UNDER WAY (a transitive cascade): a small discreet
-            // spinner, not in the way, like the preview. The object stays editable.
+            // circle filling with the render, not in the way. The object stays editable. It is
+            // keyed by the DEFINITION, so every instance of it fills in step.
             if isRecomputing && !isBaking && !isEditing {
                 VStack {
                     HStack {
                         Spacer()
-                        ProgressView().controlSize(.small).scaleEffect(0.7).padding(3)
+                        if let renderProgress, let defID = object.consolidateID {
+                            RenderProgressRing(store: renderProgress, key: defID, diameter: 11)
+                                .padding(3)
+                        } else {
+                            ProgressView().controlSize(.small).scaleEffect(0.7).padding(3)
+                        }
                     }
                     Spacer()
                 }
@@ -373,13 +383,18 @@ struct SoundBlockView: View {
                 .allowsHitTesting(false)
             }
 
-            // A BAKE UNDER WAY (a background render): a veil plus a spinner plus a render icon.
+            // A BAKE UNDER WAY (a background render): a veil plus a circle filling as the render
+            // advances (@see RenderProgressRing) plus a render icon.
             if isBaking {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.black.opacity(0.28))
                     .allowsHitTesting(false)
                 HStack(spacing: 5) {
-                    ProgressView().controlSize(.small)
+                    if let renderProgress {
+                        RenderProgressRing(store: renderProgress, key: object.id, diameter: 14)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                     if blockWidth >= 80 {
                         Image(systemName: "waveform")
                             .font(.system(size: 10, weight: .bold))

@@ -571,6 +571,10 @@ struct OBJTouchWatch {
 struct OBJRenderJob {
     std::unique_ptr<te::Edit>                       edit;
     std::shared_ptr<te::EditRenderer::Handle>       handle;
+    // L'objet du modèle que ce job rend (son UUID, la clé des maps de clips) — vide pour l'export
+    // du mix. C'est ce qui permet de répondre « où en est le rendu de CET objet ? » sans que
+    // l'appelant ait à connaître l'identifiant du job. @see renderProgressForObject:
+    std::string                                     objectKey;
 };
 
 // Sonde du rendu d'export : les crêtes de ce qui vient d'être rendu, pendant qu'on rend.
@@ -905,6 +909,7 @@ struct OBJRenderChain {
                  allowedClipIDs:(const std::vector<te::EditItemID>&)allowedClipIDs
                        prepare:(std::function<void(te::Track*)>)prepare
                           desc:(NSString*)desc
+                     objectKey:(const std::string&)objectKey
                     completion:(void(^)(BOOL ok))completion;
 // Chaîne des clips à laisser vivre pour qu'un objet sonne : lui-même, son contenu, puis chacun
 // de ses containers ancêtres jusqu'à la piste.
@@ -2847,6 +2852,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                  allowedClipIDs:(const std::vector<te::EditItemID>&)allowedClipIDs
                        prepare:(std::function<void(te::Track*)>)prepare
                           desc:(NSString*)desc
+                     objectKey:(const std::string&)objectKey
                     completion:(void(^)(BOOL ok))completion {
     if (!_edit) { if (completion) completion(NO); return; }
 
@@ -2990,7 +2996,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         if (completion) completion(NO);
         return;
     }
-    _renderJobs[jobID] = OBJRenderJob{ std::move(clone), handle };
+    _renderJobs[jobID] = OBJRenderJob{ std::move(clone), handle, objectKey };
     // Total de la partie BLOQUANTE. Au-delà, le rendu tourne sur
     // son propre thread — reste la destruction du clone, journalisée dans le callback.
     NSLog(@"[PERF] bake « %@ » : %.0f ms sur le thread principal avant de rendre la main",
@@ -3106,6 +3112,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                              }
                          }
                             desc:desc
+                       objectKey:key
                       completion:completion];
 }
 
@@ -3125,6 +3132,26 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                    completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:clipID filePath:filePath start:startSecs end:endSecs
                              desc:clipID completion:completion];
+}
+
+// Avancement d'un bake (0…1), lu dans le handle du job exactement comme `exportProgress` — le
+// renderer tient déjà ce compte pour l'export, un bake passe par le même EditRenderer. Balayage
+// linéaire plutôt qu'une seconde map objet → job : il n'y a jamais que quelques rendus en vol
+// (les bakes d'une sélection passent EN SÉRIE), et une seconde map serait une seconde chose à
+// garder en phase avec `_renderJobs`, effacé dans le callback de fin.
+// -1 = aucun rendu de cet objet n'est connu du moteur : pas encore lancé (le clone se construit
+// sur le thread principal AVANT le job), déjà fini, ou jamais demandé. L'appelant garde alors ce
+// qu'il affichait — c'est ce qui distingue « rien à dire » de « 0 % ».
+- (float)renderProgressForObject:(NSString*)objectID {
+    if (!objectID) return -1.0f;
+    const std::string key([objectID UTF8String]);
+    for (auto& entry : _renderJobs) {
+        const OBJRenderJob& job = entry.second;
+        if (job.objectKey != key || !job.handle) continue;
+        const float p = job.handle->getProgress();
+        return juce::jlimit(0.0f, 1.0f, p);
+    }
+    return -1.0f;
 }
 
 // MARK: - Export — rendu du mix complet
@@ -3308,7 +3335,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         if (completion) completion(NO, @"Le moteur n'a pas pu préparer le rendu.");
         return;
     }
-    _renderJobs[jobID] = OBJRenderJob{ std::move(clone), handle };   // clone nul en direct
+    _renderJobs[jobID] = OBJRenderJob{ std::move(clone), handle, {} };   // clone nul en direct
     _exportJobID = jobID;
     NSLog(@"[PERF] export : %.0f ms sur le thread principal avant de rendre la main",
           juce::Time::getMillisecondCounterHiRes() - tStart);
