@@ -913,6 +913,9 @@ struct OBJRenderChain {
     std::unique_ptr<te::Engine> _engine;
     OBJAudioProbe* _audioProbe;   // DIAGNOSTIC, possédé par le DeviceManager (@see OBJAudioProbe.h)
     std::vector<std::pair<uint64_t, std::string>> _audioProbeMarks;
+    // @see beginPlaybackEdit — fenêtres retenues pendant une coupe en lecture.
+    int _playbackEditDepth;
+    std::unordered_map<std::string, std::array<double, 4>> _heldWindows;
     std::unique_ptr<te::Edit>   _edit;
 
     // UUID string → pointeurs Tracktion (valides tant que _edit est vivant)
@@ -1272,9 +1275,22 @@ static BOOL gOBJAudioDisabled = NO;
 // l'inhibiteur, réallouerait le graphe de lecture à CHAQUE plugin. ReallocationInhibitor rend ces
 // appels inoffensifs : la PluginList est modifiée normalement, seule l'allocation du graphe est
 // différée jusqu'à -endBulkLoad.
-- (void)rebuildGraphNowIfPlaying {
-    if (!_edit || !_edit->getTransport().isPlaying()) return;
-    _edit->flushPendingPlaybackRestart();
+- (void)beginPlaybackEdit {
+    if (_playbackEditDepth > 0 || (_edit && _edit->getTransport().isPlaying()))
+        ++_playbackEditDepth;
+}
+
+- (void)endPlaybackEdit {
+    if (_playbackEditDepth == 0 || --_playbackEditDepth > 0) return;
+    // D'abord le graphe qui contient les nouvelles pièces (et leurs plugins, déjà instanciés),
+    // PUIS les fenêtres : jusque-là l'ancien graphe joue encore l'objet entier.
+    if (_edit && _edit->getTransport().isPlaying())
+        _edit->flushPendingPlaybackRestart();
+    for (auto& [key, w] : _heldWindows)
+        if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end())
+            if (auto* p = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
+                p->setWindow(w[0], w[1], w[2], w[3]);
+    _heldWindows.clear();
 }
 
 - (BOOL)audioProbeReset {
@@ -1729,6 +1745,10 @@ static te::Track* objOwningTrack(te::Clip& clip) {
     startSecs = juce::jmax(0.0, startSecs);
     fadeIn    = juce::jmax(0.0, fadeIn - headCut);
 
+    if (_playbackEditDepth > 0) {
+        _heldWindows[key] = { startSecs, endSecs, fadeIn, fadeOut };
+        return;
+    }
     if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
         w->setWindow(startSecs, endSecs, fadeIn, fadeOut);
 }

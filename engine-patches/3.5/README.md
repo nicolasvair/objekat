@@ -294,6 +294,13 @@ Checked as still biting: `develop` still had the linear `std::find`.
   question in O(1): the rebuild went from ~45 ms to ~10 ms. What remains is ONE silent block
   at the swap, older than this patch: a clip whose end moved no longer matches its old
   `WaveNodeRealTime` state hash and starts a fresh, cold reader.
+- `0034` — **a useless second rebuild after every clip edit.** `AudioClipBase::timerCallback`
+  comes back ~25 ms after ANY change to a clip (shortened, created by a cut…) to check its proxy,
+  and called `restartPlayback()` unconditionally — even for a plain clip whose graph already
+  plays the original file. During playback that was a second, damped rebuild 120 ms after the
+  first, and one more silent block. Now only when the playback file really changed: a different
+  proxy (a plain clip's first look excepted), or a render that was being waited for. Reversed
+  playback checked with the audio probe.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

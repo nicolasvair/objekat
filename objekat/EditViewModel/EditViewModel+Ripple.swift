@@ -266,6 +266,8 @@ extension EditViewModel {
         guard let range = rippleCutRange(grabbedID: grabbedID, atTime: t, keeping: keeping) else { return }
         let lanes = Set(laneEntries.filter { ids.contains($0.item.id) }.map(\.displayLane))
         let container = rippleContainerID(forLanes: lanes)
+        engine?.beginPlaybackEdit()           // @see cut(ids:atTime:keeping:)
+        defer { engine?.endPlaybackEdit() }
         pushUndo()
         guard rippleRemoveTimeRange(lo: range.lo, hi: range.hi, container: container) else {
             _ = undoStack.popLast()
@@ -278,6 +280,5 @@ extension EditViewModel {
         // still named the same, with nothing to rewrite.
         timeSelection = nil
         isDirty       = true
-        engine?.rebuildGraphNowIfPlaying()   // @see cut(ids:atTime:keeping:)
     }
 }

@@ -79,6 +79,14 @@ extension EditViewModel {
     @discardableResult
     func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
         guard !ids.isEmpty else { return [] }
+        // While playing, the cut is HEARD: the left half would go quiet at once while the right
+        // one — its plugins still to instantiate, then the 120 ms damper on graph rebuilds —
+        // enters the graph much later (a hole of 170-220 ms on a heavy project, more with UADx).
+        // The engine holds the windows back and rebuilds right away at the end: the whole object
+        // plays until the handover (one block of silence remains, @see engine-patches/3.5
+        // `0033`). Stopped, this does nothing.
+        engine?.beginPlaybackEdit()
+        defer { engine?.endPlaybackEdit() }
         pushUndo()
         // The crossfades the cut objects are in, noted while they still stand — and this one
         // cannot simply be wrapped like a move (@see withCrossfadeRefit), because a split hands
@@ -150,11 +158,6 @@ extension EditViewModel {
             selectedCrossfade = nil
         }
         isDirty = true
-        // While playing, the 120 ms damper on graph rebuilds is HEARD: the left half is already
-        // shorter, and the right one only enters the graph at the rebuild — a hole of 170-220 ms
-        // on a heavy project when the cut lands under the playhead. Rebuilt now instead (a single
-        // block of silence remains, @see engine-patches/3.5 `0033`). Stopped, the damper is kept.
-        engine?.rebuildGraphNowIfPlaying()
         return result
     }
 
@@ -199,6 +202,8 @@ extension EditViewModel {
         guard let sel = timeSelection else { return }
         let t1 = sel.timeRange.lowerBound, t2 = sel.timeRange.upperBound
         guard t2 > t1 + 0.001 else { return }
+        engine?.beginPlaybackEdit()           // @see cut(ids:atTime:keeping:)
+        defer { engine?.endPlaybackEdit() }
         pushUndo()
         var didSplit = false
         // The RIGHT bound first: the left half keeps the original id, so the second cut
@@ -218,7 +223,6 @@ extension EditViewModel {
             .filter { $0.absStart > t1 - 0.001 && $0.absStart + $0.item.duration < t2 + 0.001 }
             .map(\.item.id))
         isDirty = true
-        engine?.rebuildGraphNowIfPlaying()
     }
 
     // MARK: - Cutting a detached sub-tree (the content of a group being split)
