@@ -1546,6 +1546,47 @@ What has landed since mid-August, in order:
   actual on-screen paste position, the overlap resolution it triggers, or a V1/V2 collision made
   by hand (Save As, then editing both copies side by side) has been read on a real screen.
 
+- **Seven requests, one commit each** (25 September 2026, on the branch
+  `claude/great-pascal-7we4j9`, NOT on `main`; **written on a Linux machine: nothing compiled, nothing
+  run, nothing seen** — only `xcstrings.py check`/`orphans` (464 keys) and `py_compile` on the
+  scenarios. A read-only review pass acted as the compiler and found no certain compile error.)
+  **The time readout follows the cursor while stopped** — it read the playhead, which nothing moves
+  while stopped; it reads `ObjekatSession.displayedPosition` now (cursor stopped, playhead playing
+  or paused). `transport.state` gains `displayed`.
+  **Tabs reorder by drag** — `Workspace.moveTab`, the maths in `Shared/TabReorder.swift`
+  (`tools/test_tab_reorder.swift`), `tab.move`. The capsule became content + `onTapGesture` (the
+  stem bar's reason). Known gap: a drag CANCELLED by the system (no `onEnded`) leaves the tab offset
+  until its next drag.
+  **Consolidation shows a filling circle** — the job records its object, `renderProgressForObject:`
+  reads the `EditRenderer` handle like `exportProgress`; a 10 Hz poll armed by the `didSet` of
+  `bakingIDs` / `recomputingConsolidateIDs` writes a SEPARATE observable store
+  (`RenderProgressStore`) that only the ring reads. `consolidate.state` answers `renders`.
+  **⌘W, the ✕ and ⌘Q ask ONE question** (`Workspace.settleUnsavedChanges`): a failed write no
+  longer closes or quits behind the hand, an untitled tab gets a modal Save As at once, ⌘Q asks
+  every dirty tab in turn. Found on the review and fixed in the same commit: `select` wrote
+  `parked = nil` through an index read BEFORE its await, and `close` did not refuse during a switch
+  — a ✕ on a neighbour mid-switch could erase another tab's parked document.
+  **A direct solo is heard past its groups' windows** — for as long as it lasts, the groups on its
+  path (not a LOOPING one) get the infinite window on the ENGINE side only
+  (`soloOpensWindow`, read by `syncGroupWindow` / `syncAuxWindow`). Cost: the ancestors' own fades
+  are not heard during the solo. The regression's origin could not be found — this clone has no
+  history before 23 September. New `solo.get|set|clear` (with `opened_windows`), an export+RMS
+  block in `scenario_export_preview.py`.
+  **Sessions are `.objekat`** — an exported UTI `org.labelpeche.objekat.session` (conforms to
+  `public.json`) and a document type, in a NEW `objekat/Info.plist` merged with the generated one
+  (`INFOPLIST_FILE` + a membership exception in `project.pbxproj` — the riskiest edit of the lot).
+  `SessionFile.swift` is the one definition. Legacy `.json` still opens and keeps its path; every
+  NEW name takes `.objekat`. The Finder hands over through `application(_:open:)` AND `onOpenURL`
+  into one queue (`Workspace.openFromOutside`); the cold launch by double-click is the least
+  certain part.
+  **Stereo draws as two lanes** — exactly 2 channels only (3+ stay merged), per-channel peaks and
+  sample regions, `.wfc` format 3 → **4** (a lane count in the header), both drawing regimes through
+  the same helpers, a group's composite stays merged. `perf.waveforms` gains `stereo_mipmaps`.
+  **Every line of the above waits on a Mac**: a build against the 1518-warning baseline, the new
+  Swift tests, the scenarios (tabs, consolidate, export-preview, waveform-cache in UI mode), and the
+  eye/ear list the commits' own messages give — above all the stereo drawing at +24 dB and across
+  the 3 000 px/s threshold, and a cold launch by double-click on a `.objekat`.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
