@@ -40,9 +40,13 @@ enum UIPerf {
 final class EditViewModel {
     var items: [SoundObject] = [] {
         didSet {
+            // Lazy and unconditional (batch or not): rebuilt by the next reader, never stale.
+            crossfadePartnersCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
         }
     }
+    /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
+    @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
