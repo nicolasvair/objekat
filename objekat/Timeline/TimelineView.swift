@@ -329,101 +329,103 @@ struct TimelineView: View {
                 // recoloured: only the background speaks.
                 // A nested group stacks its band on the parent's → the depth is seen.
                 let focusedLanes = focusedDisplayLanes
-                ForEach(viewModel.laneEntries) { entry in
-                    if entry.item.showsChildrenInline {
-                        let gY     = rulerHeight + Double(entry.displayLane) * laneStep
-                        let color  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
-                        let span   = entry.item.childLaneCount
-                        let bandH  = Double(span) * laneStep
-                        let bandW  = totalDuration * pixelsPerSecond
-                        let inside = !focusedLanes.isDisjoint(
-                            with: (entry.displayLane + 1)...(entry.displayLane + span))
-                        // The group block's HORIZONTAL span, in the MODEL's geometry (not a gesture
-                        // preview): the border's rise and its interruption belong to the BAND, which
-                        // does not follow a movement under way — otherwise they would stay hooked to
-                        // the block and leave a hole.
-                        let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
-                        let gW = entry.item.isInfiniteBus
-                               ? contentWidth : max(1, entry.item.duration * pixelsPerSecond)
-                        let lisX = min(max(0, gX), bandW)               // the start of the interruption
-                        let lisR = min(max(0, gX + gW), bandW)          // ... and its end
-                        ZStack(alignment: .topLeading) {
-                            Rectangle()
-                                .fill(color.opacity(inside ? 0.22 : 0.11))
-                                .frame(width: bandW, height: bandH)
-                            // The TOP border in TWO segments, interrupted under the block: the group's
-                            // material rises there right up under the object (see just after), and a line
-                            // across it would restore the very break we have just erased. The BOTTOM
-                            // border, for its part, runs from one edge to the other: nothing crosses it.
-                            Rectangle()
-                                .fill(color.opacity(inside ? 0.8 : 0.35))
-                                .frame(width: lisX, height: 1)
-                            Rectangle()
-                                .fill(color.opacity(inside ? 0.8 : 0.35))
-                                .frame(width: bandW - lisR, height: 1)
-                                .offset(x: lisR)
-                            Rectangle()
-                                .fill(color.opacity(inside ? 0.8 : 0.35))
-                                .frame(width: bandW, height: 1)
-                                .offset(y: bandH - 1)
-                        }
-                        .frame(width: bandW, height: bandH, alignment: .topLeading)
-                        .offset(x: 0, y: gY + laneStep)
-                        .allowsHitTesting(false)
-
-                        // The RISE under the block: the group's inside crosses the gutter and slips
-                        // under the BOTTOM rounded corners (hence the height `laneGap + radius`), so
-                        // that the block sits on its own material instead of floating above it. It
-                        // does not go any higher: the block is opaque, and lets only what its bottom
-                        // corners cut out be seen — the TOP corners stay on the canvas's background.
-                        //
-                        // Painted with `interiorPaint` — the EXACT stack of the first inner row, its
-                        // opaque base included, the very one the hem fills itself with. Taking only
-                        // `color.opacity(...)` would not do: the canvas's alternating band changes
-                        // parity from one row to the next, and the rise, laid on the GROUP's row,
-                        // would take 2 % too much black (or too little) with respect to the row it
-                        // continues.
-                        ZStack(alignment: .topLeading) {
-                            ForEach(Array(interiorPaint(for: entry).enumerated()), id: \.offset) { _, layer in
-                                Rectangle().fill(layer)
-                            }
-                        }
-                        .frame(width: gW, height: laneGap + entry.item.blockCornerRadius)
-                        .offset(x: gX, y: gY + blockHeight - entry.item.blockCornerRadius)
-                        .allowsHitTesting(false)
+                // Every per-entry layer below iterates a PRE-FILTERED list, never `laneEntries`
+                // with an `if` inside: a `ForEach` builds and diffs one node per element even when
+                // its content is empty, so eight layers over a few hundred objects were thousands
+                // of nodes re-diffed and re-laid out on every change of `items` — most of the
+                // interface's freeze after a cut during playback. The filters are the layers' own
+                // conditions, moved out; the content is unchanged.
+                let visibleEntries = viewModel.laneEntries.filter { isEntryVisible($0) }
+                let inlineGroupEntries = viewModel.laneEntries.filter { $0.item.showsChildrenInline }
+                ForEach(inlineGroupEntries) { entry in
+                    let gY     = rulerHeight + Double(entry.displayLane) * laneStep
+                    let color  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
+                    let span   = entry.item.childLaneCount
+                    let bandH  = Double(span) * laneStep
+                    let bandW  = totalDuration * pixelsPerSecond
+                    let inside = !focusedLanes.isDisjoint(
+                        with: (entry.displayLane + 1)...(entry.displayLane + span))
+                    // The group block's HORIZONTAL span, in the MODEL's geometry (not a gesture
+                    // preview): the border's rise and its interruption belong to the BAND, which
+                    // does not follow a movement under way — otherwise they would stay hooked to
+                    // the block and leave a hole.
+                    let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
+                    let gW = entry.item.isInfiniteBus
+                           ? contentWidth : max(1, entry.item.duration * pixelsPerSecond)
+                    let lisX = min(max(0, gX), bandW)               // the start of the interruption
+                    let lisR = min(max(0, gX + gW), bandW)          // ... and its end
+                    ZStack(alignment: .topLeading) {
+                        Rectangle()
+                            .fill(color.opacity(inside ? 0.22 : 0.11))
+                            .frame(width: bandW, height: bandH)
+                        // The TOP border in TWO segments, interrupted under the block: the group's
+                        // material rises there right up under the object (see just after), and a line
+                        // across it would restore the very break we have just erased. The BOTTOM
+                        // border, for its part, runs from one edge to the other: nothing crosses it.
+                        Rectangle()
+                            .fill(color.opacity(inside ? 0.8 : 0.35))
+                            .frame(width: lisX, height: 1)
+                        Rectangle()
+                            .fill(color.opacity(inside ? 0.8 : 0.35))
+                            .frame(width: bandW - lisR, height: 1)
+                            .offset(x: lisR)
+                        Rectangle()
+                            .fill(color.opacity(inside ? 0.8 : 0.35))
+                            .frame(width: bandW, height: 1)
+                            .offset(y: bandH - 1)
                     }
+                    .frame(width: bandW, height: bandH, alignment: .topLeading)
+                    .offset(x: 0, y: gY + laneStep)
+                    .allowsHitTesting(false)
+
+                    // The RISE under the block: the group's inside crosses the gutter and slips
+                    // under the BOTTOM rounded corners (hence the height `laneGap + radius`), so
+                    // that the block sits on its own material instead of floating above it. It
+                    // does not go any higher: the block is opaque, and lets only what its bottom
+                    // corners cut out be seen — the TOP corners stay on the canvas's background.
+                    //
+                    // Painted with `interiorPaint` — the EXACT stack of the first inner row, its
+                    // opaque base included, the very one the hem fills itself with. Taking only
+                    // `color.opacity(...)` would not do: the canvas's alternating band changes
+                    // parity from one row to the next, and the rise, laid on the GROUP's row,
+                    // would take 2 % too much black (or too little) with respect to the row it
+                    // continues.
+                    ZStack(alignment: .topLeading) {
+                        ForEach(Array(interiorPaint(for: entry).enumerated()), id: \.offset) { _, layer in
+                            Rectangle().fill(layer)
+                        }
+                    }
+                    .frame(width: gW, height: laneGap + entry.item.blockCornerRadius)
+                    .offset(x: gX, y: gY + blockHeight - entry.item.blockCornerRadius)
+                    .allowsHitTesting(false)
                 }
 
                 // A sub-lane background for MIDI clips whose piano roll is open: the same principle
                 // as the expanded groups' band (it clarifies the MIDI clip's inside), more discreetly
                 // — the piano roll covers the band anyway.
-                ForEach(viewModel.laneEntries) { entry in
-                    if entry.item.showsPianoRollInline {
-                        let gY    = rulerHeight + Double(entry.displayLane) * laneStep
-                        let color = viewModel.stemColor(for: entry.item.id)
-                        ForEach(0..<SoundObject.pianoRollLaneSpan, id: \.self) { ci in
-                            Rectangle()
-                                .fill(color.opacity(0.06))
-                                .frame(width: totalDuration * pixelsPerSecond, height: laneStep)
-                                .offset(x: 0, y: gY + Double(1 + ci) * laneStep)
-                                .allowsHitTesting(false)
-                        }
+                ForEach(viewModel.laneEntries.filter { $0.item.showsPianoRollInline }) { entry in
+                    let gY    = rulerHeight + Double(entry.displayLane) * laneStep
+                    let color = viewModel.stemColor(for: entry.item.id)
+                    ForEach(0..<SoundObject.pianoRollLaneSpan, id: \.self) { ci in
+                        Rectangle()
+                            .fill(color.opacity(0.06))
+                            .frame(width: totalDuration * pixelsPerSecond, height: laneStep)
+                            .offset(x: 0, y: gY + Double(1 + ci) * laneStep)
+                            .allowsHitTesting(false)
                     }
                 }
 
                 // A '+' in the drop lane of each expanded group, centred on the in/out range
-                ForEach(viewModel.laneEntries) { entry in
-                    if entry.item.showsChildrenInline {
-                        let dropLaneY  = rulerHeight + Double(entry.displayLane + entry.item.childLaneCount) * laneStep
-                        let groupStartX = entry.absStart * pixelsPerSecond
-                        let groupW      = entry.item.duration * pixelsPerSecond
-                        Text(verbatim: "+")
-                            .font(.system(size: 64, weight: .light))
-                            .foregroundColor(Color.gray.opacity(0.45))
-                            .frame(width: groupW, height: blockHeight, alignment: .center)
-                            .offset(x: groupStartX, y: dropLaneY)
-                            .allowsHitTesting(false)
-                    }
+                ForEach(inlineGroupEntries) { entry in
+                    let dropLaneY  = rulerHeight + Double(entry.displayLane + entry.item.childLaneCount) * laneStep
+                    let groupStartX = entry.absStart * pixelsPerSecond
+                    let groupW      = entry.item.duration * pixelsPerSecond
+                    Text(verbatim: "+")
+                        .font(.system(size: 64, weight: .light))
+                        .foregroundColor(Color.gray.opacity(0.45))
+                        .frame(width: groupW, height: blockHeight, alignment: .center)
+                        .offset(x: groupStartX, y: dropLaneY)
+                        .allowsHitTesting(false)
                 }
 
                 // Grid
@@ -632,51 +634,45 @@ struct TimelineView: View {
                 // instead of N×layers → the cost of scrolling was the number of SwiftUI nodes, not
                 // the drawing). The rich blocks (selection, tools, renaming, a consolidated object, an aux,
                 // MIDI, groups, a drag) keep their SwiftUI view.
-                let plainVisible = viewModel.laneEntries.filter {
-                    isEntryVisible($0) && isPlainCanvasClip($0.item)
-                }
+                let plainVisible = visibleEntries.filter { isPlainCanvasClip($0.item) }
                 let _ = ensureWaveformsLoaded(plainVisible)
                 plainBlocksCanvas(plainVisible)
-                ForEach(viewModel.laneEntries) { entry in
-                    if isEntryVisible(entry), !isPlainCanvasClip(entry.item) {
-                        itemBlock(for: entry.item, displayLane: entry.displayLane)
-                            .allowsHitTesting(false)
-                    }
+                ForEach(visibleEntries.filter { !isPlainCanvasClip($0.item) }) { entry in
+                    itemBlock(for: entry.item, displayLane: entry.displayLane)
+                        .allowsHitTesting(false)
                 }
 
                 // Piano rolls unfolded inline under the open MIDI clips. Interactive
                 // (allowsHitTesting), unlike the blocks. Positioned on the band of sub-lanes
                 // reserved by expandedSpan.
-                ForEach(viewModel.laneEntries) { entry in
-                    if entry.item.showsPianoRollInline, isEntryVisible(entry) {
-                        // It covers the WHOLE band of sub-lanes (the clip-tinted background already fills
-                        // 2·laneStep, the gap included): without the -laneGap, a 4px line in the clip's
-                        // colour stuck out under the control band.
-                        let bandH = Double(SoundObject.pianoRollLaneSpan) * laneStep
-                        PianoRollView(
-                            viewModel: viewModel,
-                            object: entry.item,
-                            pixelsPerSecond: pixelsPerSecond,
-                            secPerBeat: 60.0 / viewModel.tempo,
-                            bandHeight: bandH,
-                            onSeekToTime: { t in
-                                viewModel.timeSelection = nil
-                                if !isPlaying { viewModel.engine?.seek(to: t) }
-                                onMoveCursor(t)
-                            }
-                        )
-                        .offset(x: entry.absStart * pixelsPerSecond,
-                                y: rulerHeight + Double(entry.displayLane + 1) * laneStep)
-                        .zIndex(2.55)
-                    }
+                ForEach(visibleEntries.filter { $0.item.showsPianoRollInline }) { entry in
+                    // It covers the WHOLE band of sub-lanes (the clip-tinted background already fills
+                    // 2·laneStep, the gap included): without the -laneGap, a 4px line in the clip's
+                    // colour stuck out under the control band.
+                    let bandH = Double(SoundObject.pianoRollLaneSpan) * laneStep
+                    PianoRollView(
+                        viewModel: viewModel,
+                        object: entry.item,
+                        pixelsPerSecond: pixelsPerSecond,
+                        secPerBeat: 60.0 / viewModel.tempo,
+                        bandHeight: bandH,
+                        onSeekToTime: { t in
+                            viewModel.timeSelection = nil
+                            if !isPlaying { viewModel.engine?.seek(to: t) }
+                            onMoveCursor(t)
+                        }
+                    )
+                    .offset(x: entry.absStart * pixelsPerSecond,
+                            y: rulerHeight + Double(entry.displayLane + 1) * laneStep)
+                    .zIndex(2.55)
                 }
 
                 // AUTOMATION bands unfolded inline under the open objects. The same overlay mechanism
                 // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan,
                 // and like them they own their clicks: the canvas steps aside over them
                 // (@see openAutomationBandContains).
-                ForEach(viewModel.laneEntries) { entry in
-                    if let r = automationBandRect(for: entry), isEntryVisible(entry) {
+                ForEach(visibleEntries) { entry in
+                    if let r = automationBandRect(for: entry) {
                         AutomationBandView(
                             viewModel: viewModel,
                             object: entry.item,
@@ -779,34 +775,32 @@ struct TimelineView: View {
                 // the unfolded band of sub-lanes). A SHARED mechanism driven by `expandedSpan`: an
                 // expanded group (the band = the children) AND an open MIDI clip (the band = the piano
                 // roll). It greys the outside of the content out so as to focus on the inside. See SoundObject.expandedSpan.
-                ForEach(viewModel.laneEntries) { entry in
+                // An infinite bus: no range any more → no out-of-range. Its inside is open over
+                // the whole timeline, so no grey mask.
+                ForEach(viewModel.laneEntries.filter { $0.item.expandedSpan > 0 && !$0.item.isInfiniteBus }) { entry in
                     let span = entry.item.expandedSpan
-                    // An infinite bus: no range any more → no out-of-range. Its inside is open over
-                    // the whole timeline, so no grey mask.
-                    if span > 0 && !entry.item.isInfiniteBus {
-                        let item   = entry.item
-                        let subY   = rulerHeight + Double(entry.displayLane + 1) * laneStep
-                        let laneH  = Double(span) * laneStep
-                        // A trim/resize under way: the mask's bounds follow the hand, otherwise the veil
-                        // stayed at the old bounds and the inside was only revealed on release — the
-                        // gesture looked as if it MOVED the group's start.
-                        let gs     = item.startTime * pixelsPerSecond + previewTrimDX(for: item)
-                        let ge     = (item.startTime + item.duration) * pixelsPerSecond + previewResizeDX(for: item)
-                        let totalW = totalDuration * pixelsPerSecond
-                        if gs > 0 {
-                            Rectangle()
-                                .fill(Color.black.opacity(0.28))
-                                .frame(width: gs, height: laneH)
-                                .offset(x: 0, y: subY)
-                                .allowsHitTesting(false)
-                        }
-                        if ge < totalW {
-                            Rectangle()
-                                .fill(Color.black.opacity(0.28))
-                                .frame(width: totalW - ge, height: laneH)
-                                .offset(x: ge, y: subY)
-                                .allowsHitTesting(false)
-                        }
+                    let item   = entry.item
+                    let subY   = rulerHeight + Double(entry.displayLane + 1) * laneStep
+                    let laneH  = Double(span) * laneStep
+                    // A trim/resize under way: the mask's bounds follow the hand, otherwise the veil
+                    // stayed at the old bounds and the inside was only revealed on release — the
+                    // gesture looked as if it MOVED the group's start.
+                    let gs     = item.startTime * pixelsPerSecond + previewTrimDX(for: item)
+                    let ge     = (item.startTime + item.duration) * pixelsPerSecond + previewResizeDX(for: item)
+                    let totalW = totalDuration * pixelsPerSecond
+                    if gs > 0 {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.28))
+                            .frame(width: gs, height: laneH)
+                            .offset(x: 0, y: subY)
+                            .allowsHitTesting(false)
+                    }
+                    if ge < totalW {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.28))
+                            .frame(width: totalW - ge, height: laneH)
+                            .offset(x: ge, y: subY)
+                            .allowsHitTesting(false)
                     }
                 }
 
@@ -814,8 +808,8 @@ struct TimelineView: View {
                 // clip): INSIDE the block, risen from the lower edge — its belonging is beyond question,
                 // nested too. Pure rendering (like the rest of the canvas's controls); the click is
                 // resolved geometrically by the tap handler.
-                ForEach(viewModel.laneEntries) { entry in
-                    if isEntryVisible(entry), let b = automationBezel(for: entry) {
+                ForEach(visibleEntries) { entry in
+                    if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry)
                         AutomationBezelView(placement: b, fill: paint, tint: tint,
