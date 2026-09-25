@@ -1284,8 +1284,11 @@ static BOOL gOBJAudioDisabled = NO;
     if (_playbackEditDepth == 0 || --_playbackEditDepth > 0) return;
     // D'abord le graphe qui contient les nouvelles pièces (et leurs plugins, déjà instanciés),
     // PUIS les fenêtres : jusque-là l'ancien graphe joue encore l'objet entier.
+    // Directement sur le transport : l'Edit n'expose pas de quoi vider son amortisseur, qui
+    // reconstruira donc une seconde fois ~120 ms plus tard — un graphe identique, sans effet
+    // audible, au prix d'une reconstruction de plus sur le thread principal.
     if (_edit && _edit->getTransport().isPlaying())
-        _edit->flushPendingPlaybackRestart();
+        _edit->getTransport().editHasChanged();
     for (auto& [key, w] : _heldWindows)
         if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end())
             if (auto* p = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))

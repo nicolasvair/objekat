@@ -83,8 +83,8 @@ extension EditViewModel {
         // one — its plugins still to instantiate, then the 120 ms damper on graph rebuilds —
         // enters the graph much later (a hole of 170-220 ms on a heavy project, more with UADx).
         // The engine holds the windows back and rebuilds right away at the end: the whole object
-        // plays until the handover (one block of silence remains, @see engine-patches/3.5
-        // `0033`). Stopped, this does nothing.
+        // plays until the handover (one block of silence remains: the shortened clip's reader
+        // starts cold in the new graph). Stopped, this does nothing.
         engine?.beginPlaybackEdit()
         defer { engine?.endPlaybackEdit() }
         pushUndo()
