@@ -133,11 +133,7 @@ extension EditViewModel {
     /// (several versions can live side by side, sharing samples/ and waveforms/).
     /// Otherwise → a project folder named after what was typed is created and written into.
     func saveAs() {
-        let panel = NSSavePanel()
-        panel.title = L("project.saveAs.title")
-        panel.nameFieldStringValue = projectURL.map { Self.projectDisplayName(for: $0) }
-            ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
-        panel.canCreateDirectories = true
+        let panel = Self.makeSaveAsPanel(projectURL: projectURL, projectName: projectName)
         panel.begin { [weak self] response in
             guard let self, response == .OK, let chosen = panel.url else { return }
             // The panel is sent away FIRST: as long as it is on screen the document window is not
@@ -155,18 +151,7 @@ extension EditViewModel {
     /// possible between what the interface does and what a script does.
     @discardableResult
     func saveAs(to chosen: URL) -> Bool {
-        let parent = chosen.deletingLastPathComponent()
-        // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
-        // `test/test.json`, the manifest bearing the project's name and nothing else.
-        let base = Self.projectDisplayName(for: chosen)
-        let fileName = "\(base).json"
-        let fileURL: URL
-        if isObjekatProjectFolder(parent) {
-            fileURL = parent.appendingPathComponent(fileName)
-        } else {
-            fileURL = parent.appendingPathComponent(base, isDirectory: true)
-                .appendingPathComponent(fileName)
-        }
+        let fileURL = Self.saveAsFileURL(for: chosen)
         // Tabs (INC1): writing over a file another tab already has open would silently orphan
         // whatever that tab still holds in memory the next time IT saves — refused here, before a
         // single byte is written, rather than diagnosed after the fact.
@@ -177,11 +162,39 @@ extension EditViewModel {
         return writeSession(to: fileURL)
     }
 
+    /// The "Save as" panel, as the menu shows it — title, suggested name, folder creation. Static
+    /// so the one other door that has to ask for a path, the save a CLOSING tab owes when it never
+    /// had a file (`Workspace.settleUnsavedChanges`, which may be saving a tab that is not the
+    /// active one, hence not `self`'s own name), shows the very same panel rather than a copy of it.
+    static func makeSaveAsPanel(projectURL: URL?, projectName: String) -> NSSavePanel {
+        let panel = NSSavePanel()
+        panel.title = L("project.saveAs.title")
+        panel.nameFieldStringValue = projectURL.map { projectDisplayName(for: $0) }
+            ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
+        panel.canCreateDirectories = true
+        return panel
+    }
+
+    /// Where "Save as" writes for what the panel handed back — the naming rule, alone, so the
+    /// active tab (`saveAs(to:)`) and a parked one (`Workspace`) cannot name a project two ways.
+    static func saveAsFileURL(for chosen: URL) -> URL {
+        let parent = chosen.deletingLastPathComponent()
+        // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
+        // `test/test.json`, the manifest bearing the project's name and nothing else.
+        let base = projectDisplayName(for: chosen)
+        let fileName = "\(base).json"
+        if isObjekatProjectFolder(parent) {
+            return parent.appendingPathComponent(fileName)
+        }
+        return parent.appendingPathComponent(base, isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
     /// A folder is an Objekat project if it holds `waveforms/`, which `writeSession` lays for
     /// every project — so the test catches them all. A bare `*.json` is deliberately NOT a sign:
     /// any folder holding some `package.json` would then pass for a project, and "Save as" would
     /// write into it instead of making the folder.
-    private func isObjekatProjectFolder(_ folder: URL) -> Bool {
+    private static func isObjekatProjectFolder(_ folder: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: waveformsDir(in: folder).path,
                                               isDirectory: &isDir) && isDir.boolValue
@@ -485,7 +498,15 @@ extension EditViewModel {
             // A known file → a synchronous write, and we carry on. Otherwise the panel has to be
             // gone through, and it is asynchronous: we give up the current operation (false) rather
             // than risk seeing it run before the user has chosen where to write.
-            if projectURL != nil { save(); return true }
+            // And a write that FAILS is not a save: `save()` swallows the error, so carrying on
+            // behind it would throw away exactly the changes the user just asked to keep.
+            if let url = projectURL {
+                guard writeSession(to: url) else {
+                    notify(L("tabs.saveTab.failed.title"), L("dialog.dirty.saveFailed.info", projectName))
+                    return false
+                }
+                return true
+            }
             saveAs()
             return false
         case .discard:

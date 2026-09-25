@@ -166,44 +166,9 @@ private struct TabCapsule: View {
         .onHover { hovering = $0 }
     }
 
-    /// The same confirmation whether the tab clicked shut is the active one or not — only HOW to
-    /// save differs: the active tab goes through the ordinary `save()`/`saveAs()`, an inactive one
-    /// writes its PARKED document directly (`EditViewModel.writeDocument`) when it has a file, or —
-    /// with none yet — is switched to so the user can "Save as" in the flesh (a panel cannot be
-    /// driven for a tab that is not on screen).
+    /// The same door as Cmd+W (`Workspace.closeWithConfirmation`), whether the tab clicked shut is
+    /// the active one or not — one question, one way of saving, for both.
     private func closeThisTab() {
-        guard workspace.isDirty(for: tab) else {
-            _ = workspace.close(tab.id, discard: false)
-            return
-        }
-        let vm = workspace.session.viewModel
-        switch vm.askDirtyDecision(titleKey: "dialog.dirty.title.closeTab",
-                                   name: workspace.displayName(for: tab)) {
-        case .cancel:
-            return
-        case .discard:
-            _ = workspace.close(tab.id, discard: true)
-        case .save:
-            if isActive {
-                if vm.projectURL != nil {
-                    vm.save()
-                    _ = workspace.close(tab.id, discard: true)
-                } else {
-                    vm.saveAs()
-                }
-            } else if let parked = tab.parked {
-                if let url = parked.projectURL {
-                    do {
-                        try EditViewModel.writeDocument(parked.doc, to: url,
-                                                        projectFolder: url.deletingLastPathComponent())
-                        _ = workspace.close(tab.id, discard: true)
-                    } catch {
-                        vm.notify(L("tabs.saveTab.failed.title"), String(describing: error))
-                    }
-                } else {
-                    Task { await workspace.select(tab.id) }
-                }
-            }
-        }
+        workspace.closeWithConfirmation(tab.id)
     }
 }

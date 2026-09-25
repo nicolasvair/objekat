@@ -154,31 +154,12 @@ struct objekatApp: App {
         selectTab(tabs[((idx + delta) % n + n) % n].id)
     }
 
-    /// The confirmation "Fermer l'onglet" (Cmd+W) owes an unsaved ACTIVE tab — an inactive one's
-    /// own dirty tab is asked about by `Workspace.confirmQuit()` at quit time, never here (closing
-    /// ONE tab is not the moment to relitigate every other one).
+    /// "Fermer l'onglet" (Cmd+W) on the ACTIVE tab — the strip's ✕ goes through the very same
+    /// door (`Workspace.closeWithConfirmation`), hence the very same question. An inactive tab's
+    /// own unsaved changes are asked about by `Workspace.confirmQuit()` at quit time, never here
+    /// (closing ONE tab is not the moment to relitigate every other one).
     private func closeActiveTabWithConfirmation() {
-        guard let tab = workspace.activeTab else { return }
-        guard workspace.isDirty(for: tab) else {
-            _ = workspace.close(tab.id, discard: false)
-            return
-        }
-        switch viewModel.askDirtyDecision(titleKey: "dialog.dirty.title.closeTab",
-                                          name: workspace.displayName(for: tab)) {
-        case .cancel:
-            return
-        case .discard:
-            _ = workspace.close(tab.id, discard: true)
-        case .save:
-            if viewModel.projectURL != nil {
-                viewModel.save()
-                _ = workspace.close(tab.id, discard: true)
-            } else {
-                // No file yet: the panel is asynchronous, so the tab is left open rather than
-                // guessed at — a second Cmd+W once it is saved closes it cleanly.
-                viewModel.saveAs()
-            }
-        }
+        workspace.closeWithConfirmation(workspace.activeTabID)
     }
 
     var body: some Scene {
