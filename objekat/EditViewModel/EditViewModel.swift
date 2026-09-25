@@ -1571,9 +1571,11 @@ final class EditViewModel {
 
     /// Pushes the aux's bounds (window) + fades: fadeIn = the entry gate, fadeOut = the tail (exit).
     /// An aux marked INFINITE ignores start/end: a [0, ∞) window, with no fades → a bus always active.
+    /// So does an aux hosted by a group a direct solo is holding open, for as long as it holds it:
+    /// the soloed child is heard WITH its send (@see soloOpensWindow).
     func syncAuxWindow(_ object: SoundObject) {
         guard case .aux = object.kind else { return }
-        if object.isInfinite {
+        if object.isInfinite || soloOpensWindow(of: object) {
             engine?.updateAuxWindow(object.id.uuidString,
                                     start: 0, end: Self.infiniteWindowEnd,
                                     fadeIn: 0, fadeOut: 0)

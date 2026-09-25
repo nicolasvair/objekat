@@ -536,6 +536,7 @@ That is end-of-process noise, with no effect on the result.
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
+| `solo.*` | the confirmed solo: read, set / unset objects, clear — and which windows a direct solo holds open |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
@@ -1019,6 +1020,29 @@ surviving matter is TRIMMED in place, never re-split — so the grabbed object s
 to its own id, and, if it was selected, to its own selection too. Same rule as an ordinary division
 (@see "DIVIDING the matter" above): the selection follows the matter, and a ripple does not touch
 it when the object it is given was not selected to begin with.
+
+### Solo, and the windows it holds open
+
+`solo.set` puts objects into the **confirmed** solo layer (`on: false` takes them out), exactly as
+the inspector's solo button does, one object at a time through the same door; `ids` defaults to the
+selection. `solo.clear` is Esc: every solo off, confirmed and temporary. `solo.get` reads the state
+without changing it. The three answer the same object: `active`, `confirmed`, `stems`, `temporary`
+(`null` unless the "s" key is being held — a script holds no key, so it can read that layer but
+never lay it), `audible` (the closure the dimming reads) and `opened_windows`. Undo policy `none`:
+a solo is a listening state, outside the undo and never saved.
+
+`opened_windows` is the half of the rule no fader shows. A group's window cuts its content, and a
+child can hang past it (a window is a frame over absolute positions, not a crop of the children).
+A **direct** solo — the object itself among the roots — is heard whatever stands in its way: the
+mute of a group it goes through (since 24 August) and, since 25 September, that group's **window**:
+for as long as the solo lasts, the engine window of every group on the path is pushed open the way
+an infinite group's is, together with the auxes those groups host, and put back when the solo
+moves off. The model's window is not touched — `object.get` still answers the bounds that were
+set. Two exceptions: a **looping** group keeps its window (a porthole onto a pattern, not an edge),
+and an **inherited** solo opens nothing — soloing a group or a stem is asking to hear it as it is,
+window included. The cost: while a child is soloed, its ancestors' own fades are not heard, a fade
+belonging to the edge the solo has lifted. `tools/scenario_export_preview.py` re-reads the rendered
+files to prove the engine followed.
 
 ### Export
 

@@ -19,6 +19,10 @@ asserted of them with no screen:
 The render has to LAST for any of that to be catchable, so the scenario lays a handful of objects
 and renders a long range rather than the four hundred milliseconds of the fixture.
 
+A last block uses the same re-read of the FILE for something else: what a render HEARS under a
+solo. A child hanging past its group's window is cut by it — unless it is soloed DIRECTLY, in which
+case the solo holds the window open (`solo.*`, `opened_windows`), and only then.
+
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
     ./scenario_export_preview.py /tmp/o.sock /tmp/trial/project.objekat.json
 
@@ -212,6 +216,59 @@ with ObjekatClient(SOCK) as c:
     check("the panel gives way", st.get("panel_open") is False, st)
     if r:
         step("  job.wait", lambda: c.send("job.wait", {"id": r["job_id"], "timeout_ms": 60000}))
+
+    # --- a DIRECT solo is heard past its group's window (25 September 2026).
+    #     A group's window is a frame laid over absolute positions, so a child can hang outside it,
+    #     where the window cuts it. Soloing that child — from the caret's row or the selection —
+    #     used to give silence: the one gesture meaning "I want to hear THIS" answered nothing. The
+    #     solo now holds the windows on its path open (engine side only), and the file is what says
+    #     whether the ENGINE followed rather than the model alone. Far from everything above
+    #     (t = 400 s, lanes 6-7), undithered so that a silence reads as zero and not as noise.
+    def render_peak(label, start, end, name):
+        r = step(label, lambda: c.send("export.run", {
+            "format": "wav", "sample_rate": 44100, "dithering": False,
+            "start": start, "end": end, "path": OUT(name)}))
+        if not r:
+            return None
+        step("  job.wait", lambda: c.send("job.wait", {"id": r["job_id"], "timeout_ms": 60000}))
+        return wav_peak(OUT(name))
+
+    SILENT, HEARD = 0.001, 0.01          # the bip peaks at ~0.55; -96 dB of it is ~1e-5
+    x = c.send("object.add", {"path": BIP, "lane": 6, "start": 400.0})["id"]
+    y = c.send("object.add", {"path": BIP, "lane": 7, "start": 401.0})["id"]
+    g = c.send("group.create", {"ids": [x, y]})["id"]
+    # The window shrinks to [400, 400.6]: `x` inside, `y` (401.0-401.4) wholly outside it.
+    c.send("object.set_duration", {"id": g, "duration": 0.6})
+
+    pk = render_peak("solo: no solo, y outside", 401.0, 401.4, "solo_none_y.wav")
+    check("the window cuts what hangs past it", pk is not None and pk < SILENT, pk)
+
+    s = step("solo.set y", lambda: c.send("solo.set", {"ids": [y]}))
+    check("y is a confirmed root", s and s["confirmed"] == [y], s)
+    check("the solo holds the group's window open",
+          s and s["opened_windows"] == [g], s and s["opened_windows"])
+    pk = render_peak("solo: y soloed, y outside", 401.0, 401.4, "solo_y_y.wav")
+    check("a soloed child is HEARD past its window", pk is not None and pk > HEARD, pk)
+    pk = render_peak("solo: y soloed, x inside", 400.0, 400.4, "solo_y_x.wav")
+    check("its neighbour stays silenced", pk is not None and pk < SILENT, pk)
+    o = c.send("object.get", {"id": g})
+    check("the MODEL's window is untouched", abs(o["duration"] - 0.6) < 1e-9, o.get("duration"))
+
+    # Soloing the GROUP itself is asking to hear it as it is: an inherited solo opens nothing.
+    step("solo.set y off", lambda: c.send("solo.set", {"ids": [y], "on": False}))
+    s = step("solo.set g", lambda: c.send("solo.set", {"ids": [g]}))
+    check("a soloed group keeps its own window", s and s["opened_windows"] == [], s)
+    pk = render_peak("solo: g soloed, y outside", 401.0, 401.4, "solo_g_y.wav")
+    check("so what hangs past it stays cut", pk is not None and pk < SILENT, pk)
+
+    # And the window closes again with the solo.
+    s = step("solo.clear", lambda: c.send("solo.clear"))
+    check("nothing soloed, nothing held open",
+          s and s["active"] is False and s["opened_windows"] == [], s)
+    pk = render_peak("solo: cleared, y outside", 401.0, 401.4, "solo_clear_y.wav")
+    check("the window cuts again once the solo is off", pk is not None and pk < SILENT, pk)
+    pk = render_peak("solo: cleared, x inside", 400.0, 400.4, "solo_clear_x.wav")
+    check("and the neighbour is back", pk is not None and pk > HEARD, pk)
 
     step("panel close", lambda: c.send("export.panel", {"open": False}))
     step("app.dialogs", lambda: c.send("app.dialogs"))

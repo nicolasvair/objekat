@@ -11,11 +11,19 @@ extension EditViewModel {
     /// A group marked INFINITE ignores its bounds: a [0, ∞) window with no fades — its inside
     /// is open onto the whole timeline (like an infinite aux, see `syncAuxWindow`). Without this the
     /// folder's gate went on cutting the children at the group's old bounds.
+    ///
+    /// A group a DIRECT SOLO goes through is pushed the same open window for as long as the solo
+    /// lasts, so the soloed child is heard even where it hangs past the group's edge — the model's
+    /// window is left alone, only the engine's is lifted (@see soloOpensWindow and the header of
+    /// EditViewModel+Audibility). Read HERE, at the one door, so that a move, a crop or a fade made
+    /// during the solo does not close it again behind the hand's back.
     func syncGroupWindow(_ group: SoundObject) {
         guard case .group = group.kind else { return }
-        if group.isInfinite {
+        if group.isInfinite || soloOpensWindow(of: group) {
             // No window = nothing to overrun: the loop means nothing here, even if the
             // model still carried it (@see setObjectInfinite, which turns it off along the way).
+            // A solo never opens a LOOPING group (`soloOpensWindow` refuses it), so dropping the
+            // loop here never silences a repeat the solo was meant to let through.
             engine?.updateGroupWindow(group.id.uuidString,
                                       start: 0, end: Self.infiniteWindowEnd,
                                       fadeIn: 0, fadeOut: 0, loopEnabled: false,

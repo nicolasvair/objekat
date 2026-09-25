@@ -236,6 +236,7 @@ final class CommandRegistry {
         registerObjectCommands()
         registerGroupCommands()
         registerStemCommands()
+        registerSoloCommands()
         registerPluginCommands()
         registerAuxCommands()
         registerMIDICommands()
