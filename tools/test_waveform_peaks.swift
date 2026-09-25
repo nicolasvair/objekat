@@ -51,6 +51,52 @@ func referenceDecimate(_ fine: [PeakPair], ratio: Int) -> [PeakPair] {
     return result
 }
 
+/// Streams `channels` (one array per channel, all the same length) through a
+/// `PeakLaneAccumulator` in chunks of `chunk` frames, the way `WaveformCache.decodeChunked`
+/// streams a file — the extent of each segment computed by hand here, with no vDSP and no code
+/// shared with the accumulator.
+func accumulate(_ channels: [[Float]], density: Double, sampleRate: Double,
+                laneCount: Int, chunk: Int) -> PeakLanes {
+    let total = channels[0].count
+    var acc = PeakLaneAccumulator(density: density, duration: Double(total) / sampleRate,
+                                  total: total, laneCount: laneCount)
+    var s = 0
+    while s < total {
+        let n = min(chunk, total - s)
+        let base = s
+        acc.add(startFrame: base, frameCount: n, channelCount: channels.count) { c, from, count in
+            var lo = channels[c][base + from], hi = lo
+            for k in (base + from)..<(base + from + count) {
+                lo = min(lo, channels[c][k])
+                hi = max(hi, channels[c][k])
+            }
+            return PeakPair(lo: lo, hi: hi)
+        }
+        s += n
+    }
+    return acc.finish()
+}
+
+/// The brute-force reference for ONE channel: every block's min/max over its own frames,
+/// starting from (0, 0) as the accumulator's blocks do, over the block grid the accumulator
+/// documents (block i ends at floor((i+1) × total/count), the last one on the file's own end).
+func referenceBlocks(_ samples: [Float], count: Int) -> [PeakPair] {
+    let total = samples.count
+    let step = Double(total) / Double(count)
+    var result: [PeakPair] = []
+    var start = 0
+    for i in 0..<count {
+        let end = i + 1 >= count ? total : min(Int(Double(i + 1) * step), total)
+        var lo: Float = 0, hi: Float = 0
+        if start < end {
+            for k in start..<end { lo = min(lo, samples[k]); hi = max(hi, samples[k]) }
+        }
+        result.append(PeakPair(lo: lo, hi: hi))
+        start = max(start, end)
+    }
+    return result
+}
+
 @main
 enum WaveformPeaksTest {
   static func main() {
@@ -262,6 +308,126 @@ enum WaveformPeaksTest {
           WaveformPeaks.peakEnvelope(spiky, from: -9, to: -2) == PeakPair(lo: 0, hi: 0))
     check("peakEnvelope: partly outside is clamped, not zeroed",
           WaveformPeaks.peakEnvelope(spiky, from: 698.5, to: 703) == PeakPair(lo: -0.05, hi: 0.05))
+
+    // MARK: - Lanes: the policy (a stereo file is two stacked waveforms, everything else one)
+
+    check("laneCount: mono → 1", WaveformPeaks.laneCount(channelCount: 1) == 1)
+    check("laneCount: stereo → 2", WaveformPeaks.laneCount(channelCount: 2) == 2)
+    check("laneCount: 5.1 → 1 (merged: nothing says which channels are left)",
+          WaveformPeaks.laneCount(channelCount: 6) == 1)
+    check("laneCount: 0 channels → 1, never 0", WaveformPeaks.laneCount(channelCount: 0) == 1)
+    check("laneCount never exceeds maxLanes",
+          (0...32).allSatisfy { WaveformPeaks.laneCount(channelCount: $0) <= WaveformPeaks.maxLanes })
+    check("lane(forChannel:): stereo keeps each channel in its own lane",
+          WaveformPeaks.lane(forChannel: 0, laneCount: 2) == 0
+          && WaveformPeaks.lane(forChannel: 1, laneCount: 2) == 1)
+    check("lane(forChannel:): one lane takes every channel",
+          (0..<6).allSatisfy { WaveformPeaks.lane(forChannel: $0, laneCount: 1) == 0 })
+
+    // MARK: - Lanes: the geometry (the bands tile the block, left on top)
+
+    let blockH = 61.0   // odd on purpose: the halves are not whole pixels
+    let one = WaveformPeaks.laneBand(0, of: 1, height: blockH)
+    check("laneBand: a single lane is the whole block", one.top == 0 && one.height == blockH)
+    let upper = WaveformPeaks.laneBand(0, of: 2, height: blockH)
+    let lower = WaveformPeaks.laneBand(1, of: 2, height: blockH)
+    check("laneBand: lane 0 (left) is the upper half", upper.top == 0 && upper.height == blockH / 2)
+    check("laneBand: lane 1 (right) starts where lane 0 ends — no gap, no overlap",
+          lower.top == upper.top + upper.height)
+    check("laneBand: lane 1 ends exactly on the block's bottom edge",
+          abs(lower.top + lower.height - blockH) < 1e-9, "ends at \(lower.top + lower.height)")
+    let past = WaveformPeaks.laneBand(5, of: 2, height: blockH)
+    let before = WaveformPeaks.laneBand(-1, of: 2, height: blockH)
+    check("laneBand: an out-of-range lane is clamped, never outside the block",
+          past.top == lower.top && past.height == lower.height
+          && before.top == upper.top && before.height == upper.height)
+
+    // MARK: - Lanes: merging them back (a group's composite)
+
+    check("merged: the union of two real envelopes",
+          WaveformPeaks.merged(PeakPair(lo: -0.2, hi: 0.7), PeakPair(lo: -0.6, hi: 0.1))
+          == PeakPair(lo: -0.6, hi: 0.7))
+    check("merged: silence on one side leaves the other whole",
+          WaveformPeaks.merged(PeakPair(lo: 0, hi: 0), PeakPair(lo: -0.4, hi: 0.3))
+          == PeakPair(lo: -0.4, hi: 0.3))
+    check("merged: two degenerate lines → the LOUDER one, sign kept (not a band between them)",
+          WaveformPeaks.merged(PeakPair(lo: 0.3, hi: 0.3), PeakPair(lo: -0.5, hi: -0.5))
+          == PeakPair(lo: -0.5, hi: -0.5))
+    check("merged: a lane merged with itself is itself",
+          WaveformPeaks.merged(PeakPair(lo: -0.25, hi: 0.5), PeakPair(lo: -0.25, hi: 0.5))
+          == PeakPair(lo: -0.25, hi: 0.5))
+
+    // MARK: - PeakLaneAccumulator: a stereo file folded into two lanes
+
+    // 1.5 s at 8 kHz, 1 000 peaks/s → 1 500 blocks of ~8 frames. LEFT: a sine that never goes
+    // past ±0.5. RIGHT: silence, except one loud click the left channel does not have.
+    let rate = 8000.0
+    let frames = 12_000
+    var left = [Float](repeating: 0, count: frames)
+    var right = [Float](repeating: 0, count: frames)
+    for k in 0..<frames { left[k] = 0.5 * sinf(Float(k) * 0.013) }
+    let clickFrame = 7_777
+    right[clickFrame] = 0.9
+    right[clickFrame + 1] = -0.85
+    left[frames - 1] = -0.95   // the file's LAST frame: it must land in the last block
+    let stereo = accumulate([left, right], density: 1000, sampleRate: rate, laneCount: 2, chunk: 777)
+    let blockCount = Int((1000 * Double(frames) / rate).rounded())
+    check("stereo → two lanes", stereo.count == 2, "got \(stereo.count)")
+    check("every lane has round(density × duration) blocks",
+          stereo.allSatisfy { $0.count == blockCount }, "\(stereo.map { $0.count }) vs \(blockCount)")
+    check("lane 0 is the LEFT channel, block for block",
+          stereo.count == 2 && stereo[0] == referenceBlocks(left, count: blockCount))
+    check("lane 1 is the RIGHT channel, block for block",
+          stereo.count == 2 && stereo[1] == referenceBlocks(right, count: blockCount))
+    if stereo.count == 2 {
+        check("the right channel's click does NOT show on the left lane",
+              stereo[0].allSatisfy { $0.hi <= 0.5 && $0.lo >= -0.95 })
+        let clickBlocks = stereo[1].filter { $0.hi > 0.8 }
+        check("the click shows on the right lane, in one block or two (a straddle)",
+              (1...2).contains(clickBlocks.count), "\(clickBlocks.count) blocks")
+        check("the right lane is silent everywhere else",
+              stereo[1].filter { $0 != PeakPair(lo: 0, hi: 0) }.count <= 2)
+        check("the file's last frame lands in the last block",
+              stereo[0].last?.lo == -0.95, "last block \(String(describing: stereo[0].last))")
+    }
+
+    // The chunking must be invisible: a block straddling a chunk boundary is carried across.
+    var chunkingInvisible = true
+    for chunk in [1, 5, 8, 777, 4096, frames] {
+        let other = accumulate([left, right], density: 1000, sampleRate: rate, laneCount: 2, chunk: chunk)
+        if other != stereo { chunkingInvisible = false; print("      differs at chunk \(chunk)") }
+    }
+    check("the lanes do not depend on the chunk size (1, 5, 8, 777, 4096, whole file)", chunkingInvisible)
+
+    // MARK: - PeakLaneAccumulator: one lane is the UNION, and it equals the lanes merged
+
+    let single = accumulate([left, right], density: 1000, sampleRate: rate, laneCount: 1, chunk: 777)
+    check("one lane for two channels → one array", single.count == 1)
+    if single.count == 1, stereo.count == 2 {
+        var mergedEqualsSingle = true
+        for i in 0..<blockCount where WaveformPeaks.merged(stereo[0][i], stereo[1][i]) != single[0][i] {
+            mergedEqualsSingle = false
+        }
+        check("merging the two lanes gives back EXACTLY the one-lane union, block for block "
+              + "(so a group's composite of a stereo child is what it was before lanes)",
+              mergedEqualsSingle)
+        check("the one-lane union keeps the right channel's click (never a mixdown)",
+              single[0].contains { $0.hi > 0.8 })
+    }
+
+    // The lanes decimate like any peak array, and stay in step.
+    if stereo.count == 2 {
+        let coarse0 = WaveformPeaks.decimate(stereo[0], ratio: 10)
+        let coarse1 = WaveformPeaks.decimate(stereo[1], ratio: 10)
+        check("decimating each lane keeps them the same length", coarse0.count == coarse1.count)
+        check("the click survives decimation on its own lane only",
+              coarse1.contains { $0.hi > 0.8 } && !coarse0.contains { $0.hi > 0.8 })
+    }
+
+    // A mono file: one lane, identical to the channel's own reference.
+    let mono = accumulate([left], density: 1000, sampleRate: rate, laneCount: 1, chunk: 777)
+    check("mono → one lane, the channel itself",
+          mono.count == 1 && mono[0] == referenceBlocks(left, count: blockCount))
 
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {

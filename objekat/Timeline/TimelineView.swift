@@ -2100,6 +2100,10 @@ struct TimelineView: View {
                 // and fill once. Skipped below 3px (an invisible sliver). Filtered (dimmed) blocks and
                 // 'samples' mode (extreme zoom) are drawn separately.
                 var waveFills: [Color: Path] = [:]
+                // The hairline between a stereo file's two lanes, batched like the fills: one Path
+                // per base colour (the stem's, or grey when muted — the colour the rich view strokes
+                // it in, @see WaveformDrawing.laneSeparatorOpacity), stroked once each.
+                var laneSeparators: [Color: Path] = [:]
                 var loopMarkers = Path()
                 for entry in entries {
                     let item = entry.item
@@ -2128,8 +2132,10 @@ struct TimelineView: View {
                     }
 
                     let fillColor: Color = isMutedItem(item) ? Color.gray.opacity(0.45) : stem.opacity(0.95)
+                    let separatorColor: Color = isMutedItem(item) ? .gray : stem
                     let handled = WaveformDrawing.appendPeaksFill(
                         to: &waveFills[fillColor, default: Path()],
+                        separators: &laneSeparators[separatorColor, default: Path()],
                         originX: x, originY: y, size: CGSize(width: w, height: blockHeight),
                         waveformCache: waveformCache, filePath: item.filePath,
                         sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
@@ -2169,6 +2175,10 @@ struct TimelineView: View {
                     }
                 }
                 for (color, path) in waveFills { ctx.fill(path, with: .color(color)) }
+                for (color, path) in laneSeparators where !path.isEmpty {
+                    ctx.stroke(path, with: .color(color.opacity(WaveformDrawing.laneSeparatorOpacity)),
+                               lineWidth: 1)
+                }
                 if !loopMarkers.isEmpty {
                     ctx.stroke(loopMarkers, with: .color(.black.opacity(0.35)),
                               style: StrokeStyle(lineWidth: 1, dash: [3, 2]))

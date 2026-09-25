@@ -27,6 +27,8 @@ What it is really out to prove, beyond the commands answering:
     its peaks from RAM, no disk read and no recompute;
   • a stale `.wfc` (an old format version) is rejected and silently replaced, never read as if
     it matched;
+  • a STEREO file is stored as two lanes (drawn as two stacked waveforms) and a mono one as one,
+    both in the `.wfc` header and in `perf.waveforms`' `stereo_mipmaps`;
   • a WRITE started before a Save As lands in the folder that was current when the decode
     FINISHED, not the one that was current when it started (@see PLAN-WAVEFORM.md, pitfall 3
     in the C3 section — `writeTarget` is re-read on the MainActor right before the write).
@@ -109,8 +111,9 @@ def make_v2_wfc(path, sample_rate, duration, file_size, mtime, densities):
     writes, field by field (@see `Shared/WaveformCache.swift`'s own format comment,
     little-endian throughout): magic, version, sampleRate, duration, fileSize, mtime,
     levelCount, then per level (density, count), then the raw peak dump — 8 bytes/peak at v2
-    (lo f32, hi f32) where v3 packs 4 (lo i16, hi i16), which is exactly what this test's last
-    assertion tells apart."""
+    (lo f32, hi f32) where v3 and v4 pack 4 (lo i16, hi i16), v4 adding a lane count before
+    levelCount and one dump per lane, which is exactly what this test's last assertions tell
+    apart."""
     with open(path, "wb") as f:
         f.write(b"WFC1")
         f.write(struct.pack("<I", 2))                      # version 2 — the fact under test
@@ -130,13 +133,14 @@ def make_v2_wfc(path, sample_rate, duration, file_size, mtime, densities):
 
 
 def read_wfc_header(path):
-    """Parses just enough of a `.wfc` to check its shape — magic, version, and the level table
-    — without assuming anything about the peak payload's own width, which is exactly the field
-    under test."""
+    """Parses just enough of a `.wfc` to check its shape — magic, version, lane count and the
+    level table — without assuming anything about the peak payload's own width, which is exactly
+    the field under test. The v4 layout (@see `WaveformCache.swift`'s format comment): the lane
+    count sits between mtime and levelCount."""
     with open(path, "rb") as f:
         raw = f.read()
-    head_fmt = "<4sIddQdI"
-    magic, version, sample_rate, duration, file_size, mtime, level_count = \
+    head_fmt = "<4sIddQdII"
+    magic, version, sample_rate, duration, file_size, mtime, lane_count, level_count = \
         struct.unpack_from(head_fmt, raw, 0)
     offset = struct.calcsize(head_fmt)
     counts = []
@@ -145,9 +149,27 @@ def read_wfc_header(path):
         offset += struct.calcsize("<dI")
         counts.append(count)
     return {
-        "magic": magic, "version": version, "level_count": level_count,
+        "magic": magic, "version": version, "lane_count": lane_count, "level_count": level_count,
         "counts": counts, "payload_offset": offset, "total_size": len(raw),
     }
+
+
+def make_stereo_wav(path, seconds=1.0, rate=22050):
+    """A 16-bit STEREO WAV whose two channels differ on purpose (a sine on the left, a quieter
+    one an octave up on the right) — step 7b is about the file carrying two lanes, not about
+    their values, but two identical channels would prove nothing the day values are checked."""
+    import math
+    n = int(round(seconds * rate))
+    frames = array.array("h")
+    for i in range(n):
+        frames.append(int(12000 * math.sin(2 * math.pi * 220 * i / rate)))
+        frames.append(int(6000 * math.sin(2 * math.pi * 440 * i / rate)))
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(frames.tobytes())
+    return path
 
 
 def wait_waveforms_idle(cmd, timeout_s=60.0, settle_polls=3):
@@ -325,11 +347,40 @@ try:
 
         header = read_wfc_header(wfc_path)
         check("the file rewritten on disk is WFC1", header["magic"] == b"WFC1", str(header["magic"]))
-        check("...at version 3", header["version"] == 3, str(header["version"]))
+        check("...at version 4", header["version"] == 4, str(header["version"]))
+        check("...with ONE lane — the fixture is mono", header["lane_count"] == 1,
+              str(header["lane_count"]))
         expected_size = header["payload_offset"] + sum(n * 4 for n in header["counts"])
         check("...sized for int16 pairs (4 bytes/peak), not the old float32 (8)",
               header["total_size"] == expected_size,
               "%d vs %d (counts=%r)" % (header["total_size"], expected_size, header["counts"]))
+
+        # ── 7b. a STEREO file carries two lanes — two stacked waveforms on screen ──
+        before_7b = cmd("perf.waveforms")
+        wav_st = make_stereo_wav(os.path.join(folder_v, "stereo.wav"))
+        cmd("object.add", path=wav_st, lane=1, start=0.0)
+        cmd("waveform.preload")
+        after_7b = wait_waveforms_idle(cmd)
+        check("a stereo file is counted as a two-lane mipmap",
+              after_7b["stereo_mipmaps"] == before_7b["stereo_mipmaps"] + 1,
+              "%r -> %r" % (before_7b["stereo_mipmaps"], after_7b["stereo_mipmaps"]))
+        check("...and a mono one never was (step 7's file did not move the counter)",
+              before_7b["stereo_mipmaps"] == before_7["stereo_mipmaps"],
+              "%r -> %r" % (before_7["stereo_mipmaps"], before_7b["stereo_mipmaps"]))
+        wfc_st = os.path.join(waveforms_dir, os.path.basename(wav_st) + ".wfc")
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not os.path.exists(wfc_st):
+            time.sleep(0.05)
+        if os.path.exists(wfc_st):
+            header_st = read_wfc_header(wfc_st)
+            check("the stereo `.wfc` says TWO lanes", header_st["lane_count"] == 2,
+                  str(header_st["lane_count"]))
+            expected_st = header_st["payload_offset"] + sum(n * 4 * 2 for n in header_st["counts"])
+            check("...and holds one int16 dump per lane (twice a mono file of the same length)",
+                  header_st["total_size"] == expected_st,
+                  "%d vs %d (counts=%r)" % (header_st["total_size"], expected_st, header_st["counts"]))
+        else:
+            check("the stereo `.wfc` was written into the project's waveforms/", False, wfc_st)
 
         # ── 8. a write started before a Save As lands where the project ENDED UP ──
         folder_start = tmproot("start")

@@ -19,6 +19,16 @@ struct PeakPair: Equatable {
     var hi: Float  // typically >= 0
 }
 
+/// One peak array per LANE, every lane holding the same number of blocks. A lane is what is drawn
+/// as one waveform in its own horizontal band of the block: a stereo source has two (left on top,
+/// right below), anything else has one (@see `WaveformPeaks.laneCount(channelCount:)` for why a
+/// source of three channels or more is NOT split). Stored per lane and never ALSO merged: the
+/// merged envelope a group's composite still wants is the union of the lanes, which min/max being
+/// associative makes exactly what a single merged pass would have computed — so keeping a merged
+/// copy beside the lanes would cost a third more memory to hold nothing new
+/// (@see `WaveformPeaks.merged`).
+typealias PeakLanes = [[PeakPair]]
+
 // `nonisolated` throughout: this is called from `WaveformCache.computeMipmap`, which runs
 // detached, off the main actor by design (@see `WaveformCacheMeter` for the same pattern and the
 // same reason) — the project defaults every declaration to `@MainActor` otherwise.
@@ -86,7 +96,8 @@ enum PeakQuantisation {
     nonisolated static let scale: Float = 32767
 
     /// A `|v| > 1` WAV float sample is legitimate and NOT clamped here for safety's sake alone:
-    /// `WaveformDrawing.clampY` already bounds every drawn point to the block's own height, and
+    /// the drawing already clamps every point to its lane's own band (`appendEnvelopeFill`'s `y`,
+    /// `WaveformDrawing.draw`'s `laneY` — the whole block for a mono file), and
     /// `waveformDisplayDB` only ever ADDS gain (0…24 dB, never negative) — so anything past ±1
     /// was already pinned to the block's edge before this quantisation existed. Clipping the
     /// cache loses nothing VISIBLE today. That is a property of the DRAWING, not a guarantee:
@@ -209,5 +220,149 @@ extension WaveformPeaks {
             vDSP_maxv(base, 1, &hi, count)
         }
         return PeakPair(lo: lo, hi: hi)
+    }
+}
+
+// MARK: - Lanes: a stereo source drawn as two stacked waveforms
+
+extension WaveformPeaks {
+    /// The most lanes any source is drawn in. The `.wfc` reader refuses a file claiming more.
+    nonisolated static let maxLanes = 2
+
+    /// How many stacked waveforms a source of `channelCount` channels is drawn in: TWO for a stereo
+    /// file (left on the upper half of the block, right on the lower), ONE for everything else.
+    ///
+    /// Why a file of three channels or more stays merged rather than being split in two: nothing in
+    /// the file says which of its channels are "left". A 5.1 is L R C LFE Ls Rs in one convention
+    /// and L C R Ls Rs LFE in another, a four-channel file may be a quad or two stereo pairs — any
+    /// fold into two lanes would draw one of them under the wrong side, and a stacked pair READS as
+    /// left/right whatever it was built from. One merged lane is less detailed but never lies
+    /// (the union of every channel, @see `lane(forChannel:laneCount:)`). The whole policy is this
+    /// one line: changing it changes what a `.wfc` holds, so it goes with a bump of
+    /// `WaveformCache.formatVersion`, or a file written under the old rule would be read under the
+    /// new one.
+    nonisolated static func laneCount(channelCount: Int) -> Int {
+        channelCount == 2 ? 2 : 1
+    }
+
+    /// The lane a channel's matter goes into. With one lane every channel folds into it — the
+    /// UNION of their envelopes, never a mixdown: summing can halve matter sitting on one channel
+    /// alone and cancel a pair in phase opposition outright, drawing silence over real sound.
+    nonisolated static func lane(forChannel channel: Int, laneCount: Int) -> Int {
+        laneCount <= 1 ? 0 : min(max(0, channel), laneCount - 1)
+    }
+
+    /// Lane `lane`'s horizontal band inside a block of `height`: equal shares, top to bottom, no
+    /// gap and no overlap, so the bands tile the block exactly. Each lane is then drawn exactly as
+    /// a whole block used to be — 0 dBFS at its band's own edges, its zero line at its band's middle,
+    /// and clamped to its band, so a lane pushed past its edge by the waveform gain stops there
+    /// rather than bleeding over its neighbour.
+    nonisolated static func laneBand(_ lane: Int, of laneCount: Int, height: Double) -> (top: Double, height: Double) {
+        let n = max(1, laneCount)
+        let share = height / Double(n)
+        return (share * Double(min(max(0, lane), n - 1)), share)
+    }
+
+    /// Two lanes' envelopes of the SAME pixel, merged into the one a single waveform draws — what a
+    /// group's composite still shows, the lanes of every child flattened (@see `GroupWaveformView`).
+    ///
+    /// The union (the lowest `lo`, the highest `hi`) — exactly what one pass over every channel
+    /// would have computed, min/max being associative, so a stereo child reads in the composite as
+    /// it did before lanes existed. With ONE exception: when both envelopes have degenerated to a
+    /// single value (under one sample per pixel, @see `sampleEnvelope`), a union would be a band
+    /// between the two channels where a line is expected; the value of LARGEST MAGNITUDE wins then,
+    /// sign kept — the rule the sample regions used to apply per sample before they were split into
+    /// lanes, so the deep-zoom composite is still a line following the louder channel.
+    nonisolated static func merged(_ a: PeakPair, _ b: PeakPair) -> PeakPair {
+        if a.lo == a.hi, b.lo == b.hi {
+            return abs(b.lo) > abs(a.lo) ? b : a
+        }
+        return PeakPair(lo: min(a.lo, b.lo), hi: max(a.hi, b.hi))
+    }
+}
+
+/// The finest level's blocks, per LANE, filled while the file streams past in chunks — moved out
+/// of `WaveformCache` (where it was `LevelAccumulator`, one lane) so the folding can be asserted
+/// alone (`tools/test_waveform_peaks.swift`), in the spirit of the rest of this file.
+///
+/// It keeps the in-progress block's (lo, hi) of every lane across chunk boundaries — a block is far
+/// narrower than a chunk (48 frames at 1 000 peaks/s and 48 kHz, against `chunkFrames`), so it WILL
+/// straddle a boundary, at most one block per boundary. Skipping that carry would draw a false notch
+/// once per chunk worth of file.
+///
+/// A block always starts at (0, 0), so its envelope always contains the zero line — what the
+/// drawing has always assumed (a block of pure DC still draws down to the axis).
+nonisolated struct PeakLaneAccumulator {
+    let count: Int
+    let laneCount: Int
+    private let step: Double
+    private let total: Int
+    private var lanes: PeakLanes
+    private var blockIndex = 0
+    private var blockEnd: Int
+    // The open block's running extrema, one slot per lane — allocated once, never per frame.
+    private var lo: [Float]
+    private var hi: [Float]
+
+    init(density: Double, duration: Double, total: Int, laneCount: Int) {
+        count = max(1, Int((density * duration).rounded()))
+        self.laneCount = max(1, laneCount)
+        step = Double(total) / Double(count)
+        self.total = total
+        lanes = PeakLanes(repeating: [PeakPair](repeating: PeakPair(lo: 0, hi: 0), count: count),
+                          count: self.laneCount)
+        lo = [Float](repeating: 0, count: self.laneCount)
+        hi = [Float](repeating: 0, count: self.laneCount)
+        blockEnd = Self.end(ofBlock: 0, count: count, step: step, total: total)
+    }
+
+    /// Where block `i` ends (exclusive, in frames). The LAST block ends on the file's own last
+    /// frame by construction rather than by arithmetic: `Double(count) * (total / count)` can land
+    /// a hair under `total`, and the old per-frame accumulator then dropped the final frame.
+    private static func end(ofBlock i: Int, count: Int, step: Double, total: Int) -> Int {
+        i + 1 >= count ? total : min(Int(Double(i + 1) * step), total)
+    }
+
+    /// Folds the file's next `frameCount` frames, starting at absolute frame `startFrame` — the
+    /// chunks must arrive in order and contiguous across the whole file, the one assumption that
+    /// makes this a single streaming pass.
+    ///
+    /// The chunk is cut at block boundaries and `extent(channel, from, count)` is asked for the
+    /// (min, max) of `count >= 1` frames of `channel`, `from` frames into the chunk — once per
+    /// SEGMENT and channel, never per frame, so the caller can hand it to vDSP (@see
+    /// `WaveformCache.decodeChunked`). Channel `c` folds into `lane(forChannel: c, …)`.
+    mutating func add(startFrame: Int, frameCount: Int, channelCount: Int,
+                      extent: (_ channel: Int, _ from: Int, _ count: Int) -> PeakPair) {
+        var f = startFrame
+        let end = startFrame + frameCount
+        while f < end {
+            while f >= blockEnd, blockIndex < count { closeBlock() }
+            guard blockIndex < count else { return }
+            let segmentEnd = min(end, blockEnd)   // > f: the loop above left `blockEnd` past `f`
+            for c in 0..<max(0, channelCount) {
+                let e = extent(c, f - startFrame, segmentEnd - f)
+                let l = WaveformPeaks.lane(forChannel: c, laneCount: laneCount)
+                if e.lo < lo[l] { lo[l] = e.lo }
+                if e.hi > hi[l] { hi[l] = e.hi }
+            }
+            f = segmentEnd
+        }
+    }
+
+    private mutating func closeBlock() {
+        for l in 0..<laneCount {
+            lanes[l][blockIndex] = PeakPair(lo: lo[l], hi: hi[l])
+            lo[l] = 0; hi[l] = 0
+        }
+        blockIndex += 1
+        if blockIndex < count {
+            blockEnd = Self.end(ofBlock: blockIndex, count: count, step: step, total: total)
+        }
+    }
+
+    /// Closes whatever block is still open once the last chunk has been folded in.
+    mutating func finish() -> PeakLanes {
+        while blockIndex < count { closeBlock() }
+        return lanes
     }
 }

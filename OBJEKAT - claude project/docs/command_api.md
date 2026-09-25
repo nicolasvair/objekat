@@ -317,6 +317,12 @@ distinction is the heart of the project's measuring method. `perf.census` counts
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.
+`stereo_mipmaps` counts, among the mipmaps computed or read, those that carry TWO lanes — a
+stereo source, drawn as two stacked waveforms (left above, right below); a mono file and a file
+of three channels or more carry one. A stereo file weighs twice a mono one in
+`peak_bytes_in_memory`, in `bytes_written` and in `region_bytes_in_memory`. Format version 4
+(since 25 September 2026) is the one that stores the lanes; a v3 `.wfc` is rejected and
+recomputed once.
 It answers even with no project open — the counters are process-wide statics — and `reset: true`
 zeroes them first, for a bench that wants to measure from a known zero.
 
