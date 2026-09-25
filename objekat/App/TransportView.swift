@@ -6,7 +6,9 @@ struct TransportView: View {
     @Binding var isPlaying: Bool
     /// A READER, not a value: the playhead moves 20 times a second, and a value here would make
     /// every tick rebuild this bar AND its parent (@see PlayheadTimeText, ContentView).
-    let playheadPosition: () -> Double
+    /// It reads the DISPLAYED position — the playhead while playing or paused, the cursor while
+    /// stopped (@see ObjekatSession.displayedPosition) — so a click answers here at once.
+    let displayedPosition: () -> Double
     let totalDuration: Double
     @Bindable var viewModel: EditViewModel
     let onPlay: () -> Void
@@ -88,7 +90,7 @@ struct TransportView: View {
                     : nil
             )
 
-            PlayheadTimeText(position: playheadPosition, format: Self.formatPosition)
+            PlayheadTimeText(position: displayedPosition, format: Self.formatPosition)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 // Its own width past 9:59 (a minute digit more), the old one as a floor so the
@@ -226,7 +228,9 @@ struct TransportView: View {
 }
 
 /// The playhead's time, the only thing in the bar that reads it: each tick redraws this text and
-/// nothing else.
+/// nothing else. The same holds for the cursor while stopped — the reader is called HERE, inside
+/// this body, so it is this body's observation tracking that records `cursorPosition` and a click
+/// invalidates these few characters rather than the bar.
 private struct PlayheadTimeText: View {
     let position: () -> Double
     let format: (Double) -> String

@@ -413,6 +413,11 @@ extension CommandRegistry {
                 // and the timeline draws. It differs from `position` by at most one tick; it is the one
                 // to read to know what the user sees.
                 "playhead": .number(session.playheadPosition),
+                // `displayed` is what the transport's time READOUT says: the playhead while playing
+                // or paused, the cursor while stopped (@see ObjekatSession.displayedPosition). Stopped,
+                // `playhead` can lag behind a click by a whole gesture — the red line is not drawn
+                // then, and nothing moves it — which is exactly why the readout stopped reading it.
+                "displayed": .number(session.displayedPosition),
                 "paused_at": session.pausedAt.map { JSONValue.number($0) } ?? .null,
                 "cursor": .number(vm.cursorPosition),
                 "tempo": .number(vm.tempo),

@@ -508,7 +508,7 @@ That is end-of-process noise, with no effect on the result.
 |---|---|
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
-| `transport.*` | play, stop, seek, state (including the **displayed** position) |
+| `transport.*` | play, stop, seek, state (including the **displayed** position: `playhead` is the red line, `displayed` what the time readout shows — the playhead while playing or paused, the cursor while stopped) |
 | `selection.*` | all, clear, set, read |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
