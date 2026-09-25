@@ -183,7 +183,12 @@ final class Workspace {
             // model this defensive elsewhere should not go silent here.
             return .failure(.notFound)
         }
+        // Les plugins de l'onglet qu'on quitte restent vivants jusqu'à son retour ou sa fermeture
+        // (@see -[OBJEngineCore beginHoldingParkedPluginsForTab:]) ; ceux de la cible sont repris.
+        vm.engine?.beginHoldingParkedPlugins(forTab: activeTabID.uuidString)
         await vm.restoreParkedProject(targetParked)
+        vm.engine?.endHoldingParkedPlugins()
+        vm.engine?.expireParkedPlugins(forTab: id.uuidString)
         tabs[targetIdx].parked = nil
         activeTabID = id
         return .success(())
@@ -205,7 +210,9 @@ final class Workspace {
             tabs[outgoingIdx].parked = outgoingParked
         }
 
+        vm.engine?.beginHoldingParkedPlugins(forTab: activeTabID.uuidString)
         vm.newProjectDiscardingChanges()
+        vm.engine?.endHoldingParkedPlugins()
         let newID = UUID()
         tabs.append(WorkspaceTab(id: newID, parked: nil, name: vm.projectName, url: nil,
                                  cachedDirty: false))
@@ -242,6 +249,7 @@ final class Workspace {
                 guard let self else { return }
                 self.isSwitching = true
                 await self.session.viewModel.restoreParkedProject(targetParked)
+                self.session.viewModel.engine?.expireParkedPlugins(forTab: neighbourID.uuidString)
                 if let i = self.tabs.firstIndex(where: { $0.id == neighbourID }) {
                     self.tabs[i].parked = nil
                 }
@@ -253,6 +261,7 @@ final class Workspace {
             guard let parked = tabs[idx].parked else { return .failure(.notFound) }
             guard discard || !parked.isDirty else { return .failure(.dirty) }
             tabs.remove(at: idx)
+            session.viewModel.engine?.releaseParkedPlugins(forTab: id.uuidString)
             return .success(())
         }
     }
@@ -293,7 +302,9 @@ final class Workspace {
             if let outgoingIdx = tabs.firstIndex(where: { $0.id == activeTabID }) {
                 tabs[outgoingIdx].parked = outgoingParked
             }
+            vm.engine?.beginHoldingParkedPlugins(forTab: activeTabID.uuidString)
             let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName, cancellable: false)
+            vm.engine?.endHoldingParkedPlugins()
             isSwitching = false
             guard ok else { return .failure(.loadFailed) }
             vm.projectURL = url

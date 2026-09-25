@@ -567,6 +567,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (BOOL)audioProbeDumpToPath:(NSString*)path;
 - (void)endBulkLoad;
 
+// Onglets : les plugins d'un projet démonté ENTRE begin et end partent en consigne au nom de
+// l'onglet `tag`, sans échéance, pour être repris vivants au retour (ré-instancier un UADx est
+// lent). `expire…` rend l'échéance ordinaire à ce qui n'a pas été repris ; `release…` libère
+// tout à la fermeture de l'onglet.
+- (void)beginHoldingParkedPluginsForTab:(NSString*)tag;
+- (void)endHoldingParkedPlugins;
+- (void)expireParkedPluginsForTab:(NSString*)tag;
+- (void)releaseParkedPluginsForTab:(NSString*)tag;
+
 // Tempo et signature temporelle
 - (double)getTempo;
 - (void)setTempo:(double)bpm;                        // remap=YES (compat init)

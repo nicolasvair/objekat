@@ -19,6 +19,7 @@
 #include <vector>
 #include <array>
 #include <functional>
+#include <limits>
 #include <dlfcn.h>
 
 namespace te = tracktion;
@@ -699,6 +700,7 @@ struct OBJParkedPlugin {
     std::string       typeKey;      // desc.createIdentifierString()
     juce::MemoryBlock state;        // chunk au moment du parking — l'identité fonctionnelle
     double            deadlineMs;
+    std::string       holdTag;      // onglet inactif qui le retient (sans échéance) ; vide sinon
 };
 
 // Au-delà, l'instance est relâchée : un AU consigné garde sa mémoire et ses ressources, on ne
@@ -1076,6 +1078,9 @@ struct OBJRenderChain {
     // Plugins retirés du graphe et gardés vivants le temps d'un aller-retour. @see OBJParkedPlugin.
     std::vector<OBJParkedPlugin>                          _pluginParking;
     std::unique_ptr<OBJCallbackTimer>                     _pluginParkingTimer;
+    // Non vide : ce qui part en consigne appartient à cet onglet et n'expire pas. @see
+    // -beginHoldingParkedPluginsForTab:.
+    std::string                                           _parkingHoldTag;
 
     // jobID → job de bake en tâche de fond (clone d'Edit + handle de rendu).
     std::unordered_map<std::string, OBJRenderJob>          _renderJobs;
@@ -4660,9 +4665,12 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     if (st.getSize() == 0) return;   // sans état, rien à apparier
 
     [self sweepPluginParking];
+    const bool held = !_parkingHoldTag.empty();
     _pluginParking.push_back({ te::Plugin::Ptr(ext), objPluginTreeTypeKey(ext->state),
                                std::move(st),
-                               juce::Time::getMillisecondCounterHiRes() + kObjPluginParkingTtlMs });
+                               held ? std::numeric_limits<double>::infinity()
+                                    : juce::Time::getMillisecondCounterHiRes() + kObjPluginParkingTtlMs,
+                               _parkingHoldTag });
 
     if (!_pluginParkingTimer) {
         _pluginParkingTimer = std::make_unique<OBJCallbackTimer>();
@@ -4699,6 +4707,42 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         NSLog(@"[PERF] consigne : %d exemplaire(s) du bon modèle mais d'état différent — "
               @"chargement complet", sameTypeOtherState);
     return nullptr;
+}
+
+// ONGLETS INACTIFS. Quitter un onglet démonte son projet, donc ses plugins partent en consigne
+// comme pour n'importe quel aller-retour — mais un retour sur l'onglet arrive bien après 20 s.
+// Or ré-instancier les UADx dans la même session est lent, voire interminable : 37 à 97 s
+// mesurées pour revenir sur PERREO WUB 3, 74 s pour WUB 3 → projet vide → WUB 3, y compris sur
+// la version du 23/09 (le plugin attend UA Connect, qui gère ses licences). Tant que l'onglet
+// existe, ses plugins restent donc vivants : hors du graphe, ils ne coûtent que de la mémoire,
+// et le retour les reprend tous (0,6 s au lieu de ~10 s même quand UA répond bien).
+- (void)beginHoldingParkedPluginsForTab:(NSString*)tag {
+    _parkingHoldTag = tag ? std::string([tag UTF8String]) : std::string();
+}
+
+- (void)endHoldingParkedPlugins {
+    _parkingHoldTag.clear();
+}
+
+// L'onglet est revenu au premier plan : ce qui n'a pas été repris (état changé entre-temps,
+// plugin retiré du document) retrouve l'échéance ordinaire.
+- (void)expireParkedPluginsForTab:(NSString*)tag {
+    const std::string t([tag UTF8String]);
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + kObjPluginParkingTtlMs;
+    for (auto& e : _pluginParking)
+        if (e.holdTag == t) { e.holdTag.clear(); e.deadlineMs = deadline; }
+}
+
+// L'onglet est fermé : ses plugins n'ont plus de raison de vivre.
+- (void)releaseParkedPluginsForTab:(NSString*)tag {
+    const std::string t([tag UTF8String]);
+    const size_t before = _pluginParking.size();
+    _pluginParking.erase(std::remove_if(_pluginParking.begin(), _pluginParking.end(),
+                                        [&t](const OBJParkedPlugin& e) { return e.holdTag == t; }),
+                         _pluginParking.end());
+    if (before != _pluginParking.size())
+        NSLog(@"[OBJ] consigne : onglet fermé, %lu plugin(s) relâché(s)",
+              (unsigned long)(before - _pluginParking.size()));
 }
 
 // Relâche les plugins dont le délai est passé. Lâcher le Ptr suffit : le PluginCache ramasse
@@ -5500,7 +5544,12 @@ static void objDumpPluginList(te::PluginList& pl,
                 [failed addObject:[NSString stringWithUTF8String:pk.c_str()]];
                 continue;
             }
-            te::Plugin::Ptr p = pl.insertPlugin(vt, indexBefore(pl, anchor));
+            // CONSIGNE, comme pour addPlugin : un FX retiré à l'identique (retour sur un onglet,
+            // aller-retour d'un geste) se reprend vivant au lieu d'être rechargé.
+            te::Plugin::Ptr p;
+            if (auto parked = [self takeParkedPluginMatching:vt])
+                p = pl.insertPlugin(parked->state, indexBefore(pl, anchor));
+            if (!p) p = pl.insertPlugin(vt, indexBefore(pl, anchor));
             if (!p) {
                 NSLog(@"[FX] compile: insertion refusée pour '%s'", pk.c_str());
                 [failed addObject:[NSString stringWithUTF8String:pk.c_str()]];
