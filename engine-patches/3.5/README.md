@@ -285,6 +285,15 @@ Checked as still biting: `develop` still had the linear `std::find`.
   reads it. A measuring probe that kills the process it measures — and worse, kills it anywhere,
   long afterwards, poisoning the diagnosis of every other Debug crash. A mutex now covers the
   statics AND the two writes. Debug only (`OBJ_GRAPH_PROFILE` follows `JUCE_DEBUG`).
+- `0033` — **cutting during playback left a hole.** Cutting an object under the playhead
+  shortens the left half at once, but the right half only enters the graph at the rebuild the
+  `0002` damper holds back 120 ms — 170-220 ms of silence on a 1 250-object project.
+  `Edit::flushPendingPlaybackRestart()` lets the app rebuild right away (objekat calls it after
+  a cut, only while playing). And `createNodeForPlugin` asked `getOwnerClip() != nullptr` —
+  a search of the whole Edit per plugin — where `Clip::isClipState (parent)` answers the same
+  question in O(1): the rebuild went from ~45 ms to ~10 ms. What remains is ONE silent block
+  at the swap, older than this patch: a clip whose end moved no longer matches its old
+  `WaveNodeRealTime` state hash and starts a fresh, cold reader.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

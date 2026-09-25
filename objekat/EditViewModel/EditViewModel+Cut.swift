@@ -150,6 +150,11 @@ extension EditViewModel {
             selectedCrossfade = nil
         }
         isDirty = true
+        // While playing, the 120 ms damper on graph rebuilds is HEARD: the left half is already
+        // shorter, and the right one only enters the graph at the rebuild — a hole of 170-220 ms
+        // on a heavy project when the cut lands under the playhead. Rebuilt now instead (a single
+        // block of silence remains, @see engine-patches/3.5 `0033`). Stopped, the damper is kept.
+        engine?.rebuildGraphNowIfPlaying()
         return result
     }
 
@@ -213,6 +218,7 @@ extension EditViewModel {
             .filter { $0.absStart > t1 - 0.001 && $0.absStart + $0.item.duration < t2 + 0.001 }
             .map(\.item.id))
         isDirty = true
+        engine?.rebuildGraphNowIfPlaying()
     }
 
     // MARK: - Cutting a detached sub-tree (the content of a group being split)

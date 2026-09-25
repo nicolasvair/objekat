@@ -128,6 +128,25 @@ extension CommandRegistry {
             return try await CommandRegistry.shared.measure(entries, repeats: repeats, settle: settle)
         }
 
+        register("perf.audio_probe",
+                 summary: "DIAGNOSTIC (app launched with OBJ_AUDIO_PROBE=1): 'reset' clears the "
+                        + "per-block record of the final mix, 'mark' timestamps a label, 'dump' "
+                        + "writes it all as CSV to 'path'.",
+                 params: [ParamSpec("action", "string", "reset | mark | dump"),
+                          ParamSpec("label", "string", required: false, "For 'mark'."),
+                          ParamSpec("path", "string", required: false, "For 'dump'.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let engine = vm.engine else {
+                throw CommandError(code: .invalid_state, message: "no engine")
+            }
+            switch try p.string("action") {
+            case "reset": return .object(["ok": .bool(engine.audioProbeReset())])
+            case "mark":  engine.audioProbeMark(try p.string("label")); return .object(["ok": .bool(true)])
+            case "dump":  return .object(["ok": .bool(engine.audioProbeDump(toPath: try p.string("path")))])
+            default: throw CommandError(code: .bad_params, message: "reset | mark | dump")
+            }
+        }
+
         register("perf.census",
                  summary: "Project census: objects by type, tracks, plugins, sends, notes.") { _ in
             let vm = try CommandContext.shared.requireViewModel()

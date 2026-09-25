@@ -278,5 +278,6 @@ extension EditViewModel {
         // still named the same, with nothing to rewrite.
         timeSelection = nil
         isDirty       = true
+        engine?.rebuildGraphNowIfPlaying()   // @see cut(ids:atTime:keeping:)
     }
 }

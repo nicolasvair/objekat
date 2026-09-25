@@ -1,0 +1,79 @@
+From 14d5bf387b400519cc3af0637548d0272df32f6d Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 25 Sep 2026 09:08:31 +0200
+Subject: [PATCH] =?UTF-8?q?perf(graph)=20:=20couper=20en=20lecture=20?=
+ =?UTF-8?q?=E2=80=94=20reconstruction=20imm=C3=A9diate,=20et=20plus=20de?=
+ =?UTF-8?q?=20findClipForID=20par=20plugin?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+1. Edit::flushPendingPlaybackRestart() : fait tout de suite la reconstruction que l'amortisseur
+   de 120 ms (0002) ferait attendre. Pendant la lecture ce délai s'entend : couper un objet sous
+   la tête de lecture raccourcit la moitié gauche aussitôt, la droite n'entre dans le graphe qu'à
+   la reconstruction. Mesuré (PERREO WUB 2 + sinus, Release) : 170-220 ms de silence -> 1 bloc.
+2. createNodeForPlugin : Clip::isClipState (parent) au lieu de getOwnerClip() != nullptr. On ne
+   demande que « ce plugin est-il sur un clip ? » ; getOwnerClip cherche le clip dans tout l'Edit
+   (O(N) par plugin, O(N²) la reconstruction). Reconstruction ~45 ms -> ~10 ms à 1 250 objets.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ modules/tracktion_engine/model/edit/tracktion_Edit.cpp      | 6 ++++++
+ modules/tracktion_engine/model/edit/tracktion_Edit.h        | 6 ++++++
+ .../playback/graph/tracktion_EditNodeBuilder.cpp            | 6 +++++-
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/model/edit/tracktion_Edit.cpp b/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
+index 7ae8233128d..1caa3f49a0a 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
++++ b/modules/tracktion_engine/model/edit/tracktion_Edit.cpp
+@@ -1255,6 +1255,12 @@ void Edit::restartPlayback()
+     startTimer ((now - firstPendingRestartMs) >= maxDelayMs ? 1 : debounceMs);
+ }
+ 
++void Edit::flushPendingPlaybackRestart()
++{
++    if (shouldRestartPlayback && isTimerRunning())
++        timerCallback();
++}
++
+ EditPlaybackContext* Edit::getCurrentPlaybackContext() const
+ {
+     return transportControl->getCurrentPlaybackContext();
+diff --git a/modules/tracktion_engine/model/edit/tracktion_Edit.h b/modules/tracktion_engine/model/edit/tracktion_Edit.h
+index ab2b263f6cd..928960997db 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_Edit.h
++++ b/modules/tracktion_engine/model/edit/tracktion_Edit.h
+@@ -371,6 +371,12 @@ public:
+     */
+     void restartPlayback();
+ 
++    /** OBJEKAT — si une reconstruction du graphe attend l'amortisseur (@see restartPlayback),
++        la fait TOUT DE SUITE au lieu d'attendre ses 120 ms. Utile pendant la lecture, où ce
++        délai s'entend : couper un objet sous la tête de lecture raccourcit la moitié gauche
++        aussitôt, mais la droite n'entre dans le graphe qu'à la reconstruction. */
++    void flushPendingPlaybackRestart();
++
+     //==============================================================================
+     /** Returns the TrackList for the Edit which contains all the top level tracks. */
+     TrackList& getTrackList()                                   { return *trackList; }
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index dbc77f2b3ca..9a06a0c76b9 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -1558,7 +1558,11 @@ std::unique_ptr<tracktion::graph::Node> createNodeForPlugin (Plugin& plugin, con
+     const bool usesSidechain = plugin.getSidechainSourceID().isValid();
+ 
+     if (! usesSidechain)
+-        if (plugin.getOwnerTrack() != nullptr || plugin.getOwnerClip() != nullptr)
++        // OBJEKAT — `Clip::isClipState (parent)` plutôt que `getOwnerClip() != nullptr` : on ne
++        // demande ici QUE « ce plugin est-il sur un clip ? », et getOwnerClip répond en cherchant
++        // le clip dans tout l'Edit (findClipForID, O(N)) — O(N²) sur la reconstruction, ~90 % de
++        // son temps à 1 250 objets. Le test sur l'arbre de valeurs donne la même réponse en O(1).
++        if (plugin.getOwnerTrack() != nullptr || Clip::isClipState (plugin.state.getParent()))
+             maxNumChannels = effectivePluginChannels;
+ 
+     // If the input has fewer channels than the plugin expects, pre-convert (e.g. mono→stereo)
+-- 
+2.50.1 (Apple Git-155)
+

@@ -11,6 +11,7 @@
 #include "OBJWindowFadePlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
+#include "OBJAudioProbe.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -910,6 +911,8 @@ struct OBJRenderChain {
 
 @implementation OBJEngineCore {
     std::unique_ptr<te::Engine> _engine;
+    OBJAudioProbe* _audioProbe;   // DIAGNOSTIC, possédé par le DeviceManager (@see OBJAudioProbe.h)
+    std::vector<std::pair<uint64_t, std::string>> _audioProbeMarks;
     std::unique_ptr<te::Edit>   _edit;
 
     // UUID string → pointeurs Tracktion (valides tant que _edit est vivant)
@@ -1119,6 +1122,11 @@ static BOOL gOBJAudioDisabled = NO;
         // test sans sortie audio.
         _engine->getDeviceManager().initialise(0, gOBJAudioDisabled ? 0 : 2);
         [self logDefaultWaveOutput];
+        if (getenv("OBJ_AUDIO_PROBE") != nullptr) {
+            auto probe = std::make_unique<OBJAudioProbe>(_engine->getDeviceManager());
+            _audioProbe = probe.get();
+            _engine->getDeviceManager().setGlobalOutputAudioProcessor(std::move(probe));
+        }
         _renderCompletions = [NSMutableDictionary dictionary];
         _exportCompletions = [NSMutableDictionary dictionary];
         _pluginEditorsFloating = true;
@@ -1264,6 +1272,35 @@ static BOOL gOBJAudioDisabled = NO;
 // l'inhibiteur, réallouerait le graphe de lecture à CHAQUE plugin. ReallocationInhibitor rend ces
 // appels inoffensifs : la PluginList est modifiée normalement, seule l'allocation du graphe est
 // différée jusqu'à -endBulkLoad.
+- (void)rebuildGraphNowIfPlaying {
+    if (!_edit || !_edit->getTransport().isPlaying()) return;
+    _edit->flushPendingPlaybackRestart();
+}
+
+- (BOOL)audioProbeReset {
+    if (!_audioProbe) return NO;
+    _audioProbe->reset();
+    _audioProbeMarks.clear();
+    return YES;
+}
+
+- (void)audioProbeMark:(NSString*)label {
+    _audioProbeMarks.emplace_back(mach_absolute_time(), std::string(label.UTF8String ?: ""));
+}
+
+- (BOOL)audioProbeDumpToPath:(NSString*)path {
+    if (!_audioProbe) return NO;
+    mach_timebase_info_data_t tb; mach_timebase_info(&tb);
+    auto ms = [&](uint64_t t) { return (double) t * tb.numer / tb.denom / 1.0e6; };
+    juce::String out;
+    out << "sr," << _engine->getDeviceManager().getSampleRate() << "\n";
+    for (auto& m : _audioProbeMarks)
+        out << "mark," << juce::String(ms(m.first), 3) << "," << juce::String::fromUTF8(m.second.c_str()) << "\n";
+    for (auto& e : _audioProbe->snapshot())
+        out << "blk," << juce::String(ms(e.hostTime), 3) << "," << e.peak << "," << e.cpu << "," << e.numSamples << "\n";
+    return juce::File(juce::String::fromUTF8(path.UTF8String)).replaceWithText(out);
+}
+
 - (void)beginBulkLoad {
     if (!_edit || _bulkLoadInhibitor) return;   // ré-entrance refusée : une paire stricte, jamais imbriquée
     // Le veilleur de latence lirait un signal en pleine reconstruction du projet (moitié ancien,
