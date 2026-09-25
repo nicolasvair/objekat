@@ -10,7 +10,8 @@ import AppKit
 import UniformTypeIdentifiers
 
 /// Intercepts the end of the app (Cmd+Q, the Quit menu, a system shutdown) to offer to save a
-/// modified project — otherwise SwiftUI quits without asking anything.
+/// modified project — otherwise SwiftUI quits without asking anything. And receives the sessions
+/// the Finder hands over (`application(_:open:)`), which a `WindowGroup` has no door for.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var viewModel: EditViewModel?
@@ -18,7 +19,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// keep a workspace alive the app has let go of. Quitting goes through it rather than through
     /// `viewModel` alone, since an inactive tab's own unsaved changes are things only the
     /// workspace knows about.
-    weak var workspace: Workspace?
+    ///
+    /// Setting it is also what releases the sessions the Finder handed over BEFORE any window
+    /// existed (a cold launch by a double-click, @see `application(_:open:)`): they wait in
+    /// `pendingOpenURLs` until there is a workspace to give them to.
+    weak var workspace: Workspace? {
+        didSet {
+            guard let workspace, !pendingOpenURLs.isEmpty else { return }
+            let urls = pendingOpenURLs
+            pendingOpenURLs = []
+            workspace.openFromOutside(urls)
+        }
+    }
+
+    /// Sessions opened from the Finder before the window's `onAppear` attached the workspace.
+    private var pendingOpenURLs: [URL] = []
+
+    /// A session handed over from OUTSIDE — a double-click on a `.objekat` in the Finder (the type
+    /// `Info.plist` declares and claims, @see SessionFile), a file dropped on the Dock icon,
+    /// `open -a OBJEKAT x.objekat`. AppKit calls this at a warm launch AND at a cold one, where it
+    /// comes BEFORE `applicationDidFinishLaunching` — hence before any window, any `onAppear`,
+    /// any workspace attached here.
+    ///
+    /// Only what has a session's extension is taken (a legacy `.json` included: `open -a` can hand
+    /// one over although the Finder never offers it); anything else is left alone, as it always
+    /// was. That includes the one case this method did not create but now meets: an ORPHANED launch
+    /// argument, which AppKit turns into an opening (@see LaunchArguments) — a `.json` project left
+    /// orphaned on the command line now opens, anything else is still ignored.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let sessions = urls.filter { $0.isFileURL && SessionFile.hasSessionExtension($0) }
+        guard !sessions.isEmpty else { return }
+        if let workspace {
+            workspace.openFromOutside(sessions)
+        } else {
+            pendingOpenURLs.append(contentsOf: sessions)
+            ensureDocumentWindowAfterLaunch()
+        }
+    }
+
+    /// A cold launch by a DOCUMENT gets no window by itself. AppKit asks for the untitled window
+    /// (`applicationOpenUntitledFile`) only when it was launched with nothing to open — which is,
+    /// as far as the symptom below lets one read it, how SwiftUI's `WindowGroup` puts up its first
+    /// window — and skips it when there is a file: the app would then sit there with the session
+    /// queued and nowhere to show it. It is the very symptom `LaunchArguments` documents for an
+    /// orphaned argument ("the app runs, mute and with no interface"), which AppKit ALSO turns into
+    /// an opening at launch. So once the launch is over (the hop to the next turn of the loop), if
+    /// no workspace has been attached and no document window exists, the untitled window is asked
+    /// for by hand, through the application's own delegate — SwiftUI's, which forwards to this one
+    /// what it does not answer itself. Asked ONLY with no titled window at all: a second window on
+    /// the one session is exactly what `applicationWillFinishLaunching` turns tabbing off to avoid.
+    /// If SwiftUI does not answer it, nothing worse happens than before this method existed — and a
+    /// click on the Dock icon still brings a window, which then takes the queued file.
+    /// NOT SEEN ON A SCREEN: this is the half of the feature that needs a real cold launch.
+    private func ensureDocumentWindowAfterLaunch() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.workspace == nil, !self.pendingOpenURLs.isEmpty else { return }
+            let hasDocumentWindow = NSApp.windows.contains {
+                $0.styleMask.contains(.titled) && !($0 is NSPanel)
+            }
+            guard !hasDocumentWindow else { return }
+            _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
+        }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let vm = viewModel else { return .terminateNow }
@@ -125,7 +187,7 @@ struct objekatApp: App {
     private func openProjectPanel() {
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = SessionFile.openableContentTypes
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -175,6 +237,18 @@ struct objekatApp: App {
                     CommandContext.shared.session = session
                     CommandContext.shared.workspace = workspace
                     ObjekatPreferences.shared.applyAPIPreference()
+                }
+                // A session handed over by the Finder goes to THIS window, never to a new one: a
+                // `WindowGroup` otherwise answers an external event by opening another window —
+                // a second `ContentView` on the one session, which tabs exist precisely to avoid
+                // (@see `applicationWillFinishLaunching`). `onOpenURL` is the SwiftUI half of the
+                // opening, the AppDelegate's `application(_:open:)` the AppKit half: whichever of
+                // the two SwiftUI delivers a document to, both feed the same queue, which opens a
+                // file once however many roads it came by (@see Workspace.openFromOutside).
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+                .onOpenURL { url in
+                    guard url.isFileURL, SessionFile.hasSessionExtension(url) else { return }
+                    workspace.openFromOutside([url])
                 }
         }
         .windowResizability(.contentMinSize)

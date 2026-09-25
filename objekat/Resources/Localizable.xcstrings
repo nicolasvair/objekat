@@ -6832,6 +6832,52 @@
         }
       }
     },
+    "project.openFailed.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file “%@” could not be read as an OBJEKAT project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El archivo «%@» no se pudo leer como un proyecto de OBJEKAT."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier « %@ » n'a pas pu être lu comme un projet OBJEKAT."
+          }
+        }
+      }
+    },
+    "project.openFailed.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not open the project"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo abrir el proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d'ouvrir le projet"
+          }
+        }
+      }
+    },
     "project.saveAs.title": {
       "extractionState": "manual",
       "localizations": {

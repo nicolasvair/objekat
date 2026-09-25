@@ -11,9 +11,22 @@
 		DA7F47832FBA52C1004F3E72 /* objekat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = objekat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DA0B5E1A2FC5B00000C4E5A1 /* Exceptions for "objekat" folder in "objekat" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DA7F47822FBA52C1004F3E72 /* objekat */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DA7F47A42FBA543B004F3E72 /* objekat */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DA0B5E1A2FC5B00000C4E5A1 /* Exceptions for "objekat" folder in "objekat" target */,
+			);
 			path = objekat;
 			sourceTree = "<group>";
 		};
@@ -301,6 +314,7 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = objekat/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (C) 2026 Nicolas Vair. Free software under the GNU AGPL v3 or later; no warranty, to the extent permitted by law. Source and licence: github.com/nicolasvair/objekat";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -391,6 +405,7 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = objekat/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (C) 2026 Nicolas Vair. Free software under the GNU AGPL v3 or later; no warranty, to the extent permitted by law. Source and licence: github.com/nicolasvair/objekat";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

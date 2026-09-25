@@ -102,17 +102,25 @@ extension EditViewModel {
         Self.projectDisplayName(for: fileURL)
     }
 
-    /// The NAME of a project as it is shown and typed: with no ".json" — the extension is an
-    /// internal matter of the manifest, never something the user names. Strips THAT suffix and
-    /// no other, in particular never a path extension of its own making: "Mix 1.2" is a name,
-    /// not a file with a ".2" extension.
+    /// The NAME of a project as it is shown and typed: with no ".objekat" (nor the legacy
+    /// ".json") — the extension is an internal matter of the manifest, never something the user
+    /// names. Strips THOSE suffixes and no other, in particular never a path extension of its own
+    /// making: "Mix 1.2" is a name, not a file with a ".2" extension. One suffix at most, and in
+    /// any case (the Finder matches an extension regardless of case, so "Mix.OBJEKAT" is a
+    /// session too): a project somebody called "p.objekat" and saved as "p.objekat.json" keeps
+    /// the name it was given.
     /// Shared by the window title, the panel and the "Recent projects" menu, so that one
-    /// project has one name everywhere.
+    /// project has one name everywhere. @see SessionFile
     static func projectDisplayName(for url: URL) -> String {
         let name = url.lastPathComponent
-        guard name.hasSuffix(".json") else { return name }
-        let base = String(name.dropLast(".json".count))
-        return base.isEmpty ? name : base
+        for ext in SessionFile.strippedExtensions {
+            guard let suffix = name.range(of: ".\(ext)",
+                                          options: [.anchored, .backwards, .caseInsensitive])
+            else { continue }
+            let base = String(name[..<suffix.lowerBound])
+            return base.isEmpty ? name : base
+        }
+        return name
     }
 
     /// Saves into the active version if there is one, otherwise "Save as".
@@ -127,9 +135,9 @@ extension EditViewModel {
 
     /// Save as: the user chooses the NAME + the location of the project.
     /// A project is a FOLDER, so what is typed here is a plain name — "My Project", never
-    /// "My Project.objekat": no content type is imposed on the panel, and the ".json" of the
+    /// "My Project.objekat": no content type is imposed on the panel, and the ".objekat" of the
     /// manifest is laid by `saveAs(to:)`, which is the only one to know about it.
-    /// If the destination is already an Objekat project folder → only the JSON is written there
+    /// If the destination is already an Objekat project folder → only the manifest is written there
     /// (several versions can live side by side, sharing samples/ and waveforms/).
     /// Otherwise → a project folder named after what was typed is created and written into.
     func saveAs() {
@@ -180,9 +188,11 @@ extension EditViewModel {
     static func saveAsFileURL(for chosen: URL) -> URL {
         let parent = chosen.deletingLastPathComponent()
         // What was chosen is a NAME, the panel imposing nothing: a project called "test" gives
-        // `test/test.json`, the manifest bearing the project's name and nothing else.
+        // `test/test.objekat`, the manifest bearing the project's name and nothing else. A NEW
+        // name always takes the current extension — Save As on a legacy `test.json` writes
+        // `test.objekat` beside it and leaves the old file alone (@see SessionFile).
         let base = projectDisplayName(for: chosen)
-        let fileName = "\(base).json"
+        let fileName = SessionFile.fileName(for: base)
         if isObjekatProjectFolder(parent) {
             return parent.appendingPathComponent(fileName)
         }
@@ -191,9 +201,9 @@ extension EditViewModel {
     }
 
     /// A folder is an Objekat project if it holds `waveforms/`, which `writeSession` lays for
-    /// every project — so the test catches them all. A bare `*.json` is deliberately NOT a sign:
-    /// any folder holding some `package.json` would then pass for a project, and "Save as" would
-    /// write into it instead of making the folder.
+    /// every project — so the test catches them all, legacy `.json` projects included. A bare
+    /// `*.json` is deliberately NOT a sign: any folder holding some `package.json` would then pass
+    /// for a project, and "Save as" would write into it instead of making the folder.
     private static func isObjekatProjectFolder(_ folder: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: waveformsDir(in: folder).path,
@@ -342,12 +352,12 @@ extension EditViewModel {
     }
 
     /// Opens a version file: you navigate into the project folder and
-    /// pick the "<project> V<n>.json" wanted.
+    /// pick the "<project> V<n>.objekat" wanted — or a legacy "….json", which still opens.
     func loadProject() {
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = SessionFile.openableContentTypes
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -363,7 +373,7 @@ extension EditViewModel {
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = SessionFile.openableContentTypes
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false

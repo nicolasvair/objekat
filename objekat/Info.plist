@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	ONLY what the INFOPLIST_KEY_* build settings cannot express: the session type and the claim on it.
+	Everything else in the app's Info.plist is still GENERATED (GENERATE_INFOPLIST_FILE = YES), and
+	merged with this file (INFOPLIST_FILE = objekat/Info.plist). The file is kept out of the target's
+	resources by a membership exception in project.pbxproj: it is the BASE of the Info.plist, not a
+	resource to copy.
+
+	org.labelpeche.objekat.session is also named in objekat/EditViewModel/SessionFile.swift: keep the
+	two in step. It conforms to public.json because a session IS JSON: anything that reads JSON still
+	reads it. The legacy .json sessions are NOT claimed here — OBJEKAT has no business being offered
+	for every JSON file on the disk; they still open from File > Open.
+-->
+<plist version="1.0">
+<dict>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.labelpeche.objekat.session</string>
+			<key>UTTypeDescription</key>
+			<string>OBJEKAT Session</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>objekat</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>OBJEKAT Session</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.labelpeche.objekat.session</string>
+			</array>
+			<key>CFBundleTypeIconSystemGenerated</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+</dict>
+</plist>

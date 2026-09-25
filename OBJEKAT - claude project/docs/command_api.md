@@ -177,7 +177,7 @@ structure, plugins, stems/routing, finalise) before answering, exactly as before
 overlay existed.
 
 ```json
-{"cmd": "project.open", "params": {"path": "/…/Project.json"}}
+{"cmd": "project.open", "params": {"path": "/…/Project.objekat"}}
 → {"path": "…", "name": "Project", "object_count": 42}
 ```
 
@@ -185,7 +185,7 @@ Pass `"async": true` to get an immediate answer instead, and follow the load wit
 `project.load_status` and/or `wait_idle`:
 
 ```json
-{"cmd": "project.open", "params": {"path": "/…/Project.json", "async": true}}
+{"cmd": "project.open", "params": {"path": "/…/Project.objekat", "async": true}}
 → {"path": "…", "status": "loading"}
 
 {"cmd": "project.load_status"}
@@ -250,7 +250,7 @@ caret, time selection, loop, viewport).
 
 ```json
 {"cmd": "tab.list"}
-→ {"tabs": [{"id": "…", "index": 1, "name": "Mix 1", "path": "/…/Mix 1.json",
+→ {"tabs": [{"id": "…", "index": 1, "name": "Mix 1", "path": "/…/Mix 1.objekat",
              "dirty": false, "active": true},
             {"id": "…", "index": 2, "name": "Untitled", "path": null,
              "dirty": true, "active": false}],
@@ -260,7 +260,7 @@ caret, time selection, loop, viewport).
 {"cmd": "tab.select", "params": {"index": 2}}   → that tab's object, now active
 {"cmd": "tab.select", "params": {"id": "…"}}    → same, by id
 
-{"cmd": "tab.open", "params": {"path": "/…/Other.json"}}
+{"cmd": "tab.open", "params": {"path": "/…/Other.objekat"}}
 → {…, "already_open": false}        // opened in a NEW tab
 → {…, "already_open": true}         // was already open elsewhere: switched to it instead
 
@@ -467,7 +467,7 @@ run loop. So the app is indeed there, simply invisible (`.prohibited`), with no 
 
 ```bash
 objekat.app/Contents/MacOS/objekat --headless --no-audio --no-recent \
-    --project=/path/project.json --exec=scenario.jsonl
+    --project=/path/project.objekat --exec=scenario.jsonl
 objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 ```
 
@@ -1127,12 +1127,12 @@ count.
 
 `project.save_copy {path}` is the menu's "Save a copy with audio files…" without its panel: `path`
 is the capsule's **folder** (created if absent), and the manifest inside is named after it
-(`/x/My copy/` → `/x/My copy/My copy.json`). The command **waits for the last write** before it
+(`/x/My copy/` → `/x/My copy/My copy.objekat`). The command **waits for the last write** before it
 answers — no job, no polling:
 
 ```json
 {"cmd": "project.save_copy", "params": {"path": "/tmp/capsule"}}
-→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.json",
+→ {"path": "/tmp/capsule", "manifest": "/tmp/capsule/capsule.objekat",
    "copied_files": 3, "missing": []}
 ```
 
@@ -1255,9 +1255,36 @@ boot volume never reads as offline.
 `tools/scenario_relink.py` asserts all of the above against a running instance, making and moving
 its own wav files on disk.
 
+### The session file: `.objekat`, which is JSON
+
+A session is written as `<name>.objekat` since 25 September 2026 — **the content is the same JSON
+it always was**. The extension exists so that the file belongs to OBJEKAT: the app's `Info.plist`
+exports the type `org.labelpeche.objekat.session` (conforming to `public.json`, so anything that
+reads JSON still reads it) and claims it as its owner, which is what makes a double-click in the
+Finder open the session in OBJEKAT rather than in a text editor. One definition in the code,
+`SessionFile` (`objekat/EditViewModel/SessionFile.swift`), which the plist must stay in step with.
+
+- **A legacy `<name>.json` still opens** — from File › Open (the panel accepts both), from
+  "Recent projects", through `project.open` / `tab.open` / `--project=`. It is never renamed
+  behind the user's back: `project.save` (and ⌘S) write where they read, so a `.json` stays a
+  `.json` until somebody gives it a NEW name.
+- **A new name takes `.objekat`**: the menu's Save As (the name typed is a plain name, the
+  extension is laid by the app) and `project.save_copy`'s manifest (`<folder>.objekat`).
+- **The API writes the path it is given**, whatever its extension, as it always has:
+  `project.save_as {"path": "/x/session.json"}` writes `session.json`. Scripts that name their
+  files `*.json` keep working unchanged.
+- The name shown for a project strips ONE of the two extensions, in any case: `Mix.objekat` and
+  `Mix.json` are both "Mix", and a `p.objekat.json` stays "p.objekat".
+- **Opening from the Finder** (double-click, a file dropped on the Dock icon, `open -a`) follows
+  `tab.open`'s rules: the same file is never opened twice (its tab is brought forward), and it opens
+  in a NEW tab — except over an untouched "Untitled" tab (no file, not modified, empty), which is
+  reused, the ordinary case of a cold launch by a double-click. A refusal (a load, an export under
+  way…) or an unreadable file is reported by an alert, the hand being in the Finder. There is no
+  command for it: it is AppKit's own door, and `tab.open` already is its scripted equivalent.
+
 ### Reading a project without the app
 
-Every manifest (`<name>.json`) carries its own notice, under the `_readme` key, **at the head of the file**:
+Every manifest (`<name>.objekat`, or `<name>.json` before 25 September 2026) carries its own notice, under the `_readme` key, **at the head of the file**:
 the keys are sorted on writing and "_" comes before the lowercase letters, so it falls first
 under a reader's eye — human or model. It says the essential of what the file does not show:
 that `items` is a tree, that the times are in seconds **except MIDI, in musical time**,

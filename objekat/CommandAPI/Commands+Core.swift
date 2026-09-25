@@ -113,7 +113,8 @@ extension CommandRegistry {
         }
 
         register("project.open",
-                 summary: "Opens a project manifest (`<name>.json`). The contract is unchanged: "
+                 summary: "Opens a project manifest (`<name>.objekat`, or a legacy `<name>.json`). "
+                        + "The contract is unchanged: "
                         + "by default this waits for the whole load (structure, plugins, stems) "
                         + "before answering, exactly as before the progress overlay existed. Pass "
                         + "`async: true` to get an immediate answer instead and follow the load "
@@ -232,7 +233,8 @@ extension CommandRegistry {
         register("project.save_as",
                  summary: "Saves the project to a given path (creating samples/ and waveforms/).",
                  params: [ParamSpec("path", "string",
-                                    "Path of the manifest, written AS GIVEN (`<name>.json`).")]) { p in
+                                    "Path of the manifest, written AS GIVEN — `<name>.objekat` is what "
+                                  + "the app names a session, but no extension is imposed.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
             let url = URL(fileURLWithPath: path)
@@ -250,7 +252,8 @@ extension CommandRegistry {
 
         register("project.save_copy",
                  summary: "\"Save a copy with audio files\" without the panel: writes a SELF-CONTAINED "
-                        + "capsule into the given folder — the manifest (named after the folder), "
+                        + "capsule into the given folder — the manifest (named after the folder, "
+                        + "`<folder>.objekat`), "
                         + "the source files it plays in samples/sources/, and the consolidated "
                         + "objects it actually uses in samples/consolidate/ (wherever they were "
                         + "read from; orphan waves and old revisions are left out). Waits for the "

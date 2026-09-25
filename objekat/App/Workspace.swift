@@ -386,6 +386,82 @@ final class Workspace {
         return ok ? .success(()) : .failure(.loadFailed)
     }
 
+    // MARK: - Opening from outside the app
+
+    /// Sessions handed over from OUTSIDE (a double-click in the Finder, a file dropped on the Dock
+    /// icon, `open -a`), waiting their turn. A queue and not a `Task` per file: the Finder hands
+    /// over a multiple selection in one go, and two loads started side by side would have the
+    /// second refused by the first (`tabSwitchBlocker` — a project loading). One at a time, in the
+    /// order given. `@ObservationIgnored`: nothing draws it, and an observed queue would invalidate
+    /// the tab bar at every file for nothing.
+    @ObservationIgnored private var outsideOpenQueue: [URL] = []
+    @ObservationIgnored private var isDrainingOutsideOpens = false
+
+    /// The door `AppDelegate.application(_:open:)` and the window's `onOpenURL` both go through —
+    /// both, because which of the two SwiftUI actually calls for a document handed over by the
+    /// Finder is not something this code can settle by reading (@see the AppDelegate). A file
+    /// already queued is not queued twice, and one that arrives by both roads anyway finds its own
+    /// tab already open the second time, which `open(url:inNewTab:)` answers by merely selecting
+    /// it: harmless either way.
+    func openFromOutside(_ urls: [URL]) {
+        for url in urls.map(\.standardizedFileURL) where !outsideOpenQueue.contains(url) {
+            outsideOpenQueue.append(url)
+        }
+        guard !isDrainingOutsideOpens, !outsideOpenQueue.isEmpty else { return }
+        isDrainingOutsideOpens = true
+        Task { [weak self] in
+            guard let self else { return }
+            while !self.outsideOpenQueue.isEmpty {
+                let url = self.outsideOpenQueue.removeFirst()
+                await self.openOneFromOutside(url)
+            }
+            self.isDrainingOutsideOpens = false
+        }
+    }
+
+    /// One session from outside. The rules are `open(url:inNewTab:)`'s — the same file is never
+    /// opened twice (a tab already showing it is brought forward instead), and a new tab is what a
+    /// double-click means — with ONE exception: an untouched "Untitled" tab (no file, not
+    /// modified, empty) is REUSED rather than left behind. That is the ordinary case of a cold
+    /// launch by a double-click (the app starts on a blank project, then the file arrives), and a
+    /// blank tab beside every project opened that way would be one more thing to close by hand.
+    /// Every refusal and failure is SAID (`notify`): nobody asked this from a menu that could grey
+    /// itself out, the hand is in the Finder and would otherwise see nothing happen.
+    private func openOneFromOutside(_ url: URL) async {
+        let vm = session.viewModel
+        // At a cold launch the file can arrive before the window's `onAppear` has wired the engine
+        // to the document (@see ContentView) — a load with no engine attached lays a model nothing
+        // plays. `start()` is idempotent, so calling it here costs nothing the second time.
+        session.start()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            vm.notify(L("project.notFound.title"), L("project.notFound.info", url.lastPathComponent))
+            return
+        }
+        // The in-place path of `open(url:inNewTab: false)` has no guard of its own (the menus that
+        // reach it are greyed out while busy); this door is not a menu, so it asks here.
+        if let reason = vm.tabSwitchBlocker {
+            vm.notify(L("tabs.switch.refused.title"), L(reason))
+            return
+        }
+        let untouched = vm.projectURL == nil && !vm.isDirty && vm.items.isEmpty
+        switch await open(url: url, inNewTab: !untouched) {
+        case .success, .failure(.cancelled):
+            return
+        case .failure(.loadFailed):
+            // In place (`untouched`), false means ONE thing: a load the hand cancelled from the
+            // overlay (that path stays cancellable) — a decision, not a failure. In a NEW tab the
+            // load is not cancellable, so false there is a real failure, and it is said.
+            if !untouched {
+                vm.notify(L("project.openFailed.title"), L("project.openFailed.info", url.lastPathComponent))
+            }
+        case .failure(.blocked(let reasonKey)):
+            vm.notify(L("tabs.switch.refused.title"), L(reasonKey))
+        case .failure:
+            // `.decodeFailed` above all: a file with the right extension and the wrong content.
+            vm.notify(L("project.openFailed.title"), L("project.openFailed.info", url.lastPathComponent))
+        }
+    }
+
     // MARK: - Unsaved changes: closing a tab, quitting
 
     /// THE question a tab carrying unsaved changes is asked before it goes away. ⌘W, the strip's

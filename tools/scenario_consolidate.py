@@ -123,7 +123,7 @@ def read_json(path):
 def text_files(folder):
     for dirpath, _, filenames in os.walk(folder):
         for f in filenames:
-            if f.endswith(".json"):
+            if f.endswith((".json", ".objekat")):
                 p = os.path.join(dirpath, f)
                 with open(p, encoding="utf-8") as fh:
                     yield p, fh.read()
@@ -719,7 +719,7 @@ try:
         CAP = os.path.join(ROOT, "capsule")
         r = cmd("project.save_copy", path=CAP)
         check("B14: save_copy answers, nothing missing",
-              r["manifest"] == os.path.join(CAP, "capsule.json") and r["missing"] == []
+              r["manifest"] == os.path.join(CAP, "capsule.objekat") and r["missing"] == []
               and r["copied_files"] == 4, r)
         info_after = cmd("app.info")
         check("B14: the current project is untouched (path, dirty)",
@@ -739,7 +739,7 @@ try:
         leaks = [p for p, t in text_files(CAP) if LEG in t or os.path.dirname(BIP) in t]
         check("B14: no path of the original project nor of the source left in the capsule",
               not leaks, leaks)
-        capdoc = read_json(os.path.join(CAP, "capsule.json"))
+        capdoc = read_json(os.path.join(CAP, "capsule.objekat"))
         check("BUG3 the copy keeps snapEnabled (false)", capdoc.get("snapEnabled") is False,
               capdoc.get("snapEnabled"))
         check("BUG3 the copy keeps the viewport, as it is in memory",
@@ -764,7 +764,7 @@ try:
         HIDDEN = LEG + "-hidden"
         os.rename(LEG, HIDDEN)
         try:
-            cmd("project.open", path=os.path.join(CAP, "capsule.json"))
+            cmd("project.open", path=os.path.join(CAP, "capsule.objekat"))
             cmd("wait_idle", timeout_ms=30000)
             check("B14: capsule reopened with the original gone — missing_files empty",
                   cmd("project.missing_files")["path_count"] == 0)

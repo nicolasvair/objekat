@@ -2,7 +2,8 @@ import Foundation
 
 // MARK: - Session format notice
 
-/// What a project manifest (`<name>.json`) holds, written AT THE HEAD of the file (the
+/// What a project manifest (`<name>.objekat`, or `<name>.json` for one written before
+/// 25 September 2026 — the same JSON either way, @see SessionFile) holds, written AT THE HEAD of the file (the
 /// `_readme` key) and served
 /// by the `project.schema` command.
 ///
