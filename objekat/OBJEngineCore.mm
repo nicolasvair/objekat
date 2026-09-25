@@ -4584,6 +4584,15 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 }
 
 - (void)tickPluginStateReasserts {
+    // Pas pendant un chargement de projet : on attend -endBulkLoad. Les respirations du chargement
+    // (EditViewModel+ProjectLoad) laissent tourner ce minuteur ENTRE deux instanciations, et
+    // l'ensureContextAllocated ci-dessous préparait alors les plugins déjà créés en plein milieu du
+    // chargement. Or UADx Opal ne s'instancie JAMAIS (boucle dans son propre code, thread principal
+    // occupé à 100 %) quand un UADx PolyMAX est déjà préparé — reproduit hors chargement (PolyMAX,
+    // play, puis Opal), y compris sur une version antérieure. PERREO WUB 3 restait donc bloqué
+    // sur « UADx Opal ». Attendre la fin du chargement rétablit l'ordre d'avant les respirations :
+    // tout est créé, PUIS tout est préparé. Les ticks ne sont pas décomptés pendant l'attente.
+    if (_bulkLoadInhibitor) return;
     // Rien ne prépare les plugins tant que le graphe de lecture n'est pas alloué — et il ne l'est
     // qu'au premier play. Tant qu'on attend un état, on force l'allocation : c'est exactement ce
     // que fait `play`, sans démarrer le transport.
