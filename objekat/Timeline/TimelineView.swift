@@ -35,9 +35,28 @@ private struct StickyToViewportTop<Content: View>: View {
     var body: some View { content.offset(y: anchor.y) }
 }
 
+/// The red playhead line — the only view of the timeline that reads the playhead, so that a
+/// tick redraws this line and nothing else (@see TimelineView.playheadPosition).
+private struct PlayheadLine: View {
+    let position: () -> Double
+    let pixelsPerSecond: Double
+    let isPlaying: Bool
+    let height: CGFloat
+    let top: CGFloat
+    var body: some View {
+        Rectangle()
+            .fill(Color.red.opacity(isPlaying ? 0.85 : 0.45))
+            .frame(width: 1.5, height: height)
+            .offset(x: position() * pixelsPerSecond - 0.75, y: top)
+    }
+}
+
 struct TimelineView: View {
     var viewModel: EditViewModel
-    var playheadPosition: Double = 0
+    /// A READER, not a value: passed by value, each tick of the playhead (20 per second) rebuilt
+    /// the whole body — every block of the project — to move one line; on a 1 250-object project
+    /// that was ~70 % of the main thread during playback. Only `PlayheadLine` calls it.
+    var playheadPosition: () -> Double = { 0 }
     var selectionCursor: Double = 0
     var isPlaying: Bool = false
     /// Playback suspended (⇧space): the playhead stays where it is and resuming starts from there.
@@ -569,10 +588,9 @@ struct TimelineView: View {
                 // While paused (⇧space), the playhead stays where playback stopped — that is where it
                 // will start again — but in a muted red to say 'stopped'.
                 if isPlaying || isPaused {
-                    Rectangle()
-                        .fill(Color.red.opacity(isPlaying ? 0.85 : 0.45))
-                        .frame(width: 1.5, height: canvasHeight - rulerHeight)
-                        .offset(x: playheadPosition * pixelsPerSecond - 0.75, y: rulerHeight)
+                    PlayheadLine(position: playheadPosition, pixelsPerSecond: pixelsPerSecond,
+                                 isPlaying: isPlaying, height: canvasHeight - rulerHeight,
+                                 top: rulerHeight)
                         .allowsHitTesting(false)
                         .zIndex(2.7)   // above the piano rolls (2.55) so as to stay visible
                 }
