@@ -220,9 +220,6 @@ struct StemStripsToolbarView: View {
     private var compactMinWidth: CGFloat? {
         contentSize.width > 0 ? min(contentSize.width, Self.compactFloorWidth) : nil
     }
-    private var compactHeight: CGFloat? {
-        contentSize.height > 0 ? contentSize.height : nil
-    }
 
     /// COMPRESSIBLE and never greedy: the frame lets the bar take up to its content's natural
     /// width and no more (a horizontal scroll view on its own would swallow every point the
@@ -243,7 +240,9 @@ struct StemStripsToolbarView: View {
         }, action: { _, newValue in
             overflow = newValue
         })
-        .frame(height: compactHeight)
+        // The row's own height, and never more: a horizontal scroll view is otherwise greedy on
+        // BOTH axes, and before the first measurement it would take height from the timeline.
+        .fixedSize(horizontal: false, vertical: true)
         .frame(minWidth: compactMinWidth, idealWidth: compactMaxWidth, maxWidth: compactMaxWidth)
         .overlay(alignment: .leading) {
             if overflow.leading { overflowHint(.leading) }
@@ -334,7 +333,9 @@ struct StemStripsToolbarView: View {
 /// Read off the scroll view's geometry. Half a point of tolerance: a scroll resting exactly on an
 /// edge can report a sub-pixel remainder, and a chevron flickering over nothing would be worse
 /// than none.
-private struct StemBarOverflow: Equatable {
+/// `nonisolated` + `Sendable`: it is built inside `onScrollGeometryChange`'s transform, off the
+/// main actor (@see the same reason on `WorkspaceTabBar`'s geometry values).
+private nonisolated struct StemBarOverflow: Equatable, Sendable {
     var leading: Bool = false
     var trailing: Bool = false
 

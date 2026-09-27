@@ -127,6 +127,11 @@ struct TransportView: View {
                 .font(.system(size: 10, weight: .medium))
                 .controlSize(.small)
                 .help(L("transport.snap.help"))
+                // Never truncated: a button-style Toggle can shrink, and it would give way ALONGSIDE
+                // the Spacer that measures the bar's density — the label would read '…' before the
+                // first level fired, and the gauge would read the window's width instead of the
+                // content's (@see densityProbe).
+                .fixedSize()
 
             Picker(noLabel, selection: $viewModel.gridMode) {
                 Text(L("transport.grid.time")).tag(GridMode.time)
