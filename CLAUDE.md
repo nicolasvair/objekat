@@ -1590,13 +1590,15 @@ What has landed since mid-August, in order:
   time; `test_tab_reorder.swift` 38 and `test_waveform_peaks.swift` 96 pass; `scenario_tabs.py` 58,
   `scenario_export_preview.py` 62 (the solo's export+RMS block included), `scenario_families.py` 191,
   all headless; Spotlight types a saved `.objekat` as `org.labelpeche.objekat.session`, so the
-  Info.plist merge holds. **A defect found, NOT fixed**: the binary exec'd DIRECTLY (not through
-  LaunchServices) opens NO window at all, even with no argument — `main` before the merge opens one
-  launched the same way, and `open -n objekat.app` does open one. The prime suspect is
-  `CFBundleDocumentTypes`: with a document type declared, AppKit seems to wait for the launch's
-  Apple event before asking for the untitled window, and a bare exec sends none. It may reach
-  Xcode's ⌘R; to be read there first. Until then, UI-mode test launches go through
-  `open -n … --args --api --no-recent --socket=…`. And `project.save_as` over the API takes its
+  Info.plist merge holds. **A cold launch by the Finder WORKS** (27 September, Release in
+  `/Applications`): `open` on a `.objekat` with the app closed puts up one window on that project,
+  a second file lands in a new tab, re-opening the first switches to its tab. The first failure seen
+  by hand was LaunchServices still pointing the type at a deleted scratch build — a claim on a
+  document type follows whatever bundle registered last, so a build in a temporary folder makes
+  the Finder's double-click break the day that folder goes (`lsregister -u` it, `-f` the real one).
+  A "no window when the binary is exec'd directly" seen on 26 September did NOT reproduce the next
+  day, Debug or Release, with or without `CFBundleDocumentTypes`; the likeliest reading is the first
+  launches of a freshly signed binary (@see the per-build TCC prompt), not proven. And `project.save_as` over the API takes its
   path LITERALLY (no `.objekat` appended) — the machine's door, consistent, worth knowing.
 
 ### What is owed
