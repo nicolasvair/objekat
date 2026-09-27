@@ -280,7 +280,7 @@ extension TimelineView {
 
     /// One frame of the gesture. Returns false when no crossfade drag is running.
     @discardableResult
-    func handleCrossfadeDrag(_ value: DragGesture.Value, phase: DragPhase) -> Bool {
+    func handleCrossfadeDrag(_ value: CanvasDrag, phase: DragPhase) -> Bool {
         guard var state = crossfadeDrag else { return false }
 
         // The vertical, measured against the ROW and not in pixels — the same origin as a fade's,

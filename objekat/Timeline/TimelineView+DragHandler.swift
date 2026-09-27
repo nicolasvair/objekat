@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct MoveDragState {
     var ids: Set<UUID>
@@ -359,9 +360,64 @@ struct ObjectMarkerDragState {
 
 enum DragPhase { case changed, ended }
 
+/// What the canvas's drag handlers read of a gesture — the three fields of `DragGesture.Value`
+/// they use, and nothing else. A type of our own because a `DragGesture.Value` cannot be built:
+/// the drag has to be REPLAYED when the view scrolls under a hand that has not moved
+/// (@see CanvasDragScrollFollow), and that replay is a value SwiftUI never sent.
+struct CanvasDrag {
+    var startLocation: CGPoint
+    var location: CGPoint
+    var translation: CGSize
+
+    init(_ value: DragGesture.Value) {
+        startLocation = value.startLocation
+        location = value.location
+        translation = value.translation
+    }
+
+    /// The same hand over content that has slid by `delta` under it. The start stays where it was
+    /// in the content (it is the point grabbed), so the translation grows by exactly as much.
+    func scrolled(by delta: CGSize) -> CanvasDrag {
+        var copy = self
+        copy.location.x += delta.width
+        copy.location.y += delta.height
+        copy.translation.width += delta.width
+        copy.translation.height += delta.height
+        return copy
+    }
+}
+
+/// Scrolling while dragging: one hand holds an object, the other scrolls the view (the wheel, or
+/// two fingers on a touch surface), and the object FOLLOWS — it stays under the hand, moving to
+/// whatever lane and instant now pass beneath it. The gesture's coordinates are the CONTENT's, so a
+/// scroll under a hand that has not moved is a move all the same; but no event says so, a drag
+/// only hearing from the mouse. So the last drag value is kept, and replayed shifted by the scroll
+/// each time the view moves (@see TimelineView.followScrollDuringDrag). The next real event
+/// arrives already in the scrolled content's coordinates, and agrees.
+/// A reference and not observed state: written on every frame of a drag, read by nothing on screen.
+final class CanvasDragScrollFollow {
+    var last: CanvasDrag?
+    /// The scroll offset `last` was read at.
+    var lastOffset: CGPoint = .zero
+    /// The scroll offset now, mirrored from the ScrollView's geometry.
+    var offset: CGPoint = .zero
+}
+
 extension TimelineView {
 
-    func handleCanvasDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleCanvasDrag(_ value: CanvasDrag, phase: DragPhase) {
+        // Remembered for a scroll that might come while the hand holds still (@see
+        // CanvasDragScrollFollow). Only for the drags that PLACE something under the hand: the
+        // Volume, Pan and Send tools read the travel as an amount, and a scroll would change the
+        // value; the ruler and the marker band are pinned to the viewport and do not scroll with
+        // the content at all.
+        if phase == .changed, followsScroll(startingAt: value.startLocation) {
+            scrollFollow.last = value
+            scrollFollow.lastOffset = scrollFollow.offset
+        } else {
+            scrollFollow.last = nil
+        }
+
         // A drag does not always start with a tap, so the keyboard is given back here too
         // (@see handleCanvasTap). Called on every frame and not just the first, there being no
         // 'began' phase here: it costs nothing, the function returning at once when there is
@@ -1372,6 +1428,30 @@ extension TimelineView {
     /// nothing can be slipped: the caller then resumes its normal course (drawing a new range).
     /// The gesture is taken on the UPPER band: a bare canvas or a block's upper half. ⌥ on an
     /// object's BODY is still a copy of that object — what one grabs decides.
+    private func followsScroll(startingAt start: CGPoint) -> Bool {
+        switch viewModel.activeTool {
+        case .toolVolume, .toolPan, .toolAux: return false
+        default: break
+        }
+        return !viewModel.soloKeyHeld
+            && !rulerBandContains(start)
+            && !markerBandContains(start)
+            && markerBandDrag == nil
+    }
+
+    /// The view has scrolled: if a drag is held, replay it over the content that slid under the
+    /// hand (@see CanvasDragScrollFollow).
+    func followScrollDuringDrag() {
+        guard let last = scrollFollow.last else { return }
+        // A drag the system cancelled never says `.ended`: without the button still down, a later
+        // scroll would replay a gesture nobody is making any more.
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { scrollFollow.last = nil; return }
+        let delta = CGSize(width: scrollFollow.offset.x - scrollFollow.lastOffset.x,
+                           height: scrollFollow.offset.y - scrollFollow.lastOffset.y)
+        guard delta.width != 0 || delta.height != 0 else { return }
+        handleCanvasDrag(last.scrolled(by: delta), phase: .changed)
+    }
+
     func beginSlipDrag(clips: [SoundObject]) -> Bool {
         guard !clips.isEmpty else { return false }
         viewModel.pushUndo()
@@ -1598,7 +1678,7 @@ extension TimelineView {
 
     /// Cutting by dragging: the gesture's direction decides which side is kept (right = keep the
     /// left). With no clear direction, it is the click's plain cut.
-    func handleCutDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleCutDrag(_ value: CanvasDrag, phase: DragPhase) {
         if cutDrag == nil {
             guard phase == .changed else { return }
             guard let hit = cutTargets(at: value.startLocation), !hit.ids.isEmpty else { return }
@@ -1659,7 +1739,7 @@ extension TimelineView {
 
     // MARK: - Volume drag
 
-    func handleVolumeDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleVolumeDrag(_ value: CanvasDrag, phase: DragPhase) {
         if volumeDrag == nil {
             guard phase == .changed else { return }
             let p = value.startLocation
@@ -1731,7 +1811,7 @@ extension TimelineView {
 
     // MARK: - Pan drag
 
-    func handlePanDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handlePanDrag(_ value: CanvasDrag, phase: DragPhase) {
         if panDrag == nil {
             guard phase == .changed else { return }
             let p = value.startLocation
@@ -1854,7 +1934,7 @@ extension TimelineView {
         return nil
     }
 
-    func handleSendDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleSendDrag(_ value: CanvasDrag, phase: DragPhase) {
         if sendDrag == nil {
             guard phase == .changed else { return }
             guard let hit = sendRowHit(at: value.startLocation) else { return }
@@ -1906,7 +1986,7 @@ extension TimelineView {
     /// Everything is applied LIVE to the model, with ONE undo pushed at the first movement that
     /// changes something. No preview state: a marker is a hairline and a row is 17 px, so there is
     /// nothing here worth the second geometry a preview would mean keeping in step.
-    func handleMarkerBandDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleMarkerBandDrag(_ value: CanvasDrag, phase: DragPhase) {
         if markerBandDrag == nil {
             guard phase == .changed, pixelsPerSecond > 0,
                   let z = markerBandZone(at: value.startLocation),
@@ -2001,7 +2081,7 @@ extension TimelineView {
     /// edge would be pushed behind it, where it is deliberately neither drawn nor clickable, and a
     /// mark that vanishes under the hand moving it has no way back but ⌘Z. It stops at the edge
     /// instead; a trim is what puts a mark behind one.
-    func handleObjectMarkerDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleObjectMarkerDrag(_ value: CanvasDrag, phase: DragPhase) {
         if objectMarkerDrag == nil {
             guard phase == .changed, pixelsPerSecond > 0,
                   case .objectMarker(let oid, let mid)? = objectMarkerHit(at: value.startLocation),
@@ -2078,7 +2158,7 @@ extension TimelineView {
     /// SWAP two buses, and a swap replayed on every frame would have the pair flickering past each
     /// other all the way down the timeline. So the gesture previews and the drop commits — one
     /// undo point, pushed only for a move that really happens.
-    func handleInfiniteBusDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleInfiniteBusDrag(_ value: CanvasDrag, phase: DragPhase) {
         guard var state = infiniteBusDrag else { return }
         let dl = Int((Double(value.translation.height) / laneStep).rounded())
         state.targetDisplayLane = max(0, state.originDisplayLane + dl)
@@ -2098,7 +2178,7 @@ extension TimelineView {
 
     /// Moving a comment, or cropping it by one of its ends. Live, one undo for the gesture — the
     /// same shape as the band's drag above.
-    func handleCommentDrag(_ value: DragGesture.Value, phase: DragPhase) {
+    func handleCommentDrag(_ value: CanvasDrag, phase: DragPhase) {
         if commentDrag == nil {
             guard phase == .changed, pixelsPerSecond > 0,
                   let z = commentZone(at: value.startLocation),

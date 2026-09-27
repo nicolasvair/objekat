@@ -194,6 +194,8 @@ struct TimelineView: View {
     @State var waveformCache = WaveformCache()
     @State var lastTapInfo: (time: Date, location: CGPoint) = (.distantPast, .zero)
     @State var moveDrag: MoveDragState? = nil
+    /// A drag held while the view scrolls (@see CanvasDragScrollFollow).
+    @State var scrollFollow = CanvasDragScrollFollow()
     @State var resizeDrag: ResizeDragState? = nil
     @State var trimDrag: TrimDragState? = nil
     @State var fadeDrag: FadeDragState? = nil
@@ -1008,8 +1010,8 @@ struct TimelineView: View {
             .onTapGesture(coordinateSpace: .local) { handleCanvasTap(at: $0) }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 3, coordinateSpace: .local)
-                    .onChanged { handleCanvasDrag($0, phase: .changed) }
-                    .onEnded   { handleCanvasDrag($0, phase: .ended)   }
+                    .onChanged { handleCanvasDrag(CanvasDrag($0), phase: .changed) }
+                    .onEnded   { handleCanvasDrag(CanvasDrag($0), phase: .ended)   }
             )
             .overlay(
                 HoverTracker { pos in
@@ -1062,12 +1064,16 @@ struct TimelineView: View {
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, x in
             scrollAnchor.x = x
             viewModel.viewScrollX = Double(x)
+            scrollFollow.offset.x = x
+            followScrollDuringDrag()
             refreshCullWindow()     // it only moves once per notch → it almost never invalidates
             relaxStickyDuration()   // back inside the content → the canvas can shrink
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
             scrollAnchor.y = y
             viewModel.viewScrollY = Double(y)
+            scrollFollow.offset.y = y
+            followScrollDuringDrag()
         }
         .background(GeometryReader { geo in
             Color(nsColor: .controlBackgroundColor)
