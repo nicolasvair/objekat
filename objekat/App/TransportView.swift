@@ -24,6 +24,17 @@ struct TransportView: View {
     /// exact combination — plain and ⇧ arrows are left to `onKeyPress` below.
     @State private var bpmCommandArrowMonitor: Any?
 
+    /// How much the bar gives up to fit a narrow window (@see ToolbarDensity). Changed ONLY by
+    /// `reconcileDensity`, one level per geometry change, from what the bar measures of itself.
+    @State private var density: ToolbarDensity = .full
+    /// What each level was measured to need. A reference on purpose: it is written on every layout
+    /// that changes the bar's content, and nothing on screen reads it — an observed value would
+    /// invalidate the bar for a number only the next measurement looks at.
+    @State private var densityMemo = ToolbarDensityMemo()
+    /// The bar's own coordinate space, in which the Spacer's two edges are read (@see densityProbe).
+    /// `nonisolated`: read inside `onGeometryChange`'s `@Sendable` closure.
+    private nonisolated static let barSpace = "transportBar"
+
     private func commitBPM() {
         if let v = TempoText.parse(bpmText) {
             // applyTempo: clamps, rounds, pushes the undo and marks the project as modified.
@@ -98,11 +109,15 @@ struct TransportView: View {
                 .fixedSize()
                 .frame(minWidth: 52, alignment: .leading)
 
-            Text(verbatim: "/ \(formatPosition(totalDuration))")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .fixedSize()
-                .frame(minWidth: 60, alignment: .leading)
+            // The total is the first thing of substance to go (level 3): the playhead's own time
+            // beside it is what one reads while working, the length of the project one can see.
+            if density < .noTotalTime {
+                Text(verbatim: "/ \(formatPosition(totalDuration))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+                    .frame(minWidth: 60, alignment: .leading)
+            }
 
             Divider().frame(height: 20)
 
@@ -193,28 +208,72 @@ struct TransportView: View {
 
             Divider().frame(height: 20)
 
-            ToolPickerButtons(viewModel: viewModel)
+            ToolPickerButtons(viewModel: viewModel, initialsOnly: density >= .toolInitials)
 
-            ZoomDragHandles(viewModel: viewModel)
+            ZoomDragHandles(viewModel: viewModel, waveformIconOnly: density >= .waveformIconOnly)
 
             Divider().frame(height: 20)
 
             // Stem mixer (INC 1 VU + INC 2 FX): one strip per bus (Main + stems), each with a live
             // VU and an FX chain popover (the signal view). layoutPriority so that the strips keep
             // their natural width (otherwise the greedy Picker squeezes and truncates them).
-            StemStripsToolbarView(viewModel: viewModel)
+            // Compact at the last level only: a number and a VU per strip, in a scroll view that
+            // takes at most its natural width and gives way below it — which is what guarantees the
+            // bar fits at that level whatever the stem count.
+            StemStripsToolbarView(viewModel: viewModel, compact: density >= .compactStems)
                 .layoutPriority(1)
 
-            Spacer()
+            densityProbe
 
             // Audio settings (device / sample rate / buffer): an icon at the far RIGHT of the
             // toolbar. The menu is rebuilt every time it opens → devices plugged in while running
             // appear (see AudioSettingsMenu).
             AudioSettingsMenu(viewModel: viewModel)
         }
+        .coordinateSpace(.named(Self.barSpace))
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    // MARK: Density — the bar gives way to a narrow window
+    //
+    // The Spacer IS the gauge. Its minimum length is ZERO so that it is always the first thing to
+    // give way: while it is wider than nothing, everything left of it sits at its natural width,
+    // so its left edge is exactly what the current level NEEDS (recorded, @see
+    // ToolbarDensityMemo); once it has shrunk to nothing, the bar is out of room at this level.
+    // Its right edge says what is AVAILABLE to the left part whatever the level — the audio menu
+    // and the padding on its right never change with the level, so they cancel out of every
+    // comparison, and both numbers come from ONE measurement, never two read at different moments.
+    //
+    // Why not breakpoints: what the bar needs depends on the project (how many stems, their names,
+    // the tempo's digits) and on the language, so any fixed width is wrong somewhere. And why not
+    // `.fixedSize()` on the left part to read its natural width: the window is sized
+    // `.contentMinSize`, so a fixed-size bar would become the WINDOW's minimum width — it could
+    // never be narrowed enough to ask for the next level at all.
+    //
+    // The measurement is STAMPED with the level the body was built at (`stamp`, a copy taken here
+    // rather than read from the state inside the closure, which would read the NEW level): right
+    // after a level change, a measurement of the previous layout must not decide a second step.
+    private var densityProbe: some View {
+        let stamp = density
+        return Spacer(minLength: 0)
+            .onGeometryChange(for: ToolbarDensityProbe.self, of: { proxy in
+                let frame = proxy.frame(in: .named(Self.barSpace))
+                return ToolbarDensityProbe(minX: frame.minX, maxX: frame.maxX, level: stamp)
+            }, action: { probe in
+                reconcileDensity(with: probe)
+            })
+    }
+
+    /// One level at most per measurement; the next one arrives with the next layout, stamped.
+    /// No animation: the controls changing width must not be tweened while the bar measures them.
+    private func reconcileDensity(with probe: ToolbarDensityProbe) {
+        guard probe.level == density,
+              let next = densityMemo.nextLevel(from: density, probe: probe) else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { density = next }
     }
 
     private func formatPosition(_ seconds: Double) -> String { Self.formatPosition(seconds) }
@@ -340,6 +399,9 @@ private struct LockedDragSurface: NSViewRepresentable {
 
 private struct ZoomDragHandles: View {
     @Bindable var viewModel: EditViewModel
+    /// Level 2 of the bar's density: the waveform pill drops its dB value and takes the width of
+    /// its two neighbours. The value stays one drag away — and the waveform itself shows it.
+    let waveformIconOnly: Bool
 
     private let minPPS: Double = 1
     private let maxPPS: Double = 200000
@@ -403,17 +465,21 @@ private struct ZoomDragHandles: View {
 
     // MARK: The waveform pill — icon plus dB value in a single frame (one control).
     // Drag/scroll = waveform zoom (clamped to whole dB); double click = reset to 0 dB.
+    // Icon only when the bar is short of room (@see ToolbarDensity.waveformIconOnly), 22 pt wide
+    // like the two handles beside it.
     private var waveformHandle: some View {
         ZStack {
             HStack(spacing: 4) {
                 Image(systemName: "waveform")
                     .font(.system(size: 11, weight: .medium))
-                Text(verbatim: "\(Int(viewModel.waveformDisplayDB)) dB")
-                    .font(.system(size: 10, weight: .medium))
-                    .monospacedDigit()
+                if !waveformIconOnly {
+                    Text(verbatim: "\(Int(viewModel.waveformDisplayDB)) dB")
+                        .font(.system(size: 10, weight: .medium))
+                        .monospacedDigit()
+                }
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, waveformIconOnly ? 0 : 6)
 
             LockedDragSurface(
                 axis: .vertical,
@@ -435,7 +501,7 @@ private struct ZoomDragHandles: View {
                 onDoubleClick: { viewModel.waveformDisplayDB = 0; waveformDBAccum = 0 }
             )
         }
-        .frame(width: 62, height: 18)
+        .frame(width: waveformIconOnly ? 22 : 62, height: 18)
         .background(Color.secondary.opacity(0.08))
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
         .cornerRadius(3)
@@ -477,6 +543,10 @@ private struct ZoomDragHandles: View {
 
 private struct ToolPickerButtons: View {
     @Bindable var viewModel: EditViewModel
+    /// Level 1 of the bar's density: each button keeps only its bold initial — which IS the tool's
+    /// key, so what is left is still the thing one presses. The Solo button follows: it sits in the
+    /// same row and reads as one of them. The tooltips keep naming the tools in full.
+    let initialsOnly: Bool
 
     private struct ToolItem {
         let key: String
@@ -497,10 +567,13 @@ private struct ToolPickerButtons: View {
         ToolItem(key: "C", label: "Cut",  tool: .toolCut,       help: L("tool.cut.help")),
     ]
 
-    /// The button's label: the initial in bold (= the key), the rest in semibold.
-    private static func toolLabel(_ label: String) -> Text {
-        Text(String(label.prefix(1))).font(.system(size: 10, weight: .bold))
-            + Text(String(label.dropFirst())).font(.system(size: 10, weight: .medium))
+    /// The button's label: the initial in bold (= the key), the rest in semibold — or the
+    /// initial alone when the bar is short of room. `Text(String)` and not a literal: the name is
+    /// not a translation key (@see the catalogue trap in CLAUDE.md).
+    private static func toolLabel(_ label: String, initialOnly: Bool) -> Text {
+        let initial = Text(String(label.prefix(1))).font(.system(size: 10, weight: .bold))
+        if initialOnly { return initial }
+        return initial + Text(String(label.dropFirst())).font(.system(size: 10, weight: .medium))
     }
 
     var body: some View {
@@ -512,7 +585,7 @@ private struct ToolPickerButtons: View {
                     viewModel.isToolPermanent = true
                     viewModel.heldToolKeyCode = nil
                 } label: {
-                    Self.toolLabel(item.label)
+                    Self.toolLabel(item.label, initialOnly: initialsOnly)
                         .fixedSize()
                         .padding(.horizontal, 6)
                         .frame(minWidth: 18, minHeight: 18, maxHeight: 18)
@@ -553,7 +626,7 @@ private struct ToolPickerButtons: View {
                     viewModel.beginHeldSolo()
                 }
             } label: {
-                Self.toolLabel("Solo")
+                Self.toolLabel("Solo", initialOnly: initialsOnly)
                     .fixedSize()
                     .padding(.horizontal, 6)
                     .frame(minWidth: 18, minHeight: 18, maxHeight: 18)
@@ -571,5 +644,87 @@ private struct ToolPickerButtons: View {
                   ? L("transport.solo.active.help")
                   : L("transport.solo.idle.help"))
         }
+    }
+}
+
+// MARK: - Toolbar density
+
+/// How much the transport bar gives up to fit a narrow window, in the order it gives it up. The
+/// levels are CUMULATIVE — each one keeps everything the previous ones gave up — and ordered from
+/// the least to the most costly to the reader: tool names shorten to the key they already carry in
+/// bold, the waveform zoom loses its value, the project's total time goes, and last the stems keep
+/// only their number and VU (their bar scrolling for the rest, @see StemStripsToolbarView).
+/// `nonisolated`: carried inside the measurement `onGeometryChange` makes off the main actor.
+private nonisolated enum ToolbarDensity: Int, Comparable, Sendable {
+    case full, toolInitials, waveformIconOnly, noTotalTime, compactStems
+
+    static func < (lhs: ToolbarDensity, rhs: ToolbarDensity) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// One reading of the bar's Spacer, in the bar's coordinate space, stamped with the level the bar
+/// was laid out at (@see TransportView.densityProbe).
+private nonisolated struct ToolbarDensityProbe: Equatable, Sendable {
+    /// Where the left part ends — its natural width, as long as the Spacer is wider than nothing.
+    let minX: CGFloat
+    /// How far the left part could go: everything right of it does not depend on the level.
+    let maxX: CGFloat
+    let level: ToolbarDensity
+
+    /// The Spacer is wider than nothing, so nothing to its left is compressed.
+    var hasSlack: Bool { maxX - minX > 0.5 }
+}
+
+/// What each level NEEDS (the right edge of the left part at its natural width), and the rule that
+/// walks the levels from it. Two rules, and the records are what keep them from fighting:
+///   - out of room (the Spacer at nothing) → one level UP, remembering that the level just left
+///     needs at least the room it had — it may be compressed already, so that is a floor;
+///   - room for the level below, with a margin → one level DOWN. With no record for it, trust:
+///     if it overflows, the rule above sends the bar straight back up, and the record now exists.
+/// A level only steps down past its record plus the margin, and only steps up at zero room, so a
+/// given width has ONE answer and the bar cannot oscillate frame to frame.
+/// The records below the current level would go stale when the content changes (a stem added or
+/// renamed, a tempo with more digits), so a change seen AT a level — two uncompressed readings in a
+/// row there, the window's width playing no part in either — shifts them by the same amount. Exact
+/// up to `noTotalTime`, where every level draws the stems alike; approximate from `compactStems`,
+/// whose strips are narrower than the full ones. What is still wrong then costs one frame: stepping
+/// down overflows and steps straight back up, the record raised.
+private final class ToolbarDensityMemo {
+    private var needed: [ToolbarDensity: CGFloat] = [:]
+    /// The levels whose record was READ uncompressed, as opposed to a floor laid while stepping up.
+    private var exact: Set<ToolbarDensity> = []
+    /// The last uncompressed reading, to tell a content change from a level change.
+    private var lastReading: (level: ToolbarDensity, need: CGFloat)?
+    /// The room a level below must have beyond its record before the bar returns to it: enough that
+    /// the Spacer is visibly more than nothing there, so the first rule does not fire on arrival.
+    private let margin: CGFloat = 8
+    /// How far a FLOOR is raised each time it proves too low (a step down that overflowed at once).
+    /// Raising it by the room merely seen would make a window widened pixel by pixel bounce on
+    /// every pixel until the real need is reached — a window opened already narrow has only
+    /// floors. Overshooting costs nothing lasting: the level is regained a few points later, and
+    /// read exactly from then on.
+    private let floorStep: CGFloat = 32
+
+    func nextLevel(from current: ToolbarDensity, probe: ToolbarDensityProbe) -> ToolbarDensity? {
+        if probe.hasSlack {
+            // Uncompressed: this IS what the current level needs — kept fresh as the content
+            // changes (a stem renamed, a tempo with more digits).
+            if let last = lastReading, last.level == current, last.need != probe.minX {
+                let delta = probe.minX - last.need
+                for (level, need) in needed where level < current { needed[level] = need + delta }
+            }
+            lastReading = (level: current, need: probe.minX)
+            needed[current] = probe.minX
+            exact.insert(current)
+            guard let lower = ToolbarDensity(rawValue: current.rawValue - 1) else { return nil }
+            if let need = needed[lower], probe.maxX < need + margin { return nil }
+            return lower
+        }
+        guard let higher = ToolbarDensity(rawValue: current.rawValue + 1) else { return nil }
+        if exact.contains(current) {
+            needed[current] = max(needed[current] ?? 0, probe.maxX)
+        } else {
+            needed[current] = max(needed[current] ?? 0, probe.maxX + floorStep)
+        }
+        return higher
     }
 }
