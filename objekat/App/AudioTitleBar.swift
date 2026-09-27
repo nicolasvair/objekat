@@ -102,15 +102,16 @@ struct AudioSettingsMenu: View {
     // MARK: Bindings (read = the engine's truth, write = apply and restart if needed)
 
     private var deviceBinding: Binding<String> {
-        // The STABLE source of truth = the chosen device, persisted through AudioOutputDevice (and not
-        // the engine read live in the `get`). Reading the engine live made the selection fail: at the
-        // slightest difference between the name the engine returns and a tag in the list, the Picker
-        // showed no ticked row and the click 'did not take'. On the very first launch (the persisted
-        // choice being empty), we fall back on the engine's current device to tick the right row.
+        // Ticks the device the engine ACTUALLY has open — read from `AudioDeviceStatus`, the
+        // SAME snapshot the window's subtitle and `audio.status` read, never
+        // `AudioOutputDevice.shared` (the WISH). After an unplug, JUCE falls back to another
+        // device and keeps it even once the original is replugged (@see
+        // plan_titlebar_audio_device.md, the adjacent defect it flags): ticking the requested
+        // name there would show a choice that is not what plays, the very thing the title bar
+        // exists to stop happening. `AudioOutputDevice.shared.name` is the fallback only before
+        // any change message has ever landed (`snapshot.name == nil`, or `--no-audio`).
         Binding(get: {
-                    let chosen = AudioOutputDevice.shared.name
-                    if !chosen.isEmpty { return chosen }
-                    return viewModel.engine?.currentOutputDeviceName() ?? ""
+                    AudioDeviceStatus.shared.snapshot.name ?? AudioOutputDevice.shared.name
                 },
                 set: { name in
                     AudioOutputDevice.shared.name = name       // publishes and persists (previews aligned)
