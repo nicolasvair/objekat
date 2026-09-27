@@ -492,6 +492,11 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
 @implementation OBJSoundObjectData
 @end
 
+// MARK: - OBJAudioDeviceSnapshot
+
+@implementation OBJAudioDeviceSnapshot
+@end
+
 static NSString* const kPluginCacheKey = @"OBJPluginListXMLCache";
 
 // MARK: - LINK : mirroir de paramètres entre instances liées
@@ -660,6 +665,18 @@ struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDa
 struct OBJLatencyWatcher : public juce::Timer {
     std::function<void()> onTick;
     void timerCallback() override { if (onTick) onTick(); }
+};
+
+// Veilleur du device audio : un second écouteur sur LE MÊME ChangeBroadcaster que
+// te::DeviceManager (device ouvert/fermé/redémarré, taux ou buffer changés, liste de devices
+// changée — @see plan_titlebar_audio_device.md §1). changeListenerCallback tourne déjà sur le
+// message thread (= le thread principal sur macOS) : pas de dispatch_async ici.
+struct OBJDeviceChangeWatcher : public juce::ChangeListener {
+    __unsafe_unretained OBJEngineCore* owner = nil;   // même convention que les autres veilleurs
+    void changeListenerCallback(juce::ChangeBroadcaster*) override {
+        jassert(juce::MessageManager::existsAndIsCurrentThread());
+        if (owner.onAudioDeviceChanged) owner.onAudioDeviceChanged();
+    }
 };
 
 // Timer générique à callback (même patron que OBJLatencyWatcher ci-dessus).
@@ -1059,6 +1076,10 @@ struct OBJRenderChain {
     std::unique_ptr<OBJLatencyWatcher>                    _latencyWatcher;
     double                                                _lastLatencySignature;  // <0 = non initialisée
 
+    // Veilleur du device audio (@see OBJDeviceChangeWatcher) : diffuse -onAudioDeviceChanged
+    // sur tout changement du juce::AudioDeviceManager (device, taux, buffer, liste).
+    std::unique_ptr<OBJDeviceChangeWatcher>               _deviceWatcher;
+
     // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
     // -endBulkLoad. Tant qu'il vit, l'Edit n'alloue aucun nouveau graphe de lecture — chaque
     // compileUserRackForObjectID: appelé pendant la file de plugins différés se contente de
@@ -1134,6 +1155,12 @@ static BOOL gOBJAudioDisabled = NO;
         // la carte son, ce qui est le but : faire tourner plusieurs instances, ou une machine de
         // test sans sortie audio.
         _engine->getDeviceManager().initialise(0, gOBJAudioDisabled ? 0 : 2);
+        // Veilleur du device audio : posé APRÈS initialise() (@see plan_titlebar_audio_device.md
+        // §Step 1) — un changement diffusé avant qu'il existe (la restauration au démarrage)
+        // est lu une fois, directement, par le premier -refresh de AudioDeviceStatus.
+        _deviceWatcher = std::make_unique<OBJDeviceChangeWatcher>();
+        _deviceWatcher->owner = self;
+        _engine->getDeviceManager().deviceManager.addChangeListener(_deviceWatcher.get());
         [self logDefaultWaveOutput];
         if (getenv("OBJ_AUDIO_PROBE") != nullptr) {
             auto probe = std::make_unique<OBJAudioProbe>(_engine->getDeviceManager());
@@ -1184,6 +1211,8 @@ static BOOL gOBJAudioDisabled = NO;
 }
 
 - (void)dealloc {
+    if (_deviceWatcher)
+        _engine->getDeviceManager().deviceManager.removeChangeListener(_deviceWatcher.get());
     if (_latencyWatcher)      _latencyWatcher->stopTimer();      // coupe les timers avant
     if (_stateReassertTimer)  _stateReassertTimer->stopTimer();  // destruction des ivars
     if (_pluginParkingTimer)  _pluginParkingTimer->stopTimer();
@@ -6132,6 +6161,28 @@ static void objDumpPluginList(te::PluginList& pl,
             dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
         });
     }
+}
+
+// Le device RÉELLEMENT en usage. Deux pièges que ne referment pas les getters ci-dessus
+// (@see plan_titlebar_audio_device.md §1) :
+//  - `--no-audio` : getCurrentAudioDevice() est non nul et getName() rend un vrai nom bien que
+//    rien ne soit ouvert (le device est CRÉÉ, jamais OUVERT) → il faut tester isOpen().
+//  - un device ouvert mais arrêté (mort, ou dans le trou d'un redémarrage) : ouvert, ne joue pas.
+- (OBJAudioDeviceSnapshot*)audioDeviceSnapshot {
+    OBJAudioDeviceSnapshot* s = [OBJAudioDeviceSnapshot new];
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* dev = dm.getCurrentAudioDevice();
+    if (dev == nullptr || !dev->isOpen()) return s;                 // --no-audio, ouverture ratée
+    const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
+    if (outs == 0) return s;                                        // device entrée seule
+    juce::String n = dev->getName(), t = dev->getTypeName();        // locaux nommés (piège toRawUTF8)
+    s.deviceName = [NSString stringWithUTF8String:n.toRawUTF8()];
+    s.deviceType = [NSString stringWithUTF8String:t.toRawUTF8()];
+    s.sampleRate = dev->getCurrentSampleRate();
+    s.bufferSize = dev->getCurrentBufferSizeSamples();
+    s.outputChannels = outs;
+    s.running = dev->isPlaying();
+    return s;
 }
 
 @end

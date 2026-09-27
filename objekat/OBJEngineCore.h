@@ -19,6 +19,19 @@
                                             // la politique du pool (@see trackSlotForKey:).
 @end
 
+// Instantané du device de sortie RÉELLEMENT ouvert par le moteur — jamais la config demandée
+// (AudioDeviceSetup, qui peut différer si JUCE a choisi le taux/buffer le plus proche), jamais
+// le choix persisté de l'utilisateur (AudioOutputDevice.shared, qui survit à un débranchement).
+// C'est l'unique vérité pour un affichage (titre de fenêtre, API).
+@interface OBJAudioDeviceSnapshot : NSObject
+@property (nonatomic, copy, nullable) NSString* deviceName;   // nil = aucun device de sortie OUVERT
+@property (nonatomic, copy, nullable) NSString* deviceType;   // "CoreAudio"…
+@property (nonatomic) double    sampleRate;                    // Hz, 0 si deviceName == nil
+@property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
+@property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
+@property (nonatomic) BOOL      running;                        // dev->isPlaying()
+@end
+
 @interface OBJEngineCore : NSObject
 
 /// Coupe l'ouverture de la carte son pour TOUTE instance créée ensuite (`--no-audio`).
@@ -603,6 +616,8 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)setOutputDevice:(NSString*)name;
 // Nom du device de sortie ACTUELLEMENT utilisé par le moteur (nil si aucun device ouvert).
 // Sert à initialiser le picker de la toolbar sur la vérité moteur (et non le 1er de la liste).
+// MENTIRA sous --no-audio (le device existe, non ouvert) : pour un AFFICHAGE, lire
+// -audioDeviceSnapshot, seul à tester isOpen().
 - (NSString* _Nullable)currentOutputDeviceName;
 
 // Réglages audio avancés du device COURANT (menu « paramètres audio » de la toolbar).
@@ -614,6 +629,16 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (NSArray<NSNumber*>*)availableBufferSizes;       // frames
 - (NSInteger)currentBufferSize;                    // frames (0 si aucun device)
 - (void)setBufferSize:(NSInteger)frames;
+
+// Le device de sortie RÉELLEMENT en usage — jamais la config demandée, jamais le choix persisté.
+// @see OBJAudioDeviceSnapshot. Thread principal.
+- (OBJAudioDeviceSnapshot* _Nonnull)audioDeviceSnapshot;
+
+// Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
+// changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices
+// changée). Coalescé par JUCE. Ne porte rien : le récepteur relit -audioDeviceSnapshot
+// (une vérité, un lecteur).
+@property (nonatomic, copy, nullable) void (^onAudioDeviceChanged)(void);
 
 @end
 
