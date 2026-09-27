@@ -183,11 +183,6 @@ struct ContentView: View {
             // the project's name and its file (the proxy icon, ⌘-click on the title), and a
             // plugin's editor opened later can no longer be mistaken for it.
             viewModel.adoptDocumentWindow()
-            // Audio device status ('device — 44.1k — 512') in the title bar, on the right.
-            // DISABLED for now: the title-bar accessory does not show reliably under this SwiftUI
-            // WindowGroup (installation succeeds but nothing is visible). The code
-            // (AudioTitlebarStatus / AudioStatusTitleView) is kept for a later attempt.
-            // AudioTitlebarStatus.install(viewModel: viewModel)
         }
     }
 
