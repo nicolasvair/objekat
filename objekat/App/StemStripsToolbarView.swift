@@ -14,6 +14,12 @@ import UniformTypeIdentifiers
 
 struct StemStripsToolbarView: View {
     @Bindable var viewModel: EditViewModel
+    /// The toolbar's LAST degradation step on a narrow window (@see TransportView): each strip
+    /// keeps only its number and its VU dot, and the whole bar — '+' included — goes inside a
+    /// horizontal scroll view that can be squeezed below its natural width. The stem's name is
+    /// then read in the strip's tooltip, which already carries it. `false` is the bar exactly as
+    /// it always was: no scroll view, no measurement, nothing added.
+    var compact: Bool = false
 
     @State private var levels: [UUID: Float] = [:]
     @State private var openStemID: UUID? = nil
@@ -46,6 +52,20 @@ struct StemStripsToolbarView: View {
     // @State (and not `let`): the toolbar is rebuilt ~20 times a second by the playhead; a `let`
     // timer would be reset before 0.07 s → it would never fire (a frozen VU).
     @State private var vuPoll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
+    // Compact mode only. `contentSize` is the strips row's NATURAL size, measured inside the
+    // scroll view (where nothing constrains it horizontally): it is what the bar may grow to and
+    // never past, so a wide toolbar does not hand the scroll view empty room to fill. `overflow`
+    // says which edges hide something, two Bools and not the raw offset — the offset moves on
+    // every scrolled frame, the Bools only when an edge is reached or left.
+    @State private var contentSize: CGSize = .zero
+    @State private var overflow = StemBarOverflow()
+    @State private var scrollPosition = ScrollPosition()
+
+    /// The narrowest a compact bar is squeezed to: about one compact strip (the Main's), so the
+    /// bar never collapses to nothing and still says there is a mixer there to scroll.
+    private static let compactFloorWidth: CGFloat = 44
+    /// The width of the fade laid over an edge hiding content.
+    private static let overflowFadeWidth: CGFloat = 18
 
     // The VU's release coefficient (applied on every 0.07 s tick). ~0.1 → a time constant of
     // ≈ 0.7 s: a 'slow' fall of the order of a second, and an immediate rise. VU/PPM ballistics.
@@ -59,12 +79,59 @@ struct StemStripsToolbarView: View {
     private var blinkOn: Bool { (pollTick / 6) % 2 == 0 }
 
     var body: some View {
+        // ONE view carries the VU poll whatever the mode: `bar` is a single conditional view, so
+        // the `onReceive` below is attached once and survives a switch between the two modes
+        // (the timer itself being @State).
+        bar.onReceive(vuPoll) { _ in
+            pollTick &+= 1
+            // VU ballistics (the PPM/VU standard): an almost instant attack — the engine already returns
+            // the MAX since the last read (getAndClear) — and a slow release (a falling average over
+            // ~1 s). Smoothed in the normalised domain (∝ dBFS) = a linear fall in dB.
+            for stem in viewModel.stems {
+                let raw  = viewModel.stemLevel(stem.id)
+                let prev = levels[stem.id] ?? 0
+                levels[stem.id] = raw >= prev ? raw : prev + (raw - prev) * vuReleaseAlpha
+
+                // Clip → latch an alert for any output that really reaches the D/A converter: the MAIN
+                // (general output) and DETACHED stems (routeToMain == false, their own physical output).
+                // A stem routed to the Main does NOT blink: it is summed in internal 32-bit float, where a
+                // momentary overshoot has no consequence — the Main is what will carry the alert if the sum
+                // really clips on the way out.
+                if raw >= clipThreshold,
+                   !stem.muted,
+                   stem.id == viewModel.mainStemID || !stem.routeToMain {
+                    clippedStems.insert(stem.id)
+                }
+            }
+            // Forgets stems deleted since (which avoids a phantom alert).
+            clippedStems.formIntersection(Set(viewModel.stems.map(\.id)))
+        }
+    }
+
+    @ViewBuilder
+    private var bar: some View {
+        if compact {
+            compactBar
+        } else {
+            stripsRow
+        }
+    }
+
+    // MARK: - The strips row (both modes)
+
+    /// The strips and the '+', shared by both modes — the compact one merely wraps it in a scroll
+    /// view. The "stemBar" coordinate space stays on THIS row, hence INSIDE the scroll view in
+    /// compact mode: the strips' frames (`liveFrames`) and the reorder drag's pointer are then both
+    /// read in CONTENT coordinates, which is the one frame `StemReorder` can compare them in — a
+    /// space laid on the scroll view itself would move the frames under the pointer as it scrolls.
+    private var stripsRow: some View {
         HStack(spacing: 4) {
             ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in
                 StemStripButton(
                     stem: stem,
                     isMain: stem.id == viewModel.mainStemID,
                     number: idx < 9 ? idx + 1 : nil,
+                    displayIndex: idx + 1,
                     level: levels[stem.id] ?? 0,
                     isOpen: openStemID == stem.id,
                     isClipping: clippedStems.contains(stem.id),
@@ -72,6 +139,7 @@ struct StemStripsToolbarView: View {
                     isDropTarget: dropTargetStemID == stem.id,
                     dropLinkAt: dropLinksStemID == stem.id ? dropLinkPoint : nil,
                     isBeingDragged: dragStemID == stem.id,
+                    compact: compact,
                     onClearClip: { clippedStems.remove(stem.id) }
                 ) {
                     openStemID = (openStemID == stem.id) ? nil : stem.id
@@ -139,30 +207,84 @@ struct StemStripsToolbarView: View {
         }
         .coordinateSpace(.named("stemBar"))
         .animation(.easeInOut(duration: 0.15), value: previewOrder)
-        .onReceive(vuPoll) { _ in
-            pollTick &+= 1
-            // VU ballistics (the PPM/VU standard): an almost instant attack — the engine already returns
-            // the MAX since the last read (getAndClear) — and a slow release (a falling average over
-            // ~1 s). Smoothed in the normalised domain (∝ dBFS) = a linear fall in dB.
-            for stem in viewModel.stems {
-                let raw  = viewModel.stemLevel(stem.id)
-                let prev = levels[stem.id] ?? 0
-                levels[stem.id] = raw >= prev ? raw : prev + (raw - prev) * vuReleaseAlpha
+    }
 
-                // Clip → latch an alert for any output that really reaches the D/A converter: the MAIN
-                // (general output) and DETACHED stems (routeToMain == false, their own physical output).
-                // A stem routed to the Main does NOT blink: it is summed in internal 32-bit float, where a
-                // momentary overshoot has no consequence — the Main is what will carry the alert if the sum
-                // really clips on the way out.
-                if raw >= clipThreshold,
-                   !stem.muted,
-                   stem.id == viewModel.mainStemID || !stem.routeToMain {
-                    clippedStems.insert(stem.id)
+    // MARK: - Compact mode: a squeezable, scrollable bar
+
+    // The bar's width bounds, pulled out of `compactBar` (the type-checker, again). While nothing
+    // has been measured yet they are nil — the frame then passes the proposal through for that one
+    // pass — rather than 0, which would lay the bar out empty.
+    private var compactMaxWidth: CGFloat? {
+        contentSize.width > 0 ? contentSize.width : nil
+    }
+    private var compactMinWidth: CGFloat? {
+        contentSize.width > 0 ? min(contentSize.width, Self.compactFloorWidth) : nil
+    }
+
+    /// COMPRESSIBLE and never greedy: the frame lets the bar take up to its content's natural
+    /// width and no more (a horizontal scroll view on its own would swallow every point the
+    /// toolbar offers it — and the parent gives this view `.layoutPriority(1)`, so it would be
+    /// offered them first), and squeezes it below that down to about one strip when the window
+    /// is narrow. The height is the row's own, a horizontal scroll view being otherwise free to
+    /// grow vertically too.
+    private var compactBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            stripsRow
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+                    contentSize = size
                 }
-            }
-            // Forgets stems deleted since (which avoids a phantom alert).
-            clippedStems.formIntersection(Set(viewModel.stems.map(\.id)))
         }
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: StemBarOverflow.self, of: { geometry in
+            StemBarOverflow(geometry: geometry)
+        }, action: { _, newValue in
+            overflow = newValue
+        })
+        // The row's own height, and never more: a horizontal scroll view is otherwise greedy on
+        // BOTH axes, and before the first measurement it would take height from the timeline.
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: compactMinWidth, idealWidth: compactMaxWidth, maxWidth: compactMaxWidth)
+        .overlay(alignment: .leading) {
+            if overflow.leading { overflowHint(.leading) }
+        }
+        .overlay(alignment: .trailing) {
+            if overflow.trailing { overflowHint(.trailing) }
+        }
+        // A stem just created lands at the END of the bar, beside the '+': bring that end into
+        // view, so the gesture's result is seen and the '+' stays under the hand for the next one.
+        .onChange(of: viewModel.stems.count) { oldCount, newCount in
+            guard newCount > oldCount else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { scrollPosition.scrollTo(edge: .trailing) }
+        }
+    }
+
+    /// An edge hiding content: the strips fade into the toolbar's own background, and a chevron
+    /// says there is more that way. The fade is deaf to the mouse (the strip under it keeps its
+    /// clicks, drops and right click); the chevron is a button that goes all the way to that end
+    /// — to the '+' on the right, to the Main on the left — which is what one scrolls for.
+    private func overflowHint(_ edge: HorizontalEdge) -> some View {
+        let isLeading = edge == .leading
+        let background = Color(nsColor: .windowBackgroundColor)
+        let stops: [Color] = isLeading ? [background, background.opacity(0)]
+                                       : [background.opacity(0), background]
+        let symbol = isLeading ? "chevron.compact.left" : "chevron.compact.right"
+        let target: Edge = isLeading ? .leading : .trailing
+        return ZStack(alignment: isLeading ? .leading : .trailing) {
+            LinearGradient(colors: stops, startPoint: .leading, endPoint: .trailing)
+                .allowsHitTesting(false)
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) { scrollPosition.scrollTo(edge: target) }
+            } label: {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(width: Self.overflowFadeWidth)
     }
 
     // MARK: - Reordering the bar by drag
@@ -203,6 +325,26 @@ struct StemStripsToolbarView: View {
         guard let from = frozenOrder.firstIndex(where: { $0.id == stem.id }) else { return }
         let target = StemReorder.targetIndex(pointerX: pointerX, frames: frozenFrames, dragged: from)
         viewModel.moveStem(id: stem.id, toIndex: target)
+    }
+}
+
+// MARK: - Which edges of the compact bar hide something
+
+/// Read off the scroll view's geometry. Half a point of tolerance: a scroll resting exactly on an
+/// edge can report a sub-pixel remainder, and a chevron flickering over nothing would be worse
+/// than none.
+/// `nonisolated` + `Sendable`: it is built inside `onScrollGeometryChange`'s transform, off the
+/// main actor (@see the same reason on `WorkspaceTabBar`'s geometry values).
+private nonisolated struct StemBarOverflow: Equatable, Sendable {
+    var leading: Bool = false
+    var trailing: Bool = false
+
+    init() {}
+
+    init(geometry: ScrollGeometry) {
+        let offset = geometry.contentOffset.x
+        leading = offset > 0.5
+        trailing = offset + geometry.containerSize.width < geometry.contentSize.width - 0.5
     }
 }
 
@@ -280,6 +422,9 @@ private struct StemStripButton: View {
     let isMain: Bool
     /// The keyboard shortcut's number (1 = Main, 2 = the 2nd stem…). nil beyond 9.
     let number: Int?
+    /// The strip's POSITION in the bar (1 = Main), for every strip — unlike `number`, which is the
+    /// shortcut's and stops at 9. What the compact strip shows in place of the name.
+    let displayIndex: Int
     let level: Float
     let isOpen: Bool
     /// A stem detached from the Main that has clipped (latched) → a blinking red LED until acknowledged.
@@ -301,6 +446,11 @@ private struct StemStripButton: View {
     /// `StemStripsToolbarView.handleStemDragChanged`): dimmed, with an accent border, while its
     /// PREVIEW slot elsewhere in the bar shows where it would land.
     var isBeingDragged: Bool = false
+    /// The bar's compact mode (@see `StemStripsToolbarView.compact`): the number and the VU dot,
+    /// no name. Everything laid AROUND the row — tint, border, clip LED, maillon — is unchanged,
+    /// and the clip LED still lands on the dot: it is aligned on the trailing edge and `hPadding`,
+    /// neither of which the compact row moves.
+    var compact: Bool = false
     var onClearClip: () -> Void = {}
     let action: () -> Void
 
@@ -339,15 +489,24 @@ private struct StemStripButton: View {
     @ViewBuilder
     private var nameRow: some View {
         HStack(spacing: 5) {
-            if let number {
-                Text(verbatim: "\(number)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            if compact {
+                // The number IS the label here, so it takes the name's weight and its strike-through
+                // rather than the secondary grey of a shortcut reminder.
+                Text(verbatim: "\(displayIndex)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .lineLimit(1)
+                    .strikethrough(stem.muted, color: .secondary)
+            } else {
+                if let number {
+                    Text(verbatim: "\(number)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                Text(isMain ? L("stem.main.name") : stem.name)
+                    .font(.system(size: 11, weight: isMain ? .semibold : .medium))
+                    .lineLimit(1)
+                    .strikethrough(stem.muted, color: .secondary)
             }
-            Text(isMain ? L("stem.main.name") : stem.name)
-                .font(.system(size: 11, weight: isMain ? .semibold : .medium))
-                .lineLimit(1)
-                .strikethrough(stem.muted, color: .secondary)
             // A muted bus (the 'N + M' shortcut): the dot is replaced by a 'muted' icon.
             if stem.muted {
                 Image(systemName: "speaker.slash.fill")
