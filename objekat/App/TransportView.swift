@@ -585,6 +585,10 @@ private struct ToolPickerButtons: View {
         return initial + Text(String(label.dropFirst())).font(.system(size: 10, weight: .medium))
     }
 
+    /// A button's narrowest: a finger's width in initials mode, where a letter alone would leave
+    /// a target of some 19 pt.
+    private var minButtonWidth: CGFloat { initialsOnly ? 26 : 18 }
+
     var body: some View {
         HStack(spacing: 2) {
             ForEach(items, id: \.key) { item in
@@ -597,7 +601,10 @@ private struct ToolPickerButtons: View {
                     Self.toolLabel(item.label, initialOnly: initialsOnly)
                         .fixedSize()
                         .padding(.horizontal, 6)
-                        .frame(minWidth: 18, minHeight: 18, maxHeight: 18)
+                        .frame(minWidth: minButtonWidth, minHeight: 18, maxHeight: 18)
+                        // Rigid: a tool button is a touch target, and the bar gives a density level
+                        // up rather than squeeze one (@see ToolbarDensityProbe.reserve).
+                        .fixedSize(horizontal: true, vertical: false)
                         .background(isActive ? Color.accentColor.opacity(0.25) : Color.clear)
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
@@ -638,7 +645,8 @@ private struct ToolPickerButtons: View {
                 Self.toolLabel("Solo", initialOnly: initialsOnly)
                     .fixedSize()
                     .padding(.horizontal, 6)
-                    .frame(minWidth: 18, minHeight: 18, maxHeight: 18)
+                    .frame(minWidth: minButtonWidth, minHeight: 18, maxHeight: 18)
+                    .fixedSize(horizontal: true, vertical: false)
                     // Yellow and not the tools' accent: solo is NOT a tool, and it is the same yellow as
                     // its button in the inspector (@see ClipMixZoneView.soloButton).
                     .background(soloOn ? Color.yellow.opacity(0.25) : Color.clear)
@@ -679,14 +687,21 @@ private nonisolated struct ToolbarDensityProbe: Equatable, Sendable {
     let maxX: CGFloat
     let level: ToolbarDensity
 
-    /// The Spacer is wider than nothing, so nothing to its left is compressed.
-    var hasSlack: Bool { maxX - minX > 0.5 }
+    /// The room the gauge keeps in hand before the bar gives a level up. Not zero: at zero the
+    /// controls to its left are already being squeezed, and the tool buttons are touch targets —
+    /// they must never be caught at less than their size, even for a frame.
+    static let reserve: CGFloat = 24
+
+    /// The gauge is wider than nothing, so nothing to its left is compressed: `minX` is exact.
+    var isUncompressed: Bool { maxX - minX > 0.5 }
+    /// What the current level needs, reserve included.
+    var need: CGFloat { minX + Self.reserve }
 }
 
 /// What each level NEEDS (the right edge of the left part at its natural width), and the rule that
 /// walks the levels from it. Two rules, and the records are what keep them from fighting:
-///   - out of room (the Spacer at nothing) → one level UP, remembering that the level just left
-///     needs at least the room it had — it may be compressed already, so that is a floor;
+///   - out of room (the gauge under its reserve, or at nothing) → one level UP, remembering the
+///     room the level just left needs — exact inside the reserve, a floor once compressed;
 ///   - room for the level below, with a margin → one level DOWN. With no record for it, trust:
 ///     if it overflows, the rule above sends the bar straight back up, and the record now exists.
 /// A level only steps down past its record plus the margin, and only steps up at zero room, so a
@@ -714,16 +729,21 @@ private final class ToolbarDensityMemo {
     private let floorStep: CGFloat = 32
 
     func nextLevel(from current: ToolbarDensity, probe: ToolbarDensityProbe) -> ToolbarDensity? {
-        if probe.hasSlack {
+        if probe.isUncompressed {
             // Uncompressed: this IS what the current level needs — kept fresh as the content
             // changes (a stem renamed, a tempo with more digits).
-            if let last = lastReading, last.level == current, last.need != probe.minX {
-                let delta = probe.minX - last.need
+            if let last = lastReading, last.level == current, last.need != probe.need {
+                let delta = probe.need - last.need
                 for (level, need) in needed where level < current { needed[level] = need + delta }
             }
-            lastReading = (level: current, need: probe.minX)
-            needed[current] = probe.minX
+            lastReading = (level: current, need: probe.need)
+            needed[current] = probe.need
             exact.insert(current)
+            // Inside the reserve: nothing is squeezed yet, and that is the point — the bar gives a
+            // level up BEFORE a control has to shrink, the tool buttons above all.
+            if probe.maxX < probe.need {
+                return ToolbarDensity(rawValue: current.rawValue + 1)
+            }
             guard let lower = ToolbarDensity(rawValue: current.rawValue - 1) else { return nil }
             if let need = needed[lower], probe.maxX < need + margin { return nil }
             return lower
