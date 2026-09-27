@@ -1435,6 +1435,7 @@ final class EditViewModel {
             titledWindow = window
             documentWindowIdentifier = window.identifier
             updateWindowTitle()
+            updateWindowSubtitle()
             return
         }
         guard attempt < 10 else { return }
@@ -1451,6 +1452,43 @@ final class EditViewModel {
         // holding the project, and choosing one opens it in the Finder. Nil as long as nothing
         // has been saved — there is no place to show yet.
         window.representedURL = projectURL
+        // Re-asserted here too: a title change (a tab switch, a Save As) does not itself touch
+        // the subtitle, but AppKit's own redraw of the title area is what makes this the moment
+        // to make sure it still agrees.
+        updateWindowSubtitle()
+    }
+
+    /// The audio device really in use, in grey, on the title's own line
+    /// (`NSWindow.subtitle` — measured to draw inline on a window with no toolbar, @see
+    /// plan_titlebar_audio_device.md §4a). Read from `AudioDeviceStatus.shared`, the SAME object
+    /// `audio.status` answers from: the title can never say something the API does not.
+    func updateWindowSubtitle() {
+        guard let window = documentWindow else { return }   // nil headless: nothing to do
+        let text = AudioDeviceStatus.shared.text
+        if window.subtitle != text { window.subtitle = text }
+    }
+
+    /// DEBUG/SPIKE ONLY (@see plan_titlebar_audio_device.md §4a): every `NSTextField` in the
+    /// window's title-bar chrome (its `NSThemeFrame`, walked whole EXCEPT `contentView` — the
+    /// SwiftUI content, which is not what this is measuring), with its frame converted to WINDOW
+    /// coordinates. Answers whether `NSWindow.subtitle` draws inline to the right of the title
+    /// (one text field's frame beside the other's, same y) or stacked below it (different y) —
+    /// measured rather than guessed, on this exact toolbar-less `WindowGroup` window.
+    func debugTitlebarTextFields() -> [(value: String, x: Double, y: Double, width: Double, height: Double)] {
+        guard let window = documentWindow, let content = window.contentView,
+              let themeFrame = content.superview else { return [] }
+        var found: [(String, Double, Double, Double, Double)] = []
+        func walk(_ view: NSView) {
+            if view === content { return }
+            if let field = view as? NSTextField {
+                let frame = field.convert(field.bounds, to: nil)
+                found.append((field.stringValue, frame.origin.x, frame.origin.y,
+                              frame.width, frame.height))
+            }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(themeFrame)
+        return found
     }
 
     /// Adds a `.clip` object to the engine at its ABSOLUTE position, on its own track.

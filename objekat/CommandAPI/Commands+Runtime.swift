@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // MARK: - Quiescence, batches, jobs and measurement
 
@@ -239,6 +240,32 @@ extension CommandRegistry {
             let paths = Array(vm.referencedAudioPaths)
             preload(paths)
             return .object(["available": .bool(true), "paths": .int(paths.count)])
+        }
+
+        // MARK: debug (spike, @see plan_titlebar_audio_device.md §4a)
+
+        register("debug.titlebar",
+                 summary: """
+                 DEBUG. Every NSTextField found in the window's title-bar chrome, with its frame \
+                 in WINDOW coordinates — used to measure whether NSWindow.subtitle draws inline \
+                 to the right of the title or stacked below it, on this toolbar-less window. \
+                 Empty in headless mode (no window).
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let fields = vm.debugTitlebarTextFields()
+            return .object([
+                "window_title": .stringOrNull(vm.titledWindow?.title),
+                "window_subtitle": .stringOrNull(vm.titledWindow?.subtitle),
+                "all_windows": .array(NSApp.windows.map {
+                    .object(["title": .string($0.title), "visible": .bool($0.isVisible),
+                             "titled": .bool($0.styleMask.contains(.titled))])
+                }),
+                "fields": .array(fields.map {
+                    .object(["value": .string($0.value), "x": .number($0.x), "y": .number($0.y),
+                             "width": .number($0.width), "height": .number($0.height)])
+                }),
+            ])
         }
     }
 
