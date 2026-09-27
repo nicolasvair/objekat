@@ -262,7 +262,11 @@ struct TransportView: View {
     // after a level change, a measurement of the previous layout must not decide a second step.
     private var densityProbe: some View {
         let stamp = density
-        return Spacer(minLength: 0)
+        // NOT a `Spacer`: wrapped in a modifier it is no longer a direct child of the HStack, loses
+        // the stack's axis, and becomes flexible VERTICALLY too — the bar grew to ~200 pt tall. A
+        // clear view flexible in width only is the same gauge with no second axis.
+        return Color.clear
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: 0)
             .onGeometryChange(for: ToolbarDensityProbe.self, of: { proxy in
                 let frame = proxy.frame(in: .named(Self.barSpace))
                 return ToolbarDensityProbe(minX: frame.minX, maxX: frame.maxX, level: stamp)
