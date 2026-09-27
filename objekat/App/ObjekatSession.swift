@@ -78,6 +78,12 @@ final class ObjekatSession {
         // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
         // left the transport showing ▶ although the sound had already stopped.
         viewModel.projectLoadWillBeginHook = { [weak self] in self?.stop() }
+        // The device really open — the title bar's grey line and `audio.status` read the same
+        // object. The hook is set BEFORE attaching: `attach`'s own first `refresh()` must reach
+        // it too, to cover the startup device (restored from Settings.xml) with no extra call.
+        // Runs for the windowed AND the headless launch; `attach` is idempotent.
+        AudioDeviceStatus.shared.onChange = { [weak viewModel] in viewModel?.updateWindowSubtitle() }
+        AudioDeviceStatus.shared.attach(engine)
         guard playheadTimer == nil else { return }
         // `.common` mode — and not the default one: without it, the playhead freezes while tracking
         // a menu or scrolling. It was already the mode of the view's `Timer.publish`, and keeping it
