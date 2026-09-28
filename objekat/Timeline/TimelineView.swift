@@ -541,6 +541,28 @@ struct TimelineView: View {
                 )
                 .zIndex(2.66)
 
+                // What a third-party script shows over the objects (words, zones). Above the marks,
+                // below the comments, and never a hit: @see ScriptOverlayLayer
+                // Always mounted, on purpose: reading `overlays` HERE (an `if` on it) would make every
+                // rewrite of a script's zones re-evaluate the whole timeline. The layer reads it itself.
+                do {
+                    ScriptOverlayLayer(
+                        store: viewModel.scriptOverlays,
+                        entries: viewModel.laneEntries,
+                        pixelsPerSecond: pixelsPerSecond,
+                        rulerHeight: rulerHeight,
+                        laneStep: laneStep,
+                        blockHeight: blockHeight,
+                        scrollOffsetX: cullScrollX,
+                        viewportWidth: cullViewportWidth,
+                        previews: objectMarkerPreviews,
+                        width: totalDuration * pixelsPerSecond,
+                        height: canvasHeight
+                    )
+                    .allowsHitTesting(false)
+                    .zIndex(2.665)
+                }
+
                 if !viewModel.comments.isEmpty {
                     CommentsOverlay(
                         comments: viewModel.visibleComments,

@@ -45,6 +45,11 @@ struct ScriptOverlay: Equatable, Sendable {
     var texts: [OverlayText] = []
     /// Sorted by `start`.
     var zones: [OverlayZone] = []
+    /// The longest span of a zone / a word: what a binary search on the START needs to know to
+    /// step back far enough to catch an element that began before the visible window and is still
+    /// running through it. Computed once, at the door.
+    var maxZoneSpan: Double = 0
+    var maxTextSpan: Double = 0
 }
 
 @Observable final class ScriptOverlayStore {
@@ -66,6 +71,8 @@ struct ScriptOverlay: Equatable, Sendable {
         if clearing.contains("zones") { o.zones = [] }
         if let texts { o.texts = texts.sorted { $0.start < $1.start } }
         if let zones { o.zones = zones.sorted { $0.start < $1.start } }
+        o.maxZoneSpan = o.zones.reduce(0) { max($0, $1.end - $1.start) }
+        o.maxTextSpan = o.texts.reduce(0) { max($0, $1.end - $1.start) }
         o.rev += 1
         overlays[object] = o
         return o
@@ -107,4 +114,19 @@ enum CommandCallContext {
     @TaskLocal static var connectionID: UUID?
     static let execOwner = UUID()
     static var caller: UUID { connectionID ?? execOwner }
+}
+
+// MARK: - Binary search on a sorted-by-start array
+
+extension Array {
+    /// The index of the first element whose `start` (read by `key`) is >= `t` — the array being
+    /// sorted by that key. `count` when none is.
+    func firstIndex(startingAtOrAfter t: Double, key: (Element) -> Double) -> Int {
+        var lo = 0, hi = count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if key(self[mid]) < t { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
 }
