@@ -409,9 +409,9 @@ try:
         cmd("project.new")
 
         def expected_label(text):
-            """The grey field's OWN stringValue: 4b lays "— " + the audio text at its start
-            (never the project name, which stays entirely AppKit's own, in `window.title`)."""
-            return ("— " + text) if text else None
+            """The grey field's OWN stringValue: the audio text alone, clamped right (never the
+            project name, which stays entirely AppKit's own, in `window.title`)."""
+            return text if text else None
 
         st = None
         deadline = time.time() + 3.0
@@ -420,7 +420,7 @@ try:
             if st.get("window_subtitle") == expected_label(st.get("text")):
                 break
             time.sleep(0.1)
-        check("window_subtitle == '— ' + text once the window has settled",
+        check("window_subtitle == text once the window has settled",
               st and st.get("window_subtitle") == expected_label(st and st.get("text")),
               (st and st.get("window_subtitle"), st and expected_label(st.get("text"))))
 
@@ -428,8 +428,8 @@ try:
         dbg = step("debug.titlebar", lambda: cmd("debug.titlebar"))
         if dbg and dbg.get("title_field_frame") and dbg.get("label_frame"):
             tf, lf = dbg["title_field_frame"], dbg["label_frame"]
-            check("the grey field starts at or after the title's own trailing edge",
-                  lf["x"] >= tf["x"] + tf["width"] - 0.5,
+            check("the grey field starts at least 16 pt past the title's own trailing edge",
+                  lf["x"] >= tf["x"] + tf["width"] + 16 - 0.5,
                   (lf["x"], tf["x"] + tf["width"]))
             title_mid = tf["y"] + tf["height"] / 2.0
             label_mid = lf["y"] + lf["height"] / 2.0
@@ -533,6 +533,9 @@ try:
             time.sleep(0.3)
             dbg_narrow = cmd("debug.titlebar")
             lw = dbg_wide.get("label_frame") or {}
+            check("clamped right: the label ends within 20 pt of the window's trailing edge",
+                  lw.get("x", 0) + lw.get("width", 0) >= wide.get("width", 0) - 20,
+                  (lw, wide.get("width")))
             ln = dbg_narrow.get("label_frame") or {}
             check("the label's position followed the resize",
                   lw.get("x") != ln.get("x") or lw.get("width") != ln.get("width"),

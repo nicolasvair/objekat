@@ -1658,7 +1658,9 @@ What has landed since mid-August, in order:
   the project's name with it. So `updateWindowSubtitle` now sets `window.subtitle` to `""` and
   never anything else, and the device text lives in a SECOND field laid by hand beside the
   title's own: `Shared/TitleBarDeviceLabel.swift`, white at 25 % (tuned for a dark title bar), the title's own font,
-  not selectable, no background, found (never guessed) by the same `NSTextField` walk
+  not selectable, no background — CLAMPED to the title bar's RIGHT edge since (asked for on
+  screen: a status, not part of the name), no leading "— ", giving way leftwards no closer than
+  16 pt to the title's end — found (never guessed) by the same `NSTextField` walk
   `debug.titlebar` already used to measure 4a. **Fails silent** if that walk cannot find a title
   field at all (a future macOS whose title-bar internals differ) — nothing drawn beats something
   misplaced over the project's own name.

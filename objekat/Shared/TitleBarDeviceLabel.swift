@@ -2,7 +2,7 @@
 //  TitleBarDeviceLabel.swift
 //  objekat
 //
-//  The grey "— device — 48k — 512" that follows the project's name in the title bar.
+//  The grey "device — 48k — 512" at the trailing edge of the title bar.
 //
 
 import AppKit
@@ -68,7 +68,7 @@ final class TitleBarDeviceLabel {
         rebuild(for: window)
     }
 
-    /// The audio text, exactly as it should read (without the leading "— "). Re-lays out only
+    /// The audio text, exactly as it should read. Re-lays out only
     /// when it actually changed — the project's own "write only on change" discipline.
     func setText(_ newText: String) {
         guard text != newText else { return }
@@ -244,10 +244,13 @@ final class TitleBarDeviceLabel {
         // every number after it is in `chrome`'s own space, label included.
         let titleInChrome = title.superview?.convert(title.frame, to: chrome) ?? title.frame
 
-        let gap: CGFloat = 6
-        let originX = titleInChrome.maxX + gap
+        // CLAMPED RIGHT, apart from the title (asked for on screen: the device is a status,
+        // not part of the project's name). It hugs the trailing bound and only ever gives way
+        // leftwards as far as `gap` past the title's end — below that it truncates, then hides.
+        let gap: CGFloat = 16
+        let minX = titleInChrome.maxX + gap
         let trailing = Self.trailingBound(in: chrome, after: titleInChrome, excluding: label)
-        let available = trailing - originX
+        let available = trailing - minX
 
         let minWidth: CGFloat = 24
         guard available >= minWidth else {
@@ -256,11 +259,12 @@ final class TitleBarDeviceLabel {
         }
 
         label.font = title.font
-        label.stringValue = "— " + text
+        label.stringValue = text
+        label.alignment = .right
         let natural = Self.naturalWidth(of: label)
         let width = min(natural, available)
         // Baseline-aligned with the title: same y, same height, both now in `chrome`'s space.
-        label.frame = NSRect(x: originX, y: titleInChrome.origin.y,
+        label.frame = NSRect(x: trailing - width, y: titleInChrome.origin.y,
                               width: width, height: titleInChrome.height)
         label.isHidden = false
     }
@@ -286,6 +290,6 @@ final class TitleBarDeviceLabel {
             if nearest == nil || frame.minX < nearest! { nearest = frame.minX }
         }
         if let nearest { return nearest - pad }
-        return chrome.bounds.maxX - 8
+        return chrome.bounds.maxX - 12
     }
 }
