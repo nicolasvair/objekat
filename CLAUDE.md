@@ -1601,6 +1601,125 @@ What has landed since mid-August, in order:
   launches of a freshly signed binary (@see the per-build TCC prompt), not proven. And `project.save_as` over the API takes its
   path LITERALLY (no `.objekat` appended) — the machine's door, consistent, worth knowing.
 
+- **The title bar carries the audio device really in use** (28 September 2026, ON THE BRANCH
+  `feature/titlebar-audio-device`, NOT on `main`) — «selected sound card — 44k — 512», in grey,
+  to the right of the project's name, on the SAME line: `NSWindow.subtitle`, measured rather
+  than assumed to draw inline on this toolbar-less window (a debug-only `debug.titlebar` command
+  walked the title bar's `NSTextField`s to confirm it, kept afterwards as a low-cost permanent
+  diagnostic). One source of truth for all THREE readers — the title, the wrench menu's tick,
+  and a script — `AudioDeviceStatus` (`@MainActor @Observable`, "write only on change," the
+  project's own rule), fed by `OBJEngineCore.audioDeviceSnapshot()` which tests the device's
+  `isOpen()` rather than trusting the requested setup, and refreshed on a real
+  `juce::AudioIODeviceCallback`/`ChangeBroadcaster` message (`OBJDeviceChangeWatcher`), never on
+  a timer. The wrench menu's own bug — it ticked the REQUESTED device, not the one JUCE actually
+  opened — is fixed the same way, reading the same snapshot. A first, disabled attempt
+  (`AudioStatusTitleView`/`AudioTitlebarStatus`, a titlebar accessory + a 0.5 s poll) was removed
+  outright rather than left commented out.
+  New family `audio.*` (`status`, `devices`, `set_buffer_size`, `set_sample_rate`,
+  `set_device`) — `status.live` re-reads the engine at the instant of the call, so a script can
+  assert it agrees with the cached fields the title bar shows, instead of taking either on
+  trust; the three `set_*` touch the REAL hardware and rewrite
+  `~/Library/objekat/Settings.xml`, exactly like the wrench menu, and a script using them is
+  responsible for restoring what it changed. `app.info` now reads the same snapshot instead of
+  the engine's raw getters (`output_device`, `sample_rate`, `buffer_size`, new `audio_running`).
+  **Two findings, both left open on purpose, out of this plan's scope, documented rather than
+  fixed.** (1) `--no-audio` does not reliably keep the device closed: once
+  `~/Library/objekat/Settings.xml` holds a saved device with no explicit channel-count attribute
+  (`useDefaultOutputChannels`, the ordinary case after any real run of the app), Tracktion's own
+  `DeviceManager::loadSettings()` opens the real device regardless of the 0-channel request —
+  traced into JUCE/Tracktion's channel negotiation, not fully resolved there, and not an engine
+  patch this plan's scope covers. `audio.status`/`app.info` stay honest about it either way (they
+  report what the engine actually opened), and `tools/scenario_audio_device.py`'s phase A detects
+  the condition and adapts its assertions instead of failing on a machine where it is present.
+  (2) At pure launch, before any command that touches edit state, neither `window.title` nor
+  `window.subtitle` has settled — SwiftUI's `WindowGroup` has not yet ceded the title to our own
+  assignment (`window.title` alone reproduces it: it reads the bundle name, "objekat", until
+  then). The FIRST state-touching command (`project.new`, `object.add`, a dirty flag…) makes
+  `updateWindowTitle()` reassert both, and they hold from then on — a pre-existing trait of the
+  title mechanism this work piggybacks on, not a defect of the subtitle itself; a real session
+  always has a `project.new` at launch before any script attaches. `scenario_audio_device.py`'s
+  phase C triggers that one command before reading "at start," rather than asking the app to
+  settle with nothing having touched it yet.
+  Verified with no screen: a Debug build, no new warning against the baseline;
+  `tools/test_audio_status_text.swift` 21/21 (locale-independent, the `11025 → "11.03k"` rounding
+  pinned by measurement); `tools/scenario_audio_device.py` 42/42 across its three phases, each on
+  its own fresh instance (phase B backs up and restores `~/Library/objekat/Settings.xml` byte for
+  byte — confirmed, its mtime is untouched by the run); i18n 465 keys, three languages, nothing
+  missing, no orphans; no window on the phase-A headless pid.
+  **Not seen, not felt**: every pixel of it — the grey subtitle itself under a real eye, whether
+  the name or the subtitle truncates first in a narrow window, the wrench menu's tick following a
+  device change made from Audio MIDI Setup, and the ~0.3 s the retry logic allows a device that
+  needs a moment to report itself running after a switch.
+
+- **The device text goes grey after all — 4b, not 4a** (28 September 2026, SAME BRANCH, the same
+  day, on the user's own reading of the entry above: "can this part of the text be greyed").
+  4a's own measurement is exactly why it could not: `NSWindow.subtitle` fuses onto the title's
+  OWN `NSTextField`, one colour for the whole line — greying the device half would have greyed
+  the project's name with it. So `updateWindowSubtitle` now sets `window.subtitle` to `""` and
+  never anything else, and the device text lives in a SECOND field laid by hand beside the
+  title's own: `Shared/TitleBarDeviceLabel.swift`, white at 25 % (tuned for a dark title bar), the title's own font,
+  not selectable, no background — CLAMPED to the title bar's RIGHT edge since (asked for on
+  screen: a status, not part of the name), no leading "— ", giving way leftwards no closer than
+  16 pt to the title's end — found (never guessed) by the same `NSTextField` walk
+  `debug.titlebar` already used to measure 4a. **Fails silent** if that walk cannot find a title
+  field at all (a future macOS whose title-bar internals differ) — nothing drawn beats something
+  misplaced over the project's own name.
+  Re-laid on every door that can move it, no polling anywhere: the audio text itself
+  (`AudioDeviceStatus`'s own on-change hook), the title field's `frameDidChangeNotification`
+  (best-effort — AppKit does not document posting it for a private view, so this is belt and
+  braces, not the only mechanism), and the window's own resize/key notifications; a title/dirty
+  change, a tab switch and a Save As already ran through `updateWindowTitle()` →
+  `updateWindowSubtitle()` and needed nothing new. Entering or leaving full screen re-discovers
+  the title field from scratch rather than merely relaying out — the chrome that holds it can be
+  REPLACED by that transition, not just moved. Never drawn past the trailing edge: the available
+  width stops at the nearest sibling view to the right of the title (a native tab-bar control, a
+  full-screen button once shown) or, finding none, a fixed inset from the chrome's own width —
+  truncated with an ellipsis inside that space, hidden entirely below a floor width.
+  **The bug this found, worth keeping in mind for anywhere else a hand-laid sibling view joins
+  AppKit's own title-bar chrome**: `title.frame` is in the coordinate space of the title field's
+  OWN immediate superview, a small private AppKit container — NOT the outer theme frame
+  (`chrome`) the label is actually added to (chosen so a sibling control elsewhere in the chrome
+  is still found for the trailing-edge check). Laying the label out with `title.frame`'s raw
+  numbers, unconverted, put it near the WINDOW'S BOTTOM instead of beside the title — caught by
+  `debug.titlebar`'s own geometry, not by eye, which is the whole reason that command carries a
+  title-field frame beside the label's. Fixed with one `convert(_:to:)` at the top of
+  `relayout()`, done once, every number after it in `chrome`'s own space, label included.
+  New `debug.titlebar` fields (DEBUG only): `label_frame`, `label_hidden`, `label_color`,
+  `label_text`, `title_field_frame` — `window_subtitle` itself now stays `""` always, by design.
+  New `debug.resize_window` (DEBUG only): the one way a script can drive the narrow-window
+  behaviour without a hand on the window. **A limitation found using it, and it is the debug
+  harness's, not the label's**: `window.setFrame` genuinely changes `NSWindow.frame` (its own
+  readback confirms the exact width asked, every time), but AppKit's PRIVATE title-bar centring
+  does not always re-run its own layout off a purely PROGRAMMATIC resize the way it does for a
+  hand-driven one — measured moving without fully re-centring for the new width. Worked around
+  in the scenario by driving the SAME computation deterministically through the title's own
+  length instead (a very long project name leaves no room for the label — hides it — a short one
+  brings it back), which is what actually proves the trailing-edge floor rather than a resize
+  whose result this harness cannot fully control.
+  `audio.status.window_subtitle` now answers the label's own displayed string (leading separator
+  included, `"— Device — 48k — 512"`), never `NSWindow.subtitle` — `null` when nothing is shown,
+  whether from the fail-silent guard or the floor-width hide, which is the honest answer to "what
+  does the hand actually see" rather than "what was asked for."
+  Verified with no screen: Debug AND Release build, **zero new warnings** — confirmed by an exact
+  clean-build recount either side of this work (1550 warnings both times, not merely an
+  incremental diff), `OBJEngineCore.h`/`.mm` untouched throughout (confirmed by an empty `git
+  diff`, the file the lead's own nullability-completeness trap lives in); six
+  `MainActor.assumeIsolated` wrappers needed around the new `NotificationCenter` closures, the
+  same pattern already used by `EditViewModel+MissingFiles.swift`'s own watch.
+  `tools/test_audio_status_text.swift` 21/21; `tools/scenario_audio_device.py` grown to **62/62**
+  across its three phases (18 new assertions: the label's geometry against the title's own frame,
+  its colour, a tab switch, a Save As, a resize, the trailing-edge floor forced by title length);
+  i18n 465 keys unchanged, no orphans; `~/Library/objekat/Settings.xml` confirmed byte-identical
+  (MD5) before and after a full run of phase B, not merely mtime.
+  A disk-full mid-session (a clean rebuild used the machine's last free megabytes) was resolved by
+  clearing other projects' `DerivedData` — none of `objekat`'s own working tree or the user's files
+  — and cost only time, not any lost work (the in-progress changes were safely under `git stash`
+  throughout).
+  **Not seen, not felt**: every pixel of it, again — the grey field beside a real title under a
+  real eye, whether the gap and the separator read right, the ellipsis truncating gracefully
+  rather than looking cut off, and the floor-width hide as it would actually happen under a real
+  hand-driven resize rather than this harness's own workaround for it.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

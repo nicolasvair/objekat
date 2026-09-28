@@ -247,6 +247,7 @@ final class CommandRegistry {
         registerMarkerCommands()
         registerViewCommands()
         registerTabCommands()
+        registerAudioCommands()
     }
 
     private func registerIntrospection() {

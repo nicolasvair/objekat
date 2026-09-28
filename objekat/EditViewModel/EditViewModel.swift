@@ -1435,6 +1435,7 @@ final class EditViewModel {
             titledWindow = window
             documentWindowIdentifier = window.identifier
             updateWindowTitle()
+            updateWindowSubtitle()
             return
         }
         guard attempt < 10 else { return }
@@ -1451,7 +1452,67 @@ final class EditViewModel {
         // holding the project, and choosing one opens it in the Finder. Nil as long as nothing
         // has been saved — there is no place to show yet.
         window.representedURL = projectURL
+        // Re-asserted here too: a title change (a tab switch, a Save As) does not itself touch
+        // the subtitle, but AppKit's own redraw of the title area is what makes this the moment
+        // to make sure it still agrees.
+        updateWindowSubtitle()
     }
+
+    /// The one owner of the grey device label (@see `TitleBarDeviceLabel`) for this window's
+    /// whole life — a document has exactly one titled window (@see `titledWindow`), so one
+    /// instance is all this ever needs.
+    @ObservationIgnored private let audioDeviceLabel = TitleBarDeviceLabel()
+
+    /// The audio device really in use, in grey, beside the title (`TitleBarDeviceLabel`, a
+    /// SECOND text field laid by hand — @see plan_titlebar_audio_device.md §4a/4b: measured
+    /// that `NSWindow.subtitle` fuses onto the title's own field, one colour for both, which is
+    /// why the audio text no longer lives there). Read from `AudioDeviceStatus.shared`, the SAME
+    /// object `audio.status` answers from: the title can never say something the API does not.
+    func updateWindowSubtitle() {
+        guard let window = documentWindow else { return }   // nil headless: nothing to do
+        // Never anything but empty here again — 4a's inline fusion is exactly what made it
+        // ungreyable on its own.
+        if window.subtitle != "" { window.subtitle = "" }
+        audioDeviceLabel.attach(to: window)
+        audioDeviceLabel.setText(AudioDeviceStatus.shared.text)
+    }
+
+    /// What the grey label ACTUALLY shows right now — `nil` when nothing is (no title field
+    /// found, or the window too narrow to fit even a truncated word of it). This is what
+    /// `audio.status`'s `window_subtitle` answers: never the text that was asked for, if the
+    /// hand would see nothing of it.
+    var displayedAudioDeviceText: String? { audioDeviceLabel.displayedText }
+
+    #if DEBUG
+    /// DEBUG/SPIKE ONLY (@see plan_titlebar_audio_device.md §4a): every `NSTextField` in the
+    /// window's title-bar chrome (its `NSThemeFrame`, walked whole EXCEPT `contentView` — the
+    /// SwiftUI content, which is not what this is measuring), with its frame converted to WINDOW
+    /// coordinates. Answers whether `NSWindow.subtitle` draws inline to the right of the title
+    /// (one text field's frame beside the other's, same y) or stacked below it (different y) —
+    /// measured rather than guessed, on this exact toolbar-less `WindowGroup` window.
+    func debugTitlebarTextFields() -> [(value: String, x: Double, y: Double, width: Double, height: Double)] {
+        guard let window = documentWindow, let content = window.contentView,
+              let themeFrame = content.superview else { return [] }
+        var found: [(String, Double, Double, Double, Double)] = []
+        func walk(_ view: NSView) {
+            if view === content { return }
+            if let field = view as? NSTextField {
+                let frame = field.convert(field.bounds, to: nil)
+                found.append((field.stringValue, frame.origin.x, frame.origin.y,
+                              frame.width, frame.height))
+            }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(themeFrame)
+        return found
+    }
+
+    /// DEBUG/measurement only, @see `TitleBarDeviceLabel.debugInfo()`: the grey label's own
+    /// frame, colour and hidden state, plus the title field's frame it is laid beside.
+    func debugAudioDeviceLabel() -> TitleBarDeviceLabel.DebugInfo {
+        audioDeviceLabel.debugInfo()
+    }
+    #endif
 
     /// Adds a `.clip` object to the engine at its ABSOLUTE position, on its own track.
     /// Includes volume/pan/fades/speed/reverse/plugins. Does NOT handle membership of a

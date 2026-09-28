@@ -116,6 +116,29 @@
         }
       }
     },
+    "audio.status.stopped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "stopped"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "detenida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arrêtée"
+          }
+        }
+      }
+    },
     "automation.curveReadout": {
       "extractionState": "manual",
       "localizations": {

@@ -2,11 +2,12 @@
 //  AudioTitleBar.swift
 //  objekat
 //
-//  Audio status in the title bar (on the right): 'Audio device — 44.1k — 512' in grey,
-//  followed by the button that opens the audio settings (device / sample rate / buffer).
-//  The label polls the engine continuously so as to ALWAYS reflect the device and settings
-//  really open (and not a frozen snapshot). The list of audio devices is rebuilt every time
-//  the menu opens → newly plugged devices appear on the click.
+//  The 'audio settings' menu (the wrench, in the toolbar): device / sample rate / buffer size.
+//  The device really in use, shown to the user, is the window's subtitle now
+//  (@see EditViewModel.updateWindowSubtitle, AudioDeviceStatus) — the first attempt at it lived
+//  HERE, as a title-bar accessory view that polled the engine every 0.5 s; it never showed
+//  reliably under this SwiftUI WindowGroup and was removed 28 September 2026
+//  (@see plan_titlebar_audio_device.md).
 //
 
 import SwiftUI
@@ -36,53 +37,6 @@ final class AudioDeviceWatcher {
         ) { _, _ in
             MainActor.assumeIsolated { AudioDeviceWatcher.shared.generation &+= 1 }
         }
-    }
-}
-
-// MARK: - Status view (title bar, right)
-
-struct AudioStatusTitleView: View {
-    @Bindable var viewModel: EditViewModel
-
-    @State private var deviceName: String = ""
-    @State private var sampleRate: Double = 0
-    @State private var bufferSize: Int = 0
-
-    // A regular poll: the status stays right even if the device or the settings change
-    // outside the app (plugging, unplugging, a system change…).
-    private let poll = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        // The status label only: the settings icon lives in the toolbar
-        // (see TransportView / AudioSettingsMenu).
-        Text(statusText)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 12)
-            .onAppear(perform: refresh)
-            .onReceive(poll) { _ in refresh() }
-    }
-
-    private var statusText: String {
-        guard !deviceName.isEmpty else { return L("audio.device.none") }
-        var parts = [deviceName]
-        if sampleRate > 0 { parts.append(Self.shortRate(sampleRate)) }
-        if bufferSize > 0 { parts.append("\(bufferSize)") }
-        return parts.joined(separator: " — ")
-    }
-
-    private func refresh() {
-        deviceName = viewModel.engine?.currentOutputDeviceName() ?? ""
-        sampleRate = viewModel.engine?.currentSampleRate() ?? 0
-        bufferSize = viewModel.engine.map { Int($0.currentBufferSize()) } ?? 0
-    }
-
-    /// '44.1k', '48k'… (a compact form for the title bar).
-    static func shortRate(_ hz: Double) -> String {
-        let k = hz / 1000
-        return k == k.rounded() ? "\(Int(k))k" : String(format: "%.1fk", k)
     }
 }
 
@@ -148,15 +102,16 @@ struct AudioSettingsMenu: View {
     // MARK: Bindings (read = the engine's truth, write = apply and restart if needed)
 
     private var deviceBinding: Binding<String> {
-        // The STABLE source of truth = the chosen device, persisted through AudioOutputDevice (and not
-        // the engine read live in the `get`). Reading the engine live made the selection fail: at the
-        // slightest difference between the name the engine returns and a tag in the list, the Picker
-        // showed no ticked row and the click 'did not take'. On the very first launch (the persisted
-        // choice being empty), we fall back on the engine's current device to tick the right row.
+        // Ticks the device the engine ACTUALLY has open — read from `AudioDeviceStatus`, the
+        // SAME snapshot the window's subtitle and `audio.status` read, never
+        // `AudioOutputDevice.shared` (the WISH). After an unplug, JUCE falls back to another
+        // device and keeps it even once the original is replugged (@see
+        // plan_titlebar_audio_device.md, the adjacent defect it flags): ticking the requested
+        // name there would show a choice that is not what plays, the very thing the title bar
+        // exists to stop happening. `AudioOutputDevice.shared.name` is the fallback only before
+        // any change message has ever landed (`snapshot.name == nil`, or `--no-audio`).
         Binding(get: {
-                    let chosen = AudioOutputDevice.shared.name
-                    if !chosen.isEmpty { return chosen }
-                    return viewModel.engine?.currentOutputDeviceName() ?? ""
+                    AudioDeviceStatus.shared.snapshot.name ?? AudioOutputDevice.shared.name
                 },
                 set: { name in
                     AudioOutputDevice.shared.name = name       // publishes and persists (previews aligned)
@@ -203,46 +158,3 @@ struct AudioSettingsMenu: View {
         return String(format: "%d — %.1f ms", frames, ms)
     }
 }
-
-// MARK: - Installing the title-bar accessory (right)
-
-/// Installs (once) the title-bar accessory hosting `AudioStatusTitleView` on the main window.
-/// Called from `ContentView.onAppear` — reliable, unlike the old `NSViewRepresentable` laid in
-/// `.background`, whose `viewDidMoveToWindow` never fired (the 0×0 view was never attached), so
-/// that the accessory was never added.
-enum AudioTitlebarStatus {
-    @MainActor
-    static func install(viewModel: EditViewModel, attempt: Int = 0) {
-        // The WindowGroup's window may not exist at the very first onAppear → we try again briefly
-        // (up to ~4 s) until we find a window with a title bar.
-        guard let window = NSApp.windows.first(where: {
-            $0.styleMask.contains(.titled) && $0.contentView != nil
-        }) else {
-            if attempt < 20 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    install(viewModel: viewModel, attempt: attempt + 1)
-                }
-            }
-            return
-        }
-        // Idempotent: do not add the accessory again if it is already there.
-        guard !window.titlebarAccessoryViewControllers.contains(where: {
-            $0 is AudioStatusAccessoryController
-        }) else { return }
-
-        let hosting = NSHostingView(rootView: AudioStatusTitleView(viewModel: viewModel))
-        // The width is driven by the content (the label grows and shrinks with the device's name):
-        // intrinsicContentSize plus a height pinned to a title bar's.
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        if #available(macOS 13.0, *) { hosting.sizingOptions = [.intrinsicContentSize] }
-
-        let vc = AudioStatusAccessoryController()
-        vc.layoutAttribute = .right
-        vc.view = hosting
-        window.addTitlebarAccessoryViewController(vc)
-        hosting.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    }
-}
-
-/// A marker subclass: it serves only to spot our accessory so as to avoid duplicates.
-final class AudioStatusAccessoryController: NSTitlebarAccessoryViewController {}

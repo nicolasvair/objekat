@@ -2878,7 +2878,7 @@ struct TimelineView: View {
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                 if sr > 0, d < 1 {
                     Text(verbatim: "·").font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text(L("hud.selection.samples", Self.selectionSamplesString(d, sampleRate: sr), AudioStatusTitleView.shortRate(sr)))
+                    Text(L("hud.selection.samples", Self.selectionSamplesString(d, sampleRate: sr), AudioStatusText.shortRate(sr)))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
