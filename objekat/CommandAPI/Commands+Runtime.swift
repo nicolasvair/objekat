@@ -249,12 +249,20 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. Every NSTextField found in the window's title-bar chrome, with its frame \
                  in WINDOW coordinates — used to measure whether NSWindow.subtitle draws inline \
-                 to the right of the title or stacked below it, on this toolbar-less window. \
-                 Empty in headless mode (no window).
+                 to the right of the title or stacked below it, on this toolbar-less window \
+                 (§4a). Also the grey audio-device LABEL's own frame, colour and hidden state, \
+                 and the title field's frame it is laid beside (§4b) — `window_subtitle` itself \
+                 stays empty since 4b, by design. Empty/null in headless mode (no window).
                  """,
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             let fields = vm.debugTitlebarTextFields()
+            let label = vm.debugAudioDeviceLabel()
+            func rect(_ r: CGRect?) -> JSONValue {
+                guard let r else { return .null }
+                return .object(["x": .number(r.origin.x), "y": .number(r.origin.y),
+                                 "width": .number(r.width), "height": .number(r.height)])
+            }
             return .object([
                 "window_title": .stringOrNull(vm.titledWindow?.title),
                 "window_subtitle": .stringOrNull(vm.titledWindow?.subtitle),
@@ -266,7 +274,36 @@ extension CommandRegistry {
                     .object(["value": .string($0.value), "x": .number($0.x), "y": .number($0.y),
                              "width": .number($0.width), "height": .number($0.height)])
                 }),
+                "title_field_frame": rect(label.titleFrame),
+                "label_frame": rect(label.labelFrame),
+                "label_hidden": label.labelHidden.map { .bool($0) } ?? .null,
+                "label_color": .stringOrNull(label.labelColor),
+                "label_text": .stringOrNull(label.labelText),
             ])
+        }
+
+        register("debug.resize_window",
+                 summary: """
+                 DEBUG. Sets the document window's frame width (and, optionally, height) — the \
+                 only way a script can drive the narrow-window / trailing-edge behaviour of the \
+                 audio-device label (@see plan_titlebar_audio_device.md §4b) without a hand on \
+                 the window. `invalid_state` with no window (headless).
+                 """,
+                 params: [ParamSpec("width", "number", "New frame width, in points."),
+                          ParamSpec("height", "number", required: false,
+                                    "New frame height; kept if omitted.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let window = vm.titledWindow else {
+                throw CommandError(code: .invalid_state, message: "no window (headless)")
+            }
+            let width = try p.double("width")
+            let height = try p.double("height", or: window.frame.height)
+            var frame = window.frame
+            frame.size = NSSize(width: width, height: height)
+            window.setFrame(frame, display: true)
+            return .object(["width": .number(window.frame.width),
+                             "height": .number(window.frame.height)])
         }
         #endif
     }

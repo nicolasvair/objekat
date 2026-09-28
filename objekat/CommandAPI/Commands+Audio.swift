@@ -110,7 +110,10 @@ extension CommandRegistry {
             "running": .bool(s.running),
             "text": .string(status.text),
             "generation": .int(status.generation),
-            "window_subtitle": .stringOrNull(CommandContext.shared.viewModel?.titledWindow?.subtitle),
+            // The grey LABEL's own displayed string (@see `TitleBarDeviceLabel`, 4b) — never
+            // `window.subtitle` itself, which 4a's measurement retired to always-empty: the
+            // subtitle fuses onto the title's own field with no way to grey only its own half.
+            "window_subtitle": .stringOrNull(CommandContext.shared.viewModel?.displayedAudioDeviceText),
         ]
         if let engine = CommandContext.shared.engine {
             let live = engine.audioDeviceSnapshot()
