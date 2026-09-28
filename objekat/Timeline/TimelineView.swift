@@ -130,6 +130,9 @@ struct TimelineView: View {
     @State private var vZoomBaseHeight: Double = 36
     @State private var vZoomLockedX: CGFloat = 0
     @State private var vZoomHeld: Bool = false
+    /// D8 — the end-of-zoom-session settle: cancelled and rearmed on every notch of the wheel /
+    /// ⇧-scroll / ⇧R / ⇧T, fires `VerticalLaneSnap.zoomSettleDebounce` after the last one.
+    @State private var vZoomSettleWork: DispatchWorkItem? = nil
     @State private var vZoomLastEventTime: TimeInterval = 0
 
     /// The silence beyond which a wheel notch opens a NEW zoom session (and therefore reevaluates
@@ -265,6 +268,25 @@ struct TimelineView: View {
         var shiftZoomLastEventTime: TimeInterval = 0
         var shiftZoomAccumX: Double = 0
         var shiftZoomAccumY: Double = 0
+
+        // MARK: Vertical lane snap (D6) — the scroll monitor's own axis lock and step state,
+        // independent of the ⇧-zoom fields above (a different gesture: no modifier held).
+        var vSnapAxis: ScrollZoomAxis? = nil
+        var vSnapAccumX: Double = 0
+        var vSnapAccumY: Double = 0
+        /// The trackpad step's own accumulator (D6.3): travel since the gesture began or last
+        /// rearmed, reset at every `.began` — distinct from `vSnapAccumY`, which only serves the
+        /// axis lock's dead zone and is never reset once the axis is decided.
+        var vSnapStepAccum: Double = 0
+        /// True once THIS gesture has already stepped a lane — the rest of it, momentum included,
+        /// is swallowed (D6.3). Cleared on the next `.began` / idle rearm.
+        var vSnapStepped: Bool = false
+        /// The wheel's own running target (D6.4): consecutive notches accumulate onto it rather
+        /// than onto the lane read back mid-animation, so a fast spin keeps advancing one lane per
+        /// notch instead of losing notches to an animation still in flight. nil = no wheel step
+        /// under way (read the framed lane instead).
+        var vSnapWheelTargetLane: Int? = nil
+        var vSnapLastEventTime: TimeInterval = 0
     }
     @State var hoverState = HoverState()
     @State private var toolHoveredID: UUID? = nil
@@ -1097,6 +1119,12 @@ struct TimelineView: View {
             scrollFollow.offset.y = y
             followScrollDuringDrag()
         }
+        // D7 — the safety net: anything else that can leave `scrollY` between two lanes while
+        // snapped (the scroller dragged by hand, a drag-follow scroll, a stray gesture) is caught
+        // here, on the scroll coming to REST.
+        .onScrollPhaseChange { _, newPhase in
+            if newPhase == .idle { reframeIfOffGridOnIdle() }
+        }
         .background(GeometryReader { geo in
             Color(nsColor: .controlBackgroundColor)
                 .onAppear {
@@ -1160,7 +1188,15 @@ struct TimelineView: View {
                 openVerticalZoomSession()
                 vZoomHeld = true
             }
-            viewModel.endVerticalZoomDrag = { vZoomHeld = false }
+            viewModel.endVerticalZoomDrag = {
+                vZoomHeld = false
+                // D8 — the pill drag ends its OWN session explicitly: no debounce needed, frame
+                // now if the snap is active.
+                vZoomSettleWork?.cancel()
+                vZoomSettleWork = nil
+                vSnapPendingFraming = false
+                if verticalSnapActive { frameLane(currentFramedLane(), animated: true) }
+            }
             viewModel.applyVerticalZoom = { newH in applyVerticalZoom(newH) }
             viewModel.verticalSnapProbe = { verticalSnapProbeSnapshot() }
         }
@@ -3228,6 +3264,10 @@ struct TimelineView: View {
     func applyVerticalZoom(_ newHeight: Double) {
         let clamped = clampBlockHeight(newHeight)
         touchVerticalZoomSession()
+        // D8 — armed on EVERY notch, pill drag excepted (it ends its own session explicitly):
+        // even a notch that changes nothing because it is already at the 90 % cap must still end
+        // the session and re-frame, which is harmless (`guard clamped != blockHeight` below).
+        if !vZoomHeld { scheduleVerticalZoomSettle() }
         guard clamped != blockHeight else { return }
         viewModel.blockHeight = clamped
         // The canvas grows WITH the block height: bounding the scroll on the old height
@@ -3238,6 +3278,24 @@ struct TimelineView: View {
         let maxScrollY = max(0, newCanvasH - Double(viewportHeight))
         let newScrollY = min(CGFloat(maxScrollY), max(0, newContentY - viewportHeight / 2))
         scrollTo(x: vZoomLockedX, y: newScrollY)
+    }
+
+    /// D8 — crossing 70 % while zooming: never snap per notch (it would fight the zoom's own
+    /// anchor — the viewport centre stays fixed on-screen for the whole session). Cancelled and
+    /// rearmed on every notch; `zoomSettleDebounce` after the last one, if the snap is active,
+    /// frames the lane at the viewport centre — continuity: what was at the centre while zooming
+    /// is what gets framed. Zooming out below 70 % needs nothing: the debounce still fires, finds
+    /// `verticalSnapActive` false, and does nothing.
+    private func scheduleVerticalZoomSettle() {
+        vZoomSettleWork?.cancel()
+        vSnapPendingFraming = true
+        let work = DispatchWorkItem { [self] in
+            vSnapPendingFraming = false
+            guard verticalSnapActive else { return }
+            frameLane(currentFramedLane(), animated: true)
+        }
+        vZoomSettleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + VerticalLaneSnap.zoomSettleDebounce, execute: work)
     }
 
     /// Brings a DISPLAY row into view, scrolling the LEAST it takes: a row above the window comes
@@ -3366,18 +3424,45 @@ struct TimelineView: View {
                                             maxScrollY: maxY, laneCount: visibleLanes)
     }
 
+    /// The neighbour of a GIVEN lane (not necessarily the one currently framed) — what the wheel's
+    /// notches accumulate onto (D6.4: onto the step animation's running target, not onto the lane
+    /// read back mid-flight, so a fast spin keeps advancing one lane per notch instead of losing
+    /// notches to an animation still in progress).
+    func neighbourLane(of lane: Int, direction: Int) -> Int? {
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        return VerticalLaneSnap.neighbour(of: lane, direction: direction, blockHeight: blockHeight,
+                                          laneStep: laneStep, available: availableLaneHeight,
+                                          maxScrollY: maxY, laneCount: visibleLanes)
+    }
+
     /// Steps the framed lane by `direction` (±1 — down/up), animated. No-op at an end: row 0 going
     /// up, or no row left with a target distinct from the last one going down (@see
     /// VerticalLaneSnap.neighbour, which several bottom rows can share once they clamp).
     @discardableResult
     func stepFramedLane(by direction: Int) -> Bool {
-        let maxY = max(0, canvasHeight - Double(viewportHeight))
-        guard let next = VerticalLaneSnap.neighbour(of: currentFramedLane(), direction: direction,
-                                                    blockHeight: blockHeight, laneStep: laneStep,
-                                                    available: availableLaneHeight, maxScrollY: maxY,
-                                                    laneCount: visibleLanes) else { return false }
+        guard let next = neighbourLane(of: currentFramedLane(), direction: direction) else { return false }
         frameLane(next, animated: true)
         return true
+    }
+
+    /// D7 — re-frames the nearest lane if the scroll came to rest OFF grid while snapped: the
+    /// vertical scroller dragged by hand, a drag-follow scroll during a block drag, a horizontal
+    /// gesture whose tiny vertical component slipped through, a programmatic scroll. Left alone
+    /// while a gesture that moves matter is in flight (its own drag-follow will settle the scroll
+    /// on its own terms) or while a framing is already pending (D8's debounce, the monitor's own
+    /// step) — converges in one move: the framed position IS on-grid, so the next `.idle` finds
+    /// nothing left to do.
+    private func reframeIfOffGridOnIdle() {
+        guard verticalSnapActive, !vSnapPendingFraming else { return }
+        guard moveDrag == nil, resizeDrag == nil, trimDrag == nil, fadeDrag == nil,
+              timeSelectionDrag == nil, cutDrag == nil, slipDrag == nil, loopRangeDrag == nil,
+              markerBandDrag == nil, commentDrag == nil, objectMarkerDrag == nil,
+              infiniteBusDrag == nil else { return }
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        guard !VerticalLaneSnap.isOnGrid(scrollY: Double(scrollOffsetY), blockHeight: blockHeight,
+                                         laneStep: laneStep, available: availableLaneHeight,
+                                         maxScrollY: maxY, laneCount: visibleLanes) else { return }
+        frameLane(currentFramedLane(), animated: true)
     }
 
     // A rubber-band selection in display-lane space.

@@ -474,6 +474,10 @@ extension CommandRegistry {
         var stillSince = Date()
         while Date().timeIntervalSince(start) < 4 {
             try? await Task.sleep(for: .milliseconds(16))
+            // D8's debounce (or D7's idle re-frame) can be ARMED while the scroll/zoom values
+            // above have already sat still for 150 ms — the vertical lane snap's own settle has
+            // not landed yet. Without this, a test would sample the frame mid-settle.
+            if vm?.verticalSnapProbe?().pendingFraming == true { stillSince = Date(); last = snapshot(); continue }
             let now = snapshot()
             if now != last { last = now; stillSince = Date() }
             else if Date().timeIntervalSince(stillSince) >= 0.15 { break }
