@@ -221,13 +221,23 @@ extension TimelineView {
                 }
                 hs.vSnapLastEventTime = now
 
-                // Axis lock over a small dead zone, decided once for the whole gesture.
+                // Axis lock, decided once for the whole gesture. A trackpad gets the 3 pt dead
+                // zone ⇧-zoom uses (a diagonal swipe's first few events are ambiguous). A WHEEL's
+                // notch already IS the unit — a mouse wheel is single-axis by construction, and
+                // holding it to the trackpad's dead zone would EAT real notches deciding the
+                // axis, which a continuous zoom can shrug off but a discrete lane count cannot
+                // (found by `tools/scenario_vertical_snap.py`: 3 notches landed only 1 lane).
                 if hs.vSnapAxis == nil {
-                    hs.vSnapAccumX += dx
-                    hs.vSnapAccumY += dy
-                    let ax = abs(hs.vSnapAccumX), ay = abs(hs.vSnapAccumY)
-                    guard max(ax, ay) >= 3 else { return nil }
-                    hs.vSnapAxis = ax >= ay ? .horizontal : .vertical
+                    if event.hasPreciseScrollingDeltas {
+                        hs.vSnapAccumX += dx
+                        hs.vSnapAccumY += dy
+                        let ax = abs(hs.vSnapAccumX), ay = abs(hs.vSnapAccumY)
+                        guard max(ax, ay) >= 3 else { return nil }
+                        hs.vSnapAxis = ax >= ay ? .horizontal : .vertical
+                    } else {
+                        guard dx != 0 || dy != 0 else { return event }
+                        hs.vSnapAxis = abs(dx) >= abs(dy) ? .horizontal : .vertical
+                    }
                 }
                 // Horizontal-dominant: NSScrollView's own predominant-axis scrolling keeps y
                 // still — let it through untouched for the whole gesture.
