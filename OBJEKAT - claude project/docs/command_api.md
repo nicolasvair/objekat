@@ -410,6 +410,44 @@ Shared parameters of the gestures: `x`, `y`, `route`, `activate`, `hover`, `meas
 `view_after`, `frames` and `build` (`debug`/`release`: Debug draws the timeline up to ×40
 slower, so never compare across the two).
 
+### The vertical lane snap (`vsnap`)
+
+Once a lane's block passes **70 %** of the available height (`viewportHeight − rulerHeight`,
+the block measured against — never `laneStep`, the 4 pt gap is not "the lane"), the vertical
+view snaps lane to lane instead of scrolling continuously: it settles framed on one, and moving
+walks it to the next. The vertical zoom itself is clamped so a lane can never exceed **90 %**.
+Completely independent of the TIME snap (`snapEnabled` / `project.set_snap`): nothing about it
+reads or writes the grid. The arithmetic lives in `objekat/Timeline/VerticalLaneSnap.swift`
+(no view, no model — asserted alone by `tools/test_vertical_lane_snap.swift`); the door onto a
+hand's own gesture is the scroll monitor, exactly as ⇧-zoom is.
+
+`view.state` (hence every gesture's `view_before`/`view_after`) carries a `vsnap` object, `null`
+with no interface:
+
+| field | meaning |
+|---|---|
+| `available_h` | the lane area under the sticky header |
+| `max_block_height` | the 90 % cap for `available_h` as it stands |
+| `lane_step` | `block_height` + the 4 pt gap |
+| `ratio` | `block_height / available_h` |
+| `active` | `ratio > 0.70` |
+| `lane` | the display row currently framed (nearest to the scroll position); `null` when not active |
+| `on_grid` | whether the scroll position sits exactly on that lane's own target |
+| `pending` | an end-of-gesture re-frame is armed and has not landed yet — `waitViewAtRest` also waits on this, otherwise a test can sample mid-settle |
+| `ruler_h` | the sticky header's height, marker rows included |
+
+A trackpad gesture steps **one lane per gesture** (24 pt of travel, momentum swallowed for the
+rest of it); a wheel steps **one lane per notch**, notches arriving mid-animation accumulating
+onto its target. A horizontal-dominant gesture is left to the ordinary `NSScrollView` untouched.
+`caret.step_lane` / `timesel.step_lane` (↑ / ↓) FRAME the lane in snap mode rather than scrolling
+the least it takes. `project.save_as` / `project.open` / `tab.*` keep the FRAMED LANE across a
+reopen, not the raw scroll pixel it was saved at.
+
+**`debug.resize_window`** (`#if DEBUG`, `Commands+Runtime.swift`) resizes the document window's
+frame — the only door a script has onto `available_h` changing (a marker row shown/hidden moves
+it too, with no command needed: it is read live). There is no `window_h` on `view.set` — this
+already does exactly that, so the plan for this feature does not duplicate it.
+
 ### The frame report
 
 A `CADisplayLink` on the timeline's own view gives one tick per refresh of **that** screen. The
