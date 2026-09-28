@@ -51,9 +51,24 @@ extension CommandRegistry {
             }
             if let engine {
                 info["playing"] = .bool(engine.isCurrentlyPlaying())
-                info["sample_rate"] = .number(engine.currentSampleRate())
-                info["buffer_size"] = .int(engine.currentBufferSize())
-                info["output_device"] = .stringOrNull(engine.currentOutputDeviceName())
+                // Read from AudioDeviceStatus (the SAME snapshot `audio.status` and the title
+                // bar read), never the raw getters directly: under `--no-audio`, THOSE answer a
+                // non-nil device name and a real rate although nothing is OPEN (@see
+                // plan_titlebar_audio_device.md §1) — closed here by testing `isOpen()`.
+                // A SEPARATE, pre-existing defect (found 28 September 2026, NOT fixed here — it
+                // sits in Tracktion's own device restore, out of this plan's scope): once
+                // `~/Library/objekat/Settings.xml` holds a saved device with no explicit channel
+                // count (`useDefaultOutputChannels`, the normal case after any real run),
+                // `--no-audio` fails to keep the real device from opening at all — so on a
+                // machine that has ever run the app for real, `output_device` stays non-null even
+                // under `--no-audio`. This field still answers the TRUTH of whatever the engine
+                // actually opened; it is the engine's `--no-audio` guarantee that is short here,
+                // not this snapshot. @see tools/scenario_audio_device.py, phase A.
+                let snap = AudioDeviceStatus.shared.snapshot
+                info["sample_rate"] = .number(snap.sampleRate)
+                info["buffer_size"] = .int(snap.bufferSize)
+                info["output_device"] = .stringOrNull(snap.name)
+                info["audio_running"] = .bool(snap.running)
             }
             return .object(info)
         }
