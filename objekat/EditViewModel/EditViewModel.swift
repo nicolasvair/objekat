@@ -1468,6 +1468,7 @@ final class EditViewModel {
         if window.subtitle != text { window.subtitle = text }
     }
 
+    #if DEBUG
     /// DEBUG/SPIKE ONLY (@see plan_titlebar_audio_device.md §4a): every `NSTextField` in the
     /// window's title-bar chrome (its `NSThemeFrame`, walked whole EXCEPT `contentView` — the
     /// SwiftUI content, which is not what this is measuring), with its frame converted to WINDOW
@@ -1490,6 +1491,7 @@ final class EditViewModel {
         walk(themeFrame)
         return found
     }
+    #endif
 
     /// Adds a `.clip` object to the engine at its ABSOLUTE position, on its own track.
     /// Includes volume/pan/fades/speed/reverse/plugins. Does NOT handle membership of a

@@ -19,18 +19,9 @@
                                             // la politique du pool (@see trackSlotForKey:).
 @end
 
-// Instantané du device de sortie RÉELLEMENT ouvert par le moteur — jamais la config demandée
-// (AudioDeviceSetup, qui peut différer si JUCE a choisi le taux/buffer le plus proche), jamais
-// le choix persisté de l'utilisateur (AudioOutputDevice.shared, qui survit à un débranchement).
-// C'est l'unique vérité pour un affichage (titre de fenêtre, API).
-@interface OBJAudioDeviceSnapshot : NSObject
-@property (nonatomic, copy, nullable) NSString* deviceName;   // nil = aucun device de sortie OUVERT
-@property (nonatomic, copy, nullable) NSString* deviceType;   // "CoreAudio"…
-@property (nonatomic) double    sampleRate;                    // Hz, 0 si deviceName == nil
-@property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
-@property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
-@property (nonatomic) BOOL      running;                        // dev->isPlaying()
-@end
+@class OBJAudioDeviceSnapshot;   // déclarée après OBJEngineCore : placée plus haut, ses annotations
+                                 // nullable avanceraient la première du fichier et réveilleraient
+                                 // -Wnullability-completeness sur toutes les lignes qui précèdent.
 
 @interface OBJEngineCore : NSObject
 
@@ -640,6 +631,19 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // (une vérité, un lecteur).
 @property (nonatomic, copy, nullable) void (^onAudioDeviceChanged)(void);
 
+@end
+
+// Instantané du device de sortie RÉELLEMENT ouvert par le moteur — jamais la config demandée
+// (AudioDeviceSetup, qui peut différer si JUCE a choisi le taux/buffer le plus proche), jamais
+// le choix persisté de l'utilisateur (AudioOutputDevice.shared, qui survit à un débranchement).
+// C'est l'unique vérité pour un affichage (titre de fenêtre, API).
+@interface OBJAudioDeviceSnapshot : NSObject
+@property (nonatomic, copy, nullable) NSString* deviceName;   // nil = aucun device de sortie OUVERT
+@property (nonatomic, copy, nullable) NSString* deviceType;   // "CoreAudio"…
+@property (nonatomic) double    sampleRate;                    // Hz, 0 si deviceName == nil
+@property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
+@property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
+@property (nonatomic) BOOL      running;                        // dev->isPlaying()
 @end
 
 #endif /* OBJEngineCore_h */

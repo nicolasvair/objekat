@@ -242,6 +242,7 @@ extension CommandRegistry {
             return .object(["available": .bool(true), "paths": .int(paths.count)])
         }
 
+        #if DEBUG
         // MARK: debug (spike, @see plan_titlebar_audio_device.md §4a)
 
         register("debug.titlebar",
@@ -267,6 +268,7 @@ extension CommandRegistry {
                 }),
             ])
         }
+        #endif
     }
 
     // MARK: - Running a batch
