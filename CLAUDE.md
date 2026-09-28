@@ -1859,6 +1859,34 @@ What has landed since mid-August, in order:
   against a mouth. The context-menu entry, the error dialogue, and Whisper's real transcription
   time on a long take are equally unseen. @see `validations-en-attente.md` for the standing list.
 
+- **Evaluating breaths: a script overlay, a script panel, and the one-sample hole closed**
+  (29 September 2026, ON THE BRANCH `feature/separateur-voix`, NOT on `main`) — the voice separator
+  gains "Evaluate breaths…": the detector's breaths are laid over the object as zones, nine
+  criteria (a box and a slider each) move them live, Apply cuts what is shown. Three pieces of app
+  machinery came out of it, all generic. **`overlay.*`** — words and coloured zones a script draws
+  over an object (one `Canvas` above the blocks, both drawing regimes covered, binary search on the
+  visible stretch); **`script.panel.*`** — a window a script declares and the app draws, exchanged by
+  LONG POLL (`script.panel.wait`) and never a sweep. Both belong to the socket CONNECTION that made
+  them (a task-local, `CommandCallContext`): the script dying, however it dies, clears them; neither
+  is an edit, saved, or in an undo snapshot. `script.panel.update` never moves `rev` (it would wake
+  the script's own wait). **A cut left a sample at zero** on about half of all cuts, and it was NOT
+  the script: the clip cuts on a ROUNDED sample index, the object's window (`OBJWindowFadePlugin`)
+  compared continuous times, so a cut whose position in samples had a fractional part in (0 ; 0.5)
+  dropped `floor(c·sr)` on both sides. Measured first (hole at exactly that index, 48 and 44.1 kHz),
+  fixed by counting the window in samples with the clip's own rule — it benefits every cut, not just
+  the separator. Residual: a cut at EXACTLY .5 sample is a float tie and can still zero one sample.
+  Python side: features vectorised (identical to the old loops to 1e-14), `breath_mask` pure and
+  re-run in ~2 ms for ten minutes of audio, an analysis cache under `~/Library/Caches/Objekat/`.
+  Verified with no screen: Debug build with no new warning (no new line from any touched file);
+  `test_breath_mask.py` (features == the old loops, mask, cache, speed), `test_detect.py` in both
+  modes; `tools/scenario_breath_eval.py` against a headless instance (the sample hole before/after,
+  overlay, panel, the script end to end with Apply / Cancel / SIGKILL, no window on the pid).
+  **Not seen, not heard**: the overlay itself (white 30 % on every hue, words fitted at strong zoom
+  and gone at low zoom, the > 100-object regime), the panel window and how the sliders feel with the
+  zones following, Whisper on a real voice, whether the thresholds mean anything on a real breath,
+  and whether the cuts are now free of any click to the ear. Full regression suites were left to
+  the test pass.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

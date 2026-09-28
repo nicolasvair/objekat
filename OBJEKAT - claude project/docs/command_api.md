@@ -1555,6 +1555,65 @@ real menu, which `--headless` has none of.
   own return, which only reports a **failure to start**, e.g. an unknown script or entry). `ids`
   (an array of uuids) feeds `OBJEKAT_OBJECT_IDS` for an `"object"`-context entry.
 
+### What a script shows: `overlay.*`
+
+A layer of PRESENTATION laid over an object by a script — words a transcription found, passages a
+detector marked. Not an edit: `undo: none`, the project is not made dirty, nothing is written to
+the session file or into an undo snapshot. Times are seconds **relative to the object's start**
+(the frame an object's own marks live in), so the layer travels with the object.
+
+**Lifetime.** A layer belongs to the **socket connection** that laid it (a task-local
+`CommandCallContext.connectionID`; commands run by `--exec` share one owner). It is cleared by
+`overlay.clear`, by that connection closing (a script that crashed or was killed leaves nothing
+behind), by the object disappearing (deleted, undone, exploded) and by a document change (project
+load, tab switch).
+
+- **`overlay.set {id, texts?, zones?, replace?}`** — `texts`: `[{start, end, text}]`; `zones`:
+  `[{start, end, color?, opacity?}]` with `color` one of `white|red|yellow|green|blue` (default
+  white) and `opacity` 0…1 (default 0.3). A field that is **absent is kept**; a field that is
+  present **replaces** that field; `replace: ["texts"|"zones"]` empties the named fields even when
+  no new value comes with them (so a script can send only its zones at every setting, and only
+  once the thousands of words). Sorted by the app. Answers `{id, texts, zones, rev}` (counts).
+  `not_found` for an unknown object; `bad_params` for `start > end`, an unknown colour, or more
+  than 20 000 elements in a field.
+- **`overlay.clear {id?}`** → `{cleared: n}`; with no `id`, every overlay the **calling connection**
+  laid.
+- **`overlay.get {id, detail?}`** → `{id, texts: n, zones: [{start, end, color, opacity}], rev,
+  owner_is_caller}`; `detail: true` adds `words`. `not_found` when there is none.
+- **`overlay.list`** → `{overlays: [{id, texts, zones}]}`.
+
+### A window a script asks for: `script.panel.*`
+
+A script has no window (it is a separate process); it **declares** a panel and the app draws it — a
+floating `NSPanel`, hidden with the app, opened only when there is an interface (**headless: the
+panel exists and no window opens**). One panel per connection (a second `open` replaces the first).
+Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
+
+Controls: `{id, kind: "bool"|"number"|"button", label, value?, min?, max?, step?, unit?,
+enabled_by?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default `min`);
+a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
+one ("a box and a threshold" — the window draws that pair inline). The labels are the SCRIPT's own
+data; the app's only texts are Validate / Cancel and the default title.
+
+- **`script.panel.open {title?, controls, object?, status?, busy?}`** → `{panel_id, rev: 0}`.
+  `bad_params`: duplicate id, `min >= max`, `step <= 0`, value out of range, `enabled_by` not a
+  bool.
+- **`script.panel.get {panel_id}`** → `{panel_id, rev, state: "open"|"validated"|"cancelled"|"closed",
+  values, events: [{button}], status, busy}`. **Reading drains `events`.**
+- **`script.panel.wait {panel_id, since_rev, timeout_ms?}`** — a **long poll**: answers as soon as
+  `rev > since_rev` or the state is no longer `open`; at the timeout (≤ 5000, default 1000) it
+  answers the current state, **no error** (the timeout is the script's heartbeat — it loops). The
+  other connections keep being served while it waits.
+- **`script.panel.update {panel_id, status?, busy?, values?}`** — the script writes back a status
+  line, the busy flag, recalibrated values. **Never moves `rev`**: it would wake the script's own
+  next `wait`. `rev` moves only when the hand acts.
+- **`script.panel.close {panel_id}`** → `{closed: true}`; the connection closing does the same.
+- **`script.panel.input {panel_id, values?, press?}`** — the HAND's door, for a headless test (the
+  window goes through the same store function): sets values (numbers clamped to their range) and/or
+  presses a button id, `"validate"` or `"cancel"`. Moves `rev` at once; the window's own slider
+  drag coalesces `rev` to 30 Hz with a trailing bump so the last value is never lost.
+- **`script.panel.list`** → `{panels: [{panel_id, title, state, object}]}`.
+
 ---
 
 ## Known reservations
