@@ -436,8 +436,8 @@ try:
             check("baseline-aligned: vertical centres within 2 pt",
                   abs(title_mid - label_mid) <= 2.0,
                   (title_mid, label_mid))
-            check("the grey field is the darker grey (labelColor at 75 %)",
-                  dbg.get("label_color") == "labelColor@0.75", dbg.get("label_color"))
+            check("the grey field is white at 25 %",
+                  dbg.get("label_color") == "white@0.25", dbg.get("label_color"))
             check("the grey field is NOT truncated in a normal-width window",
                   dbg.get("label_truncated") is False, dbg.get("label_truncated"))
             check("the grey field is not hidden at a normal window width",

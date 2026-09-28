@@ -19,7 +19,7 @@ import AppKit
 ///
 /// ONE OWNER, LAZILY DISCOVERED. `attach(to:)` finds AppKit's own title `NSTextField` in the
 /// window's title-bar chrome — the SAME walk `debugTitlebarTextFields()` uses for measurement —
-/// and adds a sibling field beside it: `secondaryLabelColor`, the title field's own font, not
+/// and adds a sibling field beside it: white at 25 % (@see `color`), the title field's own font, not
 /// selectable, no background. **If the title field cannot be found** (a macOS version whose
 /// title-bar internals differ from the ones measured here), **nothing is created**: showing
 /// nothing beats showing something misplaced over the project's own name.
@@ -33,7 +33,7 @@ import AppKit
 /// all already call `updateWindowTitle()` → `updateWindowSubtitle()` → here, needing no
 /// notification of their own. Entering or leaving full screen can replace the title-bar chrome
 /// itself, not merely move it, so those two notifications run a full re-`attach` rather than a
-/// plain relayout. Key / resign-key are wired too (belt and braces again — `secondaryLabelColor`
+/// plain relayout. Key / resign-key are wired too (belt and braces again — the label's colour
 /// does not dim on its own the way AppKit's native title text does; the label is meant to stay
 /// exactly as grey either way, so these two are cheap relayouts, not colour changes).
 ///
@@ -209,11 +209,11 @@ final class TitleBarDeviceLabel {
 
     private static let labelIdentifier = NSUserInterfaceItemIdentifier("objekat.audioDeviceLabel")
 
-    /// Darker than `secondaryLabelColor` (≈ 50 % of the label colour, read on screen as too
-    /// pale beside the title): the label colour itself at 75 %. Still DYNAMIC — an alpha taken
-    /// on a system colour keeps following light / dark mode.
-    private static let color = NSColor.labelColor.withAlphaComponent(0.75)
-    static let colorName = "labelColor@0.75"
+    /// White at 25 %, chosen by eye on screen (`secondaryLabelColor` read too pale, `labelColor`
+    /// at 75 % as plain black). NOT dynamic: it is tuned for a DARK title bar and will all but
+    /// vanish on a light one.
+    private static let color = NSColor.white.withAlphaComponent(0.25)
+    static let colorName = "white@0.25"
 
     /// The width the field needs to show its WHOLE string: the cell's own size, padding
     /// included. `attributedStringValue.size()` measures the bare glyphs, a few points short of
