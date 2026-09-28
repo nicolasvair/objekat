@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Voice separator — orchestration + client (@see plan_separateur_voix.md, D2/D5/D6).
+
+Reads the object(s) OBJEKAT hands it through OBJEKAT_OBJECT_IDS, detects voice / breaths /
+SS-CH on each one's own audio (`detect.py`, pure and testable on its own), and calls
+`object.explode` to lay the result out as a group of three sub-lanes on the object's own lane.
+No sound is changed: the pieces stay jointive, and the fades of the original edges are left where
+`object.explode` (hence `_splitInternal`) already puts them — on the FIRST and LAST piece only.
+
+Run from OBJEKAT's own object context menu ("Scripts" submenu) via `run.sh`, or from the command
+line for `--dry-run` / `--segments-json` testing.
+"""
+
+import json
+import os
+import socket
+import sys
+
+HERE = os.environ.get("OBJEKAT_PLUGIN_DIR") or os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import detect  # noqa: E402  (needs sys.path set first)
+
+SOCK = os.environ.get("OBJEKAT_SOCKET")
+
+
+class Objekat:
+    """A minimal JSON-lines client — copied out rather than imported (@see tools/example-script/
+    report.py): a third-party script must depend only on the socket, never on the layout of
+    OBJEKAT's own repository."""
+
+    def __init__(self, path):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(120)
+        self.sock.connect(path)
+        self.buffer = b""
+        self.next_id = 0
+
+    def send(self, cmd, params=None):
+        self.next_id += 1
+        request = {"id": self.next_id, "cmd": cmd}
+        if params:
+            request["params"] = params
+        self.sock.sendall(json.dumps(request).encode("utf-8") + b"\n")
+        while b"\n" not in self.buffer:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise ConnectionError("connection closed by the application")
+            self.buffer += chunk
+        line, self.buffer = self.buffer.split(b"\n", 1)
+        response = json.loads(line)
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error"))
+        return response["result"]
+
+
+def read_portion(file_path, source_offset, duration, speed):
+    """Reads `[source_offset, source_offset + duration * speed]` of `file_path` at its native
+    sample rate, mono (channels averaged — for DETECTION only, the explode never touches audio).
+    Mirrors the range the engine itself plays (@see CLAUDE.md, "the file range a clip consumes")."""
+    import numpy as np
+    import soundfile as sf
+
+    info = sf.info(file_path)
+    sr = info.samplerate
+    i0 = max(0, int(round(source_offset * sr)))
+    i1 = min(info.frames, int(round((source_offset + duration * speed) * sr)))
+    if i1 <= i0:
+        raise ValueError("empty source range")
+    data, _ = sf.read(file_path, start=i0, stop=i1, always_2d=True)
+    mono = data.mean(axis=1).astype("float64")
+    return mono, sr
+
+
+def transcribe(mono, sr, language):
+    """16 kHz mono → mlx_whisper, word-timestamped. Returns Whisper's own word list (seconds
+    relative to the portion handed in — the SAME reference `detect.segment` expects)."""
+    import numpy as np
+    from scipy.signal import resample_poly
+    import mlx_whisper
+
+    target_sr = 16000
+    from math import gcd
+    g = gcd(sr, target_sr)
+    resampled = resample_poly(mono, target_sr // g, sr // g)
+    audio = resampled.astype(np.float32)
+    lang = None if language in (None, "", "auto") else language
+    result = mlx_whisper.transcribe(
+        audio,
+        path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
+        word_timestamps=True,
+        language=lang,
+    )
+    words = []
+    for seg in result.get("segments", []):
+        for w in seg.get("words", []):
+            words.append({"word": w.get("word", "").strip(),
+                          "start": float(w.get("start", 0.0)),
+                          "end": float(w.get("end", 0.0))})
+    return words
+
+
+def refuse(reason):
+    sys.stderr.write(reason + "\n")
+    sys.exit(3)
+
+
+def process_one(app, object_id, language, no_asr, segments_override, dry_run):
+    obj = app.send("object.get", {"id": object_id})
+
+    # D2 step 5 — the script's own refusal, clearer and earlier than a generic `bad_params` from
+    # `object.explode` (which does not even check speed/reversed — @see plan's "Écarts"): none of
+    # these change what `detect.py` would be measuring against.
+    if obj.get("kind") != "clip":
+        refuse("'%s' is not an audio clip." % obj.get("name", object_id))
+    if obj.get("missing"):
+        refuse("'%s' — source file not found." % obj.get("name", object_id))
+    if obj.get("loop"):
+        refuse("'%s' loops — separating a loop's window would ignore the pattern behind it."
+               % obj.get("name", object_id))
+    if abs(obj.get("speed", 1.0) - 1.0) > 1e-9:
+        refuse("'%s' plays at a changed speed — its file positions would not line up "
+               "with the seconds Whisper reports." % obj.get("name", object_id))
+    if obj.get("reversed"):
+        refuse("'%s' plays reversed." % obj.get("name", object_id))
+
+    start = obj["start"]
+    duration = obj["duration"]
+    file_path = obj["file"]
+    source_offset = obj["source_offset"]
+    speed = obj.get("speed", 1.0)
+
+    if segments_override is not None:
+        pieces = segments_override
+    else:
+        mono, sr = read_portion(file_path, source_offset, duration, speed)
+        words = None if no_asr else transcribe(mono, sr, language)
+        pieces = detect.segment(mono, sr, duration, words=words, language=language or "fr")
+
+    cuts, lanes = detect.cuts_and_lanes(pieces)
+    counts = {}
+    for _lo, _hi, label in pieces:
+        counts[label] = counts.get(label, 0) + 1
+
+    if dry_run:
+        print("DRY RUN — %s (%.2f s)" % (obj.get("name", object_id), duration))
+        for lo, hi, label in pieces:
+            print("  [%7.3f, %7.3f]  %s" % (lo, hi, label))
+        return counts
+
+    if not cuts:
+        print("'%s' — nothing to separate (a single, uniform region)." % obj.get("name", object_id))
+        return counts
+
+    absolute_cuts = [start + c for c in cuts]
+    lane_names = detect.LANE_NAMES.get(language, detect.LANE_NAMES["en"])
+    names = lane_names[:max(lanes) + 1]
+
+    result = app.send("object.explode", {
+        "id": object_id,
+        "cuts": absolute_cuts,
+        "lanes": lanes,
+        "names": names,
+        "group_name": "%s — separated" % obj.get("name", object_id),
+    })
+
+    try:
+        app.send("object.select", {"ids": [result["group"]]})
+    except RuntimeError:
+        pass  # no such command in this build — not fatal, the explode itself already happened
+
+    return counts
+
+
+def main():
+    args = sys.argv[1:]
+    language = os.environ.get("OBJEKAT_LANGUAGE", "en")
+    no_asr = "--no-asr" in args
+    dry_run = "--dry-run" in args
+    segments_json = None
+    if "--lang" in args:
+        language = args[args.index("--lang") + 1]
+    if "--segments-json" in args:
+        segments_json = args[args.index("--segments-json") + 1]
+
+    if not SOCK:
+        sys.stderr.write("OBJEKAT_SOCKET missing: run this script from OBJEKAT.\n")
+        return 2
+
+    ids_env = os.environ.get("OBJEKAT_OBJECT_IDS", "")
+    ids = [x for x in ids_env.split(",") if x]
+    if not ids:
+        sys.stderr.write("No object selected.\n")
+        return 3
+
+    segments_override = None
+    if segments_json:
+        with open(segments_json, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        segments_override = [(p["start"], p["start"] + p["duration"], p["label"]) for p in raw]
+
+    app = Objekat(SOCK)
+    total = {}
+    for object_id in ids:
+        counts = process_one(app, object_id, language, no_asr, segments_override, dry_run)
+        for k, v in counts.items():
+            total[k] = total.get(k, 0) + v
+
+    if not dry_run:
+        print("%d breath(s), %d SS/CH" % (total.get("breath", 0), total.get("sibilant", 0)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
