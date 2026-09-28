@@ -1197,7 +1197,23 @@ struct TimelineView: View {
         .onChange(of: viewModel.pendingViewRestore) { _, vp in
             guard let vp else { return }
             DispatchQueue.main.async {
-                scrollPosition.scrollTo(x: CGFloat(vp.scrollX), y: CGFloat(vp.scrollY))
+                // D10 — clamp (D2) THEN apply the scroll: the window may not be the size it was
+                // saved at. If the snap is active afterwards, the saved scrollY is replaced by the
+                // nearest lane's own target — a project saved framed on lane k reopens framed on
+                // lane k, not on whatever pixel the old window happened to leave it at.
+                enforceVerticalZoomBounds()
+                if verticalSnapActive {
+                    let maxY = max(0, canvasHeight - Double(viewportHeight))
+                    let nearest = VerticalLaneSnap.nearestLane(scrollY: vp.scrollY, blockHeight: blockHeight,
+                                                               laneStep: laneStep, available: availableLaneHeight,
+                                                               maxScrollY: maxY, laneCount: visibleLanes)
+                    let target = VerticalLaneSnap.scrollY(forLane: nearest, blockHeight: blockHeight,
+                                                          laneStep: laneStep, available: availableLaneHeight,
+                                                          maxScrollY: maxY)
+                    scrollPosition.scrollTo(x: CGFloat(vp.scrollX), y: CGFloat(target))
+                } else {
+                    scrollPosition.scrollTo(x: CGFloat(vp.scrollX), y: CGFloat(vp.scrollY))
+                }
                 viewModel.pendingViewRestore = nil
             }
         }
@@ -3233,6 +3249,14 @@ struct TimelineView: View {
     /// visible CONTENT is `scrollOffsetY + rulerHeight` and not `scrollOffsetY`: a row brought to
     /// the latter would come to rest UNDER the band (@see rulerHeight).
     func revealDisplayLane(_ lane: Int) {
+        // D9 — in snap mode "the least it takes" would bottom/top-align a lane partially visible
+        // in its own sliver, which is off-grid. The view FRAMES the lane instead, exactly as the
+        // scroll gesture and the end-of-zoom settle do: walking the caret or a selection with
+        // ↑/↓ walks the view one lane per press, on the same grid.
+        if verticalSnapActive {
+            frameLane(lane, animated: true)
+            return
+        }
         let top = rulerHeight + Double(lane) * laneStep
         let bottom = top + blockHeight
         let y = Double(scrollOffsetY)
@@ -3299,6 +3323,61 @@ struct TimelineView: View {
         let step = Self.cullStepPx
         let bucket = (scrollAnchor.x / step).rounded(.down) * step
         if bucket != cullScrollX { cullScrollX = bucket }
+    }
+
+    // MARK: - Vertical lane snap: framing (D5, D6.5, D9, D10)
+
+    /// D6.5 — an animated VERTICAL scroll for the snap's step, distinct from `scrollTo`: it does
+    /// NOT pre-set `scrollAnchor.y`. The sticky header reads that anchor, and a pre-set would jump
+    /// the ruler straight to the target while the content is still animating underneath it — the
+    /// exact flicker `scrollTo`'s own pre-set exists to AVOID for a zoom, turned into a jump here
+    /// for the opposite reason. `onScrollGeometryChange` drives the anchor for the length of the
+    /// animation instead; `x` is left as it is — the axis is locked for the whole gesture, so the
+    /// cull window (keyed on `scrollAnchor.x`) has nothing to redo.
+    private func animatedScrollTo(y: CGFloat) {
+        withAnimation(.easeOut(duration: VerticalLaneSnap.easeOutDuration)) {
+            scrollPosition.scrollTo(x: scrollOffsetX, y: y)
+        }
+        viewModel.viewScrollY = Double(y)
+    }
+
+    /// Frames display row `lane`: scrolls — animated or not — so it sits centred (or top-aligned,
+    /// @see VerticalLaneSnap.framing) in the available area. The one function every snap door
+    /// converges on: the scroll monitor's step, ↑/↓ in snap mode (`revealDisplayLane`), the
+    /// end-of-zoom settle (D8), the idle safety net (D7), and a project reopen / tab switch (D10).
+    func frameLane(_ lane: Int, animated: Bool) {
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        let target = VerticalLaneSnap.scrollY(forLane: lane, blockHeight: blockHeight, laneStep: laneStep,
+                                              available: availableLaneHeight, maxScrollY: maxY)
+        guard abs(target - Double(scrollOffsetY)) > 0.01 else { return }
+        if animated {
+            animatedScrollTo(y: CGFloat(target))
+        } else {
+            scrollTo(x: scrollOffsetX, y: CGFloat(target))
+        }
+    }
+
+    /// The display row currently framed: the one whose own target (@see VerticalLaneSnap.scrollY)
+    /// is nearest to the scroll position.
+    func currentFramedLane() -> Int {
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        return VerticalLaneSnap.nearestLane(scrollY: Double(scrollOffsetY), blockHeight: blockHeight,
+                                            laneStep: laneStep, available: availableLaneHeight,
+                                            maxScrollY: maxY, laneCount: visibleLanes)
+    }
+
+    /// Steps the framed lane by `direction` (±1 — down/up), animated. No-op at an end: row 0 going
+    /// up, or no row left with a target distinct from the last one going down (@see
+    /// VerticalLaneSnap.neighbour, which several bottom rows can share once they clamp).
+    @discardableResult
+    func stepFramedLane(by direction: Int) -> Bool {
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        guard let next = VerticalLaneSnap.neighbour(of: currentFramedLane(), direction: direction,
+                                                    blockHeight: blockHeight, laneStep: laneStep,
+                                                    available: availableLaneHeight, maxScrollY: maxY,
+                                                    laneCount: visibleLanes) else { return false }
+        frameLane(next, animated: true)
+        return true
     }
 
     // A rubber-band selection in display-lane space.
