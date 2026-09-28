@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Breath evaluation, app side (@see plan_eval_respirations.md, T2) — driven headless.
+
+Section (a) — THE ONE-SAMPLE HOLE AFTER A CUT. A clip is cut at instants whose position in
+samples has a fractional part of 0.1 / 0.3 / 0.49 / 0.5 / 0.7, and the group rendered after
+`object.explode` is compared to the render of the original object. Before the object window
+counted samples like the clip does (`OBJWindowFadePlugin.h`), a fractional part in (0 ; 0.5)
+left ONE sample at exactly floor(c·sr) at zero — the clip A had stopped playing it, the
+window of B had already killed it.
+
+    objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
+    ./scenario_breath_eval.py /tmp/o.sock
+
+Exit: 0 if every assertion passes, 1 otherwise.
+"""
+
+import math
+import os
+import shutil
+import struct
+import sys
+import tempfile
+import wave
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from objekat_cli import ObjekatClient, ObjekatError
+
+if len(sys.argv) != 2:
+    print(__doc__)
+    sys.exit(2)
+
+SOCK = sys.argv[1]
+fails = []
+roots = []
+
+
+def check(label, ok, detail=""):
+    if ok:
+        print("ok    " + label)
+    else:
+        fails.append(label)
+        print("FAIL  %s  %s" % (label, detail))
+
+
+def tmproot(tag):
+    folder = tempfile.mkdtemp(prefix="objekat-breath-%s-" % tag)
+    roots.append(folder)
+    return os.path.realpath(folder)
+
+
+def make_wav(path, seconds, rate):
+    """24-bit mono, a sine RIDING ON A DC OFFSET so that no sample is ever near zero: a zero in
+    the render can then only be a sample somebody killed."""
+    frames = int(round(seconds * rate))
+    raw = bytearray()
+    for i in range(frames):
+        v = 0.30 + 0.15 * math.sin(2 * math.pi * 220.0 * i / rate)
+        raw += struct.pack("<i", int(v * (2 ** 23 - 1)))[0:3]
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(3)
+        w.setframerate(rate)
+        w.writeframes(bytes(raw))
+    return path
+
+
+def read_wav_24(path):
+    """Channel 0 only, one value per FRAME (the export is stereo)."""
+    with wave.open(path, "rb") as w:
+        n = w.getnframes()
+        ch = w.getnchannels()
+        raw = w.readframes(n)
+    out = []
+    step = 3 * ch
+    for i in range(0, len(raw) - step + 1, step):
+        chunk = raw[i:i + 3] + (b"\xff" if raw[i + 2] >= 0x80 else b"\x00")
+        out.append(struct.unpack("<i", chunk)[0])
+    return out
+
+
+def cleanup():
+    for r in roots:
+        shutil.rmtree(r, ignore_errors=True)
+
+
+def section_a(c, rate):
+    """One object, one cut per fractional part."""
+    ROOT = tmproot("a%d" % rate)
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 3.0, rate)
+    fracs = [0.1, 0.3, 0.49, 0.55, 0.7]   # 0.5 exactly is a float tie, @see plan Écarts
+    for frac in fracs:
+        c.send("project.new")
+        c.send("project.save_as", {"path": os.path.join(ROOT, "s%s.objekat" % frac)})
+        a = c.send("object.add", {"path": WAV, "lane": 0, "start": 1.0})["id"]
+        o = c.send("object.get", {"id": a})
+        start, dur = o["start"], o["duration"]
+        # a cut at (K + frac) samples from the timeline's origin, K well inside the clip
+        K = int(round((start + dur / 2) * rate))
+        cut = (K + frac) / rate
+        ref = os.path.join(ROOT, "ref-%s.wav" % frac)
+        r = c.send("export.run", {"format": "wav", "sample_rate": rate, "bit_depth": 24,
+                                  "start": start, "end": start + dur, "path": ref})
+        c.send("job.wait", {"id": r["job_id"], "timeout_ms": 60000})
+        c.send("object.explode", {"id": a, "cuts": [cut], "lanes": [0, 1]})
+        out = os.path.join(ROOT, "cut-%s.wav" % frac)
+        r = c.send("export.run", {"format": "wav", "sample_rate": rate, "bit_depth": 24,
+                                  "start": start, "end": start + dur, "path": out})
+        c.send("job.wait", {"id": r["job_id"], "timeout_ms": 60000})
+        s0, s1 = read_wav_24(ref), read_wav_24(out)
+        n = min(len(s0), len(s1))
+        bad = [i for i in range(n) if abs(s0[i] - s1[i]) > 2 ** 23 * 1e-4]
+        zeros = [i for i in bad if s1[i] == 0 and s0[i] != 0]
+        expected = K - int(round(start * rate))   # index of floor(c·sr) in the render
+        label = "a%d frac=%.2f" % (rate, frac)
+        print("info  %s: %d bad samples at %s (floor(c·sr) is at %d), zeros %s"
+              % (label, len(bad), bad[:6], expected, zeros[:6]))
+        check("%s: no sample differs from the original" % label, len(bad) == 0, bad[:6])
+        check("%s: no zeroed sample" % label, len(zeros) == 0, zeros[:6])
+
+
+try:
+    with ObjekatClient(SOCK, timeout=180) as c:
+        c.send("app.set_dialog_policy", {"policy": "assume_yes"})
+        section_a(c, 48000)
+        section_a(c, 44100)
+finally:
+    cleanup()
+
+print()
+if fails:
+    print("%d FAILED" % len(fails))
+    sys.exit(1)
+print("ALL PASS")

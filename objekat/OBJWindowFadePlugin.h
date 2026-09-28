@@ -153,7 +153,13 @@ public:
     // LevelMeter ou AuxSend. Pur virtuel depuis tracktion 3.5.
     BusLayout getBusses() const override                            { return BusLayout::singlePassThrough(); }
 
-    void initialise (const PluginInitialisationInfo&) override {}
+    // The rate the object's window is counted in SAMPLES at, the clip's own rule (@see applyToBuffer).
+    // Atomic: `initialise` runs on the thread that prepares the graph, `applyToBuffer` on the audio one.
+    void initialise (const PluginInitialisationInfo& info) override
+    {
+        if (info.sampleRate > 0.0)
+            renderSampleRate.store (info.sampleRate);
+    }
     void deinitialise() override {}
 
     void applyToBuffer (const PluginRenderContext& fc) override
@@ -176,15 +182,28 @@ public:
 
         const double blockStart = fc.editTime.getStart().inSeconds();
         const double blockEnd   = fc.editTime.getEnd().inSeconds();
+        const int    n  = fc.bufferNumSamples;
+
+        // THE WINDOW COUNTS IN SAMPLES, THE WAY THE CLIP DOES. The clip (Tracktion) cuts on a ROUNDED
+        // sample index — `toSamples` is `t*sr + 0.5` truncated, and `zeroSamplesOutsideClipRange`
+        // rounds too. The window used to compare CONTINUOUS times sample by sample, so at a cut
+        // whose position in samples has a fractional part in (0 ; 0.5) the sample floor(c·sr) was
+        // dropped by the left clip (its range ends at round(c·sr)) AND killed by the right
+        // object's window (t_k < c): one sample at zero, on about half of all cuts. One rule now,
+        // read from the same function: a sample k is inside iff toSamples(ws) <= k < toSamples(we).
+        // The fades keep reading `t` — a length is a duration, not a boundary.
+        const double sr = renderSampleRate.load();
+        const auto sIn  = toSamples (TimePosition::fromSeconds (ws), sr);
+        const auto sOut = toSamples (TimePosition::fromSeconds (we), sr);
+        const auto k0   = toSamples (TimePosition::fromSeconds (blockStart), sr);
 
         // Bloc entièrement hors fenêtre → silence rapide.
-        if (blockEnd <= ws || blockStart >= we)
+        if (k0 + n <= sIn || k0 >= sOut)
         {
             buffer->clear (fc.bufferStartSample, fc.bufferNumSamples);
             return;
         }
 
-        const int    n  = fc.bufferNumSamples;
         const double dt = (blockEnd - blockStart) / juce::jmax (1, n);
         const int numChans = buffer->getNumChannels();
 
@@ -195,8 +214,16 @@ public:
 
         for (int i = 0; i < n; ++i)
         {
-            const double t = blockStart + i * dt;
-            const float  g = envelopeGain (t, ws, we, pIn, pOut);
+            const auto k = k0 + i;
+            float g = 0.0f;
+            if (k >= sIn && k < sOut)
+            {
+                // `t` clamped INTO the window: a sample the rounding keeps inside can sit a
+                // fraction of a sample outside [ws, we) in continuous time, and must not be zeroed
+                // there (that is the hole this exists to close) — it reads the fade's edge value.
+                const double t = juce::jlimit (ws, we, blockStart + i * dt);
+                g = envelopeGain (t, ws, we, pIn, pOut);
+            }
             if (g == 1.0f) continue;
             for (int c = 0; c < numChans; ++c)
                 buffer->getWritePointer (c, fc.bufferStartSample)[i] *= g;
@@ -215,9 +242,10 @@ public:
     juce::CachedValue<float>  fadeInAmount, fadeOutAmount;
 
 private:
+    std::atomic<double> renderSampleRate { 44100.0 };
+
     float envelopeGain (double t, double ws, double we, float pIn, float pOut) const
     {
-        if (t < ws || t >= we) return 0.0f;
         float g = 1.0f;
         const double fi = fadeIn, fo = fadeOut;
         // `a` est la PROGRESSION du fondu, 0 = silence et 1 = plein niveau, des deux côtés : le
