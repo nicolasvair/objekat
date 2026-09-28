@@ -92,6 +92,11 @@ struct SoundObjectListView: View {
             })
             .focusable()
             .focused($listFocused)
+            // Everything repaired: the filter goes OFF, not merely dormant. Left on, it would
+            // switch itself back in, unasked, the next time a single file went missing.
+            .onChange(of: viewModel.missingFileCount) { _, n in
+                if n == 0 { showOnlyMissing = false }
+            }
             // The timeline's monitor must let the arrows through while this list holds them
             // (@see `KeyboardClaim`), and take them back the moment it does not.
             .onChange(of: listFocused) { _, f in
@@ -242,21 +247,43 @@ struct SoundObjectListView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
-                // The filter's own state, said on the badge itself: it is the switch, so it is
-                // also the lamp. A crossed-out eye = the rest of the project is being hidden.
-                Image(systemName: showOnlyMissing ? "eye.slash" : "eye")
-                    .font(.system(size: 9))
-                    .opacity(0.7)
+                // The filter's state, said in WORDS on the badge: it is the switch, so it is also
+                // the lamp. An eye (crossed out = filter ON) read backwards — a crossed-out eye
+                // says "hidden", and it was the rest of the project that was hidden, not these.
+                // So the right-hand pill names the ACTION the click will perform, and the filled
+                // funnel + the stronger ground + the border say the filter is on.
+                HStack(spacing: 3) {
+                    Image(systemName: showOnlyMissing
+                          ? "line.3.horizontal.decrease.circle.fill"
+                          : "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 10))
+                    Text(L(showOnlyMissing ? "soundList.missing.showAll" : "soundList.missing.filter"))
+                        .font(.system(size: 9, weight: .medium))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(
+                    Capsule().fill(MissingFileLabel.color.opacity(showOnlyMissing ? 0.30 : 0.0))
+                )
+                .overlay(Capsule().stroke(MissingFileLabel.color.opacity(0.6), lineWidth: 0.5))
             }
             .foregroundStyle(MissingFileLabel.color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(MissingFileLabel.color.opacity(showOnlyMissing ? 0.22 : 0.10))
+            .overlay(alignment: .bottom) {
+                // Filter ON: a line under the badge, where the list it narrows begins.
+                if showOnlyMissing {
+                    Rectangle().fill(MissingFileLabel.color.opacity(0.7)).frame(height: 1)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(L("soundList.missing.help"))
+        .help(L(showOnlyMissing ? "soundList.missing.help.on" : "soundList.missing.help"))
     }
 
     // MARK: - Gestures

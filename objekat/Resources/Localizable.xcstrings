@@ -8419,6 +8419,29 @@
         }
       }
     },
+    "soundList.missing.filter": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtrar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtrer"
+          }
+        }
+      }
+    },
     "soundList.missing.help": {
       "extractionState": "manual",
       "localizations": {
@@ -8438,6 +8461,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "N'afficher que les sons dont le fichier manque"
+          }
+        }
+      }
+    },
+    "soundList.missing.help.on": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter on: only sounds whose file is missing are shown. Click to show everything again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtro activo: solo se muestran los sonidos cuyo archivo falta. Clic para mostrar todo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtre actif : seuls les sons dont le fichier manque sont affichés. Cliquer pour tout réafficher."
+          }
+        }
+      }
+    },
+    "soundList.missing.showAll": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar todo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tout afficher"
           }
         }
       }
