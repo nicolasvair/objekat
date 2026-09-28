@@ -553,6 +553,7 @@ That is end-of-process noise, with no effect on the result.
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
 | `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
+| `audio.*` | the output device really in use — status, the list, switching device / rate / buffer |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
 ### A selection of plugin cards
@@ -1049,6 +1050,42 @@ and an **inherited** solo opens nothing — soloing a group or a stem is asking 
 window included. The cost: while a child is soloed, its ancestors' own fades are not heard, a fade
 belonging to the edge the solo has lifted. `tools/scenario_export_preview.py` re-reads the rendered
 files to prove the engine followed.
+
+### The audio device (`audio.*`)
+
+`audio.status` answers the device REALLY in use — read from the open `juce::AudioIODevice`, never
+the requested `AudioDeviceSetup` (JUCE may have picked the nearest rate/buffer to what was asked)
+and never the user's persisted choice (`AudioOutputDevice.shared`, which survives an unplug). It is
+the SAME object the window's subtitle shows, to the right of the project's name, in grey
+(`NSWindow.subtitle`, which draws INLINE on this toolbar-less window — measured, not assumed, with
+a `debug.titlebar` diagnostic command that walks the title bar's `NSTextField`s). `device: null`
+means no output device is OPEN — under `--no-audio`, `getCurrentAudioDevice()` can be non-null with
+a real name although nothing plays; the truth test is `isOpen()`. `running` tells an open-but-dead
+device (a restart gap, a device that died) from one really producing sound. `live` re-reads the
+engine at the instant of the call, so a script can assert it agrees with the cached fields the
+title bar shows — they are refreshed only on a real `juce::AudioDeviceManager` change message
+(device opened/closed/restarted, rate or buffer changed, device list changed), never on a timer:
+`generation` bumps on every such change and stays put otherwise, which is what a script checks to
+tell "nothing changed" from "the reading missed something".
+
+`audio.devices` lists what the engine currently offers (outputs, sample rates, buffer sizes),
+re-scanned live. `audio.set_buffer_size` / `audio.set_sample_rate` / `audio.set_device` apply
+through the SAME setters the wrench menu uses (never `AudioOutputDevice.shared` — a script must
+not write the user's persisted choice) and wait (up to 3 s, `settled: false` past that) for
+`generation` to move before answering the new status. **They touch the real hardware**:
+`set_sample_rate` changes the device's nominal rate for the WHOLE system (CoreAudio), not only for
+OBJEKAT, and every one of the three rewrites `~/Library/objekat/Settings.xml` — a script that
+changes them is responsible for setting them back before it quits.
+
+A known, pre-existing limitation, found alongside this family and NOT fixed by it (out of scope —
+it sits in Tracktion's own device restore, not in anything above): once
+`~/Library/objekat/Settings.xml` holds a saved device with no explicit channel-count attributes
+(the normal case after any real run — `useDefaultOutputChannels` then wins), `--no-audio` fails to
+keep the engine from opening the real device. So on a machine that has ever run the app for real,
+`audio.status.device` / `app.info.output_device` can stay non-null even under `--no-audio`. Both
+fields still answer the truth of whatever the engine actually opened; it is `--no-audio`'s own
+guarantee that is short here. `tools/scenario_audio_device.py`'s phase A detects this and adapts
+its assertions rather than failing on a machine where it is present.
 
 ### Export
 
