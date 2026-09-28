@@ -70,6 +70,18 @@ def is_sibilant_candidate(word: str, language: str) -> bool:
 
 # MARK: - Per-frame features
 
+VOICING_THRESHOLD = 0.45     # the historical fixed cut; `BreathParams.unvoiced` makes it adjustable
+
+# Bumped whenever `compute_features` changes what it returns, so a cache written by an older
+# version is not read back as if it were current (@see separateur_voix.py's feature cache).
+FEATURES_VERSION = 2
+
+# Frames are transformed in chunks: 10 minutes at 48 kHz is 60 000 frames of 1 200 samples, and
+# a strided view over them costs nothing while the windowed COPY of all of them at once would be
+# 576 MB.
+_CHUNK_FRAMES = 1024
+
+
 @dataclass
 class Features:
     times: np.ndarray          # frame START times, seconds, relative to the portion
@@ -78,126 +90,125 @@ class Features:
     e_mid_db: np.ndarray        # 10*log10(E[1-4kHz])
     zcr: np.ndarray
     flatness: np.ndarray
-    voiced: np.ndarray          # bool
+    voicing: np.ndarray         # the normalised autocorrelation peak itself, 0…1 — a SCORE, so
+                                # that the cut between voiced and not can be moved by a hand
     e_hf_db: np.ndarray          # 10*log10(E[4-10kHz]) — the sibilant refinement reads THIS, not the raw envelope
     hop_s: float
 
+    @property
+    def voiced(self) -> np.ndarray:
+        """The historical boolean, at the historical threshold."""
+        return self.voicing > VOICING_THRESHOLD
 
-def _band_energy(mag2: np.ndarray, freqs: np.ndarray, lo: float, hi: float) -> float:
-    band = mag2[(freqs >= lo) & (freqs <= hi)]
-    return float(band.sum()) if band.size else 0.0
 
-
-def _autocorr_voicing(frame: np.ndarray, sr: float) -> float:
-    """Normalised autocorrelation peak over the 70-400 Hz lag range — a crude but cheap voicing
-    detector, exactly the strength D2 asks for (a filter for a CANDIDATE, not a pitch tracker)."""
-    lag_min = int(sr / 400.0)
-    lag_max = min(int(sr / 70.0), len(frame) - 1)
-    if lag_max <= lag_min:
-        return 0.0
-    x = frame - frame.mean()
-    energy0 = float(np.dot(x, x))
-    if energy0 <= 1e-12:
-        return 0.0
-    best = 0.0
-    for lag in range(lag_min, lag_max + 1):
-        c = float(np.dot(x[:-lag], x[lag:]))
-        if c > best:
-            best = c
-    return best / energy0
+def _band_matrix(freqs: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    return ((freqs >= lo) & (freqs <= hi)).astype(np.float64)
 
 
 def compute_features(samples: np.ndarray, sr: float) -> Features:
+    """Per-frame features, vectorised: frames are a strided view (25 ms window, 10 ms hop), the
+    spectrum one `rfft` per chunk, the bands are matrix products against 0/1 bin masks, and the
+    voicing is an autocorrelation by FFT (`irfft(|rfft(x, 2N)|²)`, zero-padded to 2N so it is the
+    LINEAR autocorrelation the lag loop used to compute one dot product at a time)."""
     frame_len = max(2, int(round(FRAME_MS / 1000.0 * sr)))
     hop_len = max(1, int(round(HOP_MS / 1000.0 * sr)))
     n = len(samples)
-    window = np.hanning(frame_len)
     n_frames = max(0, 1 + (n - frame_len) // hop_len) if n >= frame_len else 0
 
-    times = np.zeros(n_frames)
-    energy_db = np.zeros(n_frames)
-    hf_lf = np.zeros(n_frames)
-    e_mid = np.zeros(n_frames)
-    e_hf = np.zeros(n_frames)
-    zcr = np.zeros(n_frames)
-    flatness = np.zeros(n_frames)
-    voiced = np.zeros(n_frames, dtype=bool)
+    def empty():
+        return np.zeros(n_frames)
+
+    times = np.arange(n_frames) * hop_len / sr
+    energy_db, hf_lf, e_mid, e_hf = empty(), empty(), empty(), empty()
+    zcr, flatness, voicing = empty(), empty(), empty()
+    if n_frames == 0:
+        return Features(times=times, energy_db=energy_db, hf_lf_ratio_db=hf_lf, e_mid_db=e_mid,
+                        zcr=zcr, flatness=flatness, voicing=voicing, e_hf_db=e_hf,
+                        hop_s=hop_len / sr)
+
+    samples = np.asarray(samples, dtype=np.float64)
+    window = np.hanning(frame_len)
+    freqs = np.fft.rfftfreq(frame_len, d=1.0 / sr)
+    lf_band = _band_matrix(freqs, 80.0, 1000.0)
+    hf_band = _band_matrix(freqs, 4000.0, 10000.0)
+    mid_band = _band_matrix(freqs, 1000.0, 4000.0)
+    flat_sel = (freqs >= 300.0) & (freqs <= 4000.0)
+
+    lag_min = int(sr / 400.0)
+    lag_max = min(int(sr / 70.0), frame_len - 1)
+    fft_len = 2 * frame_len
 
     eps = 1e-12
-    for i in range(n_frames):
-        start = i * hop_len
-        frame = samples[start:start + frame_len]
-        if len(frame) < frame_len:
-            frame = np.pad(frame, (0, frame_len - len(frame)))
-        times[i] = start / sr
+    view = np.lib.stride_tricks.sliding_window_view(samples, frame_len)[::hop_len][:n_frames]
+    for c0 in range(0, n_frames, _CHUNK_FRAMES):
+        c1 = min(n_frames, c0 + _CHUNK_FRAMES)
+        frames = view[c0:c1]
 
-        w = frame * window
-        energy_db[i] = 10.0 * math.log10(float(np.mean(frame ** 2)) + eps)
+        energy_db[c0:c1] = 10.0 * np.log10(np.mean(frames ** 2, axis=1) + eps)
 
-        spectrum = np.fft.rfft(w)
-        mag2 = (spectrum.real ** 2 + spectrum.imag ** 2)
-        freqs = np.fft.rfftfreq(frame_len, d=1.0 / sr)
+        spectrum = np.fft.rfft(frames * window, axis=1)
+        mag2 = spectrum.real ** 2 + spectrum.imag ** 2
+        e_lf_v = mag2 @ lf_band
+        e_hf_v = mag2 @ hf_band
+        hf_lf[c0:c1] = 10.0 * np.log10((e_hf_v + eps) / (e_lf_v + eps))
+        e_hf[c0:c1] = 10.0 * np.log10(e_hf_v + eps)
+        e_mid[c0:c1] = 10.0 * np.log10(mag2 @ mid_band + eps)
 
-        e_lf_v = _band_energy(mag2, freqs, 80.0, 1000.0)
-        e_hf_v = _band_energy(mag2, freqs, 4000.0, 10000.0)
-        hf_lf[i] = 10.0 * math.log10((e_hf_v + eps) / (e_lf_v + eps))
-        e_hf[i] = 10.0 * math.log10(e_hf_v + eps)
-        e_mid[i] = 10.0 * math.log10(_band_energy(mag2, freqs, 1000.0, 4000.0) + eps)
-
-        signs = np.sign(frame)
+        signs = np.sign(frames)
         signs[signs == 0] = 1
-        zcr[i] = float(np.mean(signs[1:] != signs[:-1]))
+        zcr[c0:c1] = np.mean(signs[:, 1:] != signs[:, :-1], axis=1)
 
         # Restricted to the band a breath actually occupies (300-4000 Hz): the full spectrum
         # would include the near-zero bins OUTSIDE a band-limited sound's own energy, and those
         # collapse a geometric mean to ~0 regardless of how flat the sound is WITHIN its band.
-        band = mag2[(freqs >= 300.0) & (freqs <= 4000.0)]
-        if band.size:
-            band = band + eps
-            gmean = math.exp(float(np.mean(np.log(band))))
-            amean = float(np.mean(band))
-            flatness[i] = gmean / amean if amean > 0 else 0.0
-        voiced[i] = _autocorr_voicing(frame, sr) > 0.45
+        band = mag2[:, flat_sel] + eps
+        if band.shape[1]:
+            gmean = np.exp(np.mean(np.log(band), axis=1))
+            amean = np.mean(band, axis=1)
+            flatness[c0:c1] = np.where(amean > 0, gmean / np.where(amean > 0, amean, 1.0), 0.0)
+
+        # Voicing: the peak of the normalised autocorrelation over the 70-400 Hz lags — a filter
+        # for a CANDIDATE, not a pitch tracker. Kept as a SCORE.
+        if lag_max > lag_min:
+            x = frames - frames.mean(axis=1, keepdims=True)
+            spec = np.fft.rfft(x, n=fft_len, axis=1)
+            r = np.fft.irfft(spec.real ** 2 + spec.imag ** 2, n=fft_len, axis=1)
+            energy0 = r[:, 0]
+            best = np.maximum(r[:, lag_min:lag_max + 1].max(axis=1), 0.0)
+            voicing[c0:c1] = np.where(energy0 > 1e-12, best / np.where(energy0 > 1e-12, energy0, 1.0), 0.0)
 
     return Features(times=times, energy_db=energy_db, hf_lf_ratio_db=hf_lf, e_mid_db=e_mid,
-                    zcr=zcr, flatness=flatness, voiced=voiced, e_hf_db=e_hf, hop_s=hop_len / sr)
+                    zcr=zcr, flatness=flatness, voicing=voicing, e_hf_db=e_hf, hop_s=hop_len / sr)
 
 
 # MARK: - Runs of frames matching a predicate
 
 def _frame_runs(mask: np.ndarray, hop_s: float, fill_holes_s: float, min_len_s: float):
     """Contiguous [start, end) index runs of `True` in `mask`, holes of at most `fill_holes_s`
-    bridged first, then filtered to at least `min_len_s` long."""
+    bridged first, then filtered to at least `min_len_s` long. Vectorised: run boundaries come from
+    a `diff` of the padded mask, never from a walk over the frames."""
     if mask.size == 0:
         return []
+    m = np.asarray(mask, dtype=bool).copy()
     fill_frames = int(round(fill_holes_s / hop_s))
-    m = mask.copy()
-    # Bridge short holes: a run of `False` of length <= fill_frames surrounded by `True` becomes `True`.
-    i = 0
-    while i < len(m):
-        if not m[i]:
-            j = i
-            while j < len(m) and not m[j]:
-                j += 1
-            if i > 0 and j < len(m) and (j - i) <= fill_frames:
-                m[i:j] = True
-            i = j
-        else:
-            i += 1
-    runs = []
-    i = 0
-    while i < len(m):
-        if m[i]:
-            j = i
-            while j < len(m) and m[j]:
-                j += 1
-            length_s = (j - i) * hop_s
-            if length_s >= min_len_s:
-                runs.append((i, j))
-            i = j
-        else:
-            i += 1
-    return runs
+    if fill_frames > 0:
+        # A hole is a run of False with True on BOTH sides (a mask starting or ending on False has
+        # no such neighbour, so its edge run is never bridged).
+        pad = np.concatenate(([True], m, [True])).astype(np.int8)
+        d = np.diff(pad)
+        starts = np.flatnonzero(d == -1)      # first False of a run
+        ends = np.flatnonzero(d == 1)         # one past its last False
+        sel = ((ends - starts) <= fill_frames) & (starts > 0) & (ends < len(m))
+        if sel.any():
+            delta = np.zeros(len(m) + 1, dtype=np.int64)
+            np.add.at(delta, starts[sel], 1)
+            np.add.at(delta, ends[sel], -1)
+            m |= np.cumsum(delta)[:-1] > 0
+    d = np.diff(np.concatenate(([0], m.astype(np.int8), [0])))
+    starts = np.flatnonzero(d == 1)
+    ends = np.flatnonzero(d == -1)
+    keep = (ends - starts) * hop_s >= min_len_s
+    return list(zip(starts[keep].tolist(), ends[keep].tolist()))
 
 
 def _refine_envelope_bounds(samples: np.ndarray, sr: float, lo: float, hi: float) -> tuple[float, float]:
@@ -231,57 +242,139 @@ def _refine_envelope_bounds(samples: np.ndarray, sr: float, lo: float, hi: float
 
 # MARK: - Breaths
 
-def breath_regions(samples: np.ndarray, sr: float, feats: Features, duration: float,
-                   words: list[dict] | None) -> list[tuple[float, float]]:
-    voiced_energy = feats.energy_db[feats.voiced]
+@dataclass
+class BreathParams:
+    """The nine criteria of a breath, each with its own on / off. The defaults are the figures the
+    detector always used, so `breath_mask(…, BreathParams())` IS the historical `breath_regions`.
+    A criterion switched OFF drops out of the conjunction (a `gap` off = no restriction to the
+    spaces between words); `min_len`, `fill` and `end_margin` off mean 0."""
+    gap: float = MIN_GAP_MS              # ms — a space between words at least this long
+    unvoiced: float = VOICING_THRESHOLD   # voicing score below this
+    above_floor: float = 6.0             # dB above the noise floor (5th percentile)
+    below_speech: float = 10.0           # dB under the median of the voiced frames
+    flatness: float = 0.08               # spectral flatness above this
+    hf_lf: float = 6.0                   # dB, high / low band ratio below this
+    min_len: float = MIN_BREATH_MS       # ms — the shortest run kept
+    fill: float = FILL_HOLE_MS           # ms — a hole this short is bridged
+    end_margin: float = BREATH_END_MARGIN_S * 1000.0   # ms — kept clear before the next word
+    gap_on: bool = True
+    unvoiced_on: bool = True
+    above_floor_on: bool = True
+    below_speech_on: bool = True
+    flatness_on: bool = True
+    hf_lf_on: bool = True
+    min_len_on: bool = True
+    fill_on: bool = True
+    end_margin_on: bool = True
+
+    @classmethod
+    def from_values(cls, values: dict) -> "BreathParams":
+        """From a panel's `values` ({'gap': 120, 'gap_on': True, …}); an absent key keeps its default."""
+        p = cls()
+        for name in cls.__dataclass_fields__:
+            if name in values:
+                setattr(p, name, type(getattr(p, name))(values[name]))
+        return p
+
+
+@dataclass
+class BreathStats:
+    median_speech_db: float
+    noise_floor_db: float
+
+
+def breath_stats(feats: Features, unvoiced: float = VOICING_THRESHOLD) -> BreathStats:
+    """What the energy criteria are measured against. The median of the VOICED frames depends on
+    where the voicing cut is, so it is recomputed per cut (a median of a few thousand numbers) —
+    the floor does not, and is the same for every setting."""
+    voiced_energy = feats.energy_db[feats.voicing > unvoiced]
     median_speech_db = float(np.median(voiced_energy)) if voiced_energy.size else float(np.median(feats.energy_db))
     noise_floor_db = float(np.percentile(feats.energy_db, 5))
-    sib_threshold_db = 6.0
-
-    candidate = (~feats.voiced) \
-        & (feats.energy_db > noise_floor_db + 6.0) \
-        & (feats.energy_db < median_speech_db - 10.0) \
-        & (feats.flatness > 0.08) \
-        & (feats.hf_lf_ratio_db < sib_threshold_db)
-
-    gaps = _gaps_from_words(words, duration) if words else None
-    if gaps is not None:
-        in_gap = np.zeros_like(candidate)
-        for g0, g1 in gaps:
-            in_gap |= (feats.times >= g0) & (feats.times < g1)
-        candidate &= in_gap
-
-    runs = _frame_runs(candidate, feats.hop_s, FILL_HOLE_MS / 1000.0, MIN_BREATH_MS / 1000.0)
-    out = []
-    for i, j in runs:
-        lo = float(feats.times[i])
-        # `times[k]` is a frame's START; the frame itself spans FRAME_MS (25), not HOP_MS (10) —
-        # closing the run on `+ hop_s` alone under-ran the true end by the 15 ms difference on
-        # every boundary (found chasing a stray 20 ms miss in test_detect.py's ASR-mode assertion).
-        hi = float(feats.times[j - 1] + FRAME_MS / 1000.0)
-        # No raw-envelope refinement here (unlike a sibilant's HF-peak one, @see
-        # _refine_hf_bounds): a breath's envelope is close to flat noise, and the 5 ms RMS
-        # window's halfway threshold nibbles at the tail long before the frame-level (10 ms hop)
-        # bound the candidate mask already gives — the frame resolution IS the refinement.
-        if gaps is not None:
-            # The margin belongs to whichever gap this run fell in.
-            for g0, g1 in gaps:
-                if g0 <= lo < g1:
-                    hi = min(hi, g1 - BREATH_END_MARGIN_S)
-                    break
-        if hi - lo >= MIN_BREATH_MS / 1000.0:
-            out.append((lo, hi))
-    return out
+    return BreathStats(median_speech_db, noise_floor_db)
 
 
-def _gaps_from_words(words, duration):
+def word_gaps(words: list[dict] | None, duration: float,
+              min_gap_ms: float = MIN_GAP_MS) -> tuple[np.ndarray, np.ndarray] | None:
+    """The spaces between words at least `min_gap_ms` long, as two arrays (starts, ends) — sorted
+    and disjoint, which is what lets a frame be placed with ONE `searchsorted` instead of a test
+    against every gap. None when there are no words (then nothing restricts where a breath can be)."""
+    if not words:
+        return None
+    gaps = _gaps_from_words(words, duration, min_gap_ms)
+    g0 = np.array([g[0] for g in gaps], dtype=np.float64)
+    g1 = np.array([g[1] for g in gaps], dtype=np.float64)
+    return g0, g1
+
+
+def _gap_index(times: np.ndarray, gaps: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    """For each time, the index of the gap [g0, g1) that contains it, or -1."""
+    g0, g1 = gaps
+    if g0.size == 0:
+        return np.full(times.shape, -1, dtype=np.int64)
+    idx = np.searchsorted(g0, times, side="right") - 1
+    inside = (idx >= 0) & (times < g1[np.clip(idx, 0, None)])
+    return np.where(inside, idx, -1)
+
+
+def breath_mask(feats: Features, stats: BreathStats, gaps: tuple[np.ndarray, np.ndarray] | None,
+                params: BreathParams) -> list[tuple[float, float]]:
+    """The breaths, as (start, end) seconds — PURE: features and stats in, regions out, nothing
+    recomputed. It is what runs on every setting a hand moves, so it is all array arithmetic over
+    the frames (a few milliseconds for ten minutes of audio).
+
+    `stats` must have been made for `params.unvoiced` (@see breath_stats), and `gaps` for
+    `params.gap` (@see word_gaps)."""
+    p = params
+    candidate = np.ones(feats.times.shape, dtype=bool)
+    if p.unvoiced_on:
+        candidate &= feats.voicing <= p.unvoiced
+    if p.above_floor_on:
+        candidate &= feats.energy_db > stats.noise_floor_db + p.above_floor
+    if p.below_speech_on:
+        candidate &= feats.energy_db < stats.median_speech_db - p.below_speech
+    if p.flatness_on:
+        candidate &= feats.flatness > p.flatness
+    if p.hf_lf_on:
+        candidate &= feats.hf_lf_ratio_db < p.hf_lf
+
+    use_gaps = gaps is not None and p.gap_on
+    if use_gaps:
+        candidate &= _gap_index(feats.times, gaps) >= 0
+
+    runs = _frame_runs(candidate, feats.hop_s,
+                       (p.fill / 1000.0) if p.fill_on else 0.0,
+                       (p.min_len / 1000.0) if p.min_len_on else 0.0)
+    if not runs:
+        return []
+    starts = np.array([r[0] for r in runs])
+    ends = np.array([r[1] for r in runs])
+    lo = feats.times[starts]
+    hi = feats.times[ends - 1] + FRAME_MS / 1000.0
+    if use_gaps and p.end_margin_on:
+        # The margin belongs to whichever gap the run STARTED in.
+        gi = _gap_index(lo, gaps)
+        capped = gi >= 0
+        hi = np.where(capped, np.minimum(hi, gaps[1][np.clip(gi, 0, None)] - p.end_margin / 1000.0), hi)
+    min_len = (p.min_len / 1000.0) if p.min_len_on else 0.0
+    keep = (hi - lo) >= max(min_len, 1e-9)
+    return list(zip(lo[keep].tolist(), hi[keep].tolist()))
+
+
+def breath_regions(samples: np.ndarray, sr: float, feats: Features, duration: float,
+                   words: list[dict] | None) -> list[tuple[float, float]]:
+    """The historical entry point: the defaults, stats and gaps computed on the spot."""
+    p = BreathParams()
+    return breath_mask(feats, breath_stats(feats, p.unvoiced), word_gaps(words, duration, p.gap), p)
+
+
+def _gaps_from_words(words, duration, min_gap_ms=MIN_GAP_MS):
     gaps = []
     prev_end = 0.0
     for wd in sorted(words, key=lambda w: w["start"]):
-        if wd["start"] - prev_end >= MIN_GAP_MS / 1000.0:
+        if wd["start"] - prev_end >= min_gap_ms / 1000.0:
             gaps.append((prev_end, wd["start"]))
         prev_end = max(prev_end, wd["end"])
-    if duration - prev_end >= MIN_GAP_MS / 1000.0:
+    if duration - prev_end >= min_gap_ms / 1000.0:
         gaps.append((prev_end, duration))
     return gaps
 
@@ -342,17 +435,11 @@ def sibilant_regions(samples: np.ndarray, sr: float, feats: Features, duration: 
 
 # MARK: - Segmentation
 
-def segment(samples: np.ndarray, sr: float, duration: float,
-           words: list[dict] | None = None, language: str = "fr") -> list[tuple[float, float, str]]:
-    """The full pipeline: features → breaths → sibilants → a label per instant → pieces covering
-    `[0, duration]` exactly, jointive, none shorter than `MIN_PIECE_MS` (folded into a neighbour).
-    Labels: "voice" (default), "breath", "sibilant"."""
-    feats = compute_features(samples, sr)
-    breaths = breath_regions(samples, sr, feats, duration, words)
-    sibilants = sibilant_regions(samples, sr, feats, duration, words, language)
-
-    regions = sorted([(lo, hi, "breath") for lo, hi in breaths]
-                     + [(lo, hi, "sibilant") for lo, hi in sibilants])
+def _pieces_from_regions(regions: list[tuple[float, float, str]],
+                        duration: float) -> list[tuple[float, float, str]]:
+    """Labelled regions → pieces covering `[0, duration]` exactly, jointive, none shorter than
+    `MIN_PIECE_MS` (folded into a neighbour). Everything outside a region is "voice"."""
+    regions = sorted(regions)
     # Non-overlapping: a later region's start is clipped past an earlier one's end.
     cleaned: list[tuple[float, float, str]] = []
     for lo, hi, label in regions:
@@ -390,6 +477,24 @@ def segment(samples: np.ndarray, sr: float, duration: float,
                 break
 
     return [(p[0], p[1], p[2]) for p in pieces]
+
+
+def segment(samples: np.ndarray, sr: float, duration: float,
+           words: list[dict] | None = None, language: str = "fr") -> list[tuple[float, float, str]]:
+    """The full pipeline: features → breaths → sibilants → a label per instant → pieces covering
+    `[0, duration]` exactly, jointive, none shorter than `MIN_PIECE_MS` (folded into a neighbour).
+    Labels: "voice" (default), "breath", "sibilant"."""
+    feats = compute_features(samples, sr)
+    breaths = breath_regions(samples, sr, feats, duration, words)
+    sibilants = sibilant_regions(samples, sr, feats, duration, words, language)
+    return _pieces_from_regions([(lo, hi, "breath") for lo, hi in breaths]
+                                + [(lo, hi, "sibilant") for lo, hi in sibilants], duration)
+
+
+def segment_breaths(duration: float, regions: list[tuple[float, float]]) -> list[tuple[float, float, str]]:
+    """Breath regions only → the two-label pieces (voice / breath) an evaluation lays out on two
+    sub-lanes. Same folding rule as `segment` (no piece under `MIN_PIECE_MS`)."""
+    return _pieces_from_regions([(lo, hi, "breath") for lo, hi in regions], duration)
 
 
 LANE_FOR_LABEL = {"voice": 0, "breath": 1, "sibilant": 2}

@@ -88,7 +88,7 @@ def transcribe(mono, sr, language):
     lang = None if language in (None, "", "auto") else language
     result = mlx_whisper.transcribe(
         audio,
-        path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
+        path_or_hf_repo=MODEL,
         word_timestamps=True,
         language=lang,
     )
@@ -99,6 +99,74 @@ def transcribe(mono, sr, language):
                           "start": float(w.get("start", 0.0)),
                           "end": float(w.get("end", 0.0))})
     return words
+
+
+# MARK: - The analysis cache
+
+MODEL = "mlx-community/whisper-large-v3-turbo"
+
+
+def cache_directory():
+    """`~/Library/Caches/Objekat/separateur-voix/` (`OBJEKAT_SEPARATEUR_CACHE` overrides it, which is
+    what lets a test use a folder of its own)."""
+    return os.environ.get("OBJEKAT_SEPARATEUR_CACHE") or os.path.join(
+        os.path.expanduser("~"), "Library", "Caches", "Objekat", "separateur-voix")
+
+
+def cache_key(file_path, source_offset, duration, speed, language, no_asr, model=MODEL):
+    """What the analysis of an object depends on — the file (path, modification time, size), the
+    portion of it that plays (offset, duration, speed), the language, whether Whisper ran, which
+    model, and the version of the features. A different value anywhere is a different analysis."""
+    import hashlib
+    st = os.stat(file_path)
+    fields = [os.path.realpath(file_path), st.st_mtime_ns, st.st_size,
+              round(float(source_offset), 6), round(float(duration), 6), round(float(speed), 6),
+              language or "", bool(no_asr), model, detect.FEATURES_VERSION]
+    return hashlib.sha1(json.dumps(fields).encode("utf-8")).hexdigest()
+
+
+_FEATURE_FIELDS = ("times", "energy_db", "hf_lf_ratio_db", "e_mid_db", "zcr", "flatness",
+                   "voicing", "e_hf_db")
+
+
+def save_analysis(path, words, feats, sr):
+    import numpy as np
+    arrays = {name: getattr(feats, name) for name in _FEATURE_FIELDS}
+    arrays["hop_s"] = np.array(feats.hop_s)
+    arrays["sr"] = np.array(float(sr))
+    arrays["words"] = np.frombuffer(json.dumps(words).encode("utf-8"), dtype=np.uint8)
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, **arrays)
+    os.replace(tmp, path)
+
+
+def load_analysis(path):
+    """(words, feats, sr), or None for a file that is missing or unreadable — a corrupt cache is
+    a recomputation, never an error."""
+    import numpy as np
+    try:
+        with np.load(path) as z:
+            words = json.loads(bytes(z["words"]).decode("utf-8"))
+            feats = detect.Features(hop_s=float(z["hop_s"]), **{n: z[n] for n in _FEATURE_FIELDS})
+            return words, feats, float(z["sr"])
+    except Exception:
+        return None
+
+
+def cached_analysis(key, compute):
+    """`compute()` → (words, feats, sr) runs only when nothing valid is cached under `key`."""
+    folder = cache_directory()
+    path = os.path.join(folder, key + ".npz")
+    hit = load_analysis(path) if os.path.exists(path) else None
+    if hit is not None:
+        return hit
+    words, feats, sr = compute()
+    try:
+        os.makedirs(folder, exist_ok=True)
+        save_analysis(path, words, feats, sr)
+    except OSError:
+        pass   # a cache that cannot be written is a cache that is not there
+    return words, feats, sr
 
 
 def refuse(reason):
