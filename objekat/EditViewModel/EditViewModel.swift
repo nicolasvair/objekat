@@ -1458,15 +1458,30 @@ final class EditViewModel {
         updateWindowSubtitle()
     }
 
-    /// The audio device really in use, in grey, on the title's own line
-    /// (`NSWindow.subtitle` — measured to draw inline on a window with no toolbar, @see
-    /// plan_titlebar_audio_device.md §4a). Read from `AudioDeviceStatus.shared`, the SAME object
-    /// `audio.status` answers from: the title can never say something the API does not.
+    /// The one owner of the grey device label (@see `TitleBarDeviceLabel`) for this window's
+    /// whole life — a document has exactly one titled window (@see `titledWindow`), so one
+    /// instance is all this ever needs.
+    @ObservationIgnored private let audioDeviceLabel = TitleBarDeviceLabel()
+
+    /// The audio device really in use, in grey, beside the title (`TitleBarDeviceLabel`, a
+    /// SECOND text field laid by hand — @see plan_titlebar_audio_device.md §4a/4b: measured
+    /// that `NSWindow.subtitle` fuses onto the title's own field, one colour for both, which is
+    /// why the audio text no longer lives there). Read from `AudioDeviceStatus.shared`, the SAME
+    /// object `audio.status` answers from: the title can never say something the API does not.
     func updateWindowSubtitle() {
         guard let window = documentWindow else { return }   // nil headless: nothing to do
-        let text = AudioDeviceStatus.shared.text
-        if window.subtitle != text { window.subtitle = text }
+        // Never anything but empty here again — 4a's inline fusion is exactly what made it
+        // ungreyable on its own.
+        if window.subtitle != "" { window.subtitle = "" }
+        audioDeviceLabel.attach(to: window)
+        audioDeviceLabel.setText(AudioDeviceStatus.shared.text)
     }
+
+    /// What the grey label ACTUALLY shows right now — `nil` when nothing is (no title field
+    /// found, or the window too narrow to fit even a truncated word of it). This is what
+    /// `audio.status`'s `window_subtitle` answers: never the text that was asked for, if the
+    /// hand would see nothing of it.
+    var displayedAudioDeviceText: String? { audioDeviceLabel.displayedText }
 
     #if DEBUG
     /// DEBUG/SPIKE ONLY (@see plan_titlebar_audio_device.md §4a): every `NSTextField` in the
@@ -1490,6 +1505,12 @@ final class EditViewModel {
         }
         walk(themeFrame)
         return found
+    }
+
+    /// DEBUG/measurement only, @see `TitleBarDeviceLabel.debugInfo()`: the grey label's own
+    /// frame, colour and hidden state, plus the title field's frame it is laid beside.
+    func debugAudioDeviceLabel() -> TitleBarDeviceLabel.DebugInfo {
+        audioDeviceLabel.debugInfo()
     }
     #endif
 
