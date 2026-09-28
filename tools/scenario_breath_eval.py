@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import wave
@@ -259,6 +260,141 @@ def section_c(c):
           c.send("script.panel.list"))
 
 
+VENV_PY = os.path.expanduser(
+    "~/Library/Application Support/Objekat/venvs/separateur-voix/bin/python3")
+SCRIPT_DIR = os.path.join(HERE, "scripts", "separateur-voix")
+
+
+def make_voice_wav(path):
+    """The synthetic voice of test_detect.py (vowels, one breath, two 's', one 'ch') as a 24-bit
+    mono wav — written by the script's own venv, which has numpy and soundfile."""
+    code = ("import sys; sys.path.insert(0, %r); import soundfile as sf, test_detect as t; "
+            "sf.write(%r, t.make_signal(), t.SR, subtype='PCM_24')" % (SCRIPT_DIR, path))
+    subprocess.run([VENV_PY, "-c", code], check=True)
+    return path
+
+
+def wait_for(fn, label, timeout=30.0, step=0.1):
+    import time
+    end = time.time() + timeout
+    last = None
+    while time.time() < end:
+        try:
+            last = fn()
+            if last:
+                return last
+        except ObjekatError as e:
+            last = e
+        time.sleep(step)
+    check(label, False, "timed out; last = %r" % (last,))
+    return None
+
+
+def section_d(c):
+    """End to end: the script, its panel, its overlay, the cut."""
+    import time
+    if not os.path.exists(VENV_PY):
+        print("skip  d: the script's venv is not installed (%s)" % VENV_PY)
+        return
+    ROOT = tmproot("d")
+    WAV = make_voice_wav(os.path.join(ROOT, "voice.wav"))
+    c.send("project.new")
+    a = c.send("object.add", {"path": WAV, "lane": 2, "start": 0.0})["id"]
+
+    def launch():
+        env = dict(os.environ, OBJEKAT_SOCKET=SOCK, OBJEKAT_LANGUAGE="en",
+                   OBJEKAT_SEPARATEUR_CACHE=os.path.join(ROOT, "cache"))
+        return subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--breaths-eval", "--no-asr",
+                                 "--object", a], env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+
+    def panels():
+        return [p for p in c.send("script.panel.list")["panels"] if p["state"] == "open"]
+
+    def zones():
+        try:
+            return len(c.send("overlay.get", {"id": a})["zones"])
+        except ObjekatError:
+            return 0
+
+    # ── Validate ──
+    proc = launch()
+    got = wait_for(panels, "d: the script opens its panel")
+    pid = got[0]["panel_id"] if got else None
+    n0 = wait_for(zones, "d: the script lays zones over the object")
+    check("d: zones were laid", bool(n0), n0)
+    if pid:
+        rev0 = c.send("overlay.get", {"id": a})["rev"]
+        c.send("script.panel.input", {"panel_id": pid, "values": {"flatness_on": False}})
+        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0, "d: a setting re-runs the mask")
+        n1 = zones()
+        check("d: switching the flatness criterion off never loses zones (%s -> %s)" % (n0, n1),
+              n1 >= (n0 or 0))
+        c.send("script.panel.input", {"panel_id": pid, "values": {"flatness_on": True}})
+        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0 + 1, "d: and back")
+        c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
+    rc = proc.wait(timeout=60)
+    check("d: the script exits 0 after Validate", rc == 0, proc.stderr.read().decode()[-400:])
+    time.sleep(0.3)
+    objs = c.send("object.list")["objects"]
+    groups = [o for o in objs if o.get("kind") == "group"]
+    check("d: Validate cuts the object into a group", len(groups) == 1 and a not in [o["id"] for o in objs],
+          [(o.get("kind"), o.get("name")) for o in objs])
+    if groups:
+        c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
+        kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
+        check("d: two sub-lanes, named voice / breaths",
+              {k["lane"] for k in kids} == {0, 1}
+              and {k["name"] for k in kids} == {"Voice", "Breaths"}, [(k["lane"], k["name"]) for k in kids])
+    check("d: overlay and panel gone", c.send("overlay.list")["overlays"] == [] and panels() == [])
+    c.send("edit.undo")
+    objs = c.send("object.list")["objects"]
+    check("d: one undo gives the original object back", [o["id"] for o in objs] == [a],
+          [o["id"] for o in objs])
+
+    # ── Cancel ──
+    before = c.send("object.list")["objects"]
+    proc = launch()
+    got = wait_for(panels, "d: cancel run: panel opens")
+    if got:
+        wait_for(zones, "d: cancel run: zones")
+        c.send("script.panel.input", {"panel_id": got[0]["panel_id"], "press": "cancel"})
+    rc = proc.wait(timeout=60)
+    time.sleep(0.3)
+    check("d: Cancel exits 0 and leaves the project as it was",
+          rc == 0 and c.send("object.list")["objects"] == before)
+    check("d: Cancel leaves no overlay", c.send("overlay.list")["overlays"] == [])
+
+    # ── The script is killed while its panel is open ──
+    proc = launch()
+    got = wait_for(panels, "d: kill run: panel opens")
+    wait_for(zones, "d: kill run: zones")
+    proc.kill()
+    proc.wait()
+    ok = wait_for(lambda: c.send("overlay.list")["overlays"] == [] and panels() == [],
+                  "d: SIGKILL on the script clears its overlay and its panel", timeout=10)
+    if ok:
+        check("d: SIGKILL on the script clears its overlay and its panel", True)
+
+
+def section_e():
+    """No window on the headless process (a panel was opened and closed above)."""
+    try:
+        import Quartz
+    except ImportError:
+        print("skip  e: Quartz not available")
+        return
+    out = subprocess.run(["pgrep", "-f", "socket=" + SOCK], capture_output=True, text=True).stdout.split()
+    pids = [int(x) for x in out]
+    if not pids:
+        print("skip  e: cannot find the app's pid")
+        return
+    wins = [w for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll,
+                                                         Quartz.kCGNullWindowID)
+            if w.get("kCGWindowOwnerPID") in pids]
+    check("e: no window on the headless pid", len(wins) == 0, len(wins))
+
+
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
@@ -266,6 +402,8 @@ try:
         section_a(c, 44100)
         section_b(c)
         section_c(c)
+        section_d(c)
+        section_e()
 finally:
     cleanup()
 
