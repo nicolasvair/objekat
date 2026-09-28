@@ -1720,6 +1720,94 @@ What has landed since mid-August, in order:
   rather than looking cut off, and the floor-width hide as it would actually happen under a real
   hand-driven resize rather than this harness's own workaround for it.
 
+- **A vertical lane snap, and the zoom clamped at 90 %** (28 September 2026, merged into `main`
+  the same day) — once a lane's block passes **70 %** of
+  the available height (`viewportHeight − rulerHeight`, the block measured against — never
+  `laneStep`, the 4 pt gap is not "the lane"), the vertical view SNAPS to the lanes: it settles
+  framed on one, and moving walks it to the next. The vertical zoom is clamped so a lane can
+  never exceed **90 %**. Completely independent of the TIME snap (`snapEnabled`): nothing here
+  reads or writes the grid.
+  The arithmetic lives ALONE, `objekat/Timeline/VerticalLaneSnap.swift` — no view, no model, the
+  reason `SendColumns` / `PianoRollFraming` / `CutSelection` are units — with its five tunable
+  constants named at the top: `enterRatio` (0.70), `maxRatio` (0.90), `trackpadStepThreshold`
+  (24 pt), `easeOutDuration` (0.18 s), `zoomSettleDebounce` (0.2 s), and `framing` (`.centre`,
+  the one line to flip for `.top` after the feel test). The clamp (`maxBlockHeight`) replaces the
+  old `max(120, …)` floor, which could exceed a small window outright.
+  **The clamp reaches every door through ONE catch-all**: `enforceVerticalZoomBounds()`, hung off
+  `.onChange(of: viewModel.blockHeight)` — idempotent, so `view.set`'s raw write, a project load,
+  a tab restore and the transport pill's nil-closure fallback all land on the same 90 % ceiling
+  with no second implementation. A window resize or a marker row shown/hidden keeps the RATIO
+  while snapped (`resizedBlockHeight`) rather than merely reclamping — enlarging the window must
+  not silently drop a 75 % lane under 70 % (the mode switching off under the hand), and shrinking
+  must not clamp to 90 % and then hold it there once the window grows back.
+  **Framing is centred** (a 5–15 % sliver of the previous/next lane stays visible, saying "there
+  is more, this way"), with lane 0 the one accepted exception — it cannot be centred upward, and
+  rests top-aligned. `frameLane(_:animated:)` is the one function every door converges on: the
+  scroll monitor's step, ↑/↓ in snap mode (`revealDisplayLane` branches on `verticalSnapActive`
+  before its own least-scroll logic), the end-of-zoom settle, the idle safety net, and a project
+  reopen.
+  **The scroll gesture is owned by the monitor**, not by SwiftUI's own scroll-target machinery —
+  the same doctrine ⇧-zoom already uses. A branch at the very END of `registerScrollMonitor`
+  (after ⇧-zoom, ⌥-curve and the three tools, which keep priority): a trackpad steps ONE lane per
+  GESTURE, fired as soon as 24 pt of travel is crossed, the rest — momentum included — swallowed;
+  a wheel steps ONE lane per NOTCH, notches arriving mid-animation accumulating onto its running
+  target (`TimelineView.neighbourLane`) rather than the lane read back in flight. **A genuine bug
+  the new scenario found and fixed on the same day**: the axis lock's 3 pt dead zone, copied
+  outright from ⇧-zoom's own (where it merely delays a CONTINUOUS gesture by an imperceptible
+  amount), was EATING whole wheel notches deciding the axis — a notch already IS the unit, and
+  three of them landed only one lane. A wheel (`!hasPreciseScrollingDeltas`) now decides its axis
+  on the single current event's dx/dy, no dead zone; a trackpad keeps the 3 pt one.
+  **The end of a zoom session settles the lane** (D8): never per notch — that would fight the
+  zoom's own anchor, which keeps the viewport centre fixed on screen for the whole session. Every
+  notch cancels and rearms a 0.2 s debounce (`zoomSettleDebounce` — shorter than the zoom
+  session's own 0.4 s idle gap on purpose, so it reads as an immediate settle); at its end, if the
+  snap is active, the lane nearest the viewport centre is framed. A notch that changes nothing
+  because it is already at the 90 % cap still ends the session and re-frames, harmlessly. The
+  pill drag closes its OWN session explicitly (`endVerticalZoomDrag`) rather than waiting on the
+  debounce. An idle safety net (`.onScrollPhaseChange`, `.idle`) catches everything else that can
+  leave the scroll off-grid while snapped — the scroller dragged by hand, a drag-follow scroll, a
+  stray gesture — converging in one animated move.
+  `view.state` gains a `vsnap` object (`available_h`, `max_block_height`, `lane_step`, `ratio`,
+  `active`, `lane`, `on_grid`, `pending`, `ruler_h`), `null` with no interface; `waitViewAtRest`
+  also waits while `pending` is true, otherwise a test samples mid-settle. New debug door:
+  `debug.resize_window` (already existed, reused rather than duplicated as `window_h` on
+  `view.set` — the plan's own recommendation, the divergence noted in it).
+  Verified: a Debug build, **1550 warnings, unchanged**; `tools/test_vertical_lane_snap.swift`,
+  **1137 assertions** (the clamp, the exact 0.70 threshold, the centred framing and lane 0's
+  exception, the round trip `nearestLane(scrollY(forLane: i)) == i` for every lane, the neighbour
+  walk's `nil` at both ends, the 0.5 pt on-grid tolerance, the ratio kept across a resize, and a
+  sweep over available × ratio proving targets increase monotonically to the clamp);
+  `tools/scenario_vertical_snap.py` (new, UI mode only, never `--headless`), **33/33** — the 90 %
+  clamp via `view.set` and via ⇧-zoom, the free continuous mode under 70 %, the D7 safety net, the
+  trackpad step (a 60 pt swipe and a 600 pt one WITH momentum both landing exactly one lane, a
+  10 pt sub-threshold swipe landing none), the wheel's three-notches-three-lanes (the bug above,
+  caught by this very assertion), the horizontal pass-through, the two ends, ⇧'s priority intact,
+  crossing the threshold while zooming and settling on the viewport-centre lane, the ratio surviving
+  a shrink and a regrow, ↑/↓ framing via `caret.step_lane`, and the time snap toggled with no
+  effect on any `vsnap` field. `tools/scenario_navigation.py` in UI mode: **43/43**, no
+  regression — its own vertical-zoom assertions (×0.5, ×1.6 from a 121.5 pt start) stay far under
+  the new 70 % threshold on this machine's window, so nothing needed restarting lower.
+  **Not seen, not felt**: every pixel of it — the 5–15 % slivers either side of a centred lane and
+  whether they read as "there is more, this way"; the 24 pt trackpad threshold and the 0.18 s
+  ease-out under a real hand (does a flick feel eaten, does a slow drag feel late); a fast wheel
+  spin; the ruler/marker header during the animated step, staying behind the content rather than
+  jumping ahead of it; crossing 70 % while zooming — is the 0.2 s settle a pleasant landing or a
+  surprise jump, and is the viewport-centre anchor the right lane (a hover-anchored follow-up is
+  explicitly out of scope); a piano roll walked in its two halves and an automation row as a lane
+  under real use; the resize keeping the ratio versus simply clamping (D3's alternative, one line
+  to flip if the feel test disagrees); legacy (always-visible) scrollbars, whose ~15 pt eaten out
+  of `viewportHeight` is a known, accepted imprecision; and dragging the vertical scroller's own
+  knob while snapped, releasing into the D7 re-frame.
+  **And the vertical zoom is anchored on what one is working on** (D12, the same day): a zoom
+  used to anchor on the viewport's centre, so zooming far drifted the selected object downwards
+  off screen (pre-existing). It now holds FIXED on screen, read once when the gesture opens
+  (`selectionAnchorLaneCentre`, `TimelineView.swift`): the selected objects' lane span, else a
+  traced time selection's lanes, else the caret's lane, else the viewport centre as before; the
+  end-of-zoom framing lands on that lane. **Felt by the user and approved; NOT measured** — the
+  drift assertions planned for `scenario_vertical_snap.py` (selection top/middle/bottom, the
+  caret alone, the last lane where the scroll clamps) were never written: the agent was stopped
+  before running them. Only a Debug build verifies it.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

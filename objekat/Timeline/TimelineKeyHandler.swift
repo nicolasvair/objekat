@@ -196,6 +196,81 @@ extension TimelineView {
                 return nil
             }
 
+            // MARK: Vertical lane snap (D6 of plan_vertical_lane_snap.md). Once a lane's block
+            // passes 70 % of the available height, plain vertical scrolling snaps lane to lane
+            // instead of scrolling continuously — placed LAST, after ⇧-zoom, ⌥-curve and the
+            // three tools above, which all keep priority (a Volume-tool wheel over a block stays
+            // a volume wheel even in this mode).
+            if flags.intersection(Self.heldModifiers).isEmpty, self.verticalSnapActive {
+                let dx = event.scrollingDeltaX
+                let dy = event.scrollingDeltaY
+                let hasPhase = !event.phase.isEmpty || !event.momentumPhase.isEmpty
+                let now = ProcessInfo.processInfo.systemUptime
+
+                // Rearming: a new trackpad gesture (.began) or, failing a phase (a mouse), an
+                // idle gap — the same rule ⇧-zoom's own axis lock uses, just above.
+                let newGesture = event.phase.contains(.began)
+                              || (!hasPhase && now - hs.vSnapLastEventTime > 0.4)
+                if newGesture {
+                    hs.vSnapAxis = nil
+                    hs.vSnapAccumX = 0
+                    hs.vSnapAccumY = 0
+                    hs.vSnapStepAccum = 0
+                    hs.vSnapStepped = false
+                    hs.vSnapWheelTargetLane = nil
+                }
+                hs.vSnapLastEventTime = now
+
+                // Axis lock, decided once for the whole gesture. A trackpad gets the 3 pt dead
+                // zone ⇧-zoom uses (a diagonal swipe's first few events are ambiguous). A WHEEL's
+                // notch already IS the unit — a mouse wheel is single-axis by construction, and
+                // holding it to the trackpad's dead zone would EAT real notches deciding the
+                // axis, which a continuous zoom can shrug off but a discrete lane count cannot
+                // (found by `tools/scenario_vertical_snap.py`: 3 notches landed only 1 lane).
+                if hs.vSnapAxis == nil {
+                    if event.hasPreciseScrollingDeltas {
+                        hs.vSnapAccumX += dx
+                        hs.vSnapAccumY += dy
+                        let ax = abs(hs.vSnapAccumX), ay = abs(hs.vSnapAccumY)
+                        guard max(ax, ay) >= 3 else { return nil }
+                        hs.vSnapAxis = ax >= ay ? .horizontal : .vertical
+                    } else {
+                        guard dx != 0 || dy != 0 else { return event }
+                        hs.vSnapAxis = abs(dx) >= abs(dy) ? .horizontal : .vertical
+                    }
+                }
+                // Horizontal-dominant: NSScrollView's own predominant-axis scrolling keeps y
+                // still — let it through untouched for the whole gesture.
+                guard hs.vSnapAxis == .vertical else { return event }
+
+                if event.hasPreciseScrollingDeltas {
+                    // Trackpad / Magic Mouse: ONE lane per gesture, fired as soon as the
+                    // threshold is crossed — everything after it, momentum included, is swallowed.
+                    guard !hs.vSnapStepped else { return nil }
+                    hs.vSnapStepAccum += Double(dy)
+                    if abs(hs.vSnapStepAccum) >= VerticalLaneSnap.trackpadStepThreshold {
+                        hs.vSnapStepped = true
+                        // AppKit: a positive Y reveals what is ABOVE → the previous lane.
+                        let direction = dy > 0 ? -1 : 1
+                        DispatchQueue.main.async { self.stepFramedLane(by: direction) }
+                    }
+                    return nil
+                } else {
+                    // Wheel: ONE lane per notch, accumulating onto the step animation's own
+                    // running target so a fast spin keeps advancing instead of losing notches to
+                    // an animation still in flight.
+                    guard dy != 0 else { return event }
+                    let direction = dy > 0 ? -1 : 1
+                    DispatchQueue.main.async {
+                        let base = hs.vSnapWheelTargetLane ?? self.currentFramedLane()
+                        guard let next = self.neighbourLane(of: base, direction: direction) else { return }
+                        hs.vSnapWheelTargetLane = next
+                        self.frameLane(next, animated: true)
+                    }
+                    return nil
+                }
+            }
+
             return event
         }
     }

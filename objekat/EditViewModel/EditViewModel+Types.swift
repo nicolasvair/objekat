@@ -82,6 +82,31 @@ struct ViewportState: Codable, Equatable {
     var scrollY: Double
 }
 
+/// A snapshot of the vertical lane snap (@see VerticalLaneSnap), read by `view.state.vsnap` for a
+/// test to verify with no screen. Purely diagnostic — nothing here is persisted, and nothing here
+/// writes to the model.
+struct VerticalSnapProbe {
+    /// The lane area under the sticky header (`viewportHeight − rulerHeight`).
+    var availableHeight: Double
+    /// The 90 % cap for the current available height.
+    var maxBlockHeight: Double
+    /// `blockHeight + the 4 pt gap`.
+    var laneStep: Double
+    /// `blockHeight / availableHeight`.
+    var ratio: Double
+    /// Whether the snap is active (`ratio > 0.70`).
+    var active: Bool
+    /// The display row currently framed (nearest to the scroll position) — nil when the snap is
+    /// not active, there being no one lane the view is framed on.
+    var framedLane: Int?
+    /// Whether the scroll position sits exactly on the framed lane's target.
+    var onGrid: Bool
+    /// An end-of-gesture re-frame (D7, D8) is armed and has not landed yet.
+    var pendingFraming: Bool
+    var rulerHeight: Double
+    var viewportHeight: Double
+}
+
 // MARK: - Snapshot for undo/redo
 
 struct EditSnapshot {
