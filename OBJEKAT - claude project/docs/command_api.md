@@ -1056,17 +1056,31 @@ files to prove the engine followed.
 `audio.status` answers the device REALLY in use — read from the open `juce::AudioIODevice`, never
 the requested `AudioDeviceSetup` (JUCE may have picked the nearest rate/buffer to what was asked)
 and never the user's persisted choice (`AudioOutputDevice.shared`, which survives an unplug). It is
-the SAME object the window's subtitle shows, to the right of the project's name, in grey
-(`NSWindow.subtitle`, which draws INLINE on this toolbar-less window — measured, not assumed, with
-a `debug.titlebar` diagnostic command that walks the title bar's `NSTextField`s). `device: null`
-means no output device is OPEN — under `--no-audio`, `getCurrentAudioDevice()` can be non-null with
-a real name although nothing plays; the truth test is `isOpen()`. `running` tells an open-but-dead
-device (a restart gap, a device that died) from one really producing sound. `live` re-reads the
-engine at the instant of the call, so a script can assert it agrees with the cached fields the
-title bar shows — they are refreshed only on a real `juce::AudioDeviceManager` change message
-(device opened/closed/restarted, rate or buffer changed, device list changed), never on a timer:
-`generation` bumps on every such change and stays put otherwise, which is what a script checks to
-tell "nothing changed" from "the reading missed something".
+the SAME object the window shows beside the project's name, in grey. `device: null` means no output
+device is OPEN — under `--no-audio`, `getCurrentAudioDevice()` can be non-null with a real name
+although nothing plays; the truth test is `isOpen()`. `running` tells an open-but-dead device (a
+restart gap, a device that died) from one really producing sound. `live` re-reads the engine at the
+instant of the call, so a script can assert it agrees with the cached fields the title bar shows —
+they are refreshed only on a real `juce::AudioDeviceManager` change message (device opened/closed/
+restarted, rate or buffer changed, device list changed), never on a timer: `generation` bumps on
+every such change and stays put otherwise, which is what a script checks to tell "nothing changed"
+from "the reading missed something".
+
+**`window_subtitle` is not `NSWindow.subtitle`.** Measured (a `debug.titlebar` diagnostic command
+walking the title bar's `NSTextField`s) that `NSWindow.subtitle` draws INLINE on the SAME field as
+the title, one colour for both — no way to grey only the device half and leave the project's own
+name exactly as AppKit draws it. So the device text lives in a SECOND `NSTextField`, laid by hand
+beside the title's own (`TitleBarDeviceLabel`, `secondaryLabelColor`, the title's own font), and
+`window.subtitle` itself is set to `""` and never anything else. `window_subtitle` answers that
+label's OWN displayed string — starting with its separator, `"— Device — 48k — 512"` — and `null`
+when nothing is actually shown (no title field found in a macOS whose title-bar internals differ
+from the ones measured here — fails silent rather than draw something misplaced; or the window too
+narrow to fit even a truncated word of it, which the label detects on its own and hides). Never the
+text that was ASKED for if the hand would see nothing of it — `audio.status.text` is that request;
+`window_subtitle` is the answer. `debug.titlebar` (DEBUG builds only) additionally reports the
+label's own frame, colour and hidden state, and the title field's frame it is laid beside, in WINDOW
+coordinates — enough for a script to assert the label starts at or after the title's trailing edge
+and shares its vertical centre, without which "beside the title" is merely asserted, not measured.
 
 `audio.devices` lists what the engine currently offers (outputs, sample rates, buffer sizes),
 re-scanned live. `audio.set_buffer_size` / `audio.set_sample_rate` / `audio.set_device` apply
