@@ -721,6 +721,41 @@ Its answer keeps `ids` naming the PIECES the cut produced, as it always has (not
 which the cut may or may not have touched), and gains a `selection` field — the selection as it
 stands right after, for a caller that wants to check the rule above without a screen.
 
+### Exploding an object into sub-lanes
+
+**`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?}`** cuts a plain audio clip at
+several instants and gathers the `cuts.count + 1` pieces into a **fresh group**, one sub-lane per
+piece — **ONE undo** for the whole thing. Written for the "voice separator" script
+(`tools/scripts/separateur-voix/`), generic to any "cut this object into several tagged pieces"
+gesture:
+
+| param | meaning |
+|---|---|
+| `id` | the clip to explode |
+| `cuts` | absolute timeline instants, strictly increasing, each strictly inside the object |
+| `lanes` | `cuts.count + 1` values — the sub-lane (0-based, **relative to the new group**) each piece lands on; several pieces may share a sub-lane, they simply follow one another on it |
+| `names` | optional, one name **per sub-lane** (size = the highest value in `lanes` + 1) — a piece takes the name of the sub-lane it lands on, which is what makes the group's own composed name come out right for free |
+| `group_name` | optional, the new group's own label; absent = the composed name |
+
+Answers `{"group": <uuid>, "pieces": [{"id", "start", "duration", "child_lane"}, …]}`.
+
+Why an app command rather than N × `object.split_at` driven by the script: each cut manufactures
+the id the next one has to aim at, so N separate script-driven calls could never be chained into a
+single ⌘Z; hundreds of cuts stay one round trip, one `beginPlaybackEdit`, one rebuild; and the
+geometry (sub-lanes, fades) stays with the model, which the script does not have to know about.
+The chain of splits targets the RIGHT half of the previous cut, in increasing order — the same
+edges rule as `object.split_at` applies at each one: the fade-in stays on the very first piece, the
+fade-out on the very last, every interior edge is born bare. **Refuses** (`bad_params` /
+`invalid_state`): a group or a MIDI clip (only a plain audio clip, v1), a missing file, a looping
+object, `cuts` not strictly increasing or one outside the object, `lanes`/`names` the wrong size,
+or a resulting piece shorter than 5 ms. It does **not** refuse a changed `speed` or a reversed
+clip — `object.split_at`'s own machinery already recomputes source offsets correctly for either;
+a caller with a narrower need (like the voice separator, whose detection would not line up with a
+resampled or reversed file) enforces that itself before calling, reading `speed` and `reversed` off
+`object.get` — which also gained a plain `loop` (bool) field for exactly this: a script refusing a
+looping object on its own account, without going through `object.set_loop` (which WRITES the flag
+rather than reading it).
+
 ### Crossfades
 
 A crossfade is **the zone two neighbours share**, and nothing else. There is no crossfade object and
@@ -1466,24 +1501,59 @@ would cost the sound. Here, the worst a script can do is die.
 |---|---|
 | `executable` | **relative to the script's folder**, must stay in it (`..` refused) and carry the execute bit |
 | `requires` | the commands needed, checked against the registry **at load time**: an entry one of whose commands is missing is greyed out, with the reason in a tooltip |
+| `context` | `"app"` (the default, absent = `"app"`) or `"object"` — where the entry shows (see below). Set on the manifest (every entry) or on one `menu` entry (that entry alone, overriding the manifest's) |
 | `menu` | absent ⇒ a single entry, carrying the script's name |
 
 The app reads the manifests **at launch**; Scripts ▸ "Reload the scripts" reads them again.
 
-The script receives two environment variables:
+### `context`: the bar, or an object's own menu
+
+An `"app"` entry (the default) shows in the bar's **Scripts** menu and receives no target — it
+would have none to give it. An `"object"` entry has no business there either (nothing selected,
+nothing to hand it): it shows instead in a **"Scripts"** submenu of an object's own context menu,
+and is the one shape that receives `OBJEKAT_OBJECT_IDS` below. A manifest can mix the two, one
+entry of each, or declare `context` once for all its entries.
+
+The script receives environment variables:
 
 | variable | content |
 |---|---|
 | `OBJEKAT_SOCKET` | the path of the socket to connect to |
 | `OBJEKAT_PLUGIN_DIR` | its own folder (to write its files into) |
+| `OBJEKAT_OBJECT_IDS` | **`"object"`-context entries only** — comma-separated uuids: the effective selection if the object right-clicked is part of it, otherwise the object right-clicked alone |
+| `OBJEKAT_LANGUAGE` | the app's own UI language (`fr`/`en`/`es`), a default for anything the script itself localises |
 
 The socket path goes through the environment and **never hard-coded**: that is what lets a
 script work under `--socket=` too, hence facing several instances.
 
 The app **does not wait** for the script to finish (it may work for minutes; blocking the main
-loop would freeze the interface **and** the socket it is trying to use). The exit code is
-journalled when it arrives. If the API is not enabled, the menu entry says so instead of
-leaving the script to fail on a "connection refused" in its own error output.
+loop would freeze the interface **and** the socket it is trying to use). If the API is not
+enabled, the menu entry says so instead of leaving the script to fail on a "connection refused"
+in its own error output.
+
+### A failure is surfaced, not merely logged
+
+A non-zero exit code is **reported to the user**, through the same dialogue mechanism as
+anything else (`app.dialogs` in headless mode) — not left in the console for nobody to read. The
+convention a script is asked to follow: **write your human-readable message on stderr, and exit
+≠ 0**. The app captures an 8 KB rolling tail of stderr; on a non-zero exit it shows
+`script.run.failed` with that tail, or `script.error.exitCode` (just the code) when stderr said
+nothing at all.
+
+### Driving a script from another client (`script.*`)
+
+The same door a menu click uses, open to a script or to a headless test — without it, an
+`"object"`-context entry and its `OBJEKAT_OBJECT_IDS` could only be exercised by a real click in a
+real menu, which `--headless` has none of.
+
+- **`script.list`** — the installed scripts (manifests read at launch, or since the last reload):
+  `{"scripts": [{"name", "display_name", "available", "unavailable_reason", "entries": [{"title",
+  "context"}]}]}`.
+- **`script.run {script, entry?, ids?}`** — launches a script exactly as a menu click would: a
+  **separate process**, not waited for (`{"started": true}` on success — no `pid`, nothing here
+  tracks the launch beyond that; a failure is reported through `app.dialogs`, never by this call's
+  own return, which only reports a **failure to start**, e.g. an unknown script or entry). `ids`
+  (an array of uuids) feeds `OBJEKAT_OBJECT_IDS` for an `"object"`-context entry.
 
 ---
 

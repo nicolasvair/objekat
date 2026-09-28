@@ -1808,6 +1808,57 @@ What has landed since mid-August, in order:
   caret alone, the last lane where the scroll clamps) were never written: the agent was stopped
   before running them. Only a Debug build verifies it.
 
+- **A first third-party script cutting into an object: "Voice separator"** (28 September 2026, ON
+  THE BRANCH `feature/separateur-voix`, NOT on `main`) — a new app command, `object.explode
+  {id, cuts, lanes, names?, group_name?}`, cuts a plain audio clip at several instants and gathers
+  the pieces into a fresh group, one sub-lane per piece, in ONE undo (chained `_splitInternal`
+  calls, each targeting the RIGHT half of the previous cut — the ORIGINAL fade-in/fade-out land on
+  the first/last piece for free, every interior edge born bare, exactly `object.split_at`'s own
+  rule). Generic on purpose, not tied to voices. Built for it: the third-party-script mechanism
+  gained a **`context: "object"`** manifest field — such an entry shows in the object's own context
+  menu (a new "Scripts" submenu) instead of the bar's, receives `OBJEKAT_OBJECT_IDS` /
+  `OBJEKAT_LANGUAGE`, and a non-zero exit is now REPORTED (`viewModel.notify`, an 8 KB stderr tail
+  captured) rather than only logged — a script dying used to leave no visible trace at all. New
+  `script.list` / `script.run {script, entry?, ids?}` open the same door to a headless test (no
+  `pid` in the answer — a deliberate simplification, `{"started": true}`, since nothing here waits
+  on the process; @see the plan's own "Écarts"). `object.get` gained a plain `loop` (bool) field,
+  missing until now, so a script can refuse a looping object without going through the WRITING door
+  `object.set_loop`.
+  The script itself, `tools/scripts/separateur-voix/`: Whisper (`mlx-whisper`,
+  `whisper-large-v3-turbo`) situates the WORD, frame-by-frame band energy (25 ms window / 10 ms
+  hop) situates the BREATH or the FRICTION at 10 ms resolution — no forced aligner (MFA), on
+  purpose: separating does not correct anything, a boundary a few ms off changes nothing since the
+  pieces stay jointive. `detect.py` is pure (numpy/scipy, no socket, no Whisper import at module
+  scope) and carries its own standalone test, `test_detect.py`, against a SYNTHETIC 3 s signal
+  (voiced harmonics, a band-noise breath, two "s", one "ch") — both with fake Whisper word
+  timestamps (±15 ms tolerance) and without (`--no-asr`, ±25 ms). Two real bugs surfaced and fixed
+  while closing that test, both general beyond this script: `feats.times[k]` names a frame's
+  START, and closing a detected run on `+ hop_s` (10 ms) instead of the frame's own length
+  (`FRAME_MS`, 25 ms) under-ran every boundary by 15 ms — fixed at the three sites that closed a
+  range that way; and a raw-envelope halfway-threshold refinement, reused unmodified from the
+  sibilant path, was nibbling a breath's tail down to its single loudest 5 ms window (a breath's
+  envelope being closer to flat noise than to a rise-then-fall shape) — removed from the breath
+  path entirely, kept only for a sibilant's OWN HF-band-peak refinement (`_refine_hf_bounds`),
+  which reads the same measurement the coarse detector already used rather than a raw envelope
+  that can disagree with it.
+  `install.sh` was RUN FOR REAL by this session — the venv, `mlx-whisper`/`numpy`/`scipy`/
+  `soundfile`, and the full `whisper-large-v3-turbo` model download, all succeeded and are usable
+  today at `~/Library/Application Support/Objekat/venvs/separateur-voix`, on this machine's system
+  Python (3.9.6 — the plan named "≥ 3.10", untested and unenforced; nothing here failed on it).
+  Session format, on-disk layout: unchanged.
+  Verified with no screen: `test_detect.py`, both modes (ASR and `--no-asr`), full pass; i18n
+  (`tools/i18n/xcstrings.py check`) 470 keys, 3 languages, nothing missing. **NOT verified by this
+  session**: no Debug `xcodebuild` was run (the exe/build step is left to whoever runs the build
+  count against the 1550 baseline next); `tools/scenario_voice_split.py` (T2, `object.explode`
+  end to end — structure, refusals, one undo, an export+RMS proof the sound is unchanged, the
+  `script.run`/`OBJEKAT_OBJECT_IDS` path) was WRITTEN but never RUN.
+  **Not seen, not heard, not felt, at all**: a real recording of a real voice in any of the three
+  languages has never been through this pipeline — every acoustic threshold in `detect.py`
+  (`hf_lf_ratio_db > 4.0`, `zcr > 0.12`, the breath's `flatness > 0.08`, all tuned down from D2's
+  own starting figures to catch the SYNTHETIC "ch") is tuned against synthetic noise bursts, not
+  against a mouth. The context-menu entry, the error dialogue, and Whisper's real transcription
+  time on a long take are equally unseen. @see `validations-en-attente.md` for the standing list.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
