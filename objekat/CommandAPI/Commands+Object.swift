@@ -28,6 +28,11 @@ extension CommandRegistry {
             payload["fade_in_bend"] = .number(item.fadeInCurve.amount)
             payload["fade_out_bend"] = .number(item.fadeOutCurve.amount)
             payload["infinite"] = .bool(item.isInfiniteBus)
+            // Was absent from this payload entirely — a script has to be able to refuse a
+            // looping object on its own account (@see plan_separateur_voix.md, D2 step 5)
+            // without going through `object.set_loop`, which WRITES the flag rather than
+            // reading it.
+            payload["loop"] = .bool(item.loopEnabled)
             // A group has no file of its own, so `missing` is false for it whatever its content —
             // this is the separate question: is anything DOWN THERE broken? False for everything
             // that is not a group. The two are kept apart on purpose: only the clips this counts
