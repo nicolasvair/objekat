@@ -24,7 +24,7 @@ enum ScriptPanelState: String, Sendable {
 }
 
 struct ScriptPanelControl: Equatable, Sendable {
-    enum Kind: String, Sendable { case bool, number, button }
+    enum Kind: String, Sendable { case bool, number, button, choice }
     let id: String
     let kind: Kind
     let label: String
@@ -34,6 +34,14 @@ struct ScriptPanelControl: Equatable, Sendable {
     let unit: String
     /// The id of a bool control that greys this one when it is unchecked — "a box and a threshold".
     let enabledBy: String?
+    /// A `choice`'s options, in the order the script gave them. Empty for every other kind.
+    var options: [ScriptPanelOption] = []
+}
+
+/// One entry of a `choice`: a stable id (what the script reads back) and the label drawn.
+struct ScriptPanelOption: Equatable, Sendable {
+    let id: String
+    let label: String
 }
 
 struct ScriptPanel: Equatable, Sendable {
@@ -42,7 +50,7 @@ struct ScriptPanel: Equatable, Sendable {
     let objectID: UUID?
     var title: String
     var controls: [ScriptPanelControl]
-    /// bool → .bool, number → .number. A button holds no value.
+    /// bool → .bool, number → .number, choice → .string (the option's id). A button holds no value.
     var values: [String: JSONValue]
     var rev: Int = 0
     var state: ScriptPanelState = .open
@@ -133,6 +141,12 @@ struct ScriptPanel: Equatable, Sendable {
                     throw CommandError(code: .bad_params, message: "'\(key)' is a number")
                 }
                 p.values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
+            case .choice:
+                guard let s = v.stringValue, c.options.contains(where: { $0.id == s }) else {
+                    throw CommandError(code: .bad_params,
+                                       message: "'\(key)' is one of \(c.options.map(\.id))")
+                }
+                p.values[key] = .string(s)
             case .button: break
             }
         }
@@ -190,6 +204,8 @@ struct ScriptPanel: Equatable, Sendable {
             if c.kind == .bool, let b = v.boolValue { p.values[key] = .bool(b) }
             else if c.kind == .number, let d = v.doubleValue {
                 p.values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
+            } else if c.kind == .choice, let s = v.stringValue, c.options.contains(where: { $0.id == s }) {
+                p.values[key] = .string(s)
             } else {
                 throw CommandError(code: .bad_params, message: "'\(key)': wrong type")
             }

@@ -140,6 +140,17 @@ struct ScriptPanelView: View {
                                  set: { set(c.id, .bool($0)) })) { Text(verbatim: c.label) }
         case .button:
             Button { press(c.id) } label: { Text(verbatim: c.label) }
+        case .choice:
+            // A menu, the script's own labels: a model that is not installed says so in its label.
+            HStack(spacing: 8) {
+                Text(verbatim: c.label).frame(width: 150, alignment: .leading)
+                Picker(selection: Binding(get: { p.values[c.id]?.stringValue ?? c.options.first?.id ?? "" },
+                                          set: { set(c.id, .string($0)) })) {
+                    ForEach(c.options, id: \.id) { o in Text(verbatim: o.label).tag(o.id) }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
         case .number:
             let enabled = row.gate.map { isOn($0.id, p) } ?? true
             HStack(spacing: 8) {

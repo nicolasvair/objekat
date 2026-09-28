@@ -30,10 +30,11 @@ extension CommandRegistry {
                       let kindName = o["kind"]?.stringValue,
                       let kind = ScriptPanelControl.Kind(rawValue: kindName),
                       let label = o["label"]?.stringValue else {
-                    throw bad("a control is {id, kind: bool|number|button, label, …}")
+                    throw bad("a control is {id, kind: bool|number|button|choice, label, …}")
                 }
                 guard seen.insert(id).inserted else { throw bad("duplicate control id '\(id)'") }
                 var lo = 0.0, hi = 1.0, step = 1.0
+                var options: [ScriptPanelOption] = []
                 switch kind {
                 case .bool:
                     values[id] = .bool(o["value"]?.boolValue ?? false)
@@ -48,11 +49,32 @@ extension CommandRegistry {
                     let v = o["value"]?.doubleValue ?? mn
                     guard v >= mn, v <= mx else { throw bad("control '\(id)': value out of range") }
                     values[id] = .number(v)
+                case .choice:
+                    guard let raw = o["options"]?.arrayValue, !raw.isEmpty else {
+                        throw bad("choice control '\(id)' needs a non-empty options list")
+                    }
+                    for e in raw {
+                        guard let eo = e.objectValue, let oid = eo["id"]?.stringValue, !oid.isEmpty,
+                              let olabel = eo["label"]?.stringValue else {
+                            throw bad("control '\(id)': an option is {id, label}")
+                        }
+                        guard !options.contains(where: { $0.id == oid }) else {
+                            throw bad("control '\(id)': duplicate option id '\(oid)'")
+                        }
+                        options.append(ScriptPanelOption(id: oid, label: olabel))
+                    }
+                    let v = o["value"]?.stringValue ?? options[0].id
+                    guard options.contains(where: { $0.id == v }) else {
+                        throw bad("control '\(id)': value is not one of its options")
+                    }
+                    values[id] = .string(v)
                 case .button: break
                 }
-                controls.append(ScriptPanelControl(id: id, kind: kind, label: label, min: lo, max: hi,
-                                                   step: step, unit: o["unit"]?.stringValue ?? "",
-                                                   enabledBy: o["enabled_by"]?.stringValue))
+                var control = ScriptPanelControl(id: id, kind: kind, label: label, min: lo, max: hi,
+                                                 step: step, unit: o["unit"]?.stringValue ?? "",
+                                                 enabledBy: o["enabled_by"]?.stringValue)
+                control.options = options
+                controls.append(control)
             }
             for c in controls {
                 if let by = c.enabledBy {
@@ -75,8 +97,8 @@ extension CommandRegistry {
                         + "a status line, Validate / Cancel. One panel per connection (a second "
                         + "replaces the first). Headless: the panel exists, no window opens.",
                  params: [ParamSpec("title", "string", required: false, "Window title."),
-                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?}>",
-                                    "kind: bool | number | button. A number needs min, max, step. "
+                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?}>",
+                                    "kind: bool | number | button | choice. A number needs min, max, step; a choice needs options [{id,label}] and its value is an option id. "
                                   + "enabled_by = the id of a bool control that greys this one."),
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the panel closes if it disappears."),

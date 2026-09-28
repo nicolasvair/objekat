@@ -1589,15 +1589,18 @@ floating `NSPanel`, hidden with the app, opened only when there is an interface 
 panel exists and no window opens**). One panel per connection (a second `open` replaces the first).
 Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
 
-Controls: `{id, kind: "bool"|"number"|"button", label, value?, min?, max?, step?, unit?,
-enabled_by?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default `min`);
-a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
+Controls: `{id, kind: "bool"|"number"|"button"|"choice", label, value?, min?, max?, step?, unit?,
+enabled_by?, options?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
+`min`); a `choice` (drawn as a pop-up menu) needs a non-empty `options: [{id, label}]` (unique ids),
+its `value` is an option **id** (default: the first option) and `values[id]` reads back that id as a
+string — `input` / `update` refuse an id that is not one of the options (`bad_params`), and the
+option labels, like every label, are the script's own data; a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
 one ("a box and a threshold" — the window draws that pair inline). The labels are the SCRIPT's own
 data; the app's only texts are Validate / Cancel and the default title.
 
 - **`script.panel.open {title?, controls, object?, status?, busy?}`** → `{panel_id, rev: 0}`.
   `bad_params`: duplicate id, `min >= max`, `step <= 0`, value out of range, `enabled_by` not a
-  bool.
+  bool, a `choice` with no / duplicate options or a value outside them.
 - **`script.panel.get {panel_id}`** → `{panel_id, rev, state: "open"|"validated"|"cancelled"|"closed",
   values, events: [{button}], status, busy}`. **Reading drains `events`.**
 - **`script.panel.wait {panel_id, since_rev, timeout_ms?}`** — a **long poll**: answers as soon as
