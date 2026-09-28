@@ -1601,6 +1601,56 @@ What has landed since mid-August, in order:
   launches of a freshly signed binary (@see the per-build TCC prompt), not proven. And `project.save_as` over the API takes its
   path LITERALLY (no `.objekat` appended) — the machine's door, consistent, worth knowing.
 
+- **The title bar carries the audio device really in use** (28 September 2026, ON THE BRANCH
+  `feature/titlebar-audio-device`, NOT on `main`) — «selected sound card — 44k — 512», in grey,
+  to the right of the project's name, on the SAME line: `NSWindow.subtitle`, measured rather
+  than assumed to draw inline on this toolbar-less window (a debug-only `debug.titlebar` command
+  walked the title bar's `NSTextField`s to confirm it, kept afterwards as a low-cost permanent
+  diagnostic). One source of truth for all THREE readers — the title, the wrench menu's tick,
+  and a script — `AudioDeviceStatus` (`@MainActor @Observable`, "write only on change," the
+  project's own rule), fed by `OBJEngineCore.audioDeviceSnapshot()` which tests the device's
+  `isOpen()` rather than trusting the requested setup, and refreshed on a real
+  `juce::AudioIODeviceCallback`/`ChangeBroadcaster` message (`OBJDeviceChangeWatcher`), never on
+  a timer. The wrench menu's own bug — it ticked the REQUESTED device, not the one JUCE actually
+  opened — is fixed the same way, reading the same snapshot. A first, disabled attempt
+  (`AudioStatusTitleView`/`AudioTitlebarStatus`, a titlebar accessory + a 0.5 s poll) was removed
+  outright rather than left commented out.
+  New family `audio.*` (`status`, `devices`, `set_buffer_size`, `set_sample_rate`,
+  `set_device`) — `status.live` re-reads the engine at the instant of the call, so a script can
+  assert it agrees with the cached fields the title bar shows, instead of taking either on
+  trust; the three `set_*` touch the REAL hardware and rewrite
+  `~/Library/objekat/Settings.xml`, exactly like the wrench menu, and a script using them is
+  responsible for restoring what it changed. `app.info` now reads the same snapshot instead of
+  the engine's raw getters (`output_device`, `sample_rate`, `buffer_size`, new `audio_running`).
+  **Two findings, both left open on purpose, out of this plan's scope, documented rather than
+  fixed.** (1) `--no-audio` does not reliably keep the device closed: once
+  `~/Library/objekat/Settings.xml` holds a saved device with no explicit channel-count attribute
+  (`useDefaultOutputChannels`, the ordinary case after any real run of the app), Tracktion's own
+  `DeviceManager::loadSettings()` opens the real device regardless of the 0-channel request —
+  traced into JUCE/Tracktion's channel negotiation, not fully resolved there, and not an engine
+  patch this plan's scope covers. `audio.status`/`app.info` stay honest about it either way (they
+  report what the engine actually opened), and `tools/scenario_audio_device.py`'s phase A detects
+  the condition and adapts its assertions instead of failing on a machine where it is present.
+  (2) At pure launch, before any command that touches edit state, neither `window.title` nor
+  `window.subtitle` has settled — SwiftUI's `WindowGroup` has not yet ceded the title to our own
+  assignment (`window.title` alone reproduces it: it reads the bundle name, "objekat", until
+  then). The FIRST state-touching command (`project.new`, `object.add`, a dirty flag…) makes
+  `updateWindowTitle()` reassert both, and they hold from then on — a pre-existing trait of the
+  title mechanism this work piggybacks on, not a defect of the subtitle itself; a real session
+  always has a `project.new` at launch before any script attaches. `scenario_audio_device.py`'s
+  phase C triggers that one command before reading "at start," rather than asking the app to
+  settle with nothing having touched it yet.
+  Verified with no screen: a Debug build, no new warning against the baseline;
+  `tools/test_audio_status_text.swift` 21/21 (locale-independent, the `11025 → "11.03k"` rounding
+  pinned by measurement); `tools/scenario_audio_device.py` 42/42 across its three phases, each on
+  its own fresh instance (phase B backs up and restores `~/Library/objekat/Settings.xml` byte for
+  byte — confirmed, its mtime is untouched by the run); i18n 465 keys, three languages, nothing
+  missing, no orphans; no window on the phase-A headless pid.
+  **Not seen, not felt**: every pixel of it — the grey subtitle itself under a real eye, whether
+  the name or the subtitle truncates first in a narrow window, the wrench menu's tick following a
+  device change made from Audio MIDI Setup, and the ~0.3 s the retry logic allows a device that
+  needs a moment to report itself running after a switch.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
