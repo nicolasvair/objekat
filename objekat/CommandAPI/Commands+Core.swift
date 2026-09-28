@@ -717,6 +717,85 @@ extension CommandRegistry {
                             "selection": .array(vm.selectedIDs.map { .string($0.uuidString) })])
         }
 
+        register("object.explode",
+                 summary: "Cuts a plain audio clip at several instants and gathers the pieces "
+                        + "into a fresh group, one sub-lane per piece — ONE undo for the whole "
+                        + "thing. Refuses a group, a MIDI clip, a missing file, a looping object, "
+                        + "cuts that are not strictly increasing and inside the object, or a "
+                        + "piece shorter than 5 ms.",
+                 params: [ParamSpec("id", "uuid", "The clip to explode."),
+                          ParamSpec("cuts", "array<number>",
+                                    "Absolute instants to cut at, strictly increasing, each "
+                                  + "strictly inside the object."),
+                          ParamSpec("lanes", "array<int>",
+                                    "cuts.count + 1 values: the sub-lane (0-based, relative to "
+                                  + "the new group) each piece lands on."),
+                          ParamSpec("names", "array<string>", required: false,
+                                    "One name per SUB-LANE (size = the highest value in "
+                                  + "'lanes' + 1) — a piece takes the name of the lane it lands "
+                                  + "on."),
+                          ParamSpec("group_name", "string", required: false,
+                                    "The new group's own label; absent = the composed name.")],
+                 // `explode` pushes its own undo (and pops it on a failed split).
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let cutsRaw = try p.array("cuts")
+            let cuts = try cutsRaw.map { v -> Double in
+                guard let d = v.doubleValue else {
+                    throw CommandError(code: .bad_params, message: "'cuts': a list of numbers was expected")
+                }
+                return d
+            }
+            let lanesRaw = try p.array("lanes")
+            let lanes = try lanesRaw.map { v -> Int in
+                guard let i = v.intValue else {
+                    throw CommandError(code: .bad_params, message: "'lanes': a list of ints was expected")
+                }
+                return i
+            }
+            var names: [String]? = nil
+            if p.raw["names"] != nil {
+                names = try p.array("names").map { v -> String in
+                    guard let s = v.stringValue else {
+                        throw CommandError(code: .bad_params, message: "'names': a list of strings was expected")
+                    }
+                    return s
+                }
+            }
+            let groupName = try p.optionalString("group_name")
+            do {
+                let result = try vm.explode(id: id, cuts: cuts, lanes: lanes,
+                                            names: names, groupName: groupName)
+                return .object([
+                    "group": .string(result.groupID.uuidString),
+                    "pieces": .array(result.pieces.map { piece in
+                        .object(["id": .string(piece.id.uuidString),
+                                "start": .number(piece.start),
+                                "duration": .number(piece.duration),
+                                "child_lane": .int(piece.childLane)])
+                    })
+                ])
+            } catch let e as EditViewModel.ExplodeError {
+                switch e {
+                case .notFound:
+                    throw CommandError(code: .not_found, message: "unknown object")
+                case .notAClip:
+                    throw CommandError(code: .bad_params, message: "'id' must be a plain audio clip (not a group or a MIDI clip)")
+                case .missing:
+                    throw CommandError(code: .invalid_state, message: "the object's file is missing")
+                case .looping:
+                    throw CommandError(code: .invalid_state, message: "a looping object cannot be exploded")
+                case .badCuts:
+                    throw CommandError(code: .bad_params, message: "'cuts' must be strictly increasing and strictly inside the object")
+                case .badLanes:
+                    throw CommandError(code: .bad_params, message: "'lanes' (and 'names', if given) must match the number of pieces/sub-lanes")
+                case .pieceTooShort:
+                    throw CommandError(code: .bad_params, message: "a resulting piece would be shorter than 5 ms")
+                }
+            }
+        }
+
         register("object.ripple_cut",
                  summary: "Cuts an object at an instant, throws the unwanted half away AND closes "
                         + "the gap it leaves: the ⌥ of the cut by dragging. Bounded by the "
