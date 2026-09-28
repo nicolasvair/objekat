@@ -23,6 +23,14 @@ enum HeadlessRunner {
         CommandContext.shared.session = session
         CommandContext.shared.workspace = workspace
 
+        // Third-party scripts, for `script.run`/`script.list` to have something to drive headless
+        // (@see plan_separateur_voix.md, T2.5) — the windowed launch does the same in
+        // `AppDelegate.applicationDidFinishLaunching`.
+        ScriptPluginRegistry.shared.reload()
+        ScriptPluginRegistry.shared.onFailure = { title, message in
+            CommandContext.shared.viewModel?.notify(title, message)
+        }
+
         // With no window, nobody will click a modal: leaving it on `.ask` would freeze the process
         // at the first warning. `assume_yes` moves things ALONG (which is the point of an automated
         // launch) and the journal keeps what was reported — `app.dialogs` reads it back.

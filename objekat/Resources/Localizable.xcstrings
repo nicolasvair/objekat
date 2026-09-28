@@ -5544,6 +5544,29 @@
         }
       }
     },
+    "menu.context.scripts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scripts"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scripts"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scripts"
+          }
+        }
+      }
+    },
     "menu.context.stemColor": {
       "extractionState": "manual",
       "localizations": {
@@ -8277,6 +8300,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "l'exécutable « %@ » sort du dossier du script"
+          }
+        }
+      }
+    },
+    "script.error.exitCode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "exit code %d"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "código de salida %d"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "code de sortie %d"
           }
         }
       }

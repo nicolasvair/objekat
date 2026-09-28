@@ -30,6 +30,14 @@ struct ScriptPluginManifest: Codable, Sendable {
     /// to discover the incompatibility through a failure in the middle of the work.
     var requires: [String]?
 
+    /// 'app' (the default, absent = 'app') or 'object': where the entry shows. An 'app' entry
+    /// lives in the bar's Scripts menu, with no target — it would have none to give it. An
+    /// 'object' entry has no business there either (nothing selected, nothing to hand it) and
+    /// shows instead in the object's own context menu, under a 'Scripts' submenu, receiving
+    /// `OBJEKAT_OBJECT_IDS`. Set on the manifest (every entry) or on one `MenuEntry` (that entry
+    /// alone, overriding the manifest's).
+    var context: String?
+
     /// Menu entries. Absent ⇒ a single entry, carrying the script's name.
     var menu: [MenuEntry]?
 
@@ -37,6 +45,8 @@ struct ScriptPluginManifest: Codable, Sendable {
         var title: String
         /// Arguments added to the manifest's own, to tell the entries apart.
         var arguments: [String]?
+        /// Overrides the manifest's own `context` for this entry alone.
+        var context: String?
     }
 }
 
@@ -55,11 +65,46 @@ struct ScriptPlugin: Identifiable, Sendable {
 
     var entries: [ScriptPluginManifest.MenuEntry] {
         if let menu = manifest.menu, !menu.isEmpty { return menu }
-        return [.init(title: displayName, arguments: nil)]
+        return [.init(title: displayName, arguments: nil, context: nil)]
+    }
+
+    /// 'app' or 'object', resolved: the entry's own `context`, else the manifest's, else 'app'.
+    func effectiveContext(for entry: ScriptPluginManifest.MenuEntry) -> String {
+        entry.context ?? manifest.context ?? "app"
+    }
+
+    /// The entries that belong in the bar's Scripts menu — no target, so an 'object' entry has no
+    /// business there.
+    var barEntries: [ScriptPluginManifest.MenuEntry] {
+        entries.filter { effectiveContext(for: $0) == "app" }
+    }
+
+    /// The entries that belong in an object's own context menu.
+    var objectEntries: [ScriptPluginManifest.MenuEntry] {
+        entries.filter { effectiveContext(for: $0) == "object" }
     }
 
     func arguments(for entry: ScriptPluginManifest.MenuEntry) -> [String] {
         (manifest.arguments ?? []) + (entry.arguments ?? [])
+    }
+}
+
+/// A small rolling buffer for a script's captured stderr — the last 8 KB kept, threadsafe against
+/// the pipe's own read queue racing the termination handler's last read.
+private final class StderrTail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    private static let cap = 8192
+
+    func append(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        data.append(chunk)
+        if data.count > Self.cap { data.removeFirst(data.count - Self.cap) }
+    }
+
+    var text: String {
+        lock.lock(); defer { lock.unlock() }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }
 
@@ -74,6 +119,11 @@ struct ScriptPlugin: Identifiable, Sendable {
 final class ScriptPluginRegistry {
 
     static let shared = ScriptPluginRegistry()
+
+    /// Set once by the app at launch, so the registry can report a failed script without knowing
+    /// about `EditViewModel` — `viewModel.notify` on the far side of it (@see objekatApp.swift).
+    /// `(title, message)`.
+    var onFailure: ((String, String) -> Void)?
 
     private(set) var plugins: [ScriptPlugin] = []
     /// The last loading error (an unreadable manifest), kept so as to show it on first use rather
@@ -168,9 +218,20 @@ final class ScriptPluginRegistry {
     ///
     /// We do NOT wait for the end: a script can work for several minutes, and blocking the main
     /// loop would freeze the interface AND the very socket it is trying to use.
-    /// The exit code is logged when it arrives.
+    ///
+    /// `objectIDs`, for an 'object'-context entry: the target(s) the script receives through
+    /// `OBJEKAT_OBJECT_IDS` (comma-separated) — the effective selection if the object clicked is
+    /// part of it, otherwise the object clicked alone (the caller decides which; this function
+    /// only relays the list it is given).
+    ///
+    /// A code ≠ 0 is REPORTED, not merely logged: the convention a script is asked to follow is
+    /// "write your human message on stderr, exit ≠ 0" — `onFailure` is called with that tail (an
+    /// 8 KB rolling capture, @see StderrTail), or `script.error.exitCode` when stderr said
+    /// nothing. Without this a script dying mid-work left no visible trace at all
+    /// (@see plan_separateur_voix.md §0).
     @discardableResult
-    func run(_ plugin: ScriptPlugin, entry: ScriptPluginManifest.MenuEntry) -> String? {
+    func run(_ plugin: ScriptPlugin, entry: ScriptPluginManifest.MenuEntry,
+             objectIDs: [UUID] = []) -> String? {
         if let reason = plugin.unavailableReason { return reason }
         guard let socketPath = CommandServer.shared.socketPath, CommandServer.shared.isRunning else {
             // With no socket, the script has nothing to drive. Saying so here is far more useful than
@@ -189,19 +250,52 @@ final class ScriptPluginRegistry {
         var environment = ProcessInfo.processInfo.environment
         environment["OBJEKAT_SOCKET"] = socketPath
         environment["OBJEKAT_PLUGIN_DIR"] = plugin.folder.path
+        if !objectIDs.isEmpty {
+            environment["OBJEKAT_OBJECT_IDS"] = objectIDs.map(\.uuidString).joined(separator: ",")
+        }
+        environment["OBJEKAT_LANGUAGE"] = Localization.current
         process.environment = environment
 
+        let errPipe = Pipe()
+        process.standardError = errPipe
+        let tail = StderrTail()
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            tail.append(chunk)
+        }
+
+        let title = entry.title
         process.terminationHandler = { finished in
-            NSLog("[SCRIPTS] '%@' finished, code %d",
-                  entry.title, finished.terminationStatus)
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            let code = finished.terminationStatus
+            NSLog("[SCRIPTS] '%@' finished, code %d", title, code)
+            guard code != 0 else { return }
+            let stderrText = tail.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = stderrText.isEmpty ? L("script.error.exitCode", Int(code)) : stderrText
+            DispatchQueue.main.async {
+                ScriptPluginRegistry.shared.onFailure?(L("script.run.failed", title), message)
+            }
         }
 
         do {
             try process.run()
-            NSLog("[SCRIPTS] launched: %@ (%@)", entry.title, executable.lastPathComponent)
+            NSLog("[SCRIPTS] launched: %@ (%@)", title, executable.lastPathComponent)
             return nil
         } catch {
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return L("script.error.launchFailed", error.localizedDescription)
         }
+    }
+
+    // MARK: - Lookup (for `script.run` / `script.list`)
+
+    func plugin(named name: String) -> ScriptPlugin? {
+        plugins.first { $0.folder.lastPathComponent == name }
+    }
+
+    func entry(named title: String?, in plugin: ScriptPlugin) -> ScriptPluginManifest.MenuEntry? {
+        guard let title else { return plugin.entries.first }
+        return plugin.entries.first { $0.title == title } ?? plugin.entries.first
     }
 }

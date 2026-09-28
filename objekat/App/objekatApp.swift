@@ -108,6 +108,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // again). Rereading them every time the menu opens would mean one disk access per click for
         // a folder that, in practice, never moves during a session.
         ScriptPluginRegistry.shared.reload()
+        // The registry knows nothing of `EditViewModel` — it goes through `CommandContext`
+        // (which already outlives any one window/tab) rather than this delegate's own weak
+        // `viewModel`, so a script launched from `script.run` reports the same way as one
+        // launched from the menu.
+        ScriptPluginRegistry.shared.onFailure = { title, message in
+            CommandContext.shared.viewModel?.notify(title, message)
+        }
     }
 
     /// Tabs (INC 1): a native tab's own "+" would open a SECOND `WindowGroup` scene instance —
@@ -143,10 +150,12 @@ struct objekatApp: App {
     /// rebuilds itself after 'Reload the scripts'.
     @State private var scripts = ScriptPluginRegistry.shared
 
-    /// One entry per script, or a submenu when the manifest declares several.
+    /// One entry per script, or a submenu when the manifest declares several. Only the entries
+    /// with an 'app' context (the default) — an 'object' one has no target here, it lives in the
+    /// object's own context menu instead (@see TimelineKeyHandler).
     @ViewBuilder
     private func scriptMenu(for plugin: ScriptPlugin) -> some View {
-        let entries = plugin.entries
+        let entries = plugin.barEntries
         if entries.count == 1, let only = entries.first {
             scriptButton(plugin, only, title: plugin.displayName)
         } else {
@@ -345,7 +354,8 @@ struct objekatApp: App {
                     Button(L("menu.scripts.none")) {}
                         .disabled(true)
                 } else {
-                    ForEach(scripts.plugins) { plugin in
+                    // A script with ONLY object-context entries has nothing to show here.
+                    ForEach(scripts.plugins.filter { !$0.barEntries.isEmpty }) { plugin in
                         scriptMenu(for: plugin)
                     }
                     .disabled(busy)
