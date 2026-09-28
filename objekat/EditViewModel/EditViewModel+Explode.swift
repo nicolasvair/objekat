@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 // MARK: - Exploding an object into sub-lanes
 
@@ -67,6 +68,23 @@ extension EditViewModel {
         if let names {
             let laneCount = (lanes.max() ?? -1) + 1
             guard names.count == laneCount else { throw ExplodeError.badLanes }
+        }
+
+        // A cut lands ON a sample of the source file. At exactly half a sample the clip's rounding
+        // and the next object's window can disagree by one ulp and leave a sample at zero (measured
+        // 3 cuts out of 5 at 48 kHz); on the grid both read the same integer, whatever the ulp.
+        var cuts = cuts
+        if case .clip(let path, _, _, _, _) = original.kind,
+           let f = try? AVAudioFile(forReading: URL(fileURLWithPath: path)),
+           f.fileFormat.sampleRate > 0 {
+            let sr = f.fileFormat.sampleRate
+            var prev = objStart
+            cuts = cuts.map { c in
+                let g = (c * sr).rounded() / sr
+                let ok = g > prev + Self.explodeMinPieceDuration && g < objEnd - 1e-9
+                prev = ok ? g : c
+                return ok ? g : c
+            }
         }
 
         let parent = parentGroup(for: id)
