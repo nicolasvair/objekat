@@ -1720,8 +1720,8 @@ What has landed since mid-August, in order:
   rather than looking cut off, and the floor-width hide as it would actually happen under a real
   hand-driven resize rather than this harness's own workaround for it.
 
-- **A vertical lane snap, and the zoom clamped at 90 %** (28 September 2026, ON THE BRANCH
-  `feature/vertical-lane-snap`, NOT merged into `main`) — once a lane's block passes **70 %** of
+- **A vertical lane snap, and the zoom clamped at 90 %** (28 September 2026, merged into `main`
+  the same day) — once a lane's block passes **70 %** of
   the available height (`viewportHeight − rulerHeight`, the block measured against — never
   `laneStep`, the 4 pt gap is not "the lane"), the vertical view SNAPS to the lanes: it settles
   framed on one, and moving walks it to the next. The vertical zoom is clamped so a lane can
@@ -1798,6 +1798,15 @@ What has landed since mid-August, in order:
   to flip if the feel test disagrees); legacy (always-visible) scrollbars, whose ~15 pt eaten out
   of `viewportHeight` is a known, accepted imprecision; and dragging the vertical scroller's own
   knob while snapped, releasing into the D7 re-frame.
+  **And the vertical zoom is anchored on what one is working on** (D12, the same day): a zoom
+  used to anchor on the viewport's centre, so zooming far drifted the selected object downwards
+  off screen (pre-existing). It now holds FIXED on screen, read once when the gesture opens
+  (`selectionAnchorLaneCentre`, `TimelineView.swift`): the selected objects' lane span, else a
+  traced time selection's lanes, else the caret's lane, else the viewport centre as before; the
+  end-of-zoom framing lands on that lane. **Felt by the user and approved; NOT measured** — the
+  drift assertions planned for `scenario_vertical_snap.py` (selection top/middle/bottom, the
+  caret alone, the last lane where the scroll clamps) were never written: the agent was stopped
+  before running them. Only a Debug build verifies it.
 
 ### What is owed
 
