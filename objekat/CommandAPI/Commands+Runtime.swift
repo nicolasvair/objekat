@@ -279,6 +279,7 @@ extension CommandRegistry {
                 "label_hidden": label.labelHidden.map { .bool($0) } ?? .null,
                 "label_color": .stringOrNull(label.labelColor),
                 "label_text": .stringOrNull(label.labelText),
+                "label_truncated": label.labelTruncated.map { .bool($0) } ?? .null,
             ])
         }
 

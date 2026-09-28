@@ -94,6 +94,7 @@ final class TitleBarDeviceLabel {
         var labelHidden: Bool?
         var labelColor: String?
         var labelText: String?
+        var labelTruncated: Bool?
     }
 
     func debugInfo() -> DebugInfo {
@@ -103,8 +104,9 @@ final class TitleBarDeviceLabel {
             labelHidden: label?.isHidden,
             // The only colour this label is ever given — recorded as a name rather than
             // introspected from the `NSColor`, which is simpler and exactly as honest here.
-            labelColor: label != nil ? "secondaryLabelColor" : nil,
-            labelText: label?.stringValue
+            labelColor: label != nil ? Self.colorName : nil,
+            labelText: label?.stringValue,
+            labelTruncated: label.map { $0.frame.width < Self.naturalWidth(of: $0) }
         )
     }
 
@@ -134,7 +136,7 @@ final class TitleBarDeviceLabel {
 
         let field = NSTextField(labelWithString: "")
         field.font = title.font
-        field.textColor = .secondaryLabelColor
+        field.textColor = Self.color
         field.isSelectable = false
         field.isEditable = false
         field.isBezeled = false
@@ -207,6 +209,20 @@ final class TitleBarDeviceLabel {
 
     private static let labelIdentifier = NSUserInterfaceItemIdentifier("objekat.audioDeviceLabel")
 
+    /// Darker than `secondaryLabelColor` (≈ 50 % of the label colour, read on screen as too
+    /// pale beside the title): the label colour itself at 75 %. Still DYNAMIC — an alpha taken
+    /// on a system colour keeps following light / dark mode.
+    private static let color = NSColor.labelColor.withAlphaComponent(0.75)
+    static let colorName = "labelColor@0.75"
+
+    /// The width the field needs to show its WHOLE string: the cell's own size, padding
+    /// included. `attributedStringValue.size()` measures the bare glyphs, a few points short of
+    /// what an `NSTextFieldCell` draws them in — a frame cut to it truncated with an ellipsis
+    /// even with the whole title bar free beside it (read on screen).
+    private static func naturalWidth(of field: NSTextField) -> CGFloat {
+        ceil(field.cell?.cellSize.width ?? field.attributedStringValue.size().width)
+    }
+
     // MARK: - Layout
 
     private func relayout() {
@@ -241,7 +257,7 @@ final class TitleBarDeviceLabel {
 
         label.font = title.font
         label.stringValue = "— " + text
-        let natural = label.attributedStringValue.size().width
+        let natural = Self.naturalWidth(of: label)
         let width = min(natural, available)
         // Baseline-aligned with the title: same y, same height, both now in `chrome`'s space.
         label.frame = NSRect(x: originX, y: titleInChrome.origin.y,
@@ -259,9 +275,14 @@ final class TitleBarDeviceLabel {
                                        excluding label: NSView) -> CGFloat {
         let pad: CGFloat = 4
         var nearest: CGFloat?
-        for sibling in chrome.subviews where sibling !== label {
+        for sibling in chrome.subviews where sibling !== label && !sibling.isHidden {
             let frame = sibling.frame
-            guard frame.minX > titleInChrome.maxX else { continue }
+            // Only what shares the title's LINE bounds it: a view further down the chrome (the
+            // content's own hosting views, a strip below the title bar) was capping the label
+            // and truncating it with the whole title bar free (read on screen).
+            guard frame.minX > titleInChrome.maxX,
+                  frame.maxY > titleInChrome.minY, frame.minY < titleInChrome.maxY,
+                  frame.width > 0, frame.height > 0 else { continue }
             if nearest == nil || frame.minX < nearest! { nearest = frame.minX }
         }
         if let nearest { return nearest - pad }

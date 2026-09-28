@@ -1070,7 +1070,7 @@ from "the reading missed something".
 walking the title bar's `NSTextField`s) that `NSWindow.subtitle` draws INLINE on the SAME field as
 the title, one colour for both — no way to grey only the device half and leave the project's own
 name exactly as AppKit draws it. So the device text lives in a SECOND `NSTextField`, laid by hand
-beside the title's own (`TitleBarDeviceLabel`, `secondaryLabelColor`, the title's own font), and
+beside the title's own (`TitleBarDeviceLabel`, `labelColor` at 75 %, the title's own font), and
 `window.subtitle` itself is set to `""` and never anything else. `window_subtitle` answers that
 label's OWN displayed string — starting with its separator, `"— Device — 48k — 512"` — and `null`
 when nothing is actually shown (no title field found in a macOS whose title-bar internals differ
