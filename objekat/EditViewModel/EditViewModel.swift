@@ -719,6 +719,9 @@ final class EditViewModel {
     @ObservationIgnored var endHorizontalZoomDrag: (() -> Void)?
     @ObservationIgnored var beginVerticalZoomDrag: (() -> Void)?
     @ObservationIgnored var endVerticalZoomDrag: (() -> Void)?
+    /// The vertical lane snap's current state, read by `view.state.vsnap`. nil with no interface
+    /// or before the timeline has appeared (@see VerticalSnapProbe).
+    @ObservationIgnored var verticalSnapProbe: (() -> VerticalSnapProbe)?
 
     /// Asks the timeline to compute the waveforms of these files now, whether or not their
     /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`

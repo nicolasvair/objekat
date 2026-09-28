@@ -496,9 +496,26 @@ extension CommandRegistry {
         let v = host.visibleRect
         let pps = vm.pixelsPerSecond
         let r3 = { (x: Double) in (x * 1000).rounded() / 1000 }
+        let vsnap: JSONValue
+        if let probe = vm.verticalSnapProbe?() {
+            vsnap = .object([
+                "available_h": .number(r3(probe.availableHeight)),
+                "max_block_height": .number(r3(probe.maxBlockHeight)),
+                "lane_step": .number(r3(probe.laneStep)),
+                "ratio": .number(r3(probe.ratio)),
+                "active": .bool(probe.active),
+                "lane": probe.framedLane.map { JSONValue.int($0) } ?? .null,
+                "on_grid": .bool(probe.onGrid),
+                "pending": .bool(probe.pendingFraming),
+                "ruler_h": .number(r3(probe.rulerHeight)),
+            ])
+        } else {
+            vsnap = .null
+        }
         return .object([
             "pps": .number(r3(pps)),
             "block_height": .number(r3(vm.blockHeight)),
+            "vsnap": vsnap,
             "scroll_x": .number(r3(Double(v.minX))),
             "scroll_y": .number(r3(Double(v.minY))),
             "model_scroll_x": .number(r3(vm.viewScrollX)),

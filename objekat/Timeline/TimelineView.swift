@@ -75,6 +75,18 @@ struct TimelineView: View {
     @State private var scrollAnchor = TimelineScrollAnchor()
     @State private var currentSelectionCursor: Double = 0
 
+    // MARK: - Vertical lane snap (@see VerticalLaneSnap)
+
+    /// The viewport has been MEASURED at least once: a clamp evaluated against the fake 400 pt
+    /// default at launch would permanently shrink a restored zoom before the real size is known.
+    @State private var viewportMeasured: Bool = false
+    /// The available lane height as of the LAST resize handled — kept so D3's resize can compute
+    /// the ratio against the height that is actually changing, not the new one twice over.
+    @State private var lastAvailableLaneHeight: Double = 0
+    /// Whether an end-of-zoom / D7 idle re-frame is armed and has not landed yet — read by
+    /// `view.state.vsnap.pending` so a test does not sample mid-settle (@see waitViewAtRest).
+    @State private var vSnapPendingFraming: Bool = false
+
     /// The exact scroll. NOT TO BE READ while a view body is being evaluated: that would restore the
     /// per-frame invalidation `TimelineScrollAnchor` is precisely there to avoid. Reserved for
     /// EVENT handling (hit-tests, gestures, zoom sessions), where reading it records no dependency.
@@ -138,8 +150,18 @@ struct TimelineView: View {
     var waveformDisplayDB: Double { viewModel.waveformDisplayDB }
     private let laneGap: Double = 4
     private let minBlockHeight: Double = 16
+    /// D1 — "available height": the lane area under the sticky header, marker rows included in
+    /// the header, read LIVE (the window and the marker rows both move it). `VerticalLaneSnap`
+    /// measures a lane against the BLOCK alone, never `laneStep` — the 4 pt gap is not "the lane".
+    var availableLaneHeight: Double { max(0, Double(viewportHeight) - Double(rulerHeight)) }
+    /// D2 — the 90 % clamp. The old `max(120, …)` floor is gone: it could exceed a small window.
     private var maxBlockHeight: Double {
-        max(120, Double(viewportHeight) - Double(rulerHeight) - laneGap - 8)
+        VerticalLaneSnap.maxBlockHeight(available: availableLaneHeight, minBlockHeight: minBlockHeight)
+    }
+    /// Whether the vertical view is snapped to the lanes (§ the request): the block occupies more
+    /// than 70 % of the available height.
+    var verticalSnapActive: Bool {
+        VerticalLaneSnap.isActive(blockHeight: blockHeight, available: availableLaneHeight)
     }
     private let minLanes: Int = 2
 
@@ -1077,9 +1099,18 @@ struct TimelineView: View {
         }
         .background(GeometryReader { geo in
             Color(nsColor: .controlBackgroundColor)
-                .onAppear { viewportWidth = geo.size.width; viewportHeight = geo.size.height }
+                .onAppear {
+                    viewportWidth = geo.size.width
+                    viewportHeight = geo.size.height
+                    lastAvailableLaneHeight = availableLaneHeight
+                    viewportMeasured = true
+                    enforceVerticalZoomBounds()
+                }
                 .onChange(of: geo.size.width)  { viewportWidth  = $0 }
-                .onChange(of: geo.size.height) { viewportHeight = $0 }
+                .onChange(of: geo.size.height) { _, h in
+                    viewportHeight = h
+                    adjustForAvailableHeightChange()
+                }
         })
         // The rows' names and the button that governs them: PINNED to the viewport, in the same
         // overlay layer as the tool indicator. A row's name is its identity, and an identity that
@@ -1131,6 +1162,7 @@ struct TimelineView: View {
             }
             viewModel.endVerticalZoomDrag = { vZoomHeld = false }
             viewModel.applyVerticalZoom = { newH in applyVerticalZoom(newH) }
+            viewModel.verticalSnapProbe = { verticalSnapProbeSnapshot() }
         }
         .onDisappear { unregisterKeyMonitor() }
         // ⌥ pressed or released WITHOUT moving the mouse: the drag under way flips in place between
@@ -1150,6 +1182,11 @@ struct TimelineView: View {
             moveDrag?.isAltCopy = held
         }
         .onChange(of: selectionCursor) { currentSelectionCursor = $0 }
+        // D2's catch-all: ANY door that writes `blockHeight` raw is re-clamped here.
+        .onChange(of: viewModel.blockHeight) { enforceVerticalZoomBounds() }
+        // A marker row shown or hidden moves the header, hence `availableLaneHeight` — D3's ratio
+        // rule applies here exactly as it does to a window resize.
+        .onChange(of: rulerHeight) { adjustForAvailableHeightChange() }
         // The content's length: followed at once when it grows, shrunk only when
         // that moves nothing on screen (see syncStickyDuration).
         .onChange(of: contentDuration, initial: true) { syncStickyDuration() }
@@ -3055,6 +3092,61 @@ struct TimelineView: View {
 
     func clampZoom(_ v: Double) -> Double { min(max(v, minZoom), maxZoom) }
     func clampBlockHeight(_ v: Double) -> Double { min(max(v, minBlockHeight), maxBlockHeight) }
+
+    /// D2 — the catch-all: any door that writes `viewModel.blockHeight` RAW (`view.set`, a
+    /// project load, a tab restore, the pill's nil-closure fallback) is re-clamped here, hung off
+    /// `.onChange(of: viewModel.blockHeight)`. Idempotent — the corrected write triggers one more
+    /// pass that finds nothing left to do.
+    private func enforceVerticalZoomBounds() {
+        guard viewportMeasured else { return }
+        let clamped = clampBlockHeight(viewModel.blockHeight)
+        if clamped != viewModel.blockHeight { viewModel.blockHeight = clamped }
+    }
+
+    /// D3 — the AVAILABLE height itself just changed (a window resize, a marker row shown or
+    /// hidden): below 70 % this is a plain clamp (D2); at/above it, the lane keeps its FRACTION of
+    /// the available height, so a resize does not silently switch the mode off (enlarging) or
+    /// leave the lane pinned at 90 % once the window grows back (shrinking then re-enlarging).
+    private func adjustForAvailableHeightChange() {
+        guard viewportMeasured else {
+            lastAvailableLaneHeight = availableLaneHeight
+            return
+        }
+        let oldAvail = lastAvailableLaneHeight
+        let newAvail = availableLaneHeight
+        defer { lastAvailableLaneHeight = newAvail }
+        guard oldAvail > 0, newAvail != oldAvail,
+              VerticalLaneSnap.isActive(blockHeight: viewModel.blockHeight, available: oldAvail) else {
+            enforceVerticalZoomBounds()
+            return
+        }
+        let resized = VerticalLaneSnap.resizedBlockHeight(blockHeight: viewModel.blockHeight,
+                                                           oldAvailable: oldAvail, newAvailable: newAvail,
+                                                           minBlockHeight: minBlockHeight)
+        if resized != viewModel.blockHeight { viewModel.blockHeight = resized }
+    }
+
+    /// `view.state.vsnap`'s door: a plain read, computed fresh from the current scroll/zoom —
+    /// nothing here is cached or stored beyond what the view already keeps.
+    private func verticalSnapProbeSnapshot() -> VerticalSnapProbe {
+        let avail = availableLaneHeight
+        let ls = laneStep
+        let maxY = max(0, canvasHeight - Double(viewportHeight))
+        let lanes = visibleLanes
+        let active = VerticalLaneSnap.isActive(blockHeight: blockHeight, available: avail)
+        let y = Double(scrollOffsetY)
+        let nearest = VerticalLaneSnap.nearestLane(scrollY: y, blockHeight: blockHeight, laneStep: ls,
+                                                   available: avail, maxScrollY: maxY, laneCount: lanes)
+        let onGrid = VerticalLaneSnap.isOnGrid(scrollY: y, blockHeight: blockHeight, laneStep: ls,
+                                               available: avail, maxScrollY: maxY, laneCount: lanes)
+        return VerticalSnapProbe(availableHeight: avail,
+                                 maxBlockHeight: VerticalLaneSnap.maxBlockHeight(available: avail,
+                                                                                minBlockHeight: minBlockHeight),
+                                 laneStep: ls, ratio: avail > 0 ? blockHeight / avail : 0, active: active,
+                                 framedLane: active ? nearest : nil, onGrid: onGrid,
+                                 pendingFraming: vSnapPendingFraming, rulerHeight: rulerHeight,
+                                 viewportHeight: Double(viewportHeight))
+    }
 
     /// A zoom session is under way: the canvas must neither shrink nor move under the anchor
     /// (see `relaxStickyDuration`).
