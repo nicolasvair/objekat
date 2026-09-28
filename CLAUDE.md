@@ -1651,6 +1651,73 @@ What has landed since mid-August, in order:
   device change made from Audio MIDI Setup, and the ~0.3 s the retry logic allows a device that
   needs a moment to report itself running after a switch.
 
+- **The device text goes grey after all — 4b, not 4a** (28 September 2026, SAME BRANCH, the same
+  day, on the user's own reading of the entry above: "can this part of the text be greyed").
+  4a's own measurement is exactly why it could not: `NSWindow.subtitle` fuses onto the title's
+  OWN `NSTextField`, one colour for the whole line — greying the device half would have greyed
+  the project's name with it. So `updateWindowSubtitle` now sets `window.subtitle` to `""` and
+  never anything else, and the device text lives in a SECOND field laid by hand beside the
+  title's own: `Shared/TitleBarDeviceLabel.swift`, `secondaryLabelColor`, the title's own font,
+  not selectable, no background, found (never guessed) by the same `NSTextField` walk
+  `debug.titlebar` already used to measure 4a. **Fails silent** if that walk cannot find a title
+  field at all (a future macOS whose title-bar internals differ) — nothing drawn beats something
+  misplaced over the project's own name.
+  Re-laid on every door that can move it, no polling anywhere: the audio text itself
+  (`AudioDeviceStatus`'s own on-change hook), the title field's `frameDidChangeNotification`
+  (best-effort — AppKit does not document posting it for a private view, so this is belt and
+  braces, not the only mechanism), and the window's own resize/key notifications; a title/dirty
+  change, a tab switch and a Save As already ran through `updateWindowTitle()` →
+  `updateWindowSubtitle()` and needed nothing new. Entering or leaving full screen re-discovers
+  the title field from scratch rather than merely relaying out — the chrome that holds it can be
+  REPLACED by that transition, not just moved. Never drawn past the trailing edge: the available
+  width stops at the nearest sibling view to the right of the title (a native tab-bar control, a
+  full-screen button once shown) or, finding none, a fixed inset from the chrome's own width —
+  truncated with an ellipsis inside that space, hidden entirely below a floor width.
+  **The bug this found, worth keeping in mind for anywhere else a hand-laid sibling view joins
+  AppKit's own title-bar chrome**: `title.frame` is in the coordinate space of the title field's
+  OWN immediate superview, a small private AppKit container — NOT the outer theme frame
+  (`chrome`) the label is actually added to (chosen so a sibling control elsewhere in the chrome
+  is still found for the trailing-edge check). Laying the label out with `title.frame`'s raw
+  numbers, unconverted, put it near the WINDOW'S BOTTOM instead of beside the title — caught by
+  `debug.titlebar`'s own geometry, not by eye, which is the whole reason that command carries a
+  title-field frame beside the label's. Fixed with one `convert(_:to:)` at the top of
+  `relayout()`, done once, every number after it in `chrome`'s own space, label included.
+  New `debug.titlebar` fields (DEBUG only): `label_frame`, `label_hidden`, `label_color`,
+  `label_text`, `title_field_frame` — `window_subtitle` itself now stays `""` always, by design.
+  New `debug.resize_window` (DEBUG only): the one way a script can drive the narrow-window
+  behaviour without a hand on the window. **A limitation found using it, and it is the debug
+  harness's, not the label's**: `window.setFrame` genuinely changes `NSWindow.frame` (its own
+  readback confirms the exact width asked, every time), but AppKit's PRIVATE title-bar centring
+  does not always re-run its own layout off a purely PROGRAMMATIC resize the way it does for a
+  hand-driven one — measured moving without fully re-centring for the new width. Worked around
+  in the scenario by driving the SAME computation deterministically through the title's own
+  length instead (a very long project name leaves no room for the label — hides it — a short one
+  brings it back), which is what actually proves the trailing-edge floor rather than a resize
+  whose result this harness cannot fully control.
+  `audio.status.window_subtitle` now answers the label's own displayed string (leading separator
+  included, `"— Device — 48k — 512"`), never `NSWindow.subtitle` — `null` when nothing is shown,
+  whether from the fail-silent guard or the floor-width hide, which is the honest answer to "what
+  does the hand actually see" rather than "what was asked for."
+  Verified with no screen: Debug AND Release build, **zero new warnings** — confirmed by an exact
+  clean-build recount either side of this work (1550 warnings both times, not merely an
+  incremental diff), `OBJEngineCore.h`/`.mm` untouched throughout (confirmed by an empty `git
+  diff`, the file the lead's own nullability-completeness trap lives in); six
+  `MainActor.assumeIsolated` wrappers needed around the new `NotificationCenter` closures, the
+  same pattern already used by `EditViewModel+MissingFiles.swift`'s own watch.
+  `tools/test_audio_status_text.swift` 21/21; `tools/scenario_audio_device.py` grown to **62/62**
+  across its three phases (18 new assertions: the label's geometry against the title's own frame,
+  its colour, a tab switch, a Save As, a resize, the trailing-edge floor forced by title length);
+  i18n 465 keys unchanged, no orphans; `~/Library/objekat/Settings.xml` confirmed byte-identical
+  (MD5) before and after a full run of phase B, not merely mtime.
+  A disk-full mid-session (a clean rebuild used the machine's last free megabytes) was resolved by
+  clearing other projects' `DerivedData` — none of `objekat`'s own working tree or the user's files
+  — and cost only time, not any lost work (the in-progress changes were safely under `git stash`
+  throughout).
+  **Not seen, not felt**: every pixel of it, again — the grey field beside a real title under a
+  real eye, whether the gap and the separator read right, the ellipsis truncating gracefully
+  rather than looking cut off, and the floor-width hide as it would actually happen under a real
+  hand-driven resize rather than this harness's own workaround for it.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
