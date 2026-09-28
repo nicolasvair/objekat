@@ -12,18 +12,20 @@ extension EditViewModel {
     /// Drops the overlays of objects that no longer exist. Called wherever an object can vanish
     /// (`remove`, an undo, an explode), and defensively by every `overlay.*` command.
     func pruneScriptOverlays() {
-        guard !scriptOverlays.overlays.isEmpty else { return }
         scriptOverlays.prune(keepingWhere: { find(id: $0) != nil })
+        scriptPanels.closeWhereObjectGone(exists: { find(id: $0) != nil })
     }
 
     /// The socket connection `connection` has closed: everything it laid goes.
     func scriptSessionEnded(_ connection: UUID) {
         scriptOverlays.clear(owner: connection)
+        scriptPanels.connectionClosed(connection)
     }
 
     /// A different document is on screen (load, new project, tab switch): what a script showed
     /// about the previous one means nothing here, and its panel's object is gone.
     func resetScriptSessionState() {
         scriptOverlays.clearAll()
+        scriptPanels.closeAll(reason: .closed)
     }
 }

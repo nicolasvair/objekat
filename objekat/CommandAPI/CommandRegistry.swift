@@ -250,6 +250,7 @@ final class CommandRegistry {
         registerAudioCommands()
         registerScriptCommands()
         registerOverlayCommands()
+        registerScriptPanelCommands()
     }
 
     private func registerIntrospection() {

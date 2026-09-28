@@ -175,6 +175,8 @@ final class EditViewModel {
     let renderProgress = RenderProgressStore()
     /// What a third-party script shows over the objects. @see ScriptOverlayStore
     let scriptOverlays = ScriptOverlayStore()
+    /// The windows scripts declare. @see ScriptPanelStore
+    let scriptPanels = ScriptPanelStore()
     /// The timer reading the engine's render progress while `bakingIDs` or
     /// `recomputingConsolidateIDs` is non-empty. @see updateRenderProgressPolling
     @ObservationIgnored var renderProgressTimer: Timer? = nil

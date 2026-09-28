@@ -174,12 +174,98 @@ def section_b(c):
     check("b: a removed object's layer is purged", c.send("overlay.list")["overlays"] == [])
 
 
+CONTROLS = [
+    {"id": "gap_on", "kind": "bool", "label": "Gap", "value": True},
+    {"id": "gap", "kind": "number", "label": "Gap", "value": 120, "min": 40, "max": 400,
+     "step": 10, "unit": "ms", "enabled_by": "gap_on"},
+    {"id": "go", "kind": "button", "label": "Go"},
+]
+
+
+def section_c(c):
+    """The panel: declared, read by long poll, driven by the hand's door."""
+    import threading
+    import time
+    ROOT = tmproot("c")
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 1.0, 48000)
+    c.send("project.new")
+    a = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
+    dup = CONTROLS + [{"id": "gap", "kind": "bool", "label": "dup"}]
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": dup}),
+                 "bad_params", "c: duplicate control id refused")
+    bad = [{"id": "x", "kind": "number", "label": "x", "min": 5, "max": 5, "step": 1}]
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": bad}),
+                 "bad_params", "c: min >= max refused")
+    bad = [{"id": "x", "kind": "number", "label": "x", "min": 0, "max": 5, "step": 0}]
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": bad}),
+                 "bad_params", "c: step <= 0 refused")
+    bad = [{"id": "x", "kind": "number", "label": "x", "min": 0, "max": 5, "step": 1, "value": 9}]
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": bad}),
+                 "bad_params", "c: value out of range refused")
+    r = c.send("script.panel.open", {"title": "Eval", "controls": CONTROLS, "object": a,
+                                     "status": "Analyse...", "busy": True})
+    pid = r["panel_id"]
+    check("c: open answers rev 0", r["rev"] == 0, r)
+    g = c.send("script.panel.get", {"panel_id": pid})
+    check("c: get: open, defaults", g["state"] == "open" and g["values"]["gap"] == 120
+          and g["values"]["gap_on"] is True and g["status"] == "Analyse...", g)
+    t0 = time.time()
+    w = c.send("script.panel.wait", {"panel_id": pid, "since_rev": 0, "timeout_ms": 300})
+    check("c: wait times out with rev unchanged", w["rev"] == 0 and w["state"] == "open"
+          and time.time() - t0 >= 0.25, w)
+    c.send("script.panel.update", {"panel_id": pid, "status": "42 breaths", "busy": False})
+    w = c.send("script.panel.get", {"panel_id": pid})
+    check("c: update never moves rev", w["rev"] == 0 and w["status"] == "42 breaths", w)
+    # a second connection wakes the wait in flight
+    # the wait runs on THIS connection's thread while another connection drives the hand
+    def hand():
+        time.sleep(0.4)
+        with ObjekatClient(SOCK, timeout=30) as c2:
+            c2.send("script.panel.input", {"panel_id": pid, "values": {"gap": 200}})
+    th = threading.Thread(target=hand)
+    th.start()
+    t0 = time.time()
+    w = c.send("script.panel.wait", {"panel_id": pid, "since_rev": 0, "timeout_ms": 5000})
+    dt = time.time() - t0
+    th.join()
+    check("c: a wait is woken by input from another connection (rev+1, value)",
+          w["rev"] == 1 and w["values"]["gap"] == 200 and 0.3 < dt < 2.0, (w, dt))
+    c.send("script.panel.input", {"panel_id": pid, "press": "go"})
+    w = c.send("script.panel.get", {"panel_id": pid})
+    check("c: a button press is an event, read once", w["events"] == [{"button": "go"}], w)
+    w = c.send("script.panel.get", {"panel_id": pid})
+    check("c: events are emptied by the read", w["events"] == [], w)
+    expect_error(lambda: c.send("script.panel.input", {"panel_id": pid, "values": {"nope": 1}}),
+                 "bad_params", "c: input on an unknown control refused")
+    c.send("script.panel.input", {"panel_id": pid, "values": {"gap": 9999}})
+    check("c: a number is clamped to its range",
+          c.send("script.panel.get", {"panel_id": pid})["values"]["gap"] == 400)
+    check("c: list shows the panel", [p["panel_id"] for p in c.send("script.panel.list")["panels"]] == [pid])
+    c.send("script.panel.input", {"panel_id": pid, "press": "cancel"})
+    check("c: cancel -> state cancelled",
+          c.send("script.panel.get", {"panel_id": pid})["state"] == "cancelled")
+    # an object that goes closes its panel
+    r = c.send("script.panel.open", {"title": "Eval", "controls": CONTROLS, "object": a})
+    c.send("object.remove", {"ids": [a]})
+    check("c: the object's removal closes the panel",
+          c.send("script.panel.get", {"panel_id": r["panel_id"]})["state"] == "closed")
+    # the connection's closing removes the panel
+    with ObjekatClient(SOCK, timeout=30) as c3:
+        c3.send("script.panel.open", {"title": "x", "controls": CONTROLS})
+        check("c: visible from another connection", len(c.send("script.panel.list")["panels"]) >= 1)
+    time.sleep(0.5)
+    check("c: closing the owner's connection removes its panel",
+          all(p["title"] != "x" for p in c.send("script.panel.list")["panels"]),
+          c.send("script.panel.list"))
+
+
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
         section_a(c, 48000)
         section_a(c, 44100)
         section_b(c)
+        section_c(c)
 finally:
     cleanup()
 
