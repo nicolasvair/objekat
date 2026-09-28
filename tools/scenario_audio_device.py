@@ -163,11 +163,12 @@ def cross_check(status):
 
 def short_rate(hz):
     """`AudioStatusText.shortRate`, recomputed in Python — the same rounding, checked
-    independently rather than trusted."""
+    independently rather than trusted. `"%.2f"`, then trailing zeros (and a bare trailing dot)
+    stripped, word for word what the Swift side does — 44100 -> "44.1k", not "44.10k"."""
     khz = hz / 1000.0
-    if abs(khz - round(khz)) < 1e-9:
-        return "%dk" % round(khz)
-    return "%.2fk" % khz
+    s = "%.2f" % khz
+    s = s.rstrip("0").rstrip(".")
+    return s + "k"
 
 
 def expected_text(device, sr, buf, running):
@@ -259,6 +260,13 @@ try:
                 print("  ..   window check skipped: %s" % exc)
         else:
             print("  ..   window check skipped: pid not found")
+
+        # 4b: the grey label is a real NSTextField laid beside the title's own — with no window
+        # at all (headless), nothing of it exists to find.
+        dbg = step("debug.titlebar, headless", lambda: cmd("debug.titlebar"))
+        if dbg:
+            check("no label created headless", dbg.get("label_frame") is None, dbg)
+            check("no label text headless", dbg.get("label_text") is None, dbg.get("label_text"))
 finally:
     stop(proc_a, SOCK_A)
 
@@ -388,31 +396,61 @@ try:
 
         # A PRE-EXISTING trait of `window.title` itself, found here and not introduced by this
         # work: at pure launch, before any state-changing command, SwiftUI's `WindowGroup` has
-        # not yet settled on the window's title/subtitle — `window.title` reads "objekat" (the
-        # bundle name) and `window.subtitle` reads "" — no matter how long one waits (checked
-        # to 3 s, `wait_idle` included, neither moves). The FIRST command that touches edit
-        # state (`project.new`, `object.add`, an `isDirty` flip…) makes `updateWindowTitle()`
-        # reassert both, and from then on they stick — which is the same mechanism
-        # `updateWindowSubtitle` piggybacks on, not a defect of its own. So the scenario asks
-        # for that one real state change before reading "at start", exactly as a real session
-        # always has one (`project.new` fires at launch already, before ANY script attaches —
-        # the empty window this reproduces is a window nothing has driven yet, which is what a
-        # fresh `--api` instance with no client connected yet looks like for an instant).
+        # not yet settled on the window's title — it reads "objekat" (the bundle name) no matter
+        # how long one waits (checked to 3 s, `wait_idle` included). The FIRST command that
+        # touches edit state (`project.new`, `object.add`, an `isDirty` flip…) makes
+        # `updateWindowTitle()` reassert it, and it sticks from then on — the same mechanism
+        # `updateWindowSubtitle` (hence the grey label, 4b) piggybacks on, not a defect of its
+        # own. So the scenario asks for that one real state change before reading "at start",
+        # exactly as a real session always has one (`project.new` fires at launch already,
+        # before ANY script attaches — the empty window this reproduces is a window nothing has
+        # driven yet, which is what a fresh `--api` instance with no client attached yet looks
+        # like for an instant).
         cmd("project.new")
+
+        def expected_label(text):
+            """The grey field's OWN stringValue: 4b lays "— " + the audio text at its start
+            (never the project name, which stays entirely AppKit's own, in `window.title`)."""
+            return ("— " + text) if text else None
+
         st = None
         deadline = time.time() + 3.0
         while time.time() < deadline:
             st = cmd("audio.status")
-            if st.get("window_subtitle") == st.get("text"):
+            if st.get("window_subtitle") == expected_label(st.get("text")):
                 break
             time.sleep(0.1)
-        check("window_subtitle == text once the window has settled",
-              st and st.get("window_subtitle") == st.get("text"),
-              (st and st.get("window_subtitle"), st and st.get("text")))
+        check("window_subtitle == '— ' + text once the window has settled",
+              st and st.get("window_subtitle") == expected_label(st and st.get("text")),
+              (st and st.get("window_subtitle"), st and expected_label(st.get("text"))))
 
-        if st and st.get("device") is not None:
+        # ── the geometry itself: two REAL NSTextFields, not one field pretending to be two ──
+        dbg = step("debug.titlebar", lambda: cmd("debug.titlebar"))
+        if dbg and dbg.get("title_field_frame") and dbg.get("label_frame"):
+            tf, lf = dbg["title_field_frame"], dbg["label_frame"]
+            check("the grey field starts at or after the title's own trailing edge",
+                  lf["x"] >= tf["x"] + tf["width"] - 0.5,
+                  (lf["x"], tf["x"] + tf["width"]))
+            title_mid = tf["y"] + tf["height"] / 2.0
+            label_mid = lf["y"] + lf["height"] / 2.0
+            check("baseline-aligned: vertical centres within 2 pt",
+                  abs(title_mid - label_mid) <= 2.0,
+                  (title_mid, label_mid))
+            check("the grey field is really secondaryLabelColor",
+                  dbg.get("label_color") == "secondaryLabelColor", dbg.get("label_color"))
+            check("the grey field is not hidden at a normal window width",
+                  dbg.get("label_hidden") is False, dbg.get("label_hidden"))
+            check("debug.titlebar's own label_text agrees with audio.status",
+                  dbg.get("label_text") == st.get("window_subtitle"),
+                  (dbg.get("label_text"), st.get("window_subtitle")))
+        else:
+            print("  ..   geometry checks skipped: no title/label frame reported "
+                  "(4b fell back to 'show nothing' — @see TitleBarDeviceLabel's fail-silent rule)")
+
+        has_device = st and st.get("device") is not None
+        original_buf = st.get("buffer_size") if st else None
+        if has_device:
             devs = cmd("audio.devices")
-            original_buf = st.get("buffer_size")
             sizes = devs.get("buffer_sizes", [])
             candidate = next((b for b in sizes if b != original_buf), None)
             if candidate is not None:
@@ -421,18 +459,18 @@ try:
                 if r:
                     st2 = step("audio.status after the change",
                                 lambda: cmd("audio.status"))
-                    check("window_subtitle followed the change",
-                          st2 and st2.get("window_subtitle") == st2.get("text")
+                    check("window_subtitle followed the buffer change",
+                          st2 and st2.get("window_subtitle") == expected_label(st2.get("text"))
                           and st2.get("window_subtitle") != st.get("window_subtitle"),
                           (st.get("window_subtitle"), st2 and st2.get("window_subtitle")))
-                back = step("audio.set_buffer_size %d (restore)" % original_buf,
-                             lambda: cmd("audio.set_buffer_size", frames=original_buf))
+                step("audio.set_buffer_size %d (restore)" % original_buf,
+                     lambda: cmd("audio.set_buffer_size", frames=original_buf))
             else:
                 print("  ..   no alternate buffer size — subtitle-follows test skipped.")
         else:
-            print("  ..   no real device in this UI instance — subtitle-follows test skipped.")
+            print("  ..   no real device in this UI instance — several checks below are skipped.")
 
-        # tab switch must not perturb the subtitle
+        # ── a tab switch must not perturb the label ──
         has_tabs = True
         try:
             cmd("tab.new")
@@ -447,9 +485,81 @@ try:
             after = cmd("audio.status")
             check("window_subtitle unchanged across a tab switch",
                   after.get("window_subtitle") == before.get("window_subtitle")
-                  == after.get("text"),
+                  == expected_label(after.get("text")),
                   (before.get("window_subtitle"), after.get("window_subtitle"),
-                   after.get("text")))
+                   expected_label(after.get("text"))))
+
+        # ── a Save As (a title/rename change) must not perturb the label, only the title ──
+        before = cmd("audio.status")
+        SAVE_PATH = "/tmp/objk-audio-c-project.objekat.json"
+        r = step("project.save_as (rename)", lambda: cmd("project.save_as", path=SAVE_PATH))
+        if r is not None:
+            after = cmd("audio.status")
+            check("window_subtitle unchanged across a Save As",
+                  after.get("window_subtitle") == before.get("window_subtitle")
+                  == expected_label(after.get("text")),
+                  (before.get("window_subtitle"), after.get("window_subtitle")))
+            dbg2 = cmd("debug.titlebar")
+            check("the title itself DID change (this is a rename, not a no-op)",
+                  dbg2.get("window_title") != dbg.get("window_title") if dbg else True,
+                  (dbg and dbg.get("window_title"), dbg2.get("window_title")))
+
+        # ── a window resize must re-lay the label (position follows) ──
+        # NOTE, found while writing this: `debug.resize_window`'s `setFrame` genuinely changes
+        # `NSWindow.frame` (its own readback confirms the exact width asked for, every time),
+        # but AppKit's PRIVATE title-bar centring does not always re-run its OWN layout pass off
+        # the back of a purely PROGRAMMATIC resize the way it does for a hand-driven one — the
+        # title field can be measured to have MOVED without having fully re-centred for the new
+        # width yet. That is an AppKit timing question this debug harness cannot force past, not
+        # a defect of `TitleBarDeviceLabel` (its own `relayout()` correctly uses whatever
+        # `title.frame` AppKit gives it at the moment it runs). So this checks that a resize
+        # moves the label AT ALL — proving the resize notification really does trigger a
+        # relayout — without pinning the exact resulting position.
+        has_resize = True
+        try:
+            wide = cmd("debug.resize_window", width=1100, height=700)
+        except ObjekatError as e:
+            has_resize = False
+            print("  ..   debug.resize_window unavailable (%s) — resize checks skipped." % e.code)
+        if has_resize:
+            check("window widened", wide.get("width", 0) >= 1099, wide)
+            time.sleep(0.3)
+            dbg_wide = cmd("debug.titlebar")
+
+            narrow = step("debug.resize_window (narrower)",
+                          lambda: cmd("debug.resize_window", width=800, height=700))
+            time.sleep(0.3)
+            dbg_narrow = cmd("debug.titlebar")
+            lw = dbg_wide.get("label_frame") or {}
+            ln = dbg_narrow.get("label_frame") or {}
+            check("the label's position followed the resize",
+                  lw.get("x") != ln.get("x") or lw.get("width") != ln.get("width"),
+                  (lw, ln))
+
+            back = step("debug.resize_window (restore)",
+                        lambda: cmd("debug.resize_window", width=1000, height=700))
+            time.sleep(0.3)
+
+        # ── the trailing-edge floor itself: forced with a LONG title rather than a narrow
+        #    window (the resize-timing gap above), which drives the exact same computation
+        #    (`available = trailingBound - originX`) deterministically ──
+        LONG_NAME = "/tmp/" + ("A" * 120) + ".objekat.json"
+        SHORT_NAME = "/tmp/objk-audio-c-short.objekat.json"
+        r = step("project.save_as (very long name)",
+                 lambda: cmd("project.save_as", path=LONG_NAME))
+        if r is not None:
+            time.sleep(0.2)
+            dbg_long = cmd("debug.titlebar")
+            check("hidden once the title alone leaves no room, never drawn past the trailing edge",
+                  dbg_long.get("label_hidden") is True, dbg_long.get("label_hidden"))
+
+            r2 = step("project.save_as (short name again)",
+                      lambda: cmd("project.save_as", path=SHORT_NAME))
+            if r2 is not None:
+                time.sleep(0.2)
+                dbg_short = cmd("debug.titlebar")
+                check("reappears once the title leaves room again",
+                      dbg_short.get("label_hidden") is False, dbg_short.get("label_hidden"))
 finally:
     stop(proc_c, SOCK_C)
 
