@@ -121,6 +121,7 @@ extension EditViewModel {
             items.removeAll { pieceIDs.contains($0.id) }
         }
         selectedIDs.subtract(pieceIDs)
+        pruneScriptOverlays()
 
         var group = SoundObject(
             startTime: objStart, duration: objEnd - objStart,

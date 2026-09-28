@@ -173,6 +173,8 @@ final class EditViewModel {
     /// blocks. A `let` holding its OWN observable object, so that the ten ticks a second reach the
     /// circles and not the timeline's body. @see RenderProgressStore
     let renderProgress = RenderProgressStore()
+    /// What a third-party script shows over the objects. @see ScriptOverlayStore
+    let scriptOverlays = ScriptOverlayStore()
     /// The timer reading the engine's render progress while `bakingIDs` or
     /// `recomputingConsolidateIDs` is non-empty. @see updateRenderProgressPolling
     @ObservationIgnored var renderProgressTimer: Timer? = nil

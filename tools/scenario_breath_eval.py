@@ -120,11 +120,66 @@ def section_a(c, rate):
         check("%s: no zeroed sample" % label, len(zeros) == 0, zeros[:6])
 
 
+def expect_error(fn, code, label):
+    try:
+        fn()
+        check(label, False, "it went through")
+    except ObjekatError as e:
+        check(label, e.code == code, "%s: %s" % (e.code, e.message))
+
+
+def section_b(c):
+    """The overlay layer: a model, a life, no trace in the project."""
+    ROOT = tmproot("b")
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 3.0, 48000)
+    c.send("project.new")
+    a = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
+    dirty0 = c.send("app.info").get("is_dirty")
+    texts = [{"start": i * 0.0005, "end": i * 0.0005 + 0.0004, "text": "w%d" % i} for i in range(5000)]
+    zones = [{"start": i * 0.05, "end": i * 0.05 + 0.02, "color": "red"} for i in range(50)]
+    r = c.send("overlay.set", {"id": a, "texts": texts, "zones": zones})
+    check("b: set counts", r["texts"] == 5000 and r["zones"] == 50, r)
+    g = c.send("overlay.get", {"id": a})
+    check("b: get counts", g["texts"] == 5000 and len(g["zones"]) == 50 and g["owner_is_caller"], g)
+    r = c.send("overlay.set", {"id": a, "zones": zones[:10], "replace": ["zones"]})
+    check("b: replace zones keeps texts", r["texts"] == 5000 and r["zones"] == 10, r)
+    r = c.send("overlay.set", {"id": a, "replace": ["zones"]})
+    check("b: replace with no value empties the field", r["zones"] == 0 and r["texts"] == 5000, r)
+    check("b: the project is not dirtied", c.send("app.info").get("is_dirty") == dirty0)
+    expect_error(lambda: c.send("overlay.set", {"id": "00000000-0000-0000-0000-000000000000",
+                                                 "zones": []}), "not_found", "b: unknown object")
+    expect_error(lambda: c.send("overlay.set", {"id": a, "zones": [{"start": 2, "end": 1}]}),
+                 "bad_params", "b: start > end refused")
+    expect_error(lambda: c.send("overlay.set", {"id": a, "zones": [{"start": 0, "end": 1, "color": "pink"}]}),
+                 "bad_params", "b: unknown colour refused")
+    big = [{"start": 0, "end": 0.1} for _ in range(20001)]
+    expect_error(lambda: c.send("overlay.set", {"id": a, "zones": big}), "bad_params",
+                 "b: more than 20000 elements refused")
+    # undo does not touch the layer (nothing to undo: it is not an edit)
+    c.send("object.set_fade", {"id": a, "in": 0.05, "out": 0.05})
+    c.send("edit.undo")
+    check("b: edit.undo leaves the layer", c.send("overlay.get", {"id": a})["texts"] == 5000)
+    # the layer belongs to the connection
+    with ObjekatClient(SOCK, timeout=60) as c2:
+        b = c2.send("overlay.get", {"id": a})
+        check("b: another connection is not the owner", b["owner_is_caller"] is False, b)
+        c2.send("overlay.set", {"id": a, "zones": [{"start": 0, "end": 1}]})
+    import time
+    time.sleep(0.5)
+    check("b: closing the owner's connection clears the layer",
+          c.send("overlay.list")["overlays"] == [], c.send("overlay.list"))
+    # an object that goes takes its layer along
+    c.send("overlay.set", {"id": a, "zones": [{"start": 0, "end": 1}]})
+    c.send("object.remove", {"ids": [a]})
+    check("b: a removed object's layer is purged", c.send("overlay.list")["overlays"] == [])
+
+
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
         section_a(c, 48000)
         section_a(c, 44100)
+        section_b(c)
 finally:
     cleanup()
 
