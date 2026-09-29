@@ -112,6 +112,8 @@ final class CommandServer {
     private func accept(_ nwConnection: NWConnection) {
         let connection = Connection(nwConnection) { [weak self] finished in
             self?.connections.removeValue(forKey: ObjectIdentifier(finished))
+            // Whatever a script showed through this connection goes with it (@see CommandCallContext).
+            CommandContext.shared.viewModel?.scriptSessionEnded(finished.id)
         }
         connections[ObjectIdentifier(connection)] = connection
         connection.start()
@@ -125,6 +127,8 @@ final class CommandServer {
     @MainActor
     private final class Connection {
 
+        /// Names this connection for the commands that run on it (@see CommandCallContext).
+        let id = UUID()
         private let connection: NWConnection
         private let onClose: @MainActor (Connection) -> Void
         private var buffer = Data()
@@ -205,7 +209,10 @@ final class CommandServer {
             let response: JSONValue
             do {
                 let request = try JSONValue.decode(line: line)
-                response = await CommandRegistry.shared.handle(request: request)
+                let callerID = self.id
+                response = await CommandCallContext.$connectionID.withValue(callerID) {
+                    await CommandRegistry.shared.handle(request: request)
+                }
             } catch {
                 // Unreadable JSON: no `id` to send back, but the response stays structured.
                 response = .object(["id": .null, "ok": .bool(false),

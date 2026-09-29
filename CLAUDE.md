@@ -1808,6 +1808,124 @@ What has landed since mid-August, in order:
   caret alone, the last lane where the scroll clamps) were never written: the agent was stopped
   before running them. Only a Debug build verifies it.
 
+- **A first third-party script cutting into an object: "Voice separator"** (28 September 2026, ON
+  THE BRANCH `feature/separateur-voix`, merged into `main` on 29 September) — a new app command, `object.explode
+  {id, cuts, lanes, names?, group_name?}`, cuts a plain audio clip at several instants and gathers
+  the pieces into a fresh group, one sub-lane per piece, in ONE undo (chained `_splitInternal`
+  calls, each targeting the RIGHT half of the previous cut — the ORIGINAL fade-in/fade-out land on
+  the first/last piece for free, every interior edge born bare, exactly `object.split_at`'s own
+  rule). Generic on purpose, not tied to voices. Built for it: the third-party-script mechanism
+  gained a **`context: "object"`** manifest field — such an entry shows in the object's own context
+  menu (a new "Scripts" submenu) instead of the bar's, receives `OBJEKAT_OBJECT_IDS` /
+  `OBJEKAT_LANGUAGE`, and a non-zero exit is now REPORTED (`viewModel.notify`, an 8 KB stderr tail
+  captured) rather than only logged — a script dying used to leave no visible trace at all. New
+  `script.list` / `script.run {script, entry?, ids?}` open the same door to a headless test (no
+  `pid` in the answer — a deliberate simplification, `{"started": true}`, since nothing here waits
+  on the process; @see the plan's own "Écarts"). `object.get` gained a plain `loop` (bool) field,
+  missing until now, so a script can refuse a looping object without going through the WRITING door
+  `object.set_loop`.
+  The script itself, `tools/scripts/separateur-voix/`: Whisper (`mlx-whisper`,
+  `whisper-large-v3-turbo`) situates the WORD, frame-by-frame band energy (25 ms window / 10 ms
+  hop) situates the BREATH or the FRICTION at 10 ms resolution — no forced aligner (MFA), on
+  purpose: separating does not correct anything, a boundary a few ms off changes nothing since the
+  pieces stay jointive. `detect.py` is pure (numpy/scipy, no socket, no Whisper import at module
+  scope) and carries its own standalone test, `test_detect.py`, against a SYNTHETIC 3 s signal
+  (voiced harmonics, a band-noise breath, two "s", one "ch") — both with fake Whisper word
+  timestamps (±15 ms tolerance) and without (`--no-asr`, ±25 ms). Two real bugs surfaced and fixed
+  while closing that test, both general beyond this script: `feats.times[k]` names a frame's
+  START, and closing a detected run on `+ hop_s` (10 ms) instead of the frame's own length
+  (`FRAME_MS`, 25 ms) under-ran every boundary by 15 ms — fixed at the three sites that closed a
+  range that way; and a raw-envelope halfway-threshold refinement, reused unmodified from the
+  sibilant path, was nibbling a breath's tail down to its single loudest 5 ms window (a breath's
+  envelope being closer to flat noise than to a rise-then-fall shape) — removed from the breath
+  path entirely, kept only for a sibilant's OWN HF-band-peak refinement (`_refine_hf_bounds`),
+  which reads the same measurement the coarse detector already used rather than a raw envelope
+  that can disagree with it.
+  `install.sh` was RUN FOR REAL by this session — the venv, `mlx-whisper`/`numpy`/`scipy`/
+  `soundfile`, and the full `whisper-large-v3-turbo` model download, all succeeded and are usable
+  today at `~/Library/Application Support/Objekat/venvs/separateur-voix`, on this machine's system
+  Python (3.9.6 — the plan named "≥ 3.10", untested and unenforced; nothing here failed on it).
+  Session format, on-disk layout: unchanged.
+  Verified with no screen: `test_detect.py`, both modes (ASR and `--no-asr`), full pass; i18n
+  (`tools/i18n/xcstrings.py check`) 470 keys, 3 languages, nothing missing. **NOT verified by this
+  session**: no Debug `xcodebuild` was run (the exe/build step is left to whoever runs the build
+  count against the 1550 baseline next); `tools/scenario_voice_split.py` (T2, `object.explode`
+  end to end — structure, refusals, one undo, an export+RMS proof the sound is unchanged, the
+  `script.run`/`OBJEKAT_OBJECT_IDS` path) was WRITTEN but never RUN.
+  **Not seen, not heard, not felt, at all**: a real recording of a real voice in any of the three
+  languages has never been through this pipeline — every acoustic threshold in `detect.py`
+  (`hf_lf_ratio_db > 4.0`, `zcr > 0.12`, the breath's `flatness > 0.08`, all tuned down from D2's
+  own starting figures to catch the SYNTHETIC "ch") is tuned against synthetic noise bursts, not
+  against a mouth. The context-menu entry, the error dialogue, and Whisper's real transcription
+  time on a long take are equally unseen. @see `validations-en-attente.md` for the standing list.
+
+- **Evaluating breaths: a script overlay, a script panel, and the one-sample hole closed**
+  (29 September 2026, branch `feature/separateur-voix`, merged into `main` the same day) — the voice separator
+  gains "Evaluate breaths…": the detector's breaths are laid over the object as zones, nine
+  criteria (a box and a slider each) move them live, Apply cuts what is shown. Three pieces of app
+  machinery came out of it, all generic. **`overlay.*`** — words and coloured zones a script draws
+  over an object (one `Canvas` above the blocks, both drawing regimes covered, binary search on the
+  visible stretch); **`script.panel.*`** — a window a script declares and the app draws, exchanged by
+  LONG POLL (`script.panel.wait`) and never a sweep. Both belong to the socket CONNECTION that made
+  them (a task-local, `CommandCallContext`): the script dying, however it dies, clears them; neither
+  is an edit, saved, or in an undo snapshot. `script.panel.update` never moves `rev` (it would wake
+  the script's own wait). **A cut left a sample at zero** on about half of all cuts, and it was NOT
+  the script: the clip cuts on a ROUNDED sample index, the object's window (`OBJWindowFadePlugin`)
+  compared continuous times, so a cut whose position in samples had a fractional part in (0 ; 0.5)
+  dropped `floor(c·sr)` on both sides. Measured first (hole at exactly that index, 48 and 44.1 kHz),
+  fixed by counting the window in samples with the clip's own rule — it benefits every cut, not just
+  the separator. Residual: a cut at EXACTLY .5 sample is a float tie and can still zero one sample.
+  Python side: features vectorised (identical to the old loops to 1e-14), `breath_mask` pure and
+  re-run in ~2 ms for ten minutes of audio, an analysis cache under `~/Library/Caches/Objekat/`.
+  Verified with no screen: Debug build with no new warning (no new line from any touched file);
+  `test_breath_mask.py` (features == the old loops, mask, cache, speed), `test_detect.py` in both
+  modes; `tools/scenario_breath_eval.py` against a headless instance (the sample hole before/after,
+  overlay, panel, the script end to end with Apply / Cancel / SIGKILL, no window on the pid).
+  **Not seen, not heard**: the overlay itself (white 30 % on every hue, words fitted at strong zoom
+  and gone at low zoom, the > 100-object regime), the panel window and how the sliders feel with the
+  zones following, Whisper on a real voice, whether the thresholds mean anything on a real breath,
+  and whether the cuts are now free of any click to the ear. Full regression suites were left to
+  the test pass.
+
+- **The breath evaluation keeps four criteria, and the text becomes a display** (29 September 2026,
+  same branch `feature/separateur-voix`) — Whisper's timing was too loose to detect with. The panel
+  now has voicing, energy under speech **after a low-pass** (cutoff 100–8000 Hz, default 6000),
+  minimum length, and a margin before the FIRST VOICED FRAME that follows a zone; words no longer
+  reach the detection. Frames are centred on a 2.5 ms grid (voicing on 25 ms, energy on 12 ms), and
+  the low-pass is a CUMULATIVE SUM over each frame's own spectrum stored per 100 Hz cutoff, so moving
+  the cutoff refilters nothing: edges land within 4 ms on the synthetic signal, a slider drag re-runs
+  in ~7 ms for ten minutes. 6 kHz is measured, not guessed: on a `say -v Thomas` voice, cutoffs
+  under 3 kHz flag the unvoiced consonants as breaths (13 zones), from 6 kHz only the pauses (5).
+  Silence is ALSO a zone — nothing in the four criteria tells a pause from a breath.
+  New generic panel control **`choice`** (`options: [{id,label}]`, value = option id; app + API +
+  `command_api.md`). The panel's "text shown" choice transcribes on a background thread (the panel
+  stays live), cached per model on disk; a model not installed is a label, not a crash. Backends
+  (`transcribe.py`): Whisper (installed), Parakeet TDT v3 via `parakeet-mlx` in its OWN venv (needs
+  Python ≥ 3.10, the main one is 3.9), Whisper + wav2vec2 CTC forced alignment (numpy Viterbi).
+  `install.sh --with-parakeet / --with-align`, guarded by a free-disk check.
+  **NOT installed here, and not tested on a real run: Parakeet and the alignment model.** This
+  machine had 1.3 GB free (0.3 GB by the end) against ~2.5 GB and ~1.3 GB of weights, and no
+  Python ≥ 3.10 for Parakeet. Their code paths are written and their pure halves tested (the Viterbi,
+  the availability checks, the "not installed" panel path); the `parakeet_worker.py` word grouping
+  and the transformers call in `align_segments` are UNRUN. Whisper measured: 19 words, 8.0 s.
+  Verified: Debug build (no warning in the touched files), `test_breath_mask.py` ALL PASS,
+  `scenario_breath_eval.py` 75 ok ALL PASS, `scenario_voice_split.py` ALL PASS, i18n 472 keys.
+  **Not seen**: the pop-up menu and the panel's layout with a second slider under the energy box.
+
+- **Voice separation evaluated as two INDEPENDENT blocks** (29 September 2026, same branch) — the
+  panel "Evaluate voice separation…" keeps only the text model and the progress bar as global; then a
+  BREATHS block (voicing 0.2-0.6/0.4, gap 3-15 dB/10, low-pass 100-1000 Hz/200, min length 80-200
+  ms/120) and a CONSONANTS block (SS/CH and every other fricative / burst: ONE set of settings — the
+  optional and OFF "not voiced", HF/LF -20..20/-6, zero crossings 0.05-0.4/0.12, HF energy 0-30/10,
+  min length 10-150/30, refine 3-30/12). Each block owns its own hole filling (0-100 ms/20) and its own
+  "use the text" + tolerance (50-800 ms/500): `b_fill`, `b_tolerance`, `s_fill`, `s_tolerance`; no
+  shared detection setting remains (`CommonParams` is gone). Text criterion: breaths near a word GAP,
+  consonants near a WORD (any word, no spelling filter). Overlap: consonants win, the only coupling.
+  Lanes read Voix / Respirations / Consonnes. Real `say -v Thomas` pass: 6 breaths, 26 consonant
+  zones, 63 pieces. Verified with no screen: `test_breath_mask.py`, `test_consonant_mask.py` (renamed;
+  independence checks), `scenario_breath_eval.py`, `scenario_voice_split.py` ALL PASS, i18n 472 keys.
+  **Not heard on a real recorded mouth.**
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

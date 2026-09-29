@@ -1283,6 +1283,16 @@ extension TimelineView {
                 if let target = hit.colorable {
                     addRelinkItems(menu: menu, proxies: &proxies, vm: vm, object: target)
                 }
+
+                // Third-party scripts declared for an OBJECT context (@see ScriptPlugins.swift):
+                // they have no business in the bar's Scripts menu (nothing to hand it there), so
+                // this is their only door. The target is the effective selection when the object
+                // clicked is part of it, the object clicked alone otherwise — the same convention
+                // "touching = grabbing" every other batch gesture here already follows.
+                if let target = hit.colorable {
+                    addScriptsMenu(menu: menu, proxies: &proxies, vm: vm,
+                                  targetID: target.id, selectedIDs: hit.selectedIDs)
+                }
             }
 
             // An 'infinite' bus: a top-level aux or group can lose its start/end and run over the whole
@@ -1369,6 +1379,45 @@ private func addConsolidateEachItem(menu: NSMenu, proxies: inout [MenuActionProx
                           action: #selector(MenuActionProxy.run), keyEquivalent: "")
     item.target = p
     menu.addItem(item)
+}
+
+/// The 'Scripts' submenu of an object's context menu — every entry an installed script declares
+/// with `context: "object"` (manifest-wide or entry-wide, @see ScriptPluginManifest). Nothing is
+/// added when no script declares one, so the menu stays exactly as it was before scripts existed
+/// for whoever has none installed. A greyed entry keeps the tooltip the bar's own menu already
+/// gives (`unavailableReason`, else the manifest's description) — the same reason, wherever it is
+/// read from.
+@MainActor
+private func addScriptsMenu(menu: NSMenu, proxies: inout [MenuActionProxy], vm: EditViewModel,
+                            targetID: UUID, selectedIDs: Set<UUID>) {
+    let objectIDs: [UUID] = selectedIDs.contains(targetID) ? Array(selectedIDs) : [targetID]
+    let plugins = ScriptPluginRegistry.shared.plugins.filter { !$0.objectEntries.isEmpty }
+    guard !plugins.isEmpty else { return }
+
+    if !menu.items.isEmpty { menu.addItem(.separator()) }
+    let scriptsItem = NSMenuItem(title: L("menu.context.scripts"), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: L("menu.context.scripts"))
+    for plugin in plugins {
+        let entries = plugin.objectEntries
+        for entry in entries {
+            let title = entries.count > 1 ? "\(plugin.displayName) — \(entry.title)" : plugin.displayName
+            let item = NSMenuItem(title: title, action: #selector(MenuActionProxy.run), keyEquivalent: "")
+            let p = MenuActionProxy {
+                Task { @MainActor in
+                    if let error = ScriptPluginRegistry.shared.run(plugin, entry: entry, objectIDs: objectIDs) {
+                        vm.notify(L("script.run.failed", entry.title), error)
+                    }
+                }
+            }
+            proxies.append(p)
+            item.target = p
+            item.isEnabled = plugin.isAvailable
+            item.toolTip = plugin.unavailableReason ?? plugin.manifest.description
+            submenu.addItem(item)
+        }
+    }
+    scriptsItem.submenu = submenu
+    menu.addItem(scriptsItem)
 }
 
 // MARK: - Action proxy for NSMenuItem

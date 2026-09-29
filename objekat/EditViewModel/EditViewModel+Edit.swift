@@ -26,6 +26,7 @@ extension EditViewModel {
         // A group's comments go with the group: their frame has gone, and a note left behind would
         // have no row to be drawn on (@see TimelineComment.parentID).
         pruneOrphanComments()
+        pruneScriptOverlays()
         isDirty = true
     }
 
@@ -64,6 +65,7 @@ extension EditViewModel {
         }
         selectedIDs = []
         pruneOrphanComments()   // @see remove(id:) — a comment does not outlive its frame
+        pruneScriptOverlays()
         isDirty = true
     }
 

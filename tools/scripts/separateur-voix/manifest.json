@@ -1,0 +1,25 @@
+{
+  "name": "Voice separator",
+  "description": "Splits a spoken clip into sub-lanes: voice, breaths, SS/CH — no sound changed, the piece just gets easier to work on.",
+  "version": "1.0",
+  "executable": "run.sh",
+  "requires": [
+    "object.get",
+    "object.explode",
+    "script.panel.open",
+    "script.panel.wait",
+    "overlay.set"
+  ],
+  "context": "object",
+  "menu": [
+    {
+      "title": "Separate voice / breaths / SS-CH"
+    },
+    {
+      "title": "Evaluate voice separation…",
+      "arguments": [
+        "--eval-separation"
+      ]
+    }
+  ]
+}

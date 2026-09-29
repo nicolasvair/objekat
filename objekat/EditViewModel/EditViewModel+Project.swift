@@ -467,6 +467,7 @@ extension EditViewModel {
     /// exists to prevent.
     func resetTransientSessionState(preservingClipboard: Bool = false) {
         selectedAnnotation = nil
+        resetScriptSessionState()
         clearAutomationPointSelection()
         if !preservingClipboard {
             clipboard = nil
