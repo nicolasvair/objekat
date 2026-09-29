@@ -199,7 +199,12 @@ def check_object(obj, object_id):
         refuse("'%s' plays reversed." % obj.get("name", object_id))
 
 
-def process_one(app, object_id, language, no_asr, segments_override, dry_run):
+# The crossfade laid on each cut, in ms (`object.explode`'s `fade_ms`). The panel offers 0-20 and
+# starts at 5: long enough to hide a click, short enough to stay inside a breath's edge.
+DEFAULT_FADE_MS = 5
+
+
+def process_one(app, object_id, language, no_asr, segments_override, dry_run, fade_ms=0):
     obj = app.send("object.get", {"id": object_id})
 
     check_object(obj, object_id)
@@ -242,6 +247,7 @@ def process_one(app, object_id, language, no_asr, segments_override, dry_run):
         "lanes": lanes,
         "names": names,
         "group_name": "%s — separated" % obj.get("name", object_id),
+        "fade_ms": fade_ms,
     })
 
     try:
@@ -342,6 +348,9 @@ def panel_controls(language, model_labels, model="align"):
                 "label": L("Créer des groupes (voix / respirations / consonnes)",
                            "Create groups (voice / breaths / consonants)",
                            "Crear grupos (voz / respiraciones / consonantes)")})
+    out.append({"id": "fade_ms", "kind": "number", "value": DEFAULT_FADE_MS,
+                "label": L("Fondu entre morceaux", "Fade between pieces", "Fundido entre piezas"),
+                "min": 0, "max": 20, "step": 1, "unit": "ms"})
     out.append({"id": "language", "kind": "choice",
                 "label": L("Langue parlée", "Spoken language", "Idioma hablado"),
                 "value": language if language in lang_ids else "en",
@@ -664,6 +673,7 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
                     result = app.send("object.explode", {
                         "id": object_id, "cuts": [start + c for c in cuts], "lanes": piece_lanes,
                         "names": names, "group_lanes": bool(current["values"].get("group_lanes", True)),
+                        "fade_ms": float(current["values"].get("fade_ms", DEFAULT_FADE_MS)),
                         "group_name": "%s — separated" % obj.get("name", object_id)})
                     try:
                         app.send("object.select", {"ids": [result["group"]]})
@@ -703,6 +713,10 @@ def main():
         sys.stderr.write("No object selected.\n")
         return 3
 
+    fade_ms = 0
+    if "--fade-ms" in args:
+        fade_ms = float(args[args.index("--fade-ms") + 1])
+
     segments_override = None
     if segments_json:
         with open(segments_json, "r", encoding="utf-8") as f:
@@ -717,7 +731,7 @@ def main():
         return 0
     total = {}
     for object_id in ids:
-        counts = process_one(app, object_id, language, no_asr, segments_override, dry_run)
+        counts = process_one(app, object_id, language, no_asr, segments_override, dry_run, fade_ms)
         for k, v in counts.items():
             total[k] = total.get(k, 0) + v
 
