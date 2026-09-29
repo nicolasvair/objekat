@@ -82,10 +82,14 @@ breath minimum length goes with it.
 | Whisper + alignment | Whisper's share (35 %, as above), an indeterminate stretch while the wav2vec2 model loads, then per **segment** (one forward pass each) |
 
 **Temporal precision.** The frames sit on a 2.5 ms grid, centred on their instant, and the energies
-are read on a 12 ms window (the voicing needs its 25 ms one). The low-pass is not a filter run over
-the audio: it is a cumulative sum over each frame's own spectrum, stored for every 100 Hz cutoff, so
-moving the cutoff costs nothing and refilters nothing; the HF / LF energies and the zero-crossing
-rate come from the same windows. On the synthetic test signal the edges of a 250 ms breath and of the
+are read on a 12 ms window (the voicing needs its 25 ms one). The low-pass is a classic filter run
+over the audio: a Butterworth of order 4, applied forwards then backwards (`sosfiltfilt`, zero phase,
+so it adds no delay and an edge stays at its instant), on the signal with its DC offset removed and
+resampled to 4 kHz. It is computed once per 100 Hz cutoff (100–1000 Hz) at analysis time (~2 s for
+ten minutes), so moving the cutoff refilters nothing. Being a real filter it RINGS: the lower the
+cutoff, the longer its impulse response, so a 100 Hz low-pass smears an edge by a few tens of ms where
+1 kHz barely does. The HF / LF energies and the zero-crossing rate still come from each frame's own
+spectrum. On the synthetic test signal the edges of a 250 ms breath and of the
 `s` / `ch` land within 10 ms; the analysis is ~0.7 s per minute of audio and ~35 MB per ten minutes in
 the cache; moving a slider re-runs both blocks in ~30 ms for ten minutes.
 

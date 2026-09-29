@@ -385,8 +385,10 @@ def _gaps_from_words(words, duration, min_gap_ms=MIN_GAP_MS):
 # tunes against is where a zone's edges fall, and a 10 ms hop with a 25 ms window smears every edge
 # by a dozen milliseconds. Per frame, each measured with the window it needs:
 #   - the VOICING, on a 25 ms window (an autocorrelation needs a few periods of a 70 Hz voice);
-#   - the LOW-PASSED ENERGY, on a `EVAL_LP_WINDOW_MS` window (an edge in energy is a step, and the
-#     window is what blurs it), stored for every cutoff of the grid;
+#   - the LOW-PASSED ENERGY: the signal through a classic low-pass filter (Butterworth, order 4,
+#     run forwards AND backwards so it adds no delay — an edge stays where it is), then its mean
+#     power on a `EVAL_LP_WINDOW_MS` window, stored for every cutoff of the grid (@see
+#     `_lowpass_energy_db`);
 #   - for the friction categories, on the same short window: the energy of the HF band (4-10 kHz),
 #     of the LF band (80 Hz-1 kHz) and the zero-crossing rate.
 # Frames are CENTRED on their instant (frame k is about `k * hop`), so a frame's cell
@@ -394,8 +396,10 @@ def _gaps_from_words(words, duration, min_gap_ms=MIN_GAP_MS):
 EVAL_HOP_MS = 2.5
 EVAL_VOICING_WINDOW_MS = 25.0
 EVAL_LP_WINDOW_MS = 12.0
-EVAL_CUTOFFS = np.arange(100.0, 8000.1, 100.0)      # the panel's slider grid, Hz
-EVAL_FEATURES_VERSION = 2       # 2: + hf_db, lf_db, zcr (the SS/CH category)
+EVAL_CUTOFFS = np.arange(100.0, 1000.1, 100.0)      # the panel's slider grid, Hz
+EVAL_LP_ORDER = 4
+EVAL_LP_RATE = 4000             # the low-pass runs on the signal resampled here (cutoffs <= 1 kHz)
+EVAL_FEATURES_VERSION = 3       # 2: + hf_db, lf_db, zcr (the SS/CH category); 3: lp_db from a real low-pass filter
 EVAL_HF_BAND = (4000.0, 10000.0)
 EVAL_LF_BAND = (80.0, 1000.0)
 
@@ -405,8 +409,8 @@ class EvalFeatures:
     times: np.ndarray        # frame CENTRES, seconds, relative to the portion
     voicing: np.ndarray      # the normalised autocorrelation peak, 0…1 (25 ms window)
     lp_db: np.ndarray        # (frames, len(cutoffs)) float16: 10*log10 of the window's energy below
-                             # each cutoff — the low-pass is a cumulative sum over the frame's own
-                             # spectrum, so moving the cutoff costs nothing and refilters nothing
+                             # each cutoff — computed once per cutoff at analysis time, so moving
+                             # the cutoff costs nothing and refilters nothing
     cutoffs: np.ndarray
     hop_s: float
     hf_db: np.ndarray | None = None    # 10*log10 of the energy in EVAL_HF_BAND (same normalisation as lp_db)
@@ -450,7 +454,6 @@ def compute_eval_features(samples: np.ndarray, sr: float, progress=None) -> Eval
     window = np.hanning(llen)
     wnorm = float(np.sum(window ** 2))
     freqs = np.fft.rfftfreq(llen, d=1.0 / sr)
-    cut_idx = np.clip(np.searchsorted(freqs, EVAL_CUTOFFS, side="right") - 1, 0, len(freqs) - 1)
     hf_sel = ((freqs >= EVAL_HF_BAND[0]) & (freqs <= EVAL_HF_BAND[1])).astype(np.float64)
     lf_sel = ((freqs >= EVAL_LF_BAND[0]) & (freqs <= EVAL_LF_BAND[1])).astype(np.float64)
     lag_min = int(sr / 400.0)
@@ -463,8 +466,6 @@ def compute_eval_features(samples: np.ndarray, sr: float, progress=None) -> Eval
         lf = lview[l0 + starts]
         spec = np.fft.rfft(lf * window, axis=1)
         power = spec.real ** 2 + spec.imag ** 2
-        cum = np.cumsum(power, axis=1)[:, cut_idx]
-        lp_db[c0:c1] = (10.0 * np.log10(cum / (wnorm * llen) + eps)).astype(np.float16)
         hf_db[c0:c1] = 10.0 * np.log10((power @ hf_sel) / (wnorm * llen) + eps)
         lf_db[c0:c1] = 10.0 * np.log10((power @ lf_sel) / (wnorm * llen) + eps)
         neg = lf < 0
@@ -479,8 +480,44 @@ def compute_eval_features(samples: np.ndarray, sr: float, progress=None) -> Eval
             ok = e0 > 1e-12
             voicing[c0:c1] = np.where(ok, best / np.where(ok, e0, 1.0), 0.0)
         if progress is not None:
-            progress(c1 / n_frames)
+            progress(0.9 * c1 / n_frames)
+    lp_db[:] = _lowpass_energy_db(x, sr, times).astype(np.float16)
+    if progress is not None:
+        progress(1.0)
     return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr, hf_db, lf_db, zcr)
+
+
+def _lowpass_energy_db(x: np.ndarray, sr: float, times: np.ndarray) -> np.ndarray:
+    """(frames, len(EVAL_CUTOFFS)): 10*log10 of the mean power, on a `EVAL_LP_WINDOW_MS` window
+    centred on each frame, of the signal through a classic low-pass filter at each cutoff.
+
+    The filter is a Butterworth of order `EVAL_LP_ORDER` run with `sosfiltfilt` — forwards then
+    backwards, so zero phase: no delay, an edge in energy stays at its instant (the effective slope
+    is doubled, -48 dB/octave at order 4). The global DC offset is removed first (a low-pass keeps
+    DC, and a recording's offset is not speech). Every cutoff is <= 1 kHz, so the filtering runs on
+    the signal resampled to `EVAL_LP_RATE` (anti-aliased by `resample_poly`) — cheap enough to do
+    every cutoff of the grid once, at analysis time."""
+    from math import gcd
+    from scipy.signal import butter, resample_poly, sosfiltfilt
+
+    out = np.full((times.size, len(EVAL_CUTOFFS)), -120.0)
+    if times.size == 0 or x.size == 0:
+        return out
+    isr = int(round(sr))
+    g = gcd(isr, EVAL_LP_RATE)
+    y = resample_poly(x - float(np.mean(x)), EVAL_LP_RATE // g, isr // g)
+    fs = float(EVAL_LP_RATE)
+    w = max(1, int(round(EVAL_LP_WINDOW_MS / 1000.0 * fs)))
+    centres = np.clip(np.round(times * fs).astype(np.int64), 0, max(0, y.size - 1))
+    lo = np.clip(centres - w // 2, 0, y.size)
+    hi = np.clip(lo + w, 0, y.size)
+    n = np.maximum(hi - lo, 1)
+    for k, fc in enumerate(EVAL_CUTOFFS):
+        sos = butter(EVAL_LP_ORDER, fc, btype="low", fs=fs, output="sos")
+        z = sosfiltfilt(sos, y) if y.size > 3 * (2 * EVAL_LP_ORDER + 1) else y
+        c = np.concatenate(([0.0], np.cumsum(z * z)))
+        out[:, k] = 10.0 * np.log10((c[hi] - c[lo]) / n + 1e-12)
+    return out
 
 
 # ── The settings: TWO fully independent blocks, Breaths and Consonants (SS/CH and the other

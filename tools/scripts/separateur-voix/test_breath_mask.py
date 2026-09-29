@@ -289,21 +289,40 @@ for k in (200, 480, 500, 700, 720, 870):
     c = k * int(round(0.0025 * SR))
     seg = sig[c - llen // 2: c - llen // 2 + llen]
     m2 = np.abs(np.fft.rfft(seg * win)) ** 2
-    for cut in (300.0, 1500.0, 6000.0):
-        want = 10 * math.log10(m2[freqs <= cut].sum() / norm + 1e-12)
-        got = float(ef.lp_db[k, int(round(cut / 100.0)) - 1])
-        worst = max(worst, abs(got - want))
     hf = m2[(freqs >= 4000) & (freqs <= 10000)].sum()
     lf = m2[(freqs >= 80) & (freqs <= 1000)].sum()
     worst_hf = max(worst_hf, abs(ef.hf_db[k] - 10 * math.log10(hf / norm + 1e-12)))
     worst_lf = max(worst_lf, abs(ef.lf_db[k] - 10 * math.log10(lf / norm + 1e-12)))
     neg = seg < 0
     worst_z = max(worst_z, abs(ef.zcr[k] - np.mean(neg[1:] != neg[:-1])))
-check("low-passed energy == the direct band sum (float16), max |d| = %.3f dB" % worst, worst < 0.15, worst)
+# the low-passed energy == a direct Butterworth low-pass (same resampling, zero phase), per cutoff
+from math import gcd as _gcd
+from scipy.signal import butter as _butter, resample_poly as _rp, sosfiltfilt as _sff
+_g = _gcd(int(SR), detect.EVAL_LP_RATE)
+_y = _rp(sig - sig.mean(), detect.EVAL_LP_RATE // _g, int(SR) // _g)
+_w = int(round(detect.EVAL_LP_WINDOW_MS / 1000.0 * detect.EVAL_LP_RATE))
+for ci, cut in enumerate(detect.EVAL_CUTOFFS[[0, 1, 4, 9]]):
+    _z = _sff(_butter(detect.EVAL_LP_ORDER, cut, fs=detect.EVAL_LP_RATE, output="sos"), _y)
+    col = list(detect.EVAL_CUTOFFS).index(cut)
+    for k in (200, 480, 500, 700, 720, 870):
+        c0 = int(round(ef.times[k] * detect.EVAL_LP_RATE)) - _w // 2
+        want = 10 * math.log10(float(np.mean(_z[c0:c0 + _w] ** 2)) + 1e-12)
+        worst = max(worst, abs(float(ef.lp_db[k, col]) - want))
+check("low-passed energy == a direct Butterworth low-pass (float16), max |d| = %.3f dB" % worst, worst < 0.15, worst)
+# a tone ABOVE the cutoff is attenuated, one BELOW passes: it is really a low-pass
+_t = np.arange(int(SR)) / SR
+_lo = detect.compute_eval_features(0.3 * np.sin(2 * np.pi * 150 * _t), SR)
+_hi = detect.compute_eval_features(0.3 * np.sin(2 * np.pi * 800 * _t), SR)
+_c = list(detect.EVAL_CUTOFFS).index(200.0)
+_m = slice(100, 300)
+_att = float(np.mean(_lo.lp_db[_m, _c].astype(float)) - np.mean(_hi.lp_db[_m, _c].astype(float)))
+check("200 Hz low-pass: an 800 Hz tone sits >= 40 dB under a 150 Hz one (%.1f dB)" % _att, _att >= 40, _att)
 check("HF band energy == the direct band sum, max |d| = %.4f dB" % worst_hf, worst_hf < 1e-3, worst_hf)
 check("LF band energy == the direct band sum, max |d| = %.4f dB" % worst_lf, worst_lf < 1e-3, worst_lf)
 check("zero-crossing rate == the direct count, max |d| = %.2e" % worst_z, worst_z < 1e-6, worst_z)
-check("a lower cutoff never has MORE energy", bool((np.diff(ef.lp_db.astype(np.float64), axis=1) >= -0.1).all()))
+# (No "a lower cutoff never has more energy" here: that holds for a spectrum, not for a real filter
+# read on a 12 ms window — near an attack a lower cutoff rings longer and can briefly carry MORE
+# energy. What a low-pass must do is checked on steady tones below.)
 seen = []
 ef_p = detect.compute_eval_features(sig, SR, progress=seen.append)
 check("compute_eval_features reports progress: rising, ending on 1.0 (%d calls)" % len(seen),
