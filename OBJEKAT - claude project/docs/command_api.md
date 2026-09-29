@@ -523,7 +523,7 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--project=<path>` | opens a project on startup |
 | `--exec=<script.jsonl>` | replays a JSON-lines scenario (`#` for a comment, `{DIR}` = the script's folder) |
 | `--no-audio` | opens no output device |
-| `--no-recent` | writes nothing into "Recent projects" (with or without a window) |
+| `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
 
 Exit codes: `0` success · `1` a command of the script failed · `2` a usage error
@@ -1605,7 +1605,8 @@ and can rename what it says it is doing (`labels: {id: "Transcribing…"}`) — 
 heading (a divider and its label) that groups the rows under it. Both are read back in `values`
 (`section` has none).
 
-- **`script.panel.open {title?, controls, object?, status?, busy?}`** → `{panel_id, rev: 0}`.
+- **`script.panel.open {title?, controls, object?, status?, busy?, remember?}`** → `{panel_id, rev: 0}`.
+  `remember` (a key string, or `true` = the title): see "A panel that remembers" below; `get` answers it as `remember`.
   `bad_params`: duplicate id, `min >= max`, `step <= 0`, value out of range, `enabled_by` not a
   bool, a `choice` with no / duplicate options or a value outside them.
 - **`script.panel.get {panel_id}`** → `{panel_id, rev, state: "open"|"validated"|"cancelled"|"closed",
@@ -1623,6 +1624,22 @@ heading (a divider and its label) that groups the rows under it. Both are read b
   presses a button id, `"validate"` or `"cancel"`. Moves `rev` at once; the window's own slider
   drag coalesces `rev` to 30 Hz with a trailing bump so the last value is never lost.
 - **`script.panel.list`** → `{panels: [{panel_id, title, state, object}]}`.
+
+**A panel that remembers (`remember`).** Each validated setting becomes the default of the next
+opening — the memory is the APP's and generic, the script writes nothing. (1) On `open`, every
+hand-settable control (bool, number, choice — never a button, a progress or a section) takes the
+remembered value if there is one and it still fits: same id, same kind of value, a number within
+`min…max`, a choice among the current options; anything else is ignored value by value.
+`values` in the answer of `get` already carry them. (2) Only **Validate** stores (`input`
+`press: "validate"`); Cancel and the window closing store nothing. (3) The app adds a **Reset**
+button to such panels (`input` `press: "reset"`, refused as `bad_params` on a panel without
+`remember`): every control returns to the value the script DECLARED, `rev` moves like any hand's
+input so the script re-reads them, and the stored entry is erased. (4) Storage: `UserDefaults`,
+key `scriptPanel.<remember>`, a flat `{control id: bool | number | string}`. **Under `--no-recent`
+or `--headless` nothing is read from or written to the real domain**: the entries live in a
+dictionary of the process, with the same behaviour, so a scenario can assert it
+(`tools/scenario_breath_eval.py`, section g, also checks that `defaults read` of the bundle shows
+no `scriptPanel` key).
 
 ---
 
