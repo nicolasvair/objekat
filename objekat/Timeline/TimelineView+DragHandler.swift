@@ -456,8 +456,10 @@ extension TimelineView {
 
         // With 's' held: the mouse only serves to compose what is heard (see handleCanvasTap). We
         // ignore the drag, otherwise a slightly shaky click would move an object — or draw a range —
-        // while one is setting what one hears.
-        if viewModel.soloKeyHeld { return }
+        // while one is setting what one hears. ONE exception: an edge's crop / trim handle. Adjusting
+        // where a sound starts or ends is part of listening to it, and a bound one is trying to hear
+        // is precisely what one wants to move without leaving the mode (@see soloLetsDragThrough).
+        if viewModel.soloKeyHeld, !soloLetsDragThrough(startingAt: value.startLocation) { return }
 
         if viewModel.activeTool == .toolVolume {
             handleVolumeDrag(value, phase: phase)
@@ -1433,10 +1435,37 @@ extension TimelineView {
         case .toolVolume, .toolPan, .toolAux: return false
         default: break
         }
-        return !viewModel.soloKeyHeld
+        return (!viewModel.soloKeyHeld || soloLetsDragThrough(startingAt: start))
             && !rulerBandContains(start)
             && !markerBandContains(start)
             && markerBandDrag == nil
+    }
+
+    /// With 's' held, does this drag get through? Only a CROP / TRIM: a drag already running
+    /// (`trimDrag` / `resizeDrag`, which must be allowed to finish and to end), or one that starts
+    /// on a block's lower-half side handle (`.trimLeft` / `.resizeRight` — the same carve-up as the
+    /// cursor and the gesture, `ClipEditZone.resolve`). Everything else stays ignored, as it always
+    /// was in this mode: the range, the move, the fades, the loop bounds, a crossfade, a comment, an
+    /// object's marker and an infinite bus's row — a shaky click must not edit while one is
+    /// composing what one hears.
+    ///
+    /// The tests that come before the zone in the gesture (a comment, a marker, a crossfade, the
+    /// automation hem, an infinite bus) are asked HERE too, in the gesture's own order: when one
+    /// of them would have taken the pixel, the drag that starts is not a crop, and this must say no.
+    func soloLetsDragThrough(startingAt start: CGPoint) -> Bool {
+        if trimDrag != nil || resizeDrag != nil { return true }
+        guard viewModel.activeTool == .toolSelection,
+              moveDrag == nil, fadeDrag == nil, timeSelectionDrag == nil, slipDrag == nil,
+              loopRangeDrag == nil, crossfadeDrag == nil, commentDrag == nil,
+              objectMarkerDrag == nil, infiniteBusDrag == nil,
+              start.y > rulerHeight,
+              !openPianoRollBandContains(start), !openAutomationBandContains(start),
+              automationBezelHit(at: start) == nil,
+              commentZone(at: start) == nil, objectMarkerHit(at: start) == nil,
+              crossfadeHit(at: start) == nil,
+              let (hover, item) = selectionZoneHover(at: start), !item.isInfiniteBus
+        else { return false }
+        return hover.zone == .trimLeft || hover.zone == .resizeRight
     }
 
     /// The view has scrolled: if a drag is held, replay it over the content that slid under the

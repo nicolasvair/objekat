@@ -36,12 +36,28 @@ extension TimelineView {
             return
         }
 
-        // With 's' held: the click no longer selects, it composes what is heard — each object aimed at
-        // (a clip, a group, an aux, a child of an open group) goes into or out of the solo. Neither the
-        // selection nor the transport moves: we stay on what we were listening to, and s + ⏎ then
-        // freezes the result. It takes priority over any other reading of a click in the lanes.
+        // With 's' held: a click on an object's BODY (the lower half of its block) no longer selects,
+        // it composes what is heard — the object aimed at (a clip, a group, an aux, a child of an
+        // open group, an infinite bus) goes into or out of the solo. The selection does not move,
+        // and s + ⏎ then freezes the result. It takes priority over any other reading of a click in
+        // the lanes.
+        // The UPPER half of a block, and a lane with nothing on it, are TIME, as everywhere else on
+        // the canvas: the click only lays the cursor and the caret's line there (the caret being
+        // what the arrows and ⌘V start from, and what the eye follows) — no solo, no selection, no
+        // range (⇧ and ⌘ are not read: they would build a selection). An open piano roll or
+        // automation band keeps answering by itself, as it does out of this mode.
         if viewModel.soloKeyHeld {
-            if let id = soloHitTest(at: point) { viewModel.toggleHeldSolo(objectID: id) }
+            if openPianoRollBandContains(point) || openAutomationBandContains(point) { return }
+            if let hit = soloHitTest(at: point), hit.inBody {
+                viewModel.toggleHeldSolo(objectID: hit.id)
+            } else if point.y > rulerHeight {
+                let lane = max(0, Int((point.y - rulerHeight) / laneStep))
+                let time = viewModel.snapTime(max(0, point.x / pixelsPerSecond))
+                viewModel.handleTimeSelectionClick(lane: lane, time: time, shift: false, cmd: false,
+                                                   allowsRange: false,
+                                                   onMoveCursor: { onMoveCursor($0) })
+                onMoveCursor(time)
+            }
             return
         }
 
@@ -314,7 +330,9 @@ extension TimelineView {
             // An audio clip / a child aux: nothing was using its double click, so it opens the
             // automations. A child group keeps its own (unfolding), and flips afterwards through
             // the selector.
-            if isDoubleTap, !child.isGroup {
+            // Only on the BODY: the upper half is time, and a double click there stays a click
+            // of time (it falls through to the cursor below).
+            if isDoubleTap, !child.isGroup, !inUpperZone {
                 viewModel.timeSelection = nil
                 viewModel.toggleAutomation(id: child.id)
                 return
@@ -382,7 +400,10 @@ extension TimelineView {
         // `hitClip` never holds a group (groups go through `hitGroup`, where the double click is
         // still the unfolding): so the only case left is an object with no content to show, whose
         // double click was free.
-        if isDoubleTap {
+        // Only on the BODY (`!inUpperZone`): the upper half is time, so a bare double click there
+        // stays a click of time and falls through to the cursor below. ⌥ + double click opens the
+        // band from anywhere on the block (above).
+        if isDoubleTap, !inUpperZone {
             viewModel.timeSelection = nil
             viewModel.toggleAutomation(id: clip.id)
             return
@@ -431,18 +452,21 @@ extension TimelineView {
 
     /// The visible object under the point, for the click-to-solo. Like `stemPaintHitTest`, but an
     /// infinite bus (an aux) answers over its WHOLE lane — that is how it is aimed at everywhere else.
-    func soloHitTest(at point: CGPoint) -> UUID? {
+    /// `inBody` says whether the point is on the block's LOWER half (the body, where a click chooses
+    /// what is heard) as opposed to its upper half (time — the same 50 % line as the selection's).
+    func soloHitTest(at point: CGPoint) -> (id: UUID, inBody: Bool)? {
         guard point.y > rulerHeight else { return nil }
         for e in viewModel.laneEntries {
             let by = rulerHeight + Double(e.displayLane) * laneStep
             guard point.y >= by && point.y <= by + blockHeight else { continue }
+            let inBody = (point.y - by) >= blockHeight * 0.50
             if e.item.isInfiniteBus {
-                if point.x >= 0 && point.x <= contentWidth { return e.item.id }
+                if point.x >= 0 && point.x <= contentWidth { return (e.item.id, inBody) }
                 continue
             }
             let bx = e.absStart * pixelsPerSecond
             let bw = max(e.item.duration * pixelsPerSecond, 2)
-            if point.x >= bx && point.x <= bx + bw { return e.item.id }
+            if point.x >= bx && point.x <= bx + bw { return (e.item.id, inBody) }
         }
         return nil
     }
