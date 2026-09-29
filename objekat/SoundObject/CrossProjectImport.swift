@@ -46,6 +46,10 @@ enum CrossProjectImport {
         /// keyed by its ORIGINAL id — a superset is harmless, `plan()` only ever looks up what a
         /// clip actually references.
         var consolidateDefinitions: [UUID: ConsolidateDefinition]
+        /// Every FX link (bin of shared plugins) a clip's chain refers to, keyed by its ORIGINAL id.
+        /// A pasted block gets a NEW bin cloned from it — never the source project's own id, which
+        /// would bind the paste to a bin the target does not know (or, worse, knows by chance).
+        var fxLinks: [UUID: FXLink] = [:]
         /// The source project's own folder — where its media and consolidated waves live, and
         /// where they are read from AFTER the paste too (media is never copied).
         var originFolder: URL
@@ -69,6 +73,9 @@ enum CrossProjectImport {
         var comments: [TimelineComment]
         var newConsolidateDefinitions: [ConsolidateDefinition]
         var consolidateOriginFolders: [UUID: URL]
+        /// The bins the pasted blocks belong to, ALL new (one per source bin of the batch): to be
+        /// registered in the target BEFORE the objects that refer to them are added.
+        var newFXLinks: [FXLink] = []
     }
 
     static func plan(_ clipboard: Clipboard, target: PasteTarget) -> Plan {
@@ -85,6 +92,11 @@ enum CrossProjectImport {
         for o in clipboard.clips { registerIDs(o) }
 
         var linkGroupMap: [UUID: UUID] = [:]
+        // Source bin id -> its new copy, and the definition plugins' old id -> new id (the members'
+        // `linkGroupID` names a DEFINITION plugin, so it follows the second table).
+        var fxLinkMap: [UUID: UUID] = [:]
+        var fxDefMap: [UUID: UUID] = [:]
+        var newFXLinks: [FXLink] = []
         var consolidateMap: [UUID: UUID] = [:]
         var newDefs: [ConsolidateDefinition] = []
         var originFolders: [UUID: URL] = [:]
@@ -134,20 +146,73 @@ enum CrossProjectImport {
                                     isEnabled: p.isEnabled, stateXML: p.stateXML,
                                     linkGroupID: newGroup, colorIndex: p.colorIndex)
             }
+            /// A bin's block: the bin is recreated as a NEW one (once per source bin of the batch, so
+            /// two pasted objects sharing a bin still share it), the instances get fresh ids and
+            /// name the NEW definition. A bin the clipboard does not carry cannot be recreated:
+            /// its instances then land inline, as plain independent plugins.
+            func cloneBlock(_ p: ObjectPlugin, _ fb: FXLinkBlock) -> [ObjectPlugin] {
+                guard let old = clipboard.fxLinks[fb.linkID] else {
+                    return fb.plugins.map { inst in
+                        let newID = UUID()
+                        pluginIDMap[inst.id] = newID
+                        return ObjectPlugin(id: newID, name: inst.name, manufacturer: inst.manufacturer,
+                                            identifier: inst.identifier, formatName: inst.formatName,
+                                            isEnabled: inst.isEnabled, stateXML: inst.stateXML,
+                                            colorIndex: inst.colorIndex)
+                    }
+                }
+                let newLinkID: UUID
+                if let mapped = fxLinkMap[fb.linkID] {
+                    newLinkID = mapped
+                } else {
+                    var defs: [ObjectPlugin] = []
+                    for d in old.plugins {
+                        let nd = UUID()
+                        fxDefMap[d.id] = nd
+                        var c = d
+                        c.id = nd
+                        defs.append(c)
+                    }
+                    let nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
+                                    isEnabled: old.isEnabled, gainDb: old.gainDb, pan: old.pan,
+                                    muted: old.muted)
+                    newFXLinks.append(nl)
+                    fxLinkMap[fb.linkID] = nl.id
+                    newLinkID = nl.id
+                }
+                var block = fb
+                block.linkID = newLinkID
+                block.plugins = fb.plugins.map { inst in
+                    let newID = UUID()
+                    pluginIDMap[inst.id] = newID
+                    var q = inst
+                    q.id = newID
+                    q.linkGroupID = inst.linkGroupID.flatMap { fxDefMap[$0] }
+                    q.detachedLinkGroupID = inst.detachedLinkGroupID.flatMap { fxDefMap[$0] }
+                    return q
+                }
+                let newBlockID = UUID()
+                pluginIDMap[p.id] = newBlockID
+                var np = p
+                np.id = newBlockID
+                np.fxBlock = block
+                return [np]
+            }
             func cloneSeries(_ series: [ObjectPlugin]) -> [ObjectPlugin] {
-                series.map { p in
+                series.flatMap { p -> [ObjectPlugin] in
+                    if let fb = p.fxBlock { return cloneBlock(p, fb) }
                     if let rack = p.rack {
                         let newID = UUID()
                         pluginIDMap[p.id] = newID
-                        return ObjectPlugin(id: newID, name: p.name, manufacturer: p.manufacturer,
-                                            identifier: p.identifier, formatName: p.formatName,
-                                            isEnabled: p.isEnabled,
-                                            rack: PluginRack(voices: rack.voices.map(cloneSeries),
-                                                             wetDb: rack.wetDb,
-                                                             voiceMutes: rack.voiceMutes),
-                                            colorIndex: p.colorIndex)
+                        return [ObjectPlugin(id: newID, name: p.name, manufacturer: p.manufacturer,
+                                             identifier: p.identifier, formatName: p.formatName,
+                                             isEnabled: p.isEnabled,
+                                             rack: PluginRack(voices: rack.voices.map(cloneSeries),
+                                                              wetDb: rack.wetDb,
+                                                              voiceMutes: rack.voiceMutes),
+                                             colorIndex: p.colorIndex)]
                     }
-                    return cloneLeaf(p)
+                    return [cloneLeaf(p)]
                 }
             }
             let cloned = cloneSeries(plugins)
@@ -250,6 +315,7 @@ enum CrossProjectImport {
         return Plan(clips: placedClips,
                     comments: placedComments,
                     newConsolidateDefinitions: newDefs,
-                    consolidateOriginFolders: originFolders)
+                    consolidateOriginFolders: originFolders,
+                    newFXLinks: newFXLinks)
     }
 }

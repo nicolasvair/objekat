@@ -332,6 +332,144 @@ try:
         cmd("edit.undo"); idle()
         check("...and ONE undo gives the bin back", cmd("fxlink.list")["count"] == 1)
 
+        # ── AUTOMATIC creation: a copy of plain plugins joins a bin ───────
+        cmd("project.new")
+        D = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        add(D, "4bandEq"); add(D, "reverb")
+        check("plain plugins, no bin yet", cmd("fxlink.list")["count"] == 0
+              and not any(p.get("is_fx_block") for p in chain(D)))
+
+        def hosts_with_blocks():
+            return [o["id"] for o in cmd("object.list")["objects"]
+                    if any(p.get("is_fx_block") for p in chain(o["id"]))]
+
+        def all_objects():
+            return [o["id"] for o in cmd("object.list")["objects"]]
+
+        # 1. a split
+        r = cmd("object.split_at", ids=[D], seconds=0.3); idle()
+        objs = all_objects()
+        lst = cmd("fxlink.list")
+        check("a split makes ONE bin", lst["count"] == 1, str(lst["count"]))
+        check("...both halves carry its block (the ORIGINAL included)",
+              len(objs) == 2 and sorted(hosts_with_blocks()) == sorted(objs), "%s / %s" % (objs, hosts_with_blocks()))
+        check("...and the bin has both as attached members",
+              len(lst["links"][0]["members"]) == 2 and not any(m["detached"] for m in lst["links"][0]["members"]))
+        H1, H2 = objs
+        w1 = [i for i in inst_ids(H1)]
+        w2 = [i for i in inst_ids(H2)]
+        check("...with as many instances as the definition, in its order, ids all distinct",
+              len(w1) == 2 and len(w2) == 2 and not set(w1) & set(w2))
+        check("the plain plugins were CONVERTED: nothing is left beside the block, no manual link written",
+              all(len(chain(h)) == 1 and chain(h)[0].get("is_fx_block") for h in (H1, H2)),
+              str([chain(h) for h in (H1, H2)]))
+        rv1 = [p for p in block_of(H1)["plugins"] if p["name"] == "Reverb"][0]["id"]
+        rv2 = [p for p in block_of(H2)["plugins"] if p["name"] == "Reverb"][0]["id"]
+        cmd("plugin.set_param", plugin=rv1, index=WET, value=0.77); idle()
+        check("the halves MIRROR each other", abs(param(rv2, WET) - 0.77) < 1e-3, "%s" % param(rv2, WET))
+        cmd("edit.undo"); idle()
+        check("ONE undo takes the split, the bin and the block away",
+              len(all_objects()) == 1 and cmd("fxlink.list")["count"] == 0
+              and not any(p.get("is_fx_block") for p in chain(D)), "%s" % chain(D))
+
+        # 2. a duplicate
+        cmd("object.duplicate", ids=[D]); idle()
+        objs = all_objects()
+        lst = cmd("fxlink.list")
+        check("a duplicate joins a bin with the original",
+              len(objs) == 2 and lst["count"] == 1 and len(lst["links"][0]["members"]) == 2
+              and sorted(hosts_with_blocks()) == sorted(objs))
+        cmd("edit.undo"); idle()
+        check("...and one undo brings the plain chain back",
+              len(all_objects()) == 1 and cmd("fxlink.list")["count"] == 0
+              and not any(p.get("is_fx_block") for p in chain(D)))
+
+        # 3. copy / paste
+        cmd("selection.set", ids=[D])
+        cmd("clipboard.copy")
+        cmd("caret.set", lane=2, time=0.0)      # elsewhere: a paste over the source would replace it
+        cmd("clipboard.paste"); idle()
+        objs = all_objects()
+        lst = cmd("fxlink.list")
+        check("a paste joins a bin with its source",
+              len(objs) == 2 and lst["count"] == 1 and len(lst["links"][0]["members"]) == 2
+              and sorted(hosts_with_blocks()) == sorted(objs), str(lst["count"]))
+        # a second paste: a member of some bin, never a broken chain
+        cmd("caret.set", lane=4, time=0.0)
+        cmd("clipboard.paste"); idle()
+        check("a second paste is a healthy member too (every host holds ONE block)",
+              len(all_objects()) == 3
+              and all(len(chain(h)) == 1 and chain(h)[0].get("is_fx_block") for h in all_objects()))
+        cmd("edit.undo"); cmd("edit.undo"); idle()
+        check("two undos give the plain chain back",
+              len(all_objects()) == 1 and cmd("fxlink.list")["count"] == 0
+              and not any(p.get("is_fx_block") for p in chain(D)))
+
+        # 4. the automatic bin survives a save and a reopen
+        cmd("project.new")
+        D = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        add(D, "4bandEq"); add(D, "reverb")
+        cmd("object.split_at", ids=[D], seconds=0.3); idle()
+        proj2 = os.path.join(TMP, "auto.objekat")
+        cmd("project.save_as", path=proj2); idle()
+        cmd("project.new")
+        cmd("project.open", path=proj2); idle()
+        lst = cmd("fxlink.list")
+        check("the automatic bin survives a save and a reopen",
+              lst["count"] == 1 and len(lst["links"][0]["members"]) == 2)
+
+        # ── CROSS-PROJECT paste: the bin is recreated as a NEW one ────────
+        cmd("project.new")
+        cmd("tab.new"); idle()               # a tab switch keeps the clipboard, a new document does not
+        cmd("tab.select", index=1); idle()
+        S1 = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        S2 = cmd("object.add", path=BIP, lane=1, start=0)["id"]
+        se, sr_ = add(S1, "4bandEq"), add(S1, "reverb")
+        SRC = cmd("fxlink.create", host=S1, plugins=[se, sr_], name="Src bin")["id"]
+        cmd("fxlink.attach", link=SRC, host=S2)
+        cmd("fxlink.set_output", link=SRC, gain_db=-6.0)
+        cmd("selection.set", ids=[S1, S2])
+        cmd("clipboard.copy")
+        cmd("tab.select", index=2); idle()
+        cmd("clipboard.paste"); idle()
+        lst = cmd("fxlink.list")
+        check("a cross-project paste makes ONE new bin in the target",
+              lst["count"] == 1 and lst["links"][0]["id"] != SRC, str(lst["count"]))
+        g = lst["links"][0]
+        check("...named and set as the source's (name, volume), both pasted objects its members",
+              g["name"] == "Src bin" and abs(g["gain_db"] + 6.0) < 1e-6 and len(g["members"]) == 2, str(g))
+        ti = [next(i for i in m["instances"] if i["name"] == "Reverb")["id"] for m in g["members"]]
+        cmd("plugin.set_param", plugin=ti[0], index=WET, value=0.66); idle()
+        check("...and it mirrors", abs(param(ti[1], WET) - 0.66) < 1e-3, "%s" % param(ti[1], WET))
+        cmd("tab.select", index=1); idle()
+        src = cmd("fxlink.list")
+        check("the source project keeps its own bin untouched",
+              src["count"] == 1 and src["links"][0]["id"] == SRC and len(src["links"][0]["members"]) == 2)
+        cmd("tab.close", index=2, discard=True); idle()
+
+        # ── CONSOLIDATE: a bin inside is recreated as a NEW one on opening ─
+        cmd("project.new")
+        cproj = os.path.join(TMP, "consol.objekat")
+        K1 = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        K2 = cmd("object.add", path=BIP, lane=1, start=0)["id"]
+        ke = add(K1, "4bandEq")
+        KL = cmd("fxlink.create", host=K1, plugins=[ke], name="Inner")["id"]
+        cmd("fxlink.attach", link=KL, host=K2)
+        cmd("fxlink.set_output", link=KL, gain_db=-9.0)
+        grp = cmd("group.create", ids=[K1, K2])["id"]
+        cmd("project.save_as", path=cproj); idle()
+        r = cmd("consolidate.make", id=grp)
+        cmd("job.wait", id=r["job_id"], timeout_ms=120000); idle()
+        check("consolidating leaves the timeline with an instance and no bin in sight",
+              cmd("fxlink.list")["count"] == 0)
+        cmd("consolidate.unmake", placement=grp); idle()
+        lst = cmd("fxlink.list")
+        check("unmaking gives the content back with a NEW bin (not the old id), both members",
+              lst["count"] == 1 and lst["links"][0]["id"] != KL and len(lst["links"][0]["members"]) == 2, str(lst))
+        check("...its output section carried through the sidecar (-9 dB)",
+              abs(lst["links"][0]["gain_db"] + 9.0) < 1e-6, str(lst["links"][0]))
+        check("...and its name",  lst["links"][0]["name"] == "Inner")
+
         # ── the ENGINE follows: an export re-read ──────────────────────────
         cmd("project.new")
         X = cmd("object.add", path=BIP, lane=0, start=0)["id"]

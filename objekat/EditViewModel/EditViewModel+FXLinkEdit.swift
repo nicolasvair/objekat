@@ -109,7 +109,7 @@ extension EditViewModel {
         isDirty = true
     }
 
-    private func uniqueFXLinkName(_ base: String?) -> String {
+    func uniqueFXLinkName(_ base: String?) -> String {
         if let base, !base.isEmpty { return base }
         var n = fxLinks.count + 1
         let taken = Set(fxLinks.map(\.name))

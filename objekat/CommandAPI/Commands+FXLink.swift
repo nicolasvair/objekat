@@ -101,8 +101,11 @@ extension CommandRegistry {
         register("fxlink.list",
                  summary: "Every FX link of the project: definition, output section and members.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            return .object(["links": .array(vm.fxLinks.map { self.fxLinkJSON($0, in: vm) }),
-                            "count": .int(vm.fxLinks.count)])
+            // Only the bins some block still refers to: an orphan (what a deleted object leaves
+            // behind, kept in memory for the undo) is not part of the project.
+            let live = vm.fxLinks.filter { !vm.fxLinkMembers($0.id).isEmpty }
+            return .object(["links": .array(live.map { self.fxLinkJSON($0, in: vm) }),
+                            "count": .int(live.count)])
         }
 
         register("fxlink.get",

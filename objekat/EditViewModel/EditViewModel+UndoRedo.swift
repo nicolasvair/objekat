@@ -26,6 +26,7 @@ extension EditViewModel {
     }
 
     func pushUndo() {
+        clearPendingFXSources()   // a new gesture: the previous one's promises are void
         undoStack.append(currentSnapshot())
         redoStack = []
         if undoStack.count > 50 {
@@ -83,6 +84,7 @@ extension EditViewModel {
     /// state of every plugin twice. Absent ⇒ captured here.
     func applySnapshot(_ snapshot: EditSnapshot, live: EditSnapshot? = nil) {
         let t0 = CFAbsoluteTimeGetCurrent()
+        clearPendingFXSources()   // the snapshot brings back plain plugins under the same ids: never re-adopt them
         let live = live ?? currentSnapshot()
 
         // Tempo / time signature first: the engine must have the right tempo BEFORE the clips

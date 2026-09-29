@@ -330,6 +330,7 @@ extension EditViewModel {
         redoStack = []
         consolidateDefinitions = [:]
         fxLinks = []
+        clearPendingFXSources()
         markerLanes = []
         comments = []
         consolidateEditStack.removeAll()

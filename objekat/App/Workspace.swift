@@ -99,6 +99,8 @@ final class Workspace {
             clips: cb.clips,
             comments: cb.comments,
             consolidateDefinitions: vm.consolidateDefinitions,
+            fxLinks: Dictionary(uniqueKeysWithValues:
+                vm.fxLinksForPersistence(items: cb.clips, stems: []).map { ($0.id, $0) }),
             originFolder: folder,
             originTime: cb.originTime,
             originLane: cb.originLane)

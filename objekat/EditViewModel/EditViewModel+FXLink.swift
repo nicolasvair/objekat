@@ -141,6 +141,34 @@ extension EditViewModel {
         }
     }
 
+    // MARK: Freezing (consolidated sidecars)
+
+    /// A sub-tree whose ATTACHED blocks each carry the bin's output section in `local`: a sidecar
+    /// holds no registry, so what it writes must be enough to rebuild the sound (a bin's gain, pan,
+    /// mute and common on/off are part of it). Only a snapshot: the block stays attached, and the
+    /// restoring side (`deepFreshCopy`) turns the snapshot back into a NEW bin — never into the
+    /// live one. A bin the registry no longer knows freezes as neutral. Idempotent.
+    func freezingFXBlocks(in o: SoundObject) -> SoundObject {
+        func series(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+            plugins.map { p in
+                if var fb = p.fxBlock {
+                    if !fb.isDetached, fb.local == nil { fb.local = fxLink(fb.linkID)?.output ?? FXLinkOutput() }
+                    var np = p
+                    np.fxBlock = fb
+                    return np
+                }
+                if p.rack != nil { return p.mappingChildSeries(series) }
+                return p
+            }
+        }
+        var n = o
+        n.plugins = series(o.plugins)
+        if case .group(let ch, let e) = o.kind {
+            n.kind = .group(children: ch.map { freezingFXBlocks(in: $0) }, isExpanded: e)
+        }
+        return n
+    }
+
     // MARK: Engine — hot pushes (no recompile)
 
     /// Pushes one block's output section and the effective on/off of its instances to the engine,

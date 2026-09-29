@@ -665,52 +665,75 @@ extension EditViewModel {
     /// (For a clipboard fragment whose original has gone, the backfill fails
     /// silently → the copy stays independent: there is nobody to link itself to.)
     func copiedPlugins(of object: SoundObject) -> [ObjectPlugin] {
-        // Recursive: it preserves the parallel blocks (a rack carrier clones its voices with
-        // new ids). Linking by default (the backfill) applies only to the first-level leaves.
-        func copyLeaf(_ p: ObjectPlugin, topLevel: Bool) -> ObjectPlugin {
+        // The states re-read from the engine, put back into the ORIGINAL's model in ONE write. Without
+        // it the source kept a stale `stateXML` — its setting lived only in the engine instance —
+        // and the first recompilation to come along (undo, regrouping, reloading) brought it back
+        // to its factory settings, while the copy, for its part, left with the right state.
+        var capturedStates: [(UUID, String)] = []
+        func liveState(_ p: ObjectPlugin) -> String? {
             let live = engine?.getPluginStateXML(p.id.uuidString)
-            let capturedXML = (live?.isEmpty == false) ? live : nil
-            var groupID = p.linkGroupID
-            let newGroup: UUID? = (topLevel && groupID == nil) ? UUID() : nil
-
-            // ONE write onto the ORIGINAL, for two reasons:
-            //  • LINKING BY DEFAULT (the group's backfill, see above);
-            //  • the state just re-read from the engine, put back into ITS model. Without this the
-            //    source kept a stale `stateXML` — its setting lived only in
-            //    the engine instance — and the first recompilation to come along (undo, regrouping,
-            //    reloading) brought it back to its factory settings, while the copy, for its part,
-            //    left with the right state.
-            if newGroup != nil || capturedXML != nil {
-                let written = update(id: object.id) { obj in
-                    if let newGroup {
-                        obj.plugins = Self.settingLinkGroup(p.id, newGroup, in: obj.plugins)
-                    }
-                    if let xml = capturedXML {
-                        obj.plugins = Self.settingStateXML(p.id, xml, in: obj.plugins)
-                    }
-                }
-                if written, let newGroup { groupID = newGroup }
+            let xml = (live?.isEmpty == false) ? live : nil
+            if let xml { capturedStates.append((p.id, xml)) }
+            return xml ?? p.stateXML
+        }
+        // A plugin that lives on its own (manual ⌘-link kept, or a voice of a parallel block).
+        // NOTHING is linked by default any more: an automatic copy of plain plugins joins an FX
+        // link (a bin) instead of writing a `linkGroupID`, @see copiedRun.
+        func copyLeaf(_ p: ObjectPlugin) -> ObjectPlugin {
+            ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
+                         identifier: p.identifier, formatName: p.formatName,
+                         isEnabled: p.isEnabled, stateXML: liveState(p),
+                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex)
+        }
+        /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
+        /// block gives a detached copy, with its own output section).
+        func copyBlock(_ p: ObjectPlugin, _ fb: FXLinkBlock) -> ObjectPlugin {
+            var nb = fb
+            nb.plugins = fb.plugins.map { inst in
+                var q = inst
+                q.id = UUID()
+                q.stateXML = liveState(inst)
+                return q
             }
-            return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
-                                identifier: p.identifier, formatName: p.formatName,
-                                isEnabled: p.isEnabled,
-                                stateXML: capturedXML ?? p.stateXML,
-                                linkGroupID: groupID, colorIndex: p.colorIndex)
+            var np = p
+            np.id = UUID()
+            np.fxBlock = nb
+            return np
         }
         func copySeries(_ plugins: [ObjectPlugin], topLevel: Bool) -> [ObjectPlugin] {
-            plugins.map { p in
-                if let rack = p.rack {
-                    return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
-                                        identifier: p.identifier, formatName: p.formatName,
-                                        isEnabled: p.isEnabled,
-                                        rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
-                                                         wetDb: rack.wetDb,
-                                                         voiceMutes: rack.voiceMutes))
+            var out: [ObjectPlugin] = []
+            var i = 0
+            while i < plugins.count {
+                let p = plugins[i]
+                if topLevel, Self.isFXLinkEligible(p) {
+                    var run: [ObjectPlugin] = []
+                    while i < plugins.count, Self.isFXLinkEligible(plugins[i]) { run.append(plugins[i]); i += 1 }
+                    out.append(copiedRun(run, of: object, state: liveState))
+                    continue
                 }
-                return copyLeaf(p, topLevel: topLevel)
+                i += 1
+                if let fb = p.fxBlock {
+                    out.append(copyBlock(p, fb))
+                } else if let rack = p.rack {
+                    out.append(ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
+                                            identifier: p.identifier, formatName: p.formatName,
+                                            isEnabled: p.isEnabled,
+                                            rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
+                                                             wetDb: rack.wetDb,
+                                                             voiceMutes: rack.voiceMutes)))
+                } else {
+                    out.append(copyLeaf(p))
+                }
+            }
+            return out
+        }
+        let copied = copySeries(object.plugins, topLevel: true)
+        if !capturedStates.isEmpty {
+            update(id: object.id) { obj in
+                for (id, xml) in capturedStates { obj.plugins = Self.settingStateXML(id, xml, in: obj.plugins) }
             }
         }
-        return copySeries(object.plugins, topLevel: true)
+        return copied
     }
 
     // MARK: - LINK between plugin instances
@@ -741,6 +764,7 @@ extension EditViewModel {
     /// Called at the end of `syncPlugins` → covers project loading, paste, split, groups.
     func rewireLinkGroups() {
         guard let engine else { return }
+        adoptPendingFXSources()   // the originals of an automatic FX link join their bin first
         func walk(_ arr: [SoundObject]) {
             for obj in arr {
                 // Instruments included: they live outside the FX chain (`instruments`) but
@@ -886,10 +910,13 @@ extension EditViewModel {
     ///   caller keeps the original, immediate behaviour (default true).
     func syncPlugins(_ object: SoundObject, rewireLinks: Bool = true) {
         guard engine != nil else { return }
+        // A source object the automatic FX link creation promised to a bin, compiled BY VALUE here:
+        // its plain plugins become the bin's block first (@see EditViewModel+FXLinkAuto).
+        let chain = fxAdopting(object.plugins, for: object.id) ?? object.plugins
         // Recompiles the rack from the model (project loading, paste, split, groups).
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
         // applied on the compiler side (setEnabled per leaf during the reconciliation).
-        compileRack(objectID: object.id, plugins: object.plugins,
+        compileRack(objectID: object.id, plugins: chain,
                     chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
         if rewireLinks { rewireLinkGroups() }

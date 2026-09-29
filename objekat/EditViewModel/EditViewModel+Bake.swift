@@ -57,10 +57,65 @@ extension EditViewModel {
             let n = UUID(); linkMap[old] = n; return n
         }
 
+        // FX links (bins of shared plugins): the copy gets NEW bins, exactly as it gets new link
+        // groups — two sub-trees taken from one sidecar must not share a bin. A bin is recreated
+        // from what its ATTACHED blocks hold (their instances give the definition, the block's own
+        // `local` — frozen by `encodedConsolidateSidecar` — or the live registry gives its output
+        // section), once per source bin. Detached blocks stay detached, and name the new bin if there
+        // is one. Registered at the end, so that the registry is never touched half-way.
+        var fxLinkIDMap: [UUID: UUID] = [:]
+        var fxDefMap: [UUID: UUID] = [:]
+        var createdFXLinks: [UUID: FXLink] = [:]
+        func freshFXLinkID(_ old: UUID) -> UUID {
+            if let n = fxLinkIDMap[old] { return n }
+            let n = UUID(); fxLinkIDMap[old] = n; return n
+        }
+        func freshFXDef(_ old: UUID) -> UUID {
+            if let n = fxDefMap[old] { return n }
+            let n = UUID(); fxDefMap[old] = n; return n
+        }
+        func freshBlock(_ p: ObjectPlugin, _ fb: FXLinkBlock) -> ObjectPlugin {
+            var nb = fb
+            nb.linkID = freshFXLinkID(fb.linkID)
+            if !fb.isDetached {
+                let out = fb.local ?? fxLink(fb.linkID)?.output ?? FXLinkOutput()
+                nb.local = nil
+                if createdFXLinks[nb.linkID] == nil {
+                    let reg = fxLink(fb.linkID)
+                    var link = FXLink(id: nb.linkID, name: reg?.name ?? p.name,
+                                      colorIndex: reg?.colorIndex,
+                                      plugins: fb.plugins.compactMap { inst in
+                                          guard let g = inst.linkGroupID else { return nil }
+                                          return ObjectPlugin(id: freshFXDef(g), name: inst.name,
+                                                              manufacturer: inst.manufacturer,
+                                                              identifier: inst.identifier,
+                                                              formatName: inst.formatName,
+                                                              isEnabled: inst.isEnabled,
+                                                              stateXML: inst.stateXML,
+                                                              colorIndex: inst.colorIndex)
+                                      })
+                    link.output = out
+                    createdFXLinks[nb.linkID] = link
+                }
+            }
+            nb.plugins = fb.plugins.map { inst in
+                var q = inst
+                q.id = UUID()
+                q.linkGroupID = inst.linkGroupID.map(freshFXDef)
+                q.detachedLinkGroupID = inst.detachedLinkGroupID.map(freshFXDef)
+                return q
+            }
+            var np = p
+            np.id = UUID()
+            np.fxBlock = nb
+            return np
+        }
+
         // Recursive: it preserves the parallel blocks (a rack carrier re-clones its voices) — otherwise
         // the restoration flattens/loses the parallel structure. Ids and links regenerated on the leaves.
         func freshPlugins(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
             plugins.map { p in
+                if let fb = p.fxBlock { return freshBlock(p, fb) }
                 if let rack = p.rack {
                     return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                         identifier: p.identifier, formatName: p.formatName,
@@ -116,7 +171,9 @@ extension EditViewModel {
             }
             return n
         }
-        return rebuild(root)
+        let rebuilt = rebuild(root)
+        fxLinks += createdFXLinks.values
+        return rebuilt
     }
 
     // MARK: - Realigning a restored sub-tree

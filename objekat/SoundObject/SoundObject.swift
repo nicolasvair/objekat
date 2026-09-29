@@ -104,7 +104,7 @@ enum ObjectColorPalette {
 // MARK: - A plugin in an object's rack
 
 struct ObjectPlugin: Identifiable, Codable, Equatable {
-    let id: UUID
+    var id: UUID
     var name: String
     var manufacturer: String
     var identifier: String

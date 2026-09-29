@@ -138,7 +138,7 @@ extension EditViewModel {
     func encodedConsolidateSidecar(_ subtree: SoundObject, projectFolder folder: URL?) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let definition = subtree.asConsolidateDefinition
+        let definition = freezingFXBlocks(in: subtree).asConsolidateDefinition
         guard let folder else { return try enc.encode(definition) }
         return try enc.encode(ProjectPaths.rewritingClipPaths(definition) {
             ProjectPaths.portable($0, projectFolder: folder)

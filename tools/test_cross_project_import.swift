@@ -17,6 +17,7 @@
 //         ../objekat/SoundObject/ConsolidateDefinition.swift \
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
+//         ../objekat/SoundObject/FXLink.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
@@ -258,6 +259,60 @@ enum CrossProjectImportTest {
             }
             check("a nested child's RELATIVE start is untouched (not shifted a second time)",
                   newChildren[0].startTime == 1)
+        }
+
+        // MARK: - FX links: a pasted block gets a NEW bin
+
+        do {
+            // Two objects sharing ONE bin (defs d1, d2), plus a third holding another bin.
+            let d1 = plugin(stateXML: "<d1/>"), d2 = plugin(stateXML: "<d2/>")
+            let link = FXLink(name: "Bus", colorIndex: 3, plugins: [d1, d2], gainDb: -6, pan: 0.25, muted: true)
+            func member(_ lane: Int) -> SoundObject {
+                let insts = [plugin(stateXML: "<i1/>", linkGroupID: d1.id), plugin(stateXML: "<i2/>", linkGroupID: d2.id)]
+                return clip(startTime: 0, lane: lane,
+                            plugins: [FXLink.blockEntry(linkID: link.id, name: link.name, instances: insts)])
+            }
+            let m1 = member(0), m2 = member(1)
+            let cb = CrossProjectImport.Clipboard(clips: [m1, m2], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  fxLinks: [link.id: link],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            check("one NEW bin for the two members that shared one", plan.newFXLinks.count == 1)
+            let nl = plan.newFXLinks[0]
+            check("its id is never the source's", nl.id != link.id)
+            check("its definition plugins are fresh, same count, same state",
+                  nl.plugins.count == 2 && nl.plugins[0].id != d1.id && nl.plugins[1].id != d2.id
+                  && nl.plugins[0].stateXML == "<d1/>")
+            check("its name, colour and output section are the source's",
+                  nl.name == "Bus" && nl.colorIndex == 3 && nl.gainDb == -6 && nl.pan == 0.25 && nl.muted)
+            let b1 = plan.clips[0].plugins[0], b2 = plan.clips[1].plugins[0]
+            check("both pasted blocks name the new bin, with fresh block ids",
+                  b1.fxBlock?.linkID == nl.id && b2.fxBlock?.linkID == nl.id && b1.id != m1.plugins[0].id)
+            let i1 = b1.fxBlock!.plugins, i2 = b2.fxBlock!.plugins
+            check("every instance is fresh and names the NEW definition plugin",
+                  i1[0].linkGroupID == nl.plugins[0].id && i1[1].linkGroupID == nl.plugins[1].id
+                  && i2[0].linkGroupID == nl.plugins[0].id
+                  && Set(i1.map(\.id)).isDisjoint(with: Set(i2.map(\.id))))
+            check("the source's own definition ids appear nowhere in the paste",
+                  !i1.contains { $0.linkGroupID == d1.id || $0.linkGroupID == d2.id })
+        }
+
+        do {
+            // A bin the clipboard does not carry cannot be recreated: the instances land inline, unlinked.
+            let d1 = plugin()
+            let insts = [plugin(linkGroupID: d1.id)]
+            let src = clip(startTime: 0, lane: 0,
+                           plugins: [FXLink.blockEntry(linkID: UUID(), name: "Gone", instances: insts)])
+            let cb = CrossProjectImport.Clipboard(clips: [src], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            check("a bin absent from the clipboard degrades to plain, unlinked plugins",
+                  plan.newFXLinks.isEmpty && plan.clips[0].plugins.count == 1
+                  && plan.clips[0].plugins[0].fxBlock == nil && plan.clips[0].plugins[0].linkGroupID == nil)
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"
