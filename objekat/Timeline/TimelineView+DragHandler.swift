@@ -1730,24 +1730,31 @@ extension TimelineView {
         }
     }
 
-    /// The band a ripple cut would close: the hole read off the GRABBED object, spread over every
-    /// lane of the scope — because that is what the gesture really does (it hollows the whole
-    /// container out, not just the object one is holding). Shown INSTEAD of the per-object
-    /// portions, which would say nothing of the lanes about to lose their matter.
-    var cutDragRippleBand: CGRect? {
+    /// The bands a ripple cut would close: the hole read off the GRABBED object, laid over the
+    /// lanes the gesture really takes — those of the objects it aims at, and nothing else of the
+    /// container (@see `rippleTakenLanes`). One rectangle per run of adjacent lanes, so a lane
+    /// left alone between two taken ones is not painted over. Shown INSTEAD of the per-object
+    /// portions, which would say nothing of the lanes about to slide.
+    var cutDragRippleBands: [CGRect] {
         guard let cd = cutDrag, cd.ripple, let keep = cd.keep,
               let range = viewModel.rippleCutRange(grabbedID: cd.grabbedID,
                                                    atTime: cd.cutTime, keeping: keep)
-        else { return nil }
+        else { return [] }
         let lanes = Set(viewModel.laneEntries.filter { cd.ids.contains($0.item.id) }.map(\.displayLane))
-        let container = viewModel.rippleContainerID(forLanes: lanes)
-        let scope = viewModel.rippleLanes(in: container)
-        guard let lo = scope.min(), let hi = scope.max() else { return nil }
+        let taken = viewModel.rippleTakenLanes(forLanes: lanes).sorted()
+        guard !taken.isEmpty else { return [] }
         let x0 = range.lo * pixelsPerSecond
         let x1 = range.hi * pixelsPerSecond
-        return CGRect(x: x0, y: rulerHeight + Double(lo) * laneStep,
-                      width: max(1, x1 - x0),
-                      height: Double(hi - lo) * laneStep + blockHeight)
+        var runs: [(first: Int, last: Int)] = []
+        for l in taken {
+            if let r = runs.last, r.last + 1 == l { runs[runs.count - 1].last = l }
+            else { runs.append((l, l)) }
+        }
+        return runs.map { r in
+            CGRect(x: x0, y: rulerHeight + Double(r.first) * laneStep,
+                   width: max(1, x1 - x0),
+                   height: Double(r.last - r.first) * laneStep + blockHeight)
+        }
     }
 
     /// The portions that would disappear if one released now (a preview of the cut gesture).

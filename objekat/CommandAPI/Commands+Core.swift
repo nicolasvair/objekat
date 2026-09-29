@@ -821,8 +821,9 @@ extension CommandRegistry {
 
         register("object.ripple_cut",
                  summary: "Cuts an object at an instant, throws the unwanted half away AND closes "
-                        + "the gap it leaves: the ⌥ of the cut by dragging. Bounded by the "
-                        + "container — inside a group, only that group's objects slide.",
+                        + "the gap it leaves: the ⌥ of the cut by dragging. Acts on the given "
+                        + "object's lane only, bounded by the container — inside a group, only "
+                        + "objects of that group slide, and only on that lane.",
                  params: [ParamSpec("id", "uuid", "The object grabbed; its half gives the hole its length."),
                           ParamSpec("seconds", "number", "Instant to cut at."),
                           ParamSpec("keep", "string", required: false,
@@ -856,8 +857,9 @@ extension CommandRegistry {
 
         register("object.ripple_delete",
                  summary: "Deletes the given objects (default: the selection) AND closes the time "
-                        + "they took: the ⌥⌫ with no time selection. Bounded by the container — "
-                        + "inside a group, only that group's objects slide.",
+                        + "they took: the ⌥⌫ with no time selection. Acts on the lanes of those "
+                        + "objects only, bounded by the container — inside a group, only objects of "
+                        + "that group slide, and only on those lanes.",
                  params: [ParamSpec("ids", "array<uuid>", required: false, "Objects to ripple away.")],
                  // `rippleDeleteSelectedObjects` pushes its undo, and drops it if it changed nothing.
                  undo: .handled) { p in

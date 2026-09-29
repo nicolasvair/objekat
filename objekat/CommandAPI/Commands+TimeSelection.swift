@@ -161,7 +161,9 @@ extension CommandRegistry {
 
         register("timesel.ripple_delete",
                  summary: "Deletes the time selection AND closes the gap: what follows slides back, "
-                        + "bounded by the container (a group ripples alone, the outside does not move).",
+                        + "on the SELECTED lanes only, bounded by the container (a group ripples alone, "
+                        + "the outside does not move; the container's window shrinks only if every one "
+                        + "of its lanes was selected).",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let sel = vm.timeSelection else {

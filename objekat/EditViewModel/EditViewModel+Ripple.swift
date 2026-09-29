@@ -1,26 +1,43 @@
 import Foundation
 
-// MARK: - Ripple editing, bounded by the container
+// MARK: - Ripple editing, bounded by the container, aimed at the lanes one selected
 //
 // Removing a passage and closing the gap behind it: what came after slides back onto the hole's
 // left edge. Reaper's "ripple edit", with one difference that is the whole point here — it is
-// BOUNDED BY THE CONTAINER. Doing it inside a group moves every object OF THAT GROUP and nothing
+// BOUNDED BY THE CONTAINER. Doing it inside a group moves objects OF THAT GROUP and nothing
 // else: the group's neighbours, its parent and the rest of the timeline stay exactly where they
 // are. A group is a closed world in time, so its inner montage can be reworked without the whole
 // session sliding.
 //
-// Three decisions the gesture rests on, none of them obvious:
+// Four decisions the gesture rests on, none of them obvious:
 //
-//  • ALL the lanes of the scope are hollowed out, not just those the time selection covered.
-//    Ripple's reason for existing is to preserve the internal synchronisation: if an object on
-//    another lane of the group straddled the hole and were spared, everything after it would
-//    move away from it. Closing the gap therefore implies cutting the range everywhere it runs.
-//  • The scope is the SHALLOWEST container the gesture touches. One top-level lane in the time
-//    selection and the scope is the whole timeline — an unfolded group is then an object among
-//    others, carried whole. The rule reads in one sentence, which is what one wants of a
-//    destructive gesture.
-//  • The container's own WINDOW shrinks by as much. Otherwise the gap comes back as silence at
-//    the end of the group, and one would have to trim it by hand behind every ripple.
+//  • ONLY the lanes one SELECTED are hollowed out and slide back — the lanes of the time
+//    selection, or the lanes the selected / cut objects sit on. The other lanes of the container
+//    stay exactly as they were. This is a DELIBERATE choice of the user, and it has a cost that
+//    is written here so nobody discovers it by ear: until 29 September 2026 EVERY lane of the
+//    scope was hollowed out, because ripple's reason for existing is to preserve the internal
+//    synchronisation — an object on an unselected lane straddling the hole would otherwise be
+//    spared while everything after it moved away from it. Now that lane is spared on purpose, so
+//    **the synchronisation between the lanes is no longer guaranteed**: the ripple can pull the
+//    selected lanes out of step with the ones left alone, and doing it on ALL the lanes is what
+//    gives the old behaviour back.
+//  • The scope is still the SHALLOWEST container the gesture touches. One top-level lane in the
+//    time selection and the scope is the whole timeline — an unfolded group is then an object
+//    among others, carried whole. The lanes are then intersected with the scope's: a selected lane
+//    that lies outside it is left alone.
+//  • What slides is decided per selected LANE, by unit: the shallowest object whose row is
+//    selected, carried whole with everything under it (a group whose own row is selected is one
+//    unit, its children rows or not). A sub-group only PARTIALLY selected — some of its children's
+//    rows and not its own — keeps its window where it is, and the selected children slide inside
+//    it in absolute time; the cost is that a child may slide out past the window's start.
+//  • The container's own WINDOW shrinks by as much ONLY when every lane of the scope was selected
+//    (which is the old behaviour, window included). Otherwise it does not move: the unselected
+//    lanes still need the room, and shrinking would cut their tail.
+//
+// A row is named here by what it IS, not by where it is drawn — `RippleRow`, a parent and a base
+// lane. The display lane of an object moves under the gesture's own hands (a group's rows follow
+// the lanes its children occupy, and the carve can empty one), so the selection is translated
+// into rows once, before anything is touched, and read back through them.
 
 extension EditViewModel {
 
@@ -51,36 +68,83 @@ extension EditViewModel {
         rippleScope { lanes.contains($0.displayLane) }
     }
 
-    /// Every display lane belonging to `container`'s sub-tree — `nil` = every lane there is.
-    /// It is what widens a time selection to the whole scope before hollowing it out.
-    func rippleLanes(in container: UUID?) -> Set<Int> {
-        guard let container else { return Set(laneEntries.map(\.displayLane)) }
+    /// A row of the timeline, named by what it is and not by where it is drawn: the object it hangs
+    /// under (`nil` = the top level) and its BASE lane there. The display lane is a function of the
+    /// whole structure and changes as the gesture proceeds; this one does not.
+    struct RippleRow: Hashable {
+        let parent: UUID?
+        let lane: Int
+    }
+
+    /// The rows the given DISPLAY lanes name.
+    func rippleRows(forLanes lanes: Set<Int>) -> Set<RippleRow> {
+        Set(laneEntries.filter { lanes.contains($0.displayLane) }
+            .map { RippleRow(parent: $0.parentID, lane: $0.item.lane) })
+    }
+
+    /// Every entry belonging to `container`'s sub-tree — `nil` = every entry there is.
+    private func rippleScopeEntries(in container: UUID?) -> [LaneEntry] {
+        guard let container else { return laneEntries }
         var parentOf: [UUID: UUID?] = [:]
         for e in laneEntries { parentOf[e.item.id] = e.parentID }
-        var lanes = Set<Int>()
+        var out: [LaneEntry] = []
         for e in laneEntries {
             var p = e.parentID
             while let pid = p {
-                if pid == container { lanes.insert(e.displayLane); break }
+                if pid == container { out.append(e); break }
                 p = parentOf[pid] ?? nil
             }
         }
-        return lanes
+        return out
+    }
+
+    /// What a ripple aimed at `onLanes` really takes, inside `scope`: the entries on those lanes,
+    /// and everything under one of them — an object whose row is selected is a unit, and the carve
+    /// reaches its whole content (@see `carveTimeRange`, `_cutGroupChildren`).
+    private func rippleTaken(scope: [LaneEntry], onLanes: Set<Int>, container: UUID?) -> [LaneEntry] {
+        let byID = Dictionary(scope.map { ($0.item.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return scope.filter { e in
+            var cur: LaneEntry? = e
+            while let x = cur {
+                if onLanes.contains(x.displayLane) { return true }
+                guard let p = x.parentID, p != container else { return false }
+                cur = byID[p]
+            }
+            return false
+        }
+    }
+
+    /// The display lanes of `scope` the rows name.
+    private func rippleOnLanes(scope: [LaneEntry], rows: Set<RippleRow>) -> Set<Int> {
+        Set(scope.filter { rows.contains(RippleRow(parent: $0.parentID, lane: $0.item.lane)) }
+            .map(\.displayLane))
+    }
+
+    /// The display lanes a ripple aimed at `lanes` would take — what the ⌥ cut's preview band
+    /// paints. The same reading the gesture itself makes, so the band cannot promise what the
+    /// ripple will not do.
+    func rippleTakenLanes(forLanes lanes: Set<Int>) -> Set<Int> {
+        let container = rippleContainerID(forLanes: lanes)
+        let scope = rippleScopeEntries(in: container)
+        let on = rippleOnLanes(scope: scope, rows: rippleRows(forLanes: lanes))
+        return Set(rippleTaken(scope: scope, onLanes: on, container: container).map(\.displayLane))
     }
 
     // MARK: - The primitive
 
-    /// Takes the span [lo, hi] out of `container` and closes the gap: every lane of the scope is
-    /// hollowed out, then what is left standing after `hi` comes back onto `lo`, and the
-    /// container's own window shrinks by as much. `container == nil` ⇒ the whole timeline.
+    /// Takes the span [lo, hi] out of the given ROWS of `container` and closes the gap: those rows
+    /// are hollowed out, then what is left standing after `hi` on them comes back onto `lo`, and
+    /// the container's own window shrinks by as much — but only if the rows are every row of the
+    /// container (@see the header). `container == nil` ⇒ the whole timeline.
     ///
-    /// Returns false if the gesture would change nothing (a degenerate range, an empty scope with
-    /// nothing to slide) — the caller then drops its undo rather than leaving an empty step.
+    /// Returns false if the gesture would change nothing (a degenerate range, no row of the scope
+    /// selected, nothing to slide) — the caller then drops its undo rather than leaving an empty
+    /// step.
     ///
     /// Pushes NO undo and clears no selection: the caller owns the transaction, as with
     /// `carveTimeRange`, whose matter-removing work this reuses whole.
     @discardableResult
-    func rippleRemoveTimeRange(lo: Double, hi: Double, container: UUID?) -> Bool {
+    func rippleRemoveTimeRange(lo: Double, hi: Double, container: UUID?, rows: Set<RippleRow>) -> Bool {
         let hole = hi - lo
         guard hole > 0.001 else { return false }
 
@@ -89,14 +153,31 @@ extension EditViewModel {
         // porthole would change every repeat at once, including those the gesture never touched.
         if let container, let obj = find(id: container), isLoopedGroupPorthole(obj) { return false }
 
-        let lanes = rippleLanes(in: container)
-        let carved = carveTimeRange(lo: lo, hi: hi, lanes: lanes, skippingInfiniteBuses: true)
+        // Read BEFORE anything moves: the display lanes are about to change under us.
+        let scope = rippleScopeEntries(in: container)
+        let onLanes = rippleOnLanes(scope: scope, rows: rows)
+        guard !onLanes.isEmpty else { return false }
+        let takenIDs = Set(rippleTaken(scope: scope, onLanes: onLanes, container: container).map { $0.item.id })
+        // An infinite bus is never carved nor slid, so it cannot be required to be selected.
+        let coversScope = scope.allSatisfy { $0.item.isInfiniteBus || takenIDs.contains($0.item.id) }
+
+        let carved = carveTimeRange(lo: lo, hi: hi, lanes: onLanes, skippingInfiniteBuses: true)
 
         // AFTER the carve: it creates objects (the right half of a straddling object, laid down at
         // `hi`), and those are precisely the ones that have to slide.
-        let toShift = rippleDirectChildren(of: container)
-            .filter { !$0.isInfiniteBus && $0.startTime >= hi - 1e-6 }
-            .map(\.id)
+        var toShift: [UUID] = []
+        func collect(_ children: [SoundObject], parent: UUID?) {
+            for c in children where !c.isInfiniteBus {
+                if rows.contains(RippleRow(parent: parent, lane: c.lane)) {
+                    // A unit: its row is selected, so it goes whole, everything under it too.
+                    if c.startTime >= hi - 1e-6 { toShift.append(c.id) }
+                } else if c.showsChildrenInline, case .group(let ch, _) = c.kind {
+                    // Only PARTIALLY selected: its window stays, its selected children slide.
+                    collect(ch, parent: c.id)
+                }
+            }
+        }
+        collect(rippleDirectChildren(of: container), parent: container)
 
         guard carved || !toShift.isEmpty else { return false }
 
@@ -118,7 +199,9 @@ extension EditViewModel {
             if let o = find(id: id) { syncPosition(o) }
         }
 
-        if let container { rippleShrinkContainer(container, lo: lo, hi: hi) }
+        // The window only comes back when EVERY lane of the container went through the ripple:
+        // otherwise the lanes left alone still run to the old end.
+        if let container, coversScope { rippleShrinkContainer(container, lo: lo, hi: hi) }
         return true
     }
 
@@ -176,8 +259,9 @@ extension EditViewModel {
         let lo = sel.timeRange.lowerBound
         let hi = sel.timeRange.upperBound
         let container = rippleContainerID(forLanes: sel.lanes)
+        let rows = rippleRows(forLanes: sel.lanes)
         pushUndo()
-        guard rippleRemoveTimeRange(lo: lo, hi: hi, container: container) else {
+        guard rippleRemoveTimeRange(lo: lo, hi: hi, container: container, rows: rows) else {
             _ = undoStack.popLast()
             return
         }
@@ -206,9 +290,9 @@ extension EditViewModel {
     /// true container by hand, the scope's lanes are not on screen either, so nothing would be
     /// carved while the group's children slid anyway — matter left standing, moved.
     ///
-    /// Refusing is the honest answer rather than a repair: a ripple hollows out every lane of its
-    /// scope, matter the selection never named, and a scope one cannot see is collateral one
-    /// cannot see coming. Unfolding the group puts the gesture back within reach.
+    /// Refusing is the honest answer rather than a repair: a ripple that names its lanes by what
+    /// is on screen has nothing to name for an object one cannot see, and a scope one cannot see
+    /// is collateral one cannot see coming. Unfolding the group puts the gesture back within reach.
     func rippleVisibleIDs(_ ids: Set<UUID>) -> Set<UUID> {
         let shown = Set(laneEntries.map(\.item.id))
         return ids.intersection(shown)
@@ -230,6 +314,9 @@ extension EditViewModel {
         var remaining = rippleVisibleIDs(effectiveSelectedIDs)
         guard !remaining.isEmpty else { return false }
         let container = rippleContainerID(forObjects: remaining)
+        // The rows the SELECTED objects sit on, read once: the objects go one by one and the rows
+        // are what stays (@see RippleRow).
+        let rows = rippleRows(forLanes: Set(laneEntries.filter { remaining.contains($0.item.id) }.map(\.displayLane)))
         pushUndo()
         var closed = false
         // Re-read at every step rather than take a snapshot: a removal can have trimmed or
@@ -238,7 +325,7 @@ extension EditViewModel {
         while let obj = remaining.compactMap({ find(id: $0) }).max(by: { $0.startTime < $1.startTime }) {
             remaining.remove(obj.id)
             if rippleRemoveTimeRange(lo: obj.startTime, hi: obj.startTime + obj.duration,
-                                     container: container) { closed = true }
+                                     container: container, rows: rows) { closed = true }
         }
         guard closed else { _ = undoStack.popLast(); return false }
         selectedIDs = []
@@ -266,10 +353,11 @@ extension EditViewModel {
         guard let range = rippleCutRange(grabbedID: grabbedID, atTime: t, keeping: keeping) else { return }
         let lanes = Set(laneEntries.filter { ids.contains($0.item.id) }.map(\.displayLane))
         let container = rippleContainerID(forLanes: lanes)
+        let rows = rippleRows(forLanes: lanes)
         engine?.beginPlaybackEdit()           // @see cut(ids:atTime:keeping:)
         defer { engine?.endPlaybackEdit() }
         pushUndo()
-        guard rippleRemoveTimeRange(lo: range.lo, hi: range.hi, container: container) else {
+        guard rippleRemoveTimeRange(lo: range.lo, hi: range.hi, container: container, rows: rows) else {
             _ = undoStack.popLast()
             return
         }

@@ -217,10 +217,11 @@ with ObjekatClient(SOCK) as c:
     #     GESTURE end to end, through the API, which is the only way to see whether the rule
     #     actually reaches `selectedIDs` and not merely the pure function behind it.
     # Everything below is swept up at the very end, by comparing the object set before and after —
-    # a ripple cut bounded by NO container reaches the WHOLE timeline (@see EditViewModel+Ripple:
-    # "container == nil ⇒ the whole timeline"), and a stray fixture left lying around at a high
-    # lane number would shift where the LATER, pre-existing tests expect the timeline's last row
-    # to fall. Leaving no trace is therefore part of the correctness of this block, not tidiness.
+    # a stray fixture left lying around at a high lane number would shift where the LATER,
+    # pre-existing tests expect the timeline's last row to fall. Leaving no trace is therefore part
+    # of the correctness of this block, not tidiness. (A ripple used to reach the WHOLE timeline
+    # from the top level, which made every fixture here a hazard for the others; since 29
+    # September 2026 it only acts on the lanes it is aimed at — the ripple block further down.)
     before_ids = {o["id"] for o in c.send("object.list")["objects"]}
     def add(lane, start=0.0, duration=None):
         params = {"path": BIP, "lane": lane, "start": start}
@@ -345,13 +346,10 @@ with ObjekatClient(SOCK) as c:
     # 14-15. `object.ripple_cut` no longer empties the selection either — it goes through no
     #        separate id at all (the surviving matter is TRIMMED in place, never re-split), so the
     #        grabbed object simply keeps answering to its own id, and to its own selection.
-    #        A ripple with NO container is scoped to the WHOLE timeline (@see
-    #        EditViewModel+Ripple), which would reach every other fixture on every other lane —
-    #        so each object here gets its OWN one-member group first, bounding the ripple to it
-    #        and it alone. That scoping is not what this test is about; the selection rule is.
+    #        A ripple acts on the LANES it is aimed at (29 September 2026), so a top-level object
+    #        needs no group of its own to keep the rest of the timeline out of it. That scoping is
+    #        not what this test is about; the selection rule is.
     a = add(56)
-    ga_scope = c.send("group.create", {"ids": [a]})["id"]
-    c.send("group.expand", {"id": ga_scope, "expanded": True})   # else `a` is hidden, unreachable
     a_dur = c.send("object.get", {"id": a})["duration"]
     c.send("selection.set", {"ids": [a]})
     step("ripple_cut keep=left, A selected", lambda: c.send("object.ripple_cut", {"id": a, "seconds": 0.7 * a_dur, "keep": "left"}))
@@ -359,8 +357,6 @@ with ObjekatClient(SOCK) as c:
           c.send("selection.get")["ids"] == [a], str(c.send("selection.get")))
 
     a = add(57)
-    gb_scope = c.send("group.create", {"ids": [a]})["id"]
-    c.send("group.expand", {"id": gb_scope, "expanded": True})   # else `a` is hidden, unreachable
     a_dur = c.send("object.get", {"id": a})["duration"]
     c.send("selection.set", {"ids": [a]})
     step("ripple_cut keep=right, A selected", lambda: c.send("object.ripple_cut", {"id": a, "seconds": 0.1 * a_dur, "keep": "right"}))
@@ -397,6 +393,167 @@ with ObjekatClient(SOCK) as c:
     if leftover:
         c.send("object.remove", {"ids": leftover})
     c.send("selection.clear")
+
+    # --- RIPPLE ON THE SELECTED LANES ONLY (29 September 2026). The scope is still the shallowest
+    #     container touched, but only the lanes one SELECTED are hollowed out and slide back; the
+    #     container's window shrinks only if EVERY lane of it was selected. Cost, chosen by the
+    #     user: the synchronisation between lanes is no longer guaranteed.
+    #     Fixture: a group of three lanes A, B, C, two objects per lane (at 0 and at 2 D, D long),
+    #     the hole [0.25 D, 0.5 D] — inside the first object, before the second.
+    rp_before = {o["id"] for o in c.send("object.list")["objects"]}
+    LO, HI = 0.25 * D, 0.5 * D
+    HOLE = HI - LO
+    def rp_add(lane, start):
+        return c.send("object.add", {"path": BIP, "lane": lane, "start": start})["id"]
+    def rp_group(base):
+        ids = {}
+        for name, off in (("A", 0), ("B", 1), ("C", 2)):
+            ids[name + "1"] = rp_add(base + off, 0.0)
+            ids[name + "2"] = rp_add(base + off, 2 * D)
+        gid = c.send("group.create", {"ids": list(ids.values())})["id"]
+        c.send("group.expand", {"id": gid, "expanded": True})
+        return gid, ids
+    def rp_layout(gid):
+        """{base lane: [(start, duration), …]} of the group's children, lanes ascending = A, B, C."""
+        out = {}
+        for o in c.send("object.list")["objects"]:
+            if o["parent"] == gid:
+                out.setdefault(o["lane"], []).append((o["start"], o["duration"]))
+        return [sorted(out[k]) for k in sorted(out)]
+    def rp_win(gid):
+        o = c.send("object.get", {"id": gid})
+        return (o["start"], o["duration"])
+    def rp_dl(i):
+        return c.send("object.get", {"id": i})["display_lane"]
+    def near(x, y):
+        if isinstance(x, (list, tuple)):
+            return len(x) == len(y) and all(near(p, q) for p, q in zip(x, y))
+        return abs(x - y) < 1e-3
+    def rp_tsel(lanes):
+        c.send("selection.clear")
+        c.send("timesel.set", {"start": LO, "end": HI, "lanes": lanes})
+
+    # 1. Ripple on lane A alone: B and C are IDENTICAL, A closed the gap, the window did not move.
+    g1, i1 = rp_group(200)
+    init = rp_layout(g1); win0 = rp_win(g1)
+    check("fixture: three lanes of two objects", len(init) == 3 and all(len(l) == 2 for l in init), str(init))
+    rp_tsel([rp_dl(i1["A1"])])
+    r = step("timesel.ripple_delete on A only", lambda: c.send("timesel.ripple_delete"))
+    now = rp_layout(g1)
+    check("ripple on A alone: B and C are untouched", near(now[1], init[1]) and near(now[2], init[2]), str(now))
+    check("…A is hollowed out (its first object cut) and its second slid back by the hole",
+          near(now[0], [(0.0, LO), (LO, D - HI), (2 * D - HOLE, D)]), str(now[0]))
+    check("…and the group's window did NOT shrink (not every lane was selected)",
+          near(rp_win(g1), win0), "%s vs %s" % (rp_win(g1), win0))
+    check("…the answer names the group as the container", r and r["container"] == g1, str(r))
+    step("edit.undo (one)", lambda: c.send("edit.undo"))
+    check("ONE undo gives everything back, window included",
+          near(rp_layout(g1), init) and near(rp_win(g1), win0), str(rp_layout(g1)))
+
+    # 2. A + B: C is intact, the window still stays.
+    g2, i2 = rp_group(210)
+    init = rp_layout(g2); win0 = rp_win(g2)
+    rp_tsel([rp_dl(i2["A1"]), rp_dl(i2["B1"])])
+    step("timesel.ripple_delete on A+B", lambda: c.send("timesel.ripple_delete"))
+    now = rp_layout(g2)
+    slid = [(0.0, LO), (LO, D - HI), (2 * D - HOLE, D)]
+    check("ripple on A+B: both closed the gap, C is intact",
+          near(now[0], slid) and near(now[1], slid) and near(now[2], init[2]), str(now))
+    check("…and the window did not move", near(rp_win(g2), win0), str(rp_win(g2)))
+
+    # 3. Every lane: the old behaviour, window included.
+    g3, i3 = rp_group(220)
+    init = rp_layout(g3); win0 = rp_win(g3)
+    rp_tsel([rp_dl(i3[k]) for k in ("A1", "B1", "C1")])
+    step("timesel.ripple_delete on A+B+C", lambda: c.send("timesel.ripple_delete"))
+    now = rp_layout(g3)
+    check("ripple on every lane: all three closed the gap", all(near(l, slid) for l in now), str(now))
+    check("…and the window shrank by the hole (the old behaviour)",
+          near(rp_win(g3), (win0[0], win0[1] - HOLE)), "%s vs %s" % (rp_win(g3), win0))
+    step("edit.undo (one, every lane)", lambda: c.send("edit.undo"))
+    check("…one undo gives it all back", near(rp_layout(g3), init) and near(rp_win(g3), win0))
+
+    # 4. object.ripple_delete: the lane of the object only, then every lane.
+    g4, i4 = rp_group(230)
+    init = rp_layout(g4); win0 = rp_win(g4)
+    step("object.ripple_delete A1", lambda: c.send("object.ripple_delete", {"ids": [i4["A1"]]}))
+    now = rp_layout(g4)
+    check("object.ripple_delete A1: A closed over it (A2 slid back by D), B and C intact",
+          near(now[0], [(D, D)]) and near(now[1], init[1]) and near(now[2], init[2]), str(now))
+    check("…the window stayed", near(rp_win(g4), win0), str(rp_win(g4)))
+    step("edit.undo (one, ripple_delete)", lambda: c.send("edit.undo"))
+    check("…one undo", near(rp_layout(g4), init) and near(rp_win(g4), win0))
+    step("object.ripple_delete A1+B1+C1", lambda: c.send("object.ripple_delete",
+         {"ids": [i4["A1"], i4["B1"], i4["C1"]]}))
+    now = rp_layout(g4)
+    check("object.ripple_delete on the three first objects: all lanes closed over them",
+          all(near(l, [(D, D)]) for l in now), str(now))
+    check("…every lane selected, so the window shrank by D",
+          near(rp_win(g4), (win0[0], win0[1] - D)), "%s vs %s" % (rp_win(g4), win0))
+
+    # 5. object.ripple_cut, both sides: only the object's lane closes.
+    g5, i5 = rp_group(240)
+    init = rp_layout(g5); win0 = rp_win(g5)
+    step("object.ripple_cut keep left", lambda: c.send("object.ripple_cut",
+         {"id": i5["A1"], "seconds": HI, "keep": "left"}))
+    now = rp_layout(g5)
+    check("ripple_cut keep='left': A1 ends at the cut, A2 came back by what went, B and C intact",
+          near(now[0], [(0.0, HI), (2 * D - (D - HI), D)]) and near(now[1], init[1])
+          and near(now[2], init[2]) and near(rp_win(g5), win0), str(now))
+    g6, i6 = rp_group(250)
+    init = rp_layout(g6); win0 = rp_win(g6)
+    step("object.ripple_cut keep right", lambda: c.send("object.ripple_cut",
+         {"id": i6["B1"], "seconds": HI, "keep": "right"}))
+    now = rp_layout(g6)
+    check("ripple_cut keep='right' on B: B1 starts back at 0 and is shorter, B2 slid, A and C intact",
+          near(now[1], [(0.0, D - HI), (2 * D - HI, D)]) and near(now[0], init[0])
+          and near(now[2], init[2]) and near(rp_win(g6), win0), str(now))
+    step("edit.undo (one, ripple_cut)", lambda: c.send("edit.undo"))
+    check("…one undo", near(rp_layout(g6), init) and near(rp_win(g6), win0))
+
+    # 6. Top level, two lanes: the other lanes (and the rest of the timeline) stay put.
+    x1 = rp_add(260, 0.0); x2 = rp_add(260, 2 * D)
+    y1 = rp_add(261, 0.0); y2 = rp_add(261, 2 * D)
+    z2 = rp_add(262, 2 * D)
+    before = {k: (c.send("object.get", {"id": v})["start"], c.send("object.get", {"id": v})["duration"])
+              for k, v in (("y1", y1), ("y2", y2), ("z2", z2))}
+    rp_tsel([rp_dl(x1)])
+    r = step("timesel.ripple_delete at the top level", lambda: c.send("timesel.ripple_delete"))
+    after = {k: (c.send("object.get", {"id": v})["start"], c.send("object.get", {"id": v})["duration"])
+             for k, v in (("y1", y1), ("y2", y2), ("z2", z2))}
+    check("top level: the other lanes are intact (y and z did not move)", near(list(after.values()), list(before.values())),
+          "%s vs %s" % (after, before))
+    check("…and the selected lane closed (x2 slid back by the hole)",
+          near(c.send("object.get", {"id": x2})["start"], 2 * D - HOLE))
+    check("…the container is the whole timeline", r and r["container"] is None, str(r))
+
+    # 7. A PARTIALLY selected sub-group: a child row selected under a top-level row. The scope is
+    #    the top level; the group keeps its window, its selected child slides in absolute time.
+    g7, i7 = rp_group(270)
+    init = rp_layout(g7); win0 = rp_win(g7)
+    r1 = rp_add(280, 0.0); r2 = rp_add(280, 2 * D)
+    rp_tsel([rp_dl(r1), rp_dl(i7["A1"])])
+    step("timesel.ripple_delete, top row + one child row", lambda: c.send("timesel.ripple_delete"))
+    now = rp_layout(g7)
+    check("partial group: the selected child closed the gap, the others did not",
+          near(now[0], slid) and near(now[1], init[1]) and near(now[2], init[2]), str(now))
+    check("…and the group's own window did not move", near(rp_win(g7), win0), str(rp_win(g7)))
+    check("…the top-level lane went with it", near(c.send("object.get", {"id": r2})["start"], 2 * D - HOLE))
+
+    # 8. A LOOPING container is refused: nothing moves.
+    g8, i8 = rp_group(290)
+    c.send("object.set_loop", {"id": g8, "enabled": True})
+    init = rp_layout(g8); win0 = rp_win(g8)
+    rp_tsel([rp_dl(i8["A1"])])
+    step("timesel.ripple_delete in a looping group", lambda: c.send("timesel.ripple_delete"))
+    check("a looping container refuses the ripple: nothing moved",
+          near(rp_layout(g8), init) and near(rp_win(g8), win0), str(rp_layout(g8)))
+
+    leftover = list({o["id"] for o in c.send("object.list")["objects"]} - rp_before)
+    if leftover:
+        c.send("object.remove", {"ids": leftover})
+    c.send("selection.clear")
+    c.send("timesel.clear")
 
     # --- WHERE a crossfade's zone is taken FROM. `crossfade.open` on its own centres the zone on
     #     the join, both edges giving half: nothing there says which of two alike objects should

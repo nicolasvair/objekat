@@ -796,10 +796,11 @@ struct TimelineView: View {
                             .allowsHitTesting(false)
                             .zIndex(2.62)
                     }
-                    // ⌥ = ripple: the band says what the gesture really takes — the whole SCOPE
-                    // over the hole's span, and not only the object one is holding. Struck through
-                    // like the plain cut, plus the edge that shows where everything will come back.
-                    if let band = cutDragRippleBand {
+                    // ⌥ = ripple: the band says what the gesture really takes — the lanes of the
+                    // objects it aims at over the hole's span, and not only the object one is
+                    // holding. Struck through like the plain cut, plus the edge that shows where
+                    // everything will come back.
+                    ForEach(Array(cutDragRippleBands.enumerated()), id: \.offset) { _, band in
                         Rectangle()
                             .fill(Color.red.opacity(0.22))
                             .overlay(alignment: .leading) {
