@@ -785,7 +785,7 @@ stands right after, for a caller that wants to check the rule above without a sc
 
 ### Exploding an object into sub-lanes
 
-**`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?}`** cuts a plain audio clip at
+**`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?}`** cuts a plain audio clip at
 several instants and gathers the `cuts.count + 1` pieces into a **fresh group**, one sub-lane per
 piece — **ONE undo** for the whole thing. Written for the "voice separator" script
 (`tools/scripts/separateur-voix/`), generic to any "cut this object into several tagged pieces"
@@ -798,8 +798,9 @@ gesture:
 | `lanes` | `cuts.count + 1` values — the sub-lane (0-based, **relative to the new group**) each piece lands on; several pieces may share a sub-lane, they simply follow one another on it |
 | `names` | optional, one name **per sub-lane** (size = the highest value in `lanes` + 1) — a piece takes the name of the sub-lane it lands on, which is what makes the group's own composed name come out right for free |
 | `group_name` | optional, the new group's own label; absent = the composed name |
+| `group_lanes` | optional (default false): each sub-lane's pieces are gathered into a collapsed group of their own (labelled by `names`, on that sub-lane), so the new group holds one block per sub-lane instead of hundreds — the timeline draws and hit-tests every block of an open group. The sub-group carries the label; the pieces keep whatever label the source clip had, and `pieces[].child_lane` still names the SUB-LANE of the outer group (each piece sits on row 0 of its own sub-group, so `object.get` on a piece reads `lane: 0`). |
 
-Answers `{"group": <uuid>, "pieces": [{"id", "start", "duration", "child_lane"}, …]}`.
+Answers `{"group": <uuid>, "lane_groups": [<uuid>…] (empty unless `group_lanes`), "pieces": [{"id", "start", "duration", "child_lane"}, …]}`.
 
 Why an app command rather than N × `object.split_at` driven by the script: each cut manufactures
 the id the next one has to aim at, so N separate script-driven calls could never be chained into a
@@ -1652,13 +1653,13 @@ panel exists and no window opens**). One panel per connection (a second `open` r
 Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
 
 Controls: `{id, kind: "bool"|"number"|"button"|"choice"|"progress"|"section", label, value?, min?, max?, step?, unit?,
-enabled_by?, options?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
+enabled_by?, options?, advanced?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
 `min`); a `choice` (drawn as a pop-up menu) needs a non-empty `options: [{id, label}]` (unique ids),
 its `value` is an option **id** (default: the first option) and `values[id]` reads back that id as a
 string — `input` / `update` refuse an id that is not one of the options (`bad_params`), and the
 option labels, like every label, are the script's own data; a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
-one ("a box and a threshold" — the window draws that pair inline). The labels are the SCRIPT's own
-data; the app's only texts are Validate / Cancel and the default title.
+one ("a box and a threshold" — the window draws that pair inline). `advanced: true` hides a control until the hand presses the window's **Expert** button (presentation only: the value is still read back, remembered and settable through `input`). The labels are the SCRIPT's own
+data; the app's only texts are Validate / Cancel / Reset / Expert and the default title.
 
 Two kinds are the script's own drawing and hold nothing a hand can set (`input` refuses them):
 a `progress` is a bar the script drives — `value` 0…1, or `null` for "working, no idea how far"

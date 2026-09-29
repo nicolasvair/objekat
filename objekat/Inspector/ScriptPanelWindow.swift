@@ -64,6 +64,23 @@ final class ScriptPanelWindows: NSObject, NSWindowDelegate {
 
     private static var idKey: UInt8 = 0
 
+    /// Fits the window to its content again — the "Expert" button shows or hides rows. The top edge
+    /// stays where it is (the panel grows downwards), as a disclosure would.
+    func refit(_ id: UUID) {
+        guard let w = windows[id], let hosting = w.contentView as? NSHostingView<ScriptPanelView> else { return }
+        let fit = hosting.fittingSize
+        let old = w.frame
+        let newHeight = max(120, fit.height) + (old.height - w.contentRect(forFrameRect: old).height)
+        var frame = NSRect(x: old.minX, y: old.maxY - newHeight, width: old.width, height: newHeight)
+        // Never taller than the screen it is on: Validate / Cancel must stay reachable.
+        if let screen = w.screen ?? NSScreen.main {
+            let room = screen.visibleFrame
+            frame.size.height = min(frame.height, room.height)
+            frame = w.constrainFrameRect(frame, to: screen)
+        }
+        w.setFrame(frame, display: true, animate: true)
+    }
+
     private func dismiss(_ id: UUID) {
         guard let w = windows.removeValue(forKey: id) else { return }
         closing.insert(id)
@@ -86,6 +103,8 @@ final class ScriptPanelWindows: NSObject, NSWindowDelegate {
 struct ScriptPanelView: View {
     let store: ScriptPanelStore
     let panelID: UUID
+    /// The window's own state: whether the `advanced` controls are drawn.
+    @State private var expert = false
 
     var body: some View {
         if let p = store.panels[panelID] {
@@ -100,6 +119,15 @@ struct ScriptPanelView: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 8)
+                    if p.controls.contains(where: { $0.advanced }) {
+                        Button {
+                            expert.toggle()
+                            DispatchQueue.main.async { ScriptPanelWindows.shared.refit(panelID) }
+                        } label: {
+                            Label(L("scriptpanel.expert"),
+                                  systemImage: expert ? "chevron.down" : "chevron.right")
+                        }
+                    }
                     if p.rememberKey != nil {
                         Button(L("scriptpanel.reset")) { press("reset") }
                     }
@@ -126,6 +154,7 @@ struct ScriptPanelView: View {
         for c in p.controls { if let by = c.enabledBy { gateUse[by, default: 0] += 1 } }
         let inline = Set(gateUse.filter { $0.value == 1 }.keys)
         return p.controls.compactMap { c in
+            if c.advanced, !expert { return nil }
             if c.kind == .bool, inline.contains(c.id) { return nil }
             let gate = c.enabledBy.flatMap { by in p.controls.first { $0.id == by } }
             return Row(control: c, gate: gate)

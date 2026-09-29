@@ -274,15 +274,19 @@ extension EditViewModel {
     private func recomputeSoloAudible() {
         guard hasAnySolo else { soloAudibleObjectIDs = []; return }
         var audible: Set<UUID> = []
+        // ONE walk of the tree for the parent of everything: `parentGroup(for:)` searches the whole
+        // tree, so asking it once per leaf (and again per ancestor) was quadratic — about a second
+        // in Debug for a group of 600 pieces, at every press of the solo key.
+        let parents = parentIDMap()
 
         func closeOverAncestors() {
             for id in Array(audible) {
-                var anc = parentGroup(for: id)
-                while let a = anc { audible.insert(a.id); anc = parentGroup(for: a.id) }
+                var anc = parents[id]
+                while let a = anc { audible.insert(a); anc = parents[a] }
             }
         }
 
-        for leaf in allClips where isLeafAudible(leaf) { audible.insert(leaf.id) }
+        for leaf in allClips where isLeafAudible(leaf, parents: parents) { audible.insert(leaf.id) }
         closeOverAncestors()   // groups first: an audible group can itself send
 
         for o in allObjectsFlat where !o.isAux && audible.contains(o.id) {
@@ -307,18 +311,33 @@ extension EditViewModel {
     /// A leaf is audible if it — or an ancestor — appears in the roots (confirmed ∪
     /// temporary), or if its stem is soloed. "Audible" in the sense of solo alone: the mutes are
     /// composed on top (@see AudibilitySnapshot), they are not read here.
-    private func isLeafAudible(_ leaf: SoundObject) -> Bool {
+    private func isLeafAudible(_ leaf: SoundObject, parents: [UUID: UUID]) -> Bool {
         let sid = leaf.stemID ?? mainStemID
         if soloedStemIDs.contains(sid) { return true }
-        return isInRootClosure(leaf.id, roots: soloRootIDs)
+        return isInRootClosure(leaf.id, roots: soloRootIDs, parents: parents)
     }
 
     /// True if `id` — or one of its ancestors — belongs to `roots`.
-    private func isInRootClosure(_ id: UUID, roots: Set<UUID>) -> Bool {
+    private func isInRootClosure(_ id: UUID, roots: Set<UUID>, parents: [UUID: UUID]) -> Bool {
         if roots.contains(id) { return true }
-        var anc = parentGroup(for: id)
-        while let a = anc { if roots.contains(a.id) { return true }; anc = parentGroup(for: a.id) }
+        var anc = parents[id]
+        while let a = anc { if roots.contains(a) { return true }; anc = parents[a] }
         return false
+    }
+
+    /// child id → id of its IMMEDIATE parent group, for every object under a group (a top-level
+    /// object has no entry). One walk, O(N).
+    private func parentIDMap() -> [UUID: UUID] {
+        var map: [UUID: UUID] = [:]
+        func walk(_ arr: [SoundObject]) {
+            for o in arr {
+                guard case .group(let children, _) = o.kind else { continue }
+                for c in children { map[c.id] = o.id }
+                walk(children)
+            }
+        }
+        walk(items)
+        return map
     }
 
 }

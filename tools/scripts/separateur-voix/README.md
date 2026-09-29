@@ -1,7 +1,7 @@
 # Voice separator
 
 An OBJEKAT third-party script (@see `plan_separateur_voix.md`, the architecture decisions
-`D1`-`D6`). Right-click a spoken audio clip → **Scripts → "Separate voice / breaths / SS-CH"**.
+`D1`-`D6`). Right-click a spoken audio clip → **Scripts → "Separate voice / breaths / consonants…"** (the direct, no-panel entry was removed: the panel below is the only menu entry).
 
 It cuts the clip — no sound changed, nothing re-rendered — into a new group on the object's own
 lane, with three sub-lanes: **Voice**, **Breaths**, **Consonants**. The boundaries come from Whisper's
@@ -11,9 +11,9 @@ Kaldi, no conda: the precision a phonetic aligner buys is not needed here, since
 not correct anything — a boundary a few milliseconds off does not change what is heard, the pieces
 stay jointive.
 
-## Evaluate voice separation (interactive)
+## The panel (the only entry)
 
-Right-click the object → Scripts → **Evaluate voice separation…** opens a floating panel and lays the
+Right-click the object → Scripts → **Separate voice / breaths / consonants…** opens a floating panel and lays the
 zones the detector finds over the object: **breaths in white, consonants (SS/CH and others) in yellow**. Move a setting and
 the zones follow — nothing is cut, nothing is in the undo history. **Apply** then cuts exactly what is
 shown (a group with one sub-lane per block that is ON — Voice, Breaths, Consonants — one undo);
@@ -22,8 +22,11 @@ shown (a group with one sub-lane per block that is ON — Voice, Breaths, Conson
 Every criterion is a checkbox and a value (an unchecked box drops the criterion from the conjunction
 and greys the value). A zone is a run of frames where ALL the checked frame criteria hold.
 
-**The panel** — a small GLOBAL part (the text model, the progress bar: neither is a detection
-setting), then TWO fully independent blocks. Each block owns everything it detects with — its
+**The panel** — what a first use needs: **Create groups** (checked by default: each category's pieces
+are gathered into a group of its own — Voice / Breaths / Consonants — so the result is three blocks
+and not hundreds, which the timeline can draw at a decent frame rate), the **spoken language**
+(defaults to the interface language, remembered with the rest), the text model and the progress bar.
+Everything below is a detection setting, hidden behind the **Expert** button. Then TWO fully independent blocks. Each block owns everything it detects with — its
 criteria, hole filling, minimum length, text box and tolerance — and nothing is shared between them.
 
 | block | control | range | default | meaning |
@@ -143,7 +146,7 @@ Parakeet's tokens stretch over the silence (its word ends run late).
 
 ## Use
 
-Right-click the object → Scripts → Separate voice / breaths / SS-CH (the sub-lanes read Voice / Breaths / Consonants). Refused, with a clear reason
+Right-click the object → Scripts → Separate voice / breaths / consonants… (the sub-lanes read Voice / Breaths / Consonants). Refused, with a clear reason
 on stderr (surfaced by OBJEKAT as a notification): not an audio clip, missing source file, a
 looping object, a changed speed, or reversed playback — none of these leave the file positions
 Whisper reports lined up with what `object.explode` would cut.

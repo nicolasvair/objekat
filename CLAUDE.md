@@ -32,8 +32,8 @@ Four local branches are published NOWHERE and must stay that way: `history`,
 `claude/multilingual-ui-translation-1x8d35` (the last two are stale, the first two are not).
 Engine base **tracktion 3.5**, in `tracktion_engine/` — the folder carried the version in its
 name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump); it no
-longer does, so it can no longer go stale. The fork's branch is at `eb3956b9dad` since
-27 September 2026 (`5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
+longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
+unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
 An engine series of **31** patches in `engine-patches/3.5/`, numbered `0001`→`0033` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
@@ -1983,6 +1983,41 @@ What has landed since mid-August, in order:
   ⌘-linked plugin (a run is broken by them, so the plugin never changes place); a bin's block only
   moves within the root series or a rack's branch, never into another block; the header's colour
   dot cycles the palette rather than opening it.
+
+- **Hundreds of pieces: the scroll, the voice separator's panel, and a perf patch taken back**
+  (29 September 2026, on `main`) — a voice separation of a long take left several hundred blocks in
+  one open group, and the timeline fell to **1.6 fps** on horizontal scroll (Debug, UI mode, 600
+  pieces). The cause was ONE function: `SoundObject.occupiedLanes` filtered every child for every
+  child (N² copies of a large struct, read at every frame). It is O(N log N) now (**98 fps**).
+  The general rule that came out of it, worth applying before any "it is slow with many objects":
+  **what a frame reads must cost in proportion to what is SHOWN, not to what is HELD** — the same
+  shape was found in `recomputeSoloAudible` (`parentGroup(for:)` once per leaf: ~1 s at every press
+  of S with 600 pieces, now 0.12 s through one `parentIDMap()`). And a trap on the way:
+  `URL(fileURLWithPath:)` without `isDirectory:` does a `stat()` on the disk — never in anything
+  read while drawing (`displayName`, `fileName` use `(path as NSString).lastPathComponent`).
+  Measured with `sample` on the UI instance and a synthetic 600-piece `object.explode`
+  (`input.scroll` / `input.zoom` + `perf.frames`); **not measured in Release, nor on a real
+  project.** Horizontal zoom stays at ~25 fps (Debug): the cost left is SwiftUI's graph update over
+  the open group's blocks — a real fix means drawing an open group's children in the batched Canvas.
+  **Taken back, and why it is written here**: an engine patch (Tracktion re-sorts a track's clips
+  once per moved child, cubic through `ValueTree::indexOf`) was published as `0034` and reverted the
+  same day — it showed up in ONE profile, but the explode did not get faster and nothing proved the
+  freeze depended on it. A perf patch with no measured win is a fork to maintain for nothing.
+  The next engine patch is still `0034`. A `composedGroupName` rewrite was dropped for the same
+  reason. **Known and untreated**: undoing a cut inside a 600-piece group takes ~1.3 s in Debug
+  (the group is rebuilt whole: `isPatchable` does not compare a group's children).
+  **`object.explode` gained `group_lanes`** (each sub-lane's pieces gathered into a collapsed group,
+  the answer carries `lane_groups`) and **script panels gained `advanced`** on a control (hidden
+  until the window's "Expert" button; presentation only). The voice separator now has ONE menu
+  entry — the panel — with "Create groups" (on by default), the spoken language (interface language
+  by default, remembered like the rest) and every detection setting behind Expert.
+  Verified with no screen: builds; `scenario_families` 191, `scenario_voice_split`,
+  `scenario_plugin_selection` 58, `scenario_export_preview` 62, `scenario_breath_eval` (its one
+  failure, section g, is environmental: the real `scriptPanel.separateur-voix.eval` key exists in the
+  user's defaults). **Not seen**: the Expert button and the window's refit, the three named sub-groups on
+  the timeline, the language switch during a real transcription, and by ear the edges of the
+  sub-groups' windows. Known and left: model labels ("not installed") are computed with the
+  INTERFACE language, not the remembered spoken one.
 
 ### What is owed
 

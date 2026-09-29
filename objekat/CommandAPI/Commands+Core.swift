@@ -735,7 +735,11 @@ extension CommandRegistry {
                                   + "'lanes' + 1) — a piece takes the name of the lane it lands "
                                   + "on."),
                           ParamSpec("group_name", "string", required: false,
-                                    "The new group's own label; absent = the composed name.")],
+                                    "The new group's own label; absent = the composed name."),
+                          ParamSpec("group_lanes", "bool", required: false,
+                                    "true = each sub-lane's pieces are gathered into a collapsed "
+                                  + "group of their own (named by 'names'): the new group then holds "
+                                  + "one block per sub-lane. Default false.")],
                  // `explode` pushes its own undo (and pops it on a failed split).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -764,11 +768,14 @@ extension CommandRegistry {
                 }
             }
             let groupName = try p.optionalString("group_name")
+            let groupLanes = try p.optionalBool("group_lanes") ?? false
             do {
                 let result = try vm.explode(id: id, cuts: cuts, lanes: lanes,
-                                            names: names, groupName: groupName)
+                                            names: names, groupName: groupName,
+                                            groupLanes: groupLanes)
                 return .object([
                     "group": .string(result.groupID.uuidString),
+                    "lane_groups": .array(result.laneGroupIDs.map { .string($0.uuidString) }),
                     "pieces": .array(result.pieces.map { piece in
                         .object(["id": .string(piece.id.uuidString),
                                 "start": .number(piece.start),

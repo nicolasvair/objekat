@@ -23,6 +23,8 @@ extension EditViewModel {
     struct ExplodeResult {
         let groupID: UUID
         let pieces: [ExplodePiece]
+        /// One id per sub-lane, in lane order, when `groupLanes` was asked; empty otherwise.
+        let laneGroupIDs: [UUID]
     }
 
     /// The minimum a piece may last — below this a cut is not a cut, it is noise
@@ -38,6 +40,10 @@ extension EditViewModel {
     /// composed name ("Voix + Respirations + SS/CH") come out right for free. `groupName`, when
     /// given, is the group's own label; nil leaves it to the composed name.
     ///
+    /// `groupLanes`: each sub-lane's pieces are gathered into a group of their own (named after
+    /// the sub-lane), so the new group holds a handful of blocks instead of hundreds — what a long
+    /// take needs to stay workable (the timeline draws and hit-tests every block of an open group).
+    ///
     /// ONE undo point for the whole thing (`pushUndo()` here, nothing upstream), because each cut
     /// manufactures the id the next one has to aim at — N separate `object.split_at` calls could
     /// not be chained into a single ⌘Z from a script.
@@ -49,7 +55,8 @@ extension EditViewModel {
     /// than `explodeMinPieceDuration`.
     @discardableResult
     func explode(id: UUID, cuts: [Double], lanes: [Int],
-                 names: [String]? = nil, groupName: String? = nil) throws -> ExplodeResult {
+                 names: [String]? = nil, groupName: String? = nil,
+                 groupLanes: Bool = false) throws -> ExplodeResult {
         guard let original = find(id: id) else { throw ExplodeError.notFound }
         guard case .clip = original.kind else { throw ExplodeError.notAClip }
         guard !isMissing(original) else { throw ExplodeError.missing }
@@ -123,7 +130,7 @@ extension EditViewModel {
             }
             var c = withCapturedPluginStates(obj)
             c.lane = lanes[i]
-            if let names, lanes[i] < names.count { c.label = names[lanes[i]] }
+            if !groupLanes, let names, lanes[i] < names.count { c.label = names[lanes[i]] }
             children.append(c)
             reportPieces.append(ExplodePiece(id: obj.id, start: obj.startTime,
                                              duration: obj.duration, childLane: lanes[i]))
@@ -140,6 +147,30 @@ extension EditViewModel {
         }
         selectedIDs.subtract(pieceIDs)
         pruneScriptOverlays()
+
+        var laneGroupIDs: [UUID] = []
+        if groupLanes {
+            // One collapsed group per sub-lane, on that sub-lane, holding its pieces on row 0.
+            // Children keep their absolute times, as in the single-group case.
+            var byLane: [Int: [SoundObject]] = [:]
+            for var c in children {
+                let lane = c.lane
+                c.lane = 0
+                byLane[lane, default: []].append(c)
+            }
+            children = byLane.keys.sorted().map { lane in
+                let members = byLane[lane] ?? []
+                let lo = members.map(\.startTime).min() ?? objStart
+                let hi = members.map { $0.startTime + $0.duration }.max() ?? objEnd
+                var label: String? = nil
+                if let names, lane < names.count { label = names[lane] }
+                let g = SoundObject(startTime: lo, duration: hi - lo, lane: lane,
+                                    stemID: original.stemID, label: label,
+                                    kind: .group(children: members, isExpanded: false))
+                laneGroupIDs.append(g.id)
+                return g
+            }
+        }
 
         var group = SoundObject(
             startTime: objStart, duration: objEnd - objStart,
@@ -159,6 +190,6 @@ extension EditViewModel {
         resyncAllSends()
         selectedIDs = [group.id]
         isDirty = true
-        return ExplodeResult(groupID: group.id, pieces: reportPieces)
+        return ExplodeResult(groupID: group.id, pieces: reportPieces, laneGroupIDs: laneGroupIDs)
     }
 }

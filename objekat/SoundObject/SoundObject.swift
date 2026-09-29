@@ -570,7 +570,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if let l = label { return l }
         switch kind {
         case .clip(let fp, _, _, _, _):
-            return URL(fileURLWithPath: fp).lastPathComponent
+            return (fp as NSString).lastPathComponent
         case .group:
             let composed = composedGroupName
             // An EMPTY group has nothing to be named after, and "" is not a name: it falls back
@@ -674,7 +674,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     }
     var fileName: String {
         switch kind {
-        case .clip(let fp, _, _, _, _): return URL(fileURLWithPath: fp).lastPathComponent
+        case .clip(let fp, _, _, _, _): return (fp as NSString).lastPathComponent
         case .group: return "Groupe"
         case .aux: return "Aux"
         case .midiClip: return "MIDI"

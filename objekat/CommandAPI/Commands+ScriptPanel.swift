@@ -83,6 +83,10 @@ extension CommandRegistry {
                                                  step: step, unit: o["unit"]?.stringValue ?? "",
                                                  enabledBy: o["enabled_by"]?.stringValue)
                 control.options = options
+                if let adv = o["advanced"] {
+                    guard let b = adv.boolValue else { throw bad("control '\(id)': advanced must be a bool") }
+                    control.advanced = b
+                }
                 controls.append(control)
             }
             for c in controls {
@@ -106,9 +110,9 @@ extension CommandRegistry {
                         + "a status line, Validate / Cancel. One panel per connection (a second "
                         + "replaces the first). Headless: the panel exists, no window opens.",
                  params: [ParamSpec("title", "string", required: false, "Window title."),
-                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?}>",
+                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?,advanced?}>",
                                     "kind: bool | number | button | choice | progress | section. A progress is a bar the script drives (value 0…1, null = indeterminate); a section is a heading. A number needs min, max, step; a choice needs options [{id,label}] and its value is an option id. "
-                                  + "enabled_by = the id of a bool control that greys this one."),
+                                  + "enabled_by = the id of a bool control that greys this one. advanced = true hides the control until the hand presses the window's Expert button."),
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the panel closes if it disappears."),
                           ParamSpec("status", "string", required: false, "Initial status line."),

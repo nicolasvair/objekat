@@ -13,10 +13,7 @@
   "context": "object",
   "menu": [
     {
-      "title": "Separate voice / breaths / SS-CH"
-    },
-    {
-      "title": "Evaluate voice separation…",
+      "title": "Separate voice / breaths / consonants…",
       "arguments": [
         "--eval-separation"
       ]

@@ -365,7 +365,7 @@ def wait_for(fn, label, timeout=30.0, step=0.1):
 
 
 PANEL_IDS = {
-    "model", "progress",
+    "model", "progress", "group_lanes", "language",
     "b_on", "b_unvoiced_on", "b_unvoiced", "b_below_speech_on", "b_below_speech", "b_cutoff",
     "b_min_len_on", "b_min_len", "b_fill_on", "b_fill", "b_text_on", "b_tolerance",
     "s_fill_on", "s_fill", "s_text_on", "s_tolerance",
@@ -453,6 +453,8 @@ def section_d(c):
         v = g0["values"]
         check("d: the panel carries the model, progress, breath block and consonant block controls — and nothing else",
               set(v) == PANEL_IDS, sorted(set(v) ^ PANEL_IDS))
+        check("d: 'create groups' is ON by default, the spoken language is one of fr / en / es",
+              v["group_lanes"] in (True, 1) and v["language"] in ("fr", "en", "es"), v)
         check("d: defaults: model none (--no-asr), breaths 0.4 / 10 dB / 200 Hz / 120 ms, hole 20 ms, text 500 ms",
               (v["model"], v["b_unvoiced"], v["b_below_speech"], v["b_cutoff"], v["b_min_len"], v["b_fill"],
                v["b_tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 100), v)

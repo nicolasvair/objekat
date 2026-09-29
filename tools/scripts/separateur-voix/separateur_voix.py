@@ -265,8 +265,8 @@ def panel_text(language):
     def plural(n, fr, en, es):
         return _pick(language, fr[n > 1], en[n != 1], es[n != 1])
     return {
-        "title": _pick(language, "Évaluer la séparation de la voix", "Evaluate voice separation",
-                       "Evaluar la separación de la voz"),
+        "title": _pick(language, "Séparer la voix / respirations / consonnes", "Separate voice / breaths / consonants",
+                       "Separar voz / respiraciones / consonantes"),
         "analysing": _pick(language, "Analyse du signal…", "Analysing the signal…", "Analizando la señal…"),
         "analysed": _pick(language, "Analyse du signal terminée", "Signal analysed", "Señal analizada"),
         "transcribing": _pick(language, "Transcription", "Transcribing", "Transcribiendo"),
@@ -337,6 +337,16 @@ def panel_controls(language, model_labels, model="align"):
                     "enabled_by": prefix + "text_on"})
 
     # ── global ──
+    lang_ids = ("fr", "en", "es")
+    out.append({"id": "group_lanes", "kind": "bool", "value": True,
+                "label": L("Créer des groupes (voix / respirations / consonnes)",
+                           "Create groups (voice / breaths / consonants)",
+                           "Crear grupos (voz / respiraciones / consonantes)")})
+    out.append({"id": "language", "kind": "choice",
+                "label": L("Langue parlée", "Spoken language", "Idioma hablado"),
+                "value": language if language in lang_ids else "en",
+                "options": [{"id": "fr", "label": "Français"}, {"id": "en", "label": "English"},
+                            {"id": "es", "label": "Español"}]})
     out.append({"id": "model", "kind": "choice", "label": L("Texte (modèle)", "Text (model)", "Texto (modelo)"),
                 "value": model, "options": [{"id": m, "label": model_labels[m]} for m in tr.MODEL_IDS]})
     out.append({"id": "progress", "kind": "progress", "label": text["analysing"], "value": None})
@@ -370,6 +380,11 @@ def panel_controls(language, model_labels, model="align"):
     pair("s_", s, "refine", L("Affiner sur le pic HF (−)", "Refine on the HF peak (−)",
                               "Afinar sobre el pico HF (−)"), "dB", 3, 30, 1)
     shared_tail("s_", s)
+    # Everything after the progress bar is a detection setting: kept out of sight until the
+    # window's "Expert" button is pressed (the values are still there, remembered and read back).
+    first = next(i for i, c in enumerate(out) if c["id"] == "sec_breath")
+    for c in out[first:]:
+        c["advanced"] = True
     return out
 
 
@@ -384,15 +399,23 @@ class Transcriber:
         import threading
         self.obj, self.language, self.load = obj, language, mono_loader
         self.results = queue.Queue()
-        self.done = {}          # model → (words, seconds, from_cache) | RuntimeError
+        self.done = {}          # model → (words, seconds, from_cache) | RuntimeError (for `self.language`)
         self.running = None
         self.progress = {"model": None, "f": None}     # the running model's fraction (None = unknown)
         self._threading = threading
 
-    def key(self, model):
+    def key(self, model, language=None):
         o = self.obj
         return words_cache_key(o["file"], o["source_offset"], o["duration"], o.get("speed", 1.0),
-                               self.language, model)
+                               language or self.language, model)
+
+    def set_language(self, language):
+        """The spoken language changed: what was transcribed in the other one is not this one's words.
+        A worker still running keeps going (a thread cannot be cancelled); its result is dropped by
+        `collect`, which is also what frees the slot for the new language."""
+        if language != self.language:
+            self.language = language
+            self.done.clear()
 
     def request(self, model):
         """Starts `model` unless it is done or already running. Returns True when something is (now)
@@ -402,6 +425,7 @@ class Transcriber:
         if self.running is not None:
             return True          # one at a time; `collect` starts the wanted one when this ends
         self.running = model
+        lang = self.language
         self.progress = {"model": model, "f": None}
 
         def report(f):
@@ -413,10 +437,10 @@ class Transcriber:
                 def compute():
                     mono, sr = self.load()
                     t0 = time.time()
-                    return tr.transcribe(model, mono, sr, self.language, progress=report), time.time() - t0
-                self.results.put((model, cached_words(self.key(model), compute)))
+                    return tr.transcribe(model, mono, sr, lang, progress=report), time.time() - t0
+                self.results.put((model, lang, cached_words(self.key(model, lang), compute)))
             except Exception as e:  # noqa: BLE001 — a backend failing is a label, not a crash
-                self.results.put((model, RuntimeError(str(e))))
+                self.results.put((model, lang, RuntimeError(str(e))))
 
         self._threading.Thread(target=work, daemon=True).start()
         return True
@@ -427,10 +451,11 @@ class Transcriber:
         finished = []
         while True:
             try:
-                model, outcome = self.results.get_nowait()
+                model, lang, outcome = self.results.get_nowait()
             except queue.Empty:
                 return finished
-            self.done[model] = outcome
+            if lang == self.language:
+                self.done[model] = outcome
             if self.running == model:
                 self.running = None
             finished.append(model)
@@ -526,13 +551,16 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
                 return None
             return outcome[0]
 
+        def lang_of(values):
+            return values.get("language") or language
+
         def zones_for(values):
             settings = detect.EvalSettings.from_values(values)
             k = (settings.breath.unvoiced, settings.breath.cutoff)
             if k not in speech_levels:
                 speech_levels[k] = detect.eval_speech_level(feats, *k)
             return settings, detect.eval_zones(feats, settings, duration, words_for(values),
-                                               language or "fr", speech_levels[k])
+                                               lang_of(values) or "fr", speech_levels[k])
 
         def push_status(busy=False):
             parts = [x for x in (zone_note["text"], words_note["text"]) if x]
@@ -559,7 +587,7 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
                 shown_model["id"] = "none"
                 words_note["text"] = ""
                 return
-            if not tr.installed(model, language):
+            if not tr.installed(model, transcriber.language):
                 words_note["text"] = text["missing"]
                 return
             transcriber.request(model)
@@ -587,6 +615,8 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
 
         current = app.send("script.panel.get", {"panel_id": pid})
         values = current["values"]
+        transcriber.set_language(lang_of(values))     # the remembered language, if any
+        last_lang = lang_of(values)
         show_words(values.get("model", "none"))
         settings, zones = show_zones(values)
         last_wanted = values.get("model", "none")
@@ -604,6 +634,11 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
             values = current["values"]
             finished = transcriber.collect()
             wanted = values.get("model", "none")
+            lang = lang_of(values)
+            if lang != last_lang:
+                last_lang = lang
+                transcriber.set_language(lang)
+                last_wanted = None      # forces the words to be shown (or transcribed) again
             if wanted != last_wanted or finished:
                 last_wanted = wanted
                 show_words(wanted)     # also starts `wanted` when a finished model freed the worker
@@ -628,7 +663,7 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
                     names = names[:max(piece_lanes) + 1]
                     result = app.send("object.explode", {
                         "id": object_id, "cuts": [start + c for c in cuts], "lanes": piece_lanes,
-                        "names": names,
+                        "names": names, "group_lanes": bool(current["values"].get("group_lanes", True)),
                         "group_name": "%s — separated" % obj.get("name", object_id)})
                     try:
                         app.send("object.select", {"ids": [result["group"]]})

@@ -40,6 +40,10 @@ struct ScriptPanelControl: Equatable, Sendable {
     let enabledBy: String?
     /// A `choice`'s options, in the order the script gave them. Empty for every other kind.
     var options: [ScriptPanelOption] = []
+    /// Drawn only once the hand has pressed the window's "Expert" button — the settings a first
+    /// use never needs. Purely presentational: the value is still there, still read back in
+    /// `values`, still remembered; a hidden control simply keeps whatever it holds.
+    var advanced = false
 }
 
 /// One entry of a `choice`: a stable id (what the script reads back) and the label drawn.
