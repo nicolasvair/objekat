@@ -332,15 +332,15 @@ check("compute_eval_features reports progress: rising, ending on 1.0 (%d calls)"
 d = detect.EvalSettings.from_values({})
 check("defaults — breaths: voicing 0.4, 10 dB, cutoff 200 Hz, 120 ms",
       (d.breath.unvoiced, d.breath.below_speech, d.breath.cutoff, d.breath.min_len) == (0.4, 10.0, 200.0, 120.0))
-check("defaults — each block owns its hole filling ON 20 ms, text ON, tolerance 500 ms",
-      all((x.fill_on, x.fill, x.text_on, x.tolerance) == (True, 20.0, True, 500.0)
+check("defaults — each block owns its hole filling ON 20 ms, text ON, tolerance 100 ms",
+      all((x.fill_on, x.fill, x.text_on, x.tolerance) == (True, 20.0, True, 100.0)
           for x in (d.breath, d.sibilant)) and not hasattr(d, "common"))
 check("the end margin is gone", not hasattr(d.breath, "end_margin") and not hasattr(d.breath, "end_margin_on"))
 es = detect.EvalSettings.from_values({"b_cutoff": 400, "b_below_speech_on": False, "b_tolerance": 300,
                                       "b_fill": 0, "s_zcr": 0.2, "s_on": False})
 check("EvalSettings.from_values reads the prefixed panel ids",
       es.breath.cutoff == 400.0 and es.breath.below_speech_on is False and es.breath.tolerance == 300.0
-      and es.breath.fill == 0.0 and es.sibilant.tolerance == 500.0 and es.sibilant.zcr == 0.2 and es.sibilant.on is False
+      and es.breath.fill == 0.0 and es.sibilant.tolerance == 100.0 and es.sibilant.zcr == 0.2 and es.sibilant.on is False
       and es.breath.min_len == 120.0)
 
 

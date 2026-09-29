@@ -445,9 +445,9 @@ def section_d(c):
               set(v) == PANEL_IDS, sorted(set(v) ^ PANEL_IDS))
         check("d: defaults: model none (--no-asr), breaths 0.4 / 10 dB / 200 Hz / 120 ms, hole 20 ms, text 500 ms",
               (v["model"], v["b_unvoiced"], v["b_below_speech"], v["b_cutoff"], v["b_min_len"], v["b_fill"],
-               v["b_tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 500), v)
-        check("d: the consonant block owns its own hole filling and tolerance (20 ms / 500 ms), no shared control",
-              (v["s_fill"], v["s_tolerance"], v["s_text_on"], v["b_text_on"]) == (20, 500, True, True), v)
+               v["b_tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 100), v)
+        check("d: the consonant block owns its own hole filling and tolerance (20 ms / 100 ms), no shared control",
+              (v["s_fill"], v["s_tolerance"], v["s_text_on"], v["b_text_on"]) == (20, 100, True, True), v)
         check("d: defaults: SS/CH hf/lf -6 dB, zcr 0.12, HF +10 dB, 30 ms, 12 dB, 'not voiced' off",
               (v["s_hf_ratio"], v["s_zcr"], v["s_hf_energy"], v["s_min_len"], v["s_refine"],
                v["s_unvoiced_on"]) == (-6, 0.12, 10, 30, 12, False), v)

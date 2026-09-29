@@ -36,7 +36,7 @@ criteria, hole filling, minimum length, text box and tolerance — and nothing i
 | | · low-pass | 100–1000 Hz | 200 | the low-pass both energies are measured after; greyed with the energy box |
 | | Minimum length | 80–200 ms | 120 | the shortest zone kept |
 | | Hole filling | 0–100 ms | on · 20 | a hole of candidate frames this short or shorter, between two candidate stretches, is bridged |
-| | Use the text · Tolerance | 50–800 ms | on · 500 | @see "The text" below |
+| | Use the text · Tolerance | 50–800 ms | on · 100 | @see "The text" below |
 | Consonants (SS/CH and others) | Detect consonants | box | on | ONE set of settings for s, ch, z, j, f, v, plosive bursts… — no sub-category, no per-sound setting |
 | | Not voiced (voicing <) | 0.3–0.9 | **off** · 0.7 | optional, and OFF: z, j and v are voiced and a voicing ceiling drops them (the historical detector's known fault) |
 | | High / low > | −20…+20 dB | −6 | energy 4–10 kHz over energy 80 Hz–1 kHz. Negative on purpose: a voiced z has its voicebar in the low band and reads −3 to −5 dB (an s reads +30); vowels read −15 to −35 and are kept out by the next criterion |
@@ -45,7 +45,7 @@ criteria, hole filling, minimum length, text box and tolerance — and nothing i
 | | Minimum length | 10–150 ms | 30 | |
 | | Refine on the HF peak (−) | 3–30 dB | 12 | each zone is tightened onto the frames within this of its own HF peak (applied after the minimum length) |
 | | Hole filling | 0–100 ms | on · 20 | as above, this block's own |
-| | Use the text · Tolerance | 50–800 ms | on · 500 | @see "The text" below |
+| | Use the text · Tolerance | 50–800 ms | on · 100 | @see "The text" below |
 
 Control ids: `b_…` for the breaths, `s_…` for the consonants (the historical SS/CH prefix, kept), so
 `b_fill` / `s_fill`, `b_tolerance` / `s_tolerance`, and so on; only `model` and `progress` are bare.
@@ -63,7 +63,7 @@ within THAT block's *Tolerance* of a place the text allows it — distance 0 whe
   bursts… and a grapheme table could never name them all; the signal criteria still have to fire).
   What the text removes here is friction lying in a silence, far from any speech.
 
-At the default 500 ms the criterion is loose (the words' own timing is loose: tens to hundreds of ms);
+At 500 ms the criterion is loose (the words' own timing is loose: tens to hundreds of ms);
 tighten it to make the text bite.
 
 **Overlap between the blocks — the ONLY coupling: Consonants win.** A breath is defined by what it lacks (voicing, low

@@ -215,8 +215,8 @@ check("panel: global model + progress, then two blocks — breaths, consonants",
 check("panel: a progress bar, indeterminate at the start", byid["progress"]["kind"] == "progress" and byid["progress"]["value"] is None)
 expected = {  # id: (min, max, default)
     "b_unvoiced": (0.2, 0.6, 0.4), "b_below_speech": (3, 15, 10), "b_cutoff": (100, 1000, 200),
-    "b_min_len": (80, 200, 120), "b_fill": (0, 100, 20), "b_tolerance": (50, 800, 500),
-    "s_fill": (0, 100, 20), "s_tolerance": (50, 800, 500),
+    "b_min_len": (80, 200, 120), "b_fill": (0, 100, 20), "b_tolerance": (50, 800, 100),
+    "s_fill": (0, 100, 20), "s_tolerance": (50, 800, 100),
     "s_unvoiced": (0.3, 0.9, 0.7), "s_hf_ratio": (-20, 20, -6), "s_zcr": (0.05, 0.4, 0.12),
     "s_hf_energy": (0, 30, 10), "s_min_len": (10, 150, 30), "s_refine": (3, 30, 12)}
 check("panel: every slider's range and default are the ones decided",

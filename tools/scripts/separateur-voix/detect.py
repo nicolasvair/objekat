@@ -548,7 +548,7 @@ class BreathEval:
     fill_on: bool = True
     fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
     text_on: bool = True
-    tolerance: float = 500.0    # ms — a zone is kept only within this of a word GAP (the text's "nobody speaks")
+    tolerance: float = 100.0    # ms — a zone is kept only within this of a word GAP (the text's "nobody speaks")
 
     @classmethod
     def from_values(cls, values: dict) -> "BreathEval":
@@ -579,7 +579,7 @@ class SibilantEval:
     fill_on: bool = True
     fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
     text_on: bool = True
-    tolerance: float = 500.0    # ms — a zone is kept only within this of a WORD (not of a gap between words)
+    tolerance: float = 100.0    # ms — a zone is kept only within this of a WORD (not of a gap between words)
 
     @classmethod
     def from_values(cls, values: dict) -> "SibilantEval":
