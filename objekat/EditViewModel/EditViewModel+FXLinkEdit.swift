@@ -79,8 +79,14 @@ extension EditViewModel {
     }
 
     /// The live state of a definition plugin, read off one of the attached members' instances.
+    /// The FIRST member that answers stands for all of them: that holds because the engine keeps
+    /// linked instances in agreement at rest, chunk included
+    /// (`OBJEngineCore.syncLinkedStateFrom:force:`) — the parameter mirror alone would leave a
+    /// setting the host cannot see (a Pro-Q 4 band's "Spectral" switch) on one member only.
+    /// `flushLinkedStateSync` first, so a change made a moment ago has reached them all.
     private func fxDefinitionLiveState(_ d: ObjectPlugin,
                                        members: [(hostID: UUID, block: ObjectPlugin)]) -> String? {
+        engine?.flushLinkedStateSync()
         for m in members {
             for inst in m.block.fxBlock?.plugins ?? [] where inst.linkGroupID == d.id {
                 if let s = fxLiveState(of: inst), !s.isEmpty { return s }

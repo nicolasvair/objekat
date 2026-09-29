@@ -540,11 +540,17 @@ struct OBJParamMirror : public te::AutomatableParameter::Listener {
     /// (`beginChangeGesture` / `endChangeGesture`), ce que Tracktion relaie ici : c'est le seul
     /// signal qui dise « l'utilisateur s'intéresse à CE paramètre » sans qu'il ait à le dérégler.
     std::function<void(int)>                  onGestureBegin;
+    /// Optionnel : le geste sur ce paramètre vient de FINIR (bouton relâché). Sert à la synchro
+    /// d'ÉTAT au repos d'un groupe lié (@see syncLinkedStateFrom:force:), qui attend que la main
+    /// ait lâché avant de lire le chunk du plugin.
+    std::function<void(int)>                  onGestureEnd;
     juce::Array<te::AutomatableParameter*>    params;  // bruts : le plugin les possède
 
     OBJParamMirror(te::Plugin::Ptr plugin, std::function<void(int, float)> cb,
-                   std::function<void(int)> gestureCb = {})
-        : onChange(std::move(cb)), onGestureBegin(std::move(gestureCb)) {
+                   std::function<void(int)> gestureCb = {},
+                   std::function<void(int)> gestureEndCb = {})
+        : onChange(std::move(cb)), onGestureBegin(std::move(gestureCb)),
+          onGestureEnd(std::move(gestureEndCb)) {
         for (auto* p : plugin->getAutomatableParameters()) {  // NOLINT — copy intentional
             if (!p) continue;
             params.add(p);
@@ -563,6 +569,10 @@ struct OBJParamMirror : public te::AutomatableParameter::Listener {
     void parameterChangeGestureBegin (te::AutomatableParameter& param) override {
         const int idx = params.indexOf(&param);
         if (idx >= 0 && onGestureBegin) onGestureBegin(idx);
+    }
+    void parameterChangeGestureEnd (te::AutomatableParameter& param) override {
+        const int idx = params.indexOf(&param);
+        if (idx >= 0 && onGestureEnd) onGestureEnd(idx);
     }
 };
 
@@ -887,9 +897,20 @@ struct OBJRenderChain {
 - (void)parkPluginsForObjectID:(NSString*)uuid;
 - (void)parkPlugin:(te::Plugin&)plugin;
 - (te::Plugin::Ptr)takeParkedPluginMatching:(const juce::ValueTree&)wantedTree;
+- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin;
 - (void)sweepPluginParking;
 - (void)propagateLinkedParamFromKey:(const std::string&)pluginKey index:(int)index value:(float)value;
 - (void)reportParamTouch:(const std::string&)pluginKey index:(int)index;
+// Synchro d'ÉTAT au repos d'un groupe lié — voir l'implémentation (MARK « État des instances
+// liées ») pour le pourquoi. Rend les clés des instances réellement écrasées.
+- (NSArray<NSString*>*)syncLinkedStateFrom:(const std::string&)pluginKey force:(BOOL)force;
+- (te::ExternalPlugin*)linkStateExternalForKey:(const std::string&)pluginKey;
+- (void)seedLinkStateBaseline:(const std::string&)pluginKey overwrite:(BOOL)overwrite;
+- (void)updateLinkStateTimer;
+- (void)tickLinkedState;
+- (void)linkedGestureEndedForKey:(const std::string&)pluginKey;
+- (std::unique_ptr<OBJParamMirror>)makeLinkMirrorForKey:(const std::string&)pluginKey
+                                                 plugin:(te::Plugin::Ptr)plugin;
 // Suivi du focus de l'app pour les fenêtres d'éditeurs (cf. init).
 - (void)hidePluginEditorsOnResign;
 - (void)restorePluginEditorsOnActivate;
@@ -897,7 +918,6 @@ struct OBJRenderChain {
 // Résout la PLUGIN ValueTree (description AU/VST3 / type built-in / état sauvé) pour un
 // descripteur d'inspecteur, SANS l'insérer nulle part. Tree invalide = échec de résolution.
 - (juce::ValueTree)resolvedPluginTreeForInfo:(NSDictionary*)pluginInfo
-- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin;
                                     stateXML:(NSString* _Nullable)stateXML;
 // Renumérote les EditItemID d'un arbre PLUGIN désérialisé. @see l'implémentation.
 - (void)freshenItemIDsInTree:(juce::ValueTree&)tree;
@@ -1089,6 +1109,30 @@ struct OBJRenderChain {
     std::unordered_map<std::string, std::unique_ptr<OBJParamMirror>> _mirrors; // pluginKey → listener
     // groupID → (index param → dernière valeur canonique). Sert de garde anti-boucle.
     std::unordered_map<std::string, std::unordered_map<int, float>> _groupCanonical;
+
+    // SYNCHRO D'ÉTAT AU REPOS d'un groupe lié (@see syncLinkedStateFrom:force:). Le mirror de
+    // paramètres ne voit que les paramètres que l'hôte peut écrire ; un plugin comme Pro-Q 4
+    // en garde d'autres (le switch « Spectral » d'une bande dynamique…) qui n'existent QUE dans
+    // son chunk. Cette synchro-là compare des chunks, pas des paramètres.
+    //   baseline    : le chunk que l'instance avait à la dernière synchro (ou à l'armement) ;
+    //   lastSeen    : le chunk lu au tick précédent (exigence de stabilité, hors force) ;
+    //   echoUntil   : jusqu'à cet instant (ms), les notifications de paramètres de cette
+    //                 instance sont l'écho de NOTRE écriture d'état, pas un geste de la main ;
+    //   gestureOpen : gestes de paramètre en cours (un chunk lu pendant un geste est en vol) ;
+    //   pending     : instances dont le chunk diffère de la baseline mais pas encore stable ;
+    //   unstable    : modèles de plugin dont deux lectures successives diffèrent (horloge,
+    //                 analyseur… dans le chunk) — seul un `force` les pousse.
+    std::unordered_map<std::string, juce::MemoryBlock> _linkStateBaseline;
+    std::unordered_map<std::string, juce::MemoryBlock> _linkStateLastSeen;
+    std::unordered_map<std::string, double>            _linkStateEchoUntil;
+    // pluginKey → (gestes ouverts, instant du dernier geste ouvert en ms). Un Begin sans End n'est
+    // pas exclu (plugin mal élevé) : au-delà de 5 s le geste est tenu pour fermé.
+    std::unordered_map<std::string, std::pair<int, double>> _linkStateGestureOpen;
+    std::unordered_set<std::string>                    _linkStatePending;
+    std::unordered_set<std::string>                    _unstableStateTypes;
+    std::unordered_map<std::string, int>               _linkStatePushCount;   // par SOURCE
+    int                                                _linkStatePushTotal;
+    std::unique_ptr<OBJCallbackTimer>                  _linkStateTimer;
 
     // Écoute des params tant qu'un objet consolidé est ouvert (re-miroir vivant). Écouteurs
     // installés sur les FX user de l'objet édité ; vidés à la fin de session (begin/end).
@@ -2069,6 +2113,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
                 // rend le même objet — @see OBJParkedPlugin.
                 if (auto parked = [self takeParkedPluginMatching:savedTree]) {
                     if (auto p = list.insertPlugin(parked->state, index)) {
+                        [self reassertWantedState:savedTree onTakenPlugin:p];
                         NSLog(@"[PERF] plugin « %@ » repris de la consigne (aucun chargement)",
                               pluginName);
                         return p;
@@ -2113,7 +2158,6 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         auto& fmgr = _engine->getPluginManager().pluginFormatManager;
         for (int fi = 0; fi < fmgr.getNumFormats(); fi++) {
             auto* fmt = fmgr.getFormat(fi);
-                        [self reassertWantedState:savedTree onTakenPlugin:p];
             if (!fmt || fmt->getName() != fmtStr) continue;
             juce::String searchId = (fmtStr == "AudioUnit" && !idStr.startsWith("AudioUnit:"))
                                     ? "AudioUnit:" + idStr : idStr;
@@ -4733,7 +4777,19 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
             NSLog(@"[OBJ] état plugin ré-appliqué : %s → %s", it->name.toRawUTF8(),
                   (after == it->desired) ? "OK" : "toujours différent (état non bit-stable ?)");
         }
+        // L'état est posé : si cette instance appartient à un groupe lié, c'est maintenant que
+        // son chunk devient la référence de la synchro d'état (avant, elle traversait ses
+        // réglages d'usine et toute baseline lue alors aurait été fausse).
+        te::Plugin::Ptr settled = it->plugin;
         it = _pendingStateReasserts.erase(it);
+        if (!_linkGroup.empty())
+            for (auto& kv : _pluginMap)
+                if (kv.second == settled) {
+                    // Écrase : une baseline lue avant la fin de la ré-affirmation est fausse.
+                    _linkStateBaseline.erase(kv.first);
+                    [self seedLinkStateBaseline:kv.first overwrite:NO];
+                    break;
+                }
     }
     if (_pendingStateReasserts.empty() && _stateReassertTimer)
         _stateReassertTimer->stopTimer();
@@ -4807,6 +4863,27 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     return nullptr;
 }
 
+// Une instance reprise de la consigne est VIVANTE : son arbre porte le chunk d'il y a un instant
+// (c'est ce qui l'a fait apparier), mais l'instance a pu bouger depuis — un réglage fait dans
+// l'éditeur du plugin ne remonte dans l'arbre qu'à un flush, que la mise en consigne ne fait pas.
+// Réinsérer l'instance telle quelle reprenait donc ces réglages d'AVANT au lieu de la consigne du
+// modèle (un Pro-L laissé à +12 dB revenait à +12 dB). On ré-applique l'état demandé, comme
+// `applyPluginStateXML:` : d'abord tout de suite, puis derrière la ré-affirmation (un AU pas
+// encore initialisé refuse `setStateInformation` en silence). Rien à faire — et rien de coûteux —
+// quand l'instance est déjà à l'état demandé (le cas ordinaire d'un aller-retour à l'identique).
+- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin {
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin.get());
+    if (!ext) return;
+    const juce::MemoryBlock wanted = objDesiredStateFromTree(wantedTree);
+    if (wanted.getSize() == 0) return;
+    if (auto* pi = ext->getAudioPluginInstance())
+        if (objReadInstanceState(*pi) == wanted) return;
+    NSLog(@"[OBJ] consigne : instance reprise à un autre état que celui demandé — ré-application de '%s'",
+          ext->getName().toRawUTF8());
+    ext->restorePluginStateFromValueTree(wantedTree);
+    [self schedulePluginStateReassert:plugin fromTree:wantedTree];
+}
+
 // ONGLETS INACTIFS. Quitter un onglet démonte son projet, donc ses plugins partent en consigne
 // comme pour n'importe quel aller-retour — mais un retour sur l'onglet arrive bien après 20 s.
 // Or ré-instancier les UADx dans la même session est lent, voire interminable : 37 à 97 s
@@ -4863,27 +4940,6 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 - (void)forcePluginStatesForRenderClone:(te::Edit&)clone {
     auto& dm = _engine->getDeviceManager();
     const double sr = dm.getSampleRate() > 0 ? dm.getSampleRate() : 44100.0;
-// Une instance reprise de la consigne est VIVANTE : son arbre porte le chunk d'il y a un instant
-// (c'est ce qui l'a fait apparier), mais l'instance a pu bouger depuis — un réglage fait dans
-// l'éditeur du plugin ne remonte dans l'arbre qu'à un flush, que la mise en consigne ne fait pas.
-// Réinsérer l'instance telle quelle reprenait donc ces réglages d'AVANT au lieu de la consigne du
-// modèle (un Pro-L laissé à +12 dB revenait à +12 dB). On ré-applique l'état demandé, comme
-// `applyPluginStateXML:` : d'abord tout de suite, puis derrière la ré-affirmation (un AU pas
-// encore initialisé refuse `setStateInformation` en silence). Rien à faire — et rien de coûteux —
-// quand l'instance est déjà à l'état demandé (le cas ordinaire d'un aller-retour à l'identique).
-- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin {
-    auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin.get());
-    if (!ext) return;
-    const juce::MemoryBlock wanted = objDesiredStateFromTree(wantedTree);
-    if (wanted.getSize() == 0) return;
-    if (auto* pi = ext->getAudioPluginInstance())
-        if (objReadInstanceState(*pi) == wanted) return;
-    NSLog(@"[OBJ] consigne : instance reprise à un autre état que celui demandé — ré-application de '%s'",
-          ext->getName().toRawUTF8());
-    ext->restorePluginStateFromValueTree(wantedTree);
-    [self schedulePluginStateReassert:plugin fromTree:wantedTree];
-}
-
     const int    bs = dm.getBlockSize()  > 0 ? dm.getBlockSize()  : 512;
 
     int reasserted = 0;
@@ -4994,6 +5050,9 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;                // instance pas (encore) créée
 
+    // Ouvrir l'éditeur d'un membre lié : la référence de la synchro d'état est cet instant.
+    [self seedLinkStateBaseline:pk overwrite:YES];
+
     __unsafe_unretained OBJEngineCore* weakSelf = self;  // self possède les watches → toujours vivant
     OBJTouchWatch w;
     w.plugin = it->second;
@@ -5044,20 +5103,37 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 
 // MARK: LINK d'instances
 
+- (std::unique_ptr<OBJParamMirror>)makeLinkMirrorForKey:(const std::string&)pk
+                                                 plugin:(te::Plugin::Ptr)plugin {
+    __unsafe_unretained OBJEngineCore* weakSelf = self;  // self possède _mirrors → toujours vivant
+    std::string pkCopy = pk;
+    return std::make_unique<OBJParamMirror>(plugin,
+        [weakSelf, pkCopy](int index, float value) {
+            [weakSelf propagateLinkedParamFromKey:pkCopy index:index value:value];
+        },
+        // Les gestes encadrent la synchro d'ÉTAT : un chunk lu main posée est un chunk en vol.
+        [weakSelf, pkCopy](int) {
+            auto& g = weakSelf->_linkStateGestureOpen[pkCopy];
+            ++g.first;
+            g.second = juce::Time::getMillisecondCounterHiRes();
+        },
+        [weakSelf, pkCopy](int) {
+            [weakSelf linkedGestureEndedForKey:pkCopy];
+        });
+}
+
 - (void)setPluginLinkGroup:(NSString*)pluginKey groupID:(NSString*)groupID {
     std::string pk([pluginKey UTF8String]);
     std::string gid([groupID UTF8String]);
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;  // instance pas (encore) créée
     _linkGroup[pk] = gid;
-    if (_mirrors.find(pk) == _mirrors.end()) {
-        __unsafe_unretained OBJEngineCore* weakSelf = self;  // self possède _mirrors → toujours vivant
-        std::string pkCopy = pk;
-        _mirrors[pk] = std::make_unique<OBJParamMirror>(it->second,
-            [weakSelf, pkCopy](int index, float value) {
-                [weakSelf propagateLinkedParamFromKey:pkCopy index:index value:value];
-            });
-    }
+    if (_mirrors.find(pk) == _mirrors.end())
+        _mirrors[pk] = [self makeLinkMirrorForKey:pk plugin:it->second];
+    // Le chunk d'aujourd'hui est la référence de la synchro d'état (sans effet tant que
+    // l'instance n'est pas chargée ou que son état se pose : la baseline viendra plus tard).
+    [self seedLinkStateBaseline:pk overwrite:NO];
+    [self updateLinkStateTimer];
 }
 
 - (void)clearPluginLinkGroup:(NSString*)pluginKey {
@@ -5098,14 +5174,20 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 // Nettoie la valeur canonique du groupe s'il ne reste plus aucun membre.
 - (void)teardownPluginLink:(const std::string&)pk {
     _mirrors.erase(pk);  // ~OBJParamMirror retire les listeners (params encore vivants)
+    _linkStateBaseline.erase(pk);
+    _linkStateLastSeen.erase(pk);
+    _linkStateEchoUntil.erase(pk);
+    _linkStateGestureOpen.erase(pk);
+    _linkStatePending.erase(pk);
     auto git = _linkGroup.find(pk);
-    if (git == _linkGroup.end()) return;
+    if (git == _linkGroup.end()) { [self updateLinkStateTimer]; return; }
     std::string group = git->second;
     _linkGroup.erase(git);
     bool stillUsed = false;
     for (auto& kv : _linkGroup)
         if (kv.second == group) { stillUsed = true; break; }
     if (!stillUsed) _groupCanonical.erase(group);
+    [self updateLinkStateTimer];
 }
 
 // Vrai tant que l'état d'un plugin fraîchement créé n'a pas été ré-affirmé : son instance est
@@ -5135,6 +5217,16 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     // restaurer son état — l'original perdait son réglage, la copie l'avait.
     if ([self isPluginStateSettling:pk]) return;
 
+    // Cette instance vient de recevoir un ÉTAT entier d'un autre membre (syncLinkedStateFrom:) :
+    // les notifications de paramètres qui en découlent sont l'écho de cette écriture — et
+    // certains plugins en émettent des valeurs intermédiaires qu'aucune garde canonique ne
+    // reconnaît. Les rediffuser ferait revenir l'état sur celui qu'on vient de poser.
+    {
+        auto eit = _linkStateEchoUntil.find(pk);
+        if (eit != _linkStateEchoUntil.end()
+            && juce::Time::getMillisecondCounterHiRes() < eit->second) return;
+    }
+
     auto& canon = _groupCanonical[group];
     auto cit = canon.find(index);
     if (cit != canon.end() && std::abs(cit->second - value) <= 1.0e-6f) return;  // écho
@@ -5148,6 +5240,359 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         if (index >= 0 && index < params.size())
             params[index]->setParameter(value, juce::sendNotification);
     }
+}
+
+// MARK: État des instances liées — synchro AU REPOS
+//
+// Le mirror de paramètres (OBJParamMirror) ne porte que ce que l'hôte peut lire et écrire :
+// les paramètres publiés par le plugin. Un plugin comme FabFilter Pro-Q 4 en garde d'autres
+// — 86 paramètres non inscriptibles par l'hôte, dont le switch « Spectral » d'une bande
+// dynamique — qui n'existent QUE dans son chunk d'état, et il en réécrit certains sans jamais
+// notifier. Régler l'un d'eux sur le membre B d'un bin ne bougeait donc pas A.
+//
+// La synchro d'état compare des CHUNKS : le chunk lu sur l'instance qui vient de bouger est
+// posé (`restorePluginStateFromValueTree`, PAS `applyPluginStateXML:` qui programmerait une
+// ré-affirmation différée) sur chaque autre membre du groupe. Elle ne se déclenche jamais en
+// pleine main : un chunk lu pendant un geste est un chunk en vol, et un plugin dont deux
+// lectures successives diffèrent (horloge, analyseur dans le chunk) ne se pousse que sur
+// demande explicite (`force` : fermeture d'éditeur, instantané d'annulation, sauvegarde).
+//
+// Le mirror de paramètres n'est pas remplacé pour autant : il reste le chemin rapide, image
+// par image, de tout ce que l'hôte voit. Ceci est le filet du reste.
+
+static constexpr double kObjLinkStateEchoMs         = 600.0;
+static constexpr double kObjLinkStateGestureStaleMs = 5000.0;
+static constexpr int    kObjLinkStateTimerMs        = 500;
+static constexpr int    kObjLinkStateGestureEndMs   = 300;
+
+// L'instance externe d'une clé, seulement si elle est en état de LIRE et d'ÉCRIRE un chunk :
+// instance chargée, état posé (pas de ré-affirmation en attente). nullptr sinon.
+- (te::ExternalPlugin*)linkStateExternalForKey:(const std::string&)pk {
+    auto it = _pluginMap.find(pk);
+    if (it == _pluginMap.end() || !it->second) return nullptr;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    if (!ext || ext->getAudioPluginInstance() == nullptr) return nullptr;
+    if ([self isPluginStateSettling:pk]) return nullptr;
+    return ext;
+}
+
+// Pose la référence de la synchro : le chunk que l'instance a MAINTENANT. `overwrite` NON, on
+// ne pose que si rien n'y est ; OUI, on écrase — sauf si l'instance a un changement en attente
+// (l'écraser l'effacerait avant qu'il ait été poussé).
+- (void)seedLinkStateBaseline:(const std::string&)pk overwrite:(BOOL)overwrite {
+    if (_linkGroup.find(pk) == _linkGroup.end()) return;
+    if (!overwrite && _linkStateBaseline.count(pk)) return;
+    if (overwrite && _linkStatePending.count(pk)) return;
+    auto* ext = [self linkStateExternalForKey:pk];
+    if (!ext) return;
+    juce::MemoryBlock cur = objReadInstanceState(*ext->getAudioPluginInstance());
+    if (cur.getSize() == 0) return;
+    _linkStateBaseline[pk] = std::move(cur);
+    _linkStateLastSeen.erase(pk);
+}
+
+- (void)linkedGestureEndedForKey:(const std::string&)pk {
+    auto git = _linkStateGestureOpen.find(pk);
+    if (git != _linkStateGestureOpen.end() && git->second.first > 0) --git->second.first;
+    if (_linkGroup.find(pk) == _linkGroup.end()) return;
+    _linkStatePending.insert(pk);   // « à regarder » : la synchro dira s'il y a vraiment eu un écart
+    __unsafe_unretained OBJEngineCore* rawSelf = self;   // le moteur vit autant que le process
+    std::string pkCopy = pk;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kObjLinkStateGestureEndMs * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
+        [rawSelf syncLinkedStateFrom:pkCopy force:NO];
+    });
+}
+
+// Y a-t-il un éditeur ouvert sur un membre d'un groupe d'au moins deux instances ?
+- (BOOL)linkStateWantsTimer {
+    for (auto& ed : _editorWindows) {
+        if (!ed.second) continue;
+        auto git = _linkGroup.find(ed.first);
+        if (git == _linkGroup.end()) continue;
+        int members = 0;
+        for (auto& kv : _linkGroup)
+            if (kv.second == git->second) ++members;
+        if (members >= 2) return YES;
+    }
+    return NO;
+}
+
+// Le minuteur ne tourne que tant qu'il y a quelque chose à surveiller : un éditeur ouvert sur
+// un membre d'un groupe de deux instances ou plus. Sans éditeur, personne ne peut changer un
+// paramètre que l'hôte ne voit pas — et les autres déclencheurs (fin de geste, fermeture,
+// instantané, sauvegarde) couvrent le reste.
+- (void)updateLinkStateTimer {
+    const BOOL want = [self linkStateWantsTimer];
+    if (want) {
+        if (!_linkStateTimer) {
+            _linkStateTimer = std::make_unique<OBJCallbackTimer>();
+            __unsafe_unretained OBJEngineCore* rawSelf = self;   // self possède le timer
+            _linkStateTimer->onTick = [rawSelf] { [rawSelf tickLinkedState]; };
+        }
+        if (!_linkStateTimer->isTimerRunning()) _linkStateTimer->startTimer(kObjLinkStateTimerMs);
+    } else if (_linkStateTimer && _linkStateTimer->isTimerRunning()) {
+        _linkStateTimer->stopTimer();
+    }
+}
+
+- (void)tickLinkedState {
+    if (![self linkStateWantsTimer]) { [self updateLinkStateTimer]; return; }
+    // Copie des clés : la synchro modifie les maps qu'on parcourt.
+    std::set<std::string> keys(_linkStatePending.begin(), _linkStatePending.end());
+    for (auto& ed : _editorWindows)
+        if (ed.second && _linkGroup.count(ed.first)) keys.insert(ed.first);
+    for (auto& pk : keys) [self syncLinkedStateFrom:pk force:NO];
+}
+
+// Lit le chunk de `pk` et, s'il diffère de la référence, le pose sur les autres membres de son
+// groupe. Rend les clés des instances réellement écrasées.
+//
+// `force` NO : exige la stabilité (aucun geste ouvert ET même chunk qu'à la lecture précédente,
+// sinon l'instance reste « pending » et on repasse) et refuse les modèles instables.
+// `force` OUI : pousse tel quel — fermeture d'éditeur, instantané, sauvegarde, ou l'API.
+- (NSArray<NSString*>*)syncLinkedStateFrom:(const std::string&)pk force:(BOOL)force {
+    NSMutableArray<NSString*>* pushed = [NSMutableArray array];
+    auto git = _linkGroup.find(pk);
+    if (git == _linkGroup.end()) return pushed;
+    const std::string group = git->second;
+
+    te::ExternalPlugin* src = [self linkStateExternalForKey:pk];
+    if (!src) return pushed;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+
+    // Pas de test de fenêtre d'écho ici (contrairement à propagateLinkedParamFromKey:) : ce qu'une
+    // instance vient de RECEVOIR est déjà écarté par la baseline reposée après le push, par
+    // l'exigence de stabilité et par le test bit-stable ci-dessous — et un réglage fait tout de
+    // suite après une réception (ou un `force` : instantané, sauvegarde, fermeture d'éditeur)
+    // doit être pris en compte, pas retardé.
+
+    const std::string type = objPluginTypeKey(*src);
+
+    std::vector<std::string> targets;
+    for (auto& kv : _linkGroup) {
+        if (kv.second != group || kv.first == pk) continue;
+        auto* t = [self linkStateExternalForKey:kv.first];
+        if (!t || objPluginTypeKey(*t) != type) continue;
+        targets.push_back(kv.first);
+    }
+    if (targets.empty()) { _linkStatePending.erase(pk); return pushed; }
+
+    juce::AudioPluginInstance& srcPI = *src->getAudioPluginInstance();
+    juce::MemoryBlock cur = objReadInstanceState(srcPI);
+    if (cur.getSize() == 0) return pushed;       // AU pas encore initialisé : rien à dire
+
+    // Pas de référence : on n'a aucun moyen de savoir si ce chunk est un changement. On en fait
+    // la référence — le pire cas est un premier changement manqué, jamais un écrasement à tort.
+    auto bit = _linkStateBaseline.find(pk);
+    if (bit == _linkStateBaseline.end()) {
+        _linkStateBaseline[pk] = cur;
+        _linkStatePending.erase(pk);
+        return pushed;
+    }
+    if (cur == bit->second) {
+        _linkStatePending.erase(pk);
+        _linkStateLastSeen.erase(pk);
+        return pushed;
+    }
+
+    if (!force) {
+        if (_unstableStateTypes.count(type)) return pushed;
+        bool gestureOpen = false;
+        if (auto gi = _linkStateGestureOpen.find(pk); gi != _linkStateGestureOpen.end())
+            gestureOpen = gi->second.first > 0 && (now - gi->second.second) < kObjLinkStateGestureStaleMs;
+        auto ls = _linkStateLastSeen.find(pk);
+        const bool stable = ls != _linkStateLastSeen.end() && ls->second == cur;
+        _linkStateLastSeen[pk] = cur;
+        if (gestureOpen || !stable) { _linkStatePending.insert(pk); return pushed; }
+    }
+
+    // Deux lectures d'affilée doivent rendre le même chunk : sinon le modèle de plugin n'est pas
+    // bit-stable et « chunk différent » ne veut rien dire pour lui. On l'apprend une fois.
+    if (objReadInstanceState(srcPI) != cur) {
+        if (_unstableStateTypes.insert(type).second)
+            NSLog(@"[OBJ] synchro d'état liée : '%s' n'est pas bit-stable — poussé sur demande seulement",
+                  src->getName().toRawUTF8());
+        if (!force) { _linkStatePending.insert(pk); return pushed; }
+    }
+
+    // Pose de l'état sur chacun des autres membres.
+    const juce::String encoded = cur.toBase64Encoding();
+    const int program = srcPI.getNumPrograms() > 0 ? srcPI.getCurrentProgram() : -1;
+    for (const auto& tk : targets) {
+        auto* t = [self linkStateExternalForKey:tk];
+        if (!t) continue;
+        juce::AudioPluginInstance& tPI = *t->getAudioPluginInstance();
+        const juce::MemoryBlock tCur = objReadInstanceState(tPI);
+        if (tCur == cur) { _linkStateBaseline[tk] = tCur; continue; }   // déjà pareil
+
+        // AVANT l'écriture : les notifications de paramètres qu'elle va provoquer arrivent
+        // pendant ou juste après, et doivent être reconnues comme un écho.
+        _linkStateEchoUntil[tk] = juce::Time::getMillisecondCounterHiRes() + kObjLinkStateEchoMs;
+
+        // Une copie de l'arbre de la cible portant le chunk de la source : jamais l'arbre vivant
+        // (identité, courbes d'automation) — `restorePluginStateFromValueTree` ne lit que
+        // `state` et `programNum`.
+        juce::ValueTree copy = t->state.createCopy();
+        copy.setProperty(te::IDs::state, encoded, nullptr);
+        if (program >= 0) copy.setProperty(te::IDs::programNum, program, nullptr);
+        t->restorePluginStateFromValueTree(copy);
+
+        // Le plugin change ses paramètres en interne sans le notifier : on relit les valeurs
+        // que l'hôte voit, pour que `currentValue` (celui que l'audio et l'API lisent) suive.
+        // (Ce que fait `ExternalAutomatableParameter::valueChangedByPlugin`, dont le type n'est
+        // pas exposé hors du moteur : le paramètre hôte est retrouvé par le même identifiant
+        // que celui que `ExternalPlugin::buildParameterList` lui donne — l'`paramID` du
+        // paramètre JUCE, sinon son index.)
+        {
+            const auto& jparams = tPI.getParameters();
+            for (int i = 0; i < jparams.size(); ++i) {
+                auto* jp = jparams[i];
+                if (!jp) continue;
+                const juce::String pid = (dynamic_cast<juce::AudioProcessorParameterWithID*>(jp) != nullptr)
+                    ? static_cast<juce::AudioProcessorParameterWithID*>(jp)->paramID
+                    : juce::String(i);
+                if (auto ap = t->getAutomatableParameterByID(pid))
+                    ap->setParameter(jp->getValue(), juce::sendNotification);
+            }
+        }
+
+        // Un état peut changer la LISTE des paramètres (le mirror tient des pointeurs bruts et
+        // un index par position) : on le reconstruit si le compte n'est plus le même.
+        if (auto mit = _mirrors.find(tk); mit != _mirrors.end()
+            && mit->second->params.size() != t->getAutomatableParameters().size()) {
+            auto pit = _pluginMap.find(tk);
+            mit->second.reset();          // retire les écouteurs AVANT d'en poser de nouveaux
+            if (pit != _pluginMap.end())
+                _mirrors[tk] = [self makeLinkMirrorForKey:tk plugin:pit->second];
+        }
+
+        _linkStateBaseline[tk] = objReadInstanceState(tPI);
+        _linkStateLastSeen.erase(tk);
+        _linkStatePending.erase(tk);
+        [pushed addObject:[NSString stringWithUTF8String:tk.c_str()]];
+    }
+
+    // Les valeurs canoniques du groupe deviennent celles de la source : un paramètre que les
+    // cibles rapportent encore à retardement n'est plus pris pour un geste à rediffuser.
+    {
+        auto& canon = _groupCanonical[group];
+        const auto sp = src->getAutomatableParameters();   // NOLINT — copy intentional
+        for (int i = 0; i < sp.size(); ++i)
+            if (sp[i]) canon[i] = sp[i]->getCurrentValue();
+    }
+
+    _linkStateBaseline[pk] = cur;
+    _linkStateLastSeen.erase(pk);
+    _linkStatePending.erase(pk);
+
+    if (pushed.count > 0) {
+        ++_linkStatePushCount[pk];
+        ++_linkStatePushTotal;
+        NSLog(@"[OBJ] synchro d'état liée : %s → %lu instance(s)", src->getName().toRawUTF8(),
+              (unsigned long)pushed.count);
+        if (_onLinkedPluginStateSynced)
+            _onLinkedPluginStateSynced([NSString stringWithUTF8String:pk.c_str()], pushed);
+    }
+    return pushed;
+}
+
+- (void)flushLinkedStateSync {
+    // Ce qui attend (fin de geste, lecture instable) + tout membre lié dont un éditeur est ouvert :
+    // c'est lui que la main peut avoir changé sans que rien ne l'ait encore constaté. Un modèle
+    // instable n'est relu que s'il attend déjà — sinon chaque instantané le pousserait à vide.
+    std::set<std::string> keys(_linkStatePending.begin(), _linkStatePending.end());
+    for (auto& ed : _editorWindows) {
+        if (!ed.second || !_linkGroup.count(ed.first)) continue;
+        auto* ext = [self linkStateExternalForKey:ed.first];
+        if (ext && _unstableStateTypes.count(objPluginTypeKey(*ext))) continue;
+        keys.insert(ed.first);
+    }
+    for (auto& pk : keys) [self syncLinkedStateFrom:pk force:YES];
+}
+
+- (NSArray<NSString*>*)debugLinkStateTick:(NSString*)pluginKey force:(BOOL)force {
+    return [self syncLinkedStateFrom:std::string([pluginKey UTF8String]) force:force];
+}
+
+// Réparation d'un groupe DÉJÀ en désaccord (session sauvée avant la synchro d'état) : le chunk de
+// `pluginKey` fait foi, quoi qu'en dise sa référence. Une baseline VIDE n'égale aucun chunk lisible,
+// donc le `force` pousse.
+- (NSArray<NSString*>*)resyncLinkedStateFrom:(NSString*)pluginKey {
+    const std::string pk([pluginKey UTF8String]);
+    juce::MemoryBlock saved;
+    const bool had = _linkStateBaseline.count(pk) > 0;
+    if (had) saved = _linkStateBaseline[pk];
+    _linkStateBaseline[pk] = juce::MemoryBlock();
+    _linkStateEchoUntil.erase(pk);
+    NSArray<NSString*>* pushed = [self syncLinkedStateFrom:pk force:YES];
+    // La synchro a renoncé (pas de cible prête, chunk illisible) sans poser de référence : on
+    // ne laisse pas derrière nous une baseline vide qui ferait pousser le prochain tick venu.
+    auto it = _linkStateBaseline.find(pk);
+    if (it != _linkStateBaseline.end() && it->second.getSize() == 0) {
+        if (had) it->second = saved; else _linkStateBaseline.erase(it);
+    }
+    return pushed;
+}
+
+- (BOOL)isLinkStatePending:(NSString*)pluginKey {
+    return _linkStatePending.count(std::string([pluginKey UTF8String])) > 0;
+}
+
+- (NSDictionary*)linkStateDebugInfo {
+    NSMutableDictionary* pushes   = [NSMutableDictionary dictionary];
+    NSMutableDictionary* baseline = [NSMutableDictionary dictionary];
+    NSMutableDictionary* gestures = [NSMutableDictionary dictionary];
+    NSMutableArray*      pending  = [NSMutableArray array];
+    NSMutableArray*      unstable = [NSMutableArray array];
+    for (auto& kv : _linkStatePushCount)
+        pushes[[NSString stringWithUTF8String:kv.first.c_str()]] = @(kv.second);
+    for (auto& kv : _linkStateBaseline)
+        baseline[[NSString stringWithUTF8String:kv.first.c_str()]] = @((NSUInteger)kv.second.getSize());
+    for (auto& kv : _linkStateGestureOpen)
+        if (kv.second.first > 0)
+            gestures[[NSString stringWithUTF8String:kv.first.c_str()]] = @(kv.second.first);
+    for (auto& pk : _linkStatePending) [pending addObject:[NSString stringWithUTF8String:pk.c_str()]];
+    for (auto& t : _unstableStateTypes) [unstable addObject:[NSString stringWithUTF8String:t.c_str()]];
+    return @{ @"pushes_total": @(_linkStatePushTotal),
+              @"pushes": pushes,
+              @"baselines": baseline,
+              @"gesture_open": gestures,
+              @"pending": pending,
+              @"unstable_types": unstable,
+              @"timer_running": @(_linkStateTimer && _linkStateTimer->isTimerRunning()) };
+}
+
+- (NSString* _Nullable)pluginStateChunkBase64:(NSString*)pluginKey {
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end()) return nil;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    auto* pi = ext ? ext->getAudioPluginInstance() : nullptr;
+    if (!pi) return nil;
+    const juce::MemoryBlock mb = objReadInstanceState(*pi);
+    if (mb.getSize() == 0) return nil;
+    // Base64 STANDARD (RFC 4648), pas celui de JUCE (`toBase64Encoding`, préfixé de la taille et
+    // d'un alphabet maison) : c'est pour un script, qui doit pouvoir le décoder avec n'importe
+    // quelle bibliothèque et en modifier un octet.
+    NSData* data = [NSData dataWithBytes:mb.getData() length:mb.getSize()];
+    return [data base64EncodedStringWithOptions:0];
+}
+
+- (BOOL)debugInjectPluginStateChunk:(NSString*)base64 forPlugin:(NSString*)pluginKey {
+    if (!pluginKey || base64.length == 0) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end()) return NO;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    if (!ext || !ext->getAudioPluginInstance()) return NO;
+    // Ni baseline ni synchro : c'est le geste de la main vu de l'extérieur, un changement d'état
+    // que rien n'a annoncé — exactement ce que la synchro au repos est là pour rattraper.
+    NSData* data = [[[NSData alloc] initWithBase64EncodedString:base64 options:0] autorelease];
+    if (data.length == 0) return NO;
+    const juce::MemoryBlock chunk(data.bytes, (size_t)data.length);
+    juce::ValueTree copy = ext->state.createCopy();
+    copy.setProperty(te::IDs::state, chunk.toBase64Encoding(), nullptr);   // l'encodage de JUCE, celui de l'arbre
+    ext->restorePluginStateFromValueTree(copy);
+    return YES;
 }
 
 - (void)removePlugin:(NSString*)pluginKey fromObjectID:(NSString*)uuid {
@@ -5260,10 +5705,18 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         OBJEngineCore* engineRef = rawSelf;
         std::string keyCopy = pk;
         NSString* nsKey = [NSString stringWithUTF8String:keyCopy.c_str()];
+        // Dernière chance de la synchro d'état AVANT que la fenêtre ne parte : ce que la main
+        // vient de régler dans l'éditeur (un switch que l'hôte ne voit pas) rejoint le groupe.
+        [engineRef syncLinkedStateFrom:keyCopy force:YES];
         engineRef->_editorWindows.erase(keyCopy);
+        [engineRef updateLinkStateTimer];
         if (engineRef.onEditorVisibilityChanged) engineRef.onEditorVisibilityChanged(nsKey, NO);
     }, floating, accent);
     _editorWindows[pk].reset(win);
+    // Un éditeur ouvert sur un membre lié : la référence de la synchro d'état est ce que
+    // l'instance a À L'OUVERTURE, et le minuteur se met à surveiller ce que la main va y changer.
+    [self seedLinkStateBaseline:pk overwrite:YES];
+    [self updateLinkStateTimer];
     if (self.onEditorVisibilityChanged) self.onEditorVisibilityChanged(pluginKey, YES);
     NSLog(@"[OBJ] openPluginEditor: '%s' ouvert", title.toRawUTF8());
 }
@@ -5274,7 +5727,10 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 
 - (void)closePluginEditor:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
-    if (_editorWindows.erase(pk) > 0 && self.onEditorVisibilityChanged)
+    if (_editorWindows.count(pk)) [self syncLinkedStateFrom:pk force:YES];   // avant l'erase
+    const bool closed = _editorWindows.erase(pk) > 0;
+    [self updateLinkStateTimer];
+    if (closed && self.onEditorVisibilityChanged)
         self.onEditorVisibilityChanged(pluginKey, NO);
 }
 
@@ -5693,6 +6149,13 @@ static void objDumpPluginList(te::PluginList& pl,
             bool fromParking = false;
             if (auto parked = [self takeParkedPluginMatching:vt]) {
                 p = pl.insertPlugin(parked->state, indexBefore(pl, anchor));
+                if (p) {
+                    fromParking = true;
+                    // Ré-applique l'état demandé (et programme la ré-affirmation) : l'instance
+                    // consignée peut avoir bougé depuis que son arbre a été lu.
+                    [self reassertWantedState:vt onTakenPlugin:p];
+                }
+            }
             if (!p) p = pl.insertPlugin(vt, indexBefore(pl, anchor));
             if (!p) {
                 NSLog(@"[FX] compile: insertion refusée pour '%s'", pk.c_str());
@@ -6150,13 +6613,6 @@ static void objDumpPluginList(te::PluginList& pl,
 
 - (NSArray<NSString*>*)availableOutputDevices {
     auto& dm = _engine->getDeviceManager().deviceManager;
-                if (p) {
-                    fromParking = true;
-                    // Ré-applique l'état demandé (et programme la ré-affirmation) : l'instance
-                    // consignée peut avoir bougé depuis que son arbre a été lu.
-                    [self reassertWantedState:vt onTakenPlugin:p];
-                }
-            }
     NSMutableArray* result = [NSMutableArray array];
     for (auto* type : dm.getAvailableDeviceTypes()) {
         // getDeviceNames() sert une liste MISE EN CACHE : sans ce scan, une carte branchée

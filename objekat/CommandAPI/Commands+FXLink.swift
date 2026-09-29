@@ -433,6 +433,24 @@ extension CommandRegistry {
                             })])
         }
 
+        register("fxlink.sync",
+                 summary: """
+                 Repairs a bin whose members have drifted apart (a session saved before the engine \
+                 kept linked instances in agreement at rest, chunk included): the state of this \
+                 instance stands, and is laid on the other members of its group whatever the \
+                 engine believed it had already synchronised. `pushed` lists the instances \
+                 overwritten (empty if they already agreed). Not undoable, like any change of a \
+                 plugin's state made outside the model; the project is marked modified.
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "The instance whose state is to prevail.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("plugin")
+            let pushed = engine.resyncLinkedState(from: id.uuidString)
+            return .object(["plugin": .string(id.uuidString),
+                            "pushed": .array(pushed.map { .string($0) })])
+        }
+
         register("plugin.link_overlay",
                  summary: "What the timeline's link overlay (halo + star) would show while this plugin's "
                         + "editor is open: the source object, the objects joined to it and the colour "

@@ -420,6 +420,39 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Détache pluginKey de son groupe (retire les listeners). À appeler avant destruction.
 - (void)clearPluginLinkGroup:(NSString*)pluginKey;
 
+// SYNCHRO D'ÉTAT AU REPOS des instances d'un groupe lié. Le link de paramètres ne porte que ce
+// que le plugin publie à l'hôte ; un plugin comme Pro-Q 4 garde d'autres réglages (le switch
+// « Spectral » d'une bande dynamique…) dans son seul chunk d'état. Quand un membre lié change
+// de chunk sans que l'hôte l'ait vu — constaté à la fin d'un geste, toutes les 500 ms tant qu'un
+// éditeur de groupe est ouvert, à la fermeture de cet éditeur — son chunk est posé sur les autres
+// membres du groupe (même modèle de plugin seulement). Rien à appeler pour cela.
+//
+// flushLinkedStateSync : force la constatation MAINTENANT pour tout ce qui peut avoir bougé (un
+// éditeur ouvert sur un membre lié, un geste terminé mais pas encore poussé). À appeler avant de
+// lire les états des plugins pour les figer — instantané d'annulation, sauvegarde, copie : sans
+// quoi ils fixeraient un groupe encore en désaccord avec lui-même.
+- (void)flushLinkedStateSync;
+// Rappelé (thread principal) quand un chunk vient d'être posé sur d'autres membres : le projet a
+// changé sans qu'aucun geste du modèle ne l'ait dit.
+@property (nonatomic, copy, nullable) void (^onLinkedPluginStateSynced)(NSString * _Nonnull sourceKey,
+                                                                        NSArray<NSString *> * _Nonnull targetKeys);
+// Diagnostic : compteurs de pushes, baselines (taille du chunk), gestes ouverts, instances en
+// attente, modèles instables, état du minuteur.
+- (NSDictionary * _Nonnull)linkStateDebugInfo;
+// Un tick de la synchro d'état sur UNE instance, à la demande (API de debug) — les clés des
+// instances écrasées. `force` NO exige la stabilité, comme le minuteur ; OUI pousse tel quel.
+- (NSArray<NSString *> * _Nonnull)debugLinkStateTick:(NSString * _Nonnull)pluginKey force:(BOOL)force;
+- (BOOL)isLinkStatePending:(NSString * _Nonnull)pluginKey;
+// Répare un groupe déjà en désaccord : le chunk de cette instance fait foi et est posé sur les
+// autres membres, sans rien demander à la référence. Les clés des instances écrasées.
+- (NSArray<NSString *> * _Nonnull)resyncLinkedStateFrom:(NSString * _Nonnull)pluginKey;
+// Le chunk d'état binaire VIVANT de l'instance (base64 standard), nil si absent ou illisible. La lecture
+// de `plugin.get_state`, qui compare deux membres sans passer par le modèle.
+- (NSString * _Nullable)pluginStateChunkBase64:(NSString * _Nonnull)pluginKey;
+// Pose un chunk (base64 standard) sur l'instance vivante SANS synchro ni baseline : un changement d'état
+// que rien n'a annoncé, comme celui d'une GUI native. Réservé à l'API de debug.
+- (BOOL)debugInjectPluginStateChunk:(NSString * _Nonnull)base64 forPlugin:(NSString * _Nonnull)pluginKey;
+
 // Rattache pluginKey à un groupe qu'il avait quitté, en ADOPTANT ses réglages : les valeurs
 // des paramètres d'un membre encore actif sont recopiées sur lui AVANT que ses propres
 // listeners ne soient armés. Sans cette précaution, le rejoignant pousserait ses réglages sur

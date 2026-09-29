@@ -426,6 +426,102 @@ extension CommandRegistry {
                             "value": .number(Double(value))])
         }
 
+        register("plugin.get_state",
+                 summary: """
+                 The LIVE binary state (chunk, standard base64) of an external plugin instance, read off the \
+                 engine — what a save or an undo snapshot would freeze, and the only place a \
+                 setting the host cannot see (a Pro-Q 4 band's "Spectral" switch) exists at all. \
+                 The way to check two members of an FX link agree: their chunks are equal. \
+                 `invalid_state` for a built-in plugin or an instance not loaded yet.
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "Target plugin instance."),
+                          ParamSpec("include_chunk", "bool", required: false,
+                                    "false to answer only the size (default true).")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            let includeChunk = try p.bool("include_chunk", or: true)
+            guard let chunk = engine.pluginStateChunkBase64(pluginID.uuidString) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "no readable state for \(pluginID.uuidString) "
+                                          + "(built-in, not loaded yet, or the unit refuses its state)")
+            }
+            let size = Data(base64Encoded: chunk)?.count ?? 0
+            var out: [String: JSONValue] = ["plugin": .string(pluginID.uuidString),
+                                            "size": .int(size)]
+            if includeChunk { out["state"] = .string(chunk) }
+            return .object(out)
+        }
+
+        #if DEBUG
+        register("debug.plugin_inject_state",
+                 summary: """
+                 DEBUG. Lays a binary chunk (standard base64, as `plugin.get_state` returns it) on a live \
+                 external plugin instance with NO link sync and NO baseline: a change of state \
+                 that nothing announced, like the one a native GUI makes. The resting-state sync \
+                 of an FX link is what is meant to catch it (`debug.link_state_tick`).
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "Target plugin instance."),
+                          ParamSpec("state", "string", "The chunk, base64.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            guard engine.debugInjectPluginStateChunk(try p.string("state"),
+                                                      forPlugin: pluginID.uuidString) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "cannot inject into \(pluginID.uuidString) "
+                                          + "(unknown, built-in, or not loaded yet)")
+            }
+            return .object(["plugin": .string(pluginID.uuidString)])
+        }
+
+        register("debug.link_state_tick",
+                 summary: """
+                 DEBUG. One tick of the FX-link resting-state sync on one instance: reads its chunk \
+                 and, if it differs from the reference, lays it on the other members of its group. \
+                 `force` false (default) demands stability like the 500 ms timer (no open gesture, \
+                 same chunk as the previous tick — so it takes two ticks and answers `pending` \
+                 in between); true pushes as an editor close or a save would. `pushed` lists the \
+                 instances actually overwritten.
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "The instance whose state changed."),
+                          ParamSpec("force", "bool", required: false, "Default false.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            let pushed = engine.debugLinkStateTick(pluginID.uuidString,
+                                                    force: try p.bool("force", or: false))
+            return .object(["plugin": .string(pluginID.uuidString),
+                            "pushed": .array(pushed.map { .string($0) }),
+                            "pending": .bool(engine.isLinkStatePending(pluginID.uuidString))])
+        }
+
+        register("debug.link_state",
+                 summary: """
+                 DEBUG. The resting-state sync's counters: pushes (total and by source instance), \
+                 the reference chunk size held per instance, gestures open, instances pending, the \
+                 plugin models learned unstable, and whether the 500 ms timer is running.
+                 """,
+                 undo: .none) { _ in
+            let engine = try CommandContext.shared.requireEngine()
+            let info = engine.linkStateDebugInfo()
+            @MainActor func counts(_ key: String) -> JSONValue {
+                let d = info[key] as? [String: NSNumber] ?? [:]
+                return .object(d.mapValues { .int($0.intValue) })
+            }
+            func names(_ key: String) -> JSONValue {
+                .array((info[key] as? [String] ?? []).sorted().map { .string($0) })
+            }
+            return .object(["pushes_total": .int((info["pushes_total"] as? NSNumber)?.intValue ?? 0),
+                            "pushes": counts("pushes"),
+                            "baselines": counts("baselines"),
+                            "gesture_open": counts("gesture_open"),
+                            "pending": names("pending"),
+                            "unstable_types": names("unstable_types"),
+                            "timer_running": .bool((info["timer_running"] as? NSNumber)?.boolValue ?? false)])
+        }
+        #endif
+
         // MARK: instruments (MIDI clips)
 
         register("instrument.set",

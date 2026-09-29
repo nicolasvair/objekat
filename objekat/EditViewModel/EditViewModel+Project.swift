@@ -548,6 +548,13 @@ extension EditViewModel {
     /// changing the UUIDs. Used to freeze the state before a copy/cut (the clipboard)
     /// or when saving. Does not mutate the model.
     func withCapturedPluginStates(_ obj: SoundObject) -> SoundObject {
+        // Linked instances agree with each other BEFORE their states are frozen (@see
+        // `currentSnapshot`). Once here, and not in the recursion below.
+        engine?.flushLinkedStateSync()
+        return capturedPluginStates(obj)
+    }
+
+    private func capturedPluginStates(_ obj: SoundObject) -> SoundObject {
         var o = obj
         if !obj.plugins.isEmpty {
             o.plugins = capturingPluginStates(obj.plugins)
@@ -556,7 +563,7 @@ extension EditViewModel {
             o.instruments = capturingPluginStates(obj.instruments)
         }
         if case .group(let children, let isExpanded) = obj.kind {
-            o.kind = .group(children: children.map { withCapturedPluginStates($0) },
+            o.kind = .group(children: children.map { capturedPluginStates($0) },
                             isExpanded: isExpanded)
         }
         return o
@@ -583,12 +590,14 @@ extension EditViewModel {
     /// Returns a copy of `items` where every plugin has its `stateXML` refreshed
     /// from the engine, for a complete persistence. Does not mutate `items`.
     func itemsWithCapturedPluginStates() -> [SoundObject] {
-        items.map { withCapturedPluginStates($0) }
+        engine?.flushLinkedStateSync()   // once for the whole sweep (@see `withCapturedPluginStates`)
+        return items.map { capturedPluginStates($0) }
     }
 
     /// The same for the bus FX chains carried by `stems` (INC 2). Does not mutate `stems`.
     func stemsWithCapturedPluginStates() -> [Stem] {
-        stems.map { stem in
+        engine?.flushLinkedStateSync()
+        return stems.map { stem in
             var s = stem
             if !stem.plugins.isEmpty { s.plugins = capturingPluginStates(stem.plugins) }
             return s

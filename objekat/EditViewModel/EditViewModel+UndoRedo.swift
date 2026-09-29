@@ -48,6 +48,10 @@ extension EditViewModel {
     /// innocuous action drags in a project loaded with plugins.
     func currentSnapshot() -> EditSnapshot {
         let t0 = CFAbsoluteTimeGetCurrent()
+        // Linked instances first agree with each other (a setting the host cannot see, made in
+        // one member's editor, may not have reached the others yet): otherwise the snapshot would
+        // freeze a group at odds with itself, and its undo would give that back.
+        engine?.flushLinkedStateSync()
         pluginStateCaptureCount = 0
         let snapshot = EditSnapshot(items: itemsWithCapturedPluginStates(),
                                     stems: stemsWithCapturedPluginStates(),
@@ -343,15 +347,15 @@ extension EditViewModel {
     /// re-applying a state to an AU for nothing is a `setStateInformation` for nothing, and on
     /// some plugins that is audible.
     static func changedPluginStates(_ old: SoundObject, _ new: SoundObject) -> [(id: UUID, xml: String)] {
-        var out: [(id: UUID, xml: String)] = []
-        func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
-            for (x, y) in zip(a, b) {
-                if x.isContainer, y.isContainer {
         changedPluginStates(old.plugins, new.plugins) + changedPluginStates(old.instruments, new.instruments)
     }
 
     /// The same for two chains (an object's, or a bus's: @see `applySnapshot`).
     static func changedPluginStates(_ old: [ObjectPlugin], _ new: [ObjectPlugin]) -> [(id: UUID, xml: String)] {
+        var out: [(id: UUID, xml: String)] = []
+        func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
+            for (x, y) in zip(a, b) {
+                if x.isContainer, y.isContainer {
                     for (va, vb) in zip(x.childSeries, y.childSeries) { walk(va, vb) }
                 } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
                     out.append((id: y.id, xml: xml))

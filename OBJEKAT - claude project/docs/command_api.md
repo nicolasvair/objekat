@@ -675,6 +675,33 @@ knowing before driving one:
   recreate a NEW one from the plugins' states as they were.
 - **Undo**: every mutator pushes ONE point (`undo: handled`), the registry restoring with the chains.
   `fxlink.set_output` and `fxlink.set_local_output` are hot (no recompile) — a drag's frames.
+- **A resting-state sync backs the parameter mirror up** (external plugins only, same plugin model,
+  instance loaded). The mirror carries what the plugin PUBLISHES to the host; a plugin like FabFilter
+  Pro-Q 4 keeps other settings (86 parameters the host cannot write, such as a dynamic band's
+  "Spectral" switch) in its binary chunk alone, and rewrites some parameters without notifying. So the
+  engine also compares CHUNKS: when a member's chunk differs from the reference it held (its chunk at
+  the last sync, or at editor opening), that chunk is laid on the other members of its group
+  (`restorePluginStateFromValueTree`, then the host-visible parameters are re-read). It is triggered
+  ~300 ms after a parameter gesture ends, every 500 ms while an editor of a group of two or more is
+  open (the timer only runs then), when such an editor closes, and before every undo snapshot, save and
+  copy (`flushLinkedStateSync`). Without `force` it demands STABILITY (no gesture open, same chunk as the
+  previous tick — hence two ticks) and skips a plugin model whose two successive reads differ
+  ("unstable", learned once); with `force` (close, snapshot, save) it pushes as is. A member that has
+  just received a chunk is deaf for 600 ms (its parameter notifications are the echo of the write).
+  **Two members' chunks are not byte-comparable**: a plugin re-encodes what it is given (Pro-Q's reads
+  back 2798 vs 2802 bytes for the same settings), so assert on a CHANGE propagating, never on equal
+  chunks. `flushLinkedStateSync` is not an API command; `fxlink.sync {plugin}` is its repair form for
+  a bin whose members had already drifted apart (that instance's chunk prevails, whatever the reference
+  says; `pushed` lists the instances overwritten; `undo: none`, marks the project modified).
+  `plugin.get_state {plugin, include_chunk?}` reads an external instance's LIVE chunk (`state`: standard
+  base64, `size` in bytes; `invalid_state` for a built-in or an unloaded instance). DEBUG builds add
+  `debug.plugin_inject_state {plugin, state}` (lays a chunk with no sync and no reference: a change of
+  state nothing announced, like a native GUI's), `debug.link_state_tick {plugin, force?}` (one sync tick
+  on one instance: `{pushed: [ids], pending}` — wait > 600 ms after a previous push to that instance,
+  and call it twice without `force`) and `debug.link_state {}` (`pushes_total`, `pushes` by source,
+  `baselines` = reference chunk size per instance, `gesture_open`, `pending`, `unstable_types`,
+  `timer_running`). None of them opens an editor, so headless can drive the whole path except the
+  editor-bound triggers (timer, close).
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
@@ -1536,6 +1563,7 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_markers.py` | markers / regions / comments: 78 assertions, including a cut, a reverse, an undo, a reload, the marks as snap targets, a region cropped and a mark that does not catch on itself |
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
+| `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |

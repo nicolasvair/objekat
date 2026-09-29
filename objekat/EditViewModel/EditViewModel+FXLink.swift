@@ -125,6 +125,12 @@ extension EditViewModel {
             guard let fb = b.fxBlock else { continue }
             referenced.insert(fb.linkID)
             guard !fb.isDetached else { continue }
+            // ONE member's state stands for the whole definition: the FIRST one met. That is right
+            // only because the members agree — which the engine's resting-state sync guarantees
+            // for anything the host cannot see (`OBJEngineCore.syncLinkedStateFrom:force:`), and
+            // which every caller here has just been assured of through `flushLinkedStateSync`
+            // (`itemsWithCapturedPluginStates`). Were two members to differ, the definition would
+            // silently take the first one's word.
             for inst in fb.plugins {
                 if let g = inst.linkGroupID, stateByDef[g] == nil,
                    let xml = inst.stateXML, !xml.isEmpty { stateByDef[g] = xml }

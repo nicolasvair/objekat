@@ -309,6 +309,13 @@ final class EditViewModel {
                     if let id, !isOpen { self.endPluginParamTouchWatch(id) }
                 }
             }
+            // A setting the host cannot see, made in one member of an FX link and now laid on the
+            // others (@see OBJEngineCore `syncLinkedStateFrom:force:`): the project changed with
+            // no gesture of the model to say so. The states themselves are read live at every
+            // snapshot and save, so the flag is all there is to set.
+            engine?.onLinkedPluginStateSynced = { [weak self] _, _ in
+                DispatchQueue.main.async { self?.isDirty = true }
+            }
             // A knob turned in the native GUI of an AU/VST does not cross the model: this is the
             // only path by which it becomes its object's "automation to come" row.
             // The VALUE travels with the touch: the engine has it to hand at that instant, and
