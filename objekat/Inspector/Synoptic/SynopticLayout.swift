@@ -37,7 +37,7 @@ enum SynopticLayout {
     /// paddings, ✕, and the badge when there is one). @see SynopticCardView.
     static func cardWidth(for p: SynopticPlugin) -> CGFloat {
         let nameW = ceil((p.name as NSString).size(withAttributes: [.font: cardNameFont]).width)
-        let hasBadge = p.isLinked || p.isLinkDetached
+        let hasBadge = p.showsLinkBadge
         // on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack so the tail never ellipsises
         let chrome: CGFloat = 26 + 16 + 15 + (hasBadge ? 24 : 0) + 4
         return min(audioZoneW, max(cardW, nameW + chrome))

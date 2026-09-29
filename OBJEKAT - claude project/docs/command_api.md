@@ -675,6 +675,10 @@ knowing before driving one:
   recreate a NEW one from the plugins' states as they were.
 - **Undo**: every mutator pushes ONE point (`undo: handled`), the registry restoring with the chains.
   `fxlink.set_output` and `fxlink.set_local_output` are hot (no recompile) — a drag's frames.
+- **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
+  reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
+  bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
+  block's frame and header carry the link); a legacy ⌘-linked plugin outside any bin keeps both.
 - `fxlink.list` lists only the bins some block still refers to (an orphan is what a deleted object
   leaves for the undo). Every answer carries `members[]` with `host`, `is_stem`, `block`, `detached`,
   `instances` and, when detached, `local`.

@@ -65,4 +65,23 @@ extension EditViewModel {
         guard let link = fxLink(linkID) else { return }
         setFXLinkColor(linkID, colorIndex: (link.colorIndex + 1) % ObjekatPalette.plugins.count)
     }
+
+    /// The cards the signal view draws for a host's chain, as it builds them (the very mapping the
+    /// view calls), flattened in reading order. Nil for an unknown host. It exists so that what a
+    /// card SHOWS — a link badge, the greyed look of a disabled bin — can be read back by a script
+    /// with no screen (@see `synoptic.cards`).
+    func synopticCards(host hostID: UUID) -> [SynopticPlugin]? {
+        guard let chain = chainPlugins(hostID) else { return nil }
+        let (root, _) = SynopticMapping.build(chain, objectID: hostID,
+                                              fxLinkInfo: { self.synopticFXInfo($0) })
+        var out: [SynopticPlugin] = []
+        func walk(_ n: SynopticNode) {
+            switch n.kind {
+            case .plugin(let p): out.append(p)
+            case .series(let kids), .parallel(let kids): kids.forEach(walk)
+            }
+        }
+        walk(root)
+        return out
+    }
 }

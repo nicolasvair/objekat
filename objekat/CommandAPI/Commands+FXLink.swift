@@ -410,5 +410,25 @@ extension CommandRegistry {
             else { throw self.refused("only a detached block has an output section of its own") }
             return .object(["block": .string(block.id.uuidString)])
         }
+
+        register("synoptic.cards",
+                 summary: "How the signal view draws each plugin card of a host, in reading order: "
+                        + "own on/off, link badge, linked emphasis, and whether it sits in an FX link's block.",
+                 params: [ParamSpec("host", "uuid", "The object or bus.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard let cards = vm.synopticCards(host: host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            return .object(["host": .string(host.uuidString),
+                            "cards": .array(cards.map { c in
+                                .object(["id": .string(c.id.uuidString),
+                                         "name": .string(c.name),
+                                         "enabled": .bool(c.isEnabled),
+                                         "in_fx_block": .bool(c.inFXBlock),
+                                         "link_badge": .bool(c.showsLinkBadge),
+                                         "linked_style": .bool(c.showsLinkedStyle)])
+                            })])
+        }
     }
 }

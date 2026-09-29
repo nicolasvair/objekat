@@ -528,6 +528,44 @@ try:
         check("undo restores the detached member's local section in the engine (0 dB)",
               abs(py5 / p0 - 1.0) < 0.05, "%s / %s" % (py5, p0))
 
+        # ── the SIGNAL VIEW: a bin's cards carry no link badge of their own ─────
+        # (the block does), while the old ⌘-links keep theirs. `synoptic.cards` reads what the view
+        # builds from the model, so this is asserted with no screen.
+        cmd("project.new")
+        SA = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        SB = cmd("object.add", path=BIP, lane=1, start=0)["id"]
+        s_eq = add(SA, "4bandEq")
+        s_rev = add(SA, "reverb")
+        s_solo = add(SA, "chorus")                  # outside the bin
+        SL = cmd("fxlink.create", host=SA, plugins=[s_eq, s_rev], name="View")["id"]
+        cmd("fxlink.attach", link=SL, host=SB); idle()
+
+        def cards(host):
+            return cmd("synoptic.cards", host=host)["cards"]
+
+        ca = cards(SA)
+        in_bin = [c for c in ca if c["in_fx_block"]]
+        check("the bin's two instances are cards flagged as in the block",
+              [c["name"] for c in in_bin] == ["Equalizer", "Reverb"], str(ca))
+        check("...and NOT the plugin outside it", [c["in_fx_block"] for c in ca].count(False) == 1)
+        check("a card in the block shows NO link badge (though its instance is linked)",
+              all(c["link_badge"] is False for c in in_bin)
+              and all(next(p for p in block_of(SA)["plugins"] if p["id"] == c["id"])["linked"] for c in in_bin))
+        check("...nor the linked emphasis", all(c["linked_style"] is False for c in in_bin))
+        cb = cards(SB)
+        check("the same holds on every member", len(cb) == 2 and all(not c["link_badge"] for c in cb))
+        cmd("fxlink.detach", host=SB, link=SL); idle()
+        check("a DETACHED block's cards show no badge either (the block's header carries it)",
+              all(not c["link_badge"] and c["in_fx_block"] for c in cards(SB)))
+        cmd("fxlink.reattach", host=SB, link=SL); idle()
+
+        # the old manual link keeps its badge
+        cmd("plugin.link", **{"from": SA, "plugin": s_solo, "to": SB}); idle()
+        legacy = [c for c in cards(SB) if not c["in_fx_block"]]
+        check("a legacy ⌘-linked plugin, outside any bin, keeps its badge and its emphasis",
+              len(legacy) == 1 and legacy[0]["link_badge"] is True and legacy[0]["linked_style"] is True, str(legacy))
+        check("...on its source too", [c for c in cards(SA) if not c["in_fx_block"]][0]["link_badge"] is True)
+
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 

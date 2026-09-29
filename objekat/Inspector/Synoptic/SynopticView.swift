@@ -980,7 +980,8 @@ struct SynopticCardView: View {
                     // 🔗 — the link toggle. Linked: a solid badge, tinted by the group's colour.
                     // DETACHED: the badge REMAINS, hollow and in the same tint — the group left is
                     // therefore recognisable by eye, and a click takes it back (@see relinkPlugin).
-                    if plugin.isLinked || plugin.isLinkDetached {
+                    // Never inside a bin's block: the block's header carries the link.
+                    if plugin.showsLinkBadge {
                         Button(action: { plugin.isLinked ? onUnlink?() : onRelink?() }) {
                             Image(systemName: "link")
                                 .font(.system(size: 12, weight: .bold))
@@ -1033,11 +1034,11 @@ struct SynopticCardView: View {
         // so as to tell 'this group moves together' from plain identity.
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : plugin.color.opacity(plugin.isLinked ? 1 : 0.7),
-                              lineWidth: isSelected ? 2 : (plugin.isLinked ? 2 : 1))
+                .strokeBorder(isSelected ? Color.accentColor : plugin.color.opacity(plugin.showsLinkedStyle ? 1 : 0.7),
+                              lineWidth: isSelected ? 2 : (plugin.showsLinkedStyle ? 2 : 1))
         )
-        .shadow(color: plugin.isLinked ? plugin.color.opacity(0.6) : .clear,
-                radius: plugin.isLinked ? 5 : 0)
+        .shadow(color: plugin.showsLinkedStyle ? plugin.color.opacity(0.6) : .clear,
+                radius: plugin.showsLinkedStyle ? 5 : 0)
         .opacity(plugin.isEnabled ? 1 : 0.5)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture { onSelect() }

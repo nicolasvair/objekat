@@ -66,6 +66,16 @@ enum SynopticMapping {
                 var node = buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
                                        locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
                 node.fxLink = fxLinkInfo?(p)
+                // The block carries the link: its cards show no badge of their own.
+                if case .series(let kids) = node.kind {
+                    node.kind = .series(kids.map { kid in
+                        guard case .plugin(var sp) = kid.kind else { return kid }
+                        sp.inFXBlock = true
+                        var k = kid
+                        k.kind = .plugin(sp)
+                        return k
+                    })
+                }
                 return node
             }
             return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0)))

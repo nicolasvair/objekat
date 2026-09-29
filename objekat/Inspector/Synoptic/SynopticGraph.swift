@@ -58,11 +58,20 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// halo/border and the link badge all derive from it, so that a glance is enough to tie
     /// a card in the signal view to its plugin.
     var color: Color = .gray
+    /// True for an instance held by a bin's block (an FX link): the BLOCK carries the link (its frame,
+    /// its header's badge), so the card shows no link badge of its own and no linked emphasis.
+    var inFXBlock: Bool = false
+
+    /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
+    var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
+    /// The card's "these move together" emphasis (thicker line + glow): never inside a bin.
+    var showsLinkedStyle: Bool { !inFXBlock && isLinked }
 
     init(id: UUID = UUID(), name: String, category: PluginCategory,
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
-         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray) {
+         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
+         inFXBlock: Bool = false) {
         self.id = id
         self.name = name
         self.category = category
@@ -73,6 +82,7 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.isLinked = isLinked
         self.isLinkDetached = isLinkDetached
         self.color = color
+        self.inFXBlock = inFXBlock
     }
 
     /// A generic plugin inserted by a '+' in phase A (in phase B, the '+' will open
