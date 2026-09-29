@@ -622,6 +622,12 @@ final class EditViewModel {
     var pendingNewProjectFrame: Bool = false
     /// What a new project shows, and the length its timeline starts at.
     static let newProjectSpan: Double = 60
+    /// The numerical floor of the horizontal zoom, and nothing more: it is NOT the zoom-out limit
+    /// (that one is the session's own length, @see TimelineView.minZoom) — it only keeps a
+    /// division from meeting zero, on an absurdly long session or a window not laid out yet.
+    /// It used to be 1 px/s, which capped the view at ~10 min on a 600 px window whatever the
+    /// session lasted. Every door that writes a zoom reads THIS one.
+    static let minPixelsPerSecond: Double = 1e-4
 
     /// The DISPLAY row the timeline must bring into view: the caret or the time selection has just
     /// walked onto it under ↑ / ↓ (@see stepCaretLane, stepTimeSelectionLanes), and a point of
@@ -744,6 +750,9 @@ final class EditViewModel {
     /// The vertical lane snap's current state, read by `view.state.vsnap`. nil with no interface
     /// or before the timeline has appeared (@see VerticalSnapProbe).
     @ObservationIgnored var verticalSnapProbe: (() -> VerticalSnapProbe)?
+    /// The horizontal zoom's current bounds, read by `view.state.min_pps` / `max_pps`. nil with
+    /// no interface or before the timeline has appeared.
+    @ObservationIgnored var zoomBoundsProbe: (() -> (min: Double, max: Double))?
 
     /// Asks the timeline to compute the waveforms of these files now, whether or not their
     /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`
@@ -1044,7 +1053,7 @@ final class EditViewModel {
         if let b = best, abs(b - t) < abs(gridSnap - t) { return (b, true) }
         // The grid won — but it may have won ON a mark. Half a pixel of tolerance: the two are
         // computed by different routes and an exact equality would almost never hold.
-        let eps = 0.5 / max(1, pixelsPerSecond)
+        let eps = 0.5 / max(Self.minPixelsPerSecond, pixelsPerSecond)
         return (gridSnap, targets.contains { abs($0 - gridSnap) <= eps })
     }
 

@@ -392,8 +392,8 @@ long that took, and `view_after` is read after it.
 
 | command | what it does |
 |---|---|
-| `view.state` | `pps`, `block_height`, `scroll_x/y` (read from the view itself), `model_scroll_x/y`, viewport and content size, `visible_time`, `window_key`, `app_active` |
-| `view.set` | puts `pps` / `block_height` / `scroll_x` / `scroll_y` directly, not a gesture: the starting point of a measurement |
+| `view.state` | `pps` (6 decimals), `min_pps` / `max_pps` (the zoom bounds: `min_pps` = viewport / max(session end × 1.05, 60 s), floor 1e-4), `block_height`, `scroll_x/y` (read from the view itself), `model_scroll_x/y`, viewport and content size, `visible_time`, `window_key`, `app_active` |
+| `view.set` | puts `pps` / `block_height` / `scroll_x` / `scroll_y` directly, not a gesture: the starting point of a measurement. A `pps` outside the bounds is clamped to them (`view.state` answers the result) |
 | `input.scroll` | `direction` (`up/down/left/right`) + `distance_px`, or raw `dx`/`dy`; `style: trackpad` (`duration_ms`, `rate_hz`, `momentum`) or `wheel` (`notches`, `interval_ms`); `modifiers` |
 | `input.zoom` | `factor`, `axis` (`horizontal/vertical`), `via: shift_scroll` (the timeline's law, e^(0.01·dx), e^(0.012·dy) vertically) or `keys` (`t`/`r` = ×/÷1.5, ⇧ for vertical); answers `requested_factor`, `achieved_factor`, `presses` |
 | `input.key` | `key`, `modifiers`, `repeat`, `interval_ms`, `hold_ms`; `claimed` / `claimed_by` says whether a text field or a `KeyboardClaim` owner took it before the timeline |

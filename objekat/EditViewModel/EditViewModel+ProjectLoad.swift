@@ -186,7 +186,7 @@ extension EditViewModel {
         snapEnabled = doc.snapEnabled ?? true
 
         if let vp = doc.viewport {
-            pixelsPerSecond = max(1, vp.pixelsPerSecond)
+            pixelsPerSecond = max(Self.minPixelsPerSecond, vp.pixelsPerSecond)
             blockHeight     = max(16, vp.blockHeight)
             pendingViewRestore = vp
         }

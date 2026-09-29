@@ -412,7 +412,7 @@ private struct ZoomDragHandles: View {
     /// its two neighbours. The value stays one drag away — and the waveform itself shows it.
     let waveformIconOnly: Bool
 
-    private let minPPS: Double = 1
+    private let minPPS: Double = EditViewModel.minPixelsPerSecond   // the real floor is the timeline's own minZoom
     private let maxPPS: Double = 200000
     private let minBlockH: Double = 16
     private let maxBlockH: Double = 10000  // the real clamp happens in TimelineView through a dynamic maxBlockHeight

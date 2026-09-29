@@ -500,6 +500,8 @@ extension CommandRegistry {
         let v = host.visibleRect
         let pps = vm.pixelsPerSecond
         let r3 = { (x: Double) in (x * 1000).rounded() / 1000 }
+        // The zoom is read to 6 decimals: it goes down to 1e-4 px/s, which `r3` would flatten to 0.
+        let r6 = { (x: Double) in (x * 1_000_000).rounded() / 1_000_000 }
         let vsnap: JSONValue
         if let probe = vm.verticalSnapProbe?() {
             vsnap = .object([
@@ -517,7 +519,9 @@ extension CommandRegistry {
             vsnap = .null
         }
         return .object([
-            "pps": .number(r3(pps)),
+            "pps": .number(r6(pps)),
+            "min_pps": vm.zoomBoundsProbe.map { .number(r6($0().min)) } ?? .null,
+            "max_pps": vm.zoomBoundsProbe.map { .number(r6($0().max)) } ?? .null,
             "block_height": .number(r3(vm.blockHeight)),
             "vsnap": vsnap,
             "scroll_x": .number(r3(Double(v.minX))),

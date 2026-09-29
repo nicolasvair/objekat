@@ -145,7 +145,20 @@ struct TimelineView: View {
     private static let zoomSessionIdleGap: TimeInterval = 0.4
 
     var pixelsPerSecond: Double { viewModel.pixelsPerSecond }
-    private var minZoom: Double { max(1, Double(viewportWidth) / totalDuration) }
+    /// The furthest the view zooms OUT: the whole session, and a little more, in the window. The
+    /// session's length is `contentEnd`, floored on a new project's span (60 s) so a short project
+    /// still stops at a minute of timeline. It is deliberately NOT `totalDuration`: that one
+    /// carries the 60 % right headroom, which depends on the zoom itself, and the fixed point of
+    /// the two (`0.4 · viewportWidth / contentEnd`) left a session's last 60 % of the window
+    /// unusable. The headroom stays — it is what one scrolls into past the last object — only it
+    /// no longer bounds the zoom. The old `max(1, …)` capped the view at 1 px/s, i.e. ~10 min on
+    /// a 600 px window, whatever the session lasted.
+    private var minZoom: Double {
+        let span = max(contentEnd * Self.zoomOutFitFactor, EditViewModel.newProjectSpan)
+        return max(EditViewModel.minPixelsPerSecond, Double(viewportWidth) / span)
+    }
+    /// The room left round the session at full zoom-out: it fills 1 / 1.05 of the window.
+    static let zoomOutFitFactor: Double = 1.05
     private let maxZoom: Double = 200000
     /// The WHOLE header: the ruler proper, plus one row per visible row of the marker band.
     /// Computed, and that is the point — every lane offset in this file is measured from it, so a
@@ -1230,6 +1243,7 @@ struct TimelineView: View {
             }
             viewModel.applyVerticalZoom = { newH in applyVerticalZoom(newH) }
             viewModel.verticalSnapProbe = { verticalSnapProbeSnapshot() }
+            viewModel.zoomBoundsProbe = { (min: minZoom, max: maxZoom) }
         }
         .onDisappear { unregisterKeyMonitor() }
         // ⌥ pressed or released WITHOUT moving the mouse: the drag under way flips in place between
@@ -1258,6 +1272,11 @@ struct TimelineView: View {
         // that moves nothing on screen (see syncStickyDuration).
         .onChange(of: contentDuration, initial: true) { syncStickyDuration() }
         .onChange(of: viewModel.pixelsPerSecond) { relaxStickyDuration() }
+        // The catch-all for the HORIZONTAL zoom, on the model of `enforceVerticalZoomBounds`: any
+        // door that writes `pixelsPerSecond` raw (`view.set`, a project load, a tab restore, the
+        // pill's nil-closure fallback) lands on the same bounds, with no second implementation.
+        // Idempotent — the corrected write comes back here once and finds nothing to do.
+        .onChange(of: viewModel.pixelsPerSecond) { enforceHorizontalZoomBounds() }
         // A loaded project: the zoom is already applied (by the view-model), and the scroll is what
         // is left. Deferred by one runloop turn so that the content has its final size (otherwise
         // the scroll is clamped on a width that is still empty).
@@ -1524,7 +1543,7 @@ struct TimelineView: View {
 
     /// The 'the edge cannot move any more' tolerance: half a pixel at the current scale, with a
     /// floor in seconds so as to stay stable at extreme zooms.
-    var edgeEpsilon: Double { max(0.001, 0.5 / max(pixelsPerSecond, 1)) }
+    var edgeEpsilon: Double { max(0.001, 0.5 / max(pixelsPerSecond, EditViewModel.minPixelsPerSecond)) }
 
     /// The content margin available BEFORE the clip's start, in timeline seconds. It bounds the
     /// left trim, exactly like `handleCanvasDrag` (the minimum of timeline 0 and the source content
@@ -1543,7 +1562,7 @@ struct TimelineView: View {
     /// thickness taken off each side: laid exactly on a block's start (or end), the caret
     /// straddles, and it had better keep the background's ink (@see InsertionCaret).
     func blockCovers(displayLane lane: Int, at t: Double) -> Bool {
-        let margin = InsertionCaret.halfWidth / max(pixelsPerSecond, 1)
+        let margin = InsertionCaret.halfWidth / max(pixelsPerSecond, EditViewModel.minPixelsPerSecond)
         return viewModel.laneEntries.contains { e in
             e.displayLane == lane
                 && t >= e.absStart + margin
@@ -3174,6 +3193,14 @@ struct TimelineView: View {
     // MARK: - Zoom helpers
 
     func clampZoom(_ v: Double) -> Double { min(max(v, minZoom), maxZoom) }
+
+    /// Re-clamps the zoom the model holds. Only ever pulls it INTO the bounds: the bounds moving
+    /// (content edited, window resized) never drags the current zoom along — that would be a zoom
+    /// change under the hand, made by a drag of an object.
+    private func enforceHorizontalZoomBounds() {
+        let clamped = clampZoom(viewModel.pixelsPerSecond)
+        if clamped != viewModel.pixelsPerSecond { viewModel.pixelsPerSecond = clamped }
+    }
     func clampBlockHeight(_ v: Double) -> Double { min(max(v, minBlockHeight), maxBlockHeight) }
 
     /// D2 — the catch-all: any door that writes `viewModel.blockHeight` RAW (`view.set`, a
