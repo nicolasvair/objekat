@@ -1809,7 +1809,7 @@ What has landed since mid-August, in order:
   before running them. Only a Debug build verifies it.
 
 - **A first third-party script cutting into an object: "Voice separator"** (28 September 2026, ON
-  THE BRANCH `feature/separateur-voix`, NOT on `main`) — a new app command, `object.explode
+  THE BRANCH `feature/separateur-voix`, merged into `main` on 29 September) — a new app command, `object.explode
   {id, cuts, lanes, names?, group_name?}`, cuts a plain audio clip at several instants and gathers
   the pieces into a fresh group, one sub-lane per piece, in ONE undo (chained `_splitInternal`
   calls, each targeting the RIGHT half of the previous cut — the ORIGINAL fade-in/fade-out land on
@@ -1860,7 +1860,7 @@ What has landed since mid-August, in order:
   time on a long take are equally unseen. @see `validations-en-attente.md` for the standing list.
 
 - **Evaluating breaths: a script overlay, a script panel, and the one-sample hole closed**
-  (29 September 2026, ON THE BRANCH `feature/separateur-voix`, NOT on `main`) — the voice separator
+  (29 September 2026, branch `feature/separateur-voix`, merged into `main` the same day) — the voice separator
   gains "Evaluate breaths…": the detector's breaths are laid over the object as zones, nine
   criteria (a box and a slider each) move them live, Apply cuts what is shown. Three pieces of app
   machinery came out of it, all generic. **`overlay.*`** — words and coloured zones a script draws
