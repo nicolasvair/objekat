@@ -682,6 +682,12 @@ knowing before driving one:
   `greyed` is true for the cards of a block whose common on/off is OFF (the bin's while attached, the
   block's own while detached): the card keeps its own `enabled` and its identity colours and is drawn
   greyed — the plugin's own bypass is never touched.
+- **`plugin.link_overlay {plugin}`** answers what the timeline's link overlay (the halo and the star drawn
+  while a plugin's editor is open) shows for that plugin: `source` (its object), `members` (the objects
+  joined to it), `color_index` (a palette index) and `fx_link` (the bin, or null). For a plugin held by a
+  bin's block the colour is the BIN's (`fxlink.set_color`) and the members are the hosts sharing the bin
+  through an ATTACHED block (a detached block stands alone, in the bin's colour); for a ⌘-linked or plain
+  plugin it is the plugin's own colour (`color_index` on every plugin payload) and its link group.
 - `fxlink.list` lists only the bins some block still refers to (an orphan is what a deleted object
   leaves for the undo). Every answer carries `members[]` with `host`, `is_stem`, `block`, `detached`,
   `instances` and, when detached, `local`.

@@ -744,20 +744,50 @@ extension EditViewModel {
     struct LinkOverlayInfo {
         let sourceObjectID: UUID        // the clip whose editor is open (an emphasised halo)
         let memberObjectIDs: [UUID]     // the clips to highlight (the source included; >1 if linked)
-        let color: Color                // the identity colour OF THIS plugin (@see ObjectPlugin.color)
+        /// The colour of the link: the BIN's (`FXLink.color`) for a plugin held by an FX link's
+        /// block, whose members are the hosts sharing the bin; otherwise the identity colour OF
+        /// THIS plugin (@see ObjectPlugin.color), as the old manual ⌘-links always had.
+        let color: Color
+        /// The palette index behind `color` (the bin's, or the plugin's own) — readable by a script.
+        let colorIndex: Int
+        /// The bin the source plugin belongs to, nil for a plain or ⌘-linked plugin.
+        let fxLinkID: UUID?
     }
 
+    /// The overlay of the plugin whose editor is open.
     var linkOverlayInfo: LinkOverlayInfo? {
         guard let pid = openEditorPluginID else { return nil }
+        return linkOverlayInfo(forPlugin: pid)
+    }
+
+    /// The overlay a plugin would arm while its editor is open. A plugin held by an FX link's block
+    /// takes the BIN's colour and joins the hosts that share the bin (attached blocks: a detached
+    /// block has left the group, so it stands alone); a ⌘-linked plugin keeps its own colour and
+    /// its link group's clips.
+    func linkOverlayInfo(forPlugin pid: UUID) -> LinkOverlayInfo? {
         let refs = allPluginRefs()
         guard let src = refs.first(where: { $0.plugin.id == pid }) else { return nil }
+        if let block = Self.enclosingFXBlock(of: pid, in: chainPlugins(src.objectID) ?? []),
+           let fb = block.fxBlock {
+            let link = fxLink(fb.linkID)
+            let idx = link?.colorIndex ?? src.plugin.colorIndex
+            var members: [UUID] = [src.objectID]
+            if !fb.isDetached {
+                for m in fxLinkAttachedMembers(fb.linkID) where !members.contains(m.hostID) {
+                    members.append(m.hostID)
+                }
+            }
+            return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
+                                   color: ObjekatPalette.plugin(idx), colorIndex: idx, fxLinkID: fb.linkID)
+        }
         let members: [UUID]
         if let gid = src.plugin.linkGroupID {
             members = Array(Set(refs.filter { $0.plugin.linkGroupID == gid }.map { $0.objectID }))
         } else {
             members = [src.objectID]   // not linked → highlight the single edited clip
         }
-        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members, color: src.plugin.color)
+        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
+                               color: src.plugin.color, colorIndex: src.plugin.colorIndex, fxLinkID: nil)
     }
 
     /// (Re)establishes on the engine side every link the model describes. Idempotent.

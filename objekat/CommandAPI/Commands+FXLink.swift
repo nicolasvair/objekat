@@ -432,5 +432,23 @@ extension CommandRegistry {
                                          "greyed": .bool(c.greyedByBlock)])
                             })])
         }
+
+        register("plugin.link_overlay",
+                 summary: "What the timeline's link overlay (halo + star) would show while this plugin's "
+                        + "editor is open: the source object, the objects joined to it and the colour "
+                        + "(palette index) of the link — the BIN's for a plugin in an FX link's block, "
+                        + "the plugin's own for a ⌘-link.",
+                 params: [ParamSpec("plugin", "uuid", "Any plugin instance of an object.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("plugin")
+            guard let info = vm.linkOverlayInfo(forPlugin: id) else {
+                throw CommandError(code: .not_found, message: "no object holds plugin \(id.uuidString)")
+            }
+            return .object(["plugin": .string(id.uuidString),
+                            "source": .string(info.sourceObjectID.uuidString),
+                            "members": .array(info.memberObjectIDs.map { .string($0.uuidString) }),
+                            "color_index": .int(info.colorIndex),
+                            "fx_link": info.fxLinkID.map { .string($0.uuidString) } ?? .null])
+        }
     }
 }

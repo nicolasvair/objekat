@@ -144,6 +144,7 @@ extension CommandAdapters {
             "format": .string(plugin.formatName),
             "enabled": .bool(plugin.isEnabled),
             "linked": .bool(plugin.isLinked),
+            "color_index": .int(plugin.colorIndex),
         ]
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).

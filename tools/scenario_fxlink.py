@@ -602,6 +602,47 @@ try:
               len(legacy) == 1 and legacy[0]["link_badge"] is True and legacy[0]["linked_style"] is True, str(legacy))
         check("...on its source too", [c for c in cards(SA) if not c["in_fx_block"]][0]["link_badge"] is True)
 
+        # ── the LINK OVERLAY (halo + star in the timeline, drawn while a plugin's editor is open) ─────
+        # takes the BIN's colour for a plugin held by a block, and joins the hosts sharing the bin; the
+        # old ⌘-links keep the plugin's own colour and their own group.
+        NCOL = 16           # ObjekatPalette.plugins
+        own = next(p for p in block_of(SA)["plugins"] if p["id"] == s_eq)["color_index"]
+        bin_col = (own + 1) % NCOL
+        cmd("fxlink.set_color", link=SL, color_index=bin_col)
+        ov = cmd("plugin.link_overlay", plugin=s_eq)
+        check("the overlay of a plugin in a bin takes the BIN's colour, not the plugin's own",
+              ov["color_index"] == bin_col and ov["color_index"] != own and ov["fx_link"] == SL, str(ov))
+        check("...its source is the host of the plugin", ov["source"] == SA)
+        check("...and it joins the other host sharing the bin", set(ov["members"]) == {SA, SB}, str(ov))
+        ovb = cmd("plugin.link_overlay", plugin=inst_ids(SB)[0])
+        check("seen from the other member: same colour, source is that member, same members",
+              ovb["color_index"] == bin_col and ovb["source"] == SB and set(ovb["members"]) == {SA, SB}, str(ovb))
+        cmd("fxlink.set_color", link=SL, color_index=(bin_col + 1) % NCOL)
+        check("changing the bin's colour changes the overlay's",
+              cmd("plugin.link_overlay", plugin=s_eq)["color_index"] == (bin_col + 1) % NCOL)
+        cmd("fxlink.set_color", link=SL, color_index=bin_col)
+        SC = cmd("object.add", path=BIP, lane=2, start=0)["id"]
+        cmd("fxlink.attach", link=SL, host=SC); idle()
+        check("a third member is joined by the overlay too",
+              set(cmd("plugin.link_overlay", plugin=s_eq)["members"]) == {SA, SB, SC})
+        cmd("fxlink.detach", host=SC, link=SL); idle()
+        ovc = cmd("plugin.link_overlay", plugin=inst_ids(SC)[0])
+        check("a DETACHED block's plugin stands alone (it left the group) but keeps the bin's colour",
+              ovc["members"] == [SC] and ovc["color_index"] == bin_col and ovc["fx_link"] == SL, str(ovc))
+        check("...and the others no longer join it", set(cmd("plugin.link_overlay", plugin=s_eq)["members"]) == {SA, SB})
+        cmd("fxlink.reattach", host=SC, link=SL); idle()
+        lg_src = next(p for p in chain(SA) if p["id"] == s_solo)
+        ovl = cmd("plugin.link_overlay", plugin=s_solo)
+        check("a legacy ⌘-link keeps the plugin's OWN colour and no bin",
+              ovl["fx_link"] is None and ovl["color_index"] == lg_src["color_index"], str(ovl))
+        check("...and joins its link group (the two hosts), not the bin's", set(ovl["members"]) == {SA, SB}, str(ovl))
+        lone = add(SC, "chorus")
+        ovn = cmd("plugin.link_overlay", plugin=lone)
+        check("an unlinked plugin highlights its own host alone",
+              ovn["members"] == [SC] and ovn["fx_link"] is None)
+        check("an unknown plugin is refused",
+              refused("plugin.link_overlay", plugin="00000000-0000-0000-0000-000000000000") == "not_found")
+
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 
