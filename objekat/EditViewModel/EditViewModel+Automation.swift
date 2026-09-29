@@ -103,8 +103,8 @@ extension EditViewModel {
     private static func pluginName(_ key: UUID, in object: SoundObject) -> String? {
         func search(_ plugins: [ObjectPlugin]) -> String? {
             for p in plugins {
-                if let rack = p.rack {
-                    for v in rack.voices { if let n = search(v) { return n } }
+                if p.isContainer {
+                    for v in p.childSeries { if let n = search(v) { return n } }
                 } else if p.id == key {
                     return p.name
                 }

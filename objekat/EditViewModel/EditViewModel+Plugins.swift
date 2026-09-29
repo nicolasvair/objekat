@@ -55,8 +55,8 @@ extension EditViewModel {
 
     private static func collectPluginRefs(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
         for p in plugins {
-            if let rack = p.rack {
-                for v in rack.voices { collectPluginRefs(v, into: &out) }
+            if p.isContainer {
+                for v in p.childSeries { collectPluginRefs(v, into: &out) }
             } else {
                 out.append(p)
             }
@@ -265,8 +265,8 @@ extension EditViewModel {
     static func pluginDisplayNames(_ ids: Set<UUID>, in plugins: [ObjectPlugin]) -> [String] {
         var out: [String] = []
         for p in plugins {
-            if let rack = p.rack {
-                for v in rack.voices { out += pluginDisplayNames(ids, in: v) }
+            if p.isContainer {
+                for v in p.childSeries { out += pluginDisplayNames(ids, in: v) }
             } else if ids.contains(p.id) {
                 out.append("\(p.name) [\(p.formatName)]")
             }
@@ -277,11 +277,7 @@ extension EditViewModel {
     /// Recursively removes (voices included) the plugins whose id is in `ids`.
     static func removingPlugins(_ ids: Set<UUID>, from plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.compactMap { p in
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { removingPlugins(ids, from: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { removingPlugins(ids, from: $0) } }
             return ids.contains(p.id) ? nil : p
         }
     }
