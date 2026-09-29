@@ -18,6 +18,11 @@ extension EditViewModel {
         let start: Double
         let duration: Double
         let childLane: Int
+        /// The crossfade laid on the cut that OPENS this piece / that CLOSES it, in milliseconds
+        /// (0 = a bare edge: the first piece's left edge, the last one's right edge, or `fadeMs`
+        /// absent). `fade_applied_ms` in the API is the larger of the two.
+        var fadeInMs: Double = 0
+        var fadeOutMs: Double = 0
     }
 
     struct ExplodeResult {
@@ -25,6 +30,15 @@ extension EditViewModel {
         let pieces: [ExplodePiece]
         /// One id per sub-lane, in lane order, when `groupLanes` was asked; empty otherwise.
         let laneGroupIDs: [UUID]
+    }
+
+    /// The crossfade an internal cut may carry, in seconds: what was asked, capped at a third of
+    /// the shorter of its two neighbours (so a fade-in and a fade-out never meet inside a piece).
+    /// Pure, and shared by `explode` and its tests.
+    static func explodeCrossfade(requested: Double, leftDuration: Double,
+                                 rightDuration: Double) -> Double {
+        guard requested > 0 else { return 0 }
+        return max(0, min(requested, min(leftDuration, rightDuration) / 3))
     }
 
     /// The minimum a piece may last — below this a cut is not a cut, it is noise
@@ -44,6 +58,13 @@ extension EditViewModel {
     /// the sub-lane), so the new group holds a handful of blocks instead of hundreds — what a long
     /// take needs to stay workable (the timeline draws and hit-tests every block of an open group).
     ///
+    /// `fadeMs` (default 0 = every internal edge bare, as a cut leaves it): a CROSSFADE of that
+    /// length on each internal cut, capped per cut (`explodeCrossfade`). The two neighbours overlap
+    /// by `f` around the cut — the left piece grows by `f/2` to the right, the right piece by `f/2`
+    /// to the left (source offset moved back to match) — and carry a linear fade-out / fade-in of
+    /// `f`, so the sum is unity gain: the group renders the original sample for sample. The first
+    /// piece keeps the original's fade-in, the last one its fade-out. A REVERSED clip gets none.
+    ///
     /// ONE undo point for the whole thing (`pushUndo()` here, nothing upstream), because each cut
     /// manufactures the id the next one has to aim at — N separate `object.split_at` calls could
     /// not be chained into a single ⌘Z from a script.
@@ -56,7 +77,7 @@ extension EditViewModel {
     @discardableResult
     func explode(id: UUID, cuts: [Double], lanes: [Int],
                  names: [String]? = nil, groupName: String? = nil,
-                 groupLanes: Bool = false) throws -> ExplodeResult {
+                 groupLanes: Bool = false, fadeMs: Double = 0) throws -> ExplodeResult {
         guard let original = find(id: id) else { throw ExplodeError.notFound }
         guard case .clip = original.kind else { throw ExplodeError.notAClip }
         guard !isMissing(original) else { throw ExplodeError.missing }
@@ -134,6 +155,44 @@ extension EditViewModel {
             children.append(c)
             reportPieces.append(ExplodePiece(id: obj.id, start: obj.startTime,
                                              duration: obj.duration, childLane: lanes[i]))
+        }
+
+        // The crossfades, on the COPIES and before the group reaches the engine: every fade lives
+        // in the object's window plugin, which the group's creation lays down from the model.
+        // Cap and overlap read the piece durations the splits left, BEFORE any extension.
+        if fadeMs > 0, !original.isReversed, children.count > 1 {
+            let baseDur = children.map(\.duration)
+            let ratio = max(original.speedRatio, 0.0001)
+            for k in 0..<(children.count - 1) {
+                let f = Self.explodeCrossfade(requested: fadeMs / 1000,
+                                              leftDuration: baseDur[k], rightDuration: baseDur[k + 1])
+                let h = f / 2
+                // No negative source offset: an offset that could not go back by `h` shrinks it.
+                let hR = min(h, children[k + 1].sourceOffset / ratio)
+                let fk = min(f, hR * 2)
+                guard fk > 0 else { continue }
+                let hk = fk / 2
+                // Left piece: grows to the right, fades out.
+                children[k].duration += hk
+                children[k].fadeOut = fk
+                children[k].fadeOutCurve = Self.freshCutCurve
+                // Right piece: grows to the left, fades in; its frame of reference moves with it.
+                children[k + 1].startTime -= hk
+                children[k + 1].duration += hk
+                children[k + 1].sourceOffset -= hk * ratio
+                children[k + 1].automation = children[k + 1].automation.shiftedInTime(by: hk)
+                children[k + 1].markers = children[k + 1].markers.shiftedInTime(by: hk)
+                children[k + 1].fadeIn = fk
+                children[k + 1].fadeInCurve = Self.freshCutCurve
+                reportPieces[k].fadeOutMs = fk * 1000
+                reportPieces[k + 1].fadeInMs = fk * 1000
+            }
+            for k in children.indices {
+                let old = reportPieces[k]
+                reportPieces[k] = ExplodePiece(id: old.id, start: children[k].startTime,
+                                               duration: children[k].duration, childLane: old.childLane,
+                                               fadeInMs: old.fadeInMs, fadeOutMs: old.fadeOutMs)
+            }
         }
 
         for pid in pieceIDs { if let obj = find(id: pid) { removeFromEngine(obj) } }

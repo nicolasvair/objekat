@@ -785,7 +785,7 @@ stands right after, for a caller that wants to check the rule above without a sc
 
 ### Exploding an object into sub-lanes
 
-**`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?}`** cuts a plain audio clip at
+**`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?, fade_ms?}`** cuts a plain audio clip at
 several instants and gathers the `cuts.count + 1` pieces into a **fresh group**, one sub-lane per
 piece — **ONE undo** for the whole thing. Written for the "voice separator" script
 (`tools/scripts/separateur-voix/`), generic to any "cut this object into several tagged pieces"
@@ -799,8 +799,25 @@ gesture:
 | `names` | optional, one name **per sub-lane** (size = the highest value in `lanes` + 1) — a piece takes the name of the sub-lane it lands on, which is what makes the group's own composed name come out right for free |
 | `group_name` | optional, the new group's own label; absent = the composed name |
 | `group_lanes` | optional (default false): each sub-lane's pieces are gathered into a collapsed group of their own (labelled by `names`, on that sub-lane), so the new group holds one block per sub-lane instead of hundreds — the timeline draws and hit-tests every block of an open group. The sub-group carries the label; the pieces keep whatever label the source clip had, and `pieces[].child_lane` still names the SUB-LANE of the outer group (each piece sits on row 0 of its own sub-group, so `object.get` on a piece reads `lane: 0`). |
+| `fade_ms` | optional number ≥ 0 (default 0 = bare edges, exactly as before): a **crossfade** of that length on every internal cut — see below |
 
-Answers `{"group": <uuid>, "lane_groups": [<uuid>…] (empty unless `group_lanes`), "pieces": [{"id", "start", "duration", "child_lane"}, …]}`.
+Answers `{"group": <uuid>, "lane_groups": [<uuid>…] (empty unless `group_lanes`), "pieces": [{"id", "start", "duration", "child_lane", "fade_in_ms", "fade_out_ms", "fade_applied_ms"}, …]}`.
+`start` / `duration` are the pieces' FINAL geometry (extended by the overlap when `fade_ms` > 0).
+`fade_in_ms` / `fade_out_ms` are the crossfade laid on the cut that opens / closes the piece (0 for
+the first piece's left edge, the last one's right edge, or with no `fade_ms`); `fade_applied_ms` is
+the larger of the two.
+
+**`fade_ms` — the one exception to "interior edges are born bare".** On each internal cut `c`,
+`f = min(fade_ms/1000, min(left piece duration, right piece duration) / 3)` (the ceiling `d/3`
+keeps a piece's fade-in and fade-out from ever meeting), `h = f/2`. The left piece grows by `h`
+to the right and carries a **linear, bend-0** fade-out of `f`; the right piece grows by `h` to
+the left (`start -= h`, `sourceOffset -= h × speed`) and carries a linear fade-in of `f`, so the two
+overlap by `f` centred on the cut and their gains sum to unity: the group renders the original
+sample for sample (a null test). The first piece keeps the original's fade-in and the last one its
+fade-out. A **reversed** clip gets no crossfade (`f = 0`); a source offset that could not go back
+by `h` shrinks the fade instead of going negative. Everything is done on the pieces' copies before
+the group reaches the engine — the fades live in `ObjWindowFadePlugin` as always, no engine patch —
+and it is still ONE undo.
 
 Why an app command rather than N × `object.split_at` driven by the script: each cut manufactures
 the id the next one has to aim at, so N separate script-driven calls could never be chained into a

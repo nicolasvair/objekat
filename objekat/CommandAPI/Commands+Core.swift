@@ -739,7 +739,13 @@ extension CommandRegistry {
                           ParamSpec("group_lanes", "bool", required: false,
                                     "true = each sub-lane's pieces are gathered into a collapsed "
                                   + "group of their own (named by 'names'): the new group then holds "
-                                  + "one block per sub-lane. Default false.")],
+                                  + "one block per sub-lane. Default false."),
+                          ParamSpec("fade_ms", "number", required: false,
+                                    "A crossfade of this length (ms) on each internal cut, capped "
+                                  + "per cut at a third of the shorter neighbour: the pieces overlap "
+                                  + "by that length around the cut and carry a linear fade-out / "
+                                  + "fade-in, so the group sums to the original. Default 0 = bare "
+                                  + "edges. Ignored for a reversed clip.")],
                  // `explode` pushes its own undo (and pops it on a failed split).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -769,10 +775,17 @@ extension CommandRegistry {
             }
             let groupName = try p.optionalString("group_name")
             let groupLanes = try p.optionalBool("group_lanes") ?? false
+            var fadeMs = 0.0
+            if p.raw["fade_ms"] != nil {
+                guard let v = p.raw["fade_ms"]?.doubleValue, v.isFinite, v >= 0 else {
+                    throw CommandError(code: .bad_params, message: "'fade_ms': a number >= 0 was expected")
+                }
+                fadeMs = v
+            }
             do {
                 let result = try vm.explode(id: id, cuts: cuts, lanes: lanes,
                                             names: names, groupName: groupName,
-                                            groupLanes: groupLanes)
+                                            groupLanes: groupLanes, fadeMs: fadeMs)
                 return .object([
                     "group": .string(result.groupID.uuidString),
                     "lane_groups": .array(result.laneGroupIDs.map { .string($0.uuidString) }),
@@ -780,7 +793,10 @@ extension CommandRegistry {
                         .object(["id": .string(piece.id.uuidString),
                                 "start": .number(piece.start),
                                 "duration": .number(piece.duration),
-                                "child_lane": .int(piece.childLane)])
+                                "child_lane": .int(piece.childLane),
+                                "fade_in_ms": .number(piece.fadeInMs),
+                                "fade_out_ms": .number(piece.fadeOutMs),
+                                "fade_applied_ms": .number(max(piece.fadeInMs, piece.fadeOutMs))])
                     })
                 ])
             } catch let e as EditViewModel.ExplodeError {
