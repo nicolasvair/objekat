@@ -70,6 +70,10 @@ struct ScriptPanel: Equatable, Sendable {
     var pendingEvents: [String] = []
     var status: String = ""
     var busy: Bool = false
+    /// `remember`: the key under which Validate stores the hand's values (@see ScriptPanelMemory)
+    /// and the app adds a Reset button. `declared` = what the script declared, which Reset returns to.
+    var rememberKey: String? = nil
+    var declared: [String: JSONValue] = [:]
 }
 
 @Observable final class ScriptPanelStore {
@@ -165,8 +169,16 @@ struct ScriptPanel: Equatable, Sendable {
         var immediate = !coalesced
         if let press {
             switch press {
-            case "validate": p.state = .validated; immediate = true
+            case "validate":
+                p.state = .validated; immediate = true
+                // Validate is the ONLY thing that remembers: not Cancel, not the window closing.
+                if let key = p.rememberKey { ScriptPanelMemory.save(key, handValues(p)) }
             case "cancel":   p.state = .cancelled; immediate = true
+            case "reset" where p.rememberKey != nil:
+                // Back to what the script DECLARED; the script sees it as a hand's input (rev moves).
+                for c in p.controls where c.kind.holdsHandValue { p.values[c.id] = p.declared[c.id] }
+                ScriptPanelMemory.erase(p.rememberKey!)
+                immediate = true
             default:
                 guard let c = p.controls.first(where: { $0.id == press }), c.kind == .button else {
                     throw CommandError(code: .bad_params, message: "no button '\(press)'")
@@ -178,6 +190,13 @@ struct ScriptPanel: Equatable, Sendable {
         panels[id] = p
         if immediate { bump(id) } else { bumpCoalesced(id) }
         if p.state != .open { panelEnded?(id) }
+    }
+
+    /// The values a hand can set (never a progress bar, a button or a section).
+    private func handValues(_ p: ScriptPanel) -> [String: JSONValue] {
+        var out: [String: JSONValue] = [:]
+        for c in p.controls where c.kind.holdsHandValue { out[c.id] = p.values[c.id] }
+        return out
     }
 
     private func bump(_ id: UUID) {
