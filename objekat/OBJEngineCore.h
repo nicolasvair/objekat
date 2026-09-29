@@ -354,7 +354,7 @@
 // Section de sortie d'un BAC FX (kind:"fxlink" dans l'arbre de compileUserRack…) ajustée à chaud :
 // gain dB (le mute y arrive comme un gain EFFECTIF de -96), pan -1…1, on/off commun du bac.
 // `blockID` = l'id de l'entrée-bloc de la chaîne. Sans effet tant que le bloc n'est pas compilé.
-- (void)setFXBlockOutput:(NSString*)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled;
+- (void)setFXBlockOutput:(NSString* _Nonnull)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled;
 
 // Gain dB de début (output:NO) / fin (output:YES) de chaîne, ajusté à chaud (sans recompiler).
 // Retourne NO si le rack n'existe pas encore (objet sans chaîne jamais compilé).
