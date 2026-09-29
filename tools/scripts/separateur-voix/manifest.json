@@ -16,9 +16,9 @@
       "title": "Separate voice / breaths / SS-CH"
     },
     {
-      "title": "Evaluate breaths…",
+      "title": "Evaluate voice separation…",
       "arguments": [
-        "--breaths-eval"
+        "--eval-separation"
       ]
     }
   ]

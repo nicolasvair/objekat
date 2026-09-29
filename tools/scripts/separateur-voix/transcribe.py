@@ -38,7 +38,7 @@ ALIGN_REPOS = {
 }
 MODEL_IDS = ("none", "whisper", "parakeet", "align")
 # Bumped whenever a backend's output changes, so a cached transcription is never read back as current.
-BACKEND_VERSION = 1
+BACKEND_VERSION = 2      # 2: Parakeet transcribes a long file in chunks (progress)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUPPORT = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Objekat")
@@ -96,13 +96,49 @@ def to_16k(mono: np.ndarray, sr: float) -> np.ndarray:
 
 # MARK: - Whisper
 
-def whisper_transcribe(audio16: np.ndarray, language: str | None):
+class _FrameProgress:
+    """Stands in for `tqdm.tqdm` inside mlx_whisper: its transcription loop already reports how many
+    mel frames of the file it has consumed (`pbar.update(n)` against `total`), and that IS the
+    progress — real, per window of 30 s. Nothing is drawn."""
+
+    callback = [None]      # a list: a function stored on a class would become a bound method
+
+    def __init__(self, *args, total=None, **kwargs):
+        self.total, self.n = total, 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def update(self, n=1):
+        self.n += n
+        if self.callback[0] and self.total:
+            self.callback[0](min(1.0, self.n / self.total))
+
+    def close(self):
+        pass
+
+
+def whisper_transcribe(audio16: np.ndarray, language: str | None, progress=None):
     """(words, segments): Whisper's word list and its segments (`{"text", "start", "end"}`), the
-    latter being what the aligner re-times."""
+    latter being what the aligner re-times. `progress(fraction)`: the share of the file's mel frames
+    Whisper's own loop has consumed (@see _FrameProgress) — real progress."""
+    import types
     import mlx_whisper
     lang = None if language in (None, "", "auto") else language
-    result = mlx_whisper.transcribe(audio16, path_or_hf_repo=WHISPER_REPO,
-                                    word_timestamps=True, language=lang)
+    # `mlx_whisper.transcribe` the ATTRIBUTE is the function; the module is in sys.modules
+    module = sys.modules["mlx_whisper.transcribe"]
+    original = module.tqdm
+    _FrameProgress.callback[0] = progress
+    module.tqdm = types.SimpleNamespace(tqdm=_FrameProgress)
+    try:
+        result = mlx_whisper.transcribe(audio16, path_or_hf_repo=WHISPER_REPO, verbose=False,
+                                        word_timestamps=True, language=lang)
+    finally:
+        module.tqdm = original
+        _FrameProgress.callback[0] = None
     words, segments = [], []
     for seg in result.get("segments", []):
         segments.append({"text": seg.get("text", "").strip(),
@@ -115,15 +151,32 @@ def whisper_transcribe(audio16: np.ndarray, language: str | None):
 
 # MARK: - Parakeet (a subprocess in its own venv)
 
-def parakeet_transcribe(audio16: np.ndarray) -> list[dict]:
+def parakeet_transcribe(audio16: np.ndarray, progress=None) -> list[dict]:
+    """The worker prints `PROGRESS <fraction>` per chunk (a file longer than its chunk length is
+    transcribed in chunks, and only then is there anything to report: a short file is ONE pass and
+    the bar stays indeterminate — `progress(None)`)."""
     import soundfile as sf
     with tempfile.TemporaryDirectory(prefix="objekat-parakeet-") as tmp:
         wav, out = os.path.join(tmp, "in.wav"), os.path.join(tmp, "out.json")
         sf.write(wav, audio16, 16000, subtype="PCM_16")
-        proc = subprocess.run([PARAKEET_PYTHON, os.path.join(HERE, "parakeet_worker.py"), wav, out],
-                              capture_output=True, text=True)
+        if progress:
+            progress(None)
+        proc = subprocess.Popen([PARAKEET_PYTHON, os.path.join(HERE, "parakeet_worker.py"), wav, out],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import threading
+        err = []
+        t = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
+        t.start()
+        for line in proc.stdout:
+            if progress and line.startswith("PROGRESS "):
+                try:
+                    progress(min(1.0, max(0.0, float(line.split()[1]))))
+                except ValueError:
+                    pass
+        proc.wait()
+        t.join(timeout=5)
         if proc.returncode != 0 or not os.path.exists(out):
-            raise RuntimeError("parakeet: " + (proc.stderr or "no output").strip()[-300:])
+            raise RuntimeError("parakeet: " + ((err[0] if err else "") or "no output").strip()[-300:])
         with open(out, "r", encoding="utf-8") as f:
             return json.load(f)
 
@@ -205,19 +258,23 @@ def _align_model(language: str):
     return _ALIGN_CACHE[key]
 
 
-def align_segments(audio16: np.ndarray, segments: list[dict], language: str) -> list[dict]:
+def align_segments(audio16: np.ndarray, segments: list[dict], language: str, progress=None) -> list[dict]:
     """Re-times the words of each Whisper segment against the wav2vec2 CTC of the language. A
     segment is cropped (with 0.3 s of room either side) so the model's cost stays bounded whatever
     the length of the file; a word with no symbol the model knows (a digit, a symbol) is dropped, and
     a segment the audio is too short for is left out rather than guessed."""
     import torch
+    if progress:
+        progress(None)          # loading the wav2vec2 model: no way to say how far
     processor, model = _align_model(language)
     vocab = processor.tokenizer.get_vocab()
     blank = processor.tokenizer.pad_token_id
     delimiter = vocab.get("|")
     stride = 0.02
     out: list[dict] = []
-    for seg in segments:
+    for si, seg in enumerate(segments):
+        if progress:
+            progress(si / len(segments))     # by SEGMENT: one forward pass of the model each
         words = [w for w in re.split(r"\s+", seg["text"]) if w]
         if not words:
             continue
@@ -249,19 +306,27 @@ def align_segments(audio16: np.ndarray, segments: list[dict], language: str) -> 
             frames = [spans[i] for i, o in enumerate(owner) if o == wi]
             out.append({"word": w, "start": c0 + frames[0][0] * stride,
                         "end": c0 + (frames[-1][1] + 1) * stride})
+    if progress:
+        progress(1.0)
     return out
 
 
 # MARK: - The entry point
 
-def transcribe(model: str, mono: np.ndarray, sr: float, language: str | None) -> list[dict]:
-    """`model` in {"whisper", "parakeet", "align"} → the words, seconds relative to `mono`."""
+def transcribe(model: str, mono: np.ndarray, sr: float, language: str | None, progress=None) -> list[dict]:
+    """`model` in {"whisper", "parakeet", "align"} → the words, seconds relative to `mono`.
+    `progress(fraction | None)` — 0…1, or None for "working, cannot say how far" — is called from
+    the transcribing thread: Whisper reports real progress (its mel-frame loop), Parakeet per chunk
+    of a long file (indeterminate for a short one), the alignment by Whisper's share (35 %) and then
+    by segment."""
     audio16 = to_16k(mono, sr)
     if model == "whisper":
-        return whisper_transcribe(audio16, language)[0]
+        return whisper_transcribe(audio16, language, progress)[0]
     if model == "parakeet":
-        return parakeet_transcribe(audio16)
+        return parakeet_transcribe(audio16, progress)
     if model == "align":
-        _words, segments = whisper_transcribe(audio16, language)
-        return align_segments(audio16, segments, language or "fr")
+        sub = (lambda f: progress(None if f is None else 0.35 * f)) if progress else None
+        _words, segments = whisper_transcribe(audio16, language, sub)
+        sub2 = (lambda f: progress(None if f is None else 0.35 + 0.65 * f)) if progress else None
+        return align_segments(audio16, segments, language or "fr", sub2)
     raise ValueError("unknown model %r" % model)

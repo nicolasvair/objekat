@@ -321,6 +321,33 @@ def wait_for(fn, label, timeout=30.0, step=0.1):
     return None
 
 
+PANEL_IDS = {
+    "model", "text_on", "tolerance", "fill_on", "fill", "progress",
+    "b_on", "b_unvoiced_on", "b_unvoiced", "b_below_speech_on", "b_below_speech", "b_cutoff",
+    "b_min_len_on", "b_min_len",
+    "s_on", "s_unvoiced_on", "s_unvoiced", "s_hf_ratio_on", "s_hf_ratio", "s_zcr_on", "s_zcr",
+    "s_hf_energy_on", "s_hf_energy", "s_min_len_on", "s_min_len", "s_refine_on", "s_refine"}
+
+
+def make_burst_wav(path):
+    """Two 5-9 kHz noise bursts with a 30 ms hole of room tone between them (0.80-0.90, 0.93-1.03), a
+    vowel-like buzz on either side — what the hole filling has to be seen bridging in the overlay."""
+    code = ("import numpy as np, soundfile as sf\n"
+            "sr=48000; rng=np.random.default_rng(3); n=int(2.0*sr); t=np.arange(n)/sr\n"
+            "x=0.3*10**(-55/20)*rng.standard_normal(n)\n"
+            "v=sum((1/k)*np.sin(2*np.pi*140*k*t) for k in range(1,6))*0.08\n"
+            "for a,b in ((0.2,0.75),(1.1,1.7)): i,j=int(a*sr),int(b*sr); x[i:j]+=v[i:j]\n"
+            "def burst(a,b):\n"
+            "    m=int((b-a)*sr); z=rng.standard_normal(m); f=np.fft.rfft(z); fr=np.fft.rfftfreq(m,1/sr)\n"
+            "    f[(fr<5000)|(fr>9000)]=0; z=np.fft.irfft(f,m); z=z/np.abs(z).max()*0.28\n"
+            "    w=np.ones(m); e=int(m*0.03); w[:e]=np.linspace(0,1,e); w[-e:]=np.linspace(1,0,e)\n"
+            "    x[int(a*sr):int(a*sr)+m]+=z*w\n"
+            "burst(0.80,0.90); burst(0.93,1.03)\n"
+            "sf.write(%r, x, sr, subtype='PCM_24')\n" % path)
+    subprocess.run([VENV_PY, "-c", code], check=True)
+    return path
+
+
 def section_d(c):
     """End to end: the script, its panel, its overlay, the cut."""
     import time
@@ -329,58 +356,103 @@ def section_d(c):
         return
     ROOT = tmproot("d")
     WAV = make_voice_wav(os.path.join(ROOT, "voice.wav"))
+    BURST = make_burst_wav(os.path.join(ROOT, "burst.wav"))
     c.send("project.new")
     a = c.send("object.add", {"path": WAV, "lane": 2, "start": 0.0})["id"]
 
-    def launch():
+    def launch(obj=None, extra=()):
         env = dict(os.environ, OBJEKAT_SOCKET=SOCK, OBJEKAT_LANGUAGE="en",
                    OBJEKAT_SEPARATEUR_CACHE=os.path.join(ROOT, "cache"))
-        return subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--breaths-eval", "--no-asr",
-                                 "--object", a], env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
+        return subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--eval-separation", "--object", obj or a,
+                                 *extra], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def panels():
         return [p for p in c.send("script.panel.list")["panels"] if p["state"] == "open"]
 
-    def zones():
+    def overlay(obj=None):
         try:
-            return len(c.send("overlay.get", {"id": a})["zones"])
+            return c.send("overlay.get", {"id": obj or a})
         except ObjekatError:
-            return 0
+            return {"zones": [], "texts": 0, "rev": -1}
 
-    # ── Validate ──
-    proc = launch()
+    def zones(color=None, obj=None):
+        return [z for z in overlay(obj)["zones"] if color is None or z["color"] == color]
+
+    def settle(pid, obj=None):
+        """Waits for the script to have answered the last input: the overlay rev stops moving."""
+        time.sleep(0.5)
+        r = overlay(obj)["rev"]
+        for _ in range(20):
+            time.sleep(0.15)
+            r2 = overlay(obj)["rev"]
+            if r2 == r:
+                return r2
+            r = r2
+        return r
+
+    def press(pid, values=None, button=None):
+        args = {"panel_id": pid}
+        if values:
+            args["values"] = values
+        if button:
+            args["press"] = button
+        c.send("script.panel.input", args)
+
+    # ── the panel, and both categories on the overlay ──
+    proc = launch(extra=("--no-asr",))
     got = wait_for(panels, "d: the script opens its panel")
     pid = got[0]["panel_id"] if got else None
-    n0 = wait_for(zones, "d: the script lays zones over the object")
-    check("d: zones were laid", bool(n0), n0)
+    wait_for(lambda: zones(), "d: the script lays zones over the object")
     if pid:
-        rev0 = c.send("overlay.get", {"id": a})["rev"]
         g0 = c.send("script.panel.get", {"panel_id": pid})
-        check("d: the panel carries the four criteria, the cutoff and the model choice, nothing else",
-              set(g0["values"]) == {"model", "unvoiced_on", "unvoiced", "below_speech_on", "below_speech",
-                                    "cutoff", "min_len_on", "min_len", "end_margin_on", "end_margin"},
-              sorted(g0["values"]))
-        check("d: defaults: model none, cutoff 6000 Hz, 10 dB, 80 ms, 5 ms",
-              (g0["values"]["model"], g0["values"]["cutoff"], g0["values"]["below_speech"],
-               g0["values"]["min_len"], g0["values"]["end_margin"]) == ("none", 6000, 10, 80, 5),
-              g0["values"])
-        c.send("script.panel.input", {"panel_id": pid, "values": {"below_speech_on": False}})
-        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0, "d: a setting re-runs the mask")
-        n1 = zones()
-        check("d: switching the energy criterion off never loses zones (%s -> %s)" % (n0, n1),
-              n1 >= (n0 or 0))
-        c.send("script.panel.input", {"panel_id": pid, "values": {"below_speech_on": True, "cutoff": 800}})
-        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0 + 1, "d: the cutoff moves the zones")
+        v = g0["values"]
+        check("d: the panel carries the common, breath and SS/CH controls — and nothing else",
+              set(v) == PANEL_IDS, sorted(set(v) ^ PANEL_IDS))
+        check("d: defaults: model none (--no-asr), breaths 0.4 / 10 dB / 200 Hz / 120 ms, hole 20 ms, text 500 ms",
+              (v["model"], v["b_unvoiced"], v["b_below_speech"], v["b_cutoff"], v["b_min_len"], v["fill"],
+               v["tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 500), v)
+        check("d: defaults: SS/CH hf/lf -6 dB, zcr 0.12, HF +10 dB, 30 ms, 12 dB, 'not voiced' off",
+              (v["s_hf_ratio"], v["s_zcr"], v["s_hf_energy"], v["s_min_len"], v["s_refine"],
+               v["s_unvoiced_on"]) == (-6, 0.12, 10, 30, 12, False), v)
+        check("d: the analysis finished: progress 1.0, labelled",
+              v["progress"] == 1.0, v["progress"])
+        white, yellow = zones("white"), zones("yellow")
+        check("d: breaths are WHITE and SS/CH YELLOW on the overlay (%d / %d zones)" % (len(white), len(yellow)),
+              len(white) >= 1 and len(yellow) == 3, [(z["color"], round(z["start"], 2)) for z in zones()])
+        check("d: the status line counts both categories",
+              "breath" in g0["status"] and "SS/CH" in g0["status"], g0["status"])
+        # switching a category off takes its zones off, the other stays
+        r0 = overlay()["rev"]
+        press(pid, {"s_on": False})
+        wait_for(lambda: overlay()["rev"] > r0, "d: a setting re-runs the mask")
+        check("d: SS/CH off -> no yellow zone, breaths untouched",
+              zones("yellow") == [] and len(zones("white")) == len(white))
+        press(pid, {"s_on": True, "b_on": False})
+        settle(pid)
+        check("d: breaths off -> no white zone, SS/CH back", zones("white") == [] and len(zones("yellow")) == 3)
+        press(pid, {"b_on": True})
+        settle(pid)
+        # the priority: with the breath criteria loosened to cover everything, SS/CH still owns its stretch
+        press(pid, {"b_unvoiced_on": False, "b_below_speech_on": False, "b_min_len_on": False})
+        settle(pid)
+        ys, ws = zones("yellow"), zones("white")
+        overlap = any(y["start"] < w["end"] - 1e-6 and w["start"] < y["end"] - 1e-6 for y in ys for w in ws)
+        check("d: overlapping categories: SS/CH wins, no zone overlaps another", len(ys) == 3 and not overlap)
+        press(pid, {"b_unvoiced_on": True, "b_below_speech_on": True, "b_min_len_on": True})
+        # the cutoff and a range: a value out of range is clamped by the app
+        press(pid, {"b_cutoff": 5000})
+        check("d: the breath cutoff is clamped to 1000 Hz",
+              c.send("script.panel.get", {"panel_id": pid})["values"]["b_cutoff"] == 1000)
+        press(pid, {"b_cutoff": 200})
         # a model that is not installed says so, and the panel stays alive
-        c.send("script.panel.input", {"panel_id": pid, "values": {"model": "parakeet"}})
+        press(pid, {"model": "parakeet"})
         wait_for(lambda: ("not installed" in c.send("script.panel.get", {"panel_id": pid})["status"])
-                 or ("zone" in c.send("script.panel.get", {"panel_id": pid})["status"]
-                     and c.send("overlay.get", {"id": a})["texts"] > 0),
+                 or (overlay()["texts"] > 0),
                  "d: an absent model says 'not installed' in the status line (or, installed, shows words)")
-        c.send("script.panel.input", {"panel_id": pid, "values": {"model": "none"}})
-        wait_for(lambda: c.send("overlay.get", {"id": a})["texts"] == 0, "d: 'None' clears the words")
-        c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
+        press(pid, {"model": "none"})
+        wait_for(lambda: overlay()["texts"] == 0, "d: 'None' clears the words")
+        settle(pid)
+        press(pid, button="validate")
     rc = proc.wait(timeout=60)
     check("d: the script exits 0 after Validate", rc == 0, proc.stderr.read().decode()[-400:])
     time.sleep(0.3)
@@ -391,21 +463,76 @@ def section_d(c):
     if groups:
         c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
         kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
-        check("d: two sub-lanes, named voice / breaths",
-              {k["lane"] for k in kids} == {0, 1}
-              and {k["name"] for k in kids} == {"Voice", "Breaths"}, [(k["lane"], k["name"]) for k in kids])
+        check("d: three sub-lanes, named Voice / Breaths / SS/CH",
+              {k["lane"] for k in kids} == {0, 1, 2}
+              and {k["name"] for k in kids} == {"Voice", "Breaths", "SS/CH"}, [(k["lane"], k["name"]) for k in kids])
     check("d: overlay and panel gone", c.send("overlay.list")["overlays"] == [] and panels() == [])
     c.send("edit.undo")
     objs = c.send("object.list")["objects"]
     check("d: one undo gives the original object back", [o["id"] for o in objs] == [a],
           [o["id"] for o in objs])
 
+    # ── only the categories that are ON get a lane ──
+    proc = launch(extra=("--no-asr",))
+    got = wait_for(panels, "d: two-lane run: panel opens")
+    wait_for(lambda: zones(), "d: two-lane run: zones")
+    if got:
+        press(got[0]["panel_id"], {"b_on": False})
+        settle(got[0]["panel_id"])
+        print("info  d: before validate: %s / zones %s" % (
+            {k: v for k, v in c.send("script.panel.get", {"panel_id": got[0]["panel_id"]})["values"].items() if k in ("b_on", "s_on")},
+            [(z["color"]) for z in zones()]))
+        press(got[0]["panel_id"], button="validate")
+    rc = proc.wait(timeout=60)
+    time.sleep(0.3)
+    groups = [o for o in c.send("object.list")["objects"] if o.get("kind") == "group"]
+    if not groups:
+        print("info  d: two-lane run exited %s: %s / objects %s" % (
+            rc, proc.stderr.read().decode()[-400:],
+            [(o.get("kind"), o.get("name")) for o in c.send("object.list")["objects"]]))
+    if groups:
+        c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
+        kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
+        check("d: breaths off -> two sub-lanes, Voice / SS/CH",
+              {k["lane"] for k in kids} == {0, 1} and {k["name"] for k in kids} == {"Voice", "SS/CH"},
+              [(k["lane"], k["name"]) for k in kids])
+    else:
+        check("d: breaths off -> the object was cut", False)
+    c.send("edit.undo")
+
+    # ── THE HOLE FILLING, seen in the overlay ──
+    b = c.send("object.add", {"path": BURST, "lane": 4, "start": 0.0})["id"]
+    proc = launch(b, ("--no-asr",))
+    got = wait_for(panels, "d: hole run: panel opens")
+    wait_for(lambda: zones(obj=b), "d: hole run: zones", timeout=30)
+    if got:
+        pid = got[0]["panel_id"]
+        press(pid, {"b_on": False, "fill_on": False})
+        settle(pid, b)
+        apart = zones("yellow", b)
+        check("d: hole filling OFF: the two bursts (30 ms hole) are two zones: %s"
+              % [(round(z['start'], 3), round(z['end'], 3)) for z in apart], len(apart) == 2, apart)
+        press(pid, {"fill_on": True, "fill": 20})
+        settle(pid, b)
+        check("d: hole filling ON at 20 ms: the 30 ms hole stays open (2 zones)", len(zones("yellow", b)) == 2,
+              zones("yellow", b))
+        press(pid, {"fill": 40})
+        settle(pid, b)
+        joined = zones("yellow", b)
+        check("d: hole filling at 40 ms: ONE zone, from the first burst to the second: %s"
+              % [(round(z['start'], 3), round(z['end'], 3)) for z in joined],
+              len(joined) == 1 and abs(joined[0]["start"] - 0.80) < 0.02 and abs(joined[0]["end"] - 1.03) < 0.02,
+              joined)
+        press(pid, button="cancel")
+    proc.wait(timeout=60)
+    c.send("object.remove", {"ids": [b]})
+
     # ── Cancel ──
     before = c.send("object.list")["objects"]
-    proc = launch()
+    proc = launch(extra=("--no-asr",))
     got = wait_for(panels, "d: cancel run: panel opens")
     if got:
-        wait_for(zones, "d: cancel run: zones")
+        wait_for(lambda: zones(), "d: cancel run: zones")
         c.send("script.panel.input", {"panel_id": got[0]["panel_id"], "press": "cancel"})
     rc = proc.wait(timeout=60)
     time.sleep(0.3)
@@ -414,15 +541,107 @@ def section_d(c):
     check("d: Cancel leaves no overlay", c.send("overlay.list")["overlays"] == [])
 
     # ── The script is killed while its panel is open ──
-    proc = launch()
+    proc = launch(extra=("--no-asr",))
     got = wait_for(panels, "d: kill run: panel opens")
-    wait_for(zones, "d: kill run: zones")
+    wait_for(lambda: zones(), "d: kill run: zones")
     proc.kill()
     proc.wait()
     ok = wait_for(lambda: c.send("overlay.list")["overlays"] == [] and panels() == [],
                   "d: SIGKILL on the script clears its overlay and its panel", timeout=10)
     if ok:
         check("d: SIGKILL on the script clears its overlay and its panel", True)
+
+
+def section_f(c):
+    """A REAL voice (`say -v Thomas`, s / ch / z / j and two pauses) through the script and a real
+    transcription model: the progress bar's life, the text as a criterion, Validate on three lanes."""
+    import time
+    if not os.path.exists(VENV_PY) or shutil.which("say") is None:
+        print("skip  f: no venv or no `say`")
+        return
+    probe = subprocess.run([VENV_PY, "-c", "import sys; sys.path.insert(0, %r); import transcribe as tr; "
+                            "print(' '.join(m for m in ('align', 'whisper') if tr.installed(m, 'fr')))" % SCRIPT_DIR],
+                           capture_output=True, text=True).stdout.split()
+    model = probe[0] if probe else None
+    if model is None:
+        print("skip  f: no transcription model installed")
+        return
+    ROOT = tmproot("f")
+    WAV = os.path.join(ROOT, "thomas.wav")
+    subprocess.run(["say", "-v", "Thomas", "-o", WAV, "--data-format=LEI16@44100",
+                    "Le serpent chuchote : ces six chasseurs sont assis sous les cyprès. [[slnc 900]] "
+                    "Zazie joue au jardin avec des jujubes et des chiens. [[slnc 1100]] "
+                    "Un joli visage, une bonne journée, la chaise jaune, le cheval gris."], check=True)
+    c.send("project.new")
+    a = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
+    env = dict(os.environ, OBJEKAT_SOCKET=SOCK, OBJEKAT_LANGUAGE="fr",
+               OBJEKAT_SEPARATEUR_CACHE=os.path.join(ROOT, "cache"))
+    proc = subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--eval-separation", "--object", a,
+                             "--model", model], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    end = time.time() + 30
+    pid = None
+    while time.time() < end and not pid:
+        ps = [p for p in c.send("script.panel.list")["panels"] if p["state"] == "open"]
+        pid = ps[0]["panel_id"] if ps else None
+        time.sleep(0.05)
+    check("f: the panel opens", pid is not None)
+    if not pid:
+        proc.kill()
+        return
+    seen = []           # (label, value) of the progress bar over time
+    end = time.time() + 120
+    words = 0
+    while time.time() < end:
+        g = c.send("script.panel.get", {"panel_id": pid})
+        seen.append(g["values"].get("progress"))
+        try:
+            words = c.send("overlay.get", {"id": a})["texts"]
+        except ObjekatError:
+            words = 0
+        if words > 0 and g["values"].get("progress") == 1.0:
+            break
+        time.sleep(0.05)
+    fractions = [x for x in seen if x is not None]
+    print("info  f: progress values seen (%s): %s" % (model, sorted(set(fractions))[:12]))
+    check("f: the bar was indeterminate (null) at some point while working", None in seen)
+    check("f: the bar reached 1.0 when the transcription finished, %d words on the overlay" % words,
+          fractions and fractions[-1] == 1.0 and words > 10)
+    n_all = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
+    print("info  f: zones with the defaults and the text: %s" % n_all)
+    check("f: both categories find something on a real voice", n_all["white"] >= 2 and n_all["yellow"] >= 6, n_all)
+    # the text as a criterion: 'use the text' off vs on at a tiny tolerance
+    c.send("script.panel.input", {"panel_id": pid, "values": {"text_on": False}})
+    time.sleep(1.0)
+    off = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
+    c.send("script.panel.input", {"panel_id": pid, "values": {"text_on": True, "tolerance": 50}})
+    time.sleep(1.0)
+    on = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
+    print("info  f: text off %s, text on at 50 ms %s" % (off, on))
+    check("f: the text as a criterion only ever DROPS zones", on["white"] <= off["white"] and on["yellow"] <= off["yellow"])
+    c.send("script.panel.input", {"panel_id": pid, "values": {"tolerance": 500}})
+    time.sleep(0.8)
+    c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
+    rc = proc.wait(timeout=60)
+    check("f: the script exits 0 after Validate", rc == 0, proc.stderr.read().decode()[-300:])
+    time.sleep(0.3)
+    groups = [o for o in c.send("object.list")["objects"] if o.get("kind") == "group"]
+    if groups:
+        c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
+        kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
+        check("f: Validate lays the real voice on three sub-lanes (Voix / Respirations / SS/CH)",
+              {k["lane"] for k in kids} == {0, 1, 2}
+              and {k["name"] for k in kids} == {"Voix", "Respirations", "SS/CH"},
+              [(k["lane"], k["name"]) for k in kids])
+        print("info  f: %d pieces: %s" % (len(kids), {n: sum(1 for k in kids if k["name"] == n) for n in {k["name"] for k in kids}}))
+    else:
+        check("f: Validate cut the object", False)
+
+
+def zones_of(c, obj, color):
+    try:
+        return [z for z in c.send("overlay.get", {"id": obj})["zones"] if z["color"] == color]
+    except ObjekatError:
+        return []
 
 
 def section_e():
@@ -446,12 +665,15 @@ def section_e():
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        section_a(c, 48000)
-        section_a(c, 44100)
-        section_b(c)
-        section_c(c)
-        section_d(c)
-        section_e()
+        only = os.environ.get("SECTIONS", "abcdfe")     # e.g. SECTIONS=d to run one section
+        if "a" in only:
+            section_a(c, 48000)
+            section_a(c, 44100)
+        for name, fn in (("b", section_b), ("c", section_c), ("d", section_d), ("f", section_f)):
+            if name in only:
+                fn(c)
+        if "e" in only:
+            section_e()
 finally:
     cleanup()
 

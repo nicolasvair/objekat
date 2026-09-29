@@ -16,6 +16,8 @@ import soundfile as sf
 from parakeet_mlx import from_pretrained
 
 MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+CHUNK_S = 120.0     # a longer file is transcribed in chunks of this length (so it can report progress)
+OVERLAP_S = 15.0
 
 
 def words_from(result):
@@ -52,7 +54,15 @@ def main():
     wav, out = sys.argv[1], sys.argv[2]
     _pk.load_audio = _load_audio
     model = from_pretrained(MODEL)
-    result = model.transcribe(wav)
+
+    def on_chunk(end, total):
+        # called as a chunk STARTS, with the sample it will end on: the share before this chunk
+        # is what is done. (Only a file longer than CHUNK_S is chunked at all.)
+        print("PROGRESS %.4f" % max(0.0, (end - CHUNK_S * 16000) / total), flush=True)
+
+    result = model.transcribe(wav, chunk_duration=CHUNK_S, overlap_duration=OVERLAP_S,
+                              chunk_callback=on_chunk)
+    print("PROGRESS 1.0", flush=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(words_from(result), f)
 

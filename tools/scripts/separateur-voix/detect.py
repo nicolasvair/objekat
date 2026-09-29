@@ -379,22 +379,25 @@ def _gaps_from_words(words, duration, min_gap_ms=MIN_GAP_MS):
     return gaps
 
 
-# MARK: - The evaluation grid (four criteria, fine time grid)
+# MARK: - The evaluation grid (fine time grid, low-pass, two categories)
 
-# The breath evaluation looks at the signal on a grid FINER than the historical 10 ms one: what a
-# hand tunes against is where a zone's edges fall, and a 10 ms hop with a 25 ms window smears every
-# edge by a dozen milliseconds. Two things are measured, each with the window it needs:
-#   - the VOICING, on a 25 ms window (an autocorrelation needs a few periods of a 70 Hz voice —
-#     shorter and the score means nothing), read every `EVAL_HOP_MS`;
+# The evaluation looks at the signal on a grid FINER than the historical 10 ms one: what a hand
+# tunes against is where a zone's edges fall, and a 10 ms hop with a 25 ms window smears every edge
+# by a dozen milliseconds. Per frame, each measured with the window it needs:
+#   - the VOICING, on a 25 ms window (an autocorrelation needs a few periods of a 70 Hz voice);
 #   - the LOW-PASSED ENERGY, on a `EVAL_LP_WINDOW_MS` window (an edge in energy is a step, and the
-#     window is what blurs it), at the same hop.
+#     window is what blurs it), stored for every cutoff of the grid;
+#   - for the friction categories, on the same short window: the energy of the HF band (4-10 kHz),
+#     of the LF band (80 Hz-1 kHz) and the zero-crossing rate.
 # Frames are CENTRED on their instant (frame k is about `k * hop`), so a frame's cell
 # `[t - hop/2, t + hop/2)` is what a run of frames is drawn as — no half-window bias on a zone.
 EVAL_HOP_MS = 2.5
 EVAL_VOICING_WINDOW_MS = 25.0
 EVAL_LP_WINDOW_MS = 12.0
 EVAL_CUTOFFS = np.arange(100.0, 8000.1, 100.0)      # the panel's slider grid, Hz
-EVAL_FEATURES_VERSION = 1
+EVAL_FEATURES_VERSION = 2       # 2: + hf_db, lf_db, zcr (the SS/CH category)
+EVAL_HF_BAND = (4000.0, 10000.0)
+EVAL_LF_BAND = (80.0, 1000.0)
 
 
 @dataclass
@@ -406,9 +409,22 @@ class EvalFeatures:
                              # spectrum, so moving the cutoff costs nothing and refilters nothing
     cutoffs: np.ndarray
     hop_s: float
+    hf_db: np.ndarray | None = None    # 10*log10 of the energy in EVAL_HF_BAND (same normalisation as lp_db)
+    lf_db: np.ndarray | None = None    # ... in EVAL_LF_BAND
+    zcr: np.ndarray | None = None      # zero crossings per sample, on the short window
+
+    def hf_floor_db(self) -> float:
+        """The 5th percentile of the HF energy — the noise floor the friction criterion is measured
+        from. Computed once (a percentile over a few hundred thousand frames is milliseconds, but a
+        slider drag asks for it at every step)."""
+        if "_hf_floor" not in self.__dict__:
+            self.__dict__["_hf_floor"] = (float(np.percentile(self.hf_db, 5))
+                                          if self.hf_db is not None and self.hf_db.size else -120.0)
+        return self.__dict__["_hf_floor"]
 
 
-def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
+def compute_eval_features(samples: np.ndarray, sr: float, progress=None) -> EvalFeatures:
+    """`progress(fraction)`, when given, is called after every chunk of frames (0…1)."""
     hop = max(1, int(round(EVAL_HOP_MS / 1000.0 * sr)))
     vlen = max(4, int(round(EVAL_VOICING_WINDOW_MS / 1000.0 * sr)))
     llen = max(4, int(round(EVAL_LP_WINDOW_MS / 1000.0 * sr)))
@@ -417,8 +433,11 @@ def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
     times = np.arange(n_frames) * hop / sr
     voicing = np.zeros(n_frames)
     lp_db = np.full((n_frames, len(EVAL_CUTOFFS)), -120.0, dtype=np.float16)
+    hf_db = np.full(n_frames, -120.0, dtype=np.float32)
+    lf_db = np.full(n_frames, -120.0, dtype=np.float32)
+    zcr = np.zeros(n_frames, dtype=np.float32)
     if n_frames == 0:
-        return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr)
+        return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr, hf_db, lf_db, zcr)
 
     x = np.asarray(samples, dtype=np.float64)
     pad = max(vlen, llen)
@@ -432,6 +451,8 @@ def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
     wnorm = float(np.sum(window ** 2))
     freqs = np.fft.rfftfreq(llen, d=1.0 / sr)
     cut_idx = np.clip(np.searchsorted(freqs, EVAL_CUTOFFS, side="right") - 1, 0, len(freqs) - 1)
+    hf_sel = ((freqs >= EVAL_HF_BAND[0]) & (freqs <= EVAL_HF_BAND[1])).astype(np.float64)
+    lf_sel = ((freqs >= EVAL_LF_BAND[0]) & (freqs <= EVAL_LF_BAND[1])).astype(np.float64)
     lag_min = int(sr / 400.0)
     lag_max = min(int(sr / 70.0), vlen - 1)
     fft_len = 2 * vlen
@@ -441,8 +462,13 @@ def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
         starts = np.arange(c0, c1) * hop
         lf = lview[l0 + starts]
         spec = np.fft.rfft(lf * window, axis=1)
-        cum = np.cumsum(spec.real ** 2 + spec.imag ** 2, axis=1)[:, cut_idx]
+        power = spec.real ** 2 + spec.imag ** 2
+        cum = np.cumsum(power, axis=1)[:, cut_idx]
         lp_db[c0:c1] = (10.0 * np.log10(cum / (wnorm * llen) + eps)).astype(np.float16)
+        hf_db[c0:c1] = 10.0 * np.log10((power @ hf_sel) / (wnorm * llen) + eps)
+        lf_db[c0:c1] = 10.0 * np.log10((power @ lf_sel) / (wnorm * llen) + eps)
+        neg = lf < 0
+        zcr[c0:c1] = np.mean(neg[:, 1:] != neg[:, :-1], axis=1)
         if lag_max > lag_min:
             vf = vview[v0 + starts]
             xv = vf - vf.mean(axis=1, keepdims=True)
@@ -452,30 +478,87 @@ def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
             best = np.maximum(r[:, lag_min:lag_max + 1].max(axis=1), 0.0)
             ok = e0 > 1e-12
             voicing[c0:c1] = np.where(ok, best / np.where(ok, e0, 1.0), 0.0)
-    return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr)
+        if progress is not None:
+            progress(c1 / n_frames)
+    return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr, hf_db, lf_db, zcr)
+
+
+# ── The settings: one COMMON block, one block PER CATEGORY. Each criterion is a box (`*_on`) and a
+# value; a box off drops the criterion from the conjunction. The panel's control ids are the field
+# names below, prefixed (`b_` breaths, `s_` SS/CH), so `from_values` reads a panel's values as they are.
+
+def _from_values(cls, values: dict, prefix: str = ""):
+    p = cls()
+    for name in cls.__dataclass_fields__:
+        if prefix + name in values:
+            setattr(p, name, type(getattr(p, name))(values[prefix + name]))
+    return p
 
 
 @dataclass
-class EvalParams:
-    """The four criteria of the evaluation, each with its own on / off. A zone is a run of frames
-    where every CHECKED frame criterion holds; nothing else — no words, no floor, no flatness."""
-    unvoiced: float = 0.45          # voicing score at or below this = not voiced
-    cutoff: float = 6000.0          # Hz — the low-pass both energies are measured after
-    below_speech: float = 10.0      # dB under the median low-passed energy of the voiced frames
-    min_len: float = 80.0           # ms — the shortest zone kept
-    end_margin: float = 5.0         # ms — a zone stops this long before the first voiced frame after it
-    unvoiced_on: bool = True
-    below_speech_on: bool = True
-    min_len_on: bool = True
-    end_margin_on: bool = True
+class CommonParams:
+    fill_on: bool = True
+    fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
+    text_on: bool = True
+    tolerance: float = 500.0    # ms — a zone is kept only within this of a place the TEXT allows it
 
     @classmethod
-    def from_values(cls, values: dict) -> "EvalParams":
-        p = cls()
-        for name in cls.__dataclass_fields__:
-            if name in values:
-                setattr(p, name, type(getattr(p, name))(values[name]))
-        return p
+    def from_values(cls, values: dict) -> "CommonParams":
+        return _from_values(cls, values)
+
+
+@dataclass
+class BreathEval:
+    on: bool = True
+    unvoiced_on: bool = True
+    unvoiced: float = 0.4       # voicing score at or below this = not voiced
+    below_speech_on: bool = True
+    below_speech: float = 10.0  # dB under the median low-passed energy of the voiced frames
+    cutoff: float = 200.0       # Hz — the low-pass both energies are measured after
+    min_len_on: bool = True
+    min_len: float = 120.0      # ms — the shortest zone kept
+
+    @classmethod
+    def from_values(cls, values: dict) -> "BreathEval":
+        return _from_values(cls, values, "b_")
+
+
+@dataclass
+class SibilantEval:
+    """SS / CH. Friction is what the category is FOR, so its criteria are the friction's own: a
+    high-frequency excess over the low band, a high zero-crossing rate, HF energy above the floor.
+    'Not voiced' is optional and OFF by default — z and j are voiced fricatives, and a voicing
+    ceiling drops them (the known fault of the historical detector)."""
+    on: bool = True
+    unvoiced_on: bool = False
+    unvoiced: float = 0.7
+    hf_ratio_on: bool = True
+    hf_ratio: float = -6.0      # dB — HF band over LF band above this. NEGATIVE on purpose: a voiced z or j
+                                # has its voicebar in the LF band and reads -3 to -5 dB where an s reads +30
+    zcr_on: bool = True
+    zcr: float = 0.12           # zero crossings per sample above this
+    hf_energy_on: bool = True
+    hf_energy: float = 10.0     # dB — HF energy above the noise floor (5th percentile of the HF energy)
+    min_len_on: bool = True
+    min_len: float = 30.0       # ms — the shortest zone kept (a short j is about 30 ms)
+    refine_on: bool = True
+    refine: float = 12.0        # dB — a zone is tightened onto the frames within this of its own HF peak
+
+    @classmethod
+    def from_values(cls, values: dict) -> "SibilantEval":
+        return _from_values(cls, values, "s_")
+
+
+@dataclass
+class EvalSettings:
+    common: CommonParams
+    breath: BreathEval
+    sibilant: SibilantEval
+
+    @classmethod
+    def from_values(cls, values: dict) -> "EvalSettings":
+        return cls(CommonParams.from_values(values), BreathEval.from_values(values),
+                   SibilantEval.from_values(values))
 
 
 def eval_lp_column(feats: EvalFeatures, cutoff: float) -> np.ndarray:
@@ -492,12 +575,91 @@ def eval_speech_level(feats: EvalFeatures, unvoiced: float, cutoff: float) -> fl
     return float(np.median(col[voiced])) if voiced.any() else float(np.median(col)) if col.size else 0.0
 
 
-def eval_mask(feats: EvalFeatures, speech_db: float, params: EvalParams,
-              duration: float | None = None) -> list[tuple[float, float]]:
-    """The zones, as (start, end) seconds — PURE and array-only, what every setting a hand moves
-    re-runs. `speech_db` must be `eval_speech_level` for `params.unvoiced` and `params.cutoff`.
-    Zones are clamped to `[0, duration]` (a frame's cell reaches half a hop past both ends)."""
-    p = params
+# ── The text as a criterion
+
+def word_gap_intervals(words: list[dict], duration: float) -> list[tuple[float, float]]:
+    """The spaces BETWEEN words (and before the first / after the last one), longer than a
+    millisecond — where the text says nobody is speaking."""
+    out = []
+    prev = 0.0
+    for w in sorted(words, key=lambda w: w["start"]):
+        if w["start"] - prev > 0.001:
+            out.append((prev, w["start"]))
+        prev = max(prev, w["end"])
+    if duration - prev > 0.001:
+        out.append((prev, duration))
+    return out
+
+
+def sibilant_word_intervals(words: list[dict], language: str) -> list[tuple[float, float]]:
+    """The spans of the words whose spelling holds an SS / CH grapheme — where the text says a
+    fricative may be."""
+    return [(w["start"], w["end"]) for w in words if is_sibilant_candidate(w["word"], language)]
+
+
+def keep_near(zones: list[tuple[float, float]], places: list[tuple[float, float]],
+              tolerance_s: float) -> list[tuple[float, float]]:
+    """The zones lying within `tolerance_s` of at least one place (distance 0 when they overlap).
+    `places` may be empty: then nothing is near anything and nothing is kept."""
+    if not zones or not places:
+        return []
+    zl = np.array([z[0] for z in zones])[:, None]
+    zh = np.array([z[1] for z in zones])[:, None]
+    pl = np.array([p[0] for p in places])[None, :]
+    ph = np.array([p[1] for p in places])[None, :]
+    dist = np.maximum(0.0, np.maximum(pl - zh, zl - ph))
+    keep = (dist <= tolerance_s + 1e-9).any(axis=1)
+    return [z for z, k in zip(zones, keep) if k]
+
+
+def subtract_zones(zones: list[tuple[float, float]], cut: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """`zones` with every stretch covered by `cut` taken out (a zone may split in two)."""
+    if not cut:
+        return list(zones)
+    cut = sorted(cut)
+    out = []
+    for lo, hi in zones:
+        pieces = [(lo, hi)]
+        for c0, c1 in cut:
+            nxt = []
+            for a, b in pieces:
+                if c1 <= a or c0 >= b:
+                    nxt.append((a, b))
+                    continue
+                if c0 > a:
+                    nxt.append((a, c0))
+                if c1 < b:
+                    nxt.append((c1, b))
+            pieces = nxt
+        out.extend(pieces)
+    return out
+
+
+# ── The masks
+
+def _intervals(feats: EvalFeatures, runs, duration: float | None) -> list[tuple[float, float]]:
+    if not runs:
+        return []
+    hop = feats.hop_s
+    i0 = np.array([r[0] for r in runs])
+    j0 = np.array([r[1] for r in runs])
+    lo = np.maximum(feats.times[i0] - hop / 2.0, 0.0)
+    hi = feats.times[j0 - 1] + hop / 2.0
+    if duration is not None:
+        hi = np.minimum(hi, duration)
+    keep = hi > lo
+    return list(zip(lo[keep].tolist(), hi[keep].tolist()))
+
+
+def _fill_s(common: CommonParams) -> float:
+    return (common.fill / 1000.0) if common.fill_on else 0.0
+
+
+def breath_zones(feats: EvalFeatures, speech_db: float, p: BreathEval, common: CommonParams,
+                 duration: float | None = None) -> list[tuple[float, float]]:
+    """Breath zones, before the text and before the priority rule. PURE and array-only: what every
+    setting a hand moves re-runs. `speech_db` must be `eval_speech_level` for `p.unvoiced` and
+    `p.cutoff`."""
     n = feats.times.size
     if n == 0:
         return []
@@ -506,27 +668,79 @@ def eval_mask(feats: EvalFeatures, speech_db: float, params: EvalParams,
         candidate &= feats.voicing <= p.unvoiced
     if p.below_speech_on:
         candidate &= eval_lp_column(feats, p.cutoff) < speech_db - p.below_speech
-    hop = feats.hop_s
-    runs = _frame_runs(candidate, hop, 0.0, 0.0)
-    if not runs:
+    runs = _frame_runs(candidate, feats.hop_s, _fill_s(common), (p.min_len / 1000.0) if p.min_len_on else 0.0)
+    return _intervals(feats, runs, duration)
+
+
+def _refine_eval_hf(feats: EvalFeatures, runs, drop_db: float):
+    """Each run tightened onto the frames within `drop_db` of ITS OWN HF peak (the same measurement
+    the friction criterion was made with, so the refinement cannot disagree with it)."""
+    out = []
+    for i, j in runs:
+        seg = feats.hf_db[i:j]
+        above = np.flatnonzero(seg >= seg.max() - drop_db)
+        if above.size:
+            out.append((i + int(above[0]), i + int(above[-1]) + 1))
+    return out
+
+
+def sibilant_zones(feats: EvalFeatures, p: SibilantEval, common: CommonParams,
+                   duration: float | None = None) -> list[tuple[float, float]]:
+    """SS / CH zones, before the text and before the priority rule."""
+    n = feats.times.size
+    if n == 0 or feats.hf_db is None:
         return []
-    i0 = np.array([r[0] for r in runs])
-    j0 = np.array([r[1] for r in runs])
-    lo = feats.times[i0] - hop / 2.0
-    hi = feats.times[j0 - 1] + hop / 2.0
-    lo = np.maximum(lo, 0.0)
-    if duration is not None:
-        hi = np.minimum(hi, duration)
-    if p.end_margin_on:
-        vidx = np.flatnonzero(feats.voicing > p.unvoiced)
-        if vidx.size:
-            k = np.searchsorted(vidx, i0, side="left")
-            has = k < vidx.size
-            first = feats.times[vidx[np.clip(k, 0, vidx.size - 1)]]
-            hi = np.where(has, np.minimum(hi, first - p.end_margin / 1000.0), hi)
-    min_len = (p.min_len / 1000.0) if p.min_len_on else 0.0
-    keep = (hi - lo) >= max(min_len, 1e-9)
-    return list(zip(lo[keep].tolist(), hi[keep].tolist()))
+    candidate = np.ones(n, dtype=bool)
+    if p.unvoiced_on:
+        candidate &= feats.voicing <= p.unvoiced
+    if p.hf_ratio_on:
+        candidate &= (feats.hf_db - feats.lf_db) > p.hf_ratio
+    if p.zcr_on:
+        candidate &= feats.zcr > p.zcr
+    if p.hf_energy_on:
+        candidate &= feats.hf_db > feats.hf_floor_db() + p.hf_energy
+    runs = _frame_runs(candidate, feats.hop_s, _fill_s(common), (p.min_len / 1000.0) if p.min_len_on else 0.0)
+    if p.refine_on:
+        runs = _refine_eval_hf(feats, runs, p.refine)
+    return _intervals(feats, runs, duration)
+
+
+def eval_zones(feats: EvalFeatures, settings: EvalSettings, duration: float,
+               words: list[dict] | None = None, language: str = "fr",
+               speech_db: float | None = None) -> dict[str, list[tuple[float, float]]]:
+    """Both categories, `{"breath": [...], "sibilant": [...]}`, everything applied: the criteria, the
+    hole-filling, the text, then the PRIORITY rule.
+
+    The text (`common.text_on` with a model's `words`; without either it changes nothing): a breath
+    is kept only within the tolerance of a GAP between two words, an SS/CH only within the
+    tolerance of a word whose spelling holds an SS / CH grapheme.
+
+    Priority: where the two overlap, SS/CH WINS. A breath is defined by what it lacks (voicing, low
+    energy) and a fricative lacks the same things; a fricative is defined by what it HAS (a high-
+    frequency excess, fast zero crossings), which a breath does not, so the evidence is better on
+    that side. The overlap is taken out of the breath zone (which may split), and a remnant shorter
+    than the breath's minimum length goes with it."""
+    c, b, s = settings.common, settings.breath, settings.sibilant
+    tol = c.tolerance / 1000.0
+    use_text = c.text_on and bool(words)
+    sib: list[tuple[float, float]] = []
+    breath: list[tuple[float, float]] = []
+    if s.on:
+        sib = sibilant_zones(feats, s, c, duration)
+        if use_text:
+            sib = keep_near(sib, sibilant_word_intervals(words, language), tol)
+    if b.on:
+        if speech_db is None:
+            speech_db = eval_speech_level(feats, b.unvoiced, b.cutoff)
+        breath = breath_zones(feats, speech_db, b, c, duration)
+        if use_text:
+            breath = keep_near(breath, word_gap_intervals(words, duration), tol)
+        breath = subtract_zones(breath, sib)
+        if b.min_len_on:
+            breath = [z for z in breath if (z[1] - z[0]) * 1000.0 >= b.min_len - 1e-6]
+        else:
+            breath = [z for z in breath if z[1] - z[0] > 1e-6]
+    return {"breath": breath, "sibilant": sib}
 
 
 # MARK: - Sibilants / CH
@@ -641,10 +855,17 @@ def segment(samples: np.ndarray, sr: float, duration: float,
                                 + [(lo, hi, "sibilant") for lo, hi in sibilants], duration)
 
 
+def segment_zones(duration: float, zones: dict[str, list[tuple[float, float]]]) -> list[tuple[float, float, str]]:
+    """The evaluation's zones (`{"breath": [...], "sibilant": [...]}`) → the pieces (voice / breath /
+    sibilant) an evaluation lays out on sub-lanes. Same folding rule as `segment` (no piece under
+    `MIN_PIECE_MS`); the categories never overlap (@see eval_zones)."""
+    return _pieces_from_regions([(lo, hi, "breath") for lo, hi in zones.get("breath", [])]
+                                + [(lo, hi, "sibilant") for lo, hi in zones.get("sibilant", [])], duration)
+
+
 def segment_breaths(duration: float, regions: list[tuple[float, float]]) -> list[tuple[float, float, str]]:
-    """Breath regions only → the two-label pieces (voice / breath) an evaluation lays out on two
-    sub-lanes. Same folding rule as `segment` (no piece under `MIN_PIECE_MS`)."""
-    return _pieces_from_regions([(lo, hi, "breath") for lo, hi in regions], duration)
+    """Breath regions only → the two-label pieces (voice / breath)."""
+    return segment_zones(duration, {"breath": regions})
 
 
 LANE_FOR_LABEL = {"voice": 0, "breath": 1, "sibilant": 2}
@@ -653,9 +874,12 @@ LANE_NAMES = {"fr": ["Voix", "Respirations", "SS/CH"],
              "es": ["Voz", "Respiraciones", "SS/CH"]}
 
 
-def cuts_and_lanes(pieces: list[tuple[float, float, str]]) -> tuple[list[float], list[int]]:
+def cuts_and_lanes(pieces: list[tuple[float, float, str]],
+                   lane_of: dict[str, int] | None = None) -> tuple[list[float], list[int]]:
     """`pieces` (as `segment` returns them) → `(cuts, lanes)` for `object.explode`: the interior
-    boundaries, and each piece's sub-lane."""
+    boundaries, and each piece's sub-lane (`lane_of`: label → lane, default the three fixed lanes —
+    the evaluation passes only the categories that are switched on)."""
+    table = lane_of or LANE_FOR_LABEL
     cuts = [p[0] for p in pieces[1:]]
-    lanes = [LANE_FOR_LABEL[p[2]] for p in pieces]
+    lanes = [table[p[2]] for p in pieces]
     return cuts, lanes

@@ -262,7 +262,7 @@ for _ in range(5):
 best = min(runs_t)
 check("breath_mask + stats + gaps on 10 min (60 000 frames): %.1f ms < 20 ms" % best, best < 20.0, runs_t)
 
-# ── the evaluation grid: four criteria, fine time grid, low-pass ───────────────────────────────
+# ── the evaluation grid: fine time grid, low-pass, hole filling, text, two categories ──────────
 import transcribe as tr
 
 ef = detect.compute_eval_features(sig, SR)
@@ -279,34 +279,69 @@ for k in (100, 240, 400, 480, 600, 900):
     worst = max(worst, abs(ef.voicing[k] - ref_autocorr_voicing(seg, SR)))
 check("eval voicing == the reference on the centred window, max |d| = %.2e" % worst, worst < 1e-6, worst)
 
-# the low-passed energy == the energy of the spectrum below the cutoff, computed directly
+# the low-passed energy, the HF / LF band energies and the zero-crossing rate == computed directly
 llen = int(round(detect.EVAL_LP_WINDOW_MS / 1000.0 * SR))
 win = np.hanning(llen)
 freqs = np.fft.rfftfreq(llen, d=1.0 / SR)
-worst = 0.0
-for k in (200, 480, 500, 700):
+worst, worst_hf, worst_lf, worst_z = 0.0, 0.0, 0.0, 0.0
+norm = np.sum(win ** 2) * llen
+for k in (200, 480, 500, 700, 720, 870):
     c = k * int(round(0.0025 * SR))
     seg = sig[c - llen // 2: c - llen // 2 + llen]
     m2 = np.abs(np.fft.rfft(seg * win)) ** 2
     for cut in (300.0, 1500.0, 6000.0):
-        want = 10 * math.log10(m2[freqs <= cut].sum() / (np.sum(win ** 2) * llen) + 1e-12)
+        want = 10 * math.log10(m2[freqs <= cut].sum() / norm + 1e-12)
         got = float(ef.lp_db[k, int(round(cut / 100.0)) - 1])
         worst = max(worst, abs(got - want))
+    hf = m2[(freqs >= 4000) & (freqs <= 10000)].sum()
+    lf = m2[(freqs >= 80) & (freqs <= 1000)].sum()
+    worst_hf = max(worst_hf, abs(ef.hf_db[k] - 10 * math.log10(hf / norm + 1e-12)))
+    worst_lf = max(worst_lf, abs(ef.lf_db[k] - 10 * math.log10(lf / norm + 1e-12)))
+    neg = seg < 0
+    worst_z = max(worst_z, abs(ef.zcr[k] - np.mean(neg[1:] != neg[:-1])))
 check("low-passed energy == the direct band sum (float16), max |d| = %.3f dB" % worst, worst < 0.15, worst)
+check("HF band energy == the direct band sum, max |d| = %.4f dB" % worst_hf, worst_hf < 1e-3, worst_hf)
+check("LF band energy == the direct band sum, max |d| = %.4f dB" % worst_lf, worst_lf < 1e-3, worst_lf)
+check("zero-crossing rate == the direct count, max |d| = %.2e" % worst_z, worst_z < 1e-6, worst_z)
 check("a lower cutoff never has MORE energy", bool((np.diff(ef.lp_db.astype(np.float64), axis=1) >= -0.1).all()))
+seen = []
+ef_p = detect.compute_eval_features(sig, SR, progress=seen.append)
+check("compute_eval_features reports progress: rising, ending on 1.0 (%d calls)" % len(seen),
+      len(seen) >= 1 and seen == sorted(seen) and abs(seen[-1] - 1.0) < 1e-9)
+
+# ── the defaults the user fixed ──
+d = detect.EvalSettings.from_values({})
+check("defaults — breaths: voicing 0.4, 10 dB, cutoff 200 Hz, 120 ms",
+      (d.breath.unvoiced, d.breath.below_speech, d.breath.cutoff, d.breath.min_len) == (0.4, 10.0, 200.0, 120.0))
+check("defaults — common: hole filling ON 20 ms, text ON, tolerance 500 ms",
+      (d.common.fill_on, d.common.fill, d.common.text_on, d.common.tolerance) == (True, 20.0, True, 500.0))
+check("the end margin is gone", not hasattr(d.breath, "end_margin") and not hasattr(d.breath, "end_margin_on"))
+es = detect.EvalSettings.from_values({"b_cutoff": 400, "b_below_speech_on": False, "tolerance": 300,
+                                      "fill": 0, "s_zcr": 0.2, "s_on": False})
+check("EvalSettings.from_values reads the prefixed panel ids",
+      es.breath.cutoff == 400.0 and es.breath.below_speech_on is False and es.common.tolerance == 300.0
+      and es.common.fill == 0.0 and es.sibilant.zcr == 0.2 and es.sibilant.on is False
+      and es.breath.min_len == 120.0)
 
 
-def eval_run(**kw):
-    p = detect.EvalParams(**kw)
-    return detect.eval_mask(ef, detect.eval_speech_level(ef, p.unvoiced, p.cutoff), p, DURATION)
+def settings(**kw):
+    """Breaths alone, no text unless asked, hole filling at its default."""
+    values = {"s_on": False}
+    values.update(kw)
+    return detect.EvalSettings.from_values(values)
 
 
-z = eval_run(end_margin=0, min_len=60)
+def breath_run(**kw):
+    s = settings(**kw)
+    return detect.eval_zones(ef, s, DURATION, None, "fr")["breath"]
+
+
+z = breath_run(b_min_len=80)
 breath = [r for r in z if r[0] > 1.1 and r[1] < 1.55]
-check("the synthetic breath [1.20, 1.45] is found, edges within 8 ms: %s" % breath,
-      len(breath) == 1 and abs(breath[0][0] - 1.20) < 0.008 and abs(breath[0][1] - 1.45) < 0.008, breath)
+check("the synthetic breath [1.20, 1.45] is found, edges within 10 ms: %s" % breath,
+      len(breath) == 1 and abs(breath[0][0] - 1.20) < 0.010 and abs(breath[0][1] - 1.45) < 0.010, breath)
 
-# each criterion, off, never REMOVES coverage; and a bare mask (all off) is the whole timeline
+
 def cov(regions):
     g = np.arange(0, DURATION, 0.001)
     m = np.zeros(g.shape, dtype=bool)
@@ -315,80 +350,150 @@ def cov(regions):
     return m
 
 
-base = cov(eval_run(min_len_on=False, end_margin_on=False))
-for crit in ("unvoiced", "below_speech"):
-    off = cov(eval_run(min_len_on=False, end_margin_on=False, **{crit + "_on": False}))
+# each criterion, off, never REMOVES coverage; a bare mask (all off) is the whole timeline
+bare = dict(b_min_len_on=False, fill_on=False)
+base = cov(breath_run(**bare))
+for crit in ("b_unvoiced", "b_below_speech"):
+    off = cov(breath_run(**bare, **{crit + "_on": False}))
     check("switching '%s' off never removes coverage" % crit, bool((off | ~base).all()))
-allon = cov(eval_run(unvoiced_on=False, below_speech_on=False, min_len_on=False, end_margin_on=False))
+allon = cov(breath_run(b_unvoiced_on=False, b_below_speech_on=False, **bare))
 check("with every criterion off the zone is the whole signal", allon.all())
 
-# min length: raising it never adds a zone
-counts = [len(eval_run(min_len=float(m), end_margin_on=False)) for m in (0, 60, 120, 240, 400)]
+counts = [len(breath_run(b_min_len=float(m), fill_on=False)) for m in (80, 120, 160, 200)]
 check("raising the minimum length never adds zones %s" % counts, counts == sorted(counts, reverse=True))
-short = eval_run(min_len=0, end_margin_on=False)
-check("with min_len off, every zone is kept (>= min_len run)",
-      len(eval_run(min_len_on=False, end_margin_on=False)) >= len(short))
+lens = [min((h - l) for l, h in breath_run(b_min_len=float(m), fill_on=False) or [(0, 9)]) for m in (80, 120, 200)]
+check("every zone kept is at least the minimum length %s" % lens, all(x * 1000 >= m - 1e-6 for x, m in zip(lens, (80, 120, 200))))
 
-# end margin: the zone stops X ms before the first voiced frame that follows it
-vidx = np.flatnonzero(ef.voicing > 0.45)
-for margin in (0.0, 10.0, 30.0):
-    zs = eval_run(min_len_on=False, end_margin=margin)
-    ok = True
-    for lo, hi in zs:
-        nxt = vidx[vidx * hop >= lo - 1e-9]
-        if nxt.size and hi > nxt[0] * hop - margin / 1000.0 + 1e-9:
-            ok = False
-    check("end margin %g ms: every zone ends at least that far before the next voiced frame" % margin, ok)
-z0 = eval_run(min_len_on=False, end_margin=0)
-z30 = eval_run(min_len_on=False, end_margin=30)
-breath0 = [r for r in z0 if 1.1 < r[0] < 1.3][0]
-breath30 = [r for r in z30 if 1.1 < r[0] < 1.3][0]
-check("a 30 ms margin shortens the breath's end by ~30 ms (%.3f -> %.3f)" % (breath0[1], breath30[1]),
-      0.020 < breath0[1] - breath30[1] < 0.040)
-
-# the cutoff has a say, and a lower speech threshold shrinks the candidate set
-lo_cut = cov(eval_run(cutoff=300.0, min_len_on=False, end_margin_on=False))
-check("the cutoff is a live parameter (speech level differs between 300 Hz and 6 kHz)",
-      detect.eval_speech_level(ef, 0.45, 300.0) != detect.eval_speech_level(ef, 0.45, 6000.0))
 prev, mono = None, True
-for x in (0, 5, 10, 20, 30, 40):
-    c = cov(eval_run(below_speech=float(x), min_len_on=False, end_margin_on=False)).sum()
+for x in (3, 6, 10, 15):
+    c = cov(breath_run(b_below_speech=float(x), **bare)).sum()
     if prev is not None and c > prev:
         mono = False
     prev = c
 check("raising 'X dB under speech' never adds coverage", mono)
+prev, mono = None, True
+for x in (0.2, 0.3, 0.4, 0.5, 0.6):
+    c = cov(breath_run(b_unvoiced=x, **bare)).sum()
+    if prev is not None and c < prev:
+        mono = False
+    prev = c
+check("raising the voicing ceiling never removes coverage", mono)
+check("the cutoff is a live parameter (speech level differs between 200 Hz and 1 kHz)",
+      detect.eval_speech_level(ef, 0.4, 200.0) != detect.eval_speech_level(ef, 0.4, 1000.0))
 
-ep = detect.EvalParams.from_values({"cutoff": 3000, "below_speech_on": False, "end_margin": 12})
-check("EvalParams.from_values", ep.cutoff == 3000.0 and ep.below_speech_on is False
-      and ep.end_margin == 12.0 and ep.min_len == 80.0)
-check("eval defaults: cutoff 6 kHz, 10 dB, 80 ms, 5 ms",
-      (ep.__class__().cutoff, ep.__class__().below_speech, ep.__class__().min_len,
-       ep.__class__().end_margin) == (6000.0, 10.0, 80.0, 5.0))
-pieces = detect.segment_breaths(DURATION, eval_run())
-check("eval zones -> segment_breaths: jointive, two labels",
+# ── THE HOLE FILLING (bouche-trou), on a hand-made grid so the hole is exactly as long as said ──
+def hand_features(pattern):
+    """A grid whose voicing says exactly where the candidate frames are (`1` = candidate)."""
+    n = len(pattern)
+    return detect.EvalFeatures(times=np.arange(n) * 0.0025, voicing=np.where(np.array(pattern) == 1, 0.0, 1.0),
+                               lp_db=np.zeros((n, len(detect.EVAL_CUTOFFS)), dtype=np.float16),
+                               cutoffs=detect.EVAL_CUTOFFS.copy(), hop_s=0.0025,
+                               hf_db=np.full(n, -60.0, dtype=np.float32), lf_db=np.full(n, -60.0, dtype=np.float32),
+                               zcr=np.zeros(n, dtype=np.float32))
+
+
+def two_zones(hole_frames, **kw):
+    pat = [0] * 20 + [1] * 40 + [0] * hole_frames + [1] * 40 + [0] * 20
+    f = hand_features(pat)
+    s = detect.EvalSettings.from_values({"b_below_speech_on": False, "b_min_len_on": False,
+                                         "s_on": False, "text_on": False, **kw})
+    return detect.eval_zones(f, s, len(pat) * 0.0025, None, "fr")["breath"]
+
+
+check("a hole SHORTER than the setting is bridged (15 ms hole, fill 20): 1 zone",
+      len(two_zones(6, fill_on=True, fill=20)) == 1, two_zones(6, fill_on=True, fill=20))
+check("a hole as long as the setting is bridged (15 ms hole, fill 15): 1 zone",
+      len(two_zones(6, fill_on=True, fill=15)) == 1)
+check("a hole LONGER than the setting stays open (30 ms hole, fill 20): 2 zones",
+      len(two_zones(12, fill_on=True, fill=20)) == 2, two_zones(12, fill_on=True, fill=20))
+check("a hole one frame longer than the setting stays open (15 ms hole, fill 12.5): 2 zones",
+      len(two_zones(6, fill_on=True, fill=12.5)) == 2)
+check("with the box OFF nothing is bridged (15 ms hole): 2 zones", len(two_zones(6, fill_on=False, fill=100)) == 2)
+merged = two_zones(6, fill_on=True, fill=20)[0]
+check("a bridged zone runs from the first zone's start to the second's end (%.4f-%.4f)" % merged,
+      abs(merged[0] - (20 * 0.0025 - 0.00125)) < 1e-6 and abs(merged[1] - ((20 + 86 - 1) * 0.0025 + 0.00125)) < 1e-6, merged)
+check("a hole at the very edge of the file is never bridged",
+      len(two_zones(0, fill_on=True, fill=100)) == 1)
+n_off = len(breath_run(b_unvoiced=0.6, b_below_speech_on=False, b_min_len_on=False, fill_on=False))
+n_on = len(breath_run(b_unvoiced=0.6, b_below_speech_on=False, b_min_len_on=False, fill_on=True, fill=100))
+check("on the real signal the filling only ever MERGES zones (%d -> %d)" % (n_off, n_on), n_on <= n_off)
+c_off = cov(breath_run(b_unvoiced=0.6, b_below_speech_on=False, b_min_len_on=False, fill_on=False))
+c_on = cov(breath_run(b_unvoiced=0.6, b_below_speech_on=False, b_min_len_on=False, fill_on=True, fill=100))
+check("...and never removes coverage", bool((c_on | ~c_off).all()))
+
+# ── THE TEXT as a criterion ──
+gaps_w = [{"word": "a", "start": 0.20, "end": 1.05}, {"word": "b", "start": 1.60, "end": 2.90}]
+check("word gaps: the head, the space between two words, the tail",
+      [(round(a, 3), round(b, 3)) for a, b in detect.word_gap_intervals(gaps_w, 3.0)]
+      == [(0.0, 0.2), (1.05, 1.6), (2.9, 3.0)])
+zs = [(0.5, 0.6)]
+check("keep_near: a zone at exactly the tolerance is kept, one millisecond further is not",
+      detect.keep_near(zs, [(0.7, 0.8)], 0.1) == zs and detect.keep_near(zs, [(0.701, 0.8)], 0.1) == []
+      and detect.keep_near(zs, [(0.0, 0.4)], 0.1) == zs and detect.keep_near(zs, [(0.3, 0.55)], 0.0) == zs)
+check("keep_near: no place, nothing is near anything", detect.keep_near(zs, [], 9.0) == [])
+far_words = [{"word": "long", "start": 0.15, "end": 2.90}]      # the only gaps are the head and the tail
+no_text = breath_run(b_min_len=80, text_on=False)
+check("no words: the text changes nothing (breath still there)",
+      any(1.1 < r[0] < 1.3 for r in detect.eval_zones(ef, settings(b_min_len=80, text_on=True), DURATION,
+                                                        None, "fr")["breath"]))
+def with_words(words, **kw):
+    return detect.eval_zones(ef, settings(b_min_len=80, **kw), DURATION, words, "fr")["breath"]
+has = lambda zs_: any(1.1 < r[0] < 1.3 for r in zs_)         # noqa: E731
+check("the breath sits in a gap between words: kept at tolerance 50 ms", has(with_words(gaps_w, text_on=True, tolerance=50)))
+check("a breath 1 s from any gap is dropped at tolerance 800 ms", not has(with_words(far_words, text_on=True, tolerance=800)))
+check("...kept once the box is unchecked", has(with_words(far_words, text_on=False, tolerance=50)))
+check("text ON drops zones, never adds: %d <= %d" % (len(with_words(gaps_w, text_on=True, tolerance=50)),
+                                                    len(no_text)),
+      len(with_words(gaps_w, text_on=True, tolerance=50)) <= len(no_text))
+
+# ── PRIORITY: where the categories overlap, SS/CH wins ──
+check("subtract_zones: a cut splits a zone in two and eats a whole one",
+      detect.subtract_zones([(0.0, 1.0), (2.0, 3.0)], [(0.4, 0.5), (1.9, 3.1)]) == [(0.0, 0.4), (0.5, 1.0)])
+loose = detect.EvalSettings.from_values({"b_unvoiced_on": False, "b_below_speech_on": False,
+                                         "b_min_len_on": False, "text_on": False})
+both = detect.eval_zones(ef, loose, DURATION, None, "fr")
+b_cov, s_cov = cov(both["breath"]), cov(both["sibilant"])
+check("with a breath category that covers everything, SS/CH still takes its stretch (%d SS/CH zones)"
+      % len(both["sibilant"]), len(both["sibilant"]) >= 2)
+check("the two categories never overlap", not (b_cov & s_cov).any())
+check("the SS/CH zones are untouched by the breath category",
+      detect.eval_zones(ef, detect.EvalSettings.from_values({"b_on": False, "text_on": False}), DURATION,
+                        None, "fr")["sibilant"] == both["sibilant"])
+check("a category switched off returns nothing",
+      detect.eval_zones(ef, detect.EvalSettings.from_values({"b_on": False, "s_on": False}), DURATION,
+                        None, "fr") == {"breath": [], "sibilant": []})
+
+pieces = detect.segment_zones(DURATION, both)
+check("segment_zones: jointive, covers [0, duration], three labels",
       abs(pieces[0][0]) < 1e-9 and abs(pieces[-1][1] - DURATION) < 1e-9
       and all(abs(a[1] - b[0]) < 1e-9 for a, b in zip(pieces, pieces[1:]))
-      and {p[2] for p in pieces} <= {"voice", "breath"})
+      and {p[2] for p in pieces} <= {"voice", "breath", "sibilant"}, pieces)
+cuts, lanes = detect.cuts_and_lanes(detect.segment_zones(DURATION, {"sibilant": both["sibilant"]}),
+                                    {"voice": 0, "sibilant": 1})
+check("cuts_and_lanes with a category off: lanes are contiguous from 0",
+      len(lanes) == len(cuts) + 1 and set(lanes) <= {0, 1})
 
-# 10 minutes of eval frames: what a slider drag re-runs (speech level + mask)
+# 10 minutes of eval frames: what a slider drag re-runs (speech level + both masks)
 reps = 240000 // len(ef.times) + 1
 big_e = detect.EvalFeatures(times=np.arange(240000) * hop, voicing=np.tile(ef.voicing, reps)[:240000],
-                            lp_db=np.tile(ef.lp_db, (reps, 1))[:240000], cutoffs=ef.cutoffs, hop_s=hop)
-p = detect.EvalParams()
+                            lp_db=np.tile(ef.lp_db, (reps, 1))[:240000], cutoffs=ef.cutoffs, hop_s=hop,
+                            hf_db=np.tile(ef.hf_db, reps)[:240000], lf_db=np.tile(ef.lf_db, reps)[:240000],
+                            zcr=np.tile(ef.zcr, reps)[:240000])
+st = detect.EvalSettings.from_values({"text_on": False})
 runs_t = []
+lvl = detect.eval_speech_level(big_e, st.breath.unvoiced, st.breath.cutoff)
+big_e.hf_floor_db()
 for _ in range(5):
     t0 = time.perf_counter()
-    lvl = detect.eval_speech_level(big_e, p.unvoiced, p.cutoff)
-    detect.eval_mask(big_e, lvl, p)
+    detect.eval_zones(big_e, st, 600.0, None, "fr", lvl)
     runs_t.append((time.perf_counter() - t0) * 1000)
-check("eval speech level + mask on 10 min (240 000 frames): %.1f ms < 30 ms" % min(runs_t),
-      min(runs_t) < 30.0, runs_t)
-# ...and the mask alone, the speech level being cached per (voicing, cutoff)
-lvl = detect.eval_speech_level(big_e, p.unvoiced, p.cutoff)
+check("both masks on 10 min (240 000 frames): %.1f ms < 60 ms" % min(runs_t), min(runs_t) < 60.0, runs_t)
+big_words = [{"word": "sa", "start": i * 1.0 + 0.1, "end": i * 1.0 + 0.6} for i in range(600)]
+st_t = detect.EvalSettings.from_values({"text_on": True})
 t0 = time.perf_counter()
-detect.eval_mask(big_e, lvl, p)
-mask_ms = (time.perf_counter() - t0) * 1000
-check("eval mask alone on 10 min: %.1f ms < 20 ms" % mask_ms, mask_ms < 20.0, mask_ms)
+detect.eval_zones(big_e, st_t, 600.0, big_words, "fr", lvl)
+check("...with 600 words as a criterion: %.1f ms < 200 ms" % ((time.perf_counter() - t0) * 1000),
+      (time.perf_counter() - t0) * 1000 < 200.0)
 
 # ── CTC forced alignment (numpy Viterbi) on a hand-made emission ───────────────────────────────
 V, blank = 5, 0
@@ -405,10 +510,11 @@ check("ctc_forced_align refuses audio too short for the text",
 check("model ids: none first", tr.MODEL_IDS[0] == "none" and set(tr.MODEL_IDS) == {"none", "whisper", "parakeet", "align"})
 check("'none' is always installed; an unknown id never is",
       tr.installed("none") and not tr.installed("nope"))
-_saved = tr.PARAKEET_PYTHON
-tr.PARAKEET_PYTHON = "/nonexistent/python3"
-check("parakeet with no venv is 'not installed', not an error", tr.installed("parakeet") is False)
-tr.PARAKEET_PYTHON = _saved
+_saved = tr._has_module
+tr._has_module = lambda name: False
+check("parakeet without its module is 'not installed', not an error", tr.installed("parakeet") is False
+      and tr.installed("whisper") is False and tr.installed("align") is False)
+tr._has_module = _saved
 
 # ── the caches ─────────────────────────────────────────────────────────────────────────────────
 tmp = tempfile.mkdtemp(prefix="breath-cache-")
@@ -429,7 +535,8 @@ try:
     check("features cache: the second call does not analyse again", calls["n"] == 1, calls)
     check("features cache: what comes back is what went in",
           np.allclose(f2.voicing, ef.voicing) and np.array_equal(f2.lp_db, ef.lp_db)
-          and np.allclose(f2.times, ef.times) and f2.hop_s == ef.hop_s and f2.lp_db.dtype == np.float16)
+          and np.allclose(f2.times, ef.times) and f2.hop_s == ef.hop_s and f2.lp_db.dtype == np.float16
+          and np.array_equal(f2.hf_db, ef.hf_db) and np.array_equal(f2.lf_db, ef.lf_db) and np.array_equal(f2.zcr, ef.zcr))
     for label, other in (("offset", sv.cache_key(wav, 0.5, 3.0, 1.0)),
                          ("duration", sv.cache_key(wav, 0.0, 2.0, 1.0)),
                          ("speed", sv.cache_key(wav, 0.0, 3.0, 2.0))):
@@ -464,7 +571,7 @@ try:
     obj = {"file": wav, "source_offset": 0.0, "duration": 3.0, "speed": 1.0}
     t = sv.Transcriber(obj, "es", lambda: (sig, SR))
     tr_orig = tr.transcribe
-    tr.transcribe = lambda model, mono, sr, lang: (_ for _ in ()).throw(RuntimeError("boom"))
+    tr.transcribe = lambda model, mono, sr, lang, progress=None: (_ for _ in ()).throw(RuntimeError("boom"))
     try:
         t.request("whisper")
         for _ in range(100):

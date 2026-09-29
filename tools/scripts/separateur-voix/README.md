@@ -11,46 +11,86 @@ Kaldi, no conda: the precision a phonetic aligner buys is not needed here, since
 not correct anything — a boundary a few milliseconds off does not change what is heard, the pieces
 stay jointive.
 
-## Evaluate breaths (interactive)
+## Evaluate voice separation (interactive)
 
-Right-click the object → Scripts → **Evaluate breaths…** opens a small floating panel and lays the
-zones the detector finds over the object as white areas. Move a setting and the zones follow —
-nothing is cut, nothing is in the undo history. **Apply** then cuts exactly what is shown (a group
-with two sub-lanes, Voice and Breaths, one undo); **Cancel**, the window's ✕ or the script dying
-leave the project untouched.
+Right-click the object → Scripts → **Evaluate voice separation…** opens a floating panel and lays the
+zones the detector finds over the object: **breaths in white, SS/CH in yellow**. Move a setting and
+the zones follow — nothing is cut, nothing is in the undo history. **Apply** then cuts exactly what is
+shown (a group with one sub-lane per category that is ON — Voice, Breaths, SS/CH — one undo);
+**Cancel**, the window's ✕ or the script dying leave the project untouched.
 
-**Four criteria**, each a checkbox and a slider (an unchecked box drops the criterion; the slider
-greys). A zone is a run of frames where ALL the checked frame criteria hold. No word, no floor, no
-flatness: the words are only displayed.
+Every criterion is a checkbox and a value (an unchecked box drops the criterion from the conjunction
+and greys the value). A zone is a run of frames where ALL the checked frame criteria hold.
 
-| setting | default | meaning |
-|---|---|---|
-| Voicing < | 0.45 | a frame is excluded when its voicing score (autocorrelation, 25 ms window) is above this |
-| Energy < speech − | 10 dB | the frame's energy, **measured after a low-pass**, is at least this far under the speech level — the median of the voiced frames, measured the same way |
-| Low-pass cutoff | 6000 Hz (100–8000) | the low-pass both energies are measured after; greyed with the energy box |
-| Minimum length | 80 ms | the shortest zone kept |
-| Margin before voice | 5 ms | a zone stops this long before the FIRST VOICED FRAME that follows it |
+**The panel** — a COMMON section, then one section PER CATEGORY:
 
-**Temporal precision.** The frames sit on a 2.5 ms grid, centred on their instant, and the energy is
-read on a 12 ms window (the voicing needs its 25 ms one). The low-pass is not a filter run over the
-audio: it is a cumulative sum over each frame's own spectrum, stored for every 100 Hz cutoff, so
-moving the cutoff costs nothing and refilters nothing. On the synthetic test signal the edges of a
-250 ms breath land within 4 ms; the analysis is ~0.7 s per minute of audio and 19 MB per ten minutes
-in the cache; moving a slider re-runs in ~7 ms for ten minutes of audio.
+| section | control | range | default | meaning |
+|---|---|---|---|---|
+| Common | Text (model) | menu | Whisper + alignment (else Whisper, else none) | the words, displayed AND usable as a criterion; *Parakeet is labelled "English"* |
+| | Use the text · Tolerance | 50–800 ms | on · 500 | @see "The text" below |
+| | Hole filling | 0–100 ms | on · 20 | a hole of candidate frames this short or shorter, between two candidate stretches, is bridged (both categories) |
+| | progress bar | — | — | the signal analysis, then the transcription |
+| Breaths | Detect breaths | box | on | |
+| | Voicing < | 0.2–0.6 | 0.4 | a frame is a candidate when its voicing score (autocorrelation, 25 ms window) is at most this |
+| | Energy under speech · gap | 3–15 dB | 10 | the frame's energy, **measured after a low-pass**, is at least this far under the speech level (median of the voiced frames, measured the same way) |
+| | · low-pass | 100–1000 Hz | 200 | the low-pass both energies are measured after; greyed with the energy box. It is the BREATHS' — SS/CH reads no speech level, so it is not common |
+| | Minimum length | 80–200 ms | 120 | the shortest zone kept |
+| SS / CH | Detect SS / CH | box | on | |
+| | Not voiced (voicing <) | 0.3–0.9 | **off** · 0.7 | optional, and OFF: z and j are voiced fricatives and a voicing ceiling drops them (the historical detector's known fault) |
+| | High / low > | −20…+20 dB | −6 | energy 4–10 kHz over energy 80 Hz–1 kHz. Negative on purpose: a voiced z has its voicebar in the low band and reads −3 to −5 dB (an s reads +30); vowels read −15 to −35 and are kept out by the next criterion |
+| | Zero crossings > | 0.05–0.4 | 0.12 | crossings per sample: noise at 5–9 kHz is 0.25–0.3, a vowel is 0.02–0.05 |
+| | HF energy > floor + | 0–30 dB | 10 | the 4–10 kHz energy above its own 5th percentile |
+| | Minimum length | 10–150 ms | 30 | |
+| | Refine on the HF peak (−) | 3–30 dB | 12 | each zone is tightened onto the frames within this of its own HF peak (applied after the minimum length) |
 
-**Why 6 kHz.** On a French `say -v Thomas` voice with four real pauses, cutoffs up to 3 kHz flagged
-13 zones (the unvoiced consonants — *ch*, *ss* — are quiet under a low-pass and pass for breaths);
-from 6 kHz the fricatives' own energy is counted as speech and the zones fall to the pauses
-themselves (5). Lower it if a real breath is being missed. Note that silence is ALSO a zone here:
-nothing in these four criteria distinguishes a pause from a breath.
+The end margin the breaths used to have is gone.
 
-**Text shown** (a choice in the panel — display only, the detection never reads it): None, or a
-model whose words are laid over the block, to compare their timing:
+**The text.** With *Use the text* checked and a model's words available (none selected, still
+transcribing or failed: no effect at all), a candidate zone is kept only when it lies within
+*Tolerance* of a place the text allows it — distance 0 when it overlaps:
+
+- a **breath** — of a **gap between two words** (also before the first word and after the last one;
+  any gap over 1 ms). A model whose words run into each other (Parakeet stretches word ends over the
+  silence) leaves few gaps, so its text filters breaths hard;
+- an **SS/CH** — of a **word whose spelling holds an SS/CH grapheme** (`ch ss ç sh s x z ce ci …` per
+  language, `detect.SIBILANT_GRAPHEMES` — deliberately coarse; the signal still has to fire).
+
+At the default 500 ms the criterion is loose (the words' own timing is loose: tens to hundreds of ms);
+tighten it to make the text bite.
+
+**Priority between categories: SS/CH wins.** A breath is defined by what it lacks (voicing, low
+energy) and a fricative lacks the same things; a fricative is defined by what it HAS (a high-frequency
+excess, fast zero crossings), which a breath does not — so the better evidence sits on that side. The
+overlap is taken out of the breath zone (which may split in two), and a remnant shorter than the
+breath minimum length goes with it.
+
+**Progress bar** (the panel's `progress` control): the signal analysis reports per chunk of frames
+(real). For the transcription, what each model gives:
+
+| model | progress |
+|---|---|
+| Whisper (mlx) | real, but coarse: `mlx_whisper` counts mel frames per **30 s window**, so a file under 30 s is indeterminate then jumps to 100 %; a 10-minute file moves 20 times |
+| Parakeet | indeterminate for a file up to 2 min (one pass, ~2 s); beyond it the worker transcribes in 2-min chunks (15 s overlap) and reports per chunk |
+| Whisper + alignment | Whisper's share (35 %, as above), an indeterminate stretch while the wav2vec2 model loads, then per **segment** (one forward pass each) |
+
+**Temporal precision.** The frames sit on a 2.5 ms grid, centred on their instant, and the energies
+are read on a 12 ms window (the voicing needs its 25 ms one). The low-pass is not a filter run over
+the audio: it is a cumulative sum over each frame's own spectrum, stored for every 100 Hz cutoff, so
+moving the cutoff costs nothing and refilters nothing; the HF / LF energies and the zero-crossing
+rate come from the same windows. On the synthetic test signal the edges of a 250 ms breath and of the
+`s` / `ch` land within 10 ms; the analysis is ~0.7 s per minute of audio and ~35 MB per ten minutes in
+the cache; moving a slider re-runs both categories in ~30 ms for ten minutes.
+
+**Note.** Silence is ALSO a breath zone here: nothing in the breath criteria distinguishes a pause
+from a breath. The SS/CH category also picks up plosive bursts and `v`/`f` frication (high zero
+crossings, high HF) — the text criterion is what filters them by spelling.
+
+**Text shown / used** (a choice in the panel): None, or a model whose words are laid over the block:
 
 | model | what | licences (code / weights) |
 |---|---|---|
 | Whisper large-v3-turbo (mlx) | installed by default | MIT / MIT |
-| Parakeet TDT v3 (`parakeet-mlx`) | a token-timed transducer; a subprocess of the same venv (`parakeet_worker.py`, no ffmpeg needed) | Apache-2.0 / CC-BY-4.0 |
+| Parakeet TDT v3 (`parakeet-mlx`) | a token-timed transducer, **for English** (v3 is multilingual but this is the tested use); a subprocess of the same venv (`parakeet_worker.py`, no ffmpeg needed) | Apache-2.0 / CC-BY-4.0 |
 | Whisper + wav2vec2 alignment | Whisper's text re-timed by forced CTC alignment against `jonatasgrosman/wav2vec2-large-xlsr-53-{french,english,spanish}` (numpy Viterbi, no torchaudio, no WhisperX) | Apache-2.0 / Apache-2.0 |
 
 Choosing a model transcribes in the BACKGROUND (the panel stays live; the status line says
@@ -62,7 +102,7 @@ The features are cached under `~/Library/Caches/Objekat/separateur-voix/` — ke
 (path, modification time, size) and the portion played, never on a model.
 
 Same refusals as the other entry (not a clip, missing file, looping, changed speed, reversed).
-Command line: `OBJEKAT_SOCKET=… python3 separateur_voix.py --breaths-eval --object <uuid> [--model none|whisper|parakeet|align] [--lang fr|en|es]`.
+Command line: `OBJEKAT_SOCKET=… python3 separateur_voix.py --eval-separation --object <uuid> [--model none|whisper|parakeet|align] [--lang fr|en|es]` (`--breaths-eval` is the old name and still works).
 
 ## Install
 
@@ -118,11 +158,12 @@ no socket:
 
 ```
 <venv>/bin/python3 test_detect.py
-<venv>/bin/python3 test_breath_mask.py    # vectorised features == the old loops; the eval grid, its four criteria, the low-pass, the margin; CTC alignment; the caches
+<venv>/bin/python3 test_breath_mask.py    # vectorised features == the old loops; the eval grid, the breath criteria, the low-pass, the hole filling, the text, the priority; CTC alignment; the caches
+<venv>/bin/python3 test_sibilant_mask.py  # SS/CH criteria (incl. a voiced z), refinement, text graphemes, the panel's ranges and defaults
 ```
 
 `tools/scenario_breath_eval.py <socket>` (headless instance) drives the app side and this script
-end to end: the sample-exact cut, the overlay, the panel (including the `choice` control), Apply / Cancel / a killed script.
+end to end: the sample-exact cut, the overlay, the panel (`choice`, `progress`, `section`), both categories, the hole filling seen in the overlay, Apply on 3 / 2 lanes, Cancel / a killed script, and a real `say -v Thomas` pass with a transcription model.
 
 ## Licences
 

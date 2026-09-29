@@ -119,7 +119,8 @@ def save_features(path, feats):
     import numpy as np
     tmp = path + ".tmp.npz"
     np.savez(tmp, times=feats.times, voicing=feats.voicing, lp_db=feats.lp_db,
-             cutoffs=feats.cutoffs, hop_s=np.array(feats.hop_s))
+             cutoffs=feats.cutoffs, hop_s=np.array(feats.hop_s),
+             hf_db=feats.hf_db, lf_db=feats.lf_db, zcr=feats.zcr)
     os.replace(tmp, path)
 
 
@@ -130,7 +131,8 @@ def load_features(path):
     try:
         with np.load(path) as z:
             return detect.EvalFeatures(times=z["times"], voicing=z["voicing"], lp_db=z["lp_db"],
-                                       cutoffs=z["cutoffs"], hop_s=float(z["hop_s"]))
+                                       cutoffs=z["cutoffs"], hop_s=float(z["hop_s"]),
+                                       hf_db=z["hf_db"], lf_db=z["lf_db"], zcr=z["zcr"])
     except Exception:
         return None
 
@@ -250,79 +252,123 @@ def process_one(app, object_id, language, no_asr, segments_override, dry_run):
     return counts
 
 
-# MARK: - Breath evaluation (interactive)
+# MARK: - Voice separation evaluation (interactive)
 
 # Panel wording. The LABELS are the script's own data (the app draws whatever it is told, and only
 # its own three buttons / title go through its catalogue), so the script speaks the language it was
 # launched in (OBJEKAT_LANGUAGE).
-PANEL_TEXT = {
-    "fr": {"title": "Évaluer les respirations", "analysing": "Analyse…",
-           "none": "Aucune respiration — rien n'est coupé.",
-           "count": lambda n, s: "%d zone%s, %.1f s" % (n, "" if n <= 1 else "s", s),
-           "transcribing": "transcription…", "missing": "non installé", "failed": "transcription échouée",
-           "words": lambda n, sec, cached: "%d mot%s%s" % (n, "" if n <= 1 else "s",
-                                                           "" if cached else " (%.1f s)" % sec),
-           "model": "Texte affiché", "not_installed": " — non installé",
-           "models": {"none": "Aucun", "whisper": "Whisper large-v3-turbo (mlx)",
-                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + alignement wav2vec2"}},
-    "en": {"title": "Evaluate breaths", "analysing": "Analysing…",
-           "none": "No breath found — nothing is cut.",
-           "count": lambda n, s: "%d zone%s, %.1f s" % (n, "" if n == 1 else "s", s),
-           "transcribing": "transcribing…", "missing": "not installed", "failed": "transcription failed",
-           "words": lambda n, sec, cached: "%d word%s%s" % (n, "" if n == 1 else "s",
-                                                           "" if cached else " (%.1f s)" % sec),
-           "model": "Text shown", "not_installed": " — not installed",
-           "models": {"none": "None", "whisper": "Whisper large-v3-turbo (mlx)",
-                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + wav2vec2 alignment"}},
-    "es": {"title": "Evaluar respiraciones", "analysing": "Analizando…",
-           "none": "Ninguna respiración — no se corta nada.",
-           "count": lambda n, s: "%d zona%s, %.1f s" % (n, "" if n == 1 else "s", s),
-           "transcribing": "transcribiendo…", "missing": "no instalado", "failed": "transcripción fallida",
-           "words": lambda n, sec, cached: "%d palabra%s%s" % (n, "" if n == 1 else "s",
-                                                              "" if cached else " (%.1f s)" % sec),
-           "model": "Texto mostrado", "not_installed": " — no instalado",
-           "models": {"none": "Ninguno", "whisper": "Whisper large-v3-turbo (mlx)",
-                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + alineación wav2vec2"}},
-}
-
-# The four criteria. (id, label per language, unit, min, max, step) of each one's SLIDER; the box is
-# `<id>_on`. The energy criterion carries a second slider, the low-pass cutoff, gated by the same box.
-CRITERIA = [
-    ("unvoiced", {"fr": "Voisement <", "en": "Voicing <", "es": "Sonoridad <"}, "", 0.1, 0.9, 0.01),
-    ("below_speech", {"fr": "Énergie < parole − (passe-bas)", "en": "Energy < speech − (low-passed)",
-                      "es": "Energía < habla − (paso bajo)"}, "dB", 0, 40, 1),
-    ("min_len", {"fr": "Durée minimale", "en": "Minimum length", "es": "Duración mínima"}, "ms", 0, 400, 10),
-    ("end_margin", {"fr": "Marge avant la voix", "en": "Margin before voice",
-                    "es": "Margen antes de la voz"}, "ms", 0, 60, 1),
-]
-CUTOFF_LABEL = {"fr": "Coupure passe-bas", "en": "Low-pass cutoff", "es": "Corte paso bajo"}
+def _pick(language, fr, en, es):
+    return {"fr": fr, "en": en, "es": es}.get(language, en)
 
 
-def panel_controls(language, model_labels):
-    """The model choice, then one checkbox + one slider per criterion (the slider greys while its box
-    is unchecked — `enabled_by`, the whole 'box and threshold' idea)."""
-    defaults = detect.EvalParams()
-    text = PANEL_TEXT.get(language, PANEL_TEXT["en"])
-    controls = [{"id": "model", "kind": "choice", "label": text["model"], "value": "none",
-                 "options": [{"id": m, "label": model_labels[m]} for m in tr.MODEL_IDS]}]
-    for cid, labels, unit, lo, hi, step in CRITERIA:
-        label = labels.get(language, labels["en"])
-        controls.append({"id": cid + "_on", "kind": "bool", "label": label, "value": True})
-        controls.append({"id": cid, "kind": "number", "label": label, "value": getattr(defaults, cid),
-                         "min": lo, "max": hi, "step": step, "unit": unit, "enabled_by": cid + "_on"})
-        if cid == "below_speech":
-            controls.append({"id": "cutoff", "kind": "number", "label": CUTOFF_LABEL.get(language, CUTOFF_LABEL["en"]),
-                             "value": defaults.cutoff, "min": float(detect.EVAL_CUTOFFS[0]),
-                             "max": float(detect.EVAL_CUTOFFS[-1]),
-                             "step": float(detect.EVAL_CUTOFFS[1] - detect.EVAL_CUTOFFS[0]),
-                             "unit": "Hz", "enabled_by": "below_speech_on"})
-    return controls
+def panel_text(language):
+    def plural(n, fr, en, es):
+        return _pick(language, fr[n > 1], en[n != 1], es[n != 1])
+    return {
+        "title": _pick(language, "Évaluer la séparation de la voix", "Evaluate voice separation",
+                       "Evaluar la separación de la voz"),
+        "analysing": _pick(language, "Analyse du signal…", "Analysing the signal…", "Analizando la señal…"),
+        "analysed": _pick(language, "Analyse du signal terminée", "Signal analysed", "Señal analizada"),
+        "transcribing": _pick(language, "Transcription", "Transcribing", "Transcribiendo"),
+        "transcribed": _pick(language, "Transcription terminée", "Transcription done", "Transcripción terminada"),
+        "none": _pick(language, "Aucune zone — rien n'est coupé.", "No zone found — nothing is cut.",
+                      "Ninguna zona — no se corta nada."),
+        "breaths": lambda n, s: "%d %s, %.1f s" % (n, plural(n, ("respiration", "respirations"),
+                                                             ("breath", "breaths"),
+                                                             ("respiración", "respiraciones")), s),
+        "sibilants": lambda n, s: "%d SS/CH, %.1f s" % (n, s),
+        "status_transcribing": _pick(language, "transcription…", "transcribing…", "transcribiendo…"),
+        "missing": _pick(language, "non installé", "not installed", "no instalado"),
+        "failed": _pick(language, "transcription échouée", "transcription failed", "transcripción fallida"),
+        "words": lambda n, sec, cached: "%d %s%s" % (
+            n, plural(n, ("mot", "mots"), ("word", "words"), ("palabra", "palabras")),
+            "" if cached else " (%.1f s)" % sec),
+        "not_installed": _pick(language, " — non installé", " — not installed", " — no instalado"),
+        "models": {
+            "none": _pick(language, "Aucun", "None", "Ninguno"),
+            "whisper": "Whisper large-v3-turbo (mlx)",
+            "parakeet": _pick(language, "Parakeet TDT v3 (mlx) — anglais", "Parakeet TDT v3 (mlx) — English",
+                              "Parakeet TDT v3 (mlx) — inglés"),
+            "align": _pick(language, "Whisper + alignement wav2vec2", "Whisper + wav2vec2 alignment",
+                           "Whisper + alineación wav2vec2"),
+        },
+    }
+
+
+# Backwards-compatible name for the tests / callers that read the wording table.
+PANEL_TEXT = {lang: panel_text(lang) for lang in ("fr", "en", "es")}
+
+
+def panel_controls(language, model_labels, model="align"):
+    """The panel, in three parts: a COMMON one (the text — model, box + tolerance —, the hole
+    filling, the progress bar), then one section PER CATEGORY (its own box, then each criterion as a
+    box and a value: an unchecked box drops the criterion and greys its value, `enabled_by`)."""
+    L = lambda fr, en, es: _pick(language, fr, en, es)      # noqa: E731
+    text = panel_text(language)
+    c, b, s = detect.CommonParams(), detect.BreathEval(), detect.SibilantEval()
+    out = []
+
+    def section(cid, label):
+        out.append({"id": cid, "kind": "section", "label": label})
+
+    def flag(cid, label, value):
+        out.append({"id": cid, "kind": "bool", "label": label, "value": value})
+
+    def pair(prefix, obj, name, label, unit, lo, hi, step, gate_label=None, gated=True):
+        """`<prefix><name>_on` (when the criterion has a box) + the value control. The box's label is
+        what the window draws next to it (a box and its only value share a row)."""
+        if gated:
+            flag(prefix + name + "_on", gate_label or label, getattr(obj, name + "_on"))
+        out.append({"id": prefix + name, "kind": "number", "label": label, "value": getattr(obj, name),
+                    "min": lo, "max": hi, "step": step, "unit": unit,
+                    **({"enabled_by": prefix + name + "_on"} if gated else {})})
+
+    # ── common ──
+    section("sec_common", L("Commun", "Common", "Común"))
+    out.append({"id": "model", "kind": "choice", "label": L("Texte (modèle)", "Text (model)", "Texto (modelo)"),
+                "value": model, "options": [{"id": m, "label": model_labels[m]} for m in tr.MODEL_IDS]})
+    flag("text_on", L("Utiliser le texte, tolérance", "Use the text, tolerance", "Usar el texto, tolerancia"),
+         c.text_on)
+    out.append({"id": "tolerance", "kind": "number", "label": L("Tolérance", "Tolerance", "Tolerancia"),
+                "value": c.tolerance, "min": 50, "max": 800, "step": 10, "unit": "ms",
+                "enabled_by": "text_on"})
+    pair("", c, "fill", L("Bouche-trou", "Hole filling", "Rellena huecos"), "ms", 0, 100, 1)
+    out.append({"id": "progress", "kind": "progress", "label": text["analysing"], "value": None})
+
+    # ── breaths ──
+    section("sec_breath", L("Respirations", "Breaths", "Respiraciones"))
+    flag("b_on", L("Détecter les respirations", "Detect breaths", "Detectar respiraciones"), b.on)
+    pair("b_", b, "unvoiced", L("Voisement <", "Voicing <", "Sonoridad <"), "", 0.2, 0.6, 0.01)
+    flag("b_below_speech_on", L("Énergie sous la parole", "Energy under speech", "Energía bajo el habla"),
+         b.below_speech_on)
+    out.append({"id": "b_below_speech", "kind": "number", "label": L("   écart", "   gap", "   diferencia"),
+                "value": b.below_speech, "min": 3, "max": 15, "step": 1, "unit": "dB",
+                "enabled_by": "b_below_speech_on"})
+    out.append({"id": "b_cutoff", "kind": "number", "label": L("   passe-bas", "   low-pass", "   paso bajo"),
+                "value": b.cutoff, "min": 100, "max": 1000, "step": 100, "unit": "Hz",
+                "enabled_by": "b_below_speech_on"})
+    pair("b_", b, "min_len", L("Durée minimale", "Minimum length", "Duración mínima"), "ms", 80, 200, 5)
+
+    # ── SS / CH ──
+    section("sec_sib", "SS / CH")
+    flag("s_on", L("Détecter SS / CH", "Detect SS / CH", "Detectar SS / CH"), s.on)
+    pair("s_", s, "unvoiced", L("Non voisé (voisement <)", "Not voiced (voicing <)", "No sonoro (sonoridad <)"),
+         "", 0.3, 0.9, 0.01)
+    pair("s_", s, "hf_ratio", L("Aigus / graves >", "High / low >", "Agudos / graves >"), "dB", -20, 20, 1)
+    pair("s_", s, "zcr", L("Passages par zéro >", "Zero crossings >", "Cruces por cero >"), "", 0.05, 0.4, 0.01)
+    pair("s_", s, "hf_energy", L("Énergie HF > plancher +", "HF energy > floor +", "Energía HF > suelo +"),
+         "dB", 0, 30, 1)
+    pair("s_", s, "min_len", L("Durée minimale", "Minimum length", "Duración mínima"), "ms", 10, 150, 5)
+    pair("s_", s, "refine", L("Affiner sur le pic HF (−)", "Refine on the HF peak (−)",
+                              "Afinar sobre el pico HF (−)"), "dB", 3, 30, 1)
+    return out
 
 
 class Transcriber:
     """Transcribes on a BACKGROUND thread, one model at a time, so the panel stays reactive: the
     socket is only ever used by the main thread, the worker just computes and hands the result back
-    through `results`. Each model's words are cached on disk under their own key."""
+    through `results` (and its progress through `progress`, read by the main loop). Each model's
+    words are cached on disk under their own key."""
 
     def __init__(self, obj, language, mono_loader):
         import queue
@@ -331,6 +377,7 @@ class Transcriber:
         self.results = queue.Queue()
         self.done = {}          # model → (words, seconds, from_cache) | RuntimeError
         self.running = None
+        self.progress = {"model": None, "f": None}     # the running model's fraction (None = unknown)
         self._threading = threading
 
     def key(self, model):
@@ -346,6 +393,10 @@ class Transcriber:
         if self.running is not None:
             return True          # one at a time; `collect` starts the wanted one when this ends
         self.running = model
+        self.progress = {"model": model, "f": None}
+
+        def report(f):
+            self.progress = {"model": model, "f": f}
 
         def work():
             import time
@@ -353,7 +404,7 @@ class Transcriber:
                 def compute():
                     mono, sr = self.load()
                     t0 = time.time()
-                    return tr.transcribe(model, mono, sr, self.language), time.time() - t0
+                    return tr.transcribe(model, mono, sr, self.language, progress=report), time.time() - t0
                 self.results.put((model, cached_words(self.key(model), compute)))
             except Exception as e:  # noqa: BLE001 — a backend failing is a label, not a crash
                 self.results.put((model, RuntimeError(str(e))))
@@ -376,38 +427,80 @@ class Transcriber:
             finished.append(model)
 
 
+class ProgressBar:
+    """The panel's `progress` control, written back at most every 100 ms (a value that did not move
+    is not sent again): what the script says it is doing (`label`) and how far (`fraction`, or None
+    for "no idea")."""
+
+    def __init__(self, app, panel_id, control_id="progress"):
+        self.app, self.pid, self.cid = app, panel_id, control_id
+        self.sent = None
+        self.last = 0.0
+
+    def set(self, label, fraction, force=False):
+        import time
+        state = (label, None if fraction is None else round(fraction, 3))
+        now = time.time()
+        if state == self.sent or (not force and now - self.last < 0.1):
+            return
+        self.sent, self.last = state, now
+        self.app.send("script.panel.update", {"panel_id": self.pid, "labels": {self.cid: label},
+                                              "values": {self.cid: fraction}})
+
+
+def eval_lanes(settings):
+    """label → sub-lane, for the categories that are ON: Voice is always lane 0, then Breaths, then
+    SS/CH — a category that is switched off has no lane at all."""
+    lanes = {"voice": 0}
+    if settings.breath.on:
+        lanes["breath"] = len(lanes)
+    if settings.sibilant.on:
+        lanes["sibilant"] = len(lanes)
+    return lanes
+
+
 def breaths_eval(app, object_id, language, no_asr, model_arg=None):
-    """Shows the zones the detector finds on ONE object, as white zones over it, and lets the hand
-    move the four criteria until they are right; Validate then cuts exactly what is shown. Nothing is
-    changed before that: the zones are an overlay (never in the project), and Cancel — or the
-    window closing, or this process dying — leaves the project untouched. The words are a DISPLAY
-    (a model chosen in the panel, transcribed in the background); the detection never reads them."""
+    """Shows the zones the detector finds on ONE object — breaths in white, SS/CH in yellow — and
+    lets the hand move the criteria until they are right; Validate then cuts exactly what is shown.
+    Nothing is changed before that: the zones are an overlay (never in the project), and Cancel — or
+    the window closing, or this process dying — leaves the project untouched. The words come from a
+    model chosen in the panel (transcribed in the background) and are both DISPLAYED and, when 'use
+    the text' is checked, a criterion (@see detect.eval_zones)."""
     obj = app.send("object.get", {"id": object_id})
     check_object(obj, object_id)
-    text = PANEL_TEXT.get(language, PANEL_TEXT["en"])
+    text = panel_text(language)
     start, duration = obj["start"], obj["duration"]
     speed = obj.get("speed", 1.0)
 
     model_labels = {m: text["models"][m] + ("" if tr.installed(m, language) else text["not_installed"])
                     for m in tr.MODEL_IDS}
-    controls = panel_controls(language, model_labels)
-    initial = "none" if no_asr else (model_arg or "none")
-    for c in controls:
-        if c["id"] == "model":
-            c["value"] = initial if initial in tr.MODEL_IDS else "none"
+    if no_asr:
+        initial = "none"
+    elif model_arg:
+        initial = model_arg
+    else:   # the default is Whisper + alignment; an install that lacks it falls back rather than
+            # opening on a model that says "not installed"
+        initial = next((m for m in ("align", "whisper") if tr.installed(m, language)), "none")
+    if initial not in tr.MODEL_IDS:
+        initial = "none"
+    controls = panel_controls(language, model_labels, initial)
 
     panel = app.send("script.panel.open", {
         "title": text["title"], "controls": controls, "object": object_id,
         "status": text["analysing"], "busy": True})
     pid = panel["panel_id"]
+    bar = ProgressBar(app, pid)
 
     def load_portion():
         return read_portion(obj["file"], obj["source_offset"], duration, speed)
 
     try:
+        bar.set(text["analysing"], None, force=True)
         feats = cached_features(
             cache_key(obj["file"], obj["source_offset"], duration, speed),
-            lambda: detect.compute_eval_features(*load_portion()))
+            lambda: detect.compute_eval_features(
+                *load_portion(), progress=lambda f: bar.set(text["analysing"], f)))
+        bar.set(text["analysed"], 1.0, force=True)
 
         speech_levels = {}
         transcriber = Transcriber(obj, language, load_portion)
@@ -415,25 +508,39 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
         words_note = {"text": ""}         # the transcription half of the status line
         zone_note = {"text": ""}
 
-        def regions_for(values):
-            p = detect.EvalParams.from_values(values)
-            k = (p.unvoiced, p.cutoff)
+        def words_for(values):
+            """The words the DETECTION may read: the wanted model's, once it has them."""
+            m = values.get("model", "none")
+            outcome = transcriber.done.get(m) if m != "none" else None
+            if outcome is None or isinstance(outcome, Exception):
+                return None
+            return outcome[0]
+
+        def zones_for(values):
+            settings = detect.EvalSettings.from_values(values)
+            k = (settings.breath.unvoiced, settings.breath.cutoff)
             if k not in speech_levels:
-                speech_levels[k] = detect.eval_speech_level(feats, p.unvoiced, p.cutoff)
-            return detect.eval_mask(feats, speech_levels[k], p, duration)
+                speech_levels[k] = detect.eval_speech_level(feats, *k)
+            return settings, detect.eval_zones(feats, settings, duration, words_for(values),
+                                               language or "fr", speech_levels[k])
 
         def push_status(busy=False):
             parts = [x for x in (zone_note["text"], words_note["text"]) if x]
             app.send("script.panel.update", {"panel_id": pid, "status": " · ".join(parts), "busy": busy})
 
         def show_zones(values):
-            regions = regions_for(values)
-            app.send("overlay.set", {"id": object_id, "replace": ["zones"],
-                                     "zones": [{"start": lo, "end": hi, "color": "white"}
-                                               for lo, hi in regions]})
-            zone_note["text"] = text["count"](len(regions), sum(hi - lo for lo, hi in regions))
+            settings, zones = zones_for(values)
+            overlay = ([{"start": lo, "end": hi, "color": "white"} for lo, hi in zones["breath"]]
+                       + [{"start": lo, "end": hi, "color": "yellow"} for lo, hi in zones["sibilant"]])
+            app.send("overlay.set", {"id": object_id, "replace": ["zones"], "zones": overlay})
+            notes = []
+            if settings.breath.on:
+                notes.append(text["breaths"](len(zones["breath"]), sum(h - l for l, h in zones["breath"])))
+            if settings.sibilant.on:
+                notes.append(text["sibilants"](len(zones["sibilant"]), sum(h - l for l, h in zones["sibilant"])))
+            zone_note["text"] = " · ".join(notes)
             push_status()
-            return regions
+            return settings, zones
 
         def show_words(model):
             """Puts `model`'s words on the overlay, or says why it cannot."""
@@ -448,7 +555,7 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
             transcriber.request(model)
             outcome = transcriber.done.get(model)
             if outcome is None:
-                words_note["text"] = text["transcribing"]
+                words_note["text"] = text["status_transcribing"]
             elif isinstance(outcome, Exception):
                 words_note["text"] = text["failed"]
                 sys.stderr.write("transcription (%s) failed: %s\n" % (model, outcome))
@@ -459,11 +566,21 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
                 shown_model["id"] = model
                 words_note["text"] = text["words"](len(words), seconds, from_cache)
 
+        def show_progress(model, force=False):
+            """The bar follows the model being transcribed; when nothing is, it rests on 'done'."""
+            if transcriber.running is not None:
+                name = model_labels[transcriber.running].replace(text["not_installed"], "")
+                bar.set("%s — %s" % (text["transcribing"], name), transcriber.progress["f"], force)
+            else:
+                bar.set(text["transcribed"] if model != "none" and isinstance(
+                    transcriber.done.get(model), tuple) else text["analysed"], 1.0, force)
+
         current = app.send("script.panel.get", {"panel_id": pid})
         values = current["values"]
-        regions = show_zones(values)
+        show_words(values.get("model", "none"))
+        settings, zones = show_zones(values)
         last_wanted = values.get("model", "none")
-        show_words(last_wanted)
+        show_progress(last_wanted, force=True)
         push_status(busy=False)
         rev = current["rev"]
 
@@ -476,26 +593,32 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
             rev = current["rev"]
             values = current["values"]
             finished = transcriber.collect()
-            if changed:
-                regions = show_zones(values)
             wanted = values.get("model", "none")
             if wanted != last_wanted or finished:
                 last_wanted = wanted
                 show_words(wanted)     # also starts `wanted` when a finished model freed the worker
+            if changed or finished:
+                settings, zones = show_zones(values)
+            elif wanted != shown_model["id"]:
                 push_status()
+            show_progress(wanted, force=bool(finished))
 
         if current["state"] == "validated":
-            regions = regions_for(current["values"])
-            if not regions:
+            settings, zones = zones_for(current["values"])
+            lanes = eval_lanes(settings)
+            if not (zones["breath"] or zones["sibilant"]):
                 app.send("script.panel.update", {"panel_id": pid, "status": text["none"]})
             else:
-                pieces = detect.segment_breaths(duration, regions)
-                cuts, lanes = detect.cuts_and_lanes(pieces)
+                pieces = detect.segment_zones(duration, zones)
+                cuts, piece_lanes = detect.cuts_and_lanes(pieces, lanes)
                 if cuts:
                     lane_names = detect.LANE_NAMES.get(language, detect.LANE_NAMES["en"])
+                    by_lane = sorted(lanes.items(), key=lambda kv: kv[1])
+                    names = [lane_names[detect.LANE_FOR_LABEL[label]] for label, _ in by_lane]
+                    names = names[:max(piece_lanes) + 1]
                     result = app.send("object.explode", {
-                        "id": object_id, "cuts": [start + c for c in cuts], "lanes": lanes,
-                        "names": lane_names[:2],
+                        "id": object_id, "cuts": [start + c for c in cuts], "lanes": piece_lanes,
+                        "names": names,
                         "group_name": "%s — separated" % obj.get("name", object_id)})
                     try:
                         app.send("object.select", {"ids": [result["group"]]})
@@ -542,7 +665,7 @@ def main():
         segments_override = [(p["start"], p["start"] + p["duration"], p["label"]) for p in raw]
 
     app = Objekat(SOCK)
-    if "--breaths-eval" in args:
+    if "--breaths-eval" in args or "--eval-separation" in args:
         target = args[args.index("--object") + 1] if "--object" in args else ids[0]
         model_arg = args[args.index("--model") + 1] if "--model" in args else None
         breaths_eval(app, target, language, no_asr, model_arg)
