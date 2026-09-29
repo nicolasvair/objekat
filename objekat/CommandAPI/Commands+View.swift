@@ -62,6 +62,39 @@ extension CommandRegistry {
             return try Self.viewState()
         }
 
+        register("view.reveal",
+                 summary: """
+                 Asks the timeline to bring objects into view, exactly as selecting them in the \
+                 sound list does (the selection itself is NOT changed). Groups hiding them are \
+                 unfolded (`unfolded` names them). One object: scrolls (never zooms). Several that \
+                 fit in the window: scrolls. Several that do not: zooms out to ~80 % of the width, \
+                 within the timeline's zoom bounds, then centres. A box already entirely visible \
+                 moves nothing. Vertically: no zoom, the first lane is brought in (the lane snap \
+                 frames it when active). Waits until applied and answers `view` (a `view.state`) \
+                 and `view_before`. UI mode only: `invalid_state` with `--headless`.
+                 """,
+                 params: [ParamSpec("ids", "array<uuid>", "Objects to show.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try InputSynth.timelineHost()
+            let ids = try p.uuids("ids")
+            guard !ids.isEmpty else { throw CommandError(code: .bad_params, message: "'ids' is empty") }
+            for id in ids where vm.find(id: id) == nil {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let before = try Self.viewState()
+            let opened = vm.revealInTimeline(ids: Set(ids))
+            // The view applies the request one run-loop turn later (two when the zoom changes)
+            // and sets it back to nil; then the layout and the scroll have to come to rest.
+            let deadline = Date().addingTimeInterval(2)
+            while vm.timelineRevealRequest != nil, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            _ = await Self.waitViewAtRest(host)
+            return .object(["unfolded": .array(opened.map { .string($0.uuidString) }),
+                            "view_before": before,
+                            "view": try Self.viewState()])
+        }
+
         // MARK: input.*
 
         register("input.hover",

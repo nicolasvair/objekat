@@ -641,6 +641,16 @@ final class EditViewModel {
     /// `pendingRangeReveal`.
     var pendingLaneReveal: Int? = nil
 
+    /// The sound list asking the timeline to show a selection (@see `revealInTimeline`). Same
+    /// protocol as `pendingLaneReveal`: the view applies it and sets it back to nil.
+    var timelineRevealRequest: TimelineRevealRequest? = nil
+    @ObservationIgnored var timelineRevealSerial = 0
+    /// Bumped by every EXPLICIT selection of a single object (`select`, `selectIDs`), wherever it
+    /// comes from. The sound list observes `(row, token)`, not the row alone: clicking again the
+    /// object that is already the only one selected changes nothing in `selectedIDs`, and a list
+    /// scrolled away by hand in the meantime would never come back to it.
+    var listRevealToken = 0
+
     /// A request to STOP playback issued by the model: an export in direct render takes the Edit
     /// out of the device manager for the length of the render, and the view's transport state (which lives in
     /// ContentView) has to know, otherwise the button stays on "stop" and the playhead freezes

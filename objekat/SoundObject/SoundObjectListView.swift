@@ -24,6 +24,11 @@ struct SoundObjectListView: View {
     /// or reaching any other view.
     @State private var showOnlyMissing = false
 
+    /// The token of the last selection made by a CLICK IN THIS LIST. The list scrolls itself onto
+    /// what is selected, and a row one has just clicked is under the pointer by definition:
+    /// centring it again on a re-click would move a row from under the hand that pressed it.
+    @State private var ownClickToken: Int = -1
+
     /// The rows actually drawn.
     ///
     /// The text filter is applied inside `soundListRows` (it reads `filterText`, which belongs to
@@ -49,6 +54,30 @@ struct SoundObjectListView: View {
     private var rowToReveal: UUID? {
         guard viewModel.selectedIDs.count == 1, let id = viewModel.selectedIDs.first else { return nil }
         return rows.contains(where: { $0.id == id }) ? id : nil
+    }
+
+    /// What the list watches to know it must scroll: the row AND the selection token, never the
+    /// row alone. Clicking again, in the timeline, the object that is already the only one selected
+    /// leaves `rowToReveal` exactly as it was, so an `onChange` on the row would stay silent — and
+    /// a list the user has scrolled away by hand in the meantime would never come back to it.
+    private struct RevealKey: Equatable {
+        let id: UUID
+        let token: Int
+    }
+
+    private var revealKey: RevealKey? {
+        guard let id = rowToReveal else { return nil }
+        return RevealKey(id: id, token: viewModel.listRevealToken)
+    }
+
+    /// True only while one is REALLY typing in the search field. SwiftUI's `searchFocused` can
+    /// stay true after the focus has gone to the timeline's canvas (which is not a SwiftUI
+    /// focusable view, so nothing tells the flag), and a list that trusted it would stop following
+    /// every selection for as long as the flag was stale. The truth is the window's first
+    /// responder: a field editor is what a focused text field puts there.
+    private var isTypingInSearch: Bool {
+        guard searchFocused else { return false }
+        return (NSApp.keyWindow?.firstResponder as? NSTextView)?.isFieldEditor == true
     }
 
     var body: some View {
@@ -118,17 +147,46 @@ struct SoundObjectListView: View {
             // show, and picking one would be picking for the user. And it never steals the view
             // while one is typing in the search field, where the rows under the hand are the
             // result of the search and not of any selection.
-            .onChange(of: rowToReveal) { _, id in
-                guard let id, !searchFocused else { return }
-                // `.center` rather than the nearest edge: a row revealed flush against the top or
-                // the bottom of the panel is a row with no neighbours shown, and what one wants
-                // of a table of contents is precisely what sits around the thing one selected.
-                withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(id, anchor: .center) }
+            .onChange(of: revealKey) { old, new in
+                guard let new else { return }
+                // A click in THIS list on the row that was already the one to show: it is under
+                // the pointer, there is nothing to bring into view.
+                if new.token == ownClickToken, old?.id == new.id { return }
+                if isTypingInSearch { return }
+                // The flag was stale (see `isTypingInSearch`): put it right so the next gesture
+                // does not have to work it out again.
+                if searchFocused { searchFocused = false }
+                revealRow(new.id, in: scroller)
             }
             }
         }
         .frame(minWidth: 240)
         .onDisappear { KeyboardClaim.shared.release(.soundList) }
+    }
+
+    /// Scrolls the list so the row sits at the centre — `.center` rather than the nearest edge: a
+    /// row revealed flush against the top or the bottom of the panel is a row with no neighbours
+    /// shown, and what one wants of a table of contents is precisely what sits around the thing
+    /// one selected.
+    ///
+    /// Two scrolls, and both are deliberate. The first is DEFERRED by one turn of the run loop:
+    /// the selection can arrive in the very transaction that unfolds a group or filters the list,
+    /// and a row that the `ForEach` has not been given yet cannot be scrolled to. The second, a
+    /// quarter of a second later and unanimated, is for the `LazyVStack`: a `scrollTo` towards a
+    /// row that has not been realised lands on the height the stack ESTIMATED for everything it
+    /// has not laid out, which is not where the row ends up. Once the animation has brought the
+    /// row into being the target is exact, and the second call is a no-op on a list that got it
+    /// right the first time. Both give way if the selection has moved on in the meantime (a key
+    /// held down walks it faster than either lands).
+    private func revealRow(_ id: UUID, in scroller: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            guard rowToReveal == id else { return }
+            withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(id, anchor: .center) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard rowToReveal == id else { return }
+            scroller.scrollTo(id, anchor: .center)
+        }
     }
 
     // MARK: - One row, with its gestures
@@ -183,6 +241,16 @@ struct SoundObjectListView: View {
         let flags = NSEvent.modifierFlags
         if flags.contains(.shift) { extendSelection(to: id) }
         else { viewModel.select(id, additive: flags.contains(.command)) }
+        ownClickToken = viewModel.listRevealToken
+        // ⌘ that took the row OUT of the selection has nothing to show.
+        if viewModel.isSelected(id) { viewModel.revealInTimeline(ids: viewModel.selectedIDs) }
+    }
+
+    /// A plain selection made by the arrow keys: the timeline's view follows it (@see
+    /// `EditViewModel.revealInTimeline`), the way it follows a click on the row.
+    private func selectAndReveal(_ id: UUID) {
+        viewModel.select(id, additive: false)
+        viewModel.revealInTimeline(ids: [id])
     }
 
     /// ⇧ — everything from the end of the current selection to the row clicked, over the rows
@@ -316,11 +384,11 @@ struct SoundObjectListView: View {
     private func moveCursor(_ delta: Int) {
         guard !rows.isEmpty else { return }
         guard let i = cursorIndex else {
-            viewModel.select(delta > 0 ? rows[0].id : rows[rows.count - 1].id, additive: false)
+            selectAndReveal(delta > 0 ? rows[0].id : rows[rows.count - 1].id)
             return
         }
         let next = min(max(i + delta, 0), rows.count - 1)
-        if next != i { viewModel.select(rows[next].id, additive: false) }
+        if next != i { selectAndReveal(rows[next].id) }
     }
 
     /// → — open a folded group, then step into it.
@@ -341,7 +409,7 @@ struct SoundObjectListView: View {
         // it is checked and not assumed: a filter can hide a child, and the row below would then
         // belong to somebody else entirely.
         if i + 1 < rows.count, rows[i + 1].parentID == row.id {
-            viewModel.select(rows[i + 1].id, additive: false)
+            selectAndReveal(rows[i + 1].id)
         }
     }
 
@@ -357,7 +425,7 @@ struct SoundObjectListView: View {
             viewModel.toggleGroupExpansion(id: row.id)
             return
         }
-        if let parent = row.parentID { viewModel.select(parent, additive: false) }
+        if let parent = row.parentID { selectAndReveal(parent) }
     }
 
     /// The file a row can show in the Finder, or nil.

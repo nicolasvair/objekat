@@ -54,9 +54,14 @@ extension EditViewModel {
         } else {
             selectedIDs = [id]
         }
+        if selectedIDs.count == 1 { listRevealToken += 1 }
     }
 
-    func selectIDs(_ ids: Set<UUID>) { selectedCrossfade = nil; selectedIDs = ids }
+    func selectIDs(_ ids: Set<UUID>) {
+        selectedCrossfade = nil
+        selectedIDs = ids
+        if ids.count == 1 { listRevealToken += 1 }
+    }
 
     /// Moves the TIME SELECTION one displayed row up (`-1`) or down (`+1`) — the passage travels
     /// across the lanes while keeping the same span of time, and NOTHING moves with it: no object

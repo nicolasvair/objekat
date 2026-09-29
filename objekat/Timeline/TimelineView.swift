@@ -1327,6 +1327,16 @@ struct TimelineView: View {
             revealDisplayLane(lane)
             DispatchQueue.main.async { viewModel.pendingLaneReveal = nil }
         }
+        // The sound list selected something and asks the view to show it (@see
+        // EditViewModel.revealInTimeline, TimelineReveal). Same protocol once more — applied, then
+        // set back to nil, unless a newer request has replaced it in the meantime.
+        .onChange(of: viewModel.timelineRevealRequest) { _, req in
+            guard let req else { return }
+            revealObjects(req)
+            DispatchQueue.main.async {
+                if viewModel.timelineRevealRequest == req { viewModel.timelineRevealRequest = nil }
+            }
+        }
         // The project folder changes (Save As, opening, a new version) → retarget the
         // disk cache; becoming non-nil flushes the peaks already computed.
         .onChange(of: viewModel.projectURL) {
@@ -3469,6 +3479,59 @@ struct TimelineView: View {
             let maxScrollX = max(0, totalDuration * pps - Double(viewportWidth))
             let x = min(maxScrollX, max(0, range.lowerBound * pps - Double(viewportWidth) * margin))
             scrollTo(x: CGFloat(x), y: scrollOffsetY)
+        }
+    }
+
+    /// Brings the objects of a reveal request into view: the box they fill in time × display lanes
+    /// is measured here (the only place that knows the window, the scroll and the zoom) and
+    /// `TimelineReveal` says what has to change — nothing, when the box is already in sight. Every
+    /// write goes through a door that already exists: the zoom through `pixelsPerSecond` as
+    /// `revealTimeRange` does (an anchored `applyZoom` is exactly what a framing must not use),
+    /// the scroll through `scrollTo`, the vertical snap through `frameLane`.
+    ///
+    /// Deferred by one turn of the run loop, twice when the zoom changes: the request can arrive
+    /// in the transaction that has just unfolded a group (the canvas is not as tall as it is about
+    /// to be) and a new scale gives the canvas its new width only after it has been set — a scroll
+    /// bounded on the old one lands short of the box. @see revealTimeRange, which has the second.
+    func revealObjects(_ req: TimelineRevealRequest) {
+        DispatchQueue.main.async {
+            guard let box = viewModel.revealBox(for: req.ids) else { return }
+            let vw = Double(viewportWidth)
+            let view = TimelineReveal.View(
+                viewportWidth: vw,
+                scrollX: Double(scrollOffsetX),
+                pixelsPerSecond: pixelsPerSecond,
+                minPixelsPerSecond: minZoom,
+                maxPixelsPerSecond: maxZoom,
+                // The canvas's width at a GIVEN zoom (@see totalDuration, whose headroom is a
+                // fraction of the window and so depends on it).
+                maxScrollX: { pps in
+                    let total = max(max(contentDuration, stickyTotalDuration),
+                                    contentEnd + Self.rightHeadroomFraction * vw / pps)
+                    return max(0, total * pps - vw)
+                },
+                viewportHeight: Double(viewportHeight),
+                scrollY: Double(scrollOffsetY),
+                maxScrollY: max(0, canvasHeight - Double(viewportHeight)),
+                rulerHeight: rulerHeight,
+                laneStep: laneStep,
+                blockHeight: blockHeight,
+                snapActive: verticalSnapActive)
+            let frame = TimelineReveal.frame(box: box, view: view)
+            guard !frame.isEmpty else { return }
+            let zoomed = frame.pixelsPerSecond
+            if let pps = zoomed { viewModel.pixelsPerSecond = clampZoom(pps) }
+            let apply = {
+                var x = frame.scrollX.map { CGFloat($0) } ?? scrollOffsetX
+                if zoomed != nil {
+                    // Re-bounded on the canvas as it now IS, not as it was estimated.
+                    x = min(x, CGFloat(max(0, totalDuration * pixelsPerSecond - Double(viewportWidth))))
+                }
+                let y = frame.scrollY.map { CGFloat($0) } ?? scrollOffsetY
+                if x != scrollOffsetX || y != scrollOffsetY { scrollTo(x: x, y: y) }
+                if let lane = frame.frameLane { frameLane(lane, animated: true) }
+            }
+            if zoomed != nil { DispatchQueue.main.async(execute: apply) } else { apply() }
         }
     }
 
