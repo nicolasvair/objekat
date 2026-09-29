@@ -200,6 +200,19 @@ extension EditViewModel {
                         // The effective gain (silence for muted branches) → the mute survives the recompile.
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
+            if let block = p.fxBlock {
+                // An FX link's block: its instances (already in the bin's order) + the bin's output
+                // section, which the engine unfolds into leaves and one ObjGain. The common on/off
+                // is folded into each leaf's own, so the engine has one flag per plugin to read.
+                let out = fxOutput(of: p)
+                return ["id":      p.id.uuidString,
+                        "kind":    "fxlink",
+                        "plugins": rackSpec(for: block.plugins.map { leaf in
+                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l }),
+                        "enabled": out.isEnabled,
+                        "gainDb":  Double(out.effectiveGainDb),
+                        "pan":     Double(out.pan)]
+            }
             var d: [String: Any] = [
                 "id":         p.id.uuidString,
                 "kind":       "plugin",
@@ -728,6 +741,15 @@ extension EditViewModel {
             }
         }
         walk(items)
+        // The buses' chains: an FX link can sit on one, and its instances are mirrors like any
+        // other. (The legacy manual link never reached them — left as it was.)
+        for s in stems {
+            for p in Self.flattenLeaves(s.plugins) {
+                if let g = p.linkGroupID, Self.enclosingFXBlock(of: p.id, in: s.plugins) != nil {
+                    engine.setPluginLinkGroup(p.id.uuidString, groupID: g.uuidString)
+                }
+            }
+        }
     }
 
     /// Every (objectID, plugin) instance in the project, flattened (recursively).

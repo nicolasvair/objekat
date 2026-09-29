@@ -306,9 +306,14 @@ static void movePluginBefore(te::PluginList& pl, const te::Plugin::Ptr& p,
 // L'arbre (source de vérité = modèle Swift) garde sa forme d'origine :
 //   feuille : { id, kind:"plugin", identifier, format, name, stateXML?, enabled? }
 //   bloc //  : { kind:"rack", voices:[ [<entrées série>], ... ] }
+//   bac FX   : { id, kind:"fxlink", plugins:[<feuilles>], enabled, gainDb, pan }
 // et il est compilé TEL QUEL : un bloc parallèle devient un ObjParallelBlockPlugin, dont
 // chaque branche porte la chaîne série de sa voie et un ObjGain de fin (wetDb). Le moteur le
 // déplie en SummingNode { branche… } et égalise les latences entre branches.
+// Un BAC FX (kind:"fxlink") n'a pas de forme propre côté moteur : il est DÉPLIÉ au parsing en
+// ses feuilles, suivies d'un ObjGain de sortie (clé fxOutputKey) — la section de sortie du bac
+// (volume, pan, mute, on/off commun). Rien de plus à réconcilier : les feuilles sont des plugins
+// ordinaires, et leur miroir (link) est celui qui existait déjà.
 // @see ObjParallelBlockPlugin, te::ParallelPluginBlock
 
 namespace {
@@ -318,6 +323,10 @@ using CompileSeries = std::vector<CompileNode>;
 
 struct CompileNode {
     bool                       isRack = false;
+    // gain de sortie d'un bac FX (isGain) — `key` = fxOutputKey(id du bloc)
+    bool                       isGain = false;
+    float                      gainDb = 0.0f;
+    float                      pan = 0.0f;
     // feuille (!isRack)
     std::string                key;        // pluginKey (ObjectPlugin.id)
     bool                       enabled = true;
@@ -347,9 +356,29 @@ static CompileNode parseCompileNode(NSDictionary* d) {
     return n;
 }
 
+// Clé du gain de sortie d'un bac FX — comme voiceGainKey, un plugin que le compilateur pose de
+// lui-même : il DOIT figurer parmi les clés attendues (le nettoyage le détruirait sinon).
+static std::string fxOutputKey(const std::string& blockKey) {
+    return blockKey + "#fxout";
+}
+
 static CompileSeries parseCompileSeries(NSArray<NSDictionary*>* arr) {
     CompileSeries s;
-    for (NSDictionary* d in arr) s.push_back(parseCompileNode(d));
+    for (NSDictionary* d in arr) {
+        if ([d[@"kind"] isEqualToString:@"fxlink"]) {
+            for (NSDictionary* leaf in (NSArray*)d[@"plugins"])
+                s.push_back(parseCompileNode(leaf));
+            CompileNode g;
+            g.isGain  = true;
+            g.key     = fxOutputKey(std::string([(d[@"id"] ?: @"") UTF8String]));
+            g.enabled = d[@"enabled"] ? [d[@"enabled"] boolValue] : YES;
+            g.gainDb  = d[@"gainDb"] ? [d[@"gainDb"] floatValue] : 0.0f;
+            g.pan     = d[@"pan"] ? [d[@"pan"] floatValue] : 0.0f;
+            s.push_back(g);
+            continue;
+        }
+        s.push_back(parseCompileNode(d));
+    }
     return s;
 }
 
@@ -5545,6 +5574,30 @@ static void objDumpPluginList(te::PluginList& pl,
     for (auto& n : series) {
         if (n.key.empty()) continue;
 
+        if (n.isGain) {
+            // Sortie d'un bac FX : un ObjGain posé à la suite des feuilles du bac (l'ordre est
+            // remis en place par la passe de fin de série, comme pour tout le reste).
+            te::Plugin::Ptr gp;
+            if (auto git = _pluginMap.find(n.key); git != _pluginMap.end()) gp = git->second;
+            if (!gp) {
+                gp = pl.insertPlugin(te::ObjGainPlugin::create(), indexBefore(pl, anchor));
+                if (!gp) {
+                    NSLog(@"[FX] compile: sortie de bac '%s' refusée", n.key.c_str());
+                    [failed addObject:[NSString stringWithUTF8String:n.key.c_str()]];
+                    continue;
+                }
+                _pluginMap[n.key] = gp;
+            }
+            if (auto* g = dynamic_cast<te::ObjGainPlugin*>(gp.get())) {
+                g->setGainDb(n.gainDb);
+                g->setPan(n.pan);
+            }
+            gp->setEnabled(n.enabled);
+            order.push_back(n.key);
+            here.push_back(n.key);
+            continue;
+        }
+
         if (n.isRack) {
             te::Plugin::Ptr carrier;
             if (auto pit = _pluginMap.find(n.key); pit != _pluginMap.end()) carrier = pit->second;
@@ -5772,6 +5825,20 @@ static void objDumpPluginList(te::PluginList& pl,
 
     if (auto* g = dynamic_cast<te::ObjGainPlugin*>(it->second.get()))
         g->setGainDb(dB);
+}
+
+// Section de sortie d'un bac FX, à chaud : gain, pan et on/off de l'ObjGain posé à la suite des
+// feuilles du bloc. Silencieux si le bloc n'a jamais été compilé — la valeur vit dans le modèle,
+// la prochaine compilation la posera. Le gain porte aussi le MUTE (le modèle pousse un gain EFFECTIF).
+- (void)setFXBlockOutput:(NSString*)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled {
+    if (!blockID) return;
+    auto it = _pluginMap.find(fxOutputKey(std::string([blockID UTF8String])));
+    if (it == _pluginMap.end()) return;
+    if (auto* g = dynamic_cast<te::ObjGainPlugin*>(it->second.get())) {
+        g->setGainDb(dB);
+        g->setPan(pan);
+    }
+    it->second->setEnabled(enabled);
 }
 
 // Ajuste à chaud le gain dB de début (output=NO) / fin (output=YES) de chaîne, sans recompiler.

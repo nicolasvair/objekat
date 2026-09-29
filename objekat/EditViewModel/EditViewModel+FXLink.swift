@@ -126,4 +126,32 @@ extension EditViewModel {
             return l
         }
     }
+
+    // MARK: Engine — hot pushes (no recompile)
+
+    /// Pushes one block's output section and the effective on/off of its instances to the engine,
+    /// with no recompile: a volume drag, a mute or the bin's common on/off must not glitch the
+    /// chain. Silent for a block the engine has not compiled yet — the model holds the value, the
+    /// next compile lays it down.
+    func pushFXBlockOutput(hostID: UUID, block: ObjectPlugin) {
+        guard let engine, let fb = block.fxBlock else { return }
+        let out = fxOutput(of: block)
+        engine.setFXBlockOutput(block.id.uuidString, gainDb: out.effectiveGainDb, pan: out.pan,
+                                enabled: out.isEnabled)
+        for leaf in fb.plugins {
+            engine.setPlugin(leaf.id.uuidString, enabled: leaf.isEnabled && out.isEnabled,
+                             forObjectID: hostID.uuidString)
+        }
+    }
+
+    /// The same for every ATTACHED member of bin `linkID`.
+    func pushFXLinkOutput(_ linkID: UUID) {
+        for m in fxLinkAttachedMembers(linkID) { pushFXBlockOutput(hostID: m.hostID, block: m.block) }
+    }
+
+    /// The same for every block of the project — after an undo, which restores the registry
+    /// beside chains that may have been kept in place (@see applySnapshot).
+    func pushAllFXBlockOutputs() {
+        for m in allFXBlocks() { pushFXBlockOutput(hostID: m.hostID, block: m.block) }
+    }
 }

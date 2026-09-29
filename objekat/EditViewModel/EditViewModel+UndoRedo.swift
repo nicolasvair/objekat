@@ -192,6 +192,7 @@ extension EditViewModel {
         }
 
         resyncAllSends()   // every aux now exists → rewire the sends
+        pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
 
         let rebuilt = items.count - kept.count
         NSLog("[UNDO] restored in %.0f ms — top-level: %d rebuilt, %d patched, %d untouched",
