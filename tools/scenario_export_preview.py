@@ -197,6 +197,29 @@ with ObjekatClient(SOCK) as c:
     st = c.send("export.status")
     check("the panel keeps the result", st.get("panel_open") is True, st)
 
+    # --- the listening goes out on OBJEKAT's own card, not the system's default output.
+    #     `output_device` is read back from the listening engine's AudioUnit, `audio.status.device`
+    #     is what the engine really opened: the two must name the same card. Only meaningful when
+    #     a device IS open — a `--no-audio` instance has nothing to compare against — and the
+    #     `listen` half really PLAYS for a moment, which is why it lives behind the same test.
+    au = c.send("audio.status")
+    if au.get("running") and au.get("device"):
+        q = step("preview, output device", lambda: c.send("export.preview"))
+        check("output_device == audio.status device",
+              q and q.get("output_device") == au["device"],
+              "%r vs %r" % (q and q.get("output_device"), au["device"]))
+        q = step("listen on", lambda: c.send("export.preview", {"listen": True}))
+        check("listening while reading the device", q and q.get("listening") is True, q)
+        check("still OBJEKAT's card while playing",
+              q and q.get("output_device") == au["device"],
+              "%r vs %r" % (q and q.get("output_device"), au["device"]))
+        step("listen off", lambda: c.send("export.preview", {"listen": False}))
+        q = c.send("export.preview")
+        check("listening stopped", q.get("listening") is False, q)
+    else:
+        print("  ..   output device block skipped: no audio device open (audio.status running=%s)"
+              % au.get("running"))
+
     # --- the peaks are the SOUND and not a decoration: the same project, rendered over a stretch
     #     where nothing plays, must give a flat waveform.
     r = step("run over silence", lambda: c.send("export.run", {

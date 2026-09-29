@@ -1181,19 +1181,31 @@ go of, and `time` moves the cursor with it. The selection payload now carries **
 
 ### Ripple
 
-`timesel.ripple_delete` and `object.ripple_cut` do not merely remove matter: they **close the gap
-behind it**, everything that followed sliding back onto the hole's left edge. What makes them worth
-a command of their own is their **scope**, which is the container and nothing wider: a ripple laid
-inside a group moves that group's objects, shrinks the group's own window by as much, and leaves the
-group's neighbours, its parent and the rest of the timeline exactly where they were.
+`timesel.ripple_delete`, `object.ripple_delete` and `object.ripple_cut` do not merely remove
+matter: they **close the gap behind it**, everything that followed sliding back onto the hole's
+left edge. What makes them worth a command of their own is their **scope**, which is the container
+and nothing wider: a ripple laid inside a group moves objects of that group, and leaves the group's
+neighbours, its parent and the rest of the timeline exactly where they were.
 
-Three consequences a script has to know about:
+What a script has to know about:
 
-- **Every lane of the scope is hollowed out**, not just those the time selection covered — that is
-  what keeps the scope's internal synchronisation. So a ripple destroys matter the selection never
-  named. `timesel.delete` is the gesture that does not.
-- The scope is the **shallowest** container the gesture touches. `timesel.ripple_delete` returns it
-  as `container` (`null` = the whole timeline): read it back rather than assuming it.
+- **Only the SELECTED lanes are hollowed out and slide back** — the lanes of the time selection
+  (`timesel.ripple_delete`), the lanes the given objects sit on (`object.ripple_delete`), the lane
+  of the object cut (`object.ripple_cut`). The other lanes of the container stay exactly as they
+  were. This is a deliberate choice, and its **cost is that the synchronisation between the lanes
+  is no longer guaranteed**: an object on an unselected lane that straddles the hole is spared, so
+  the selected lanes can end up out of step with it. (Until 29 September 2026 every lane of the
+  scope was hollowed out.) A ripple on ALL the lanes of a container gives the old behaviour back.
+- What slides is decided per selected lane, by **unit**: the shallowest object whose row is
+  selected goes whole, with everything under it — a group whose own row is selected is one unit,
+  its children's rows selected or not. A sub-group only **partially** selected (some of its
+  children's rows, not its own) keeps its window where it is, and the selected children slide
+  inside it in absolute time (so one may slide out past the window's start).
+- The container's own window **shrinks only if every lane of the scope was selected** (an infinite
+  bus does not count). Otherwise it does not move.
+- The scope is the **shallowest** container the gesture touches; selected lanes outside it are left
+  alone. `timesel.ripple_delete` and `object.ripple_delete` return it as `container` (`null` = the
+  whole timeline): read it back rather than assuming it.
 - `object.ripple_cut` reads the hole off the object it is given — `keep: "left"` removes
   `[seconds, that object's end]`, `keep: "right"` removes `[its start, seconds]`. The answer says
   which span went, in `removed_from` / `removed_to`.
@@ -1351,6 +1363,14 @@ from the display's own cache:
 | `audible_seconds` | how much can be listened to right now. |
 | `rendered_duration` | the range being rendered, frozen at the start. |
 | `source` | the file being listened to: the render's temporary wave, then the final file. |
+| `output_device` | the sound card the listening goes out on, READ BACK from the listening engine's own AudioUnit (`null` if unreadable). It is OBJEKAT's card — the name `audio.status` publishes — not the system's default output; a name that cannot be resolved falls back on the default output, said in the log (`[EXPORT-AUDITION]`). |
+
+`export.preview` also takes an optional `listen` (bool): `true` starts the listening from the start
+of the range, `false` stops it — the machine's door onto the listen button, and it **really plays**
+on the card. If OBJEKAT's card changes while one listens, the pass stops, is reconfigured on the
+new card and resumes at the same position. `tools/scenario_export_preview.py` compares
+`output_device` with `audio.status.device` whenever a device is open, and skips that block when
+none is (`--no-audio`).
 
 `audible_seconds` is deliberately **not** the progress: the render runs ahead of the writer, which
 flushes its header every six seconds of audio (`numSamplesPerFlush`). That flush is what makes the

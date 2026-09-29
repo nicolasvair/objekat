@@ -181,10 +181,23 @@ extension CommandRegistry {
                  summary: "What the panel shows OF a render while it runs: how far the waveform "
                         + "has grown (the engine's tap) and how much of the file can already be "
                         + "listened to (what the writer has flushed to disk). The two are "
-                        + "different numbers — the render runs ahead of the flush.") { _ in
+                        + "different numbers — the render runs ahead of the flush. "
+                        + "`output_device` is the sound card the listening goes out on, read "
+                        + "back from the listening engine's own AudioUnit. `listen` (optional) "
+                        + "starts (true, from the beginning) or stops (false) the listening — "
+                        + "the machine's door onto the listen button, and it really plays.",
+                 params: [ParamSpec("listen", "bool", required: false,
+                                    "true = start listening from 0, false = stop.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             guard let job = vm.exportJob else {
                 throw CommandError(code: .invalid_state, message: "no export to show")
+            }
+            if let listen = try p.optionalBool("listen") {
+                if listen {
+                    vm.exportAudition.start(source: job.previewSource, from: 0)
+                } else {
+                    vm.exportAudition.stop()
+                }
             }
             // Read from the ENGINE and from the FILE, not from what the panel's timer last
             // cached: a command that only echoed the display could not prove the display right.
@@ -201,6 +214,7 @@ extension CommandRegistry {
                 "rendered_duration": .number(job.renderedDuration),
                 "source": .string(job.previewSource.path),
                 "listening": .bool(vm.exportAudition.isPlaying),
+                "output_device": .stringOrNull(vm.exportAudition.outputDeviceName()),
             ])
         }
 

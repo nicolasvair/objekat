@@ -1,4 +1,6 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 import Observation
 
 // LISTENING TO AN EXPORT WHILE IT IS BEING MADE.
@@ -22,8 +24,16 @@ import Observation
 // the render is behind.
 //
 // Deliberately NOT the project's engine: Tracktion is either rendering or playing something else,
-// and the two must not be entangled. A separate `AVAudioEngine` on the default output is one more
-// client of the device, which CoreAudio has always allowed.
+// and the two must not be entangled. A separate `AVAudioEngine` is one more client of the device,
+// which CoreAudio has always allowed.
+//
+// WHICH DEVICE. Not the system's default output: the sound card OBJEKAT itself opened (the name
+// `AudioDeviceStatus` publishes) — otherwise a project working on an interface would be listened
+// to through the laptop's speakers. The name is resolved to an `AudioDeviceID` through CoreAudio
+// (devices with an output stream) and set on the output node's AudioUnit BEFORE the engine starts;
+// a name that cannot be found falls back on the default output, said in the log. If OBJEKAT's
+// card changes while one listens, the pass stops, is reconfigured and picks up at the same
+// position.
 @MainActor
 @Observable
 final class ExportAudition {
@@ -50,6 +60,11 @@ final class ExportAudition {
     @ObservationIgnored private var scheduledFrames: AVAudioFramePosition = 0
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var lastProbe: Date = .distantPast
+    /// A restart for a device change is under way: our own stop/start must not re-enter it.
+    @ObservationIgnored private var restarting = false
+    /// An observation of `AudioDeviceStatus` is armed (it fires ONCE per arming).
+    @ObservationIgnored private var observingDevice = false
+    @ObservationIgnored private var configObserver: NSObjectProtocol?
 
     /// The longest slice handed over at once. Short enough that the play head never lags far
     /// behind what is on disk, long enough that the top-up is four times a second at most.
@@ -75,14 +90,21 @@ final class ExportAudition {
         scheduledFrames = from
         position = Double(from) / fmt.sampleRate
 
+        // The device first, THEN the graph: changing the output node's device moves its format
+        // (another card, another rate), and the mixer must be plugged again on what it now is.
+        applyOutputDevice()
         if !attached { engine.attach(player); attached = true }
-        engine.connect(player, to: engine.mainMixerNode, format: fmt)
-        do { try engine.start() } catch { return false }
+        reconnectGraph(playerFormat: fmt)
+        do { try engine.start() } catch {
+            NSLog("[EXPORT-AUDITION] engine.start failed: %@", String(describing: error))
+            return false
+        }
 
         topUp()
         player.play()
         isPlaying = true
         startTicking()
+        watchDevice()
         return true
     }
 
@@ -120,6 +142,16 @@ final class ExportAudition {
         availableDuration = Double(file.length) / file.processingFormat.sampleRate
     }
 
+    /// The name of the device the listening goes out on, READ BACK from the output node's
+    /// AudioUnit — not from what was asked for, so a caller can tell the resolution from the
+    /// intention. While no pass runs the device is (re)applied first, so the answer is what the
+    /// NEXT pass would use. `nil` when the unit cannot be read.
+    func outputDeviceName() -> String? {
+        if !engine.isRunning { applyOutputDevice() }
+        guard let id = currentOutputDeviceID() else { return nil }
+        return Self.deviceName(id)
+    }
+
     /// Everything goes: called when the job's files are about to disappear.
     func forget() {
         stop()
@@ -127,6 +159,158 @@ final class ExportAudition {
         format = nil
         position = 0
         availableDuration = 0
+    }
+
+    // MARK: - Output device
+
+    /// Points the output node at the card OBJEKAT has open. Only while the engine is stopped:
+    /// the property is meant to be set before start, and doing it on a running engine would be
+    /// answered by a configuration change of our own making.
+    private func applyOutputDevice() {
+        guard !engine.isRunning else { return }
+        guard let unit = engine.outputNode.audioUnit else {
+            NSLog("[EXPORT-AUDITION] output node has no AudioUnit: system default output")
+            return
+        }
+        let wanted = AudioDeviceStatus.shared.snapshot.name
+        var target: AudioDeviceID?
+        if let wanted, let id = Self.outputDeviceID(named: wanted) {
+            target = id
+        } else {
+            // Not resolved: the system default. It is also an explicit set — a previous pass may
+            // have left the unit on a card that has since stopped being OBJEKAT's.
+            NSLog("[EXPORT-AUDITION] device %@ not found among the output devices: default output",
+                  wanted ?? "(none published)")
+            target = Self.defaultOutputDeviceID()
+        }
+        guard var device = target else { return }
+        if currentOutputDeviceID() == device { return }
+        let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0, &device,
+                                          UInt32(MemoryLayout<AudioDeviceID>.size))
+        if status != noErr {
+            NSLog("[EXPORT-AUDITION] setting the output device failed (%d): left as it was",
+                  Int(status))
+        }
+    }
+
+    /// Plugs player → mixer → output again, on the formats the (possibly new) device now has.
+    private func reconnectGraph(playerFormat fmt: AVAudioFormat) {
+        let out = engine.outputNode.inputFormat(forBus: 0)
+        if out.sampleRate > 0, out.channelCount > 0 {
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: out)
+        }
+        engine.connect(player, to: engine.mainMixerNode, format: fmt)
+    }
+
+    private func currentOutputDeviceID() -> AudioDeviceID? {
+        guard let unit = engine.outputNode.audioUnit else { return nil }
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0, &id, &size)
+        return status == noErr && id != 0 ? id : nil
+    }
+
+    private static func defaultOutputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                                0, nil, &size, &id)
+        return status == noErr && id != 0 ? id : nil
+    }
+
+    /// Every device that has at least one OUTPUT stream (an input-only interface is not a place
+    /// to send sound to, even if a name matches).
+    private static func outputDeviceIDs() -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address,
+                                             0, nil, &size) == noErr, size > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                         0, nil, &size, &ids) == noErr else { return [] }
+        return ids.filter { id in
+            var streams = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
+                                                     mScope: kAudioObjectPropertyScopeOutput,
+                                                     mElement: kAudioObjectPropertyElementMain)
+            var n: UInt32 = 0
+            return AudioObjectGetPropertyDataSize(id, &streams, 0, nil, &n) == noErr && n > 0
+        }
+    }
+
+    fileprivate static func deviceName(_ id: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(id, &address, 0, nil, &size, &name)
+        guard status == noErr, let name else { return nil }
+        return name.takeRetainedValue() as String
+    }
+
+    /// The exact name first; a name that differs only by case or by surrounding blanks second.
+    private static func outputDeviceID(named wanted: String) -> AudioDeviceID? {
+        let candidates = outputDeviceIDs().compactMap { id in deviceName(id).map { (id, $0) } }
+        if let hit = candidates.first(where: { $0.1 == wanted }) { return hit.0 }
+        let plain = wanted.trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidates.first(where: {
+            $0.1.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(plain) == .orderedSame
+        })?.0
+    }
+
+    // MARK: - Following the card
+
+    /// Two doors say the card moved: OBJEKAT's own device changing (`AudioDeviceStatus`) and the
+    /// engine's configuration changing under us (the card we are bound to went away).
+    private func watchDevice() {
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.deviceMayHaveChanged(forced: true) }
+            }
+        }
+        guard !observingDevice else { return }
+        observingDevice = true
+        withObservationTracking {
+            _ = AudioDeviceStatus.shared.generation
+        } onChange: { [weak self] in
+            // Called on `willSet`: hop, so that the new snapshot is what is read.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.observingDevice = false
+                    self.deviceMayHaveChanged(forced: false)
+                    if self.isPlaying { self.watchDevice() }
+                }
+            }
+        }
+    }
+
+    /// Stop, reconfigure, resume at the same position — but only when the device it would go out
+    /// on is not the one it is on (a change of rate or buffer alone moves nothing here).
+    private func deviceMayHaveChanged(forced: Bool) {
+        guard isPlaying, !restarting, let url = source else { return }
+        if !forced {
+            // The restart gap of a card (stopped, then running again) is not a new card: wait.
+            let snap = AudioDeviceStatus.shared.snapshot
+            guard snap.running, let name = snap.name else { return }
+            guard let id = Self.outputDeviceID(named: name), id != currentOutputDeviceID() else { return }
+        }
+        updatePosition()
+        let resumeAt = position
+        restarting = true
+        defer { restarting = false }
+        NSLog("[EXPORT-AUDITION] device changed: reconfiguring, resuming at %.2f s", resumeAt)
+        start(source: url, from: resumeAt)
     }
 
     // MARK: - Feeding
