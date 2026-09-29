@@ -1,0 +1,100 @@
+From a1d7c5b13ae39f034f19486532772d2143d7ba0f Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 16:17:44 +0200
+Subject: [PATCH] =?UTF-8?q?perf(clips)=20:=20un=20seul=20tri=20par=20lot,?=
+ =?UTF-8?q?=20plus=20un=20comparateur=20O(N)=20par=20d=C3=A9placement?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ClipList::sortClips déplace les clips un par un ; chaque déplacement
+déclenchait valueTreeChildOrderChanged -> sortArray, dont le comparateur
+appelait ValueTree::indexOf (O(N)) deux fois par comparaison : cubique,
+sur le thread principal, dès quelques centaines de clips sur une piste.
+
+- ValueTreeObjectList : beginOrderBatch/endOrderBatch, un seul tri à la fin.
+- sortArray : chaque index est lu une fois, puis tri stable.
+- ClipList::handleAsyncUpdate entoure sortClips du lot.
+---
+ .../model/clips/tracktion_ClipOwner.cpp       |  2 +
+ .../utilities/tracktion_ValueTreeUtilities.h  | 41 ++++++++++++++++++-
+ 2 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp b/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
+index 0eae93d5fb1..9ebebc9111c 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ClipOwner.cpp
+@@ -122,7 +122,9 @@ struct ClipOwner::ClipList : public ValueTreeObjectList<Clip>,
+ 
+     void handleAsyncUpdate() override
+     {
++        beginOrderBatch();
+         sortClips (parent, &edit.getUndoManager());
++        endOrderBatch();
+     }
+ 
+     static void sortClips (juce::ValueTree& state, juce::UndoManager* um)
+diff --git a/modules/tracktion_engine/utilities/tracktion_ValueTreeUtilities.h b/modules/tracktion_engine/utilities/tracktion_ValueTreeUtilities.h
+index 580d4abcde0..681adac9546 100644
+--- a/modules/tracktion_engine/utilities/tracktion_ValueTreeUtilities.h
++++ b/modules/tracktion_engine/utilities/tracktion_ValueTreeUtilities.h
+@@ -188,6 +188,31 @@ public:
+     {
+         if (tree == parent)
+         {
++            // OBJEKAT: a batch (ClipList::sortClips) moves N children one by one; re-sorting
++            // the array at each move made it cubic. One sort at the end of the batch.
++            if (orderBatchDepth > 0)
++            {
++                orderChangedInBatch = true;
++                return;
++            }
++
++            {
++                const ScopedLockType sl (arrayLock);
++                sortArray();
++            }
++
++            objectOrderChanged();
++        }
++    }
++
++    void beginOrderBatch()  { ++orderBatchDepth; }
++
++    void endOrderBatch()
++    {
++        if (--orderBatchDepth == 0 && orderChangedInBatch)
++        {
++            orderChangedInBatch = false;
++
+             {
+                 const ScopedLockType sl (arrayLock);
+                 sortArray();
+@@ -231,9 +256,23 @@ protected:
+         return -1;
+     }
+ 
++    int orderBatchDepth = 0;
++    bool orderChangedInBatch = false;
++
+     void sortArray()
+     {
+-        objects.sort (*this);
++        // OBJEKAT: each index is read once (O(N) each) instead of twice per comparison.
++        std::vector<std::pair<int, ObjectType*>> keyed;
++        keyed.reserve ((size_t) objects.size());
++
++        for (auto* o : objects)
++            keyed.emplace_back (parent.indexOf (o->state), o);
++
++        std::stable_sort (keyed.begin(), keyed.end(),
++                          [] (const auto& a, const auto& b) { return a.first < b.first; });
++
++        for (int i = 0; i < (int) keyed.size(); ++i)
++            objects.set (i, keyed[(size_t) i].second);
+     }
+ 
+ public:
+-- 
+2.50.1 (Apple Git-155)
+

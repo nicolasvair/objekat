@@ -897,13 +897,27 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// allowing for expanded subgroups that take several rows.
     /// Consistent with `EditViewModel.buildLaneEntries`'s `extraAbove`.
     static func occupiedLanes(_ children: [SoundObject]) -> Int {
-        var maxBottom = 0
+        // O(N log N): the span of each child is read ONCE, and `extraAbove` is a prefix sum over
+        // the lanes. It used to `filter` the whole array per child — N² copies of a large struct,
+        // paid at every frame with a few hundred pieces in one group.
+        var spanOfLane: [Int: Int] = [:]
+        var spans: [Int] = []
+        spans.reserveCapacity(children.count)
         for child in children {
-            let extraAbove = children
-                .filter { $0.lane < child.lane }
-                .reduce(0) { acc, g in acc + g.expandedSpan }
-            let top    = child.lane + extraAbove
-            let height = 1 + child.expandedSpan
+            let s = child.expandedSpan
+            spans.append(s)
+            spanOfLane[child.lane, default: 0] += s
+        }
+        var above: [Int: Int] = [:]
+        var running = 0
+        for lane in spanOfLane.keys.sorted() {
+            above[lane] = running
+            running += spanOfLane[lane] ?? 0
+        }
+        var maxBottom = 0
+        for (i, child) in children.enumerated() {
+            let top    = child.lane + (above[child.lane] ?? 0)
+            let height = 1 + spans[i]
             maxBottom  = max(maxBottom, top + height)
         }
         return maxBottom

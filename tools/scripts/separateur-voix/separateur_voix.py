@@ -33,7 +33,7 @@ class Objekat:
 
     def __init__(self, path):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(120)
+        self.sock.settimeout(900)  # object.explode on hundreds of pieces can take tens of seconds (Debug)
         self.sock.connect(path)
         self.buffer = b""
         self.next_id = 0
