@@ -35,7 +35,7 @@ struct GroupWaveformView: View {
             absStart: o.startTime, duration: o.duration,
             fadeIn: o.fadeIn, fadeOut: o.fadeOut,
             curveIn: o.fadeInCurve, curveOut: o.fadeOutCurve,
-            gain: WaveformShaping.linearGain(dB: o.volume))
+            gain: WaveformShaping.linearGain(dB: o.waveformDisplayGainDb))
     }
 
     /// A ceiling on expanded instances, all depths together: two nested loops multiply their

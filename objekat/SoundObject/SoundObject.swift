@@ -341,6 +341,18 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// the fader. Always present in the signal view, even without a parallel block. 0 = unity.
     var chainInGainDb: Float = 0
     var chainOutGainDb: Float = 0
+    /// The gain the DRAWN waveform follows: the fader plus the chain's two trims (pre / post FX).
+    ///
+    /// A DISPLAY approximation, on purpose. What is heard is `volume` then the chain, and the
+    /// plugins in between (a compressor, an EQ) can change the level by any amount the drawing
+    /// cannot know without rendering — so only what is a pure GAIN is counted here: the fader and
+    /// the two trims, which are dB in a straight line. A trim moves the waveform exactly as far as it
+    /// moves the sound, whatever the plugins do in between. `-96` (silence) stays silence whatever
+    /// the trims add — a muted-by-fader object does not come back on the screen because of a +12.
+    var waveformDisplayGainDb: Float {
+        if volume <= -96 { return volume }
+        return volume + chainInGainDb + chainOutGainDb
+    }
     var label: String?
     /// A custom colour (an index into `ObjectColorPalette.palette`), independent of the stem —
     /// assignable through the context menu on a clip / MIDI clip / group / aux. `nil` = no colour

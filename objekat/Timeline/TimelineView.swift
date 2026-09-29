@@ -105,7 +105,14 @@ struct TimelineView: View {
     /// we cull on `cullViewportWidth`, which includes that notch — without which a band of content
     /// would stay blank until the next notch.
     @State private var cullScrollX: CGFloat = 0
-    private static let cullStepPx: CGFloat = 512
+    static let cullStepPx: CGFloat = 512
+    /// What the blocks read to lay things in their VISIBLE portion with the exact scroll (@see
+    /// LiveScroll). Holding it reads nothing: the anchor's `x` is only read by the small views
+    /// that need it, and only when a block straddles the viewport's edge.
+    private var liveScroll: LiveScroll {
+        LiveScroll(anchor: scrollAnchor, viewportWidth: viewportWidth,
+                   cullScrollX: cullScrollX, cullStepPx: Self.cullStepPx)
+    }
     /// The width to cull: the real viewport plus the possible notch of lag. @see cullScrollX
     private var cullViewportWidth: CGFloat { viewportWidth + Self.cullStepPx }
 
@@ -2097,6 +2104,7 @@ struct TimelineView: View {
             waveformCache: waveformCache,
             scrollOffsetX: cullScrollX,
             viewportWidth: cullViewportWidth,
+            liveScroll: liveScroll,
             waveformDisplayDB: waveformDisplayDB,
             displayLane: dLane,
             stemColor: viewModel.stemColor(for: object.id),
@@ -2268,7 +2276,7 @@ struct TimelineView: View {
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: false,
                             clipDuration: item.duration, speedRatio: item.speedRatio,
-                            isReversed: item.isReversed, volumeDb: item.volume,
+                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                             curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
@@ -2286,7 +2294,7 @@ struct TimelineView: View {
                         sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                         scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
                         clipDuration: item.duration, speedRatio: item.speedRatio,
-                        isReversed: item.isReversed, volumeDb: item.volume,
+                        isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                         fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                         curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                         waveformDisplayDB: waveformDisplayDB, loopRange: item.loopMarkerLocalRange)
@@ -2300,7 +2308,7 @@ struct TimelineView: View {
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: false,
                             clipDuration: item.duration, speedRatio: item.speedRatio,
-                            isReversed: item.isReversed, volumeDb: item.volume,
+                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                             curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
@@ -2475,6 +2483,7 @@ struct TimelineView: View {
             displayLane: dl,
             scrollOffsetX: cullScrollX,
             viewportWidth: cullViewportWidth,
+            liveScroll: liveScroll,
             waveformDisplayDB: waveformDisplayDB,
             previewOffset:   previewOffset(for: group),
             previewResizeDX: previewResizeDX(for: group),

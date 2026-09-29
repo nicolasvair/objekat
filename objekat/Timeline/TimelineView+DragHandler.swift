@@ -1384,7 +1384,7 @@ extension TimelineView {
     /// button is down, so it is here that the arrows go out when a stop is reached. `room` = the
     /// travel still possible (left, right), in seconds.
     func setEdgeCursor(open: Bool, room: (left: Double, right: Double)) {
-        let eps = max(0.001, 0.5 / max(pixelsPerSecond, 1))
+        let eps = max(0.001, 0.5 / max(pixelsPerSecond, EditViewModel.minPixelsPerSecond))
         TimelineCursorKeeper.set(TimelineCursors.edge(open: open,
                                                       canLeft: room.left > eps,
                                                       canRight: room.right > eps))

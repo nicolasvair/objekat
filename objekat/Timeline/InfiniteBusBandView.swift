@@ -65,7 +65,7 @@ struct InfiniteBusBandView: View {
     /// composite must be neither bounded nor faded at the edges (fadeIn/Out = 0 ⇒ no gate).
     private var rootMod: WaveformShaping.Modifier {
         WaveformShaping.Modifier(absStart: 0, duration: 0, fadeIn: 0, fadeOut: 0,
-                                 gain: WaveformShaping.linearGain(dB: item.volume))
+                                 gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb))
     }
 
     var body: some View {

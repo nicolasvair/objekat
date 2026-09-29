@@ -106,22 +106,34 @@ struct ToolVolumeLayer: View {
 
 struct ToolVolumeLayerMinimal: View {
     let object: SoundObject
+    /// The block's visible sub-window (LOCAL coordinates, @see LiveVisibleSpan): the veil covers the
+    /// whole block, but the level reads in the part one can SEE — centred on the block, it sat
+    /// off screen whenever the block overflowed the viewport. nil = centred on the block.
+    var span: (x: Double, width: Double)? = nil
 
     private var volumeLevelString: String {
         if object.volume <= -96 { return "-∞" }
         return String(format: "%.0f dB", object.volume)
     }
 
+    private var level: some View {
+        Text(volumeLevelString)
+            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+            .foregroundStyle(object.isMuted ? Color.red.opacity(0.85) : Color.white.opacity(0.9))
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .padding(.horizontal, 2)
+    }
+
     var body: some View {
-        ZStack {
+        ZStack(alignment: .leading) {
             Color.black.opacity(0.65)
             if object.isMuted { Color.red.opacity(0.20) }
-            Text(volumeLevelString)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .foregroundStyle(object.isMuted ? Color.red.opacity(0.85) : Color.white.opacity(0.9))
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .padding(.horizontal, 2)
+            if let span {
+                level.frame(width: span.width).offset(x: span.x)
+            } else {
+                level.frame(maxWidth: .infinity)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .allowsHitTesting(false)

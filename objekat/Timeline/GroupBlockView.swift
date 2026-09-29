@@ -28,6 +28,10 @@ struct GroupBlockView: View {
     let displayLane: Int         // a virtual lane (after expanded groups have shifted things)
     let scrollOffsetX: CGFloat
     let viewportWidth: CGFloat
+    /// The EXACT scroll, for what has to sit in the part of the block one can SEE (the tool
+    /// controls, the consolidation's ring): `scrollOffsetX` above only moves in 512 px notches.
+    /// nil = fall back on those. @see LiveScroll
+    var liveScroll: LiveScroll? = nil
     let waveformDisplayDB: Double
 
     let previewOffset: (dx: Double, dy: Double)?
@@ -97,12 +101,14 @@ struct GroupBlockView: View {
         rulerHeight + Double(displayLane) * laneStep + (previewOffset?.dy ?? 0)
     }
 
-    /// The block's visible sub-window (in LOCAL coordinates) on which to lay the tool controls. See
-    /// `visibleSpan` — it keeps mute/±/pan reachable when the group overflows the viewport.
-    private var toolSpan: (x: Double, width: Double) {
-        let s = visibleSpan(blockX: xPos, blockWidth: blockWidth,
-                            scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
-        return (s.x - xPos, s.width)
+    /// Hands `content` the block's visible sub-window (in LOCAL coordinates) on which to lay the
+    /// tool controls. See `visibleSpan` — it keeps mute/±/pan reachable when the group overflows
+    /// the viewport — and `LiveVisibleSpan`, which reads the EXACT scroll like the hit-tests do.
+    private func withToolSpan<C: View>(needed: Bool = true,
+                                       @ViewBuilder _ content: @escaping ((x: Double, width: Double)) -> C) -> some View {
+        LiveVisibleSpan(live: liveScroll, blockX: xPos, blockWidth: blockWidth,
+                        scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
+                        needed: needed, content: content)
     }
 
     private var effectiveFadeIn:  Double { previewFadeIn  ?? group.fadeIn  }
@@ -126,7 +132,7 @@ struct GroupBlockView: View {
             absStart: effectiveStartTime, duration: effDur,
             fadeIn: effectiveFadeIn, fadeOut: effectiveFadeOut,
             curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve,
-            gain: WaveformShaping.linearGain(dB: group.volume))
+            gain: WaveformShaping.linearGain(dB: group.waveformDisplayGainDb))
     }
 
     var body: some View {
@@ -196,22 +202,32 @@ struct GroupBlockView: View {
             // Volume overlay
             if activeTool == .toolVolume {
                 let isNarrow = blockWidth < 50
-                if isSelected || isNarrow {
-                    ToolVolumeLayerMinimal(object: group)
+                // A NARROW block keeps the culling window's span (`needed: false`): its label is a
+                // few pixels wide, and following the exact scroll costs a re-evaluation per frame
+                // for every block a viewport edge can cut — measured on 480 narrow blocks.
+                withToolSpan(needed: !isNarrow && (isSelected || isToolHovered)) { span in
+                    if isSelected || isNarrow {
+                        ToolVolumeLayerMinimal(object: group, span: span)
+                    }
+                    ToolVolumeLayer(object: group, showFullOverlay: !isNarrow, forceShow: isToolHovered, span: span)
                 }
-                ToolVolumeLayer(object: group, showFullOverlay: !isNarrow, forceShow: isToolHovered, span: toolSpan)
             }
 
             // Pan overlay
             if activeTool == .toolPan {
                 let isNarrow = blockWidth < 50
-                ToolPanLayer(object: group, alwaysShowOverlay: isSelected || isNarrow || isToolHovered, span: toolSpan)
+                let shown = isSelected || isNarrow || isToolHovered
+                withToolSpan(needed: !isNarrow && shown) { span in
+                    ToolPanLayer(object: group, alwaysShowOverlay: shown, span: span)
+                }
             }
 
             // Stem overlay — the hover veil naming the stem the click will assign.
             if activeTool == .toolStemAssign, let t = stemAssignTarget {
-                ToolStemLayer(target: t, forceShow: isToolHovered,
-                              span: toolSpan, cornerRadius: 20)
+                withToolSpan(needed: isToolHovered) { span in
+                    ToolStemLayer(target: t, forceShow: isToolHovered,
+                                  span: span, cornerRadius: 20)
+                }
             }
 
             // Send overlay — one send knob per aux overlapping the group.
@@ -335,19 +351,23 @@ struct GroupBlockView: View {
                 RoundedRectangle(cornerRadius: 20)
                     .fill(Color.black.opacity(0.28))
                     .allowsHitTesting(false)
-                HStack(spacing: 5) {
-                    if let renderProgress {
-                        RenderProgressRing(store: renderProgress, key: group.id, diameter: 14)
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                    if blockWidth >= 80 {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.9))
+                // Centred in the block's VISIBLE portion. @see VisibleSpanCentered
+                VisibleSpanCentered(live: liveScroll, blockX: xPos, blockWidth: blockWidth,
+                                    blockHeight: blockHeight, scrollOffsetX: scrollOffsetX,
+                                    viewportWidth: viewportWidth) {
+                    HStack(spacing: 5) {
+                        if let renderProgress {
+                            RenderProgressRing(store: renderProgress, key: group.id, diameter: 14)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                        if blockWidth >= 80 {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.9))
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
             }
         }
