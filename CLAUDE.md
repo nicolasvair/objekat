@@ -1887,6 +1887,31 @@ What has landed since mid-August, in order:
   and whether the cuts are now free of any click to the ear. Full regression suites were left to
   the test pass.
 
+- **The breath evaluation keeps four criteria, and the text becomes a display** (29 September 2026,
+  same branch `feature/separateur-voix`) — Whisper's timing was too loose to detect with. The panel
+  now has voicing, energy under speech **after a low-pass** (cutoff 100–8000 Hz, default 6000),
+  minimum length, and a margin before the FIRST VOICED FRAME that follows a zone; words no longer
+  reach the detection. Frames are centred on a 2.5 ms grid (voicing on 25 ms, energy on 12 ms), and
+  the low-pass is a CUMULATIVE SUM over each frame's own spectrum stored per 100 Hz cutoff, so moving
+  the cutoff refilters nothing: edges land within 4 ms on the synthetic signal, a slider drag re-runs
+  in ~7 ms for ten minutes. 6 kHz is measured, not guessed: on a `say -v Thomas` voice, cutoffs
+  under 3 kHz flag the unvoiced consonants as breaths (13 zones), from 6 kHz only the pauses (5).
+  Silence is ALSO a zone — nothing in the four criteria tells a pause from a breath.
+  New generic panel control **`choice`** (`options: [{id,label}]`, value = option id; app + API +
+  `command_api.md`). The panel's "text shown" choice transcribes on a background thread (the panel
+  stays live), cached per model on disk; a model not installed is a label, not a crash. Backends
+  (`transcribe.py`): Whisper (installed), Parakeet TDT v3 via `parakeet-mlx` in its OWN venv (needs
+  Python ≥ 3.10, the main one is 3.9), Whisper + wav2vec2 CTC forced alignment (numpy Viterbi).
+  `install.sh --with-parakeet / --with-align`, guarded by a free-disk check.
+  **NOT installed here, and not tested on a real run: Parakeet and the alignment model.** This
+  machine had 1.3 GB free (0.3 GB by the end) against ~2.5 GB and ~1.3 GB of weights, and no
+  Python ≥ 3.10 for Parakeet. Their code paths are written and their pure halves tested (the Viterbi,
+  the availability checks, the "not installed" panel path); the `parakeet_worker.py` word grouping
+  and the transformers call in `align_segments` are UNRUN. Whisper measured: 19 words, 8.0 s.
+  Verified: Debug build (no warning in the touched files), `test_breath_mask.py` ALL PASS,
+  `scenario_breath_eval.py` 75 ok ALL PASS, `scenario_voice_split.py` ALL PASS, i18n 472 keys.
+  **Not seen**: the pop-up menu and the panel's layout with a second slider under the energy box.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
