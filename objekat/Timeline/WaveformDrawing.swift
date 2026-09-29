@@ -45,13 +45,47 @@ enum WaveformDrawing {
         let peaks: PeakLanes
         let fileDuration: Double
         let region: WaveformCache.SampleRegion?
+        /// The clip's channel choice (@see `ChannelMode`), applied when READING the columns — the
+        /// cache describes the file and never changes with it. Only meaningful for a source of
+        /// exactly two lanes, which is what a stereo file is; a one-lane source ignores it.
+        var channelMode: ChannelMode = .lr
+
+        /// The channel choice, if it applies to this source at all.
+        private var effectiveMode: ChannelMode { peaks.count == 2 ? channelMode : .lr }
 
         /// How many stacked waveforms to draw. The peaks decide: the region is decoded under the
         /// same lane rule, and a lane index past what it holds is clamped rather than trusted.
-        var laneCount: Int { max(1, peaks.count) }
+        /// `c` folds a stereo file's two bands into ONE (the mono sum has a single waveform); `l`
+        /// and `r` keep both bands, each showing the chosen channel.
+        var laneCount: Int { effectiveMode == .c ? 1 : max(1, peaks.count) }
 
         /// `fileA`/`fileB`: the file times at the column's two edges, in either order (reverse).
         func envelope(lane: Int, fileA: Double, fileB: Double) -> PeakPair {
+            switch effectiveMode {
+            case .lr:
+                return rawEnvelope(lane: lane, fileA: fileA, fileB: fileB)
+            case .l:
+                return rawEnvelope(lane: 0, fileA: fileA, fileB: fileB)
+            case .r:
+                return rawEnvelope(lane: 1, fileA: fileA, fileB: fileB)
+            case .c:
+                // Samples: the EXACT min / max of (L + R) / 2. Peaks: the mean of the two
+                // channels' envelopes, an approximation that over-draws two channels in phase
+                // opposition (@see `WaveformPeaks.centreOfEnvelopes`).
+                if let r = region, r.lanes.count == 2 {
+                    let sr = r.sampleRate
+                    return WaveformPeaks.sampleEnvelopeMean(r.lanes[0], r.lanes[1],
+                                                            from: (fileA - r.startTime) * sr,
+                                                            to: (fileB - r.startTime) * sr)
+                }
+                return WaveformPeaks.centreOfEnvelopes(
+                    rawEnvelope(lane: 0, fileA: fileA, fileB: fileB),
+                    rawEnvelope(lane: 1, fileA: fileA, fileB: fileB))
+            }
+        }
+
+        /// One CHANNEL of the file as it is, whatever the choice.
+        private func rawEnvelope(lane: Int, fileA: Double, fileB: Double) -> PeakPair {
             if let r = region, !r.lanes.isEmpty {
                 let sr = r.sampleRate
                 return WaveformPeaks.sampleEnvelope(r.lanes[min(max(0, lane), r.lanes.count - 1)],
@@ -88,7 +122,8 @@ enum WaveformDrawing {
     /// (a miss schedules the decode and falls back on the peaks for this frame), the peaks
     /// otherwise. nil = nothing to draw yet (the file is still being analysed).
     static func envelopeSource(waveformCache: WaveformCache, filePath: String, pixelsPerSecond: Double,
-                               window: (lo: Double, hi: Double)?) -> EnvelopeSource? {
+                               window: (lo: Double, hi: Double)?,
+                               channelMode: ChannelMode = .lr) -> EnvelopeSource? {
         guard let fileDuration = waveformCache.duration(for: filePath), fileDuration > 0,
               let peaks = waveformCache.peaks(for: filePath, pixelsPerSecond: pixelsPerSecond),
               let firstLane = peaks.first, !firstLane.isEmpty else { return nil }
@@ -98,7 +133,8 @@ enum WaveformDrawing {
             region = waveformCache.samplesRegion(for: filePath, fileStart: max(0, w.lo),
                                                  fileEnd: min(fileDuration, w.hi))
         }
-        return EnvelopeSource(peaks: peaks, fileDuration: fileDuration, region: region)
+        return EnvelopeSource(peaks: peaks, fileDuration: fileDuration, region: region,
+                              channelMode: channelMode)
     }
 
     /// Adds the filled envelope of columns `startI...endI` to `path`: the `hi` edge forwards, the
@@ -201,12 +237,14 @@ enum WaveformDrawing {
         volumeDb: Float, fadeIn: Double, fadeOut: Double,
         curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear,
         waveformDisplayDB: Double,
-        loopRange: (start: Double, end: Double)? = nil
+        loopRange: (start: Double, end: Double)? = nil,
+        channelMode: ChannelMode = .lr
     ) -> Bool {
         guard (waveformCache.duration(for: filePath) ?? 0) > 0 else { return true }
         if pixelsPerSecond >= WaveformCache.sampleModeThreshold { return false }   // samples mode → drawn individually
         guard let source = envelopeSource(waveformCache: waveformCache, filePath: filePath,
-                                          pixelsPerSecond: pixelsPerSecond, window: nil) else { return true }
+                                          pixelsPerSecond: pixelsPerSecond, window: nil,
+                                          channelMode: channelMode) else { return true }
 
         let gainLin = WaveformShaping.linearGain(dB: volumeDb)
         let displayGain = WaveformShaping.linearGain(dB: Float(waveformDisplayDB))
@@ -312,7 +350,8 @@ enum WaveformDrawing {
         curveOut: FadeCurve = .linear,
         isMuted: Bool,
         waveformDisplayDB: Double,
-        loopRange: (start: Double, end: Double)? = nil
+        loopRange: (start: Double, end: Double)? = nil,
+        channelMode: ChannelMode = .lr
     ) {
         guard (waveformCache.duration(for: filePath) ?? 0) > 0 else { return }
 
@@ -373,7 +412,10 @@ enum WaveformDrawing {
 
         if let region, !region.lanes.isEmpty {
             let sr = region.sampleRate
-            let laneCount = region.lanes.count
+            // The clip's channel choice, applied to the decoded lanes (@see
+            // `WaveformPeaks.channelLanes`): a no-op for `lr` and for anything but a stereo pair.
+            let drawnSamples = WaveformPeaks.channelLanes(region.lanes, mode: channelMode)
+            let laneCount = drawnSamples.count
             var poly = Path()
             var filled = Path()
             // The STROKE only earns its place where the envelope DEGENERATES (under ~2 samples per
@@ -395,7 +437,7 @@ enum WaveformDrawing {
             var loValues: [Double] = []
             loValues.reserveCapacity(endI - startI + 1)
             for lane in 0..<laneCount {
-                let samples = region.lanes[lane]
+                let samples = drawnSamples[lane]
                 let n = samples.count
                 // The lane's own band (@see WaveformPeaks.laneBand): with one lane it is the whole
                 // block, and every line below reads exactly as it did before lanes existed.
@@ -468,7 +510,8 @@ enum WaveformDrawing {
             if needsStroke { ctx.stroke(poly, with: .color(strokeColor), lineWidth: 1) }
             drawnLanes = laneCount
         } else if let source = envelopeSource(waveformCache: waveformCache, filePath: filePath,
-                                              pixelsPerSecond: pixelsPerSecond, window: nil) {
+                                              pixelsPerSecond: pixelsPerSecond, window: nil,
+                                              channelMode: channelMode) {
             // Peaks: below the samples threshold, or while the region is still being decoded.
             var path = Path()
             appendLanesFill(to: &path, from: startI, through: endI,

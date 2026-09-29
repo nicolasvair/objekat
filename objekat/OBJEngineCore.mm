@@ -9,6 +9,7 @@
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"
 #include "OBJWindowFadePlugin.h"
+#include "OBJChannelModePlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
 #include "OBJAudioProbe.h"
@@ -1110,6 +1111,10 @@ struct OBJRenderChain {
     std::unordered_map<std::string, te::Plugin::Ptr>          _faderGainMap;
     // objectID → ObjWindowFade (fenêtre + fades post-FX), en fin de chaîne hôte.
     std::unordered_map<std::string, te::Plugin::Ptr>          _windowFadeMap;
+    // objectID → ObjChannelMode, en TÊTE de la plugin-list d'un clip stéréo. Absent tant que le
+    // mode vaut LR : le plugin n'existe que quand il a quelque chose à faire.
+    // @see updateChannelMode:forID:
+    std::unordered_map<std::string, te::Plugin::Ptr>          _channelModeMap;
     // auxID des ContainerClip marqués BUS D'AUX. Ils sont aussi dans _containerClipMap (ce
     // sont des containers : ils se déplacent, se dissolvent, portent une chaîne de la même
     // façon), mais ils ne jouent pas leur contenu — ils somment les envois qui les visent.
@@ -1286,6 +1291,9 @@ static BOOL gOBJAudioDisabled = NO;
         // Enveloppe fenêtre+fade de bus de groupe (folder). Enregistrer avant toute
         // création/restauration de folder de groupe.
         _engine->getPluginManager().createBuiltInType<te::ObjWindowFadePlugin>();
+        // Choix de canal d'un clip stéréo (L / R / C), en tête de sa chaîne. Même règle
+        // d'enregistrement : avant toute création/restauration de clip.
+        _engine->getPluginManager().createBuiltInType<te::ObjChannelModePlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjParallelBlockPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjAuxSendPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
@@ -1576,6 +1584,7 @@ static BOOL gOBJAudioDisabled = NO;
     _groupLoopRangeMap.clear();
     _faderGainMap.clear();
     _windowFadeMap.clear();
+    _channelModeMap.clear();
     _clipMap.clear();
     _midiClipMap.clear();
     _instrumentMap.clear();
@@ -2021,10 +2030,14 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // La chaîne propre à l'objet (trims + FX user + fader + fenêtre/fades) vit sur la CLIP
     // plugin-list : la piste est partagée par toute la lane, elle ne peut rien porter de
     // spécifique. C'est ce qui impose une chaîne LINÉAIRE (pas de RackInstance sur un clip).
-    if (auto* pl = clip->getPluginList())
+    if (auto* pl = clip->getPluginList()) {
         [self installObjectChainTail:*pl forKey:key
                               volume:data.volume pan:data.pan
                               window:pos.time fadeIn:data.fadeIn fadeOut:data.fadeOut];
+        // Le choix de canal (clip stéréo) vient AVEC le clip : un objet recréé (undo qui
+        // reconstruit, collage, chargement d'un projet) naît déjà dans son mode.
+        [self applyChannelMode:(int)data.channelMode toList:*pl forKey:key];
+    }
 
     // Un enfant qui arrive étend son groupe.
     if (insideContainer) [self refreshOwnerContainerSpanFor:key];
@@ -2348,6 +2361,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     _modelFadeMap.erase(key);
     _faderGainMap.erase(key);
     _windowFadeMap.erase(key);
+    _channelModeMap.erase(key);
     _objectChainMap.erase(key);
     _childOwnerMap.erase(key);
     _auxKeys.erase(key);
@@ -2717,6 +2731,65 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
     if (it == _windowFadeMap.end()) return;
     if (auto* w = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
         w->setCurves(curveIn, amountIn, curveOut, amountOut);
+}
+
+// MARK: - Choix de canal (clip stéréo)
+//
+// Un clip stéréo peut se lire par son canal gauche seul, son droit seul ou leur somme mono, sur
+// les deux côtés — sans toucher au fichier. Le travail est fait par un petit plugin de service,
+// ObjChannelMode, posé en TÊTE de la plugin-list du clip (AVANT trims, FX et fader : le choix
+// porte sur la source). Il n'existe que quand le mode n'est pas LR, si bien qu'un clip ordinaire
+// ne paie rien. Codes : 0 = LR, 1 = L, 2 = R, 3 = C (@see ObjChannelModePlugin::Mode).
+//
+// Pose / retire / règle le plugin d'une plugin-list de clip. Idempotent, et ne reconstruit le
+// graphe que quand la STRUCTURE de la liste bouge (un plugin de plus ou de moins) — passer de L à
+// R, lui, n'écrit qu'un entier lu par le thread audio.
+- (void)applyChannelMode:(int)mode toList:(te::PluginList&)pl forKey:(const std::string&)key {
+    mode = juce::jlimit(0, 3, mode);
+    auto it = _channelModeMap.find(key);
+    // Le Ptr mémorisé peut avoir quitté la liste (chaîne refaite) : la liste fait foi.
+    if (it != _channelModeMap.end() && pl.indexOf(it->second.get()) < 0) {
+        _channelModeMap.erase(it);
+        it = _channelModeMap.end();
+    }
+
+    if (mode == 0) {
+        if (it == _channelModeMap.end()) return;
+        te::Plugin::Ptr gone = it->second;
+        _channelModeMap.erase(it);
+        gone->deleteFromParent();
+        if (_edit) _edit->restartPlayback();
+        return;
+    }
+
+    if (it == _channelModeMap.end()) {
+        // Index 0 : AVANT trimIn, les FX et le fader. `userInsertIndexForKey:` pose tout le reste
+        // devant ses ancres (trimOut / fader), donc rien ne passera devant celui-là.
+        te::Plugin::Ptr p = pl.insertPlugin(te::ObjChannelModePlugin::create(), 0);
+        if (!p) { NSLog(@"[OBJ] channelMode: insertion refusée (%s)", key.c_str()); return; }
+        _channelModeMap[key] = p;
+        it = _channelModeMap.find(key);
+        if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(p.get())) cm->setMode(mode);
+        if (_edit) _edit->restartPlayback();
+        return;
+    }
+    if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(it->second.get())) cm->setMode(mode);
+}
+
+- (void)updateChannelMode:(NSInteger)mode forID:(NSString*)uuid {
+    if (!_edit) return;
+    std::string key([uuid UTF8String]);
+    auto cit = _clipMap.find(key);
+    if (cit == _clipMap.end()) return;          // un choix de canal n'existe que sur un clip audio
+    if (auto* pl = cit->second->getPluginList())
+        [self applyChannelMode:(int)mode toList:*pl forKey:key];
+}
+
+- (NSInteger)channelModeForID:(NSString*)uuid {
+    auto it = _channelModeMap.find(std::string([uuid UTF8String]));
+    if (it == _channelModeMap.end()) return 0;
+    if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(it->second.get())) return cm->getMode();
+    return 0;
 }
 
 // MARK: - Reverse
@@ -4220,10 +4293,17 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
     // seule l'appartenance à un container reste à recopier, elle n'est pas déductible du clip.
     if (insideContainer) _childOwnerMap[newKey] = _childOwnerMap[key];
 
-    if (auto* pl = newClip->getPluginList())
+    if (auto* pl = newClip->getPluginList()) {
         [self installObjectChainTail:*pl forKey:newKey
                               volume:origGainDb pan:origPan
                               window:rightPos.time fadeIn:0.0 fadeOut:0.0];
+        // Le fragment droit garde le choix de canal de l'original : c'est la même matière. Lu
+        // ICI, sur le plugin vivant, pour que la moitié droite l'ait dès la naissance, sans
+        // attendre que le modèle le repousse.
+        if (auto cit = _channelModeMap.find(key); cit != _channelModeMap.end())
+            if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(cit->second.get()))
+                [self applyChannelMode:cm->getMode() toList:*pl forKey:newKey];
+    }
 
     // (Le split conserve l'étendue totale, mais on recale par principe : no-op si rien n'a bougé.)
     if (insideContainer) [self refreshOwnerContainerSpanFor:newKey];

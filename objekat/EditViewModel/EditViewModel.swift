@@ -1585,6 +1585,10 @@ final class EditViewModel {
         data.fadeIn       = object.fadeIn
         data.fadeOut      = object.fadeOut
         data.sourceOffset = sourceOffset
+        // The channel choice of a stereo clip is born WITH the clip: every path that recreates one
+        // (an undo that rebuilds, a paste, a project load, a relink) goes through here, so none of
+        // them has to remember to push it afterwards. @see EditViewModel+ChannelMode
+        data.channelMode  = object.channelMode.engineCode
         engine.addSoundObject(data, withID: object.id.uuidString)
         if isReversed      { engine.updateIsReversed(true, forID: object.id.uuidString) }
         if speedRatio != 1.0 { engine.updateSpeedRatio(speedRatio, forID: object.id.uuidString) }

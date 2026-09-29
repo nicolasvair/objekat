@@ -24,6 +24,8 @@ struct TimelineWaveformView: View {
     /// The loop's IN/OUT bounds in seconds LOCAL to the block (`nil` = no loop).
     /// @see SoundObject.loopMarkerLocalRange
     var loopRange: (start: Double, end: Double)? = nil
+    /// The clip's channel choice — how a STEREO file's two lanes are drawn (@see `ChannelMode`).
+    var channelMode: ChannelMode = .lr
 
     var body: some View {
         if let fileDuration = waveformCache.duration(for: filePath), fileDuration > 0 {
@@ -38,7 +40,8 @@ struct TimelineWaveformView: View {
                     clipDuration: clipDuration, speedRatio: speedRatio, isReversed: isReversed,
                     volumeDb: volumeDb, fadeIn: fadeIn, fadeOut: fadeOut,
                     curveIn: curveIn, curveOut: curveOut,
-                    isMuted: isMuted, waveformDisplayDB: waveformDisplayDB, loopRange: loopRange)
+                    isMuted: isMuted, waveformDisplayDB: waveformDisplayDB, loopRange: loopRange,
+                    channelMode: channelMode)
             }
             .allowsHitTesting(false)
         }

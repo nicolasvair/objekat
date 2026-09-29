@@ -86,6 +86,10 @@ struct ObjectInspectorView: View {
 
     private func pluginsSynopticColumn(id: UUID, obj: SoundObject) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            // At the HEAD, before the signal view: the choice acts on the SOURCE, ahead of every
+            // effect below. Only appears for a stereo clip.
+            channelModeRow(ids: [id])
+                .padding(.horizontal, 8)
             SynopticBoundView(viewModel: viewModel, objectID: id, scrolls: false)
 
             HStack(spacing: 12) {
@@ -105,6 +109,54 @@ struct ObjectInspectorView: View {
         .padding(.vertical, 8)
     }
 
+    // MARK: - Channel choice (stereo clips)
+
+    /// LR / L / R / C for the clip(s) in `ids` — shown ONLY when every one of them is a stereo
+    /// audio clip (exactly two channels: @see `EditViewModel.channelModeRefusal`, the one rule the
+    /// API and the setter read too). A selection that mixes a stereo clip with anything else has no
+    /// meaningful single answer, so it shows nothing rather than a choice that would silently skip
+    /// some of what is selected. Mixed values light no pill and say so in the tooltip; a click on
+    /// any pill then sets them all — ONE undo point for the gesture.
+    @ViewBuilder
+    private func channelModeRow(ids: [UUID]) -> some View {
+        let clips = ids.compactMap { viewModel.find(id: $0) }
+        if !clips.isEmpty, clips.allSatisfy({ viewModel.canChooseChannelMode($0) }) {
+            let modes = Set(clips.map(\.channelMode))
+            let current: ChannelMode? = modes.count == 1 ? modes.first : nil
+            HStack(spacing: 4) {
+                zoneTitle(L("inspector.channelMode.title"))
+                ForEach(ChannelMode.allCases, id: \.self) { mode in
+                    pill(channelModeLabel(mode), on: current == mode) {
+                        viewModel.setChannelMode(ids: ids, mode: mode)
+                    }
+                    .help(channelModeHelp(mode))
+                }
+                Spacer(minLength: 0)
+            }
+            .help(current == nil ? L("inspector.channelMode.mixed") : "")
+        }
+    }
+
+    // One literal key per case, on purpose: `orphans` reads the code for key-shaped strings, and a
+    // key assembled at run time would make all eight look dead.
+    private func channelModeLabel(_ mode: ChannelMode) -> String {
+        switch mode {
+        case .lr: return L("inspector.channelMode.lr")
+        case .l:  return L("inspector.channelMode.l")
+        case .r:  return L("inspector.channelMode.r")
+        case .c:  return L("inspector.channelMode.c")
+        }
+    }
+
+    private func channelModeHelp(_ mode: ChannelMode) -> String {
+        switch mode {
+        case .lr: return L("inspector.channelMode.lr.help")
+        case .l:  return L("inspector.channelMode.l.help")
+        case .r:  return L("inspector.channelMode.r.help")
+        case .c:  return L("inspector.channelMode.c.help")
+        }
+    }
+
     // MARK: - Multiple selection
     //
     // The same reading as a single object, top to bottom: WHAT is selected (the items, drawn as
@@ -119,6 +171,7 @@ struct ObjectInspectorView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L("inspector.selection.count", selectedObjects.count))
                     .font(.caption).foregroundStyle(.secondary)
+                channelModeRow(ids: selectedObjects.map(\.id))
                 selectionItems
                     .padding(.bottom, 4)
                 if !selectedSounds.isEmpty && selectedSounds.count == selectedObjects.count {

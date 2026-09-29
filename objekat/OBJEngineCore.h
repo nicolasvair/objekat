@@ -17,6 +17,8 @@
 @property (nonatomic) NSInteger lane;       // lane timeline : donnée d'AFFICHAGE. Le moteur ne
                                             // s'en sert que comme clé d'allocation de piste, via
                                             // la politique du pool (@see trackSlotForKey:).
+@property (nonatomic) NSInteger channelMode; // choix de canal d'un clip stéréo : 0 LR, 1 L, 2 R, 3 C
+                                            // (@see updateChannelMode:forID:). 0 = pas de plugin.
 @end
 
 @class OBJAudioDeviceSnapshot;   // déclarée après OBJEngineCore : placée plus haut, ses annotations
@@ -48,6 +50,13 @@
 // chaque image du geste, là où updateFadeIn:fadeOut: relit la position du clip et, pour un
 // groupe, repose toute la fenêtre.
 - (void)previewFadesIn:(double)fadeIn out:(double)fadeOut forID:(NSString*)uuid;
+// Choix de canal d'un clip STÉRÉO, en lecture : 0 = LR (le clip tel quel), 1 = L (canal gauche
+// sur les deux côtés), 2 = R, 3 = C (somme mono (L+R)/2 sur les deux côtés). Un plugin de service
+// en tête de la chaîne du clip, qui n'existe que pour un mode différent de LR. Sans effet sur ce
+// qui n'est pas un clip audio. `channelModeForID:` relit ce que le moteur joue VRAIMENT (0 si
+// aucun plugin) — c'est ce que les tests comparent au modèle.
+- (void)updateChannelMode:(NSInteger)mode forID:(NSString*)uuid;
+- (NSInteger)channelModeForID:(NSString*)uuid;
 - (void)updateIsReversed:(BOOL)reversed forID:(NSString*)uuid;
 - (void)updateSpeedRatio:(double)ratio forID:(NSString*)uuid;
 // Change la lane d'un objet top-level : son clip passe sur la piste porteuse de la lane cible

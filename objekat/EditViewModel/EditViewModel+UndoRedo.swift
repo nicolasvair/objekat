@@ -256,6 +256,9 @@ extension EditViewModel {
         probe.fadeIn        = new.fadeIn
         probe.fadeOut       = new.fadeOut
         probe.isMuted       = new.isMuted
+        // The channel choice is a flag of the clip's chain: `pushPatch` puts it to the engine
+        // (`updateChannelMode`), which adds or removes one small plugin without touching the file.
+        probe.channelMode   = new.channelMode
         probe.label         = new.label
         probe.colorIndex    = new.colorIndex
         probe.pianoRollOpen = new.pianoRollOpen
@@ -383,6 +386,11 @@ extension EditViewModel {
             for change in Self.changedPluginStates(live, object) {
                 engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString)
             }
+        }
+        // The channel choice of a stereo clip (no-op for every other kind: the engine looks the
+        // clip up and finds none). Pushed only when it moved — a plugin is added or removed for it.
+        if case .clip = object.kind, live == nil || live?.channelMode != object.channelMode {
+            engine?.updateChannelMode(object.channelMode.engineCode, forID: object.id.uuidString)
         }
         switch object.kind {
         case .clip, .midiClip:

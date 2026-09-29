@@ -38,6 +38,18 @@ extension CommandRegistry {
             // that is not a group. The two are kept apart on purpose: only the clips this counts
             // can be relinked, never the group.
             payload["missing_descendant"] = .bool(vm.containsMissingDescendant(item))
+            // The channel choice of a stereo clip. `channels` is the SOURCE's count (null for
+            // anything that has no file, or a file that cannot be read); `engine_channel_mode` is
+            // what the engine is really playing, so a script can assert the model and the engine
+            // agree — after an undo above all.
+            payload["channel_mode"] = .string(item.channelMode.rawValue)
+            if case .clip(let path, _, _, _, _) = item.kind {
+                payload["channels"] = ClipChannels.count(atPath: path).map { JSONValue.int($0) } ?? JSONValue.null
+                payload["engine_channel_mode"] = .string(
+                    ChannelMode.allCases.first { $0.engineCode == vm.engineChannelMode(for: id) }?.rawValue ?? "lr")
+            } else {
+                payload["channels"] = .null
+            }
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)
@@ -195,6 +207,40 @@ extension CommandRegistry {
             let reversed = try p.bool("reversed", or: !object.isReversed)
             vm.updateReversed(id: id, reversed: reversed)
             return .object(["id": .string(id.uuidString), "reversed": .bool(reversed)])
+        }
+
+        register("object.set_channel_mode",
+                 summary: "Which channel(s) of a STEREO audio clip (exactly two channels) are heard, "
+                        + "non-destructively: lr (as is, the default) | l (left channel on both "
+                        + "sides) | r (right channel on both sides) | c (mono sum (L+R)/2 on both "
+                        + "sides). Refuses anything that is not a stereo audio clip (mono, "
+                        + "multichannel, group, aux, MIDI, consolidated instance, unreadable file) "
+                        + "with invalid_state. One undo point, none if nothing changes.",
+                 params: [ParamSpec("id", "uuid", "Target clip."),
+                          ParamSpec("mode", "string", "lr | l | r | c.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let name = try p.string("mode")
+            guard let mode = ChannelMode(rawValue: name) else {
+                throw CommandError(code: .bad_params,
+                                   message: "'mode': expected one of "
+                                          + ChannelMode.allCases.map(\.rawValue).joined(separator: ", "))
+            }
+            // LR is a way BACK and is always accepted on a clip (@see setChannelMode); every other
+            // mode needs a stereo clip, and the refusal says which condition failed.
+            if !(mode == .lr && object.isClip), let why = vm.channelModeRefusal(for: object) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            vm.setChannelMode(id: id, mode: mode)
+            guard let after = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "object lost")
+            }
+            return .object(["id": .string(id.uuidString),
+                            "channel_mode": .string(after.channelMode.rawValue)])
         }
 
         register("object.set_loop",

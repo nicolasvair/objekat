@@ -399,6 +399,10 @@ extension EditViewModel {
             obj.kind = .clip(filePath: newPath, sourceOffset: fitted.sourceOffset,
                              fileDuration: length, speedRatio: speed, isReversed: reversed)
             obj.fileSize = size
+            // A channel choice belongs to a STEREO source: onto a file that is not, it has nothing
+            // left to choose between (and the selector would be hidden with the old value still
+            // set) — the clip goes back to the default.
+            if obj.channelMode != .lr, ClipChannels.count(atPath: newPath) != 2 { obj.channelMode = .lr }
             guard fitted.duration < obj.duration else { return }
             // The END comes in, so the fades are treated at the door every other shortening goes
             // through: a fade-out starts at a point IN the sound, it keeps that start and ends

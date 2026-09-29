@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 17
+    static let formatVersion = 18
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -41,6 +41,12 @@ enum SessionSchema {
         "  It settles which of two files carrying the same name is the right one when a broken",
         "  link is repaired. Absent = unknown (a session written before format 14), and a repair",
         "  then falls back on the name alone.",
+        "channelMode — which channel(s) of a STEREO clip (exactly two channels) are heard, on a clip",
+        "  only: \"l\" (the left channel alone, on both sides), \"r\" (the right alone, on both sides)",
+        "  or \"c\" (the mono sum (L+R)/2, on both sides). Playback only, the file is never touched.",
+        "  WRITTEN ONLY WHEN IT IS NOT the default: no key = both channels as they are (\"lr\"),",
+        "  which is every session written before format 18 and every mono or multichannel clip.",
+        "  A consolidated instance never carries one: the choice was baked into its wave.",
         "",
         "TIME — startTime, duration, fadeIn, fadeOut are in SECONDS. MIDI notes, on the other",
         "  hand, are in MUSICAL TIME (startBeat, lengthBeats): converted at the current tempo.",

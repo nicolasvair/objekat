@@ -812,6 +812,41 @@ Its answer keeps `ids` naming the PIECES the cut produced, as it always has (not
 which the cut may or may not have touched), and gains a `selection` field — the selection as it
 stands right after, for a caller that wants to check the rule above without a screen.
 
+### The channel choice of a stereo clip (`object.set_channel_mode`)
+
+A stereo audio clip — a file of **exactly two channels** — can be heard through one of its channels
+only, non-destructively and per clip:
+
+| `mode` | what is heard |
+|---|---|
+| `lr` | the clip as it is (the default) |
+| `l` | the LEFT channel alone, on both sides |
+| `r` | the RIGHT channel alone, on both sides |
+| `c` | the mono sum `(L + R) / 2`, on both sides |
+
+`object.set_channel_mode {id, mode}` refuses anything that is not a stereo audio clip with
+`invalid_state` and a message naming the failed condition (a mono or multichannel file, a group, an
+aux, a MIDI clip, a consolidated instance, a file that cannot be read); an unknown `mode` is
+`bad_params`. `lr` is a way back and is accepted on any clip. One undo point, and none at all when
+nothing changes (`undo: handled`). `object.get` answers `channel_mode` (the model), `channels` (the
+SOURCE file's channel count, `null` for anything that has no file) and `engine_channel_mode` (what
+the engine is really playing, on a clip) — a script can assert that the model and the engine agree,
+after an undo above all.
+
+The engine carries it as a small service plugin, `ObjChannelMode`, at the HEAD of the clip's chain —
+before the trims, the effects and the fader, so what follows works on the channel that was chosen. It
+exists only while the mode is not `lr`. Export and consolidation therefore follow with nothing to
+do: they render the engine's graph, and a consolidated wave carries the choice baked in (its
+placement is `lr` again). The choice follows the clip through a cut, a duplication, a paste
+(cross-project included) and a session save/reopen. It is stored as `channelMode` on the clip,
+written **only when it is not `lr`** (session format **18**; no key = `lr`, so every earlier file
+opens as before, and an earlier build simply ignores the key).
+
+The engine attenuates a centred stereo signal by 3 dB (its pan law), so compare renders **against
+the `lr` export of the same clip** and not against absolute levels: `l` and `r` put the kept channel
+on both sides at the level that side had in `lr`, and `c` sits 6 dB under `l` for a signal that lives
+in one channel only. `tools/scenario_channel_mode.py` is the reference.
+
 ### Exploding an object into sub-lanes
 
 **`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?, fade_ms?}`** cuts a plain audio clip at

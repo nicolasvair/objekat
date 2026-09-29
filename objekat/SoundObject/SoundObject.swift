@@ -408,6 +408,18 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// `.clip` on purpose: adding a parameter there would touch every construction site of the
     /// case, about twenty of them, for a field only the relink reads.
     var fileSize: Int64? = nil
+    /// Which channel(s) of a STEREO clip are heard: both (`.lr`, the default), the left alone, the
+    /// right alone, or their mono sum — on both sides. A playback choice, non-destructive, per clip.
+    /// Meaningful only for a `.clip` of exactly two channels (@see `ClipChannels`, and
+    /// `EditViewModel.setChannelMode`, which refuses anything else); `.lr` everywhere else, and
+    /// for every session written before format 18.
+    ///
+    /// TOP LEVEL, like `fileSize`, for the same reason: `.clip` has about twenty construction
+    /// sites and only a few of them care. What follows from that is the rule to remember — every
+    /// site that rebuilds a clip FIELD BY FIELD must carry it (`derivedCopy` does, and the copies
+    /// that start from `var n = o` get it for free); a site that forgets turns the clip back into
+    /// a plain LR one without a word.
+    var channelMode: ChannelMode = .lr
     /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
     /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -960,6 +972,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
          loopRangeStart: Double? = nil,
          loopRangeEnd: Double? = nil,
          markers: [Marker] = [],
+         channelMode: ChannelMode = .lr,
          kind: Kind) {
         self.id         = id
         self.startTime  = startTime
@@ -991,6 +1004,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.loopRangeStart = loopRangeStart
         self.loopRangeEnd   = loopRangeEnd
         self.markers    = markers
+        self.channelMode = channelMode
         self.kind       = kind
     }
 
@@ -1065,6 +1079,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     loopRangeStart: loopRangeStart,
                     loopRangeEnd: loopRangeEnd,
                     markers: inheritedMarkers,
+                    channelMode: channelMode,
                     kind: kind)
     }
 
@@ -1102,7 +1117,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1151,6 +1166,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(loopRangeEnd,   forKey: .loopRangeEnd)
         if !markers.isEmpty { try c.encode(markers, forKey: .markers) }
         try c.encodeIfPresent(fileSize, forKey: .fileSize)
+        // Written only when it says something: LR is the overwhelming case (a key absent = LR).
+        if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1188,6 +1205,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         loopRangeEnd   = try c.decodeIfPresent(Double.self, forKey: .loopRangeEnd)
         markers        = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         fileSize       = try c.decodeIfPresent(Int64.self, forKey: .fileSize)
+        // A value this build does not know (written by a later one) reads as LR rather than
+        // failing the whole project: the choice is playback-only, the sound is still there.
+        channelMode    = (try? c.decodeIfPresent(ChannelMode.self, forKey: .channelMode)) ?? .lr
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }

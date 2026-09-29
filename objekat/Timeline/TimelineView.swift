@@ -2290,7 +2290,8 @@ struct TimelineView: View {
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                             curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
-                            loopRange: item.loopMarkerLocalRange)
+                            loopRange: item.loopMarkerLocalRange,
+                            channelMode: item.channelMode)
                         continue
                     }
 
@@ -2307,7 +2308,8 @@ struct TimelineView: View {
                         isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                         fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                         curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
-                        waveformDisplayDB: waveformDisplayDB, loopRange: item.loopMarkerLocalRange)
+                        waveformDisplayDB: waveformDisplayDB, loopRange: item.loopMarkerLocalRange,
+                        channelMode: item.channelMode)
                     if !handled {
                         // Samples mode (extreme zoom, few blocks) → drawn individually and in full.
                         var wc = ctx; wc.translateBy(x: x, y: y)
@@ -2322,7 +2324,8 @@ struct TimelineView: View {
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                             curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
-                            loopRange: item.loopMarkerLocalRange)
+                            loopRange: item.loopMarkerLocalRange,
+                            channelMode: item.channelMode)
                     } else if let loopLocal = item.loopMarkerLocalRange {
                         // `appendPeaksFill` only lays the fill (batched by colour): the loop marks are
                         // drawn separately, in coordinates LOCAL to the block, translated here as the

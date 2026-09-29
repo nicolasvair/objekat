@@ -2,7 +2,7 @@
 // compiled and run alone, exactly like `SendColumns` / `SynopticMarquee` / `PianoRollFraming` /
 // `CutSelection` before it.
 //
-//     swiftc -parse-as-library ../objekat/Shared/WaveformPeaks.swift test_waveform_peaks.swift \
+//     swiftc -parse-as-library ../objekat/Shared/WaveformPeaks.swift ../objekat/SoundObject/ChannelMode.swift test_waveform_peaks.swift \
 //         -o /tmp/wfpeaks && /tmp/wfpeaks
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -428,6 +428,57 @@ enum WaveformPeaksTest {
     let mono = accumulate([left], density: 1000, sampleRate: rate, laneCount: 1, chunk: 777)
     check("mono → one lane, the channel itself",
           mono.count == 1 && mono[0] == referenceBlocks(left, count: blockCount))
+
+    // ── The channel choice of a stereo clip, applied at draw time (@see channelLanes) ──────
+    do {
+        let l: [Float] = [0.5, -0.25, 0.75, 0.0, -0.5, 0.25, 1.0, -1.0]
+        let r: [Float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        let stereoLanes = [l, r]
+        check("lr: the lanes come back untouched",
+              WaveformPeaks.channelLanes(stereoLanes, mode: .lr) == stereoLanes)
+        check("l: the left channel on BOTH bands",
+              WaveformPeaks.channelLanes(stereoLanes, mode: .l) == [l, l])
+        check("r: the right channel on BOTH bands",
+              WaveformPeaks.channelLanes(stereoLanes, mode: .r) == [r, r])
+        let c = WaveformPeaks.channelLanes(stereoLanes, mode: .c)
+        check("c: ONE band, (L + R) / 2 sample for sample",
+              c.count == 1 && c[0] == l.map { $0 * 0.5 })
+        check("a one-lane source is left alone whatever the mode",
+              WaveformPeaks.channelLanes([l], mode: .c) == [l] && WaveformPeaks.channelLanes([l], mode: .r) == [l])
+        check("three lanes are left alone (a stereo pair only)",
+              WaveformPeaks.channelLanes([l, r, l], mode: .l).count == 3)
+
+        // The samples path is EXACT, even for phase opposition — where the peaks approximation is not.
+        let inPhaseL: [Float] = (0..<64).map { Float(sin(Double($0) * 0.4)) }
+        let inPhaseR: [Float] = inPhaseL.map { -$0 }
+        let sumExact = WaveformPeaks.sampleEnvelopeMean(inPhaseL, inPhaseR, from: 4, to: 40)
+        check("sampleEnvelopeMean: opposed channels cancel to zero, exactly",
+              sumExact.lo == 0 && sumExact.hi == 0, "\(sumExact)")
+        let viaLanes = WaveformPeaks.sampleEnvelope(WaveformPeaks.channelLanes([inPhaseL, inPhaseR], mode: .c)[0],
+                                                    from: 4, to: 40)
+        check("sampleEnvelopeMean agrees with sampleEnvelope of the materialised sum",
+              viaLanes == sumExact, "\(viaLanes) vs \(sumExact)")
+        var rng = DeterministicRNG(seed: 9)
+        let rl: [Float] = (0..<512).map { _ in rng.nextFloat(in: -1...1) }
+        let rr: [Float] = (0..<512).map { _ in rng.nextFloat(in: -1...1) }
+        let sum = WaveformPeaks.channelLanes([rl, rr], mode: .c)[0]
+        var agree = true
+        for (from, to) in [(0.0, 3.0), (10.0, 90.5), (200.0, 511.0), (100.2, 100.9), (-5.0, 8.0)] {
+            if WaveformPeaks.sampleEnvelopeMean(rl, rr, from: from, to: to)
+                != WaveformPeaks.sampleEnvelope(sum, from: from, to: to) { agree = false }
+        }
+        check("sampleEnvelopeMean == sampleEnvelope of the sum, on random material and awkward spans", agree)
+
+        // The peaks path: the mean of the envelopes (an approximation, documented).
+        let a = PeakPair(lo: -0.4, hi: 0.6), b = PeakPair(lo: -0.2, hi: 0.2)
+        let m = WaveformPeaks.centreOfEnvelopes(a, b)
+        check("centreOfEnvelopes: the mean of the mins and of the maxes",
+              abs(m.lo - (-0.3)) < 1e-6 && abs(m.hi - 0.4) < 1e-6, "\(m)")
+        let silent = PeakPair(lo: 0, hi: 0)
+        let half = WaveformPeaks.centreOfEnvelopes(a, silent)
+        check("centreOfEnvelopes: one silent channel gives half the other — exact for L alone",
+              abs(half.lo - (-0.2)) < 1e-6 && abs(half.hi - 0.3) < 1e-6, "\(half)")
+    }
 
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {

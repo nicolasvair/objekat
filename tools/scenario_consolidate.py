@@ -37,7 +37,7 @@ Then the pre-existing bugs fixed on 2026-09-24, each checked STRICTLY (a failure
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
-import json, os, shutil, stat, subprocess, sys, tempfile, time
+import json, os, re, shutil, stat, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -273,7 +273,8 @@ def forge_old_format(folder):
         t = t.replace("samples\\/consolidate\\/", "samples\\/objects\\/")
         if p.endswith("legacy.json"):
             # …and the format number the old build wrote.
-            t = t.replace('"version" : 16', '"version" : 15')
+            # (whatever the current format is: a literal `16` went stale at every bump.)
+            t = re.sub(r'"version" : \d+', '"version" : 15', t, count=1)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(t)
 
@@ -429,12 +430,12 @@ try:
               pa_row and pa_row["file"] == os.path.join(CONS, dr[ids["a"]]["wave"]), pa_row)
 
         # ── B5 ───────────────────────────────────────────────────────────────────────────────
-        section("B5 — saving: format 16, historic keys, relative paths")
+        section("B5 — saving: format 18, historic keys, relative paths")
         cmd("project.save")
         doc = read_json(ids["manifest"])
         st = cmd("project.get_state")
-        check("B5: version 17 on disk and in get_state",
-              doc.get("version") == 17 and st.get("version") == 17, (doc.get("version"), st.get("version")))
+        check("B5: version 18 on disk and in get_state",
+              doc.get("version") == 18 and st.get("version") == 18, (doc.get("version"), st.get("version")))
         check("B5: key objectDefinitions kept", "objectDefinitions" in doc
               and "consolidateDefinitions" not in doc, list(doc))
         dB = [d for d in doc["objectDefinitions"] if d["id"] == ids["b"]][0]

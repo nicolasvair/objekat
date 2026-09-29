@@ -5,7 +5,7 @@ import Accelerate
 // `SynopticMarquee` / `PianoRollFraming` / `ComposedName` / `CutSelection`, so it can be compiled
 // and asserted ALONE:
 //
-//     swiftc -parse-as-library ../objekat/Shared/WaveformPeaks.swift test_waveform_peaks.swift \
+//     swiftc -parse-as-library ../objekat/Shared/WaveformPeaks.swift ../objekat/SoundObject/ChannelMode.swift test_waveform_peaks.swift \
 //         -o /tmp/wfpeaks && /tmp/wfpeaks
 //
 // `PeakPair` lives here rather than nested in `WaveformCache` (where it used to be — a plain
@@ -278,6 +278,80 @@ extension WaveformPeaks {
             return abs(b.lo) > abs(a.lo) ? b : a
         }
         return PeakPair(lo: min(a.lo, b.lo), hi: max(a.hi, b.hi))
+    }
+
+    // MARK: - The channel choice of a stereo clip, at DRAW time
+
+    /// The lanes a stereo clip is DRAWN with once its channel choice is applied (@see
+    /// `ChannelMode`): `l` draws the left channel on both bands, `r` the right on both, `c` ONE
+    /// band holding the mono sum `(L + R) / 2`. Anything that is not exactly two lanes, or `lr`,
+    /// comes back as it was. The choice is applied here, when drawing, and never in the `.wfc`
+    /// cache: the cache describes the FILE, which the choice never touches, so changing the mode
+    /// costs no recomputation and no disk.
+    ///
+    /// `l` / `r` copy nothing (Swift arrays are copy-on-write); `c` allocates one sum, once per
+    /// call — the caller is the samples-mode drawing of ONE block, at a zoom where a block is
+    /// a few seconds of file at most (@see `WaveformCache.regionByteCap`).
+    nonisolated static func channelLanes(_ lanes: [[Float]], mode: ChannelMode) -> [[Float]] {
+        guard lanes.count == 2, mode.isActive else { return lanes }
+        switch mode {
+        case .lr: return lanes
+        case .l:  return [lanes[0], lanes[0]]
+        case .r:  return [lanes[1], lanes[1]]
+        case .c:
+            let n = min(lanes[0].count, lanes[1].count)
+            var sum = [Float](repeating: 0, count: n)
+            lanes[0].withUnsafeBufferPointer { l in
+                lanes[1].withUnsafeBufferPointer { r in
+                    var half: Float = 0.5
+                    // sum = (l + r) * 0.5
+                    vDSP_vasm(l.baseAddress!, 1, r.baseAddress!, 1, &half, &sum, 1, vDSP_Length(n))
+                }
+            }
+            return [sum]
+        }
+    }
+
+    /// `sampleEnvelope` of the MONO SUM of two lanes, computed on the fly (nothing allocated) —
+    /// EXACT: the min and max of `(L + R) / 2` over the span, so two channels in phase opposition
+    /// cancel to the flat line they really give. The peaks path cannot do that (it only holds each
+    /// channel's own min / max per block): @see `centreOfEnvelopes`.
+    nonisolated static func sampleEnvelopeMean(_ l: [Float], _ r: [Float], from: Double, to: Double) -> PeakPair {
+        let n = min(l.count, r.count)
+        guard n > 0 else { return PeakPair(lo: 0, hi: 0) }
+        if to - from < 1 {
+            let mid = (from + to) * 0.5
+            guard mid >= 0, mid < Double(n - 1) else { return PeakPair(lo: 0, hi: 0) }
+            let i0 = Int(mid.rounded(.down))
+            let frac = mid - Double(i0)
+            let a = Double(l[i0]) * (1 - frac) + Double(l[i0 + 1]) * frac
+            let b = Double(r[i0]) * (1 - frac) + Double(r[i0 + 1]) * frac
+            let v = Float((a + b) * 0.5)
+            return PeakPair(lo: v, hi: v)
+        }
+        guard to >= 0, from < Double(n) else { return PeakPair(lo: 0, hi: 0) }
+        let lo0 = max(0, Int(from.rounded(.down)))
+        let hi0 = min(n - 1, Int(to.rounded(.up)))
+        guard lo0 <= hi0 else { return PeakPair(lo: 0, hi: 0) }
+        var lo: Float = 0, hi: Float = 0
+        var j = lo0
+        while j <= hi0 {
+            let v = (l[j] + r[j]) * 0.5
+            if j == lo0 { lo = v; hi = v } else { lo = min(lo, v); hi = max(hi, v) }
+            j += 1
+        }
+        return PeakPair(lo: lo, hi: hi)
+    }
+
+    /// The mono sum's envelope from the two channels' PEAKS: the mean of the two mins and of the
+    /// two maxes. An APPROXIMATION, and it says so: a peak block only keeps each channel's own
+    /// extremes, not when they happened, so the true `min(L + R)` cannot be known. The mean is
+    /// exact when the channels agree (identical or one silent — where it gives half the loud one,
+    /// which is what the sum is) and OVER-DRAWS when they are in phase opposition (it shows two
+    /// half-amplitude excursions where the sum is silence). The sample path
+    /// (`sampleEnvelopeMean`, zoomed in) is exact, so the drawing settles as one zooms in.
+    nonisolated static func centreOfEnvelopes(_ a: PeakPair, _ b: PeakPair) -> PeakPair {
+        PeakPair(lo: (a.lo + b.lo) * 0.5, hi: (a.hi + b.hi) * 0.5)
     }
 }
 
