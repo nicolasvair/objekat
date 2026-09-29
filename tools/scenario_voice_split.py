@@ -17,6 +17,9 @@ What it is out to prove:
   • the object-context script path works end to end: `script.run` with `--segments-json` (which
     short-circuits detection entirely) produces the SAME structure as calling `object.explode`
     directly, and a script whose venv is missing reports through `app.dialogs`, not silently;
+  • `fade_ms`: a linear crossfade on each internal cut (capped at a third of the shorter
+    neighbour, the pieces overlapping by f centred on the cut, first fade-in / last fade-out kept),
+    a null test of the group against the original, ONE undo, none on a reversed clip;
   • nothing here opens a window on the headless pid.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
@@ -312,6 +315,132 @@ try:
                  "object.explode, the restored object measures %.3f dB %s than the true "
                  "pre-explode reference (ratio %.4fx) — model fields match exactly, engine "
                  "gain does not." % (abs(db), "louder" if db > 0 else "quieter", avg_ratio))
+
+        # ── fade_ms — a crossfade on every internal cut (object `a` is back to one object).
+        # The reference is rendered HERE, in the state the explode starts from, so the null test
+        # below never straddles an undo (the +3 dB anomaly above).
+        out_ref2 = os.path.join(ROOT, "fade_ref.wav")
+        rjr = cmd("export.run", format="wav", sample_rate=RATE, bit_depth=24,
+                  start=obj_start, end=obj_end, path=out_ref2)
+        cmd("job.wait", id=rjr["job_id"], timeout_ms=60000)
+
+        # A 12 ms piece between two cuts: its cap is 12/3 = 4 ms on BOTH of its edges, while the
+        # neighbouring cuts (long pieces both sides) keep the 5 ms asked for. (Not 9 ms: the
+        # engine's own split refuses a half shorter than 10 ms — @see splitSoundObjectWithID.)
+        f_cuts = [obj_start + 0.5, obj_start + 0.512, obj_start + 1.5, obj_start + 2.0]
+        f_lanes = [0, 1, 0, 2, 0]
+        rf = cmd("object.explode", id=a, cuts=f_cuts, lanes=f_lanes,
+                 names=["Voice", "Breaths", "SS/CH"], fade_ms=5)
+        fp = rf["pieces"]
+        expected_ms = [(0, 4), (4, 4), (4, 5), (5, 5), (5, 0)]
+        check("fade_ms: fade_in_ms / fade_out_ms reported per piece (cap 4 ms on the 12 ms piece, 5 ms elsewhere)",
+              len(fp) == 5 and all(approx(fp[i]["fade_in_ms"], expected_ms[i][0], eps=0.05)
+                                   and approx(fp[i]["fade_out_ms"], expected_ms[i][1], eps=0.05)
+                                   for i in range(5)),
+              [(x.get("fade_in_ms"), x.get("fade_out_ms")) for x in fp])
+        check("fade_ms: fade_applied_ms is the larger of the two",
+              all(approx(x["fade_applied_ms"], max(x["fade_in_ms"], x["fade_out_ms"])) for x in fp))
+        cmd("group.expand", id=rf["group"], expanded=True)
+        fkids = sorted(children_of(rf["group"]), key=lambda o: o["start"])
+        fd = [cmd("object.get", id=k["id"]) for k in fkids]
+        check("fade_ms: 5 children", len(fd) == 5, len(fd))
+        fadin = lambda i: [0.05, 0.004, 0.004, 0.005, 0.005][i]     # noqa: E731
+        fadout = lambda i: [0.004, 0.004, 0.005, 0.005, 0.05][i]    # noqa: E731
+        check("fade_ms: interior fades are the capped lengths; first fade-in / last fade-out are the original ones",
+              all(approx(fd[i]["fade_in"], fadin(i), eps=1e-4) and approx(fd[i]["fade_out"], fadout(i), eps=1e-4)
+                  for i in range(5)),
+              [(d["fade_in"], d["fade_out"]) for d in fd])
+        check("fade_ms: interior fades are linear, bend 0",
+              all(fd[i]["fade_in_curve"] == "linear" and approx(fd[i]["fade_in_bend"], 0)
+                  for i in range(1, 5))
+              and all(fd[i]["fade_out_curve"] == "linear" and approx(fd[i]["fade_out_bend"], 0)
+                      for i in range(0, 4)),
+              [(d["fade_in_curve"], d["fade_in_bend"], d["fade_out_curve"], d["fade_out_bend"]) for d in fd])
+        # geometry: overlap f centred on each cut (eps: cuts are snapped to the sample grid)
+        fvals = [0.004, 0.004, 0.005, 0.005]
+        geo_ok, off_ok = True, True
+        for i in range(4):
+            cut = f_cuts[i]
+            geo_ok = geo_ok and approx(fd[i]["start"] + fd[i]["duration"], cut + fvals[i] / 2, eps=3e-5) \
+                and approx(fd[i + 1]["start"], cut - fvals[i] / 2, eps=3e-5)
+            # right piece's source offset: off0 + (cut - start) - f/2  (speed 1)
+            off_ok = off_ok and approx(fd[i + 1]["source_offset"],
+                                       off0 + (cut - obj_start) - fvals[i] / 2, eps=3e-5)
+        check("fade_ms: each neighbour overlaps the cut by f/2 on each side", geo_ok,
+              [(d["start"], d["duration"]) for d in fd])
+        check("fade_ms: the right pieces' source offsets went back by f/2", off_ok,
+              [d["source_offset"] for d in fd])
+        check("fade_ms: first piece starts, last piece ends, where the object did",
+              approx(fd[0]["start"], obj_start) and approx(fd[-1]["start"] + fd[-1]["duration"], obj_end, eps=3e-5),
+              (fd[0]["start"], fd[-1]["start"] + fd[-1]["duration"]))
+        gf = obj(rf["group"])
+        check("fade_ms: the group's window is still the object's window",
+              approx(gf["start"], obj_start) and approx(gf["duration"], obj_dur), gf)
+
+        out_fade = os.path.join(ROOT, "fade_after.wav")
+        rjf = cmd("export.run", format="wav", sample_rate=RATE, bit_depth=24,
+                  start=obj_start, end=obj_end, path=out_fade)
+        cmd("job.wait", id=rjf["job_id"], timeout_ms=60000)
+        s_ref, s_fade = read_wav_24(out_ref2), read_wav_24(out_fade)
+        nf = min(len(s_ref), len(s_fade))
+        if nf > 0:
+            dmax = max(abs(s_ref[i] - s_fade[i]) for i in range(nf)) / float(2 ** 23)
+            db = 20 * math.log10(dmax) if dmax > 0 else -999.0
+            check("fade_ms: null test — group vs original, max diff < -90 dBFS (%.1f dBFS)" % db,
+                  dmax < 10 ** (-90 / 20.0), dmax)
+        else:
+            check("fade_ms: null test — both renders produced samples", False, (len(s_ref), len(s_fade)))
+
+        cmd("edit.undo")
+        check("fade_ms: ONE undo gives the whole clip back",
+              len(objects()) == 1 and objects()[0]["id"] == a, objects())
+        r_a = obj(a)
+        check("fade_ms: the restored clip is where it was",
+              approx(r_a["start"], before["start"]) and approx(r_a["duration"], before["duration"])
+              and approx(r_a["source_offset"], before["source_offset"]), r_a)
+
+        # fade_ms = 0 explicit: bare edges, pieces jointive
+        r0 = cmd("object.explode", id=a, cuts=f_cuts[:2], lanes=[0, 1, 0], fade_ms=0)
+        p0 = r0["pieces"]
+        check("fade_ms=0: no crossfade reported, pieces jointive",
+              all(x["fade_applied_ms"] == 0 for x in p0)
+              and approx(p0[0]["start"] + p0[0]["duration"], p0[1]["start"], eps=1e-6),
+              p0)
+        cmd("edit.undo")
+
+        # group_lanes: the sub-groups' windows are computed AFTER the overlap
+        rg = cmd("object.explode", id=a, cuts=f_cuts, lanes=f_lanes, names=["Voice", "Breaths", "SS/CH"],
+                 group_lanes=True, fade_ms=5)
+        cmd("group.expand", id=rg["group"], expanded=True)
+        lane_groups = rg["lane_groups"]
+        for lg in lane_groups:
+            cmd("group.expand", id=lg, expanded=True)
+        gw_ok = True
+        for lg in lane_groups:
+            gd = obj(lg)
+            for kd in children_of(lg):
+                gw_ok = gw_ok and kd["start"] >= gd["start"] - 1e-9 \
+                    and kd["start"] + kd["duration"] <= gd["start"] + gd["duration"] + 1e-9
+        check("fade_ms + group_lanes: each sub-group's window covers its extended pieces",
+              len(lane_groups) == 3 and gw_ok, lane_groups)
+        cmd("edit.undo")
+
+        refused(lambda: cmd("object.explode", id=a, cuts=f_cuts[:1], lanes=[0, 1], fade_ms=-1),
+                "fade_ms: a negative value → bad_params", "bad_params")
+        check("fade_ms: the refusals left the project untouched",
+              len(objects()) == 1 and objects()[0]["id"] == a, objects())
+
+        # a REVERSED clip gets no crossfade
+        cmd("object.set_reversed", id=a, reversed=True)
+        rr = cmd("object.explode", id=a, cuts=f_cuts[:2], lanes=[0, 1, 0], fade_ms=5)
+        check("fade_ms: a reversed clip gets no crossfade (fade_applied_ms 0, jointive)",
+              all(x["fade_applied_ms"] == 0 for x in rr["pieces"])
+              and approx(rr["pieces"][0]["start"] + rr["pieces"][0]["duration"], rr["pieces"][1]["start"], eps=1e-6),
+              rr["pieces"])
+        cmd("edit.undo")
+        cmd("object.set_reversed", id=a, reversed=False)
+        check("fade_ms: back to one plain clip after the reversed case",
+              len(objects()) == 1 and not obj(a)["reversed"], objects())
 
         # ── T2 step 5 — the object-context script path, `--segments-json` bypassing detection.
         # The project is back to ONE object on lane 3 (the undo above) — exactly what the script
