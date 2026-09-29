@@ -356,9 +356,10 @@ def wait_for(fn, label, timeout=30.0, step=0.1):
 
 
 PANEL_IDS = {
-    "model", "text_on", "tolerance", "fill_on", "fill", "progress",
+    "model", "progress",
     "b_on", "b_unvoiced_on", "b_unvoiced", "b_below_speech_on", "b_below_speech", "b_cutoff",
-    "b_min_len_on", "b_min_len",
+    "b_min_len_on", "b_min_len", "b_fill_on", "b_fill", "b_text_on", "b_tolerance",
+    "s_fill_on", "s_fill", "s_text_on", "s_tolerance",
     "s_on", "s_unvoiced_on", "s_unvoiced", "s_hf_ratio_on", "s_hf_ratio", "s_zcr_on", "s_zcr",
     "s_hf_energy_on", "s_hf_energy", "s_min_len_on", "s_min_len", "s_refine_on", "s_refine"}
 
@@ -440,11 +441,13 @@ def section_d(c):
     if pid:
         g0 = c.send("script.panel.get", {"panel_id": pid})
         v = g0["values"]
-        check("d: the panel carries the common, breath and SS/CH controls — and nothing else",
+        check("d: the panel carries the model, progress, breath block and consonant block controls — and nothing else",
               set(v) == PANEL_IDS, sorted(set(v) ^ PANEL_IDS))
         check("d: defaults: model none (--no-asr), breaths 0.4 / 10 dB / 200 Hz / 120 ms, hole 20 ms, text 500 ms",
-              (v["model"], v["b_unvoiced"], v["b_below_speech"], v["b_cutoff"], v["b_min_len"], v["fill"],
-               v["tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 500), v)
+              (v["model"], v["b_unvoiced"], v["b_below_speech"], v["b_cutoff"], v["b_min_len"], v["b_fill"],
+               v["b_tolerance"]) == ("none", 0.4, 10, 200, 120, 20, 500), v)
+        check("d: the consonant block owns its own hole filling and tolerance (20 ms / 500 ms), no shared control",
+              (v["s_fill"], v["s_tolerance"], v["s_text_on"], v["b_text_on"]) == (20, 500, True, True), v)
         check("d: defaults: SS/CH hf/lf -6 dB, zcr 0.12, HF +10 dB, 30 ms, 12 dB, 'not voiced' off",
               (v["s_hf_ratio"], v["s_zcr"], v["s_hf_energy"], v["s_min_len"], v["s_refine"],
                v["s_unvoiced_on"]) == (-6, 0.12, 10, 30, 12, False), v)
@@ -454,7 +457,7 @@ def section_d(c):
         check("d: breaths are WHITE and SS/CH YELLOW on the overlay (%d / %d zones)" % (len(white), len(yellow)),
               len(white) >= 1 and len(yellow) == 3, [(z["color"], round(z["start"], 2)) for z in zones()])
         check("d: the status line counts both categories",
-              "breath" in g0["status"] and "SS/CH" in g0["status"], g0["status"])
+              "breath" in g0["status"] and "consonant" in g0["status"], g0["status"])
         # switching a category off takes its zones off, the other stays
         r0 = overlay()["rev"]
         press(pid, {"s_on": False})
@@ -497,9 +500,9 @@ def section_d(c):
     if groups:
         c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
         kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
-        check("d: three sub-lanes, named Voice / Breaths / SS/CH",
+        check("d: three sub-lanes, named Voice / Breaths / Consonants",
               {k["lane"] for k in kids} == {0, 1, 2}
-              and {k["name"] for k in kids} == {"Voice", "Breaths", "SS/CH"}, [(k["lane"], k["name"]) for k in kids])
+              and {k["name"] for k in kids} == {"Voice", "Breaths", "Consonants"}, [(k["lane"], k["name"]) for k in kids])
     check("d: overlay and panel gone", c.send("overlay.list")["overlays"] == [] and panels() == [])
     c.send("edit.undo")
     objs = c.send("object.list")["objects"]
@@ -527,8 +530,8 @@ def section_d(c):
     if groups:
         c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
         kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
-        check("d: breaths off -> two sub-lanes, Voice / SS/CH",
-              {k["lane"] for k in kids} == {0, 1} and {k["name"] for k in kids} == {"Voice", "SS/CH"},
+        check("d: breaths off -> two sub-lanes, Voice / Consonants",
+              {k["lane"] for k in kids} == {0, 1} and {k["name"] for k in kids} == {"Voice", "Consonants"},
               [(k["lane"], k["name"]) for k in kids])
     else:
         check("d: breaths off -> the object was cut", False)
@@ -541,16 +544,16 @@ def section_d(c):
     wait_for(lambda: zones(obj=b), "d: hole run: zones", timeout=30)
     if got:
         pid = got[0]["panel_id"]
-        press(pid, {"b_on": False, "fill_on": False})
+        press(pid, {"b_on": False, "s_fill_on": False})
         settle(pid, b)
         apart = zones("yellow", b)
         check("d: hole filling OFF: the two bursts (30 ms hole) are two zones: %s"
               % [(round(z['start'], 3), round(z['end'], 3)) for z in apart], len(apart) == 2, apart)
-        press(pid, {"fill_on": True, "fill": 20})
+        press(pid, {"s_fill_on": True, "s_fill": 20})
         settle(pid, b)
         check("d: hole filling ON at 20 ms: the 30 ms hole stays open (2 zones)", len(zones("yellow", b)) == 2,
               zones("yellow", b))
-        press(pid, {"fill": 40})
+        press(pid, {"s_fill": 40})
         settle(pid, b)
         joined = zones("yellow", b)
         check("d: hole filling at 40 ms: ONE zone, from the first burst to the second: %s"
@@ -643,16 +646,30 @@ def section_f(c):
     n_all = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
     print("info  f: zones with the defaults and the text: %s" % n_all)
     check("f: both categories find something on a real voice", n_all["white"] >= 2 and n_all["yellow"] >= 6, n_all)
-    # the text as a criterion: 'use the text' off vs on at a tiny tolerance
-    c.send("script.panel.input", {"panel_id": pid, "values": {"text_on": False}})
-    time.sleep(1.0)
-    off = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
-    c.send("script.panel.input", {"panel_id": pid, "values": {"text_on": True, "tolerance": 50}})
-    time.sleep(1.0)
-    on = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
-    print("info  f: text off %s, text on at 50 ms %s" % (off, on))
-    check("f: the text as a criterion only ever DROPS zones", on["white"] <= off["white"] and on["yellow"] <= off["yellow"])
-    c.send("script.panel.input", {"panel_id": pid, "values": {"tolerance": 500}})
+    # the text as a criterion, PER BLOCK: each block's box + tolerance moves only its own zones
+    def counts():
+        time.sleep(1.0)
+        out = {k: len(zones_of(c, a, k)) for k in ("white", "yellow")}
+        out["white_s"] = round(sum(z["end"] - z["start"] for z in zones_of(c, a, "white")), 3)
+        return out
+
+    def put(values):
+        c.send("script.panel.input", {"panel_id": pid, "values": values})
+
+    put({"b_text_on": False, "s_text_on": False})
+    off = counts()
+    put({"b_text_on": True, "b_tolerance": 50})
+    b_only = counts()
+    put({"b_text_on": False, "s_text_on": True, "s_tolerance": 50})
+    s_only = counts()
+    print("info  f: text off %s, breaths text 50 ms %s, consonants text 50 ms %s" % (off, b_only, s_only))
+    check("f: independence — the breaths' text/tolerance leaves the consonant zones as they were",
+          b_only["yellow"] == off["yellow"], (off, b_only))
+    check("f: independence — dropping consonant zones can only GIVE room to the breaths (priority rule), never take it",
+          s_only["white_s"] >= off["white_s"] - 1e-6, (off, s_only))
+    check("f: each text criterion only ever DROPS zones of its own block",
+          b_only["white"] <= off["white"] and s_only["yellow"] <= off["yellow"])
+    put({"b_text_on": True, "b_tolerance": 500, "s_tolerance": 500})
     time.sleep(0.8)
     c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
     rc = proc.wait(timeout=60)
@@ -662,9 +679,9 @@ def section_f(c):
     if groups:
         c.send("group.expand", {"id": groups[0]["id"], "expanded": True})
         kids = [o for o in c.send("object.list")["objects"] if o.get("parent") == groups[0]["id"]]
-        check("f: Validate lays the real voice on three sub-lanes (Voix / Respirations / SS/CH)",
+        check("f: Validate lays the real voice on three sub-lanes (Voix / Respirations / Consonnes)",
               {k["lane"] for k in kids} == {0, 1, 2}
-              and {k["name"] for k in kids} == {"Voix", "Respirations", "SS/CH"},
+              and {k["name"] for k in kids} == {"Voix", "Respirations", "Consonnes"},
               [(k["lane"], k["name"]) for k in kids])
         print("info  f: %d pieces: %s" % (len(kids), {n: sum(1 for k in kids if k["name"] == n) for n in {k["name"] for k in kids}}))
     else:

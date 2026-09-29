@@ -276,7 +276,9 @@ def panel_text(language):
         "breaths": lambda n, s: "%d %s, %.1f s" % (n, plural(n, ("respiration", "respirations"),
                                                              ("breath", "breaths"),
                                                              ("respiración", "respiraciones")), s),
-        "sibilants": lambda n, s: "%d SS/CH, %.1f s" % (n, s),
+        "sibilants": lambda n, s: "%d %s, %.1f s" % (n, plural(n, ("consonne", "consonnes"),
+                                                               ("consonant", "consonants"),
+                                                               ("consonante", "consonantes")), s),
         "status_transcribing": _pick(language, "transcription…", "transcribing…", "transcribiendo…"),
         "missing": _pick(language, "non installé", "not installed", "no instalado"),
         "failed": _pick(language, "transcription échouée", "transcription failed", "transcripción fallida"),
@@ -300,12 +302,14 @@ PANEL_TEXT = {lang: panel_text(lang) for lang in ("fr", "en", "es")}
 
 
 def panel_controls(language, model_labels, model="align"):
-    """The panel, in three parts: a COMMON one (the text — model, box + tolerance —, the hole
-    filling, the progress bar), then one section PER CATEGORY (its own box, then each criterion as a
-    box and a value: an unchecked box drops the criterion and greys its value, `enabled_by`)."""
+    """The panel: a small GLOBAL part (the text model, the progress bar — neither is a detection
+    setting), then TWO fully independent blocks, Breaths and Consonants (SS/CH and the others), each
+    owning everything it detects with — its criteria (a box and a value: an unchecked box drops the
+    criterion and greys its value, `enabled_by`), its hole filling, its minimum length, its text
+    criterion and tolerance. Ids: `b_` breaths, `s_` consonants (the historical prefix)."""
     L = lambda fr, en, es: _pick(language, fr, en, es)      # noqa: E731
     text = panel_text(language)
-    c, b, s = detect.CommonParams(), detect.BreathEval(), detect.SibilantEval()
+    b, s = detect.BreathEval(), detect.SibilantEval()
     out = []
 
     def section(cid, label):
@@ -323,16 +327,18 @@ def panel_controls(language, model_labels, model="align"):
                     "min": lo, "max": hi, "step": step, "unit": unit,
                     **({"enabled_by": prefix + name + "_on"} if gated else {})})
 
-    # ── common ──
-    section("sec_common", L("Commun", "Common", "Común"))
+    def shared_tail(prefix, obj):
+        """What both blocks have, each its own: the hole filling and the text + tolerance."""
+        pair(prefix, obj, "fill", L("Bouche-trou", "Hole filling", "Rellena huecos"), "ms", 0, 100, 1)
+        flag(prefix + "text_on", L("Utiliser le texte, tolérance", "Use the text, tolerance",
+                                   "Usar el texto, tolerancia"), obj.text_on)
+        out.append({"id": prefix + "tolerance", "kind": "number", "label": L("Tolérance", "Tolerance", "Tolerancia"),
+                    "value": obj.tolerance, "min": 50, "max": 800, "step": 10, "unit": "ms",
+                    "enabled_by": prefix + "text_on"})
+
+    # ── global ──
     out.append({"id": "model", "kind": "choice", "label": L("Texte (modèle)", "Text (model)", "Texto (modelo)"),
                 "value": model, "options": [{"id": m, "label": model_labels[m]} for m in tr.MODEL_IDS]})
-    flag("text_on", L("Utiliser le texte, tolérance", "Use the text, tolerance", "Usar el texto, tolerancia"),
-         c.text_on)
-    out.append({"id": "tolerance", "kind": "number", "label": L("Tolérance", "Tolerance", "Tolerancia"),
-                "value": c.tolerance, "min": 50, "max": 800, "step": 10, "unit": "ms",
-                "enabled_by": "text_on"})
-    pair("", c, "fill", L("Bouche-trou", "Hole filling", "Rellena huecos"), "ms", 0, 100, 1)
     out.append({"id": "progress", "kind": "progress", "label": text["analysing"], "value": None})
 
     # ── breaths ──
@@ -348,10 +354,12 @@ def panel_controls(language, model_labels, model="align"):
                 "value": b.cutoff, "min": 100, "max": 1000, "step": 100, "unit": "Hz",
                 "enabled_by": "b_below_speech_on"})
     pair("b_", b, "min_len", L("Durée minimale", "Minimum length", "Duración mínima"), "ms", 80, 200, 5)
+    shared_tail("b_", b)
 
-    # ── SS / CH ──
-    section("sec_sib", "SS / CH")
-    flag("s_on", L("Détecter SS / CH", "Detect SS / CH", "Detectar SS / CH"), s.on)
+    # ── consonants ──
+    section("sec_sib", L("Consonnes (SS/CH et autres)", "Consonants (SS/CH and others)",
+                         "Consonantes (SS/CH y otras)"))
+    flag("s_on", L("Détecter les consonnes", "Detect consonants", "Detectar consonantes"), s.on)
     pair("s_", s, "unvoiced", L("Non voisé (voisement <)", "Not voiced (voicing <)", "No sonoro (sonoridad <)"),
          "", 0.3, 0.9, 0.01)
     pair("s_", s, "hf_ratio", L("Aigus / graves >", "High / low >", "Agudos / graves >"), "dB", -20, 20, 1)
@@ -361,6 +369,7 @@ def panel_controls(language, model_labels, model="align"):
     pair("s_", s, "min_len", L("Durée minimale", "Minimum length", "Duración mínima"), "ms", 10, 150, 5)
     pair("s_", s, "refine", L("Affiner sur le pic HF (−)", "Refine on the HF peak (−)",
                               "Afinar sobre el pico HF (−)"), "dB", 3, 30, 1)
+    shared_tail("s_", s)
     return out
 
 

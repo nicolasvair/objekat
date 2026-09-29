@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Standalone test of the SS / CH category of the evaluation (`detect.sibilant_zones`, the text
-criterion for graphemes, the priority rule) and of the panel the script declares — the SS/CH twin of
+"""Standalone test of the CONSONANTS block of the evaluation (`detect.sibilant_zones` — SS/CH and the
+others, one set of settings —, its own hole filling and text criterion (near a WORD), the priority
+rule, the independence of the two blocks) and of the panel the script declares — the twin of
 `test_breath_mask.py`. No Whisper, no socket. Run with the venv's own python3:
 
-    python3 test_sibilant_mask.py
+    python3 test_consonant_mask.py
 """
 
 import math
@@ -65,11 +66,11 @@ hop = ef.hop_s
 
 def sib(feats=None, **kw):
     """SS / CH alone (the breaths off), no text unless a `words` list is given."""
-    values = {"b_on": False, "text_on": False}
-    values.update(kw)
+    values = {"b_on": False, "s_text_on": False}
+    values.update({("s_" + k if k in ("fill_on", "fill", "text_on", "tolerance") else k): v for k, v in kw.items()})
     words = values.pop("words", None)
     if words is not None:
-        values["text_on"] = True
+        values["s_text_on"] = True
     s = detect.EvalSettings.from_values(values)
     return detect.eval_zones(feats or ef, s, DURATION, words, values.pop("language", "fr"))["sibilant"]
 
@@ -150,8 +151,8 @@ def hand_features(pattern):
 def two(hole_frames, **kw):
     pat = [0] * 20 + [1] * 40 + [0] * hole_frames + [1] * 40 + [0] * 20
     f = hand_features(pat)
-    values = {"b_on": False, "text_on": False, "s_hf_ratio_on": False, "s_hf_energy_on": False,
-              "s_min_len_on": False, "s_refine_on": False, **kw}
+    values = {"b_on": False, "s_text_on": False, "s_hf_ratio_on": False, "s_hf_energy_on": False,
+              "s_min_len_on": False, "s_refine_on": False, **{('s_' + k if k in ('fill_on', 'fill') else k): v for k, v in kw.items()}}
     return detect.eval_zones(f, detect.EvalSettings.from_values(values), len(pat) * 0.0025, None, "fr")["sibilant"]
 
 
@@ -160,33 +161,34 @@ check("hole filling: a 15 ms hole is bridged at 20 ms, and at exactly 15 ms",
 check("hole filling: a 30 ms hole stays open at 20 ms; a 15 ms one at 12.5 ms; nothing bridged with the box off",
       len(two(12, fill_on=True, fill=20)) == 2 and len(two(6, fill_on=True, fill=12.5)) == 2
       and len(two(6, fill_on=False, fill=100)) == 2)
-check("...the same setting drives the breaths and the SS/CH (it is COMMON): the panel has one 'fill'",
-      sum(1 for c in sv.panel_controls("en", {m: m for m in sv.tr.MODEL_IDS}) if c["id"] == "fill") == 1)
+check("...the hole filling is EACH block's own: the panel has b_fill and s_fill, and no shared 'fill'",
+      sorted(c["id"] for c in sv.panel_controls("en", {m: m for m in sv.tr.MODEL_IDS}) if c["id"].endswith("fill"))
+      == ["b_fill", "s_fill"])
 n_off = len(sib(fill_on=False))
 n_on = len(sib(fill_on=True, fill=100))
 check("on the real signal the filling only ever merges zones (%d -> %d)" % (n_off, n_on), n_on <= n_off)
 
-# ── THE TEXT: a zone is kept only near a word whose spelling holds an SS / CH grapheme ──
-check("graphemes: 'chat', 'salle', 'assise' are candidates, 'ta', 'kilo' are not (fr)",
-      all(detect.is_sibilant_candidate(w, "fr") for w in ("chat", "salle", "assise"))
-      and not any(detect.is_sibilant_candidate(w, "fr") for w in ("ta", "kilo")))
+# ── THE TEXT: a zone is kept only within the tolerance of a WORD (no spelling filter) ──
 from test_detect import WORDS
-check("with the words of the synthetic voice, the three zones stay (each sits in a word with s / ch)",
+check("with the words of the synthetic voice, the three zones stay (each sits in a word)",
       len(sib(words=WORDS, tolerance=50)) == 3, sib(words=WORDS, tolerance=50))
 plain = [{"word": "ta", "start": 0.35, "end": 0.65}, {"word": "toto", "start": 1.7, "end": 2.3}]
-check("words with no SS / CH grapheme: every zone is dropped, whatever the tolerance",
-      sib(words=plain, tolerance=800) == [] and sib(words=plain, tolerance=50) == [])
+check("NO spelling filter: 'ta' (no s, no ch) keeps the zone it wraps; a word lying elsewhere keeps none",
+      len(sib(words=plain[:1], tolerance=50)) >= 1 and len(sib(words=plain[:1], tolerance=50)) < 3
+      and sib(words=[{"word": "ta", "start": 2.9, "end": 2.95}], tolerance=50) == [])
+check("no word at all... is 'no text', not 'no place': nothing dropped",
+      len(sib(words=[])) == 3)
 one = [{"word": "sa", "start": 0.38, "end": 0.62}]
 check("one word with an 's' wrapping the first zone: only that zone at 50 ms (%s)" % sib(words=one, tolerance=50),
       len(sib(words=one, tolerance=50)) == 1 and near(sib(words=one, tolerance=50)[0], 0.40, 0.52))
-far = [{"word": "sa", "start": 0.90, "end": 1.00}]
-check("a zone 380 ms from the 's' word: dropped at 300 ms, kept at 400 ms",
+far = [{"word": "sa", "start": 0.90, "end": 1.00}]      # any word: the spelling is not read
+check("a zone 380 ms from the word: dropped at 300 ms, kept at 400 ms",
       len(sib(words=far, tolerance=300)) == 0 and len(sib(words=far, tolerance=400)) == 1)
 check("text OFF, or no words at all, changes nothing",
       len(sib(text_on=False)) == 3 and len(sib(words=None)) == 3)
 
 # ── the priority between categories: SS/CH wins ──
-loose_b = {"b_unvoiced_on": False, "b_below_speech_on": False, "text_on": False}
+loose_b = {"b_unvoiced_on": False, "b_below_speech_on": False, "b_text_on": False, "s_text_on": False}
 both = detect.eval_zones(ef, detect.EvalSettings.from_values(loose_b), DURATION, None, "fr")
 check("the categories never overlap, SS/CH keeps its whole zone",
       not (cov(both["breath"]) & cov(both["sibilant"])).any() and both["sibilant"] == zones)
@@ -207,13 +209,14 @@ for lang in ("fr", "en", "es"):
           and {c["kind"] for c in controls} <= {"bool", "number", "choice", "progress", "section"})
 controls = sv.panel_controls("en", labels)
 byid = {c["id"]: c for c in controls}
-check("panel: three sections in order — common, breaths, SS/CH",
-      [c["id"] for c in controls if c["kind"] == "section"] == ["sec_common", "sec_breath", "sec_sib"]
-      and ids.index("model") < ids.index("sec_breath") < ids.index("b_unvoiced") < ids.index("sec_sib") < ids.index("s_zcr"))
+check("panel: global model + progress, then two blocks — breaths, consonants",
+      [c["id"] for c in controls if c["kind"] == "section"] == ["sec_breath", "sec_sib"]
+      and ids.index("model") < ids.index("progress") < ids.index("sec_breath") < ids.index("b_unvoiced") < ids.index("sec_sib") < ids.index("s_zcr"))
 check("panel: a progress bar, indeterminate at the start", byid["progress"]["kind"] == "progress" and byid["progress"]["value"] is None)
 expected = {  # id: (min, max, default)
     "b_unvoiced": (0.2, 0.6, 0.4), "b_below_speech": (3, 15, 10), "b_cutoff": (100, 1000, 200),
-    "b_min_len": (80, 200, 120), "fill": (0, 100, 20), "tolerance": (50, 800, 500),
+    "b_min_len": (80, 200, 120), "b_fill": (0, 100, 20), "b_tolerance": (50, 800, 500),
+    "s_fill": (0, 100, 20), "s_tolerance": (50, 800, 500),
     "s_unvoiced": (0.3, 0.9, 0.7), "s_hf_ratio": (-20, 20, -6), "s_zcr": (0.05, 0.4, 0.12),
     "s_hf_energy": (0, 30, 10), "s_min_len": (10, 150, 30), "s_refine": (3, 30, 12)}
 check("panel: every slider's range and default are the ones decided",
@@ -222,8 +225,7 @@ check("panel: every slider's range and default are the ones decided",
 check("panel: no end-margin control any more", not any("margin" in c["id"] for c in controls))
 values = {c["id"]: c["value"] for c in controls if c["kind"] in ("bool", "number")}
 check("panel defaults == the dataclass defaults (a panel left alone detects with the tested defaults)",
-      detect.EvalSettings.from_values(values) == detect.EvalSettings(
-          detect.CommonParams(), detect.BreathEval(), detect.SibilantEval()))
+      detect.EvalSettings.from_values(values) == detect.EvalSettings(detect.BreathEval(), detect.SibilantEval()))
 check("panel: the default model is Whisper + alignment when it is installed (else the next best)",
       byid["model"]["value"] == "align" and [o["id"] for o in byid["model"]["options"]] == list(sv.tr.MODEL_IDS))
 check("panel: Parakeet says it is for English (fr / en / es)",
@@ -234,6 +236,30 @@ check("lanes: only the categories that are ON get one",
       and sv.eval_lanes(detect.EvalSettings.from_values({"b_on": False})) == {"voice": 0, "sibilant": 1}
       and sv.eval_lanes(detect.EvalSettings.from_values({"s_on": False})) == {"voice": 0, "breath": 1}
       and sv.eval_lanes(detect.EvalSettings.from_values({"b_on": False, "s_on": False})) == {"voice": 0})
+
+# ── INDEPENDENCE: a setting of one block never moves the other block's zones ──
+words_i = [{"word": "sa", "start": 0.38, "end": 0.62}, {"word": "la", "start": 1.6, "end": 1.9}]
+def both_blocks(**kw):
+    return detect.eval_zones(ef, detect.EvalSettings.from_values(kw), DURATION, words_i, "fr")
+ref = both_blocks()
+for k, v in (("b_tolerance", 50), ("b_text_on", False), ("b_fill", 0), ("b_unvoiced", 0.6), ("b_min_len", 200),
+             ("b_cutoff", 500), ("b_below_speech", 4)):
+    check("breath setting %s=%s leaves the consonant zones untouched" % (k, v),
+          both_blocks(**{k: v})["sibilant"] == ref["sibilant"])
+alone = both_blocks(s_on=False)["breath"]
+for k, v in (("s_tolerance", 50), ("s_text_on", False), ("s_fill", 0), ("s_zcr", 0.3), ("s_min_len", 150),
+             ("s_refine", 3), ("s_hf_energy", 30)):
+    z = both_blocks(**{k: v})
+    # the consonants' own tolerance / filling / criteria never touch the breaths beyond the priority rule:
+    # the breath zones are exactly the breath-alone zones with this block's zones cut out
+    want = detect.subtract_zones(alone, z["sibilant"])
+    want = [x for x in want if (x[1] - x[0]) * 1000.0 >= 120 - 1e-6]
+    check("consonant setting %s=%s changes the breaths only through the priority rule" % (k, v),
+          [(round(a, 6), round(b, 6)) for a, b in z["breath"]] == [(round(a, 6), round(b, 6)) for a, b in want])
+tight = both_blocks(b_tolerance=50, s_tolerance=800)
+check("tolerances are per block: 50 ms on the breaths, 800 ms on the consonants at once",
+      tight["sibilant"] == both_blocks(s_tolerance=800)["sibilant"]
+      and tight["sibilant"] != both_blocks(s_tolerance=50)["sibilant"])
 
 print()
 if FAILS:

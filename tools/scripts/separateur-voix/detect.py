@@ -483,9 +483,12 @@ def compute_eval_features(samples: np.ndarray, sr: float, progress=None) -> Eval
     return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr, hf_db, lf_db, zcr)
 
 
-# ── The settings: one COMMON block, one block PER CATEGORY. Each criterion is a box (`*_on`) and a
-# value; a box off drops the criterion from the conjunction. The panel's control ids are the field
-# names below, prefixed (`b_` breaths, `s_` SS/CH), so `from_values` reads a panel's values as they are.
+# ── The settings: TWO fully independent blocks, Breaths and Consonants (SS/CH and the other
+# fricatives / bursts — one set of settings for all of them). Each block owns EVERYTHING it detects
+# with: its criteria, its hole filling, its minimum length, its text criterion and tolerance. Each
+# criterion is a box (`*_on`) and a value; a box off drops the criterion from the conjunction. The
+# panel's control ids are the field names below, prefixed (`b_` breaths, `s_` consonants — the
+# historical prefix of the SS/CH category, kept), so `from_values` reads a panel's values as they are.
 
 def _from_values(cls, values: dict, prefix: str = ""):
     p = cls()
@@ -493,18 +496,6 @@ def _from_values(cls, values: dict, prefix: str = ""):
         if prefix + name in values:
             setattr(p, name, type(getattr(p, name))(values[prefix + name]))
     return p
-
-
-@dataclass
-class CommonParams:
-    fill_on: bool = True
-    fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
-    text_on: bool = True
-    tolerance: float = 500.0    # ms — a zone is kept only within this of a place the TEXT allows it
-
-    @classmethod
-    def from_values(cls, values: dict) -> "CommonParams":
-        return _from_values(cls, values)
 
 
 @dataclass
@@ -517,6 +508,10 @@ class BreathEval:
     cutoff: float = 200.0       # Hz — the low-pass both energies are measured after
     min_len_on: bool = True
     min_len: float = 120.0      # ms — the shortest zone kept
+    fill_on: bool = True
+    fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
+    text_on: bool = True
+    tolerance: float = 500.0    # ms — a zone is kept only within this of a word GAP (the text's "nobody speaks")
 
     @classmethod
     def from_values(cls, values: dict) -> "BreathEval":
@@ -525,7 +520,8 @@ class BreathEval:
 
 @dataclass
 class SibilantEval:
-    """SS / CH. Friction is what the category is FOR, so its criteria are the friction's own: a
+    """CONSONANTS — s, ch, z, j, f, v, plosive bursts… ONE set of settings for all of them, no
+    sub-category. Friction / burst is what the block is FOR, so its criteria are the friction's own: a
     high-frequency excess over the low band, a high zero-crossing rate, HF energy above the floor.
     'Not voiced' is optional and OFF by default — z and j are voiced fricatives, and a voicing
     ceiling drops them (the known fault of the historical detector)."""
@@ -543,6 +539,10 @@ class SibilantEval:
     min_len: float = 30.0       # ms — the shortest zone kept (a short j is about 30 ms)
     refine_on: bool = True
     refine: float = 12.0        # dB — a zone is tightened onto the frames within this of its own HF peak
+    fill_on: bool = True
+    fill: float = 20.0          # ms — a hole this short or shorter, between two candidate frames, is bridged
+    text_on: bool = True
+    tolerance: float = 500.0    # ms — a zone is kept only within this of a WORD (not of a gap between words)
 
     @classmethod
     def from_values(cls, values: dict) -> "SibilantEval":
@@ -551,14 +551,12 @@ class SibilantEval:
 
 @dataclass
 class EvalSettings:
-    common: CommonParams
     breath: BreathEval
     sibilant: SibilantEval
 
     @classmethod
     def from_values(cls, values: dict) -> "EvalSettings":
-        return cls(CommonParams.from_values(values), BreathEval.from_values(values),
-                   SibilantEval.from_values(values))
+        return cls(BreathEval.from_values(values), SibilantEval.from_values(values))
 
 
 def eval_lp_column(feats: EvalFeatures, cutoff: float) -> np.ndarray:
@@ -591,10 +589,11 @@ def word_gap_intervals(words: list[dict], duration: float) -> list[tuple[float, 
     return out
 
 
-def sibilant_word_intervals(words: list[dict], language: str) -> list[tuple[float, float]]:
-    """The spans of the words whose spelling holds an SS / CH grapheme — where the text says a
-    fricative may be."""
-    return [(w["start"], w["end"]) for w in words if is_sibilant_candidate(w["word"], language)]
+def word_intervals(words: list[dict]) -> list[tuple[float, float]]:
+    """The spans of the WORDS — where the text says somebody is speaking, hence where a consonant may
+    be. No spelling filter: the block covers 's', 'ch', 'z', 'f', 'v', bursts… ('and others'), so
+    any word may hold one; the signal criteria still have to fire."""
+    return [(w["start"], w["end"]) for w in words]
 
 
 def keep_near(zones: list[tuple[float, float]], places: list[tuple[float, float]],
@@ -651,11 +650,11 @@ def _intervals(feats: EvalFeatures, runs, duration: float | None) -> list[tuple[
     return list(zip(lo[keep].tolist(), hi[keep].tolist()))
 
 
-def _fill_s(common: CommonParams) -> float:
-    return (common.fill / 1000.0) if common.fill_on else 0.0
+def _fill_s(p) -> float:
+    return (p.fill / 1000.0) if p.fill_on else 0.0
 
 
-def breath_zones(feats: EvalFeatures, speech_db: float, p: BreathEval, common: CommonParams,
+def breath_zones(feats: EvalFeatures, speech_db: float, p: BreathEval,
                  duration: float | None = None) -> list[tuple[float, float]]:
     """Breath zones, before the text and before the priority rule. PURE and array-only: what every
     setting a hand moves re-runs. `speech_db` must be `eval_speech_level` for `p.unvoiced` and
@@ -668,7 +667,7 @@ def breath_zones(feats: EvalFeatures, speech_db: float, p: BreathEval, common: C
         candidate &= feats.voicing <= p.unvoiced
     if p.below_speech_on:
         candidate &= eval_lp_column(feats, p.cutoff) < speech_db - p.below_speech
-    runs = _frame_runs(candidate, feats.hop_s, _fill_s(common), (p.min_len / 1000.0) if p.min_len_on else 0.0)
+    runs = _frame_runs(candidate, feats.hop_s, _fill_s(p), (p.min_len / 1000.0) if p.min_len_on else 0.0)
     return _intervals(feats, runs, duration)
 
 
@@ -684,7 +683,7 @@ def _refine_eval_hf(feats: EvalFeatures, runs, drop_db: float):
     return out
 
 
-def sibilant_zones(feats: EvalFeatures, p: SibilantEval, common: CommonParams,
+def sibilant_zones(feats: EvalFeatures, p: SibilantEval,
                    duration: float | None = None) -> list[tuple[float, float]]:
     """SS / CH zones, before the text and before the priority rule."""
     n = feats.times.size
@@ -699,7 +698,7 @@ def sibilant_zones(feats: EvalFeatures, p: SibilantEval, common: CommonParams,
         candidate &= feats.zcr > p.zcr
     if p.hf_energy_on:
         candidate &= feats.hf_db > feats.hf_floor_db() + p.hf_energy
-    runs = _frame_runs(candidate, feats.hop_s, _fill_s(common), (p.min_len / 1000.0) if p.min_len_on else 0.0)
+    runs = _frame_runs(candidate, feats.hop_s, _fill_s(p), (p.min_len / 1000.0) if p.min_len_on else 0.0)
     if p.refine_on:
         runs = _refine_eval_hf(feats, runs, p.refine)
     return _intervals(feats, runs, duration)
@@ -708,33 +707,33 @@ def sibilant_zones(feats: EvalFeatures, p: SibilantEval, common: CommonParams,
 def eval_zones(feats: EvalFeatures, settings: EvalSettings, duration: float,
                words: list[dict] | None = None, language: str = "fr",
                speech_db: float | None = None) -> dict[str, list[tuple[float, float]]]:
-    """Both categories, `{"breath": [...], "sibilant": [...]}`, everything applied: the criteria, the
-    hole-filling, the text, then the PRIORITY rule.
+    """Both blocks, `{"breath": [...], "sibilant": [...]}` (the second key is the CONSONANTS, its
+    historical name), everything applied: each block's criteria, hole-filling and text, then the
+    PRIORITY rule. The two blocks are independent — each reads only its own settings, and the
+    consonants never read the breaths; the ONLY coupling is the priority rule below.
 
-    The text (`common.text_on` with a model's `words`; without either it changes nothing): a breath
-    is kept only within the tolerance of a GAP between two words, an SS/CH only within the
-    tolerance of a word whose spelling holds an SS / CH grapheme.
+    The text (a block's own `text_on` + tolerance, with a model's `words`; without either it changes
+    nothing): a breath is kept only within ITS tolerance of a GAP between two words; a consonant only
+    within ITS tolerance of a WORD (not of a gap) — no filtering by spelling.
 
     Priority: where the two overlap, SS/CH WINS. A breath is defined by what it lacks (voicing, low
     energy) and a fricative lacks the same things; a fricative is defined by what it HAS (a high-
     frequency excess, fast zero crossings), which a breath does not, so the evidence is better on
     that side. The overlap is taken out of the breath zone (which may split), and a remnant shorter
     than the breath's minimum length goes with it."""
-    c, b, s = settings.common, settings.breath, settings.sibilant
-    tol = c.tolerance / 1000.0
-    use_text = c.text_on and bool(words)
+    b, s = settings.breath, settings.sibilant
     sib: list[tuple[float, float]] = []
     breath: list[tuple[float, float]] = []
     if s.on:
-        sib = sibilant_zones(feats, s, c, duration)
-        if use_text:
-            sib = keep_near(sib, sibilant_word_intervals(words, language), tol)
+        sib = sibilant_zones(feats, s, duration)
+        if s.text_on and words:
+            sib = keep_near(sib, word_intervals(words), s.tolerance / 1000.0)
     if b.on:
         if speech_db is None:
             speech_db = eval_speech_level(feats, b.unvoiced, b.cutoff)
-        breath = breath_zones(feats, speech_db, b, c, duration)
-        if use_text:
-            breath = keep_near(breath, word_gap_intervals(words, duration), tol)
+        breath = breath_zones(feats, speech_db, b, duration)
+        if b.text_on and words:
+            breath = keep_near(breath, word_gap_intervals(words, duration), b.tolerance / 1000.0)
         breath = subtract_zones(breath, sib)
         if b.min_len_on:
             breath = [z for z in breath if (z[1] - z[0]) * 1000.0 >= b.min_len - 1e-6]
@@ -869,9 +868,9 @@ def segment_breaths(duration: float, regions: list[tuple[float, float]]) -> list
 
 
 LANE_FOR_LABEL = {"voice": 0, "breath": 1, "sibilant": 2}
-LANE_NAMES = {"fr": ["Voix", "Respirations", "SS/CH"],
-             "en": ["Voice", "Breaths", "SS/CH"],
-             "es": ["Voz", "Respiraciones", "SS/CH"]}
+LANE_NAMES = {"fr": ["Voix", "Respirations", "Consonnes"],
+             "en": ["Voice", "Breaths", "Consonants"],
+             "es": ["Voz", "Respiraciones", "Consonantes"]}
 
 
 def cuts_and_lanes(pieces: list[tuple[float, float, str]],
