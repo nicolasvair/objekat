@@ -337,6 +337,8 @@
 //   feuille : @{@"id":…, @"kind":@"plugin", @"identifier":…, @"format":…, @"name":…,
 //              @"stateXML":… (optionnel), @"enabled":@(BOOL)}
 //   bloc // : @{@"kind":@"rack", @"voices":@[ @[<entrées série>], … ]}
+//   bac FX  : @{@"id":…, @"kind":@"fxlink", @"plugins":@[<feuilles>], @"enabled":@(BOOL),
+//              @"gainDb":…, @"pan":…} — déplié en feuilles + un ObjGain de sortie
 // Retourne la liste des pluginKeys NON RÉSOLUS (introuvables) — le caller les retire du modèle.
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
@@ -348,6 +350,11 @@
 
 // Gain dB d'une voie parallèle (ObjGain de fin de voie), ajusté à chaud (sans recompiler).
 - (void)setVoiceGain:(float)dB forBlockID:(NSString*)blockID voiceIndex:(int)vi objectID:(NSString*)uuid;
+
+// Section de sortie d'un BAC FX (kind:"fxlink" dans l'arbre de compileUserRack…) ajustée à chaud :
+// gain dB (le mute y arrive comme un gain EFFECTIF de -96), pan -1…1, on/off commun du bac.
+// `blockID` = l'id de l'entrée-bloc de la chaîne. Sans effet tant que le bloc n'est pas compilé.
+- (void)setFXBlockOutput:(NSString* _Nonnull)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled;
 
 // Gain dB de début (output:NO) / fin (output:YES) de chaîne, ajusté à chaud (sans recompiler).
 // Retourne NO si le rack n'existe pas encore (objet sans chaîne jamais compilé).

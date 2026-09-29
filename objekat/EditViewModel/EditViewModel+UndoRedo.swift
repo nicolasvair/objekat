@@ -26,6 +26,7 @@ extension EditViewModel {
     }
 
     func pushUndo() {
+        clearPendingFXSources()   // a new gesture: the previous one's promises are void
         undoStack.append(currentSnapshot())
         redoStack = []
         if undoStack.count > 50 {
@@ -55,7 +56,8 @@ extension EditViewModel {
                                     timeSigNumerator: timeSigNumerator,
                                     timeSigDenominator: timeSigDenominator,
                                     markerLanes: markerLanes,
-                                    comments: comments)
+                                    comments: comments,
+                                    fxLinks: fxLinks)
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         if ms >= 1 {
             NSLog("[PERF] snapshot: %d plugin state(s) re-read in %.0f ms",
@@ -82,6 +84,7 @@ extension EditViewModel {
     /// state of every plugin twice. Absent ⇒ captured here.
     func applySnapshot(_ snapshot: EditSnapshot, live: EditSnapshot? = nil) {
         let t0 = CFAbsoluteTimeGetCurrent()
+        clearPendingFXSources()   // the snapshot brings back plain plugins under the same ids: never re-adopt them
         let live = live ?? currentSnapshot()
 
         // Tempo / time signature first: the engine must have the right tempo BEFORE the clips
@@ -109,6 +112,10 @@ extension EditViewModel {
             }
         }
         let kept = intact.union(patched)
+
+        // The FX links' registry BEFORE anything is compiled: a block's output section and its
+        // definition are read from it, so a rebuilt object must find the restored bin.
+        if let snapLinks = snapshot.fxLinks { fxLinks = snapLinks }
 
         for item in live.items where !kept.contains(item.id) { removeFromEngine(item) }
         items = snapshot.items
@@ -187,6 +194,7 @@ extension EditViewModel {
         }
 
         resyncAllSends()   // every aux now exists → rewire the sends
+        pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
 
         let rebuilt = items.count - kept.count
         NSLog("[UNDO] restored in %.0f ms — top-level: %d rebuilt, %d patched, %d untouched",
@@ -284,6 +292,15 @@ extension EditViewModel {
         var out = old
         for i in old.indices {
             guard old[i].id == new[i].id else { return nil }
+            // An FX link's block: the same block (same bin), with the same instances underneath.
+            // A block facing anything else, or another bin, is another chain.
+            if old[i].fxBlock != nil || new[i].fxBlock != nil {
+                guard old[i].rack == nil, new[i].rack == nil,
+                      let a = old[i].fxBlock, let b = new[i].fxBlock, a.linkID == b.linkID,
+                      let inner = adoptingPluginStates(a.plugins, b.plugins) else { return nil }
+                out[i].fxBlock?.plugins = inner
+                continue
+            }
             switch (old[i].rack, new[i].rack) {
             case (nil, nil):
                 out[i].stateXML = new[i].stateXML
@@ -311,8 +328,8 @@ extension EditViewModel {
         var out: [(id: UUID, xml: String)] = []
         func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
             for (x, y) in zip(a, b) {
-                if let rackA = x.rack, let rackB = y.rack {
-                    for (va, vb) in zip(rackA.voices, rackB.voices) { walk(va, vb) }
+                if x.isContainer, y.isContainer {
+                    for (va, vb) in zip(x.childSeries, y.childSeries) { walk(va, vb) }
                 } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
                     out.append((id: y.id, xml: xml))
                 }

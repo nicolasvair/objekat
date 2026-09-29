@@ -58,11 +58,24 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// halo/border and the link badge all derive from it, so that a glance is enough to tie
     /// a card in the signal view to its plugin.
     var color: Color = .gray
+    /// True for an instance held by a bin's block (an FX link): the BLOCK carries the link (its frame,
+    /// its header's badge), so the card shows no link badge of its own and no linked emphasis.
+    var inFXBlock: Bool = false
+    /// True while the bin's common on/off is OFF: the card keeps its own on/off state and its
+    /// identity colours but is drawn greyed, like any state inherited from a disabled container.
+    /// It never touches the plugin's own bypass (`isEnabled`).
+    var greyedByBlock: Bool = false
+
+    /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
+    var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
+    /// The card's "these move together" emphasis (thicker line + glow): never inside a bin.
+    var showsLinkedStyle: Bool { !inFXBlock && isLinked }
 
     init(id: UUID = UUID(), name: String, category: PluginCategory,
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
-         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray) {
+         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
+         inFXBlock: Bool = false, greyedByBlock: Bool = false) {
         self.id = id
         self.name = name
         self.category = category
@@ -73,6 +86,8 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.isLinked = isLinked
         self.isLinkDetached = isLinkDetached
         self.color = color
+        self.inFXBlock = inFXBlock
+        self.greyedByBlock = greyedByBlock
     }
 
     /// A generic plugin inserted by a '+' in phase A (in phase B, the '+' will open
@@ -82,9 +97,29 @@ struct SynopticPlugin: Identifiable, Equatable {
     }
 }
 
+/// What a `.series` node carries when it IS a bin's block (an FX link): the rounded rectangle drawn
+/// round it, and the header / footer controls. The series inside is the block's own instances, so
+/// every '+' / drop zone / card of it is laid by the ordinary series code.
+struct SynopticFXLink: Equatable {
+    var blockID: UUID
+    var name: String
+    var color: Color
+    /// Out of the bin, holding its own copy of the chain (and of the output section).
+    var isDetached: Bool
+    /// The common on/off (the bin's while attached, the block's own while detached).
+    var isEnabled: Bool
+    var gainDb: Float
+    var pan: Float
+    var muted: Bool
+    /// How many hosts carry the bin (attached or not), for the tooltip.
+    var memberCount: Int
+}
+
 struct SynopticNode: Identifiable, Equatable {
     let id: UUID
     var kind: Kind
+    /// Non-nil when this series is a bin's block (@see SynopticFXLink).
+    var fxLink: SynopticFXLink? = nil
     /// Filled in when this node is a BRANCH of a parallel block: the dB gain at the branch's end.
     var voiceGainDb: Float? = nil
     /// The branch's mute (a parallel block): the sound is cut, the gain is kept.

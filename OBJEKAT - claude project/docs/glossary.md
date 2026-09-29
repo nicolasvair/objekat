@@ -64,6 +64,9 @@ source, not a translation.
 | fréquence d'échantillonnage | sample rate | frecuencia de muestreo |  |
 | latence / taille du buffer | latency / buffer size | latencia / tamaño del búfer |  |
 | onglet | tab | pestaña | onglet de projet |
+| fx link (bac de plugins partagé) | FX link (shared plugin bin) | fx link (bin de plugins compartido) | the name stays « fx link » in the three languages; a shared bin of plugins, one block in each member's chain |
+| détacher / rattacher (un fx link) | detach / reattach | desvincular / volver a vincular | per host: the host keeps an independent copy, then realigns on the bin |
+| section de sortie (d'un fx link) | output section | sección de salida | volume, pan, mute of the bin, after its plugins |
 
 ## What does not get translated
 

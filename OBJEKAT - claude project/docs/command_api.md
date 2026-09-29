@@ -582,6 +582,7 @@ That is end-of-process noise, with no effect on the result.
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
 | `solo.*` | the confirmed solo: read, set / unset objects, clear — and which windows a direct solo holds open |
 | `plugin.*` / `instrument.*` | catalogue, chain, add, remove, bypass, move, copy, link, unlink, parameters, **a selection of several cards** |
+| `fxlink.*` | **FX links**: a named bin of plugins several objects or buses share — create, edit the definition, output section, attach / detach / reattach / release |
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
@@ -634,6 +635,67 @@ Three things are worth knowing before driving them:
 `plugin.move`, `plugin.copy` and `plugin.link` take **`plugins`** (a list) in place of `plugin`: one
 card or a whole selection, the same three gestures either way. A link of several ties each card to
 its OWN copy — an EQ and a reverb dragged together do not end up sharing their parameters.
+
+### FX links (`fxlink.*`)
+
+An **FX link** is a named bin of plugins that several hosts (objects, or buses) share. What is worth
+knowing before driving one:
+
+- **The design is MIRROR INSTANCES**, not one processor fed by many. Every host keeps its OWN engine
+  instances of the bin's plugins; the parameters travel through the existing link machinery (an
+  instance carries `link_group == the definition plugin's id`). So `plugin.set_param` on any member's
+  instance reaches the others, and editing the bin never reloads a live plugin (an instance keeps its id).
+- **In a host's chain the bin is ONE entry**, a block (`is_fx_block: true`, with `link`, `detached`
+  and its instances under `plugins`). It is placed anywhere between the trims and reordered like any
+  other plugin (`fxlink.move_block`, or the synoptic's drop). It carries an **output section** —
+  volume, pan, mute — and a **common on/off**, both the bin's while the block follows it.
+- **Two kinds of id**, and telling them apart is the family's trap: the DEFINITION plugin's id
+  (`plugins[].id` of a link — what `add_plugin` returns and `remove_plugin` / `move_plugin` /
+  `set_plugin_enabled` take) and the INSTANCE's id (`members[].instances[].id` — an ordinary plugin of
+  one host, the id `plugin.*` and the automation address). `instances[].definition` names the one
+  a given instance mirrors.
+- **Order, add, remove and on/off are linked to every attached member**; a gesture aimed at an
+  attached instance (`plugin.toggle`, `plugin.remove`, a reorder in the synoptic) is a gesture on the
+  DEFINITION. An instance is never edited on its own.
+- **Detaching is per host** (`fxlink.detach`): the block stays where it is but stops following; the host
+  keeps an independent copy with the settings of the moment, and its own output section
+  (`fxlink.set_local_output`). `fxlink.reattach` realigns the host on the bin — it adopts the bin's
+  settings, never the reverse. `fxlink.release` leaves for good and keeps the plugins as plain ones;
+  `fxlink.remove_block` drops the block and its plugins from this host; `fxlink.delete` dissolves the
+  bin everywhere (every block replaced by its plugins, inline and independent).
+- **Creation**: `fxlink.create {host, plugins}` makes the plugins of ONE series of one host (plain,
+  with no manual ⌘-link, none already in a bin) the definition, the host's own instances becoming its
+  block at the place of the first (nothing reloads). `fxlink.create {objects}` — the timeline menu's
+  last entry — takes the first object (timeline order) with plain plugins as the source, and the
+  others receive a block of it at the END of their chain, their own plugins untouched.
+- **Automatic creation.** A cut / split, a duplicate, ⌥-copy, a paste or an overlap's fragment of an
+  object whose plugins are plain no longer writes a `link_group` on them: the copy joins a NEW bin and
+  the original joins it too. (The old manual ⌘-links and their `link_group` are untouched, and cohabit.)
+- **Crossing a project** (paste into another tab) and **consolidating** never share a bin: they
+  recreate a NEW one from the plugins' states as they were.
+- **Undo**: every mutator pushes ONE point (`undo: handled`), the registry restoring with the chains.
+  `fxlink.set_output` and `fxlink.set_local_output` are hot (no recompile) — a drag's frames.
+- **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
+  reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
+  bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
+  block's frame and header carry the link); a legacy ⌘-linked plugin outside any bin keeps both.
+  `greyed` is true for the cards of a block whose common on/off is OFF (the bin's while attached, the
+  block's own while detached): the card keeps its own `enabled` and its identity colours and is drawn
+  greyed — the plugin's own bypass is never touched.
+- **`plugin.link_overlay {plugin}`** answers what the timeline's link overlay (the halo and the star drawn
+  while a plugin's editor is open) shows for that plugin: `source` (its object), `members` (the objects
+  joined to it), `color_index` (a palette index) and `fx_link` (the bin, or null). For a plugin held by a
+  bin's block the colour is the BIN's (`fxlink.set_color`) and the members are the hosts sharing the bin
+  through an ATTACHED block (a detached block stands alone, in the bin's colour); for a ⌘-linked or plain
+  plugin it is the plugin's own colour (`color_index` on every plugin payload) and its link group.
+- `fxlink.list` lists only the bins some block still refers to (an orphan is what a deleted object
+  leaves for the undo). Every answer carries `members[]` with `host`, `is_stem`, `block`, `detached`,
+  `instances` and, when detached, `local`.
+
+Persisted as the optional `fxLinks` registry of the session file (**format 17**; a file with no key
+opens as before; an older build has no notion of the block entry, so a project holding bins is not
+meant to be edited by one). `tools/scenario_fxlink.py` (headless, 91 assertions, the export + RMS proof that the
+ENGINE followed) is the reference for every rule above.
 
 ### Fade shapes
 

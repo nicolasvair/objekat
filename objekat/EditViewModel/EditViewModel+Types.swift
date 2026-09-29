@@ -26,6 +26,9 @@ struct ProjectDocument: Codable {
     /// The registry of the consolidated objects referenced by `SoundObject.consolidateID` in
     /// `items`. nil/absent ⇒ none.
     var consolidateDefinitions: [ConsolidateDefinition]?
+    /// The registry of the FX links (bins of shared plugins) that `items`' and `stems`' chains
+    /// refer to through `ObjectPlugin.fxBlock`. nil/absent ⇒ none. See `FXLink`.
+    var fxLinks: [FXLink]?
     /// The state of the timeline view at the time of saving (H zoom = px/s, V zoom = block
     /// height, scroll position). All optional: an earlier project leaves them at nil and the
     /// view keeps its default values. See `ViewportState`.
@@ -40,7 +43,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments
+        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -56,7 +59,8 @@ struct ProjectDocument: Codable {
          consolidateDefinitions: [ConsolidateDefinition]? = nil,
          viewport: ViewportState? = nil,
          markerLanes: [MarkerLane]? = nil,
-         comments: [TimelineComment]? = nil) {
+         comments: [TimelineComment]? = nil,
+         fxLinks: [FXLink]? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -69,6 +73,7 @@ struct ProjectDocument: Codable {
         self.viewport = viewport
         self.markerLanes = markerLanes
         self.comments = comments
+        self.fxLinks = fxLinks
     }
 }
 
@@ -129,6 +134,10 @@ struct EditSnapshot {
     // unrelated gesture. Optional = the snapshots from before this field (in-memory only).
     var markerLanes: [MarkerLane]? = nil
     var comments: [TimelineComment]? = nil
+    // The FX links' registry: a bin's output section and definition are read from it when a chain
+    // is compiled, so an undo that restored the chains without it would leave the blocks playing
+    // the bin as it was AFTER the gesture. Optional = the snapshots from before this field.
+    var fxLinks: [FXLink]? = nil
 }
 
 // MARK: - Common types

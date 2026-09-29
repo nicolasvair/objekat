@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 16
+    static let formatVersion = 17
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -54,6 +54,18 @@ enum SessionSchema {
         "sends — sends towards an aux object: { auxID, levelDb, enabled }.",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
+        "  An entry with an `fxBlock` key is neither: it is the place an FX LINK (a bin of shared",
+        "  plugins) takes in the chain — { linkID, isDetached?, plugins, local? }. `plugins` are THIS",
+        "  object's own instances of the bin's plugins; each names the bin's definition plugin",
+        "  through its linkGroupID (detachedLinkGroupID once detached). A reader that does not know",
+        "  the key (a build from before format 17) cannot decode the entry: forward incompatibility.",
+        "fxLinks — the registry of FX LINKS: { id, name, colorIndex, plugins, isEnabled, gainDb, pan,",
+        "  muted }. plugins are the DEFINITION (leaves only, in the bin's order), whose ids the",
+        "  members' linkGroupID names. isEnabled is the bin's common on/off (off = every member's",
+        "  block is bypassed), gainDb/pan/muted its output section, an end-of-series gain stage.",
+        "  Editing the definition edits every ATTACHED member; a detached block (fxBlock.isDetached)",
+        "  keeps an independent copy of the chain and its own output section (fxBlock.local).",
+        "  Only the bins some block still refers to are written. Absent = none.",
         "",
         "automation — an object's curves, one entry per parameter: { param, points }.",
         "  param names the target: {type:volume|pan|chainInGain|chainOutGain},",

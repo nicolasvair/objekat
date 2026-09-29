@@ -55,8 +55,8 @@ extension EditViewModel {
 
     private static func collectPluginRefs(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
         for p in plugins {
-            if let rack = p.rack {
-                for v in rack.voices { collectPluginRefs(v, into: &out) }
+            if p.isContainer {
+                for v in p.childSeries { collectPluginRefs(v, into: &out) }
             } else {
                 out.append(p)
             }
@@ -200,6 +200,19 @@ extension EditViewModel {
                         // The effective gain (silence for muted branches) → the mute survives the recompile.
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
+            if let block = p.fxBlock {
+                // An FX link's block: its instances (already in the bin's order) + the bin's output
+                // section, which the engine unfolds into leaves and one ObjGain. The common on/off
+                // is folded into each leaf's own, so the engine has one flag per plugin to read.
+                let out = fxOutput(of: p)
+                return ["id":      p.id.uuidString,
+                        "kind":    "fxlink",
+                        "plugins": rackSpec(for: block.plugins.map { leaf in
+                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l }),
+                        "enabled": out.isEnabled,
+                        "gainDb":  Double(out.effectiveGainDb),
+                        "pan":     Double(out.pan)]
+            }
             var d: [String: Any] = [
                 "id":         p.id.uuidString,
                 "kind":       "plugin",
@@ -265,8 +278,8 @@ extension EditViewModel {
     static func pluginDisplayNames(_ ids: Set<UUID>, in plugins: [ObjectPlugin]) -> [String] {
         var out: [String] = []
         for p in plugins {
-            if let rack = p.rack {
-                for v in rack.voices { out += pluginDisplayNames(ids, in: v) }
+            if p.isContainer {
+                for v in p.childSeries { out += pluginDisplayNames(ids, in: v) }
             } else if ids.contains(p.id) {
                 out.append("\(p.name) [\(p.formatName)]")
             }
@@ -277,11 +290,7 @@ extension EditViewModel {
     /// Recursively removes (voices included) the plugins whose id is in `ids`.
     static func removingPlugins(_ ids: Set<UUID>, from plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.compactMap { p in
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { removingPlugins(ids, from: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { removingPlugins(ids, from: $0) } }
             return ids.contains(p.id) ? nil : p
         }
     }
@@ -457,6 +466,12 @@ extension EditViewModel {
 
     func removePlugin(objectID: UUID, pluginID: UUID) {
         guard chainPlugins(objectID) != nil, engine != nil else { return }
+        // An instance of an attached FX link is not removed on its own: the bin's DEFINITION loses
+        // the plugin, and every member with it.
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            fxRemovePlugin(linkID: def.linkID, definitionID: def.definitionID)
+            return
+        }
         pushUndo()
         // The touch listening RETAINS the plugin: leaving it armed would keep it alive after it has been
         // removed from the chain. And what was known of its parameters is worth nothing any more.
@@ -482,6 +497,11 @@ extension EditViewModel {
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }),
               let engine else { return }
         let newEnabled = !plug.isEnabled
+        // The bypass of an attached FX link's instance is the bin's: every member's instance follows.
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            fxSetPluginEnabled(linkID: def.linkID, definitionID: def.definitionID, enabled: newEnabled)
+            return
+        }
         pushUndo()
         engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: objectID.uuidString)
         updateChainPlugins(objectID) { p in p = Self.settingEnabled(pluginID, newEnabled, in: p) }
@@ -645,52 +665,75 @@ extension EditViewModel {
     /// (For a clipboard fragment whose original has gone, the backfill fails
     /// silently → the copy stays independent: there is nobody to link itself to.)
     func copiedPlugins(of object: SoundObject) -> [ObjectPlugin] {
-        // Recursive: it preserves the parallel blocks (a rack carrier clones its voices with
-        // new ids). Linking by default (the backfill) applies only to the first-level leaves.
-        func copyLeaf(_ p: ObjectPlugin, topLevel: Bool) -> ObjectPlugin {
+        // The states re-read from the engine, put back into the ORIGINAL's model in ONE write. Without
+        // it the source kept a stale `stateXML` — its setting lived only in the engine instance —
+        // and the first recompilation to come along (undo, regrouping, reloading) brought it back
+        // to its factory settings, while the copy, for its part, left with the right state.
+        var capturedStates: [(UUID, String)] = []
+        func liveState(_ p: ObjectPlugin) -> String? {
             let live = engine?.getPluginStateXML(p.id.uuidString)
-            let capturedXML = (live?.isEmpty == false) ? live : nil
-            var groupID = p.linkGroupID
-            let newGroup: UUID? = (topLevel && groupID == nil) ? UUID() : nil
-
-            // ONE write onto the ORIGINAL, for two reasons:
-            //  • LINKING BY DEFAULT (the group's backfill, see above);
-            //  • the state just re-read from the engine, put back into ITS model. Without this the
-            //    source kept a stale `stateXML` — its setting lived only in
-            //    the engine instance — and the first recompilation to come along (undo, regrouping,
-            //    reloading) brought it back to its factory settings, while the copy, for its part,
-            //    left with the right state.
-            if newGroup != nil || capturedXML != nil {
-                let written = update(id: object.id) { obj in
-                    if let newGroup {
-                        obj.plugins = Self.settingLinkGroup(p.id, newGroup, in: obj.plugins)
-                    }
-                    if let xml = capturedXML {
-                        obj.plugins = Self.settingStateXML(p.id, xml, in: obj.plugins)
-                    }
-                }
-                if written, let newGroup { groupID = newGroup }
+            let xml = (live?.isEmpty == false) ? live : nil
+            if let xml { capturedStates.append((p.id, xml)) }
+            return xml ?? p.stateXML
+        }
+        // A plugin that lives on its own (manual ⌘-link kept, or a voice of a parallel block).
+        // NOTHING is linked by default any more: an automatic copy of plain plugins joins an FX
+        // link (a bin) instead of writing a `linkGroupID`, @see copiedRun.
+        func copyLeaf(_ p: ObjectPlugin) -> ObjectPlugin {
+            ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
+                         identifier: p.identifier, formatName: p.formatName,
+                         isEnabled: p.isEnabled, stateXML: liveState(p),
+                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex)
+        }
+        /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
+        /// block gives a detached copy, with its own output section).
+        func copyBlock(_ p: ObjectPlugin, _ fb: FXLinkBlock) -> ObjectPlugin {
+            var nb = fb
+            nb.plugins = fb.plugins.map { inst in
+                var q = inst
+                q.id = UUID()
+                q.stateXML = liveState(inst)
+                return q
             }
-            return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
-                                identifier: p.identifier, formatName: p.formatName,
-                                isEnabled: p.isEnabled,
-                                stateXML: capturedXML ?? p.stateXML,
-                                linkGroupID: groupID, colorIndex: p.colorIndex)
+            var np = p
+            np.id = UUID()
+            np.fxBlock = nb
+            return np
         }
         func copySeries(_ plugins: [ObjectPlugin], topLevel: Bool) -> [ObjectPlugin] {
-            plugins.map { p in
-                if let rack = p.rack {
-                    return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
-                                        identifier: p.identifier, formatName: p.formatName,
-                                        isEnabled: p.isEnabled,
-                                        rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
-                                                         wetDb: rack.wetDb,
-                                                         voiceMutes: rack.voiceMutes))
+            var out: [ObjectPlugin] = []
+            var i = 0
+            while i < plugins.count {
+                let p = plugins[i]
+                if topLevel, Self.isFXLinkEligible(p) {
+                    var run: [ObjectPlugin] = []
+                    while i < plugins.count, Self.isFXLinkEligible(plugins[i]) { run.append(plugins[i]); i += 1 }
+                    out.append(copiedRun(run, of: object, state: liveState))
+                    continue
                 }
-                return copyLeaf(p, topLevel: topLevel)
+                i += 1
+                if let fb = p.fxBlock {
+                    out.append(copyBlock(p, fb))
+                } else if let rack = p.rack {
+                    out.append(ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
+                                            identifier: p.identifier, formatName: p.formatName,
+                                            isEnabled: p.isEnabled,
+                                            rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
+                                                             wetDb: rack.wetDb,
+                                                             voiceMutes: rack.voiceMutes)))
+                } else {
+                    out.append(copyLeaf(p))
+                }
+            }
+            return out
+        }
+        let copied = copySeries(object.plugins, topLevel: true)
+        if !capturedStates.isEmpty {
+            update(id: object.id) { obj in
+                for (id, xml) in capturedStates { obj.plugins = Self.settingStateXML(id, xml, in: obj.plugins) }
             }
         }
-        return copySeries(object.plugins, topLevel: true)
+        return copied
     }
 
     // MARK: - LINK between plugin instances
@@ -701,26 +744,57 @@ extension EditViewModel {
     struct LinkOverlayInfo {
         let sourceObjectID: UUID        // the clip whose editor is open (an emphasised halo)
         let memberObjectIDs: [UUID]     // the clips to highlight (the source included; >1 if linked)
-        let color: Color                // the identity colour OF THIS plugin (@see ObjectPlugin.color)
+        /// The colour of the link: the BIN's (`FXLink.color`) for a plugin held by an FX link's
+        /// block, whose members are the hosts sharing the bin; otherwise the identity colour OF
+        /// THIS plugin (@see ObjectPlugin.color), as the old manual ⌘-links always had.
+        let color: Color
+        /// The palette index behind `color` (the bin's, or the plugin's own) — readable by a script.
+        let colorIndex: Int
+        /// The bin the source plugin belongs to, nil for a plain or ⌘-linked plugin.
+        let fxLinkID: UUID?
     }
 
+    /// The overlay of the plugin whose editor is open.
     var linkOverlayInfo: LinkOverlayInfo? {
         guard let pid = openEditorPluginID else { return nil }
+        return linkOverlayInfo(forPlugin: pid)
+    }
+
+    /// The overlay a plugin would arm while its editor is open. A plugin held by an FX link's block
+    /// takes the BIN's colour and joins the hosts that share the bin (attached blocks: a detached
+    /// block has left the group, so it stands alone); a ⌘-linked plugin keeps its own colour and
+    /// its link group's clips.
+    func linkOverlayInfo(forPlugin pid: UUID) -> LinkOverlayInfo? {
         let refs = allPluginRefs()
         guard let src = refs.first(where: { $0.plugin.id == pid }) else { return nil }
+        if let block = Self.enclosingFXBlock(of: pid, in: chainPlugins(src.objectID) ?? []),
+           let fb = block.fxBlock {
+            let link = fxLink(fb.linkID)
+            let idx = link?.colorIndex ?? src.plugin.colorIndex
+            var members: [UUID] = [src.objectID]
+            if !fb.isDetached {
+                for m in fxLinkAttachedMembers(fb.linkID) where !members.contains(m.hostID) {
+                    members.append(m.hostID)
+                }
+            }
+            return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
+                                   color: ObjekatPalette.plugin(idx), colorIndex: idx, fxLinkID: fb.linkID)
+        }
         let members: [UUID]
         if let gid = src.plugin.linkGroupID {
             members = Array(Set(refs.filter { $0.plugin.linkGroupID == gid }.map { $0.objectID }))
         } else {
             members = [src.objectID]   // not linked → highlight the single edited clip
         }
-        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members, color: src.plugin.color)
+        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
+                               color: src.plugin.color, colorIndex: src.plugin.colorIndex, fxLinkID: nil)
     }
 
     /// (Re)establishes on the engine side every link the model describes. Idempotent.
     /// Called at the end of `syncPlugins` → covers project loading, paste, split, groups.
     func rewireLinkGroups() {
         guard let engine else { return }
+        adoptPendingFXSources()   // the originals of an automatic FX link join their bin first
         func walk(_ arr: [SoundObject]) {
             for obj in arr {
                 // Instruments included: they live outside the FX chain (`instruments`) but
@@ -732,6 +806,15 @@ extension EditViewModel {
             }
         }
         walk(items)
+        // The buses' chains: an FX link can sit on one, and its instances are mirrors like any
+        // other. (The legacy manual link never reached them — left as it was.)
+        for s in stems {
+            for p in Self.flattenLeaves(s.plugins) {
+                if let g = p.linkGroupID, Self.enclosingFXBlock(of: p.id, in: s.plugins) != nil {
+                    engine.setPluginLinkGroup(p.id.uuidString, groupID: g.uuidString)
+                }
+            }
+        }
     }
 
     /// Every (objectID, plugin) instance in the project, flattened (recursively).
@@ -798,7 +881,8 @@ extension EditViewModel {
     /// two stay reunitable with each other.
     func unlinkPlugin(objectID: UUID, pluginID: UUID) {
         guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.linkGroupID else { return }
+              let gid = plug.linkGroupID,
+              fxDefinition(ofInstance: pluginID, on: objectID) == nil else { return }   // a bin's member detaches through its block
         pushUndo()
         detachLink(objectID: objectID, pluginID: pluginID, group: gid)
         let remaining = allPluginRefs().filter { $0.plugin.linkGroupID == gid }
@@ -813,7 +897,8 @@ extension EditViewModel {
     /// crush what the members who stayed have set in the meantime.
     func relinkPlugin(objectID: UUID, pluginID: UUID) {
         guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.detachedLinkGroupID else { return }
+              let gid = plug.detachedLinkGroupID,
+              !isInFXBlock(pluginID, of: objectID) else { return }   // a bin's copy rejoins through its block
         pushUndo()
         setLinkGroups(objectID: objectID, pluginID: pluginID, link: gid, detached: nil)
         engine?.relinkPluginAdoptingGroup(pluginID.uuidString, groupID: gid.uuidString)
@@ -855,10 +940,13 @@ extension EditViewModel {
     ///   caller keeps the original, immediate behaviour (default true).
     func syncPlugins(_ object: SoundObject, rewireLinks: Bool = true) {
         guard engine != nil else { return }
+        // A source object the automatic FX link creation promised to a bin, compiled BY VALUE here:
+        // its plain plugins become the bin's block first (@see EditViewModel+FXLinkAuto).
+        let chain = fxAdopting(object.plugins, for: object.id) ?? object.plugins
         // Recompiles the rack from the model (project loading, paste, split, groups).
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
         // applied on the compiler side (setEnabled per leaf during the reconciliation).
-        compileRack(objectID: object.id, plugins: object.plugins,
+        compileRack(objectID: object.id, plugins: chain,
                     chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
         if rewireLinks { rewireLinkGroups() }

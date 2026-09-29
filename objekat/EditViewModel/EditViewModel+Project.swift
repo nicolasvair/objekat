@@ -239,7 +239,15 @@ extension EditViewModel {
                         consolidateDefinitions: defs.isEmpty ? nil : defs,
                         viewport: currentViewport,
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
-                        comments: comments.isEmpty ? nil : comments)
+                        comments: comments.isEmpty ? nil : comments,
+                        fxLinks: fxLinksDoc(for: items))
+    }
+
+    /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
+    /// (`stems`) count as referrers too, so a bin used on a bus only is not thrown away.
+    private func fxLinksDoc(for items: [SoundObject]) -> [FXLink]? {
+        let links = fxLinksForPersistence(items: items, stems: stems)
+        return links.isEmpty ? nil : links
     }
 
     /// Serialises the current session (with refreshed plugin states) into JSON. The paths of the
@@ -321,6 +329,8 @@ extension EditViewModel {
         undoStack = []
         redoStack = []
         consolidateDefinitions = [:]
+        fxLinks = []
+        clearPendingFXSources()
         markerLanes = []
         comments = []
         consolidateEditStack.removeAll()
@@ -552,8 +562,8 @@ extension EditViewModel {
     private func capturingPluginStates(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { plug in
             var p = plug
-            if let rack = plug.rack {
-                p.rack?.voices = rack.voices.map { capturingPluginStates($0) }
+            if plug.isContainer {
+                p = plug.mappingChildSeries { capturingPluginStates($0) }
             } else {
                 pluginStateCaptureCount += 1
                 if let xml = engine?.getPluginStateXML(plug.id.uuidString), !xml.isEmpty {

@@ -22,6 +22,12 @@ enum SynopticLayout {
     static let scopePad: CGFloat = 14      // the inner margin of a parallel's backing area
     static let plusW: CGFloat = 20         // the diameter of a '+' zone
     static let plusGap: CGFloat = 12       // the space before the '+' zone at the end of a series
+    // An FX link's block: a coloured rounded rectangle round its series, a header band above it (colour
+    // dot · name · on/off) and a footer band under it (mute · volume · pan). The wire runs through both.
+    static let fxHeaderH: CGFloat = 26
+    static let fxFooterH: CGFloat = 32
+    static let fxPad: CGFloat = 10         // the inner margin on each side of the block's series
+    static let fxMinW: CGFloat = 176       // wide enough for the footer's three controls
     static let gainBandH: CGFloat = 30     // the band reserved for the mute plus end-of-branch dB gain of a parallel branch (under the branches)
 
     /// A card's width: wide enough for its whole name and its link badge, from `cardW` (the old
@@ -31,7 +37,7 @@ enum SynopticLayout {
     /// paddings, ✕, and the badge when there is one). @see SynopticCardView.
     static func cardWidth(for p: SynopticPlugin) -> CGFloat {
         let nameW = ceil((p.name as NSString).size(withAttributes: [.font: cardNameFont]).width)
-        let hasBadge = p.isLinked || p.isLinkDetached
+        let hasBadge = p.showsLinkBadge
         // on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack so the tail never ellipsises
         let chrome: CGFloat = 26 + 16 + 15 + (hasBadge ? 24 : 0) + 4
         return min(audioZoneW, max(cardW, nameW + chrome))
@@ -100,6 +106,15 @@ enum SynopticLayout {
         var id: String { "\(blockID.uuidString):\(voiceIndex)" }
     }
 
+    /// One FX link's block, as laid: its frame, and where its header and footer controls sit.
+    struct FXBlockPlacement: Identifiable {
+        var id: UUID { link.blockID }
+        let link: SynopticFXLink
+        let rect: CGRect
+        let headerCenter: CGPoint
+        let footerCenter: CGPoint
+    }
+
     struct Placement {
         var size: CGSize
         var entry: CGPoint       // the anchor point of the incoming cable (top)
@@ -111,17 +126,31 @@ enum SynopticLayout {
         var inserts: [InsertZone] = []
         var cableDrops: [CableDropZone] = []
         var voiceGains: [VoiceGain] = []
+        var fxBlocks: [FXBlockPlacement] = []
 
         mutating func absorb(_ o: Placement) {
             cards += o.cards; cables += o.cables; dots += o.dots
             scopes += o.scopes; inserts += o.inserts
             cableDrops += o.cableDrops; voiceGains += o.voiceGains
+            fxBlocks += o.fxBlocks
         }
     }
 
     // MARK: Measuring (size alone, to centre before placing)
 
+    /// The series of a bin's block, WITHOUT the frame (the inner content the frame is laid round).
+    private static func bare(_ node: SynopticNode) -> SynopticNode {
+        var n = node
+        n.fxLink = nil
+        return n
+    }
+
     static func measure(_ node: SynopticNode) -> CGSize {
+        if node.fxLink != nil {
+            let inner = measure(bare(node))
+            return CGSize(width: max(fxMinW, inner.width + 2 * fxPad),
+                          height: fxHeaderH + inner.height + fxFooterH)
+        }
         switch node.kind {
         case .plugin(let p):
             return CGSize(width: cardWidth(for: p), height: cardH)
@@ -154,6 +183,27 @@ enum SynopticLayout {
     // MARK: Placing (absolute coordinates)
 
     static func place(_ node: SynopticNode, at origin: CGPoint, depth: Int = 0) -> Placement {
+        if let fx = node.fxLink {
+            let inner = bare(node)
+            let innerSize = measure(inner)
+            let total = measure(node)
+            let cx = origin.x + total.width / 2
+            let ipl = place(inner, at: CGPoint(x: origin.x + (total.width - innerSize.width) / 2,
+                                               y: origin.y + fxHeaderH), depth: depth + 1)
+            var pl = Placement(size: total,
+                               entry: CGPoint(x: cx, y: origin.y),
+                               exit: CGPoint(x: cx, y: origin.y + total.height))
+            // The wire runs through the header and the footer (their controls are drawn over it).
+            pl.cables.append(Cable(from: pl.entry, to: ipl.entry, style: .connector))
+            pl.cables.append(Cable(from: ipl.exit, to: pl.exit, style: .connector))
+            pl.fxBlocks.append(FXBlockPlacement(
+                link: fx,
+                rect: CGRect(origin: origin, size: total),
+                headerCenter: CGPoint(x: cx, y: origin.y + fxHeaderH / 2),
+                footerCenter: CGPoint(x: cx, y: origin.y + total.height - fxFooterH / 2)))
+            pl.absorb(ipl)
+            return pl
+        }
         switch node.kind {
 
         case .plugin(let p):

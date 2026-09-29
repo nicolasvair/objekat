@@ -156,6 +156,13 @@ final class EditViewModel {
     /// The project's consolidated registry: an instance (`SoundObject.consolidateID`)
     /// resolves its content through this UID. See EditViewModel+Consolidate.
     var consolidateDefinitions: [UUID: ConsolidateDefinition] = [:]
+    /// The project's FX links (bins of shared plugins). A chain's `fxBlock` entry names its bin
+    /// through `linkID`; the definition, the common on/off and the output section live HERE.
+    /// See `FXLink` and EditViewModel+FXLink.
+    var fxLinks: [FXLink] = []
+    /// What `copiedPlugins` promised for the plain plugins of an object it copied: to be adopted into
+    /// their bin by the end of the gesture (@see EditViewModel+FXLinkAuto). Transient, never saved.
+    @ObservationIgnored var fxPendingSources: [UUID: [FXPendingSource]] = [:]
     /// The definitions whose AUTOMATIC re-bake (a transitive cascade after a dependency has
     /// changed) is UNDER WAY in the background. Drives a "recomputing" indicator on their
     /// instances, replacing the manual "Refresh" action. See

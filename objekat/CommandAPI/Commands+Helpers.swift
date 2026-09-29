@@ -144,10 +144,19 @@ extension CommandAdapters {
             "format": .string(plugin.formatName),
             "enabled": .bool(plugin.isEnabled),
             "linked": .bool(plugin.isLinked),
+            "color_index": .int(plugin.colorIndex),
         ]
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).
         if plugin.isRack { payload["is_rack"] = .bool(true) }
+        // An FX link's block is not a plugin either: its instances are listed under `plugins`, and
+        // `plugin.set_param` & co. address THEM (they are ordinary instances, mirrors of the bin).
+        if let block = plugin.fxBlock {
+            payload["is_fx_block"] = .bool(true)
+            payload["link"] = .string(block.linkID.uuidString)
+            payload["detached"] = .bool(block.isDetached)
+            payload["plugins"] = .array(block.plugins.map(pluginPayload))
+        }
         if let group = plugin.linkGroupID { payload["link_group"] = .string(group.uuidString) }
         return .object(payload)
     }

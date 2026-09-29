@@ -170,6 +170,8 @@ extension EditViewModel {
     /// stemID/auxID/consolidateID corruption this reset exists to prevent.
     private func performStructureSetup(_ doc: ProjectDocument, preservingClipboard: Bool = false) {
         consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
+        fxLinks = doc.fxLinks ?? []
+        clearPendingFXSources()
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
         consolidateEditStack.removeAll()

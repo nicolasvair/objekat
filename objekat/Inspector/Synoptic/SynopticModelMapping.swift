@@ -12,11 +12,16 @@ import SwiftUI
 enum SeriesLocation: Hashable {
     case root
     case voice(blockID: UUID, voiceIndex: Int)
+    /// The single series of an FX link's block (`ObjectPlugin.fxBlock`): what a hand drops into is
+    /// the bin's DEFINITION, so the gestures aimed here are redirected to the bin
+    /// (@see EditViewModel+FXLink).
+    case block(blockID: UUID)
 
     var key: String {
         switch self {
         case .root:                       return "root"
         case .voice(let b, let i):        return "voice-\(b.uuidString)-\(i)"
+        case .block(let b):               return "block-\(b.uuidString)"
         }
     }
 }
@@ -26,18 +31,20 @@ enum SynopticMapping {
     /// `rack` block) plus the `seriesID → SeriesLocation` table that lets the insertion actions
     /// find the right series again. The series/branch ids are regenerated on every build: the
     /// action closures capture the table from the SAME build, so it is consistent.
-    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:])
+    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:],
+                      fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)? = nil)
         -> (node: SynopticNode, locations: [UUID: SeriesLocation]) {
         var locations: [UUID: SeriesLocation] = [:]
         let node = buildSeries(plugins, seriesID: objectID, location: .root,
-                               locations: &locations, levels: levels)
+                               locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
         return (node, locations)
     }
 
     private static func buildSeries(_ plugins: [ObjectPlugin], seriesID: UUID,
                                     location: SeriesLocation,
                                     locations: inout [UUID: SeriesLocation],
-                                    levels: [UUID: Double]) -> SynopticNode {
+                                    levels: [UUID: Double],
+                                    fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)?) -> SynopticNode {
         locations[seriesID] = location
         let children: [SynopticNode] = plugins.map { p in
             if let rack = p.rack {
@@ -46,12 +53,33 @@ enum SynopticMapping {
                 let voices: [SynopticNode] = rack.voices.enumerated().map { vi, voice in
                     var vnode = buildSeries(voice, seriesID: UUID(),
                                             location: .voice(blockID: p.id, voiceIndex: vi),
-                                            locations: &locations, levels: levels)
+                                            locations: &locations, levels: levels,
+                                            fxLinkInfo: fxLinkInfo)
                     vnode.voiceGainDb = gains[vi]   // the end-of-branch dB gain → a UI control
                     vnode.voiceMuted  = mutes[vi]   // the branch's mute → a UI button
                     return vnode
                 }
                 return SynopticNode(id: p.id, kind: .parallel(voices))
+            }
+            if let block = p.fxBlock {
+                // A bin's block: a series of its instances, framed and controlled as ONE thing.
+                var node = buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
+                                       locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
+                node.fxLink = fxLinkInfo?(p)
+                // The block carries the link and the common on/off: its cards show no badge of their
+                // own, and are drawn greyed (their own on/off untouched) while the bin is off.
+                let greyed = node.fxLink.map { !$0.isEnabled } ?? false
+                if case .series(let kids) = node.kind {
+                    node.kind = .series(kids.map { kid in
+                        guard case .plugin(var sp) = kid.kind else { return kid }
+                        sp.inFXBlock = true
+                        sp.greyedByBlock = greyed
+                        var k = kid
+                        k.kind = .plugin(sp)
+                        return k
+                    })
+                }
+                return node
             }
             return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0)))
         }
@@ -78,7 +106,7 @@ extension EditViewModel {
 
     static func flattenLeaves(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.flatMap { p -> [ObjectPlugin] in
-            if let rack = p.rack { return rack.voices.flatMap { flattenLeaves($0) } }
+            if p.isContainer { return p.childSeries.flatMap { flattenLeaves($0) } }
             return [p]
         }
     }
@@ -92,6 +120,21 @@ extension EditViewModel {
     func synopticInsert(objectID: UUID, available: AvailablePlugin,
                         into location: SeriesLocation, at index: Int) {
         guard let plugins = chainPlugins(objectID) else { return }
+        // Dropped into an ATTACHED block, a new plugin joins the bin's DEFINITION (every member gets
+        // an instance); the editor opens on this host's own.
+        if case .block(let blockID) = location,
+           let block = Self.findBlock(blockID, in: plugins), let fb = block.fxBlock, !fb.isDetached {
+            let template = makeObjectPlugin(available)
+            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, at: index) else {
+                availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
+                return
+            }
+            if let inst = chainPlugins(objectID).flatMap({ Self.flattenLeaves($0).first { $0.linkGroupID == defID } }) {
+                if inst.isBuiltIn { openBuiltInPluginEditor(plug: inst) }
+                else { openPluginEditor(objectID: objectID, pluginID: inst.id) }
+            }
+            return
+        }
         let newPlug = makeObjectPlugin(available)
         pushUndo()
         updateChainPlugins(objectID) { $0 = Self.inserting(newPlug, into: location, at: index, plugins: plugins) }
@@ -109,7 +152,8 @@ extension EditViewModel {
     /// the end plus a '+' to add a plugin to it). No picker. A plugin → a 2-branch block (the
     /// element plus an empty branch); an existing block → one more empty branch.
     func synopticBranch(objectID: UUID, elementID: UUID) {
-        guard let plugins = chainPlugins(objectID) else { return }
+        guard let plugins = chainPlugins(objectID),
+              fxDefinition(ofInstance: elementID, on: objectID) == nil else { return }   // a bin's instance is not put in parallel on its own
         pushUndo()
         updateChainPlugins(objectID) { $0 = Self.branchingEmpty(plugins, elementID: elementID) }
         compileRack(objectID: objectID)
@@ -130,9 +174,28 @@ extension EditViewModel {
     /// index (the same branch, another branch, or the root). The engine instance is preserved
     /// (the same id, reused by the reconciliation). A no-op if the plugin is not in the object.
     func synopticReorder(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
+        // A bin's BLOCK dragged by its header moves as one piece, instances and all.
+        if let plugins = chainPlugins(objectID), Self.findBlock(pluginID, in: plugins) != nil {
+            moveFXBlock(hostID: objectID, blockID: pluginID, to: location, at: index)
+            return
+        }
         guard let plugins = chainPlugins(objectID),
               let (srcLoc, srcIdx) = Self.locate(pluginID, in: plugins),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+        // Inside an ATTACHED block the order is the bin's: reordering there reorders the definition,
+        // for every member; and an instance does not leave its block, nor does a plugin enter one
+        // from outside by this gesture (the drop of a plugin ON a bin adds to the definition — see
+        // fxAddPlugin — and belongs to the timeline drag, not to a reorder).
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            guard case .block(let dst) = location,
+                  let block = Self.findBlock(dst, in: plugins), block.fxBlock?.linkID == def.linkID else { return }
+            var target = index
+            if srcLoc == location && srcIdx < index { target = index - 1 }
+            fxMovePlugin(linkID: def.linkID, definitionID: def.definitionID, to: target)
+            return
+        }
+        if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
+           block.fxBlock?.isDetached == false { return }
         // The same series: removing upstream shifts the following indices → adjust the target.
         var target = index
         if srcLoc == location && srcIdx < index { target = index - 1 }
@@ -150,6 +213,9 @@ extension EditViewModel {
     func synopticCopyPlugin(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
         guard let plugins = chainPlugins(objectID),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+        // A copy does not land INSIDE an attached block: the instances are the bin's to decide.
+        if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
+           block.fxBlock?.isDetached == false { return }
         let live = engine?.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
@@ -188,6 +254,10 @@ extension EditViewModel {
                                           location: .voice(blockID: p.id, voiceIndex: vi)) {
                         return found
                     }
+                }
+            } else if let block = p.fxBlock {
+                if let found = locate(pluginID, in: block.plugins, location: .block(blockID: p.id)) {
+                    return found
                 }
             }
         }
@@ -238,11 +308,7 @@ extension EditViewModel {
                 }
                 return rackCarrier(voices: [[p], []])        // a plugin → a 2-branch block (a real one and an empty one)
             }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { branchingEmpty($0, elementID: elementID) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { branchingEmpty($0, elementID: elementID) } }
             return p
         }
     }
@@ -258,11 +324,7 @@ extension EditViewModel {
                 if rack.voices.count < 2 { return rack.voices.first ?? [] }
                 var np = p; np.rack = rack; return [np]
             }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { removingVoice(blockID, vi, in: $0) }
-                return [np]
-            }
+            if p.isContainer { return [p.mappingChildSeries { removingVoice(blockID, vi, in: $0) }] }
             return [p]
         }
     }
@@ -282,10 +344,19 @@ extension EditViewModel {
                     rack.voices[vi] = voice
                     var np = p; np.rack = rack; return np
                 }
-                if let rack = p.rack {
-                    var np = p
-                    np.rack?.voices = rack.voices.map { inserting(newPlug, into: location, at: index, plugins: $0) }
-                    return np
+                if p.isContainer {
+                    return p.mappingChildSeries { inserting(newPlug, into: location, at: index, plugins: $0) }
+                }
+                return p
+            }
+        case .block(let blockID):
+            return plugins.map { p in
+                if p.id == blockID, var block = p.fxBlock {
+                    block.plugins.insert(newPlug, at: min(max(0, index), block.plugins.count))
+                    var np = p; np.fxBlock = block; return np
+                }
+                if p.isContainer {
+                    return p.mappingChildSeries { inserting(newPlug, into: location, at: index, plugins: $0) }
                 }
                 return p
             }
@@ -296,11 +367,7 @@ extension EditViewModel {
     static func settingEnabled(_ id: UUID, _ enabled: Bool, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { p in
             if p.id == id { var np = p; np.isEnabled = enabled; return np }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingEnabled(id, enabled, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingEnabled(id, enabled, in: $0) } }
             return p
         }
     }
@@ -328,11 +395,7 @@ extension EditViewModel {
                 rack.wetDb = w
                 var np = p; np.rack = rack; return np
             }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingVoiceGain(blockID, vi, dB, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingVoiceGain(blockID, vi, dB, in: $0) } }
             return p
         }
     }
@@ -364,11 +427,7 @@ extension EditViewModel {
                 rack.voiceMutes = m
                 var np = p; np.rack = rack; return np
             }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingVoiceMute(blockID, vi, muted, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingVoiceMute(blockID, vi, muted, in: $0) } }
             return p
         }
     }
@@ -380,8 +439,8 @@ extension EditViewModel {
                 let eff = effectiveWetDb(rack)
                 return (vi >= 0 && vi < eff.count) ? eff[vi] : nil
             }
-            if let rack = p.rack {
-                for voice in rack.voices {
+            if p.isContainer {
+                for voice in p.childSeries {
                     if let f = effectiveVoiceGain(blockID, vi, in: voice) { return f }
                 }
             }
@@ -393,11 +452,7 @@ extension EditViewModel {
     static func settingLinkGroup(_ id: UUID, _ gid: UUID?, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { p in
             if p.id == id { var np = p; np.linkGroupID = gid; return np }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingLinkGroup(id, gid, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingLinkGroup(id, gid, in: $0) } }
             return p
         }
     }
@@ -406,11 +461,7 @@ extension EditViewModel {
     static func settingDetachedLinkGroup(_ id: UUID, _ gid: UUID?, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { p in
             if p.id == id { var np = p; np.detachedLinkGroupID = gid; return np }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingDetachedLinkGroup(id, gid, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingDetachedLinkGroup(id, gid, in: $0) } }
             return p
         }
     }
@@ -419,11 +470,7 @@ extension EditViewModel {
     static func settingStateXML(_ id: UUID, _ xml: String, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { p in
             if p.id == id { var np = p; np.stateXML = xml; return np }
-            if let rack = p.rack {
-                var np = p
-                np.rack?.voices = rack.voices.map { settingStateXML(id, xml, in: $0) }
-                return np
-            }
+            if p.isContainer { return p.mappingChildSeries { settingStateXML(id, xml, in: $0) } }
             return p
         }
     }
@@ -432,6 +479,8 @@ extension EditViewModel {
     /// deleted, one with 1 branch is inlined into the parent series. Recursive.
     static func simplifyTree(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.flatMap { p -> [ObjectPlugin] in
+            // A bin's block is not a rack to fold back: it stays whatever it holds (its content is
+            // the bin's definition, and an emptied bin is the bin's business, not the tree's).
             guard let rack = p.rack else { return [p] }
             let gains = paddedWetDb(rack.wetDb, count: rack.voices.count)
             let mutes = paddedMutes(rack.voiceMutes, count: rack.voices.count)

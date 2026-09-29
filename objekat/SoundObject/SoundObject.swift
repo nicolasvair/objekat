@@ -104,7 +104,7 @@ enum ObjectColorPalette {
 // MARK: - A plugin in an object's rack
 
 struct ObjectPlugin: Identifiable, Codable, Equatable {
-    let id: UUID
+    var id: UUID
     var name: String
     var manufacturer: String
     var identifier: String
@@ -126,6 +126,9 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// encodes all the internal nesting (tracktion racks do not nest:
     /// `RackInstance::canBeAddedToRack()==false`). See [[synoptic-plugin-view-design]].
     var rack: PluginRack? = nil
+    /// Non-nil ⇒ this entry is NOT a plugin but an FX LINK's BLOCK: this host's instances of a
+    /// shared bin of plugins (@see FXLink). Mutually exclusive with `rack`.
+    var fxBlock: FXLinkBlock? = nil
     /// THIS instance's identity colour, drawn at random on creation (an index into
     /// `ObjekatPalette.plugins`). It serves to recognise at a glance which card in the signal
     /// view goes with which plugin — its on/off, halo and link badge all derive from it
@@ -138,6 +141,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
          isEnabled: Bool = true, stateXML: String? = nil,
          linkGroupID: UUID? = nil, detachedLinkGroupID: UUID? = nil,
          rack: PluginRack? = nil,
+         fxBlock: FXLinkBlock? = nil,
          colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count)) {
         self.id = id
         self.name = name
@@ -149,6 +153,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.linkGroupID = linkGroupID
         self.detachedLinkGroupID = detachedLinkGroupID
         self.rack = rack
+        self.fxBlock = fxBlock
         self.colorIndex = colorIndex
     }
 
@@ -175,7 +180,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, colorIndex
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -189,6 +194,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         linkGroupID = try c.decodeIfPresent(UUID.self, forKey: .linkGroupID)
         detachedLinkGroupID = try c.decodeIfPresent(UUID.self, forKey: .detachedLinkGroupID)
         rack = try c.decodeIfPresent(PluginRack.self, forKey: .rack)
+        fxBlock = try c.decodeIfPresent(FXLinkBlock.self, forKey: .fxBlock)
         // Backwards compatibility: projects earlier than this identity colour → a random value,
         // stable from the first save that follows.
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
@@ -856,8 +862,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// Looks a plugin up by id, the branches of parallel blocks included.
     static func containsPlugin(_ key: UUID, in plugins: [ObjectPlugin]) -> Bool {
         for p in plugins {
-            if let rack = p.rack {
-                if rack.voices.contains(where: { containsPlugin(key, in: $0) }) { return true }
+            if p.isContainer {
+                if p.childSeries.contains(where: { containsPlugin(key, in: $0) }) { return true }
             } else if p.id == key {
                 return true
             }
@@ -1039,7 +1045,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// A chain's plugin leaves, the branches of parallel blocks flattened in series order.
     static func pluginLeaves(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.flatMap { p -> [ObjectPlugin] in
-            if let rack = p.rack { return rack.voices.flatMap { pluginLeaves($0) } }
+            if p.isContainer { return p.childSeries.flatMap { pluginLeaves($0) } }
             return [p]
         }
     }

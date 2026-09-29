@@ -43,6 +43,9 @@ extension EditViewModel {
         for def in result.newConsolidateDefinitions {
             consolidateDefinitions[def.id] = def
         }
+        // The pasted blocks' bins are NEW ones (never the source project's ids): registered here,
+        // before the chains that name them are compiled.
+        fxLinks += result.newFXLinks
         for (id, folder) in result.consolidateOriginFolders {
             consolidateOriginFolders[id] = folder
         }
