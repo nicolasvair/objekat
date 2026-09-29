@@ -66,11 +66,14 @@ enum SynopticMapping {
                 var node = buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
                                        locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
                 node.fxLink = fxLinkInfo?(p)
-                // The block carries the link: its cards show no badge of their own.
+                // The block carries the link and the common on/off: its cards show no badge of their
+                // own, and are drawn greyed (their own on/off untouched) while the bin is off.
+                let greyed = node.fxLink.map { !$0.isEnabled } ?? false
                 if case .series(let kids) = node.kind {
                     node.kind = .series(kids.map { kid in
                         guard case .plugin(var sp) = kid.kind else { return kid }
                         sp.inFXBlock = true
+                        sp.greyedByBlock = greyed
                         var k = kid
                         k.kind = .plugin(sp)
                         return k

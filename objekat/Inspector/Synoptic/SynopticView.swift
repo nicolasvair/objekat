@@ -1040,6 +1040,12 @@ struct SynopticCardView: View {
         .shadow(color: plugin.showsLinkedStyle ? plugin.color.opacity(0.6) : .clear,
                 radius: plugin.showsLinkedStyle ? 5 : 0)
         .opacity(plugin.isEnabled ? 1 : 0.5)
+        // A card of a bin that is switched OFF: its own state (on / off) and its identity colours
+        // stay, but the whole card is greyed and dimmed — the look of a state inherited from a
+        // disabled container. A plugin that is itself off is already at half opacity with a grey
+        // button, so the two remain tellable apart: on-and-greyed keeps a filled button.
+        .saturation(plugin.greyedByBlock ? 0.25 : 1)
+        .opacity(plugin.greyedByBlock ? 0.6 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture { onSelect() }
         // Highlighted when a plugin card hovers this card (the axis accepts the drop).

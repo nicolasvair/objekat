@@ -413,7 +413,8 @@ extension CommandRegistry {
 
         register("synoptic.cards",
                  summary: "How the signal view draws each plugin card of a host, in reading order: "
-                        + "own on/off, link badge, linked emphasis, and whether it sits in an FX link's block.",
+                        + "own on/off, link badge, linked emphasis, whether it sits in an FX link's block, and "
+                        + "whether it is drawn greyed (its bin is off).",
                  params: [ParamSpec("host", "uuid", "The object or bus.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let host = try p.uuid("host")
@@ -427,7 +428,8 @@ extension CommandRegistry {
                                          "enabled": .bool(c.isEnabled),
                                          "in_fx_block": .bool(c.inFXBlock),
                                          "link_badge": .bool(c.showsLinkBadge),
-                                         "linked_style": .bool(c.showsLinkedStyle)])
+                                         "linked_style": .bool(c.showsLinkedStyle),
+                                         "greyed": .bool(c.greyedByBlock)])
                             })])
         }
     }

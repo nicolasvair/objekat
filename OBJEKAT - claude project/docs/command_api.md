@@ -679,6 +679,9 @@ knowing before driving one:
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
   block's frame and header carry the link); a legacy ⌘-linked plugin outside any bin keeps both.
+  `greyed` is true for the cards of a block whose common on/off is OFF (the bin's while attached, the
+  block's own while detached): the card keeps its own `enabled` and its identity colours and is drawn
+  greyed — the plugin's own bypass is never touched.
 - `fxlink.list` lists only the bins some block still refers to (an orphan is what a deleted object
   leaves for the undo). Every answer carries `members[]` with `host`, `is_stem`, `block`, `detached`,
   `instances` and, when detached, `local`.

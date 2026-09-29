@@ -61,6 +61,10 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// True for an instance held by a bin's block (an FX link): the BLOCK carries the link (its frame,
     /// its header's badge), so the card shows no link badge of its own and no linked emphasis.
     var inFXBlock: Bool = false
+    /// True while the bin's common on/off is OFF: the card keeps its own on/off state and its
+    /// identity colours but is drawn greyed, like any state inherited from a disabled container.
+    /// It never touches the plugin's own bypass (`isEnabled`).
+    var greyedByBlock: Bool = false
 
     /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
     var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
@@ -71,7 +75,7 @@ struct SynopticPlugin: Identifiable, Equatable {
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
          isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
-         inFXBlock: Bool = false) {
+         inFXBlock: Bool = false, greyedByBlock: Bool = false) {
         self.id = id
         self.name = name
         self.category = category
@@ -83,6 +87,7 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.isLinkDetached = isLinkDetached
         self.color = color
         self.inFXBlock = inFXBlock
+        self.greyedByBlock = greyedByBlock
     }
 
     /// A generic plugin inserted by a '+' in phase A (in phase B, the '+' will open

@@ -559,6 +559,42 @@ try:
               all(not c["link_badge"] and c["in_fx_block"] for c in cards(SB)))
         cmd("fxlink.reattach", host=SB, link=SL); idle()
 
+        # ── a bin that is OFF: the cards keep their own on/off, drawn GREYED ─────
+        d_rev_s = defs(SL)[1]
+        cmd("fxlink.set_plugin_enabled", link=SL, plugin=d_rev_s, enabled=False)      # one plugin off on its own
+        check("nothing is greyed while the bin is on",
+              all(not c["greyed"] for c in cards(SA)) and all(not c["greyed"] for c in cards(SB)))
+        cmd("fxlink.set_enabled", link=SL, enabled=False); idle()
+        grey = [c for c in cards(SA) if c["in_fx_block"]]
+        check("the bin off greys every card of its block",
+              len(grey) == 2 and all(c["greyed"] for c in grey), str(grey))
+        check("...each keeping its OWN on/off (the on plugin on, the individually-off one off)",
+              [c["enabled"] for c in grey] == [True, False], str(grey))
+        check("an individually-off plugin stays tellable from an on one greyed by the bin",
+              (grey[0]["enabled"], grey[0]["greyed"]) == (True, True)
+              and (grey[1]["enabled"], grey[1]["greyed"]) == (False, True))
+        check("...the plugin's own bypass in the model is untouched by the bin's off",
+              [p["enabled"] for p in block_of(SA)["plugins"]] == [True, False])
+        check("...the plugin outside the bin is not greyed",
+              [c["greyed"] for c in cards(SA) if not c["in_fx_block"]] == [False])
+        check("...every member is greyed", all(c["greyed"] for c in cards(SB)))
+        cmd("fxlink.detach", host=SB, link=SL); idle()
+        check("a block detached while the bin is off keeps the state of that moment (greyed)",
+              all(c["greyed"] for c in cards(SB)))
+        cmd("fxlink.set_local_output", host=SB, link=SL, enabled=True); idle()
+        check("...then follows its OWN on/off, not the bin's (ungreyed while the bin stays off)",
+              all(not c["greyed"] for c in cards(SB)) and all(c["greyed"] for c in cards(SA) if c["in_fx_block"]))
+        cmd("fxlink.set_local_output", host=SB, link=SL, enabled=False); idle()
+        check("...and is greyed by its own off", all(c["greyed"] for c in cards(SB)))
+        cmd("fxlink.set_local_output", host=SB, link=SL, enabled=True)
+        cmd("fxlink.reattach", host=SB, link=SL)
+        cmd("fxlink.set_enabled", link=SL, enabled=True); idle()
+        check("switching the bin back on ungreys the cards",
+              all(not c["greyed"] for c in cards(SA)) and all(not c["greyed"] for c in cards(SB)))
+        check("...and the individually-off plugin is still off",
+              [c["enabled"] for c in cards(SA) if c["in_fx_block"]] == [True, False])
+        cmd("fxlink.set_plugin_enabled", link=SL, plugin=d_rev_s, enabled=True); idle()
+
         # the old manual link keeps its badge
         cmd("plugin.link", **{"from": SA, "plugin": s_solo, "to": SB}); idle()
         legacy = [c for c in cards(SB) if not c["in_fx_block"]]
