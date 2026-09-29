@@ -98,16 +98,27 @@ extension EditViewModel {
         let ids = orderedSelectedPluginIDs()
         guard !ids.isEmpty, chainPlugins(host) != nil, engine != nil else { return 0 }
         pushUndo()
+        // The instances of an attached FX link leave through the bin's DEFINITION (every member
+        // loses them), the others through this chain alone.
+        var byLink: [UUID: [UUID]] = [:]
+        var own: [UUID] = []
+        for id in ids {
+            if let def = fxDefinition(ofInstance: id, on: host) { byLink[def.linkID, default: []].append(def.definitionID) }
+            else { own.append(id) }
+        }
+        for (linkID, defs) in byLink { fxRemovePlugins(linkID: linkID, definitionIDs: defs, undo: false) }
         // Same two cleanups as the single removal, per card: the touch listening RETAINS the
         // plugin, and what was known of its parameters is worth nothing once it has left the chain.
-        for id in ids {
+        for id in own {
             endPluginParamTouchWatch(id)
             invalidatePluginParamInfos(id)
         }
-        updateChainPlugins(host) { p in
-            p = Self.simplifyTree(Self.removingPlugins(Set(ids), from: p))
+        if !own.isEmpty {
+            updateChainPlugins(host) { p in
+                p = Self.simplifyTree(Self.removingPlugins(Set(own), from: p))
+            }
+            compileRack(objectID: host)
         }
-        compileRack(objectID: host)
         clearPluginSelection()
         isDirty = true
         return ids.count
@@ -131,11 +142,21 @@ extension EditViewModel {
         guard !selected.isEmpty else { return nil }
         let newEnabled = !selected.contains { $0.isEnabled }
         pushUndo()
+        // An attached FX link's instance switches through the bin's definition (every member follows).
+        var ownSelected: [ObjectPlugin] = []
         for p in selected {
+            if let def = fxDefinition(ofInstance: p.id, on: host) {
+                fxSetPluginEnabled(linkID: def.linkID, definitionID: def.definitionID,
+                                   enabled: newEnabled, undo: false)
+            } else {
+                ownSelected.append(p)
+            }
+        }
+        for p in ownSelected {
             engine.setPlugin(p.id.uuidString, enabled: newEnabled, forObjectID: host.uuidString)
         }
         updateChainPlugins(host) { plugins in
-            for p in selected { plugins = Self.settingEnabled(p.id, newEnabled, in: plugins) }
+            for p in ownSelected { plugins = Self.settingEnabled(p.id, newEnabled, in: plugins) }
         }
         isDirty = true
         return newEnabled
@@ -156,7 +177,7 @@ extension EditViewModel {
         let selected = orderedSelectedPlugins()
         guard !selected.isEmpty, let plugins = chainPlugins(host), engine != nil else { return [] }
         guard let anchor = selected.last,
-              let (loc, idx) = Self.locate(anchor.id, in: plugins) else { return [] }
+              let (loc, idx) = Self.locateOutsideFXBlock(anchor.id, in: plugins) else { return [] }
         let copies = selected.map { independentCopy(of: $0) }
         pushUndo()
         updateChainPlugins(host) { p in
@@ -192,7 +213,7 @@ extension EditViewModel {
         // The insertion point: after the last selected card IF the selection is this host's.
         var target: (SeriesLocation, Int)? = nil
         if selectedPluginHostID == host, let anchor = orderedSelectedPlugins().last {
-            target = Self.locate(anchor.id, in: plugins)
+            target = Self.locateOutsideFXBlock(anchor.id, in: plugins)
         }
         pushUndo()
         updateChainPlugins(host) { p in
@@ -226,7 +247,12 @@ extension EditViewModel {
         // burnt an undo point, and a link would tie a plugin to its own instance.
         if mode != .copy && sourceHostID == targetHostID { return [] }
         let wanted = Set(ids)
-        let ordered = Self.flattenLeaves(sourcePlugins).filter { wanted.contains($0.id) }
+        // The instances of an ATTACHED FX link are the bin's, not the host's: they can be copied
+        // out (an independent twin), never moved nor linked — a move would empty the bin for this
+        // host alone, and a link would tie a member to a second group.
+        let ordered = Self.flattenLeaves(sourcePlugins).filter { p in
+            wanted.contains(p.id) && (mode == .copy || fxDefinition(ofInstance: p.id, on: sourceHostID) == nil)
+        }
         guard !ordered.isEmpty else { return [] }
 
         pushUndo()

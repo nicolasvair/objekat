@@ -466,6 +466,12 @@ extension EditViewModel {
 
     func removePlugin(objectID: UUID, pluginID: UUID) {
         guard chainPlugins(objectID) != nil, engine != nil else { return }
+        // An instance of an attached FX link is not removed on its own: the bin's DEFINITION loses
+        // the plugin, and every member with it.
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            fxRemovePlugin(linkID: def.linkID, definitionID: def.definitionID)
+            return
+        }
         pushUndo()
         // The touch listening RETAINS the plugin: leaving it armed would keep it alive after it has been
         // removed from the chain. And what was known of its parameters is worth nothing any more.
@@ -491,6 +497,11 @@ extension EditViewModel {
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }),
               let engine else { return }
         let newEnabled = !plug.isEnabled
+        // The bypass of an attached FX link's instance is the bin's: every member's instance follows.
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            fxSetPluginEnabled(linkID: def.linkID, definitionID: def.definitionID, enabled: newEnabled)
+            return
+        }
         pushUndo()
         engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: objectID.uuidString)
         updateChainPlugins(objectID) { p in p = Self.settingEnabled(pluginID, newEnabled, in: p) }
@@ -816,7 +827,8 @@ extension EditViewModel {
     /// two stay reunitable with each other.
     func unlinkPlugin(objectID: UUID, pluginID: UUID) {
         guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.linkGroupID else { return }
+              let gid = plug.linkGroupID,
+              fxDefinition(ofInstance: pluginID, on: objectID) == nil else { return }   // a bin's member detaches through its block
         pushUndo()
         detachLink(objectID: objectID, pluginID: pluginID, group: gid)
         let remaining = allPluginRefs().filter { $0.plugin.linkGroupID == gid }
@@ -831,7 +843,8 @@ extension EditViewModel {
     /// crush what the members who stayed have set in the meantime.
     func relinkPlugin(objectID: UUID, pluginID: UUID) {
         guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.detachedLinkGroupID else { return }
+              let gid = plug.detachedLinkGroupID,
+              !isInFXBlock(pluginID, of: objectID) else { return }   // a bin's copy rejoins through its block
         pushUndo()
         setLinkGroups(objectID: objectID, pluginID: pluginID, link: gid, detached: nil)
         engine?.relinkPluginAdoptingGroup(pluginID.uuidString, groupID: gid.uuidString)

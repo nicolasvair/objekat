@@ -72,12 +72,26 @@ extension EditViewModel {
         return nil
     }
 
+    /// `locate`, except that a plugin inside a bin's block answers with the BLOCK's own place: a copy
+    /// laid "after" it lands after the block, never among the instances (which the definition rules).
+    static func locateOutsideFXBlock(_ pluginID: UUID, in plugins: [ObjectPlugin]) -> (SeriesLocation, Int)? {
+        guard let found = locate(pluginID, in: plugins) else { return nil }
+        if case .block(let blockID) = found.0 { return locate(blockID, in: plugins) }
+        return found
+    }
+
     /// True if `pluginID` is an instance held by an ATTACHED block of host `hostID`: such an
     /// instance is not edited on its own — the bin's definition is (@see EditViewModel+FXLinkEdit).
     func isAttachedFXMember(_ pluginID: UUID, of hostID: UUID) -> Bool {
         guard let plugins = chainPlugins(hostID),
               let block = Self.enclosingFXBlock(of: pluginID, in: plugins) else { return false }
         return block.fxBlock?.isDetached == false
+    }
+
+    /// True if `pluginID` sits in ANY bin's block of the host, attached or detached.
+    func isInFXBlock(_ pluginID: UUID, of hostID: UUID) -> Bool {
+        guard let plugins = chainPlugins(hostID) else { return false }
+        return Self.enclosingFXBlock(of: pluginID, in: plugins) != nil
     }
 
     // MARK: Output section

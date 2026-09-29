@@ -102,6 +102,21 @@ extension EditViewModel {
     func synopticInsert(objectID: UUID, available: AvailablePlugin,
                         into location: SeriesLocation, at index: Int) {
         guard let plugins = chainPlugins(objectID) else { return }
+        // Dropped into an ATTACHED block, a new plugin joins the bin's DEFINITION (every member gets
+        // an instance); the editor opens on this host's own.
+        if case .block(let blockID) = location,
+           let block = Self.findBlock(blockID, in: plugins), let fb = block.fxBlock, !fb.isDetached {
+            let template = makeObjectPlugin(available)
+            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, at: index) else {
+                availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
+                return
+            }
+            if let inst = chainPlugins(objectID).flatMap({ Self.flattenLeaves($0).first { $0.linkGroupID == defID } }) {
+                if inst.isBuiltIn { openBuiltInPluginEditor(plug: inst) }
+                else { openPluginEditor(objectID: objectID, pluginID: inst.id) }
+            }
+            return
+        }
         let newPlug = makeObjectPlugin(available)
         pushUndo()
         updateChainPlugins(objectID) { $0 = Self.inserting(newPlug, into: location, at: index, plugins: plugins) }
@@ -119,7 +134,8 @@ extension EditViewModel {
     /// the end plus a '+' to add a plugin to it). No picker. A plugin → a 2-branch block (the
     /// element plus an empty branch); an existing block → one more empty branch.
     func synopticBranch(objectID: UUID, elementID: UUID) {
-        guard let plugins = chainPlugins(objectID) else { return }
+        guard let plugins = chainPlugins(objectID),
+              fxDefinition(ofInstance: elementID, on: objectID) == nil else { return }   // a bin's instance is not put in parallel on its own
         pushUndo()
         updateChainPlugins(objectID) { $0 = Self.branchingEmpty(plugins, elementID: elementID) }
         compileRack(objectID: objectID)
@@ -143,6 +159,20 @@ extension EditViewModel {
         guard let plugins = chainPlugins(objectID),
               let (srcLoc, srcIdx) = Self.locate(pluginID, in: plugins),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+        // Inside an ATTACHED block the order is the bin's: reordering there reorders the definition,
+        // for every member; and an instance does not leave its block, nor does a plugin enter one
+        // from outside by this gesture (the drop of a plugin ON a bin adds to the definition — see
+        // fxAddPlugin — and belongs to the timeline drag, not to a reorder).
+        if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
+            guard case .block(let dst) = location,
+                  let block = Self.findBlock(dst, in: plugins), block.fxBlock?.linkID == def.linkID else { return }
+            var target = index
+            if srcLoc == location && srcIdx < index { target = index - 1 }
+            fxMovePlugin(linkID: def.linkID, definitionID: def.definitionID, to: target)
+            return
+        }
+        if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
+           block.fxBlock?.isDetached == false { return }
         // The same series: removing upstream shifts the following indices → adjust the target.
         var target = index
         if srcLoc == location && srcIdx < index { target = index - 1 }
@@ -160,6 +190,9 @@ extension EditViewModel {
     func synopticCopyPlugin(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
         guard let plugins = chainPlugins(objectID),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+        // A copy does not land INSIDE an attached block: the instances are the bin's to decide.
+        if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
+           block.fxBlock?.isDetached == false { return }
         let live = engine?.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
