@@ -50,7 +50,7 @@ model whose words are laid over the block, to compare their timing:
 | model | what | licences (code / weights) |
 |---|---|---|
 | Whisper large-v3-turbo (mlx) | installed by default | MIT / MIT |
-| Parakeet TDT v3 (`parakeet-mlx`) | a token-timed transducer; runs in its own Python ≥ 3.10 venv | Apache-2.0 / CC-BY-4.0 |
+| Parakeet TDT v3 (`parakeet-mlx`) | a token-timed transducer; a subprocess of the same venv (`parakeet_worker.py`, no ffmpeg needed) | Apache-2.0 / CC-BY-4.0 |
 | Whisper + wav2vec2 alignment | Whisper's text re-timed by forced CTC alignment against `jonatasgrosman/wav2vec2-large-xlsr-53-{french,english,spanish}` (numpy Viterbi, no torchaudio, no WhisperX) | Apache-2.0 / Apache-2.0 |
 
 Choosing a model transcribes in the BACKGROUND (the panel stays live; the status line says
@@ -75,11 +75,19 @@ Creates a dedicated venv (`~/Library/Application Support/Objekat/venvs/separateu
 model, and symlinks this folder into OBJEKAT's own `Plugins/` directory. Apple Silicon only
 (`mlx-whisper`). Reload the scripts in OBJEKAT afterwards (Scripts menu → Reload, or relaunch).
 
-Two heavy models are opt-in, for the text comparison: `./install.sh --with-align` (adds
+ONE venv for everything, on a Python ≥ 3.10 that `install.sh` finds by itself (PATH, then
+Homebrew's prefixes) — macOS's own 3.9 cannot host `parakeet-mlx`; with none found it says
+`brew install python@3.12`, and a venv left on 3.9 by an older install is rebuilt.
+Two heavy models are opt-in, for the text comparison: `./install.sh --with-align` (adds `torch` and
 `transformers`, downloads the wav2vec2 model of each language in `ALIGN_LANGS`, default `fr`, ~1.3 GB
-each) and `./install.sh --with-parakeet` (a second venv, `separateur-voix-parakeet`, on a Python
-≥ 3.10 found on the PATH — macOS's own 3.9 cannot run it — plus ~2.5 GB of weights). Either is
-SKIPPED with a message when the disk lacks room or no Python ≥ 3.10 exists.
+each) and `./install.sh --with-parakeet` (`parakeet-mlx` plus ~2.5 GB of weights). Either is
+SKIPPED with a message when the disk lacks room.
+
+First comparison (Thomas's `say` voice, 12 s, 27 words, two 1.4 s pauses, no ground truth; Whisper /
+Parakeet / alignment: transcription 4.1 / 4.1 / 17.1 s cold, 1.4 / 1.8 / 2.5 s warm). At the first
+pause (energy silence 3.44–4.82 s) the last word ends at 3.36 / 4.00 / 3.42 s and the next begins at
+4.44 / 4.64 / 4.90 s: the alignment is the tightest on both edges, Whisper starts words early, and
+Parakeet's tokens stretch over the silence (its word ends run late).
 
 ## Use
 
