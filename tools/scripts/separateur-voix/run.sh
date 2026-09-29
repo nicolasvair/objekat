@@ -11,7 +11,7 @@ VENV_DIR="$HOME/Library/Application Support/Objekat/venvs/separateur-voix"
 PY="$VENV_DIR/bin/python3"
 
 if [ ! -x "$PY" ]; then
-  echo "Dépendances absentes : lancez install.sh ($HERE/install.sh)" >&2
+  echo "Dépendances absentes : lancez install.sh ($HERE/install.sh) — il a besoin de Python >= 3.10 (brew install python@3.12)" >&2
   exit 2
 fi
 

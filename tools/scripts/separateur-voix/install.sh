@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Optional heavy models for the breath evaluation's text display (all opt-in, none is needed to
-# detect anything): --with-parakeet (Parakeet TDT v3, ~2.5 GB, its own Python >= 3.10 venv) and
+# detect anything): --with-parakeet (Parakeet TDT v3, ~2.5 GB, same venv) and
 # --with-align (wav2vec2 CTC forced alignment of Whisper's text, ~1.3 GB per language; languages in
 # ALIGN_LANGS, default "fr").
 WITH_PARAKEET=0
@@ -39,23 +39,32 @@ PLUGINS_DIR="$SUPPORT_DIR/Plugins"
 
 echo "== Voice separator — install =="
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 not found. Install Python 3.10+ (arm64) first." >&2
+# ONE venv for everything (Whisper, alignment, Parakeet), on a Python >= 3.10 — macOS's own 3.9
+# cannot host parakeet-mlx. Looked for in PATH and in Homebrew's prefixes; the message says what to do.
+PY=""
+for cand in python3.13 python3.12 python3.11 python3.10; do
+  for dir in "" /opt/homebrew/bin/ /usr/local/bin/; do
+    if command -v "${dir}${cand}" >/dev/null 2>&1; then PY="$(command -v "${dir}${cand}")"; break 2; fi
+  done
+done
+if [ -z "$PY" ]; then
+  echo "No Python >= 3.10 found (macOS's own is 3.9). Install one, then rerun: brew install python@3.12" >&2
   exit 1
 fi
-
-ARCH="$(python3 -c 'import platform; print(platform.machine())')"
+ARCH="$("$PY" -c 'import platform; print(platform.machine())')"
 if [ "$ARCH" != "arm64" ]; then
-  echo "Warning: python3 reports '$ARCH', not arm64 — mlx-whisper needs Apple Silicon." >&2
+  echo "Warning: $PY reports '$ARCH', not arm64 — mlx needs Apple Silicon." >&2
 fi
-# The plan named Python >= 3.10; run for real on this machine's system python3 (3.9.6, macOS's
-# own /usr/bin/python3), which installed and ran mlx-whisper without complaint — no version floor
-# enforced here, the install simply fails loudly (pip's own resolver) if a real one is ever hit.
 
 mkdir -p "$SUPPORT_DIR/venvs"
+# A venv left by an older version of this script (Python 3.9) is rebuilt; the model caches survive.
+if [ -x "$VENV_DIR/bin/python3" ] && ! "$VENV_DIR/bin/python3" -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
+  echo "Venv on an old Python, rebuilding: $VENV_DIR"
+  rm -rf "$VENV_DIR"
+fi
 if [ ! -d "$VENV_DIR" ]; then
-  echo "Creating venv at: $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
+  echo "Creating venv ($PY) at: $VENV_DIR"
+  "$PY" -m venv "$VENV_DIR"
 else
   echo "Venv already exists: $VENV_DIR"
 fi
@@ -78,7 +87,7 @@ PYEOF
 if [ "$WITH_ALIGN" = 1 ]; then
   echo "== Alignment models (wav2vec2 CTC, Apache-2.0): $ALIGN_LANGS =="
   if free_gb_for 2 "the alignment models"; then
-    "$VENV_DIR/bin/pip" install transformers
+    "$VENV_DIR/bin/pip" install torch transformers
     ALIGN_LANGS="$ALIGN_LANGS" "$VENV_DIR/bin/python3" - <<'PYEOF'
 import os
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
@@ -95,18 +104,9 @@ fi
 
 if [ "$WITH_PARAKEET" = 1 ]; then
   echo "== Parakeet TDT v3 (parakeet-mlx, Apache-2.0 code, CC-BY-4.0 weights) =="
-  PARAKEET_VENV="$SUPPORT_DIR/venvs/separateur-voix-parakeet"
-  PY310=""
-  for cand in python3.13 python3.12 python3.11 python3.10; do
-    if command -v "$cand" >/dev/null 2>&1; then PY310="$(command -v "$cand")"; break; fi
-  done
-  if [ -z "$PY310" ]; then
-    echo "Skipping Parakeet: it needs Python >= 3.10 and macOS's own is 3.9. Install one (brew install python@3.12) and rerun with --with-parakeet." >&2
-  elif free_gb_for 4 "Parakeet"; then
-    [ -d "$PARAKEET_VENV" ] || "$PY310" -m venv "$PARAKEET_VENV"
-    "$PARAKEET_VENV/bin/pip" install --upgrade pip
-    "$PARAKEET_VENV/bin/pip" install parakeet-mlx
-    "$PARAKEET_VENV/bin/python3" -c "from parakeet_mlx import from_pretrained; from_pretrained('mlx-community/parakeet-tdt-0.6b-v3'); print('Parakeet ready.')"
+  if free_gb_for 4 "Parakeet"; then
+    "$VENV_DIR/bin/pip" install parakeet-mlx
+    "$VENV_DIR/bin/python3" -c "from parakeet_mlx import from_pretrained; from_pretrained('mlx-community/parakeet-tdt-0.6b-v3'); print('Parakeet ready.')"
   fi
 fi
 

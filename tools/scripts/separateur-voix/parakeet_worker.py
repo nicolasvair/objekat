@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Runs in the PARAKEET venv (Python >= 3.10, `parakeet-mlx`), never in the main one:
+"""Runs in a subprocess of the venv (Python >= 3.10, `parakeet-mlx`):
 `parakeet_worker.py in.wav out.json` writes `[{"word", "start", "end"}, …]` (seconds).
 
 Parakeet emits SUB-WORD tokens with a start and an end each; a token whose text begins with a space

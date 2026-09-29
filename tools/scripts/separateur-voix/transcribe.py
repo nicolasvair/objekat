@@ -10,8 +10,7 @@ that is absent is a label in the panel and never a crash:
   whisper   mlx-whisper, `whisper-large-v3-turbo` (MIT code, MIT weights). Word times come from
             Whisper's own cross-attention: good on WHICH word, loose (tens of ms) on WHEN.
   parakeet  Parakeet TDT 0.6B v3 through `parakeet-mlx` (Apache-2.0 code, CC-BY-4.0 weights): a
-            transducer that emits a time with every token. It needs Python >= 3.10, which the main
-            venv (macOS's own 3.9) does not have, so it runs as a SUBPROCESS in a venv of its own
+            transducer that emits a time with every token. It needs Python >= 3.10 (the one venv is on it), and runs as a SUBPROCESS
             (`parakeet_worker.py`) — a whole process per transcription, no state to keep.
   align     Whisper's TEXT, re-timed by forced CTC alignment against a wav2vec2 model of the
             language (`jonatasgrosman/wav2vec2-large-xlsr-53-*`, Apache-2.0 code and weights) —
@@ -43,8 +42,9 @@ BACKEND_VERSION = 1
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUPPORT = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Objekat")
-PARAKEET_PYTHON = os.environ.get("OBJEKAT_PARAKEET_PYTHON") or os.path.join(
-    SUPPORT, "venvs", "separateur-voix-parakeet", "bin", "python3")
+# parakeet-mlx lives in the main venv (Python >= 3.10 for everything); still a subprocess, so a
+# transcription is a whole process with no state to keep. OBJEKAT_PARAKEET_PYTHON overrides it.
+PARAKEET_PYTHON = os.environ.get("OBJEKAT_PARAKEET_PYTHON") or sys.executable
 
 
 # MARK: - Is it installed?
@@ -78,7 +78,7 @@ def installed(model: str, language: str = "fr") -> bool:
     if model == "whisper":
         return _has_module("mlx_whisper") and _hf_has(WHISPER_REPO)
     if model == "parakeet":
-        return os.path.exists(PARAKEET_PYTHON) and _hf_has(PARAKEET_REPO)
+        return (_has_module("parakeet_mlx") or PARAKEET_PYTHON != sys.executable) and _hf_has(PARAKEET_REPO)
     if model == "align":
         return (installed("whisper") and _has_module("torch") and _has_module("transformers")
                 and _hf_has(ALIGN_REPOS.get(language, ALIGN_REPOS["fr"])))
