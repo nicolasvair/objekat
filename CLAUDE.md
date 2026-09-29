@@ -1912,6 +1912,16 @@ What has landed since mid-August, in order:
   `scenario_breath_eval.py` 75 ok ALL PASS, `scenario_voice_split.py` ALL PASS, i18n 472 keys.
   **Not seen**: the pop-up menu and the panel's layout with a second slider under the energy box.
 
+- **Voice separation evaluated in two categories** (29 September 2026, same branch) — the panel
+  "Evaluate voice separation…" has a COMMON section (model, text criterion + tolerance 50-800 ms
+  default 500, hole filling 0-100 ms default 20, progress bar), a BREATHS section (voicing 0.2-0.6/0.4,
+  gap 3-15 dB/10, low-pass 100-1000 Hz/200, min length 80-200 ms/120) and an SS/CH section (its "not
+  voiced" criterion is optional and OFF, since it excluded z and j). SS/CH wins over a breath on overlap.
+  Validate lays Voix / Respirations / SS-CH on sub-lanes, enabled categories only. New generic panel
+  controls `progress` and `section` (+ `labels` on update). Real `say -v Thomas` pass: 6 breaths, 25
+  SS/CH, 61 pieces. Verified with no screen: `test_breath_mask.py`, `test_sibilant_mask.py`,
+  `scenario_breath_eval.py` ALL PASS, smoke clean. **Not heard on a real recorded mouth.**
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -276,6 +276,40 @@ def section_c(c):
     expect_error(lambda: c.send("script.panel.update", {"panel_id": cp, "values": {"model": "nope"}}),
                  "bad_params", "c: update: an unknown option is refused")
     c.send("script.panel.close", {"panel_id": cp})
+    # ── the `progress` and `section` controls ──
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": [
+        {"id": "p", "kind": "progress", "label": "p", "value": 1.5}]}), "bad_params",
+        "c: a progress above 1 is refused")
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": [
+        {"id": "p", "kind": "progress", "label": "p", "value": -0.1}]}), "bad_params",
+        "c: a progress below 0 is refused")
+    r = c.send("script.panel.open", {"title": "Prog", "controls": [
+        {"id": "sec", "kind": "section", "label": "Common"},
+        {"id": "p1", "kind": "progress", "label": "Analysing", "value": None},
+        {"id": "p2", "kind": "progress", "label": "Idle"},
+        {"id": "p3", "kind": "progress", "label": "Half", "value": 0.5},
+        {"id": "b", "kind": "bool", "label": "b", "value": True}]})
+    pp = r["panel_id"]
+    g = c.send("script.panel.get", {"panel_id": pp})
+    check("c: progress: null = indeterminate, absent = 0, a value kept; a section holds no value",
+          g["values"] == {"p1": None, "p2": 0, "p3": 0.5, "b": True}, g["values"])
+    c.send("script.panel.update", {"panel_id": pp, "values": {"p1": 0.25, "p2": 7, "p3": None},
+                                   "labels": {"p1": "Transcribing", "sec": "Renamed"}})
+    g = c.send("script.panel.get", {"panel_id": pp})
+    check("c: update moves a progress (clamped to 1, null = indeterminate) and never moves rev",
+          g["values"]["p1"] == 0.25 and g["values"]["p2"] == 1 and g["values"]["p3"] is None and g["rev"] == 0,
+          g)
+    expect_error(lambda: c.send("script.panel.update", {"panel_id": pp, "values": {"p1": "half"}}),
+                 "bad_params", "c: update: a progress is a number or null")
+    expect_error(lambda: c.send("script.panel.update", {"panel_id": pp, "values": {"sec": 1}}),
+                 "bad_params", "c: update: a section holds no value")
+    expect_error(lambda: c.send("script.panel.update", {"panel_id": pp, "labels": {"nope": "x"}}),
+                 "bad_params", "c: update: labels name a known control")
+    expect_error(lambda: c.send("script.panel.update", {"panel_id": pp, "labels": {"p1": 3}}),
+                 "bad_params", "c: update: a label is a string")
+    expect_error(lambda: c.send("script.panel.input", {"panel_id": pp, "values": {"p1": 0.9}}),
+                 "bad_params", "c: input: the hand cannot set a progress bar")
+    c.send("script.panel.close", {"panel_id": pp})
     # an object that goes closes its panel
     r = c.send("script.panel.open", {"title": "Eval", "controls": CONTROLS, "object": a})
     c.send("object.remove", {"ids": [a]})
