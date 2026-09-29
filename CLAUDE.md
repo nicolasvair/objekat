@@ -1936,6 +1936,54 @@ What has landed since mid-August, in order:
   headless: Debug build, `scenario_breath_eval.py` section g (incl. `defaults read` shows no panel
   key). **Not seen**: the Reset button in the window.
 
+- **FX link — a bin of plugins several objects share** (29 September 2026, ON THE BRANCH
+  `feature/fx-link-bac`, NOT on `main`; seven commits, one per step of the plan). A named bin
+  (`FXLink`, `SoundObject/FXLink.swift`) that objects or buses share: the design is **MIRROR
+  INSTANCES** — every host keeps its OWN engine instances, and an instance of a bin's plugin carries
+  `linkGroupID == the definition plugin's id`, which is what the existing engine mirror
+  (`rewireLinkGroups`) already turns into synchronised parameters, so the engine needed no new
+  synchronisation. The bin is ONE entry in a host's chain (`ObjectPlugin.fxBlock`, an `FXLinkBlock`:
+  `linkID`, `isDetached`, the host's instances, an optional `local` output), reorderable like a
+  parallel `rack`, framed and named in the signal view. It carries an OUTPUT SECTION (volume, pan,
+  mute — an end-of-series gain stage, `ObjGain`) and a common on/off. Order, add, remove and on/off
+  are linked to every attached member; **a gesture aimed at an attached instance is a gesture on the
+  DEFINITION** (`fxDefinition(ofInstance:on:)`), so an instance is never edited on its own. Detaching
+  is per host and undoable (an independent copy, its own `local` output); reattaching realigns the
+  host on the bin, never the reverse.
+  Creation: the synoptic's right click (cards and canvas: "Create an FX link", and a "Join" submenu),
+  the timeline menu's LAST entry on a multiple selection, and AUTOMATICALLY through `copiedPlugins`
+  (cut, split, duplicate, ⌥-copy, paste, overlap fragments) — which no longer writes a legacy
+  `linkGroupID` on the original. The old manual ⌘-links are untouched and cohabit. Cross-project paste
+  and consolidation recreate a NEW bin, never share one (`CrossProjectImport.cloneBlock`,
+  `deepFreshCopy`; a sidecar has no registry, so an attached block's output is frozen into `local`).
+  Persistence: optional `fxLinks` registry, **session format 16 → 17** (only the referenced bins are
+  written, definitions carrying the members' freshest state). API: the `fxlink.*` family (19
+  commands, `undo: .handled`), documented in `command_api.md`.
+  **The trap that shaped the automatic creation, worth keeping**: `copiedPlugins` cannot convert the
+  ORIGINAL on the spot — some callers re-read it from the model afterwards, others write back a
+  value they took BEFORE the call, and a conversion made in between would be crushed by the stale
+  copy while the engine had compiled the converted chain. The conversion is DEFERRED and idempotent
+  (`fxPendingSources`, `adoptPendingFXSources`, applied at `rewireLinkGroups` / `syncPlugins`), and it
+  dies with the gesture (`pushUndo`, an undo/redo, a new project, a load) — an undo restores plain
+  plugins with the very same ids, and adopting them again would undo the undo. Same family as the
+  `automationTouchOrder` rule: anything recorded outside the undo stack makes objects
+  unrecoverable if the snapshot compares it.
+  Verified with no screen: a Debug build after every step, no new warning against the 1550 baseline;
+  `tools/scenario_fxlink.py` 91 assertions (creation, propagation, order, on/off, detach / reattach,
+  undo, save / reopen, split, duplicate, paste, cross-project, consolidate, and an **export + RMS**
+  proof that the ENGINE followed — the output section heard per member, detached or not);
+  `tools/test_cross_project_import.swift` 34; `tools/test_synoptic_fxblock.swift` (the frame's
+  geometry against the layout); i18n 489 keys, no orphans.
+  **Not seen, not heard, not felt**: every pixel of the block in the signal view — the frame's colour
+  against the dark stem colours, the header's controls in a 176 pt block, the footer's mute / volume /
+  pan, the dashed frame once detached, the inline rename, the drag of a block by its name, the
+  right-click menus (whether the card's menu reads right when a card outside the selection is
+  clicked), the timeline entry; and by ear, **the mirrored parameters under a real AU** and the
+  output section of a bin heard while playing. Known holes: a bin cannot hold a rack or a legacy
+  ⌘-linked plugin (a run is broken by them, so the plugin never changes place); a bin's block only
+  moves within the root series or a rack's branch, never into another block; the header's colour
+  dot cycles the palette rather than opening it.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
