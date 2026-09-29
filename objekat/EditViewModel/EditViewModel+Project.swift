@@ -229,8 +229,14 @@ extension EditViewModel {
     /// later would have been dropped the same way.
     func projectDocument(items: [SoundObject],
                          consolidateDefinitions defs: [ConsolidateDefinition]) -> ProjectDocument {
-        ProjectDocument(items: items,
-                        stems: stems,
+        // The bus chains (Main included) carry their plugins' state in the ENGINE, as the objects'
+        // do: a plugin freshly added to a bus has `stateXML == nil` in the model, and one tweaked
+        // in its own editor never passes through it. Captured HERE, once, for every writer (save,
+        // `project.get_state`, "Save a copy", parking a tab) — a writer that passed `stems` raw
+        // silently dropped every bus plugin's settings from the file.
+        let capturedStems = stemsWithCapturedPluginStates()
+        return ProjectDocument(items: items,
+                        stems: capturedStems,
                         tempo: tempo,
                         timeSigNumerator: timeSigNumerator,
                         timeSigDenominator: timeSigDenominator,
@@ -240,12 +246,12 @@ extension EditViewModel {
                         viewport: currentViewport,
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                         comments: comments.isEmpty ? nil : comments,
-                        fxLinks: fxLinksDoc(for: items))
+                        fxLinks: fxLinksDoc(for: items, stems: capturedStems))
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
     /// (`stems`) count as referrers too, so a bin used on a bus only is not thrown away.
-    private func fxLinksDoc(for items: [SoundObject]) -> [FXLink]? {
+    private func fxLinksDoc(for items: [SoundObject], stems: [Stem]) -> [FXLink]? {
         let links = fxLinksForPersistence(items: items, stems: stems)
         return links.isEmpty ? nil : links
     }

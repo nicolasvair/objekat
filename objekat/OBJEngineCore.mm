@@ -897,6 +897,7 @@ struct OBJRenderChain {
 // Résout la PLUGIN ValueTree (description AU/VST3 / type built-in / état sauvé) pour un
 // descripteur d'inspecteur, SANS l'insérer nulle part. Tree invalide = échec de résolution.
 - (juce::ValueTree)resolvedPluginTreeForInfo:(NSDictionary*)pluginInfo
+- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin;
                                     stateXML:(NSString* _Nullable)stateXML;
 // Renumérote les EditItemID d'un arbre PLUGIN désérialisé. @see l'implémentation.
 - (void)freshenItemIDsInTree:(juce::ValueTree&)tree;
@@ -2112,6 +2113,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         auto& fmgr = _engine->getPluginManager().pluginFormatManager;
         for (int fi = 0; fi < fmgr.getNumFormats(); fi++) {
             auto* fmt = fmgr.getFormat(fi);
+                        [self reassertWantedState:savedTree onTakenPlugin:p];
             if (!fmt || fmt->getName() != fmtStr) continue;
             juce::String searchId = (fmtStr == "AudioUnit" && !idStr.startsWith("AudioUnit:"))
                                     ? "AudioUnit:" + idStr : idStr;
@@ -2260,9 +2262,17 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     std::string newKey([mainStemID UTF8String]);
     if (!_edit) { _masterStemKey = newKey; return; }
 
-    // Rechargement de projet : la clé du Main change (nouvel UUID) → purge l'ancienne chaîne
-    // master (plugins + éditeurs) pour ne pas la laisser orpheline dans le master.
-    if (newKey != _masterStemKey && !_masterStemKey.empty()) {
+    // Rechargement de projet : purge TOUJOURS l'ancienne chaîne master (plugins + éditeurs), que la
+    // clé change ou non. Le test `newKey != _masterStemKey` était un bug : deux projets peuvent
+    // partager l'UUID de leur Main (V1/V2, Save As, copie, onglets d'une même lignée), et alors
+    // (1) `compileSeries` retrouvait la clé de chaque plugin dans `_pluginMap` et gardait l'instance
+    // vivante SANS appliquer l'état du fichier — le réglage du projet précédent fuyait dans le
+    // suivant ; (2) un projet sans plugin sur le Main héritait de ceux du précédent. Les instances
+    // externes partent en consigne (@see takeParkedPluginMatching:) : les reprendre reste gratuit.
+    // Aucun appelant n'a besoin que la chaîne survive à cet appel : la clé vide (init) n'a rien à
+    // purger, et un chargement / un « nouveau projet » / un retour d'onglet recompilent la chaîne
+    // du Main depuis le modèle juste après.
+    if (!_masterStemKey.empty()) {
         // Contrairement à un clip (dont la chaîne meurt avec lui), la plugin-list du master
         // survit : il faut retirer nous-mêmes les plugins de l'ancienne chaîne.
         std::vector<te::Plugin::Ptr> toDelete;
@@ -4400,8 +4410,11 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
                 // se reprend vivant. Un aller-retour de chaîne recharge sinon chaque AU user.
                 if (auto parked = [self takeParkedPluginMatching:savedTree]) {
                     ptr = clipPlugins->insertPlugin(parked->state, at);
-                    if (ptr) NSLog(@"[PERF] plugin « %@ » repris de la consigne (aucun chargement)",
-                                   pluginName);
+                    if (ptr) {
+                        [self reassertWantedState:savedTree onTakenPlugin:ptr];
+                        NSLog(@"[PERF] plugin « %@ » repris de la consigne (aucun chargement)",
+                              pluginName);
+                    }
                 }
                 if (!ptr) {
                     [self freshenItemIDsInTree:savedTree];   // sinon on vole son id à l'instance source
@@ -4850,6 +4863,27 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 - (void)forcePluginStatesForRenderClone:(te::Edit&)clone {
     auto& dm = _engine->getDeviceManager();
     const double sr = dm.getSampleRate() > 0 ? dm.getSampleRate() : 44100.0;
+// Une instance reprise de la consigne est VIVANTE : son arbre porte le chunk d'il y a un instant
+// (c'est ce qui l'a fait apparier), mais l'instance a pu bouger depuis — un réglage fait dans
+// l'éditeur du plugin ne remonte dans l'arbre qu'à un flush, que la mise en consigne ne fait pas.
+// Réinsérer l'instance telle quelle reprenait donc ces réglages d'AVANT au lieu de la consigne du
+// modèle (un Pro-L laissé à +12 dB revenait à +12 dB). On ré-applique l'état demandé, comme
+// `applyPluginStateXML:` : d'abord tout de suite, puis derrière la ré-affirmation (un AU pas
+// encore initialisé refuse `setStateInformation` en silence). Rien à faire — et rien de coûteux —
+// quand l'instance est déjà à l'état demandé (le cas ordinaire d'un aller-retour à l'identique).
+- (void)reassertWantedState:(const juce::ValueTree&)wantedTree onTakenPlugin:(te::Plugin::Ptr)plugin {
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin.get());
+    if (!ext) return;
+    const juce::MemoryBlock wanted = objDesiredStateFromTree(wantedTree);
+    if (wanted.getSize() == 0) return;
+    if (auto* pi = ext->getAudioPluginInstance())
+        if (objReadInstanceState(*pi) == wanted) return;
+    NSLog(@"[OBJ] consigne : instance reprise à un autre état que celui demandé — ré-application de '%s'",
+          ext->getName().toRawUTF8());
+    ext->restorePluginStateFromValueTree(wantedTree);
+    [self schedulePluginStateReassert:plugin fromTree:wantedTree];
+}
+
     const int    bs = dm.getBlockSize()  > 0 ? dm.getBlockSize()  : 512;
 
     int reasserted = 0;
@@ -5656,7 +5690,8 @@ static void objDumpPluginList(te::PluginList& pl,
             // CONSIGNE, comme pour addPlugin : un FX retiré à l'identique (retour sur un onglet,
             // aller-retour d'un geste) se reprend vivant au lieu d'être rechargé.
             te::Plugin::Ptr p;
-            if (auto parked = [self takeParkedPluginMatching:vt])
+            bool fromParking = false;
+            if (auto parked = [self takeParkedPluginMatching:vt]) {
                 p = pl.insertPlugin(parked->state, indexBefore(pl, anchor));
             if (!p) p = pl.insertPlugin(vt, indexBefore(pl, anchor));
             if (!p) {
@@ -5666,7 +5701,8 @@ static void objDumpPluginList(te::PluginList& pl,
             }
             _pluginMap[pk] = p;
             // Certains AU refusent leur état tant qu'ils ne sont pas préparés → on revérifie plus tard.
-            [self schedulePluginStateReassert:p fromTree:vt];
+            // (Une instance reprise de la consigne l'a déjà fait dans reassertWantedState:.)
+            if (!fromParking) [self schedulePluginStateReassert:p fromTree:vt];
         }
         if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end())
             pit->second->setEnabled(n.enabled);
@@ -6114,6 +6150,13 @@ static void objDumpPluginList(te::PluginList& pl,
 
 - (NSArray<NSString*>*)availableOutputDevices {
     auto& dm = _engine->getDeviceManager().deviceManager;
+                if (p) {
+                    fromParking = true;
+                    // Ré-applique l'état demandé (et programme la ré-affirmation) : l'instance
+                    // consignée peut avoir bougé depuis que son arbre a été lu.
+                    [self reassertWantedState:vt onTakenPlugin:p];
+                }
+            }
     NSMutableArray* result = [NSMutableArray array];
     for (auto* type : dm.getAvailableDeviceTypes()) {
         // getDeviceNames() sert une liste MISE EN CACHE : sans ce scan, une carte branchée

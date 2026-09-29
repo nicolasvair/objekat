@@ -79,11 +79,10 @@ extension EditViewModel {
     /// the engine first (`itemsWithCapturedPluginStates`/`stemsWithCapturedPluginStates`), exactly
     /// as a save would, so a knob turned live is not lost the moment the tab leaves the screen.
     func parkProject() -> ParkedProject {
+        // `projectDocument` captures the bus chains' states itself.
         let doc = projectDocument(items: itemsWithCapturedPluginStates(),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
-        var parkedDoc = doc
-        parkedDoc.stems = stemsWithCapturedPluginStates()
-        return ParkedProject(doc: parkedDoc,
+        return ParkedProject(doc: doc,
                              projectURL: projectURL,
                              projectName: projectName,
                              isDirty: isDirty,

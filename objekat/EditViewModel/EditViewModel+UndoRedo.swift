@@ -138,7 +138,25 @@ extension EditViewModel {
             // rack has changed — including to empty a rack whose plugins the undo removed.
             // A bus whose rack is identical keeps its own: recompiling would only rebuild
             // the graph for nothing.
-            for stem in stems where liveStems[stem.id] != stem { compileRack(objectID: stem.id) }
+            for stem in stems where liveStems[stem.id] != stem {
+                // A bus whose chain differs ONLY by its plugins' states (a knob turned on the Main,
+                // then undone): the chain is the same chain, so its live instances get the state
+                // handed back (@see `adoptingPluginStates`) — a recompile would find every plugin
+                // still in the engine's map and keep it AS IT IS, the undo giving nothing back.
+                // Anything else that differs (order, bypass, links, gains…) recompiles as before.
+                if let liveStem = liveStems[stem.id],
+                   let adopted = Self.adoptingPluginStates(liveStem.plugins, stem.plugins) {
+                    var probe = liveStem
+                    probe.plugins = adopted
+                    if probe == stem {
+                        for change in Self.changedPluginStates(liveStem.plugins, stem.plugins) {
+                            engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString)
+                        }
+                        continue
+                    }
+                }
+                compileRack(objectID: stem.id)
+            }
             syncStemGains()     // bus gains restored in the model → pushed back to the engine
             syncStemRouting()   // the same for the buses detached from the Main
             refreshAudibility() // bus mutes restored → recomposes the silence of every object
@@ -329,14 +347,18 @@ extension EditViewModel {
         func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
             for (x, y) in zip(a, b) {
                 if x.isContainer, y.isContainer {
+        changedPluginStates(old.plugins, new.plugins) + changedPluginStates(old.instruments, new.instruments)
+    }
+
+    /// The same for two chains (an object's, or a bus's: @see `applySnapshot`).
+    static func changedPluginStates(_ old: [ObjectPlugin], _ new: [ObjectPlugin]) -> [(id: UUID, xml: String)] {
                     for (va, vb) in zip(x.childSeries, y.childSeries) { walk(va, vb) }
                 } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
                     out.append((id: y.id, xml: xml))
                 }
             }
         }
-        walk(old.plugins, new.plugins)
-        walk(old.instruments, new.instruments)
+        walk(old, new)
         return out
     }
 
