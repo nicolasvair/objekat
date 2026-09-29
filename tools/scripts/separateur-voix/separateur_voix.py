@@ -496,6 +496,7 @@ def breaths_eval(app, object_id, language, no_asr, model_arg=None):
 
     panel = app.send("script.panel.open", {
         "title": text["title"], "controls": controls, "object": object_id,
+        "remember": "separateur-voix.eval",     # the app keeps what was last validated
         "status": text["analysing"], "busy": True})
     pid = panel["panel_id"]
     bar = ProgressBar(app, pid)
