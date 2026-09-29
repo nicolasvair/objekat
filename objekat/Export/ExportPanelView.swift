@@ -121,7 +121,11 @@ struct ExportPanelView: View {
                                    resolution: EditViewModel.exportPeakResolution,
                                    playhead: auditionFraction,
                                    audible: audibleFraction,
-                                   onSeek: { viewModel.seekExportAudition(toFraction: $0) })
+                                   onSeek: { viewModel.seekExportAudition(toFraction: $0) },
+                                   loudness: viewModel.exportLoudness,
+                                   duration: viewModel.exportAuditionDuration)
+
+                loudnessLine
 
                 HStack(spacing: 10) {
                     Button { viewModel.toggleExportAudition() } label: {
@@ -165,6 +169,48 @@ struct ExportPanelView: View {
                 }
             }
         }
+    }
+
+    /// The loudness of what has been rendered so far, on one line: what the meter reads (integrated
+    /// and range) and the loudest true peak — a delivery spec is written in exactly these three
+    /// numbers. The three coloured letters are the curves' legend, and their tooltip says what
+    /// every abbreviation stands for. Numbers and units are not translated; the tooltip is.
+    @ViewBuilder
+    private var loudnessLine: some View {
+        let a = viewModel.exportLoudness
+        HStack(spacing: 8) {
+            Text(verbatim: Self.loudnessSummary(a))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(a.blockCount > 0 ? .primary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 4)
+            HStack(spacing: 5) {
+                legendLetter("M", .mint)
+                legendLetter("S", .yellow)
+                legendLetter("I", .white)
+            }
+        }
+        .help(L("export.loudness.help"))
+    }
+
+    private func legendLetter(_ letter: String, _ color: Color) -> some View {
+        Text(verbatim: letter)
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundStyle(color)
+    }
+
+    /// "I −23.0 LUFS · LRA 10.0 LU · TP −6.0 dBTP". A reading that does not exist yet (fewer than
+    /// 400 ms rendered, or under 3 s for the range) shows a dash rather than a number that would be
+    /// a guess, and silence shows −∞.
+    static func loudnessSummary(_ a: LoudnessAnalysis) -> String {
+        func number(_ v: Double?, _ unit: String) -> String {
+            guard let v else { return "– \(unit)" }
+            return v.isFinite ? String(format: "%.1f \(unit)", v) : "−∞ \(unit)"
+        }
+        guard a.blockCount > 0 else { return "I – LUFS · LRA – LU · TP – dBTP" }
+        let integrated: Double? = a.blockCount >= LoudnessAnalysis.momentaryBlocks ? a.integrated : nil
+        return "I \(number(integrated, "LUFS")) · LRA \(number(a.loudnessRange, "LU")) · TP \(number(a.truePeakDB, "dBTP"))"
     }
 
     /// Where the listening is, in 0…1 of the range being rendered. nil = nobody is listening.

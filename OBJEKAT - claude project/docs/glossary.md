@@ -23,6 +23,9 @@ source, not a translation.
 | exemplaire | instance | ejemplar | one occurrence of a definition in the timeline |
 | baker / baké | bake / baked | renderizar / renderizado | the render that freezes a sub-tree into a wave |
 | sonothèque | sound library | sonoteca | the audio file browser |
+| sonie (LUFS) | loudness (LUFS) | sonoridad (LUFS) | ITU-R BS.1770-4 / EBU R128 measurement of the render: M momentary (400 ms), S short-term (3 s), I integrated (gated) |
+| plage de sonie (LRA) | loudness range (LRA) | rango de sonoridad (LRA) | EBU Tech 3342: the spread of the short-term loudness, 10th to 95th percentile |
+| crête vraie (TP) | true peak (TP) | pico real (TP) | the peak of the 4× oversampled signal, in dBTP — what the samples alone do not show |
 | groupe | group | grupo | a submix; a container clip, not a folder of tracks |
 | dissoudre un groupe | ungroup | desagrupar | the only departure from the calque: "disband" is not said in an interface |
 | fenêtre (d'un objet) | window | ventana | its bounds, which also cut its effect chain |

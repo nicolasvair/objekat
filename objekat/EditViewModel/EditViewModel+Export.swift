@@ -264,6 +264,7 @@ extension EditViewModel {
         exportStatusClearWork = nil
         exportAudition.forget()
         exportPeaks = []
+        exportLoudness.removeAll()
         exportJob = ExportJob(phase: .preparing, progress: 0,
                               destination: destination, previewSource: renderTarget,
                               renderedDuration: range.upperBound - range.lowerBound,
@@ -297,6 +298,7 @@ extension EditViewModel {
                 // One last reading: the poll runs at 10 Hz and the render's last buckets land
                 // between two beats. Without this the waveform would stop a hair short of its end.
                 self.readExportPeaks()
+                self.readExportLoudness()
                 guard ok else {
                     try? FileManager.default.removeItem(at: renderTarget)
                     self.finishExportWithFailure(errorMessage ?? L("export.error.renderFailed"))
@@ -418,6 +420,7 @@ extension EditViewModel {
             self.exportAudition.forget()
             self.exportJob = nil
             self.exportPeaks = []
+            self.exportLoudness.removeAll()
         }
         exportStatusClearWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
@@ -431,6 +434,7 @@ extension EditViewModel {
         exportAudition.forget()
         exportJob = nil
         exportPeaks = []
+        exportLoudness.removeAll()
     }
 
     func revealExportedFileInFinder() {
@@ -450,6 +454,7 @@ extension EditViewModel {
                 let share = self.exportJob?.settings.format == .mp3 ? Self.renderShareOfMp3Export : 1
                 self.exportJob?.progress = min(1, max(0, p)) * share
                 self.readExportPeaks()
+                self.readExportLoudness()
                 // What could be heard right now. Not the same number as the progress: the render
                 // runs ahead of the writer's flush, and only what has been flushed can be opened.
                 if let source = self.exportJob?.previewSource {
@@ -487,6 +492,30 @@ extension EditViewModel {
         var values = [Float](repeating: 0, count: count)
         _ = values.withUnsafeMutableBytes { data.copyBytes(to: $0) }
         exportPeaks = values
+    }
+
+    /// Reads what the tap has measured of the LOUDNESS since the last call: only the new 100 ms
+    /// sub-blocks come across (the engine takes the count already held), and they are appended to
+    /// `exportLoudness`, whose windows, gates and curves are computed there. Called by the same
+    /// 10 Hz timer as the peaks, and once more when the render ends — its last sub-blocks land
+    /// between two beats.
+    func readExportLoudness() {
+        // Same rule as the peaks, for the same reason: while preparing, the tap is not this
+        // render's yet, and nothing of the PREVIOUS one must show.
+        guard exportJob?.phase != .preparing else {
+            if exportLoudness.blockCount > 0 { exportLoudness.removeAll() }
+            return
+        }
+        guard let engine,
+              let data = engine.exportLoudnessBlocks(from: exportLoudness.blockCount),
+              data.count >= 2 * MemoryLayout<Double>.size else { return }
+        let count = data.count / (2 * MemoryLayout<Double>.size)
+        var values = [Double](repeating: 0, count: count * 2)
+        _ = values.withUnsafeMutableBytes { data.copyBytes(to: $0, count: count * 2 * MemoryLayout<Double>.size) }
+        // Built aside and stored once: one change notification per poll, not one per sub-block.
+        var analysis = exportLoudness
+        for i in 0..<count { analysis.append(energy: values[i * 2], truePeak: Float(values[i * 2 + 1])) }
+        exportLoudness = analysis
     }
 
     // MARK: - Listening while it renders

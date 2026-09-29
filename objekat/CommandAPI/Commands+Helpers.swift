@@ -237,6 +237,26 @@ extension CommandAdapters {
         return .object(payload)
     }
 
+    /// The loudness measured so far. A value that does not exist yet (a window that has not filled)
+    /// or is silence (−infinity) is `null`: JSON has no infinity, and "nothing yet" and "silence"
+    /// deserve the same honest answer.
+    static func loudnessPayload(_ a: LoudnessAnalysis) -> JSONValue {
+        func number(_ v: Double?) -> JSONValue {
+            guard let v, v.isFinite else { return .null }
+            return .number(v)
+        }
+        return .object([
+            "integrated": number(a.integrated),
+            "lra": number(a.loudnessRange),
+            "true_peak": number(a.truePeakDB),
+            "momentary": number(a.latestMomentary),
+            "short_term": number(a.latestShortTerm),
+            "momentary_max": number(a.momentaryMax),
+            "short_term_max": number(a.shortTermMax),
+            "blocks": .int(a.blockCount),
+        ])
+    }
+
     /// Follows an export to its end. We read the phase rather than waiting for quiescence: a
     /// render on a copy leaves the app perfectly available, so `wait_idle` would call it idle while
     /// the file does not exist yet.

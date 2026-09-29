@@ -1404,6 +1404,39 @@ is really launched, and only zeroed when its graph is built, so it still answers
 export's shape in between. `peaks_filled` is 0 throughout that phase rather than the last render's
 count.
 
+**Loudness while it renders (ITU-R BS.1770-4 / EBU R128, Tech 3341 / 3342).** The same tap that
+draws the waveform measures the loudness of every rendered block, after dithering and just before the
+write: K-weighting computed for the render's actual sample rate, energy per 100 ms sub-block, true peak
+at 4× oversampling (BS.1770-4 Annex 2 FIR). The signal half is `objekat/Shared/OBJLoudness.h` (plain C, one
+implementation shared with `tools/test_loudness.swift`); the windows and gates are
+`Export/LoudnessAnalysis.swift`. The engine hands the sub-blocks over incrementally
+(`OBJEngineCore.exportLoudnessBlocksFrom:`), lock-free (release / acquire), in memory sized once when the
+render starts. The result survives the end of the render, like the peaks, and — like them — nothing of
+it shows while the export **prepares**.
+
+`export.status.loudness` (an object; `null` when there is no export at all):
+
+| field | what it says |
+|---|---|
+| `integrated` | LUFS. Blocks of 400 ms every 100 ms, gated at −70 LUFS (absolute) then −10 LU under the power mean of what survived (relative). |
+| `lra` | LU. The short-term (3 s) values gated at −70 LUFS and −20 LU (relative), then the spread between their 10th and 95th percentiles. `null` until 3 s of material have passed the gates. |
+| `true_peak` | dBTP, the loudest of all channels over the whole render so far. |
+| `momentary` / `short_term` | the LATEST 400 ms / 3 s windows, LUFS. `null` until the window has filled. |
+| `momentary_max` / `short_term_max` | the highest of each so far, LUFS. |
+| `blocks` | how many 100 ms sub-blocks have been measured (the render's progress in tenths of a second; a final partial one is dropped). |
+
+Any value that does not exist yet **or is silence (−∞)** is `null` — JSON has no infinity. The gated
+readings sit in 0.1 LU histograms (as libebur128 does), each bin keeping the exact sum of the energies
+it holds: the mean over the kept bins is exact, only the gate thresholds are quantised (≤ 0.1 LU).
+
+`export.loudness {points?}` (1…5000, default 200) returns the three curves cut down to at most `points`
+samples, evenly spread over the sub-blocks: `times` (s, the instant each window **ends**), `momentary`,
+`short_term`, and `integrated` (the gated value as it stood at that instant — what the meter would have
+read had the render stopped there), all in LUFS and `null` where the window has not filled or the value
+is silence; plus `blocks`, `duration` and `summary` (the same object as `export.status.loudness`).
+`invalid_state` with no export. `tools/scenario_loudness.py` asserts all of it against generated WAVs
+(a 997 Hz stereo sine at −23 dBFS reads −23.0 LUFS; two levels 10 LU apart read an LRA of 10).
+
 ### Saving a copy with the audio files
 
 `project.save_copy {path}` is the menu's "Save a copy with audio files…" without its panel: `path`

@@ -602,6 +602,11 @@ final class EditViewModel {
     /// filled — so its LENGTH says how far the render has got. Read from the engine's tap by the
     /// same timer that reads the progress. @see OBJEngineCore `exportPeaks`, ExportWaveformView.
     var exportPeaks: [Float] = []
+    /// The loudness (BS.1770-4 / EBU R128) of the render in progress, built up from the 100 ms
+    /// sub-blocks the engine's tap has measured so far — momentary, short-term and integrated
+    /// curves, loudness range, true peak. Read INCREMENTALLY by the same timer as the peaks.
+    /// @see EditViewModel+Export `readExportLoudness`, LoudnessAnalysis.
+    var exportLoudness = LoudnessAnalysis()
     /// Listening to the file while it is being written. @see ExportAudition.
     let exportAudition = ExportAudition()
     /// The timer reading the engine's progress during the render phase.

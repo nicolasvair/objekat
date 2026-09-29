@@ -276,6 +276,20 @@
 + (NSInteger)exportPeakResolution;
 - (NSData* _Nullable)exportPeaks;
 
+// SONIE DU RENDU EN COURS (ITU-R BS.1770-4 / EBU R128), mesurée sur la même accroche que les
+// crêtes : chaque bloc rendu passe dans Shared/OBJLoudness.h (pondération K recalculée pour la
+// fréquence de rendu, true peak 4×) qui le découpe en SOUS-BLOCS de 100 ms.
+//
+// `exportLoudnessBlocksFrom:` rend les sous-blocs d'indice `from` et suivants, jusqu'au dernier
+// COMPLET, sous la forme de paires de `double` (énergie pondérée moyenne du sous-bloc, true peak
+// linéaire) — 16 octets par 100 ms. La lecture est donc INCRÉMENTALE : l'appelant garde le nombre
+// de sous-blocs déjà reçus et le repasse. Les fenêtres (400 ms, 3 s), les portes et la plage de
+// sonie sont de l'arithmétique sur cette série : Export/LoudnessAnalysis.swift.
+//
+// Vide tant que le rendu n'a rien mesuré ; nil si aucun export n'a jamais été lancé. Comme les
+// crêtes, la série du dernier export SURVIT à sa fin (le lancement du suivant la remplace).
+- (NSData* _Nullable)exportLoudnessBlocksFrom:(NSInteger)from;
+
 // Plugins VST3/AU — rack par objet sonore
 // availablePlugins : liste des plugins connus (scan préalable ou cache)
 // Chaque dict : @{@"name":…, @"manufacturer":…, @"identifier":…, @"format":…}

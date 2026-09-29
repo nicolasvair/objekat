@@ -173,17 +173,62 @@ extension CommandRegistry {
         register("export.status",
                  summary: "State of the running export, or of the last one to finish. "
                         + "`panel_open` says whether the export panel is showing it: a DIRECT "
-                        + "render keeps the panel, a background one closes it.") { _ in
+                        + "render keeps the panel, a background one closes it. `loudness` is what "
+                        + "the render has measured so far (ITU-R BS.1770-4 / EBU R128): "
+                        + "`integrated` (LUFS, gated), `lra` (LU), `true_peak` (dBTP), "
+                        + "`momentary` / `short_term` (the latest windows, LUFS), "
+                        + "`momentary_max` / `short_term_max`, and `blocks` (the number of 100 ms "
+                        + "sub-blocks measured). A value that does not exist yet, or is "
+                        + "silence (-infinity), is null.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let job = vm.exportJob else {
                 return .object(["running": .bool(false),
-                                "panel_open": .bool(vm.exportPanelPresented)])
+                                "panel_open": .bool(vm.exportPanelPresented),
+                                "loudness": .null])
             }
             guard case .object(var payload) = CommandAdapters.exportPayload(job) else {
                 return CommandAdapters.exportPayload(job)
             }
             payload["panel_open"] = .bool(vm.exportPanelPresented)
+            // Read from the ENGINE now, not from what the panel's timer last cached.
+            vm.readExportLoudness()
+            payload["loudness"] = CommandAdapters.loudnessPayload(vm.exportLoudness)
             return .object(payload)
+        }
+
+        register("export.loudness",
+                 summary: "The loudness CURVES of the render (or of the last one to finish), cut down to "
+                        + "at most `points` samples evenly spread over its 100 ms sub-blocks: "
+                        + "`times` (s, the instant each window ENDS), `momentary` (400 ms), "
+                        + "`short_term` (3 s) and `integrated` (the gated value as it stood at "
+                        + "that instant), all in LUFS. A curve is null where its window has not "
+                        + "filled yet or where it is silence. `summary` is the same object as "
+                        + "`export.status.loudness`.",
+                 params: [ParamSpec("points", "int", required: false,
+                                    "How many samples at most (default 200, 1 … 5000).")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard vm.exportJob != nil else {
+                throw CommandError(code: .invalid_state, message: "no export to measure")
+            }
+            let points = try p.int("points", or: 200)
+            guard (1...5000).contains(points) else {
+                throw CommandError(code: .bad_params, message: "points must be 1 … 5000")
+            }
+            vm.readExportLoudness()
+            let a = vm.exportLoudness
+            let c = a.curves(points: points)
+            func series(_ v: [Double?]) -> JSONValue {
+                .array(v.map { $0.map { .number($0) } ?? .null })
+            }
+            return .object([
+                "blocks": .int(a.blockCount),
+                "duration": .number(a.duration),
+                "times": .array(c.times.map { .number($0) }),
+                "momentary": series(c.momentary),
+                "short_term": series(c.shortTerm),
+                "integrated": series(c.integrated),
+                "summary": CommandAdapters.loudnessPayload(a),
+            ])
         }
 
         register("export.preview",

@@ -12,6 +12,7 @@
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
 #include "OBJAudioProbe.h"
+#include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -631,6 +632,18 @@ struct OBJRenderJob {
 // du thread principal : d'où des atomiques relâchées et pas un verrou — un verrou ferait attendre
 // le rendu pour un dessin, et une crête lue à moitié écrite ne coûte qu'un pixel d'un seau, le
 // temps d'une image. Et le nombre de seaux est FIXE : la mémoire ne dépend pas de la durée.
+//
+// SONIE (BS.1770-4 / EBU R128). La même accroche porte la mesure : chaque bloc rendu passe dans
+// `objloud_process` (Shared/OBJLoudness.h — pondération K recalculée pour la vraie fréquence,
+// énergie par sous-blocs de 100 ms, true peak 4×), qui rend un sous-bloc à chaque fois qu'un est
+// complet. Les sous-blocs sont publiés un par un (énergie, crête) dans un tableau dont la taille est
+// connue dès `reset` — durée du rendu ÷ 100 ms — et alloué là, sur le thread principal, AVANT que le
+// rendu ne démarre : `addBlock` (thread de rendu) n'alloue rien et ne prend aucun verrou. Le lecteur
+// (le poll à 10 Hz) relit incrémentalement : les valeurs sont écrites en relaxed PUIS le compteur
+// `loudBlocks` en release, lu en acquire — un sous-bloc compté est donc un sous-bloc entièrement
+// écrit, ce qui est plus exigeant que pour les crêtes (où une lecture à moitié écrite ne coûte qu'un
+// pixel) : une énergie lue à moitié fausserait toute la fenêtre de 3 s qui la contient.
+// Le calcul des fenêtres et des portes est fait côté Swift (LoudnessAnalysis) : ici, seulement le signal.
 struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDataReceiver {
     static constexpr int kBuckets = 1024;
 
@@ -639,7 +652,37 @@ struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDa
     std::atomic<int>        filled { 0 };          // seaux déjà touchés, donc avancement visible
     std::atomic<long long>  totalSamples { 0 };
 
+    // — Sonie : les sous-blocs de 100 ms déjà mesurés.
+    struct LoudSeries {
+        int capacity = 0;
+        std::unique_ptr<std::atomic<double>[]> energy;
+        std::unique_ptr<std::atomic<float>[]>  truePeak;
+        explicit LoudSeries(int n) : capacity(n),
+            energy(new std::atomic<double>[(size_t) n]), truePeak(new std::atomic<float>[(size_t) n]) {
+            for (int i = 0; i < n; ++i) {
+                energy[(size_t) i].store(0.0, std::memory_order_relaxed);
+                truePeak[(size_t) i].store(0.0f, std::memory_order_relaxed);
+            }
+        }
+    };
+    std::atomic<LoudSeries*>                 loudSeries { nullptr };   // publiée par reset()
+    std::atomic<int>                         loudBlocks { 0 };         // sous-blocs COMPLETS, release
+    std::vector<std::unique_ptr<LoudSeries>> loudOwned;                // propriétaire (reset + destructeur)
+    OBJLoudness*                             loudState = nullptr;      // état DSP, thread de rendu seul
+
     OBJExportTap() { clear(); }
+    ~OBJExportTap() { if (loudState) objloud_destroy(loudState); }
+    OBJExportTap(const OBJExportTap&) = delete;
+    OBJExportTap& operator=(const OBJExportTap&) = delete;
+
+    static void emitLoudBlock(void* context, int index, double energy, float truePeak) {
+        auto* self = static_cast<OBJExportTap*>(context);
+        LoudSeries* series = self->loudSeries.load(std::memory_order_relaxed);
+        if (!series || index < 0 || index >= series->capacity) return;
+        series->energy[(size_t) index].store(energy, std::memory_order_relaxed);
+        series->truePeak[(size_t) index].store(truePeak, std::memory_order_relaxed);
+        self->loudBlocks.store(index + 1, std::memory_order_release);
+    }
 
     void clear() {
         for (int i = 0; i < kBuckets; ++i) {
@@ -649,16 +692,38 @@ struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDa
         filled.store(0, std::memory_order_relaxed);
     }
 
-    void reset(int, double, juce::int64 totalSamplesInSource) override {
+    void reset(int numChannels, double sampleRate, juce::int64 totalSamplesInSource) override {
         totalSamples.store((long long) juce::jmax((juce::int64) 1, totalSamplesInSource),
                            std::memory_order_relaxed);
         clear();
+
+        // La mesure de sonie : SEULE allocation, faite ici (thread principal, avant que le rendu
+        // ne démarre — NodeRenderContext appelle reset dans son constructeur).
+        loudBlocks.store(0, std::memory_order_release);
+        if (loudState) { objloud_destroy(loudState); loudState = nullptr; }
+        loudState = objloud_create(sampleRate, numChannels);
+        if (loudState) {
+            const long long capacity = totalSamplesInSource / loudState->subblockLength + 2;
+            loudOwned.push_back(std::make_unique<LoudSeries>(
+                (int) juce::jlimit<long long>(1, 100000000LL, capacity)));   // 100 M sous-blocs = 115 jours
+            loudSeries.store(loudOwned.back().get(), std::memory_order_release);
+        } else {
+            loudSeries.store(nullptr, std::memory_order_release);
+        }
     }
 
     void addBlock(juce::int64 startSample, const juce::AudioBuffer<float>& buffer,
                   int startOffsetInBuffer, int numSamples) override {
         const long long total = totalSamples.load(std::memory_order_relaxed);
         if (numSamples <= 0 || total <= 0 || buffer.getNumChannels() <= 0) return;
+
+        if (loudState) {
+            const float* channels[OBJLOUD_MAX_CHANNELS];
+            const int last = buffer.getNumChannels() - 1;
+            for (int c = 0; c < loudState->channels; ++c)
+                channels[c] = buffer.getReadPointer(juce::jmin(c, last), startOffsetInBuffer);
+            objloud_process(loudState, channels, numSamples, &OBJExportTap::emitLoudBlock, this);
+        }
 
         // Un bloc peut chevaucher deux seaux (il tombe presque toujours dans un seul) : on le
         // découpe sur les frontières plutôt que de l'attribuer en bloc au seau de son début.
@@ -3479,6 +3544,22 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         out[(size_t) i * 2 + 1] = _exportTap->hi[i].load(std::memory_order_relaxed);
     }
     return [NSData dataWithBytes:out.data() length:out.size() * sizeof(float)];
+}
+
+- (NSData*)exportLoudnessBlocksFrom:(NSInteger)from {
+    if (!_exportTap) return nil;
+    OBJExportTap::LoudSeries* series = _exportTap->loudSeries.load(std::memory_order_acquire);
+    if (!series) return [NSData data];
+    // Le compteur d'ABORD, en acquire : tout sous-bloc qu'il compte est entièrement écrit.
+    const int n = juce::jlimit(0, series->capacity, _exportTap->loudBlocks.load(std::memory_order_acquire));
+    const int start = (int) juce::jlimit<NSInteger>(0, (NSInteger) n, from);
+    if (start >= n) return [NSData data];
+    std::vector<double> out((size_t) (n - start) * 2);
+    for (int i = start; i < n; ++i) {
+        out[(size_t) (i - start) * 2]     = series->energy[(size_t) i].load(std::memory_order_relaxed);
+        out[(size_t) (i - start) * 2 + 1] = (double) series->truePeak[(size_t) i].load(std::memory_order_relaxed);
+    }
+    return [NSData dataWithBytes:out.data() length:out.size() * sizeof(double)];
 }
 
 - (void)cancelExport {

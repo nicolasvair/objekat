@@ -2554,6 +2554,29 @@
         }
       }
     },
+    "export.loudness.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EBU R128 loudness: M = momentary (400 ms), S = short-term (3 s), I = integrated (gated), LRA = loudness range, TP = true peak (dBTP). Hover the waveform to read the values."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sonoridad EBU R128: M = momentánea (400 ms), S = a corto plazo (3 s), I = integrada (con puertas), LRA = rango de sonoridad, TP = pico real (dBTP). Pasa el ratón por la forma de onda para leer los valores."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sonie EBU R128 : M = momentanée (400 ms), S = court terme (3 s), I = intégrée (avec portes), LRA = plage de sonie, TP = crête vraie (dBTP). Survolez la forme d'onde pour lire les valeurs."
+          }
+        }
+      }
+    },
     "export.overwrite.info": {
       "extractionState": "manual",
       "localizations": {
