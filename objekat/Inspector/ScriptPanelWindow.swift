@@ -36,7 +36,7 @@ final class ScriptPanelWindows: NSObject, NSWindowDelegate {
 
         let hosting = NSHostingView(rootView: ScriptPanelView(store: store, panelID: id))
         let size = hosting.fittingSize
-        let frame = NSRect(x: 0, y: 0, width: max(360, size.width), height: max(120, size.height))
+        let frame = NSRect(x: 0, y: 0, width: max(460, size.width), height: max(120, size.height))
         hosting.frame = frame
 
         let w = NSPanel(contentRect: frame,
@@ -89,7 +89,7 @@ struct ScriptPanelView: View {
 
     var body: some View {
         if let p = store.panels[panelID] {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(rows(of: p), id: \.control.id) { row in
                     controlRow(row, p)
                 }
@@ -109,7 +109,7 @@ struct ScriptPanelView: View {
                 }
             }
             .padding(12)
-            .frame(width: 360)
+            .frame(width: 460)
         }
     }
 
@@ -140,10 +140,36 @@ struct ScriptPanelView: View {
                                  set: { set(c.id, .bool($0)) })) { Text(verbatim: c.label) }
         case .button:
             Button { press(c.id) } label: { Text(verbatim: c.label) }
+        case .section:
+            // A heading over the rows that follow it: the script's own text, set apart.
+            VStack(alignment: .leading, spacing: 3) {
+                Divider()
+                Text(verbatim: c.label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.top, 2)
+        case .progress:
+            // A bar the script drives: a number is a fraction, `null` is "working, no idea how far".
+            let fraction = p.values[c.id]?.doubleValue
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(verbatim: c.label).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    if let fraction {
+                        Text(verbatim: "\(Int((fraction * 100).rounded())) %")
+                            .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                }
+                if let fraction {
+                    ProgressView(value: fraction).progressViewStyle(.linear)
+                } else {
+                    ProgressView().progressViewStyle(.linear)
+                }
+            }
         case .choice:
             // A menu, the script's own labels: a model that is not installed says so in its label.
             HStack(spacing: 8) {
-                Text(verbatim: c.label).frame(width: 150, alignment: .leading)
+                Text(verbatim: c.label).frame(width: 200, alignment: .leading)
                 Picker(selection: Binding(get: { p.values[c.id]?.stringValue ?? c.options.first?.id ?? "" },
                                           set: { set(c.id, .string($0)) })) {
                     ForEach(c.options, id: \.id) { o in Text(verbatim: o.label).tag(o.id) }
@@ -159,9 +185,9 @@ struct ScriptPanelView: View {
                                          set: { set(gate.id, .bool($0)) })) {
                         Text(verbatim: gate.label)
                     }
-                    .frame(width: 150, alignment: .leading)
+                    .frame(width: 200, alignment: .leading)
                 } else {
-                    Text(verbatim: c.label).frame(width: 150, alignment: .leading)
+                    Text(verbatim: c.label).frame(width: 200, alignment: .leading)
                 }
                 Slider(value: Binding(get: { p.values[c.id]?.doubleValue ?? c.min },
                                       set: { set(c.id, .number($0), coalesced: true) }),

@@ -24,10 +24,14 @@ enum ScriptPanelState: String, Sendable {
 }
 
 struct ScriptPanelControl: Equatable, Sendable {
-    enum Kind: String, Sendable { case bool, number, button, choice }
+    /// `progress` is a bar the SCRIPT drives (value 0…1, or `null` = indeterminate) and `section` a
+    /// heading that groups the rows under it: neither holds anything a hand can set.
+    enum Kind: String, Sendable { case bool, number, button, choice, progress, section }
     let id: String
     let kind: Kind
-    let label: String
+    /// The script may rewrite it (`script.panel.update`'s `labels`): a progress bar says WHAT is
+    /// going on, and that changes from one stage to the next.
+    var label: String
     let min: Double
     let max: Double
     let step: Double
@@ -39,6 +43,13 @@ struct ScriptPanelControl: Equatable, Sendable {
 }
 
 /// One entry of a `choice`: a stable id (what the script reads back) and the label drawn.
+extension ScriptPanelControl.Kind {
+    /// What a HAND can set (`input`): a progress bar and a section are the script's own drawing.
+    var holdsHandValue: Bool { self == .bool || self == .number || self == .choice }
+    /// What the script can write with `update`'s `values`.
+    var holdsValue: Bool { holdsHandValue || self == .progress }
+}
+
 struct ScriptPanelOption: Equatable, Sendable {
     let id: String
     let label: String
@@ -50,7 +61,8 @@ struct ScriptPanel: Equatable, Sendable {
     let objectID: UUID?
     var title: String
     var controls: [ScriptPanelControl]
-    /// bool → .bool, number → .number, choice → .string (the option's id). A button holds no value.
+    /// bool → .bool, number → .number, choice → .string (the option's id), progress → .number 0…1 or
+    /// .null (indeterminate). A button and a section hold no value.
     var values: [String: JSONValue]
     var rev: Int = 0
     var state: ScriptPanelState = .open
@@ -127,7 +139,7 @@ struct ScriptPanel: Equatable, Sendable {
             throw CommandError(code: .invalid_state, message: "panel is \(p.state.rawValue)")
         }
         for (key, v) in values {
-            guard let c = p.controls.first(where: { $0.id == key }), c.kind != .button else {
+            guard let c = p.controls.first(where: { $0.id == key }), c.kind.holdsHandValue else {
                 throw CommandError(code: .bad_params, message: "no value control '\(key)'")
             }
             switch c.kind {
@@ -147,7 +159,7 @@ struct ScriptPanel: Equatable, Sendable {
                                        message: "'\(key)' is one of \(c.options.map(\.id))")
                 }
                 p.values[key] = .string(s)
-            case .button: break
+            case .button, .progress, .section: break
             }
         }
         var immediate = !coalesced
@@ -191,17 +203,28 @@ struct ScriptPanel: Equatable, Sendable {
 
     // MARK: What the script writes back — never moves `rev`
 
-    func update(_ id: UUID, status: String?, busy: Bool?, values: [String: JSONValue]) throws {
+    func update(_ id: UUID, status: String?, busy: Bool?, values: [String: JSONValue],
+                labels: [String: String] = [:]) throws {
         guard var p = panels[id] else {
             throw CommandError(code: .not_found, message: "no panel \(id.uuidString)")
         }
         if let status { p.status = status }
         if let busy { p.busy = busy }
+        for (key, text) in labels {
+            guard let i = p.controls.firstIndex(where: { $0.id == key }) else {
+                throw CommandError(code: .bad_params, message: "no control '\(key)'")
+            }
+            p.controls[i].label = text
+        }
         for (key, v) in values {
-            guard let c = p.controls.first(where: { $0.id == key }), c.kind != .button else {
+            guard let c = p.controls.first(where: { $0.id == key }), c.kind.holdsValue else {
                 throw CommandError(code: .bad_params, message: "no value control '\(key)'")
             }
-            if c.kind == .bool, let b = v.boolValue { p.values[key] = .bool(b) }
+            if c.kind == .progress {
+                if case .null = v { p.values[key] = .null }
+                else if let d = v.doubleValue { p.values[key] = .number(Swift.min(1, Swift.max(0, d))) }
+                else { throw CommandError(code: .bad_params, message: "'\(key)': a progress is 0…1 or null") }
+            } else if c.kind == .bool, let b = v.boolValue { p.values[key] = .bool(b) }
             else if c.kind == .number, let d = v.doubleValue {
                 p.values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
             } else if c.kind == .choice, let s = v.stringValue, c.options.contains(where: { $0.id == s }) {

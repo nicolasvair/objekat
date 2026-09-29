@@ -1589,7 +1589,7 @@ floating `NSPanel`, hidden with the app, opened only when there is an interface 
 panel exists and no window opens**). One panel per connection (a second `open` replaces the first).
 Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
 
-Controls: `{id, kind: "bool"|"number"|"button"|"choice", label, value?, min?, max?, step?, unit?,
+Controls: `{id, kind: "bool"|"number"|"button"|"choice"|"progress"|"section", label, value?, min?, max?, step?, unit?,
 enabled_by?, options?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
 `min`); a `choice` (drawn as a pop-up menu) needs a non-empty `options: [{id, label}]` (unique ids),
 its `value` is an option **id** (default: the first option) and `values[id]` reads back that id as a
@@ -1597,6 +1597,13 @@ string — `input` / `update` refuse an id that is not one of the options (`bad_
 option labels, like every label, are the script's own data; a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
 one ("a box and a threshold" — the window draws that pair inline). The labels are the SCRIPT's own
 data; the app's only texts are Validate / Cancel and the default title.
+
+Two kinds are the script's own drawing and hold nothing a hand can set (`input` refuses them):
+a `progress` is a bar the script drives — `value` 0…1, or `null` for "working, no idea how far"
+(absent = 0); `script.panel.update` moves it (`values: {id: 0.4}` / `{id: null}`, clamped to 0…1)
+and can rename what it says it is doing (`labels: {id: "Transcribing…"}`) — and a `section` is a
+heading (a divider and its label) that groups the rows under it. Both are read back in `values`
+(`section` has none).
 
 - **`script.panel.open {title?, controls, object?, status?, busy?}`** → `{panel_id, rev: 0}`.
   `bad_params`: duplicate id, `min >= max`, `step <= 0`, value out of range, `enabled_by` not a
@@ -1607,8 +1614,8 @@ data; the app's only texts are Validate / Cancel and the default title.
   `rev > since_rev` or the state is no longer `open`; at the timeout (≤ 5000, default 1000) it
   answers the current state, **no error** (the timeout is the script's heartbeat — it loops). The
   other connections keep being served while it waits.
-- **`script.panel.update {panel_id, status?, busy?, values?}`** — the script writes back a status
-  line, the busy flag, recalibrated values. **Never moves `rev`**: it would wake the script's own
+- **`script.panel.update {panel_id, status?, busy?, values?, labels?}`** — the script writes back a status
+  line, the busy flag, recalibrated values, progress values, control labels. **Never moves `rev`**: it would wake the script's own
   next `wait`. `rev` moves only when the hand acts.
 - **`script.panel.close {panel_id}`** → `{closed: true}`; the connection closing does the same.
 - **`script.panel.input {panel_id, values?, press?}`** — the HAND's door, for a headless test (the

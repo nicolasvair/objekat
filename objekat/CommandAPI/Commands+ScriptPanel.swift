@@ -30,7 +30,7 @@ extension CommandRegistry {
                       let kindName = o["kind"]?.stringValue,
                       let kind = ScriptPanelControl.Kind(rawValue: kindName),
                       let label = o["label"]?.stringValue else {
-                    throw bad("a control is {id, kind: bool|number|button|choice, label, …}")
+                    throw bad("a control is {id, kind: bool|number|button|choice|progress|section, label, …}")
                 }
                 guard seen.insert(id).inserted else { throw bad("duplicate control id '\(id)'") }
                 var lo = 0.0, hi = 1.0, step = 1.0
@@ -68,7 +68,15 @@ extension CommandRegistry {
                         throw bad("control '\(id)': value is not one of its options")
                     }
                     values[id] = .string(v)
-                case .button: break
+                case .progress:
+                    // absent = 0, explicit null = indeterminate
+                    if let raw = o["value"], case .null = raw { values[id] = .null }
+                    else {
+                        let v = o["value"]?.doubleValue ?? 0
+                        guard v >= 0, v <= 1 else { throw bad("control '\(id)': a progress is 0…1 or null") }
+                        values[id] = .number(v)
+                    }
+                case .button, .section: break
                 }
                 var control = ScriptPanelControl(id: id, kind: kind, label: label, min: lo, max: hi,
                                                  step: step, unit: o["unit"]?.stringValue ?? "",
@@ -98,7 +106,7 @@ extension CommandRegistry {
                         + "replaces the first). Headless: the panel exists, no window opens.",
                  params: [ParamSpec("title", "string", required: false, "Window title."),
                           ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?}>",
-                                    "kind: bool | number | button | choice. A number needs min, max, step; a choice needs options [{id,label}] and its value is an option id. "
+                                    "kind: bool | number | button | choice | progress | section. A progress is a bar the script drives (value 0…1, null = indeterminate); a section is a heading. A number needs min, max, step; a choice needs options [{id,label}] and its value is an option id. "
                                   + "enabled_by = the id of a bool control that greys this one."),
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the panel closes if it disappears."),
@@ -159,12 +167,23 @@ extension CommandRegistry {
                  params: [ParamSpec("panel_id", "uuid", "The panel."),
                           ParamSpec("status", "string", required: false, "Status line."),
                           ParamSpec("busy", "bool", required: false, "Busy indicator."),
-                          ParamSpec("values", "object", required: false, "Control id → value.")],
+                          ParamSpec("values", "object", required: false,
+                                    "Control id → value (a progress: 0…1, or null = indeterminate)."),
+                          ParamSpec("labels", "object", required: false,
+                                    "Control id → new label (what a progress bar says it is doing).")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            var labels: [String: String] = [:]
+            if let raw = p.raw["labels"] {
+                guard let o = raw.objectValue else { throw bad("'labels' must be an object") }
+                for (k, v) in o {
+                    guard let t = v.stringValue else { throw bad("'labels.\(k)' must be a string") }
+                    labels[k] = t
+                }
+            }
             let busy: Bool? = p.raw["busy"] == nil ? nil : try p.bool("busy")
             try vm.scriptPanels.update(try p.uuid("panel_id"), status: try p.optionalString("status"),
-                                       busy: busy, values: try parseValues(p))
+                                       busy: busy, values: try parseValues(p), labels: labels)
             return .object(["ok": .bool(true)])
         }
 
