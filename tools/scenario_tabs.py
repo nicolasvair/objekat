@@ -18,7 +18,7 @@ silently corrupting whatever is mid-gesture.
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
-import json, os, re, sys, time
+import hashlib, json, os, re, subprocess, sys, time, wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -35,7 +35,8 @@ A_JSON = os.path.join(ROOT, "A", "A.objekat.json")
 B_JSON = os.path.join(ROOT, "B", "B.objekat.json")
 C_JSON = os.path.join(ROOT, "C", "C.objekat.json")
 C2_JSON = os.path.join(ROOT, "C", "C_v2.objekat.json")
-for p in (A_JSON, B_JSON, C_JSON, C2_JSON):
+E_JSON = os.path.join(ROOT, "E", "E.objekat.json")
+for p in (A_JSON, B_JSON, C_JSON, C2_JSON, E_JSON):
     os.makedirs(os.path.dirname(p), exist_ok=True)
 
 fails = []
@@ -52,6 +53,66 @@ def check(label, ok, detail=""):
 
 def approx(a, b, eps=1e-6):
     return abs(a - b) < eps
+
+
+def wav_rms(path):
+    """RMS of a 16/24-bit WAV, read in chunks (a 900 s stereo 24-bit file is 240 MB). Re-reading
+    the FILE is what proves the render is a sound and not merely a file that exists — 24 bits is
+    unpacked by hand (`wave` hands the bytes over as they are, @see the CLI's 24-bit caution)."""
+    import numpy as np
+    total, count = 0.0, 0
+    with wave.open(path, "rb") as w:
+        sw, ch = w.getsampwidth(), w.getnchannels()
+        while True:
+            raw = w.readframes(1 << 20)
+            if not raw:
+                break
+            if sw == 2:
+                a = np.frombuffer(raw, dtype="<i2").astype(np.float64) / 32768.0
+            elif sw == 3:
+                b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3).astype(np.int32)
+                v = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+                v = np.where(v >= 1 << 23, v - (1 << 24), v)
+                a = v.astype(np.float64) / 8388608.0
+            else:
+                raise RuntimeError("unexpected sample width: %d" % sw)
+            total += float(np.sum(a * a))
+            count += a.size
+    return (total / count) ** 0.5 if count else 0.0
+
+
+def wav_digest(path):
+    """A hash of the audio DATA only (the header carries nothing that can differ, but this reads
+    the samples and nothing else)."""
+    h = hashlib.sha256()
+    with wave.open(path, "rb") as w:
+        while True:
+            raw = w.readframes(1 << 20)
+            if not raw:
+                break
+            h.update(raw)
+    return h.hexdigest()
+
+
+def pid_for_socket(sock_path):
+    try:
+        out = subprocess.check_output(["lsof", "-t", sock_path], text=True,
+                                      stderr=subprocess.DEVNULL)
+        pids = [int(p) for p in out.split()]
+        return pids[0] if pids else None
+    except Exception:
+        return None
+
+
+def window_count_for_pid(pid):
+    """Windows the process owns, off the WindowServer's own list (no permission needed). None if
+    Quartz is not there to ask."""
+    try:
+        import Quartz
+    except ImportError:
+        return None
+    info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
+    return sum(1 for w in info if w.get("kCGWindowOwnerPID") == pid)
 
 
 # `project.get_state` is re-serialised through `json.dumps` for the comparison, so the XML's
@@ -297,6 +358,132 @@ with ObjekatClient(SOCK, timeout=180) as c:
     cmd("wait_idle", timeout_ms=10000)
     cmd("tab.select", id=tab_b_id)
     check("tab.select after the export finishes: works", tab_with_path(B_JSON)["active"] is True)
+
+    # ── a render on a COPY outlives a tab switch (L5) ────────────────────────
+    #
+    # A background export renders a CLONE of the Edit once it is under way: the hand can go and
+    # work in another tab meanwhile, which is the whole point of rendering in the background. Only
+    # a DIRECT render (it reads the live Edit) — and the clone being made, `.preparing` — pin the
+    # document in front. The file is what says the engine followed and not merely the model: the
+    # render taken across three tab switches must be the same SOUND as one taken without moving.
+    RANGE = 900.0
+    cmd("tab.select", id=tab_b_id)
+    t_e = cmd("tab.new")
+    tab_e_id = t_e["id"]
+    for lane in range(4):
+        for k in range(15):
+            cmd("object.add", path=BIP, lane=lane, start=60.0 * k + 3.0 * lane)
+    cmd("project.save_as", path=E_JSON)
+    e_name = tab_with_path(E_JSON)["name"]
+    e_objects = len(cmd("object.list")["objects"])
+    REF = os.path.join(ROOT, "E", "ref.wav")
+    TEST = os.path.join(ROOT, "E", "across_tabs.wav")
+    DIRECT = os.path.join(ROOT, "E", "direct.wav")
+
+    def export_args(path, background):
+        return dict(format="wav", sample_rate=44100, dithering=False, background=background,
+                    start=0.0, end=RANGE, path=path)
+
+    def wait_past_preparing(limit=30.0):
+        deadline = time.time() + limit
+        while time.time() < deadline:
+            st = cmd("export.status")
+            if st.get("phase") != "preparing":
+                return st
+            time.sleep(0.02)
+        return cmd("export.status")
+
+    t0 = time.time()
+    ref_job = cmd("export.run", **export_args(REF, True))["job_id"]
+    cmd("job.wait", id=ref_job, timeout_ms=300000)
+    ref_secs = time.time() - t0
+    print("      (reference render: %.1f s for %.0f s of audio)" % (ref_secs, RANGE))
+    check("reference export written", os.path.exists(REF), REF)
+    cmd("export.panel", open=False)
+
+    job = cmd("export.run", **export_args(TEST, True))["job_id"]
+    st = cmd("export.status")
+    check("export.status carries the project it was launched from",
+          st.get("project_name") == e_name and st.get("background") is True, st)
+    st = wait_past_preparing()
+    check("the render is under way (past preparing)", st.get("running") is True, st)
+
+    try:
+        t_new = cmd("tab.new")
+        check("tab.new during a background render: works", cmd("tab.list")["count"] >= 4)
+    except ObjekatError as e:
+        t_new = None
+        check("tab.new during a background render: works", False, e.args[0])
+    still = cmd("export.status")
+    check("the render survived tab.new, project_name unchanged",
+          still.get("running") is True and still.get("project_name") == e_name, still)
+
+    for label, tid in (("E", tab_e_id), ("B", tab_b_id)):
+        try:
+            cmd("tab.select", id=tid)
+            check("tab.select %s during a background render: works" % label,
+                  [t for t in tabs() if t["id"] == tid][0]["active"] is True)
+        except ObjekatError as e:
+            check("tab.select %s during a background render: works" % label, False, e.args[0])
+    still = cmd("export.status")
+    check("the render is still running after tab.new + two switches",
+          still.get("running") is True,
+          "it ended too early to prove anything — lengthen RANGE: %s" % still)
+    check("export.status.project_name is still the origin's, from another tab",
+          still.get("project_name") == e_name, still)
+
+    # The strip's Show button, through its API door: the panel comes back ONTO the running job.
+    # No window may appear on a headless instance — the flag is state, the sheet is ContentView's.
+    pid = pid_for_socket(SOCK)
+    panel = cmd("export.panel", open=True)
+    check("export.panel during a job: open", panel.get("open") is True, panel)
+    check("export.status.panel_open", cmd("export.status").get("panel_open") is True)
+    if pid is not None:
+        wc = window_count_for_pid(pid)
+        check("no window on the headless pid", wc in (0, None), wc)
+    cmd("export.panel", open=False)
+
+    cmd("job.wait", id=job, timeout_ms=300000)
+    done = cmd("export.status")
+    check("the render finished", done.get("phase") == "finished", done)
+    check("export.status.project_name survives the end", done.get("project_name") == e_name, done)
+    check("the final file exists", os.path.exists(TEST), TEST)
+    if os.path.exists(TEST) and os.path.exists(REF):
+        r_ref, r_test = wav_rms(REF), wav_rms(TEST)
+        check("real signal in the render", r_ref > 0.001, r_ref)
+        check("RMS equals the reference render's (no tab change)",
+              abs(r_test - r_ref) <= 1e-9 + 1e-6 * r_ref, "%.9f vs %.9f" % (r_test, r_ref))
+        check("and so do the samples", wav_digest(TEST) == wav_digest(REF))
+
+    # DIRECT: the live Edit is being read, so everything that would replace or park it is refused.
+    cmd("tab.select", id=tab_e_id)
+    dj = cmd("export.run", **export_args(DIRECT, False))["job_id"]
+    check("a direct render is running", cmd("export.status").get("running") is True)
+
+    def refused(label, fn):
+        try:
+            fn()
+            check(label + ": refused", False, "it went through")
+        except ObjekatError as e:
+            check(label + ": refused", e.code == "invalid_state", e.code)
+
+    refused("tab.select during a DIRECT render", lambda: cmd("tab.select", id=tab_b_id))
+    refused("tab.new during a DIRECT render", lambda: cmd("tab.new"))
+    refused("project.new during a DIRECT render", lambda: cmd("project.new"))
+    refused("project.open during a DIRECT render", lambda: cmd("project.open", path=A_JSON))
+    refused("tab.open during a DIRECT render", lambda: cmd("tab.open", path=C_JSON))
+    check("the project is untouched by the refusals",
+          len(cmd("object.list")["objects"]) == e_objects
+          and cmd("export.status").get("running") is True)
+    cmd("job.wait", id=dj, timeout_ms=300000)
+    check("the direct render finished", cmd("export.status").get("phase") == "finished")
+    cmd("tab.select", id=tab_b_id)
+    check("tab.select works again once it ends", [t for t in tabs() if t["id"] == tab_b_id][0]["active"])
+    for t in list(tabs()):
+        if t["id"] not in (tab_a_id, tab_b_id):
+            cmd("tab.close", id=t["id"], discard=True)
+    check("the L5 tabs are closed", cmd("tab.list")["count"] == 2, cmd("tab.list")["count"])
+    cmd("export.panel", open=False)
 
     # ── closing: a dirty tab refuses, discard forces it, the last tab never closes ──
     cmd("tab.select", id=tab_a_id)

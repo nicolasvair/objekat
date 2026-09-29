@@ -359,6 +359,11 @@ final class Workspace {
             activeTabID = newID
             return .success(OpenOutcome(tabID: newID, alreadyOpen: false))
         } else {
+            // Replacing the active document tears its Edit down, and a direct render is reading it.
+            if vm.exportPinsActiveDocument {
+                vm.refuseWhileExportPins()   // the menu ignores the failure: this is its only voice
+                return .failure(.blocked(reasonKey: "tabs.switch.refused.export"))
+            }
             guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
             let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName)
             guard ok else { return .failure(.loadFailed) }
@@ -383,6 +388,10 @@ final class Workspace {
             return .success(())
         }
         let vm = session.viewModel
+        if vm.exportPinsActiveDocument {
+            vm.refuseWhileExportPins()
+            return .failure(.blocked(reasonKey: "tabs.switch.refused.export"))
+        }
         guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
         let ok = await vm.loadProjectAsync(from: url)
         return ok ? .success(()) : .failure(.loadFailed)

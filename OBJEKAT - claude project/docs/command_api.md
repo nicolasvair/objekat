@@ -275,8 +275,9 @@ caret, time selection, loop, viewport).
 
 `tab.select`/`tab.close` accept `id` (from `tab.list`) or a 1-based `index` in the SAME order
 `tab.list` shows. `tab.close` on the last remaining tab, or on a modified tab without
-`"discard": true`, answers `invalid_state`. A switch refused because a render, an export or a
-consolidated-object edit is under way (`tab.select`/`tab.new`/`tab.open` all check this BEFORE
+`"discard": true`, answers `invalid_state`. A switch refused because a render, a DIRECT export (or
+any export still `preparing` — a background render on its own copy does NOT block, @see "Tabs and
+exports" in the Export section) or a consolidated-object edit is under way (`tab.select`/`tab.new`/`tab.open` all check this BEFORE
 touching anything, so a refusal never half-parks a tab) also answers `invalid_state`, naming the
 reason in English (`"tab switch refused: an export is running"`, …) — the same four conditions
 `Quiescence.inFlight()` already reports for `wait_idle`.
@@ -1352,6 +1353,28 @@ exists with no window to show it in. `export.status` answers `panel_open` for th
 
 `export.run` **keeps** a window, it never opens one — same doctrine as the plugin editors: an
 export driven by a script must not put a window on the screen of whoever is working.
+
+**Bringing the window back onto a running render** (the strip's *Show* button): while a job runs,
+`export.panel {open: true}` does not open on fresh settings and does not refuse with "already
+running" — it brings the window back onto THAT render. The window then shows the job's own settings
+and span (greyed, frozen at the launch), never the active tab's: the render may have been launched
+from another one. On an instance with no interface (`--headless`) it only sets the state, readable as
+`export.status.panel_open`; no window ever appears there (`CGWindowListCopyWindowInfo` on the pid
+returns nothing, and `tools/scenario_tabs.py` / `scenario_export_preview.py` assert it). With no
+job, or a finished one, `open: true` is the window's ordinary opening on fresh settings.
+
+`export.status` (and the result of `job.wait` on an `export.run`) carries `project_name` — the
+project the render was **launched from**, frozen, so it still says so after the hand has moved to
+another tab — and `background` (the regime).
+
+**Tabs and exports.** A render on a **copy** (`background: true`) owns its own Edit once it is under
+way: `tab.new`, `tab.select`, `tab.open` and `tab.close` all work while it renders, and it finishes
+as if nothing had happened (the file is the same sound, sample for sample, as one rendered without
+moving — asserted by `scenario_tabs.py`). Two cases pin the document in front and answer
+`invalid_state`, for `tab.*` **and** for `project.new` / `project.open` (which tear the active Edit
+down exactly as a switch does): a **direct** render (it reads the live Edit end to end) and the
+`preparing` phase of any render (the clone is being made; a switch slipping in before it existed would
+have the wrong project cloned).
 
 `export.preview` reports what the window draws, read from the engine and from the file rather than
 from the display's own cache:

@@ -29,7 +29,7 @@ case the solo holds the window open (`solo.*`, `opened_windows`), and only then.
 Exit: 0 if everything passes, 1 as soon as one assertion fails.
 """
 
-import sys, os, json, time, wave, array
+import sys, os, json, time, wave, array, subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -70,6 +70,26 @@ def check(label, cond, detail=""):
     else:
         ko += 1
         print("  FAIL %-34s %s" % (label, detail))
+
+def pid_for_socket(sock_path):
+    try:
+        out = subprocess.check_output(["lsof", "-t", sock_path], text=True,
+                                      stderr=subprocess.DEVNULL)
+        pids = [int(p) for p in out.split()]
+        return pids[0] if pids else None
+    except Exception:
+        return None
+
+
+def window_count_for_pid(pid):
+    """Windows the process owns, off the WindowServer's list. None if Quartz is not there."""
+    try:
+        import Quartz
+    except ImportError:
+        return None
+    info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
+    return sum(1 for w in info if w.get("kCGWindowOwnerPID") == pid)
+
 
 def wav_peak(path):
     """The loudest sample of a WAV, in 0…1. Re-reading the FILE is the only way to tell whether
@@ -239,6 +259,37 @@ with ObjekatClient(SOCK) as c:
     check("the panel gives way", st.get("panel_open") is False, st)
     if r:
         step("  job.wait", lambda: c.send("job.wait", {"id": r["job_id"], "timeout_ms": 60000}))
+
+    # --- the strip's "Show" button, through its API door (L5): a background render closes the
+    #     panel by design, and `export.panel {open:true}` brings it back ONTO the running job —
+    #     never a fresh export's settings, never the "already running" refusal. On a headless
+    #     instance the flag is state and nothing else: no window may appear.
+    r = step("run background, long", lambda: c.send("export.run", {
+        "format": "wav", "sample_rate": 44100, "background": True,
+        "start": 0.0, "end": RANGE_END, "path": OUT("bg_long.wav")}))
+    if r:
+        st = c.send("export.status")
+        origin = st.get("project_name")
+        check("export.status names the project it was launched from",
+              isinstance(origin, str) and origin != "", st)
+        check("the panel is closed under a background render", st.get("panel_open") is False, st)
+        # Past `.preparing`, so the clone is made and the render has its own Edit.
+        deadline = time.time() + 30
+        while time.time() < deadline and c.send("export.status").get("phase") == "preparing":
+            time.sleep(0.02)
+        pid = pid_for_socket(SOCK)
+        p = step("export.panel open, job running", lambda: c.send("export.panel", {"open": True}))
+        check("the panel came back", p and p.get("open") is True, p)
+        st = c.send("export.status")
+        check("panel_open reads true, the job still running",
+              st.get("panel_open") is True and st.get("running") is True, st)
+        check("the job's project_name is unchanged", st.get("project_name") == origin, st)
+        if pid is not None:
+            wc = window_count_for_pid(pid)
+            check("no window on the headless pid", wc in (0, None), wc)
+        step("export.panel close", lambda: c.send("export.panel", {"open": False}))
+        check("closing it leaves the strip", c.send("export.status").get("panel_open") is False)
+        step("  job.wait", lambda: c.send("job.wait", {"id": r["job_id"], "timeout_ms": 120000}))
 
     # --- a DIRECT solo is heard past its group's window (25 September 2026).
     #     A group's window is a frame laid over absolute positions, so a child can hang outside it,

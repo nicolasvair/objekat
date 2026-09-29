@@ -229,6 +229,9 @@ extension CommandAdapters {
             "destination": .string(job.destination.path),
             "format": .string(job.settings.format.rawValue),
             "sample_rate": .number(job.settings.sampleRate),
+            // The project the render was LAUNCHED from, frozen: a render on a copy outlives a tab switch.
+            "project_name": .string(job.projectName),
+            "background": .bool(job.settings.renderInBackground),
         ]
         if let failure { payload["error"] = .string(failure) }
         return .object(payload)

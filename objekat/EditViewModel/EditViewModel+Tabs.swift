@@ -43,7 +43,11 @@ extension EditViewModel {
     /// switch is refused with a message in the tab bar, not diagnosed like `wait_idle`.
     var tabSwitchBlocker: String? {
         if isLoadingProject { return "tabs.switch.refused.loading" }
-        if exportJob?.isRunning == true { return "tabs.switch.refused.export" }
+        // Not every export: a render on a COPY has its own Edit once it is under way, and the hand
+        // can go and work in another tab meanwhile (the whole point of rendering in the background).
+        // Only a DIRECT render (it reads the live Edit) and the clone being made (`.preparing`)
+        // need the document in front to stay put. @see ExportJob.pinsActiveDocument
+        if exportJob?.pinsActiveDocument == true { return "tabs.switch.refused.export" }
         if !bakingIDs.isEmpty || !recomputingConsolidateIDs.isEmpty || isCascadingRebake {
             return "tabs.switch.refused.render"
         }
@@ -51,6 +55,21 @@ extension EditViewModel {
             return "tabs.switch.refused.consolidateEdit"
         }
         return nil
+    }
+
+    /// True while an export needs the active document untouched — the same condition as a tab
+    /// switch's, but read by the doors that REPLACE the active document in place (New, Open,
+    /// Recent): they tear the Edit down exactly as a switch does, and a direct render is reading it.
+    var exportPinsActiveDocument: Bool { exportJob?.pinsActiveDocument == true }
+
+    /// The refusal a hand sees when one of those doors is used while `exportPinsActiveDocument`.
+    /// Returns true when it refused (so callers write `guard !refuseWhileExportPins() else { return }`).
+    /// A script never reaches it: the API doors check the flag themselves and answer `invalid_state`.
+    @discardableResult
+    func refuseWhileExportPins() -> Bool {
+        guard exportPinsActiveDocument else { return false }
+        notify(L("project.refused.export.title"), L("project.refused.export.info"))
+        return true
     }
 
     // MARK: - Plugin editors

@@ -3037,6 +3037,29 @@
         }
       }
     },
+    "export.strip.show": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher"
+          }
+        }
+      }
+    },
     "export.strip.title": {
       "extractionState": "manual",
       "localizations": {
@@ -7292,6 +7315,52 @@
         }
       }
     },
+    "project.refused.export.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A direct export is running: the project cannot be replaced until it ends. An export rendered in the background has no such limit."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay una exportación directa en curso: el proyecto no se puede reemplazar hasta que termine. Una exportación en segundo plano no tiene este límite."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un export direct est en cours : le projet ne peut pas être remplacé avant sa fin. Un export en arrière-plan n'aurait pas cette limite."
+          }
+        }
+      }
+    },
+    "project.refused.export.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action refused"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Acción rechazada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action refusée"
+          }
+        }
+      }
+    },
     "project.saveAs.title": {
       "extractionState": "manual",
       "localizations": {
@@ -10725,19 +10794,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Can't switch tabs while an export is running."
+            "value": "Can't switch tabs during a direct export. An export rendered in the background allows it."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "No se puede cambiar de pestaña: hay una exportación en curso."
+            "value": "No se puede cambiar de pestaña durante una exportación directa. Una exportación en segundo plano lo permite."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Impossible de changer d'onglet : un export est en cours."
+            "value": "Impossible de changer d'onglet pendant un export direct. Un export en arrière-plan le permet."
           }
         }
       }

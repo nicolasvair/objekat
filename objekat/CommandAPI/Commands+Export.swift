@@ -152,12 +152,21 @@ extension CommandRegistry {
                  summary: "Opens or closes the export panel. It is what decides where a render "
                         + "SHOWS itself: with the panel open, a direct render stays in it "
                         + "(waveform, progress, listening); closed, the strip under the "
-                        + "transport takes over. `export.run` never OPENS one by itself.",
+                        + "transport takes over. `export.run` never OPENS one by itself. "
+                        + "While a render runs, `open: true` brings the panel back onto THAT "
+                        + "render (its own settings, greyed) — the strip's Show button. "
+                        + "With no interface it only sets the state (`panel_open`): no window.",
                  params: [ParamSpec("open", "bool", required: true,
                                     "true = open on the settings, false = close.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            if try p.bool("open") { vm.openExportPanel() } else { vm.exportPanelPresented = false }
+            if try p.bool("open") {
+                // A render under way: bring the panel back onto IT (the strip's "Show" button),
+                // rather than opening on fresh settings and refusing with "already running".
+                if vm.exportJob?.isRunning == true { vm.reopenExportPanel() } else { vm.openExportPanel() }
+            } else {
+                vm.exportPanelPresented = false
+            }
             return .object(["open": .bool(vm.exportPanelPresented)])
         }
 

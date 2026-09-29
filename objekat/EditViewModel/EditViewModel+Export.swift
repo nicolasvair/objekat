@@ -67,6 +67,30 @@ extension EditViewModel {
         revealExportRange(s)
     }
 
+    /// Brings the panel back onto a render that already exists — the strip's "Show" button, and
+    /// `export.panel` while a job runs. It is NOT `openExportPanel`: that one starts a NEW export
+    /// from fresh settings (and clears a finished job on the way), while this one shows the job that
+    /// is there. A background render closes the panel by design; without this door the only way
+    /// back to its waveform and its listening was to wait for it to end.
+    ///
+    /// While the job runs the panel reads `job.settings` (greyed, @see ExportPanelView), never the
+    /// active tab's: the render may have been launched from another one. Once it has ended the
+    /// panel is a place to start again, so it gets the job's settings to edit — and drops the
+    /// imposed range, which is the API's, not the panel's.
+    ///
+    /// The flag is state and nothing else: it is ContentView's sheet that puts a window on the
+    /// screen, and headless has no ContentView — so the same call is harmless there and readable
+    /// through `export.status.panel_open`, exactly as `export.panel` always was.
+    func reopenExportPanel() {
+        guard let job = exportJob else { return }
+        if !job.isRunning {
+            var s = job.settings
+            s.explicitRange = nil
+            exportSettings = s
+        }
+        exportPanelPresented = true
+    }
+
     /// The initial settings: the format kept from the last export, the project's folder and name.
     private func makeExportSettings() -> ExportSettings {
         let d = UserDefaults.standard
@@ -243,7 +267,9 @@ extension EditViewModel {
         exportJob = ExportJob(phase: .preparing, progress: 0,
                               destination: destination, previewSource: renderTarget,
                               renderedDuration: range.upperBound - range.lowerBound,
-                              settings: settings)
+                              settings: settings,
+                              projectName: projectName,
+                              renderedRange: range)
         startExportProgressPolling()
 
         // MP3 goes through a FLOATING-POINT wave (32 bits): it is an intermediate, no reason

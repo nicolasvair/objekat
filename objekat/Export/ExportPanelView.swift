@@ -24,13 +24,31 @@ struct ExportPanelView: View {
 
     private enum Field { case inPoint, outPoint, name }
 
-    private var settings: ExportSettings { viewModel.exportSettings }
+    /// While a render runs the panel describes THAT render, whichever tab is in front: the render
+    /// may have been launched from another one, and `exportSettings` (like the project's IN/OUT
+    /// markers) belongs to the active document. Otherwise it edits the settings of the next export.
+    private var settings: ExportSettings {
+        if let job, job.isRunning { return job.settings }
+        return viewModel.exportSettings
+    }
+
+    /// A binding that READS what the panel is showing (`settings`: the running job's own while a
+    /// render runs) and WRITES the settings of the next export. The controls are disabled under a
+    /// running render, so the write side is only ever reached with no job — but the READ side is
+    /// what keeps them from displaying another tab's values under it.
+    private func bound<T>(_ keyPath: WritableKeyPath<ExportSettings, T>) -> Binding<T> {
+        Binding(get: { settings[keyPath: keyPath] },
+                set: { viewModel.exportSettings[keyPath: keyPath] = $0 })
+    }
 
     /// The unit of the IN/OUT fields (seconds or bars) — the export's own.
     private var timeFieldMode: GridMode { settings.timeFieldMode }
 
     /// The range that will be rendered, as the view-model computes it (the single source of truth).
-    private var range: ClosedRange<Double>? { viewModel.exportTimeRange(for: settings) }
+    private var range: ClosedRange<Double>? {
+        if let job, job.isRunning { return job.renderedRange }   // frozen at the launch
+        return viewModel.exportTimeRange(for: settings)
+    }
 
     private var durationLabel: String {
         guard let r = range else { return "—" }
@@ -82,6 +100,7 @@ struct ExportPanelView: View {
         .frame(width: 460)
         .onAppear(perform: syncTimeFields)
         .onChange(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
+        .onChange(of: job?.isRunning) { _, _ in syncTimeFields() }
         // Changing unit does not touch the bounds: we show the same instants differently.
         .onChange(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
         // The listening belongs to this panel: closing it stops the sound. The render, itself,
@@ -328,7 +347,11 @@ struct ExportPanelView: View {
     }
 
     private func syncTimeFields() {
-        guard let r = viewModel.loopRegion else { inText = ""; outText = ""; return }
+        // Under a running render the fields show the span being rendered, not the markers of
+        // whichever tab is in front.
+        let shown: ClosedRange<Double>? = (job?.isRunning == true && settings.rangeMode == .inOut)
+            ? job?.renderedRange : viewModel.loopRegion
+        guard let r = shown else { inText = ""; outText = ""; return }
         if focusedField != .inPoint  { inText  = formatTime(r.lowerBound) }
         if focusedField != .outPoint { outText = formatTime(r.upperBound) }
     }
@@ -359,7 +382,7 @@ struct ExportPanelView: View {
             }
 
             HStack(spacing: 12) {
-                Picker(noLabel, selection: $viewModel.exportSettings.sampleRate) {
+                Picker(noLabel, selection: bound(\.sampleRate)) {
                     ForEach(settings.format.sampleRates, id: \.self) { hz in
                         Text(ExportSettings.sampleRateLabel(hz)).tag(hz)
                     }
@@ -371,7 +394,7 @@ struct ExportPanelView: View {
                 if settings.format == .wav {
                     // The 'Resolution' label has gone: the picker already says '16 bit' and
                     // '24 bit', and the explanation fits in the tooltip.
-                    Picker(noLabel, selection: $viewModel.exportSettings.bitDepth) {
+                    Picker(noLabel, selection: bound(\.bitDepth)) {
                         Text(L("export.bitDepth.16")).tag(16)
                         Text(L("export.bitDepth.24")).tag(24)
                     }
@@ -383,7 +406,7 @@ struct ExportPanelView: View {
             }
 
             if settings.format == .wav {
-                Toggle(isOn: $viewModel.exportSettings.dithering) {
+                Toggle(isOn: bound(\.dithering)) {
                     Text(L("export.dithering"))
                         .font(.system(size: 11))
                 }
@@ -418,7 +441,7 @@ struct ExportPanelView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(width: 78, alignment: .leading)
-                TextField(noLabel, text: $viewModel.exportSettings.name)
+                TextField(noLabel, text: bound(\.name))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
                     .focused($focusedField, equals: .name)
@@ -442,7 +465,7 @@ struct ExportPanelView: View {
     @ViewBuilder
     private var renderModeSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $viewModel.exportSettings.renderInBackground) {
+            Toggle(isOn: bound(\.renderInBackground)) {
                 Text(L("export.renderInBackground"))
                     .font(.system(size: 11))
             }

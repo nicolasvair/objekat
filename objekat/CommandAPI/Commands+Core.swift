@@ -123,6 +123,13 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             // The variant WITHOUT a dialogue: `newProject()` would raise the "save first?" alert.
             // A caller who wants that guard asks `app.info` (the `dirty` field) first.
+            // A DIRECT render reads the live Edit, which this would empty (and so does a render
+            // on a copy still being cloned): refused, like a tab switch. @see ExportJob.pinsActiveDocument
+            guard !vm.exportPinsActiveDocument else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a direct export is running (or preparing): "
+                                          + "the project cannot be replaced until it ends")
+            }
             vm.newProjectDiscardingChanges()
             return .object(["ok": .bool(true)])
         }
@@ -145,6 +152,11 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
             let url = URL(fileURLWithPath: path)
+            guard !vm.exportPinsActiveDocument else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a direct export is running (or preparing): "
+                                          + "the project cannot be replaced until it ends")
+            }
             // Tabs (INC1): this file may already be open in ANOTHER tab — switch to it rather than
             // load a second copy into the active one. The historical, tabs-unaware contract is kept
             // for everything else (reopening the ACTIVE tab's own file still reloads it in place).

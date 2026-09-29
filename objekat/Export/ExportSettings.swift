@@ -128,8 +128,25 @@ struct ExportJob: Equatable {
     /// width must stand for what is BEING rendered, not for what would be rendered now.
     var renderedDuration: Double = 0
     var settings: ExportSettings
+    /// The name of the project this render was LAUNCHED from. A render on a copy outlives the tab
+    /// it started in — the hand can go and work in another one — so the strip and `export.status`
+    /// say which project is being made, not which one happens to be in front now.
+    var projectName: String = ""
+    /// The span being rendered, frozen at the launch for the same reason: the panel reopened from
+    /// another tab must not read that tab's IN/OUT markers to describe this render.
+    var renderedRange: ClosedRange<Double> = 0...0
 
     var isRunning: Bool { phase == .preparing || phase == .rendering || phase == .encoding }
+
+    /// True while this job needs the document in front to STAY where it is. A DIRECT render reads
+    /// the live Edit from end to end, and any render — on a copy too — is still cloning that Edit
+    /// during `.preparing` (the main thread is frozen for it; a switch slipping in before the clone
+    /// is made would have the WRONG project cloned). Once a render on a copy is under way it owns
+    /// its own Edit and nothing the hand does to the active tab can reach it.
+    /// @see EditViewModel.tabSwitchBlocker, OBJEngineCore `exportMixToFileAsync:`
+    var pinsActiveDocument: Bool {
+        isRunning && (!settings.renderInBackground || phase == .preparing)
+    }
 
     /// True while no numbered progress exists: the bar spins instead of filling.
     var isIndeterminate: Bool { phase == .preparing }

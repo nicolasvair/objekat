@@ -63,6 +63,7 @@ extension EditViewModel {
                    L("project.notFound.info", url.lastPathComponent))
             return
         }
+        guard !refuseWhileExportPins() else { return }
         guard confirmDiscardIfDirty() else { return }
         loadProject(from: url)
     }
@@ -76,6 +77,7 @@ extension EditViewModel {
                    L("project.notFound.info", url.lastPathComponent))
             return
         }
+        guard !refuseWhileExportPins() else { return }
         guard confirmDiscardIfDirty() else { return }
         await loadProjectAsync(from: url)
     }
@@ -313,6 +315,7 @@ extension EditViewModel {
 
     /// Empties the current project and starts again from a new one.
     func newProject() {
+        guard !refuseWhileExportPins() else { return }
         guard confirmDiscardIfDirty() else { return }
         newProjectDiscardingChanges()
     }
@@ -322,6 +325,9 @@ extension EditViewModel {
     /// a script cannot answer a modal, and the caller has `app.info` to know whether the
     /// project is modified before deciding.
     func newProjectDiscardingChanges() {
+        // A direct render reads the live Edit, which this is about to empty. The API's `project.new`
+        // answers `invalid_state` BEFORE getting here; this is the net for every other caller.
+        guard !exportPinsActiveDocument else { return }
         engine?.stop()
         for stem in stems where stem.id != mainStemID {
             let memberIDs = allClips.filter { $0.stemID == stem.id }.map { $0.id.uuidString }
@@ -370,6 +376,7 @@ extension EditViewModel {
     /// Opens a version file: you navigate into the project folder and
     /// pick the "<project> V<n>.objekat" wanted — or a legacy "….json", which still opens.
     func loadProject() {
+        guard !refuseWhileExportPins() else { return }
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
@@ -386,6 +393,7 @@ extension EditViewModel {
     /// The breathing twin of `loadProject()` — the menu's "Open…" entry point, so opening from the
     /// panel shows the same overlay as opening a recent project or through `project.open`.
     func loadProjectAsyncFromPanel() async {
+        guard !refuseWhileExportPins() else { return }
         guard confirmDiscardIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.title = L("project.open.title")
@@ -423,6 +431,7 @@ extension EditViewModel {
 
     @discardableResult
     func loadProject(from url: URL) -> Bool {
+        guard !exportPinsActiveDocument else { return false }
         do {
             let doc = try decodeProjectDocument(at: url)
             applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
@@ -445,6 +454,7 @@ extension EditViewModel {
     /// already been entered). NEVER call this from `HeadlessRunner`'s pre-`app.run()` opening.
     @discardableResult
     func loadProjectAsync(from url: URL) async -> Bool {
+        guard !exportPinsActiveDocument else { return false }
         do {
             let doc = try decodeProjectDocument(at: url)
             let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url))

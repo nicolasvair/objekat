@@ -32,7 +32,9 @@ struct ExportProgressBar: View {
 
                     // WHICH render. With the panel closed, nothing else on screen says what is
                     // being made — and a session is exported several times over an afternoon.
-                    Text(L("export.strip.title", viewModel.projectName))
+                    // The project the render was LAUNCHED from, not the one in front now: a render on a
+                    // copy goes on while the hand works in another tab.
+                    Text(L("export.strip.title", job.projectName))
                         .font(.system(size: 11, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -68,6 +70,12 @@ struct ExportProgressBar: View {
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    // Back to the panel, whatever the state of the job: a background render closed it
+                    // by design, and its waveform and listening are only there. Shown for a finished
+                    // job too — the result stays readable there.
+                    Button(L("export.strip.show")) { viewModel.reopenExportPanel() }
+                        .controlSize(.small)
 
                     if job.isRunning {
                         Button(L("common.cancel")) { viewModel.cancelExport() }
