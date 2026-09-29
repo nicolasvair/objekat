@@ -1341,6 +1341,23 @@ extension TimelineView {
                 menu.addItem(swatchItem)
             }
 
+            // 'Create an FX link' — the very last entry, on a MULTIPLE selection the clicked object
+            // belongs to: the objects come to share ONE bin of plugins (@see createFXLinkFromObjects).
+            // Offered only when one of them has plain plugins to make the bin of.
+            if hit.selectedIDs.count >= 2, let clicked = hit.colorable, hit.selectedIDs.contains(clicked.id) {
+                let ids = Array(hit.selectedIDs)
+                let offered = MainActor.assumeIsolated { vm.canCreateFXLinkFromObjects(ids) }
+                if offered {
+                    if !menu.items.isEmpty { menu.addItem(.separator()) }
+                    let pf = MenuActionProxy { Task { @MainActor in vm.createFXLinkFromObjects(ids) } }
+                    proxies.append(pf)
+                    let fxItem = NSMenuItem(title: L("fxlink.menu.create"),
+                                            action: #selector(MenuActionProxy.run), keyEquivalent: "")
+                    fxItem.target = pf
+                    menu.addItem(fxItem)
+                }
+            }
+
             guard !menu.items.isEmpty else { return event }
             if let window = NSApp.keyWindow {
                 let screenPt = window.convertPoint(toScreen: event.locationInWindow)

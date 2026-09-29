@@ -31,18 +31,20 @@ enum SynopticMapping {
     /// `rack` block) plus the `seriesID → SeriesLocation` table that lets the insertion actions
     /// find the right series again. The series/branch ids are regenerated on every build: the
     /// action closures capture the table from the SAME build, so it is consistent.
-    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:])
+    static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:],
+                      fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)? = nil)
         -> (node: SynopticNode, locations: [UUID: SeriesLocation]) {
         var locations: [UUID: SeriesLocation] = [:]
         let node = buildSeries(plugins, seriesID: objectID, location: .root,
-                               locations: &locations, levels: levels)
+                               locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
         return (node, locations)
     }
 
     private static func buildSeries(_ plugins: [ObjectPlugin], seriesID: UUID,
                                     location: SeriesLocation,
                                     locations: inout [UUID: SeriesLocation],
-                                    levels: [UUID: Double]) -> SynopticNode {
+                                    levels: [UUID: Double],
+                                    fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)?) -> SynopticNode {
         locations[seriesID] = location
         let children: [SynopticNode] = plugins.map { p in
             if let rack = p.rack {
@@ -51,7 +53,8 @@ enum SynopticMapping {
                 let voices: [SynopticNode] = rack.voices.enumerated().map { vi, voice in
                     var vnode = buildSeries(voice, seriesID: UUID(),
                                             location: .voice(blockID: p.id, voiceIndex: vi),
-                                            locations: &locations, levels: levels)
+                                            locations: &locations, levels: levels,
+                                            fxLinkInfo: fxLinkInfo)
                     vnode.voiceGainDb = gains[vi]   // the end-of-branch dB gain → a UI control
                     vnode.voiceMuted  = mutes[vi]   // the branch's mute → a UI button
                     return vnode
@@ -59,9 +62,11 @@ enum SynopticMapping {
                 return SynopticNode(id: p.id, kind: .parallel(voices))
             }
             if let block = p.fxBlock {
-                // Provisional drawing until the block has a card of its own: its members in series.
-                return buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
-                                   locations: &locations, levels: levels)
+                // A bin's block: a series of its instances, framed and controlled as ONE thing.
+                var node = buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
+                                       locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
+                node.fxLink = fxLinkInfo?(p)
+                return node
             }
             return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0)))
         }
@@ -156,6 +161,11 @@ extension EditViewModel {
     /// index (the same branch, another branch, or the root). The engine instance is preserved
     /// (the same id, reused by the reconciliation). A no-op if the plugin is not in the object.
     func synopticReorder(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
+        // A bin's BLOCK dragged by its header moves as one piece, instances and all.
+        if let plugins = chainPlugins(objectID), Self.findBlock(pluginID, in: plugins) != nil {
+            moveFXBlock(hostID: objectID, blockID: pluginID, to: location, at: index)
+            return
+        }
         guard let plugins = chainPlugins(objectID),
               let (srcLoc, srcIdx) = Self.locate(pluginID, in: plugins),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }

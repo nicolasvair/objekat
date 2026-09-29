@@ -87,6 +87,32 @@ struct SynopticActions {
 
     // A bus's chain head: the 'infinite' toggle (a top-level aux / group).
     var onToggleInfinite: (() -> Void)? = nil
+
+    // FX links (a bin's block). Every closure that takes a UUID takes the BLOCK's id.
+    /// The common on/off of the block.
+    var onFXToggleEnabled: ((UUID) -> Void)? = nil
+    var onFXSetGain: ((UUID, Float) -> Void)? = nil
+    var onFXSetPan: ((UUID, Float) -> Void)? = nil
+    var onFXToggleMute: ((UUID) -> Void)? = nil
+    /// The start of a drag on the block's output section: push an undo point.
+    var onFXBeginEdit: (() -> Void)? = nil
+    var onFXRename: ((UUID, String) -> Void)? = nil
+    /// A click on the colour dot: the next colour of the palette.
+    var onFXCycleColor: ((UUID) -> Void)? = nil
+    /// Detach / reattach (the same button: the state says which).
+    var onFXToggleDetach: ((UUID) -> Void)? = nil
+    /// Leave the bin and keep the plugins as plain, independent ones.
+    var onFXRelease: ((UUID) -> Void)? = nil
+    /// Drop the block and its plugins from THIS host.
+    var onFXRemove: ((UUID) -> Void)? = nil
+    /// Dissolve the bin on every host.
+    var onFXDelete: ((UUID) -> Void)? = nil
+    /// Right click → 'Create an FX link' from these plugins (nil = never offered).
+    var canCreateFXLink: (([UUID]) -> Bool)? = nil
+    var onCreateFXLink: (([UUID]) -> Void)? = nil
+    /// The bins this host does not hold yet, and joining one.
+    var joinableFXLinks: (() -> [(id: UUID, name: String)])? = nil
+    var onJoinFXLink: ((UUID) -> Void)? = nil
 }
 
 /// The data of the 'audio file' zone (an audio clip), carried over into the signal view.
@@ -349,6 +375,15 @@ struct SynopticView: View {
                 }
             }
 
+            // A bin's block: its header (colour · name · on/off · menu) and its footer (mute ·
+            // volume · pan) are laid over the wire the frame is drawn round (@see draw).
+            ForEach(d.placement.fxBlocks) { b in
+                FXBlockHeaderView(link: b.link, width: b.rect.width, actions: actions)
+                    .position(b.headerCenter)
+                FXBlockFooterView(link: b.link, actions: actions)
+                    .position(b.footerCenter)
+            }
+
             ForEach(d.placement.cards) { c in
                 SynopticCardView(
                     plugin: c.plugin,
@@ -364,6 +399,10 @@ struct SynopticView: View {
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
                     linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
                 )
+                .contextMenu {
+                    // A card outside the selection speaks for itself alone (the drag's own rule).
+                    fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
+                }
                 .position(x: c.frame.midX, y: c.frame.midY)
             }
 
@@ -454,6 +493,27 @@ struct SynopticView: View {
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
         .contentShape(Rectangle())
         .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards))
+        .contextMenu { fxLinkMenu(ids: Array(selection)) }
+    }
+
+    /// The FX link entries of the right-click menus: make a bin of the plugins in hand, or join one
+    /// that exists. Nothing at all (an empty menu is not shown) when neither applies, and never on a
+    /// closed consolidated object, whose FX are read-only.
+    @ViewBuilder
+    private func fxLinkMenu(ids: [UUID]) -> some View {
+        if !fxReadOnly {
+            if !ids.isEmpty, actions.canCreateFXLink?(ids) == true {
+                Button(L("fxlink.menu.create")) { actions.onCreateFXLink?(ids) }
+            }
+            let joinable = actions.joinableFXLinks?() ?? []
+            if !joinable.isEmpty {
+                Menu(L("fxlink.menu.join")) {
+                    ForEach(joinable, id: \.id) { j in
+                        Button(j.name) { actions.onJoinFXLink?(j.id) }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Choosing cards
@@ -635,6 +695,14 @@ struct SynopticView: View {
             ctx.fill(path, with: .color(Color.gray.opacity(0.06 + Double(s.depth) * 0.05)))
         }
 
+        // A bin's block: its colour round its series (dashed once the host has left the bin).
+        for b in d.placement.fxBlocks {
+            let path = Path(roundedRect: b.rect, cornerRadius: 12)
+            ctx.fill(path, with: .color(b.link.color.opacity(b.link.isEnabled ? 0.16 : 0.06)))
+            ctx.stroke(path, with: .color(b.link.color.opacity(b.link.isDetached ? 0.6 : 0.95)),
+                       style: StrokeStyle(lineWidth: 1.5, dash: b.link.isDetached ? [4, 3] : []))
+        }
+
         for cable in d.placement.cables {
             var path = Path()
             path.move(to: cable.from)
@@ -668,6 +736,162 @@ struct SynopticView: View {
             ctx.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
                      with: .color(Color.secondary.opacity(0.8)))
         }
+    }
+}
+
+// MARK: - FX link block (header and footer)
+
+/// The strip above a bin's block: the colour dot (a click moves on to the next colour), the name
+/// (a double click renames it, a drag moves the whole block), the link badge (solid = follows the
+/// bin, hollow = detached; a click flips it), the common on/off and a menu with the rest.
+struct FXBlockHeaderView: View {
+    let link: SynopticFXLink
+    let width: CGFloat
+    let actions: SynopticActions
+
+    @State private var renaming = false
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
+
+    private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { actions.onFXCycleColor?(link.blockID) } label: {
+                Circle().fill(link.color).frame(width: 10, height: 10)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("fxlink.help.color"))
+
+            if renaming {
+                TextField(noLabel, text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .focused($fieldFocused)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { renaming = false }
+                    .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(link.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { beginRename() }
+                    .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } })
+                    .help(help)
+            }
+
+            Button { actions.onFXToggleDetach?(link.blockID) } label: {
+                Image(systemName: "link")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(link.isDetached ? link.color.opacity(0.9) : .white)
+                    .padding(3)
+                    .background {
+                        if link.isDetached {
+                            Circle().strokeBorder(link.color.opacity(0.7), lineWidth: 1.5)
+                        } else {
+                            Circle().fill(link.color)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
+
+            Button { actions.onFXToggleEnabled?(link.blockID) } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(link.isEnabled ? .white : .secondary)
+                    .frame(width: 18, height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4)
+                        .fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("fxlink.help.power"))
+
+            Menu { menuItems } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(L("fxlink.help.menu"))
+        }
+        .padding(.horizontal, 8)
+        .frame(width: width, height: SynopticLayout.fxHeaderH)
+        .contextMenu { menuItems }
+    }
+
+    @ViewBuilder private var menuItems: some View {
+        Button(L("fxlink.menu.rename")) { beginRename() }
+        Button(link.isDetached ? L("fxlink.menu.reattach") : L("fxlink.menu.detach")) {
+            actions.onFXToggleDetach?(link.blockID)
+        }
+        Divider()
+        Button(L("fxlink.menu.release")) { actions.onFXRelease?(link.blockID) }
+        Button(L("fxlink.menu.remove")) { actions.onFXRemove?(link.blockID) }
+        Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
+    }
+
+    private func beginRename() {
+        draft = link.name
+        renaming = true
+        fieldFocused = true
+    }
+
+    private func commitRename() {
+        guard renaming else { return }
+        renaming = false
+        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != link.name { actions.onFXRename?(link.blockID, name) }
+    }
+}
+
+/// The strip under a bin's block: its OUTPUT section — mute · volume · pan. While the block follows
+/// the bin these are the bin's (every member moves together); once detached they are the block's own.
+struct FXBlockFooterView: View {
+    let link: SynopticFXLink
+    let actions: SynopticActions
+
+    private func panLabel(_ p: Double) -> String {
+        if abs(p) < 0.01 { return "C" }
+        return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
+                          muted: link.muted,
+                          onToggleMute: {
+                              actions.onFXBeginEdit?()
+                              actions.onFXToggleMute?(link.blockID)
+                          },
+                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
+                actions.onFXSetGain?(link.blockID, newDB)
+            }
+            DragValueBox(value: Double(link.pan),
+                         format: { panLabel($0) },
+                         range: -1...1, pointsPerStep: 80, snap: false, width: 52,
+                         keyStep: 0.1,
+                         parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
+                         help: L("help.drag.pan"),
+                         onBegin: { actions.onFXBeginEdit?() },
+                         onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
+                         onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
+        }
+        .frame(height: SynopticLayout.fxFooterH)
+        .opacity(link.isEnabled ? 1 : 0.5)
     }
 }
 
@@ -1975,7 +2199,8 @@ struct SynopticBoundView: View {
         let obj = viewModel.find(id: objectID)
         let model = viewModel.chainPlugins(objectID) ?? []
         let gains = viewModel.chainGains(objectID)
-        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels)
+        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
+                                                       fxLinkInfo: { viewModel.synopticFXInfo($0) })
 
         let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
 
@@ -2204,7 +2429,41 @@ struct SynopticBoundView: View {
                 }
             },
             onBeginSendEdit: { viewModel.pushUndo() },
-            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) }
+            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) },
+            // FX links. The block's id is what every one of these carries; the model resolves the
+            // bin (attached) or the block's own copy (detached) itself.
+            onFXToggleEnabled: { blockID in fxToggleEnabled(blockID) },
+            onFXSetGain: { blockID, dB in fxSetOutput(blockID, gain: dB) },
+            onFXSetPan: { blockID, pan in fxSetOutput(blockID, pan: Float((pan * 10).rounded() / 10)) },
+            onFXToggleMute: { blockID in fxSetOutput(blockID, toggleMute: true) },
+            onFXBeginEdit: { viewModel.pushUndo() },
+            onFXRename: { blockID, name in
+                if let id = fxLinkID(of: blockID) { viewModel.renameFXLink(id, to: name) }
+            },
+            onFXCycleColor: { blockID in
+                if let id = fxLinkID(of: blockID) { viewModel.cycleFXLinkColor(id) }
+            },
+            onFXToggleDetach: { blockID in
+                guard let block = fxBlock(blockID) else { return }
+                if block.fxBlock?.isDetached == true {
+                    viewModel.reattachFXBlock(hostID: objectID, blockID: blockID)
+                } else {
+                    viewModel.detachFXBlock(hostID: objectID, blockID: blockID)
+                }
+            },
+            onFXRelease: { viewModel.releaseFXBlock(hostID: objectID, blockID: $0) },
+            onFXRemove: { viewModel.removeFXBlock(hostID: objectID, blockID: $0) },
+            onFXDelete: { blockID in
+                if let id = fxLinkID(of: blockID) { viewModel.deleteFXLink(id) }
+            },
+            canCreateFXLink: { viewModel.canCreateFXLink(host: objectID, pluginIDs: $0) },
+            onCreateFXLink: { ids in
+                if viewModel.createFXLink(from: objectID, pluginIDs: ids) != nil {
+                    viewModel.setPluginSelection([], host: objectID)
+                }
+            },
+            joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
+            onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) }
         ))
         .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
         .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
@@ -2251,6 +2510,40 @@ struct SynopticBoundView: View {
             )
         }
         .frame(width: 280, height: 420)
+    }
+
+    // MARK: FX link helpers (a block's id → what the model needs)
+
+    private func fxBlock(_ blockID: UUID) -> ObjectPlugin? {
+        viewModel.chainPlugins(objectID).flatMap { EditViewModel.findBlock(blockID, in: $0) }
+    }
+
+    private func fxLinkID(of blockID: UUID) -> UUID? { fxBlock(blockID)?.fxBlock?.linkID }
+
+    /// The common on/off: the bin's while the block follows it, the block's own once detached.
+    private func fxToggleEnabled(_ blockID: UUID) {
+        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
+        let now = viewModel.fxOutput(of: block).isEnabled
+        if fb.isDetached {
+            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, enabled: !now)
+        } else {
+            viewModel.fxSetEnabled(linkID: fb.linkID, enabled: !now)
+        }
+    }
+
+    /// The output section (volume / pan / mute) — the bin's while attached, the block's own while
+    /// detached. No undo point of its own: the control asked for one when the gesture began
+    /// (`onFXBeginEdit`).
+    private func fxSetOutput(_ blockID: UUID, gain: Float? = nil, pan: Float? = nil,
+                             toggleMute: Bool = false) {
+        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
+        let muted: Bool? = toggleMute ? !viewModel.fxOutput(of: block).muted : nil
+        if fb.isDetached {
+            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, gainDb: gain, pan: pan,
+                                       muted: muted, undo: false)
+        } else {
+            viewModel.fxSetOutput(linkID: fb.linkID, gainDb: gain, pan: pan, muted: muted, undo: false)
+        }
     }
 
     /// Toggles the editor: a native window for an external plugin, a dedicated window for a
