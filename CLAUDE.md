@@ -1927,7 +1927,7 @@ What has landed since mid-August, in order:
   **Not heard on a real recorded mouth.**
 
 - **Script panels remember what was validated** (29 September 2026, ON THE BRANCH
-  `feature/panel-remember`, NOT on `main`) — `script.panel.open` takes `remember` (a key, or `true` =
+  `feature/panel-remember`, merged into `main` the same day) — `script.panel.open` takes `remember` (a key, or `true` =
   the title); the APP keeps the values last VALIDATED (never on Cancel) in `UserDefaults`
   `scriptPanel.<key>` (`Shared/ScriptPanelMemory.swift`), applies those that still fit (id, kind, range,
   options) at the next opening, and adds a Reset button (`press: "reset"`) that returns to the
