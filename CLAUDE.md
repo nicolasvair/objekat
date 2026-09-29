@@ -1926,6 +1926,16 @@ What has landed since mid-August, in order:
   independence checks), `scenario_breath_eval.py`, `scenario_voice_split.py` ALL PASS, i18n 472 keys.
   **Not heard on a real recorded mouth.**
 
+- **Script panels remember what was validated** (29 September 2026, ON THE BRANCH
+  `feature/panel-remember`, merged into `main` the same day) — `script.panel.open` takes `remember` (a key, or `true` =
+  the title); the APP keeps the values last VALIDATED (never on Cancel) in `UserDefaults`
+  `scriptPanel.<key>` (`Shared/ScriptPanelMemory.swift`), applies those that still fit (id, kind, range,
+  options) at the next opening, and adds a Reset button (`press: "reset"`) that returns to the
+  DECLARED values and erases the entry. Under `--no-recent` or `--headless` the memory is the
+  process's own and the real domain is never touched. The voice separator opens with it. Verified
+  headless: Debug build, `scenario_breath_eval.py` section g (incl. `defaults read` shows no panel
+  key). **Not seen**: the Reset button in the window.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

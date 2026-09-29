@@ -183,6 +183,15 @@ CONTROLS = [
 ]
 
 
+def forget_remembered(c):
+    """The script's panel remembers what was validated (`remember`), and these sections expect its
+    DECLARED values: open its key, press Reset (which erases the entry), close."""
+    pid = c.send("script.panel.open", {"title": "forget", "remember": "separateur-voix.eval",
+                                       "controls": [{"id": "x", "kind": "bool", "label": "x"}]})["panel_id"]
+    c.send("script.panel.input", {"panel_id": pid, "press": "reset"})
+    c.send("script.panel.close", {"panel_id": pid})
+
+
 def section_c(c):
     """The panel: declared, read by long poll, driven by the hand's door."""
     import threading
@@ -396,6 +405,7 @@ def section_d(c):
     a = c.send("object.add", {"path": WAV, "lane": 2, "start": 0.0})["id"]
 
     def launch(obj=None, extra=()):
+        forget_remembered(c)
         env = dict(os.environ, OBJEKAT_SOCKET=SOCK, OBJEKAT_LANGUAGE="en",
                    OBJEKAT_SEPARATEUR_CACHE=os.path.join(ROOT, "cache"))
         return subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--eval-separation", "--object", obj or a,
@@ -613,6 +623,7 @@ def section_f(c):
     a = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
     env = dict(os.environ, OBJEKAT_SOCKET=SOCK, OBJEKAT_LANGUAGE="fr",
                OBJEKAT_SEPARATEUR_CACHE=os.path.join(ROOT, "cache"))
+    forget_remembered(c)
     proc = subprocess.Popen([os.path.join(SCRIPT_DIR, "run.sh"), "--eval-separation", "--object", a,
                              "--model", model], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     end = time.time() + 30
@@ -695,6 +706,88 @@ def zones_of(c, obj, color):
         return []
 
 
+def section_g(c):
+    """`remember`: the values last VALIDATED are the next opening's; Cancel remembers nothing;
+    Reset returns to the declared values and forgets. Under --headless / --no-recent the memory
+    is the process's own, and the app's real UserDefaults domain must stay free of any panel key."""
+    ctl = [{"id": "on", "kind": "bool", "label": "On", "value": False},
+           {"id": "gap", "kind": "number", "label": "Gap", "value": 120, "min": 40, "max": 400,
+            "step": 10, "unit": "ms"},
+           {"id": "m", "kind": "choice", "label": "M", "value": "a",
+            "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]},
+           {"id": "prog", "kind": "progress", "label": "P", "value": 0.5},
+           {"id": "go", "kind": "button", "label": "Go"}]
+    key = "scenario-remember-%d" % os.getpid()
+
+    def open_(controls=ctl, remember=key):
+        r = c.send("script.panel.open", {"title": "Rem", "controls": controls, "remember": remember})
+        return r["panel_id"]
+
+    def vals(pid):
+        return c.send("script.panel.get", {"panel_id": pid})["values"]
+
+    pid = open_()
+    v = vals(pid)
+    check("g: first opening = declared values", v["gap"] == 120 and v["on"] is False and v["m"] == "a", v)
+    check("g: get reports the remember key",
+          c.send("script.panel.get", {"panel_id": pid})["remember"] == key)
+    c.send("script.panel.input", {"panel_id": pid, "values": {"gap": 250, "on": True, "m": "b"}})
+    c.send("script.panel.input", {"panel_id": pid, "press": "cancel"})
+    pid = open_()
+    v = vals(pid)
+    check("g: Cancel remembers nothing", v["gap"] == 120 and v["on"] is False and v["m"] == "a", v)
+    c.send("script.panel.input", {"panel_id": pid, "values": {"gap": 250, "on": True, "m": "b"}})
+    c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
+    pid = open_()
+    v = vals(pid)
+    check("g: Validate then reopen = remembered values",
+          v["gap"] == 250 and v["on"] is True and v["m"] == "b" and v["prog"] == 0.5, v)
+    # a panel without `remember` is not affected, and does not remember either
+    other = c.send("script.panel.open", {"title": "Rem", "controls": ctl})["panel_id"]
+    check("g: without remember, declared values", vals(other)["gap"] == 120)
+    check("g: without remember, no key",
+          c.send("script.panel.get", {"panel_id": other})["remember"] is None)
+    expect_error(lambda: c.send("script.panel.input", {"panel_id": other, "press": "reset"}),
+                 "bad_params", "g: reset is refused on a panel that does not remember")
+    # Reset: declared values, the hand's rev moves, the entry is erased
+    pid = open_()
+    rev0 = c.send("script.panel.get", {"panel_id": pid})["rev"]
+    c.send("script.panel.input", {"panel_id": pid, "press": "reset"})
+    g = c.send("script.panel.get", {"panel_id": pid})
+    check("g: Reset returns the declared values and moves rev",
+          g["values"]["gap"] == 120 and g["values"]["on"] is False and g["values"]["m"] == "a"
+          and g["rev"] > rev0 and g["state"] == "open", g)
+    c.send("script.panel.input", {"panel_id": pid, "press": "cancel"})
+    pid = open_()
+    check("g: Reset erased the entry", vals(pid)["gap"] == 120)
+    # a stale entry is ignored value by value: out of range, wrong type, unknown option
+    c.send("script.panel.input", {"panel_id": pid, "values": {"gap": 300, "on": True, "m": "b"}})
+    c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
+    changed = [{"id": "on", "kind": "number", "label": "On", "value": 1, "min": 0, "max": 2, "step": 1},
+               {"id": "gap", "kind": "number", "label": "Gap", "value": 60, "min": 40, "max": 200,
+                "step": 10},
+               {"id": "m", "kind": "choice", "label": "M", "value": "c",
+                "options": [{"id": "c", "label": "C"}, {"id": "d", "label": "D"}]}]
+    pid = open_(changed)
+    v = vals(pid)
+    check("g: an entry that no longer fits is ignored", v["on"] == 1 and v["gap"] == 60 and v["m"] == "c", v)
+    c.send("script.panel.input", {"panel_id": pid, "press": "cancel"})
+    # `true` derives the key from the title
+    pid = c.send("script.panel.open", {"title": "Rem", "controls": ctl, "remember": True})["panel_id"]
+    check("g: remember true = a key from the title",
+          c.send("script.panel.get", {"panel_id": pid})["remember"] == "Rem")
+    c.send("script.panel.close", {"panel_id": pid})
+    expect_error(lambda: c.send("script.panel.open", {"title": "", "controls": ctl, "remember": True}),
+                 "bad_params", "g: remember true with no title refused")
+    expect_error(lambda: c.send("script.panel.open", {"title": "t", "controls": ctl, "remember": 3}),
+                 "bad_params", "g: remember 3 refused")
+    info = c.send("app.info")
+    check("g: the instance is a test one (no-recent)", info.get("records_recent_projects") is False, info)
+    out = subprocess.run(["defaults", "read", "org.labelpeche.objekat"], capture_output=True, text=True)
+    check("g: the real UserDefaults domain holds no panel key",
+          "scriptPanel" not in out.stdout and key not in out.stdout)
+
+
 def section_e():
     """No window on the headless process (a panel was opened and closed above)."""
     try:
@@ -716,11 +809,11 @@ def section_e():
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdfe")     # e.g. SECTIONS=d to run one section
+        only = os.environ.get("SECTIONS", "abcdfge")     # e.g. SECTIONS=d to run one section
         if "a" in only:
             section_a(c, 48000)
             section_a(c, 44100)
-        for name, fn in (("b", section_b), ("c", section_c), ("d", section_d), ("f", section_f)):
+        for name, fn in (("b", section_b), ("c", section_c), ("d", section_d), ("f", section_f), ("g", section_g)):
             if name in only:
                 fn(c)
         if "e" in only:

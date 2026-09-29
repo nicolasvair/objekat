@@ -16,7 +16,8 @@ extension CommandRegistry {
                      "state": .string(p.state.rawValue),
                      "values": .object(p.values),
                      "events": .array(p.pendingEvents.map { .object(["button": .string($0)]) }),
-                     "status": .string(p.status), "busy": .bool(p.busy)])
+                     "status": .string(p.status), "busy": .bool(p.busy),
+                     "remember": .stringOrNull(p.rememberKey)])
         }
 
         func bad(_ m: String) -> CommandError { CommandError(code: .bad_params, message: m) }
@@ -111,7 +112,11 @@ extension CommandRegistry {
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the panel closes if it disappears."),
                           ParamSpec("status", "string", required: false, "Initial status line."),
-                          ParamSpec("busy", "bool", required: false, "Initial busy indicator.")],
+                          ParamSpec("busy", "bool", required: false, "Initial busy indicator."),
+                          ParamSpec("remember", "string|true", required: false,
+                                    "A key: the panel opens on the values last VALIDATED under it "
+                                  + "(those that still fit), Validate stores them, and the app adds a "
+                                  + "Reset button. `true` = a key derived from the title.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let (controls, values) = try parseControls(try p.array("controls"))
@@ -122,6 +127,18 @@ extension CommandRegistry {
             var panel = ScriptPanel(id: UUID(), owner: CommandCallContext.caller, objectID: object,
                                     title: try p.string("title", or: ""), controls: controls,
                                     values: values)
+            panel.declared = values
+            if let raw = p.raw["remember"], raw != .null, raw != .bool(false) {
+                var key: String
+                if case .string(let k) = raw { key = k }
+                else if raw == .bool(true) { key = panel.title }
+                else { throw bad("'remember' is a key (string) or true") }
+                key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.isEmpty else { throw bad("'remember' needs a non-empty key (or a title)") }
+                panel.rememberKey = key
+                let kept = ScriptPanelMemory.applicable(ScriptPanelMemory.load(key), to: controls)
+                for (k, v) in kept { panel.values[k] = v }
+            }
             panel.status = try p.string("status", or: "")
             panel.busy = try p.bool("busy", or: false)
             vm.scriptPanels.open(panel)
@@ -207,7 +224,7 @@ extension CommandRegistry {
                  params: [ParamSpec("panel_id", "uuid", "The panel."),
                           ParamSpec("values", "object", required: false, "Control id → value."),
                           ParamSpec("press", "string", required: false,
-                                    "A button id, 'validate' or 'cancel'.")],
+                                    "A button id, 'validate', 'cancel' or (remember panels) 'reset'.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("panel_id")

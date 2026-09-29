@@ -100,6 +100,9 @@ struct ScriptPanelView: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 8)
+                    if p.rememberKey != nil {
+                        Button(L("scriptpanel.reset")) { press("reset") }
+                    }
                     Button(L("common.cancel")) { press("cancel") }
                         .keyboardShortcut(.cancelAction)
                         .tint(.red)

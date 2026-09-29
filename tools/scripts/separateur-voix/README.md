@@ -163,6 +163,14 @@ OBJEKAT_SOCKET=... OBJEKAT_OBJECT_IDS=<uuid> python3 separateur_voix.py --segmen
   `tools/scenario_voice_split.py` to drive `object.explode` deterministically.
 - `--dry-run` — prints the detected segments, calls no command that changes the project.
 
+## The panel remembers
+
+The evaluation panel is opened with `remember: "separateur-voix.eval"`: the app keeps the values
+last **validated** (never on Cancel) and starts the next opening on them; its **Reset** button
+returns every control to the values `panel_controls` declares. Generic, app side — the script
+stores nothing (`command_api.md`, "A panel that remembers"). A remembered `model` wins over the
+`--no-asr` / `--model` initial choice.
+
 ## Tests
 
 `test_detect.py` — the pure detection module (`detect.py`) against a synthetic signal, no Whisper,
