@@ -245,6 +245,37 @@ def section_c(c):
     c.send("script.panel.input", {"panel_id": pid, "press": "cancel"})
     check("c: cancel -> state cancelled",
           c.send("script.panel.get", {"panel_id": pid})["state"] == "cancelled")
+    # ── the `choice` control ──
+    opts = [{"id": "none", "label": "None"}, {"id": "w", "label": "Whisper"}, {"id": "p", "label": "Parakeet"}]
+    for label, controls in (
+            ("no options", [{"id": "m", "kind": "choice", "label": "m"}]),
+            ("empty options", [{"id": "m", "kind": "choice", "label": "m", "options": []}]),
+            ("an option with no label", [{"id": "m", "kind": "choice", "label": "m", "options": [{"id": "a"}]}]),
+            ("duplicate option ids", [{"id": "m", "kind": "choice", "label": "m",
+                                       "options": [{"id": "a", "label": "A"}, {"id": "a", "label": "B"}]}]),
+            ("a value outside the options", [{"id": "m", "kind": "choice", "label": "m",
+                                              "options": opts, "value": "zzz"}])):
+        expect_error(lambda controls=controls: c.send("script.panel.open", {"title": "t", "controls": controls}),
+                     "bad_params", "c: choice with %s refused" % label)
+    r = c.send("script.panel.open", {"title": "Model", "controls": [
+        {"id": "model", "kind": "choice", "label": "Text", "options": opts}]})
+    cp = r["panel_id"]
+    g = c.send("script.panel.get", {"panel_id": cp})
+    check("c: a choice defaults to its first option and reads back as a string id",
+          g["values"] == {"model": "none"}, g)
+    c.send("script.panel.input", {"panel_id": cp, "values": {"model": "p"}})
+    g = c.send("script.panel.get", {"panel_id": cp})
+    check("c: input on a choice moves rev and stores the option id", g["rev"] == 1 and g["values"]["model"] == "p", g)
+    expect_error(lambda: c.send("script.panel.input", {"panel_id": cp, "values": {"model": "nope"}}),
+                 "bad_params", "c: input: an id that is not an option is refused")
+    expect_error(lambda: c.send("script.panel.input", {"panel_id": cp, "values": {"model": 3}}),
+                 "bad_params", "c: input: a choice is a string")
+    c.send("script.panel.update", {"panel_id": cp, "values": {"model": "w"}})
+    g = c.send("script.panel.get", {"panel_id": cp})
+    check("c: update recalibrates a choice without moving rev", g["values"]["model"] == "w" and g["rev"] == 1, g)
+    expect_error(lambda: c.send("script.panel.update", {"panel_id": cp, "values": {"model": "nope"}}),
+                 "bad_params", "c: update: an unknown option is refused")
+    c.send("script.panel.close", {"panel_id": cp})
     # an object that goes closes its panel
     r = c.send("script.panel.open", {"title": "Eval", "controls": CONTROLS, "object": a})
     c.send("object.remove", {"ids": [a]})
@@ -325,13 +356,30 @@ def section_d(c):
     check("d: zones were laid", bool(n0), n0)
     if pid:
         rev0 = c.send("overlay.get", {"id": a})["rev"]
-        c.send("script.panel.input", {"panel_id": pid, "values": {"flatness_on": False}})
+        g0 = c.send("script.panel.get", {"panel_id": pid})
+        check("d: the panel carries the four criteria, the cutoff and the model choice, nothing else",
+              set(g0["values"]) == {"model", "unvoiced_on", "unvoiced", "below_speech_on", "below_speech",
+                                    "cutoff", "min_len_on", "min_len", "end_margin_on", "end_margin"},
+              sorted(g0["values"]))
+        check("d: defaults: model none, cutoff 6000 Hz, 10 dB, 80 ms, 5 ms",
+              (g0["values"]["model"], g0["values"]["cutoff"], g0["values"]["below_speech"],
+               g0["values"]["min_len"], g0["values"]["end_margin"]) == ("none", 6000, 10, 80, 5),
+              g0["values"])
+        c.send("script.panel.input", {"panel_id": pid, "values": {"below_speech_on": False}})
         wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0, "d: a setting re-runs the mask")
         n1 = zones()
-        check("d: switching the flatness criterion off never loses zones (%s -> %s)" % (n0, n1),
+        check("d: switching the energy criterion off never loses zones (%s -> %s)" % (n0, n1),
               n1 >= (n0 or 0))
-        c.send("script.panel.input", {"panel_id": pid, "values": {"flatness_on": True}})
-        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0 + 1, "d: and back")
+        c.send("script.panel.input", {"panel_id": pid, "values": {"below_speech_on": True, "cutoff": 800}})
+        wait_for(lambda: c.send("overlay.get", {"id": a})["rev"] > rev0 + 1, "d: the cutoff moves the zones")
+        # a model that is not installed says so, and the panel stays alive
+        c.send("script.panel.input", {"panel_id": pid, "values": {"model": "parakeet"}})
+        wait_for(lambda: ("not installed" in c.send("script.panel.get", {"panel_id": pid})["status"])
+                 or ("zone" in c.send("script.panel.get", {"panel_id": pid})["status"]
+                     and c.send("overlay.get", {"id": a})["texts"] > 0),
+                 "d: an absent model says 'not installed' in the status line (or, installed, shows words)")
+        c.send("script.panel.input", {"panel_id": pid, "values": {"model": "none"}})
+        wait_for(lambda: c.send("overlay.get", {"id": a})["texts"] == 0, "d: 'None' clears the words")
         c.send("script.panel.input", {"panel_id": pid, "press": "validate"})
     rc = proc.wait(timeout=60)
     check("d: the script exits 0 after Validate", rc == 0, proc.stderr.read().decode()[-400:])

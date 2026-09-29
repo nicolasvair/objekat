@@ -21,6 +21,7 @@ HERE = os.environ.get("OBJEKAT_PLUGIN_DIR") or os.path.dirname(os.path.abspath(_
 sys.path.insert(0, HERE)
 
 import detect  # noqa: E402  (needs sys.path set first)
+import transcribe as tr  # noqa: E402
 
 SOCK = os.environ.get("OBJEKAT_SOCKET")
 
@@ -74,37 +75,12 @@ def read_portion(file_path, source_offset, duration, speed):
 
 
 def transcribe(mono, sr, language):
-    """16 kHz mono → mlx_whisper, word-timestamped. Returns Whisper's own word list (seconds
-    relative to the portion handed in — the SAME reference `detect.segment` expects)."""
-    import numpy as np
-    from scipy.signal import resample_poly
-    import mlx_whisper
-
-    target_sr = 16000
-    from math import gcd
-    g = gcd(sr, target_sr)
-    resampled = resample_poly(mono, target_sr // g, sr // g)
-    audio = resampled.astype(np.float32)
-    lang = None if language in (None, "", "auto") else language
-    result = mlx_whisper.transcribe(
-        audio,
-        path_or_hf_repo=MODEL,
-        word_timestamps=True,
-        language=lang,
-    )
-    words = []
-    for seg in result.get("segments", []):
-        for w in seg.get("words", []):
-            words.append({"word": w.get("word", "").strip(),
-                          "start": float(w.get("start", 0.0)),
-                          "end": float(w.get("end", 0.0))})
-    return words
+    """The historical mode's words: Whisper, word-timestamped (@see transcribe.py, which also holds
+    the other backends the evaluation can display)."""
+    return tr.transcribe("whisper", mono, sr, language)
 
 
-# MARK: - The analysis cache
-
-MODEL = "mlx-community/whisper-large-v3-turbo"
-
+# MARK: - The caches
 
 def cache_directory():
     """`~/Library/Caches/Objekat/separateur-voix/` (`OBJEKAT_SEPARATEUR_CACHE` overrides it, which is
@@ -113,60 +89,89 @@ def cache_directory():
         os.path.expanduser("~"), "Library", "Caches", "Objekat", "separateur-voix")
 
 
-def cache_key(file_path, source_offset, duration, speed, language, no_asr, model=MODEL):
-    """What the analysis of an object depends on — the file (path, modification time, size), the
-    portion of it that plays (offset, duration, speed), the language, whether Whisper ran, which
-    model, and the version of the features. A different value anywhere is a different analysis."""
-    import hashlib
+def _portion_fields(file_path, source_offset, duration, speed):
     st = os.stat(file_path)
-    fields = [os.path.realpath(file_path), st.st_mtime_ns, st.st_size,
-              round(float(source_offset), 6), round(float(duration), 6), round(float(speed), 6),
-              language or "", bool(no_asr), model, detect.FEATURES_VERSION]
+    return [os.path.realpath(file_path), st.st_mtime_ns, st.st_size,
+            round(float(source_offset), 6), round(float(duration), 6), round(float(speed), 6)]
+
+
+def _digest(fields):
+    import hashlib
     return hashlib.sha1(json.dumps(fields).encode("utf-8")).hexdigest()
 
 
-_FEATURE_FIELDS = ("times", "energy_db", "hf_lf_ratio_db", "e_mid_db", "zcr", "flatness",
-                   "voicing", "e_hf_db")
+def cache_key(file_path, source_offset, duration, speed):
+    """What the FEATURES of an object depend on — the file (path, modification time, size), the
+    portion of it that plays, and the version of the features. Nothing about a model: the detection
+    never reads the words, so changing the transcription model never recomputes them."""
+    return _digest(_portion_fields(file_path, source_offset, duration, speed)
+                   + ["features", detect.EVAL_FEATURES_VERSION])
 
 
-def save_analysis(path, words, feats, sr):
+def words_cache_key(file_path, source_offset, duration, speed, language, model):
+    """The transcription of the same portion by ONE model, in one language: its own entry, so that
+    each model is transcribed once and switching between them afterwards is instant."""
+    return _digest(_portion_fields(file_path, source_offset, duration, speed)
+                   + ["words", model, language or "", tr.BACKEND_VERSION])
+
+
+def save_features(path, feats):
     import numpy as np
-    arrays = {name: getattr(feats, name) for name in _FEATURE_FIELDS}
-    arrays["hop_s"] = np.array(feats.hop_s)
-    arrays["sr"] = np.array(float(sr))
-    arrays["words"] = np.frombuffer(json.dumps(words).encode("utf-8"), dtype=np.uint8)
     tmp = path + ".tmp.npz"
-    np.savez(tmp, **arrays)
+    np.savez(tmp, times=feats.times, voicing=feats.voicing, lp_db=feats.lp_db,
+             cutoffs=feats.cutoffs, hop_s=np.array(feats.hop_s))
     os.replace(tmp, path)
 
 
-def load_analysis(path):
-    """(words, feats, sr), or None for a file that is missing or unreadable — a corrupt cache is
-    a recomputation, never an error."""
+def load_features(path):
+    """The `EvalFeatures`, or None for a file that is missing or unreadable — a corrupt cache is a
+    recomputation, never an error."""
     import numpy as np
     try:
         with np.load(path) as z:
-            words = json.loads(bytes(z["words"]).decode("utf-8"))
-            feats = detect.Features(hop_s=float(z["hop_s"]), **{n: z[n] for n in _FEATURE_FIELDS})
-            return words, feats, float(z["sr"])
+            return detect.EvalFeatures(times=z["times"], voicing=z["voicing"], lp_db=z["lp_db"],
+                                       cutoffs=z["cutoffs"], hop_s=float(z["hop_s"]))
     except Exception:
         return None
 
 
-def cached_analysis(key, compute):
-    """`compute()` → (words, feats, sr) runs only when nothing valid is cached under `key`."""
+def cached_features(key, compute):
+    """`compute()` → `EvalFeatures` runs only when nothing valid is cached under `key`."""
     folder = cache_directory()
     path = os.path.join(folder, key + ".npz")
-    hit = load_analysis(path) if os.path.exists(path) else None
+    hit = load_features(path) if os.path.exists(path) else None
     if hit is not None:
         return hit
-    words, feats, sr = compute()
+    feats = compute()
     try:
         os.makedirs(folder, exist_ok=True)
-        save_analysis(path, words, feats, sr)
+        save_features(path, feats)
     except OSError:
         pass   # a cache that cannot be written is a cache that is not there
-    return words, feats, sr
+    return feats
+
+
+def cached_words(key, compute):
+    """`compute()` → (words, seconds) runs only when nothing valid is cached under `key`. Returns
+    `(words, seconds, from_cache)`."""
+    folder = cache_directory()
+    path = os.path.join(folder, key + ".words.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data["words"], float(data.get("seconds", 0.0)), True
+    except Exception:
+        pass
+    words, seconds = compute()
+    try:
+        os.makedirs(folder, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"words": words, "seconds": seconds}, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return words, seconds, False
 
 
 def refuse(reason):
@@ -253,109 +258,236 @@ def process_one(app, object_id, language, no_asr, segments_override, dry_run):
 PANEL_TEXT = {
     "fr": {"title": "Évaluer les respirations", "analysing": "Analyse…",
            "none": "Aucune respiration — rien n'est coupé.",
-           "count": lambda n, s: "%d respiration%s, %.1f s" % (n, "" if n <= 1 else "s", s)},
+           "count": lambda n, s: "%d zone%s, %.1f s" % (n, "" if n <= 1 else "s", s),
+           "transcribing": "transcription…", "missing": "non installé", "failed": "transcription échouée",
+           "words": lambda n, sec, cached: "%d mot%s%s" % (n, "" if n <= 1 else "s",
+                                                           "" if cached else " (%.1f s)" % sec),
+           "model": "Texte affiché", "not_installed": " — non installé",
+           "models": {"none": "Aucun", "whisper": "Whisper large-v3-turbo (mlx)",
+                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + alignement wav2vec2"}},
     "en": {"title": "Evaluate breaths", "analysing": "Analysing…",
            "none": "No breath found — nothing is cut.",
-           "count": lambda n, s: "%d breath%s, %.1f s" % (n, "" if n == 1 else "es", s)},
+           "count": lambda n, s: "%d zone%s, %.1f s" % (n, "" if n == 1 else "s", s),
+           "transcribing": "transcribing…", "missing": "not installed", "failed": "transcription failed",
+           "words": lambda n, sec, cached: "%d word%s%s" % (n, "" if n == 1 else "s",
+                                                           "" if cached else " (%.1f s)" % sec),
+           "model": "Text shown", "not_installed": " — not installed",
+           "models": {"none": "None", "whisper": "Whisper large-v3-turbo (mlx)",
+                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + wav2vec2 alignment"}},
     "es": {"title": "Evaluar respiraciones", "analysing": "Analizando…",
            "none": "Ninguna respiración — no se corta nada.",
-           "count": lambda n, s: "%d respiraci%s, %.1f s" % (n, "ón" if n == 1 else "ones", s)},
+           "count": lambda n, s: "%d zona%s, %.1f s" % (n, "" if n == 1 else "s", s),
+           "transcribing": "transcribiendo…", "missing": "no instalado", "failed": "transcripción fallida",
+           "words": lambda n, sec, cached: "%d palabra%s%s" % (n, "" if n == 1 else "s",
+                                                              "" if cached else " (%.1f s)" % sec),
+           "model": "Texto mostrado", "not_installed": " — no instalado",
+           "models": {"none": "Ninguno", "whisper": "Whisper large-v3-turbo (mlx)",
+                      "parakeet": "Parakeet TDT v3 (mlx)", "align": "Whisper + alineación wav2vec2"}},
 }
 
-# (id, min, max, step, unit, {language: label}) — the defaults are BreathParams's own.
-BREATH_CRITERIA = [
-    ("gap", 40, 400, 10, "ms", {"fr": "Trou entre mots ≥", "en": "Gap between words ≥", "es": "Hueco entre palabras ≥"}),
-    ("unvoiced", 0.1, 0.9, 0.01, "", {"fr": "Voisement <", "en": "Voicing <", "es": "Sonoridad <"}),
-    ("above_floor", 0, 30, 1, "dB", {"fr": "Énergie > plancher +", "en": "Energy > floor +", "es": "Energía > suelo +"}),
-    ("below_speech", 0, 40, 1, "dB", {"fr": "Énergie < parole −", "en": "Energy < speech −", "es": "Energía < habla −"}),
-    ("flatness", 0, 0.5, 0.01, "", {"fr": "Platitude >", "en": "Flatness >", "es": "Planitud >"}),
-    ("hf_lf", -20, 20, 1, "dB", {"fr": "Aigus/graves <", "en": "Highs/lows <", "es": "Agudos/graves <"}),
-    ("min_len", 0, 400, 10, "ms", {"fr": "Durée ≥", "en": "Length ≥", "es": "Duración ≥"}),
-    ("fill", 0, 100, 5, "ms", {"fr": "Bouchage des trous", "en": "Fill holes", "es": "Rellenar huecos"}),
-    ("end_margin", 0, 60, 5, "ms", {"fr": "Marge de fin", "en": "End margin", "es": "Margen final"}),
+# The four criteria. (id, label per language, unit, min, max, step) of each one's SLIDER; the box is
+# `<id>_on`. The energy criterion carries a second slider, the low-pass cutoff, gated by the same box.
+CRITERIA = [
+    ("unvoiced", {"fr": "Voisement <", "en": "Voicing <", "es": "Sonoridad <"}, "", 0.1, 0.9, 0.01),
+    ("below_speech", {"fr": "Énergie < parole − (passe-bas)", "en": "Energy < speech − (low-passed)",
+                      "es": "Energía < habla − (paso bajo)"}, "dB", 0, 40, 1),
+    ("min_len", {"fr": "Durée minimale", "en": "Minimum length", "es": "Duración mínima"}, "ms", 0, 400, 10),
+    ("end_margin", {"fr": "Marge avant la voix", "en": "Margin before voice",
+                    "es": "Margen antes de la voz"}, "ms", 0, 60, 1),
 ]
+CUTOFF_LABEL = {"fr": "Coupure passe-bas", "en": "Low-pass cutoff", "es": "Corte paso bajo"}
 
 
-def panel_controls(language):
-    """One checkbox + one slider per criterion; the slider is greyed while its box is unchecked
-    (`enabled_by`), which is the whole 'box and threshold' idea."""
-    defaults = detect.BreathParams()
-    controls = []
-    for cid, lo, hi, step, unit, labels in BREATH_CRITERIA:
+def panel_controls(language, model_labels):
+    """The model choice, then one checkbox + one slider per criterion (the slider greys while its box
+    is unchecked — `enabled_by`, the whole 'box and threshold' idea)."""
+    defaults = detect.EvalParams()
+    text = PANEL_TEXT.get(language, PANEL_TEXT["en"])
+    controls = [{"id": "model", "kind": "choice", "label": text["model"], "value": "none",
+                 "options": [{"id": m, "label": model_labels[m]} for m in tr.MODEL_IDS]}]
+    for cid, labels, unit, lo, hi, step in CRITERIA:
         label = labels.get(language, labels["en"])
         controls.append({"id": cid + "_on", "kind": "bool", "label": label, "value": True})
         controls.append({"id": cid, "kind": "number", "label": label, "value": getattr(defaults, cid),
                          "min": lo, "max": hi, "step": step, "unit": unit, "enabled_by": cid + "_on"})
+        if cid == "below_speech":
+            controls.append({"id": "cutoff", "kind": "number", "label": CUTOFF_LABEL.get(language, CUTOFF_LABEL["en"]),
+                             "value": defaults.cutoff, "min": float(detect.EVAL_CUTOFFS[0]),
+                             "max": float(detect.EVAL_CUTOFFS[-1]),
+                             "step": float(detect.EVAL_CUTOFFS[1] - detect.EVAL_CUTOFFS[0]),
+                             "unit": "Hz", "enabled_by": "below_speech_on"})
     return controls
 
 
-def breaths_eval(app, object_id, language, no_asr):
-    """Shows the breaths the detector finds on ONE object, as zones over it, and lets the hand move
-    the nine criteria until they are right; Validate then cuts exactly what is shown. Nothing is
+class Transcriber:
+    """Transcribes on a BACKGROUND thread, one model at a time, so the panel stays reactive: the
+    socket is only ever used by the main thread, the worker just computes and hands the result back
+    through `results`. Each model's words are cached on disk under their own key."""
+
+    def __init__(self, obj, language, mono_loader):
+        import queue
+        import threading
+        self.obj, self.language, self.load = obj, language, mono_loader
+        self.results = queue.Queue()
+        self.done = {}          # model → (words, seconds, from_cache) | RuntimeError
+        self.running = None
+        self._threading = threading
+
+    def key(self, model):
+        o = self.obj
+        return words_cache_key(o["file"], o["source_offset"], o["duration"], o.get("speed", 1.0),
+                               self.language, model)
+
+    def request(self, model):
+        """Starts `model` unless it is done or already running. Returns True when something is (now)
+        in flight or ready to be collected."""
+        if model in self.done or self.running == model:
+            return True
+        if self.running is not None:
+            return True          # one at a time; `collect` starts the wanted one when this ends
+        self.running = model
+
+        def work():
+            import time
+            try:
+                def compute():
+                    mono, sr = self.load()
+                    t0 = time.time()
+                    return tr.transcribe(model, mono, sr, self.language), time.time() - t0
+                self.results.put((model, cached_words(self.key(model), compute)))
+            except Exception as e:  # noqa: BLE001 — a backend failing is a label, not a crash
+                self.results.put((model, RuntimeError(str(e))))
+
+        self._threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def collect(self):
+        """Moves finished work into `done`. Returns the models that finished."""
+        import queue
+        finished = []
+        while True:
+            try:
+                model, outcome = self.results.get_nowait()
+            except queue.Empty:
+                return finished
+            self.done[model] = outcome
+            if self.running == model:
+                self.running = None
+            finished.append(model)
+
+
+def breaths_eval(app, object_id, language, no_asr, model_arg=None):
+    """Shows the zones the detector finds on ONE object, as white zones over it, and lets the hand
+    move the four criteria until they are right; Validate then cuts exactly what is shown. Nothing is
     changed before that: the zones are an overlay (never in the project), and Cancel — or the
-    window closing, or this process dying — leaves the project untouched."""
+    window closing, or this process dying — leaves the project untouched. The words are a DISPLAY
+    (a model chosen in the panel, transcribed in the background); the detection never reads them."""
     obj = app.send("object.get", {"id": object_id})
     check_object(obj, object_id)
     text = PANEL_TEXT.get(language, PANEL_TEXT["en"])
     start, duration = obj["start"], obj["duration"]
+    speed = obj.get("speed", 1.0)
+
+    model_labels = {m: text["models"][m] + ("" if tr.installed(m, language) else text["not_installed"])
+                    for m in tr.MODEL_IDS}
+    controls = panel_controls(language, model_labels)
+    initial = "none" if no_asr else (model_arg or "none")
+    for c in controls:
+        if c["id"] == "model":
+            c["value"] = initial if initial in tr.MODEL_IDS else "none"
 
     panel = app.send("script.panel.open", {
-        "title": text["title"], "controls": panel_controls(language), "object": object_id,
+        "title": text["title"], "controls": controls, "object": object_id,
         "status": text["analysing"], "busy": True})
     pid = panel["panel_id"]
 
-    def status(message, busy=False):
-        app.send("script.panel.update", {"panel_id": pid, "status": message, "busy": busy})
+    def load_portion():
+        return read_portion(obj["file"], obj["source_offset"], duration, speed)
 
     try:
-        key = cache_key(obj["file"], obj["source_offset"], duration, obj.get("speed", 1.0),
-                        language, no_asr)
+        feats = cached_features(
+            cache_key(obj["file"], obj["source_offset"], duration, speed),
+            lambda: detect.compute_eval_features(*load_portion()))
 
-        def analyse():
-            mono, sr = read_portion(obj["file"], obj["source_offset"], duration, obj.get("speed", 1.0))
-            words = None if no_asr else transcribe(mono, sr, language)
-            return words, detect.compute_features(mono, sr), sr
-
-        words, feats, _sr = cached_analysis(key, analyse)
-        if words:
-            app.send("overlay.set", {"id": object_id, "texts": [
-                {"start": w["start"], "end": w["end"], "text": w["word"]} for w in words]})
-
-        stats_by_voicing, gaps_by_gap = {}, {}
+        speech_levels = {}
+        transcriber = Transcriber(obj, language, load_portion)
+        shown_model = {"id": None}        # the model whose words are on the overlay
+        words_note = {"text": ""}         # the transcription half of the status line
+        zone_note = {"text": ""}
 
         def regions_for(values):
-            p = detect.BreathParams.from_values(values)
-            if p.unvoiced not in stats_by_voicing:
-                stats_by_voicing[p.unvoiced] = detect.breath_stats(feats, p.unvoiced)
-            if p.gap not in gaps_by_gap:
-                gaps_by_gap[p.gap] = detect.word_gaps(words, duration, p.gap)
-            return detect.breath_mask(feats, stats_by_voicing[p.unvoiced], gaps_by_gap[p.gap], p)
+            p = detect.EvalParams.from_values(values)
+            k = (p.unvoiced, p.cutoff)
+            if k not in speech_levels:
+                speech_levels[k] = detect.eval_speech_level(feats, p.unvoiced, p.cutoff)
+            return detect.eval_mask(feats, speech_levels[k], p, duration)
 
-        def show(values):
+        def push_status(busy=False):
+            parts = [x for x in (zone_note["text"], words_note["text"]) if x]
+            app.send("script.panel.update", {"panel_id": pid, "status": " · ".join(parts), "busy": busy})
+
+        def show_zones(values):
             regions = regions_for(values)
             app.send("overlay.set", {"id": object_id, "replace": ["zones"],
                                      "zones": [{"start": lo, "end": hi, "color": "white"}
                                                for lo, hi in regions]})
-            status(text["count"](len(regions), sum(hi - lo for lo, hi in regions)))
+            zone_note["text"] = text["count"](len(regions), sum(hi - lo for lo, hi in regions))
+            push_status()
             return regions
 
+        def show_words(model):
+            """Puts `model`'s words on the overlay, or says why it cannot."""
+            if model == "none":
+                app.send("overlay.set", {"id": object_id, "replace": ["texts"], "texts": []})
+                shown_model["id"] = "none"
+                words_note["text"] = ""
+                return
+            if not tr.installed(model, language):
+                words_note["text"] = text["missing"]
+                return
+            transcriber.request(model)
+            outcome = transcriber.done.get(model)
+            if outcome is None:
+                words_note["text"] = text["transcribing"]
+            elif isinstance(outcome, Exception):
+                words_note["text"] = text["failed"]
+                sys.stderr.write("transcription (%s) failed: %s\n" % (model, outcome))
+            else:
+                words, seconds, from_cache = outcome
+                app.send("overlay.set", {"id": object_id, "replace": ["texts"], "texts": [
+                    {"start": w["start"], "end": w["end"], "text": w["word"]} for w in words]})
+                shown_model["id"] = model
+                words_note["text"] = text["words"](len(words), seconds, from_cache)
+
         current = app.send("script.panel.get", {"panel_id": pid})
-        regions = show(current["values"])
+        values = current["values"]
+        regions = show_zones(values)
+        last_wanted = values.get("model", "none")
+        show_words(last_wanted)
+        push_status(busy=False)
         rev = current["rev"]
 
         while True:
             current = app.send("script.panel.wait",
-                               {"panel_id": pid, "since_rev": rev, "timeout_ms": 1000})
+                               {"panel_id": pid, "since_rev": rev, "timeout_ms": 250})
             if current["state"] != "open":
                 break
-            if current["rev"] != rev:
-                rev = current["rev"]
-                regions = show(current["values"])
+            changed = current["rev"] != rev
+            rev = current["rev"]
+            values = current["values"]
+            finished = transcriber.collect()
+            if changed:
+                regions = show_zones(values)
+            wanted = values.get("model", "none")
+            if wanted != last_wanted or finished:
+                last_wanted = wanted
+                show_words(wanted)     # also starts `wanted` when a finished model freed the worker
+                push_status()
 
         if current["state"] == "validated":
             regions = regions_for(current["values"])
             if not regions:
-                status(text["none"])
+                app.send("script.panel.update", {"panel_id": pid, "status": text["none"]})
             else:
                 pieces = detect.segment_breaths(duration, regions)
                 cuts, lanes = detect.cuts_and_lanes(pieces)
@@ -412,7 +544,8 @@ def main():
     app = Objekat(SOCK)
     if "--breaths-eval" in args:
         target = args[args.index("--object") + 1] if "--object" in args else ids[0]
-        breaths_eval(app, target, language, no_asr)
+        model_arg = args[args.index("--model") + 1] if "--model" in args else None
+        breaths_eval(app, target, language, no_asr, model_arg)
         return 0
     total = {}
     for object_id in ids:

@@ -262,7 +262,155 @@ for _ in range(5):
 best = min(runs_t)
 check("breath_mask + stats + gaps on 10 min (60 000 frames): %.1f ms < 20 ms" % best, best < 20.0, runs_t)
 
-# ── the cache ─────────────────────────────────────────────────────────────────────────────────
+# ── the evaluation grid: four criteria, fine time grid, low-pass ───────────────────────────────
+import transcribe as tr
+
+ef = detect.compute_eval_features(sig, SR)
+hop = ef.hop_s
+check("eval frames are centred: times = k * hop", np.allclose(ef.times, np.arange(len(ef.times)) * hop)
+      and abs(hop - 0.0025) < 1e-6)
+
+# voicing at frame k == the reference score on the 25 ms window CENTRED on k*hop
+vlen = int(round(detect.EVAL_VOICING_WINDOW_MS / 1000.0 * SR))
+worst = 0.0
+for k in (100, 240, 400, 480, 600, 900):
+    c = k * int(round(0.0025 * SR))
+    seg = sig[c - vlen // 2: c - vlen // 2 + vlen]
+    worst = max(worst, abs(ef.voicing[k] - ref_autocorr_voicing(seg, SR)))
+check("eval voicing == the reference on the centred window, max |d| = %.2e" % worst, worst < 1e-6, worst)
+
+# the low-passed energy == the energy of the spectrum below the cutoff, computed directly
+llen = int(round(detect.EVAL_LP_WINDOW_MS / 1000.0 * SR))
+win = np.hanning(llen)
+freqs = np.fft.rfftfreq(llen, d=1.0 / SR)
+worst = 0.0
+for k in (200, 480, 500, 700):
+    c = k * int(round(0.0025 * SR))
+    seg = sig[c - llen // 2: c - llen // 2 + llen]
+    m2 = np.abs(np.fft.rfft(seg * win)) ** 2
+    for cut in (300.0, 1500.0, 6000.0):
+        want = 10 * math.log10(m2[freqs <= cut].sum() / (np.sum(win ** 2) * llen) + 1e-12)
+        got = float(ef.lp_db[k, int(round(cut / 100.0)) - 1])
+        worst = max(worst, abs(got - want))
+check("low-passed energy == the direct band sum (float16), max |d| = %.3f dB" % worst, worst < 0.15, worst)
+check("a lower cutoff never has MORE energy", bool((np.diff(ef.lp_db.astype(np.float64), axis=1) >= -0.1).all()))
+
+
+def eval_run(**kw):
+    p = detect.EvalParams(**kw)
+    return detect.eval_mask(ef, detect.eval_speech_level(ef, p.unvoiced, p.cutoff), p, DURATION)
+
+
+z = eval_run(end_margin=0, min_len=60)
+breath = [r for r in z if r[0] > 1.1 and r[1] < 1.55]
+check("the synthetic breath [1.20, 1.45] is found, edges within 8 ms: %s" % breath,
+      len(breath) == 1 and abs(breath[0][0] - 1.20) < 0.008 and abs(breath[0][1] - 1.45) < 0.008, breath)
+
+# each criterion, off, never REMOVES coverage; and a bare mask (all off) is the whole timeline
+def cov(regions):
+    g = np.arange(0, DURATION, 0.001)
+    m = np.zeros(g.shape, dtype=bool)
+    for lo, hi in regions:
+        m |= (g >= lo) & (g < hi)
+    return m
+
+
+base = cov(eval_run(min_len_on=False, end_margin_on=False))
+for crit in ("unvoiced", "below_speech"):
+    off = cov(eval_run(min_len_on=False, end_margin_on=False, **{crit + "_on": False}))
+    check("switching '%s' off never removes coverage" % crit, bool((off | ~base).all()))
+allon = cov(eval_run(unvoiced_on=False, below_speech_on=False, min_len_on=False, end_margin_on=False))
+check("with every criterion off the zone is the whole signal", allon.all())
+
+# min length: raising it never adds a zone
+counts = [len(eval_run(min_len=float(m), end_margin_on=False)) for m in (0, 60, 120, 240, 400)]
+check("raising the minimum length never adds zones %s" % counts, counts == sorted(counts, reverse=True))
+short = eval_run(min_len=0, end_margin_on=False)
+check("with min_len off, every zone is kept (>= min_len run)",
+      len(eval_run(min_len_on=False, end_margin_on=False)) >= len(short))
+
+# end margin: the zone stops X ms before the first voiced frame that follows it
+vidx = np.flatnonzero(ef.voicing > 0.45)
+for margin in (0.0, 10.0, 30.0):
+    zs = eval_run(min_len_on=False, end_margin=margin)
+    ok = True
+    for lo, hi in zs:
+        nxt = vidx[vidx * hop >= lo - 1e-9]
+        if nxt.size and hi > nxt[0] * hop - margin / 1000.0 + 1e-9:
+            ok = False
+    check("end margin %g ms: every zone ends at least that far before the next voiced frame" % margin, ok)
+z0 = eval_run(min_len_on=False, end_margin=0)
+z30 = eval_run(min_len_on=False, end_margin=30)
+breath0 = [r for r in z0 if 1.1 < r[0] < 1.3][0]
+breath30 = [r for r in z30 if 1.1 < r[0] < 1.3][0]
+check("a 30 ms margin shortens the breath's end by ~30 ms (%.3f -> %.3f)" % (breath0[1], breath30[1]),
+      0.020 < breath0[1] - breath30[1] < 0.040)
+
+# the cutoff has a say, and a lower speech threshold shrinks the candidate set
+lo_cut = cov(eval_run(cutoff=300.0, min_len_on=False, end_margin_on=False))
+check("the cutoff is a live parameter (speech level differs between 300 Hz and 6 kHz)",
+      detect.eval_speech_level(ef, 0.45, 300.0) != detect.eval_speech_level(ef, 0.45, 6000.0))
+prev, mono = None, True
+for x in (0, 5, 10, 20, 30, 40):
+    c = cov(eval_run(below_speech=float(x), min_len_on=False, end_margin_on=False)).sum()
+    if prev is not None and c > prev:
+        mono = False
+    prev = c
+check("raising 'X dB under speech' never adds coverage", mono)
+
+ep = detect.EvalParams.from_values({"cutoff": 3000, "below_speech_on": False, "end_margin": 12})
+check("EvalParams.from_values", ep.cutoff == 3000.0 and ep.below_speech_on is False
+      and ep.end_margin == 12.0 and ep.min_len == 80.0)
+check("eval defaults: cutoff 6 kHz, 10 dB, 80 ms, 5 ms",
+      (ep.__class__().cutoff, ep.__class__().below_speech, ep.__class__().min_len,
+       ep.__class__().end_margin) == (6000.0, 10.0, 80.0, 5.0))
+pieces = detect.segment_breaths(DURATION, eval_run())
+check("eval zones -> segment_breaths: jointive, two labels",
+      abs(pieces[0][0]) < 1e-9 and abs(pieces[-1][1] - DURATION) < 1e-9
+      and all(abs(a[1] - b[0]) < 1e-9 for a, b in zip(pieces, pieces[1:]))
+      and {p[2] for p in pieces} <= {"voice", "breath"})
+
+# 10 minutes of eval frames: what a slider drag re-runs (speech level + mask)
+reps = 240000 // len(ef.times) + 1
+big_e = detect.EvalFeatures(times=np.arange(240000) * hop, voicing=np.tile(ef.voicing, reps)[:240000],
+                            lp_db=np.tile(ef.lp_db, (reps, 1))[:240000], cutoffs=ef.cutoffs, hop_s=hop)
+p = detect.EvalParams()
+runs_t = []
+for _ in range(5):
+    t0 = time.perf_counter()
+    lvl = detect.eval_speech_level(big_e, p.unvoiced, p.cutoff)
+    detect.eval_mask(big_e, lvl, p)
+    runs_t.append((time.perf_counter() - t0) * 1000)
+check("eval speech level + mask on 10 min (240 000 frames): %.1f ms < 30 ms" % min(runs_t),
+      min(runs_t) < 30.0, runs_t)
+# ...and the mask alone, the speech level being cached per (voicing, cutoff)
+lvl = detect.eval_speech_level(big_e, p.unvoiced, p.cutoff)
+t0 = time.perf_counter()
+detect.eval_mask(big_e, lvl, p)
+mask_ms = (time.perf_counter() - t0) * 1000
+check("eval mask alone on 10 min: %.1f ms < 20 ms" % mask_ms, mask_ms < 20.0, mask_ms)
+
+# ── CTC forced alignment (numpy Viterbi) on a hand-made emission ───────────────────────────────
+V, blank = 5, 0
+lp = np.full((12, V), -8.0)
+plan = [0, 1, 1, 0, 2, 2, 0, 0, 3, 0, 3, 0]          # tokens 1, 2, 3, 3 (the repeat needs its blank)
+for t, s in enumerate(plan):
+    lp[t, s] = -0.01
+sp = tr.ctc_forced_align(lp, [1, 2, 3, 3], blank)
+check("ctc_forced_align recovers the token spans %s" % sp, sp == [(1, 2), (4, 5), (8, 8), (10, 10)], sp)
+check("ctc_forced_align refuses audio too short for the text",
+      tr.ctc_forced_align(np.log(np.full((3, V), 0.2)), [1, 2, 3, 3, 1], blank) is None)
+
+# ── models: ids, availability, and nothing installed is a label ────────────────────────────────
+check("model ids: none first", tr.MODEL_IDS[0] == "none" and set(tr.MODEL_IDS) == {"none", "whisper", "parakeet", "align"})
+check("'none' is always installed; an unknown id never is",
+      tr.installed("none") and not tr.installed("nope"))
+_saved = tr.PARAKEET_PYTHON
+tr.PARAKEET_PYTHON = "/nonexistent/python3"
+check("parakeet with no venv is 'not installed', not an error", tr.installed("parakeet") is False)
+tr.PARAKEET_PYTHON = _saved
+
+# ── the caches ─────────────────────────────────────────────────────────────────────────────────
 tmp = tempfile.mkdtemp(prefix="breath-cache-")
 os.environ["OBJEKAT_SEPARATEUR_CACHE"] = os.path.join(tmp, "cache")
 try:
@@ -273,27 +421,60 @@ try:
 
     def compute():
         calls["n"] += 1
-        return words, feats, float(SR)
+        return ef
 
-    k = sv.cache_key(wav, 0.0, 3.0, 1.0, "fr", False)
-    w1, f1, s1 = sv.cached_analysis(k, compute)
-    w2, f2, s2 = sv.cached_analysis(k, compute)
-    check("cache: the second call does not analyse again", calls["n"] == 1, calls)
-    check("cache: what comes back is what went in",
-          w2 == words and s2 == SR and np.allclose(f2.voicing, feats.voicing)
-          and np.allclose(f2.times, feats.times) and f2.hop_s == feats.hop_s)
-    for label, other in (("offset", sv.cache_key(wav, 0.5, 3.0, 1.0, "fr", False)),
-                         ("duration", sv.cache_key(wav, 0.0, 2.0, 1.0, "fr", False)),
-                         ("language", sv.cache_key(wav, 0.0, 3.0, 1.0, "en", False)),
-                         ("no-asr", sv.cache_key(wav, 0.0, 3.0, 1.0, "fr", True)),
-                         ("speed", sv.cache_key(wav, 0.0, 3.0, 2.0, "fr", False))):
-        check("cache key changes with the %s" % label, other != k)
+    k = sv.cache_key(wav, 0.0, 3.0, 1.0)
+    f1 = sv.cached_features(k, compute)
+    f2 = sv.cached_features(k, compute)
+    check("features cache: the second call does not analyse again", calls["n"] == 1, calls)
+    check("features cache: what comes back is what went in",
+          np.allclose(f2.voicing, ef.voicing) and np.array_equal(f2.lp_db, ef.lp_db)
+          and np.allclose(f2.times, ef.times) and f2.hop_s == ef.hop_s and f2.lp_db.dtype == np.float16)
+    for label, other in (("offset", sv.cache_key(wav, 0.5, 3.0, 1.0)),
+                         ("duration", sv.cache_key(wav, 0.0, 2.0, 1.0)),
+                         ("speed", sv.cache_key(wav, 0.0, 3.0, 2.0))):
+        check("features key changes with the %s" % label, other != k)
     os.utime(wav, (time.time() + 100, time.time() + 100))
-    check("cache key changes with the file's mtime", sv.cache_key(wav, 0.0, 3.0, 1.0, "fr", False) != k)
+    check("features key changes with the file's mtime", sv.cache_key(wav, 0.0, 3.0, 1.0) != k)
     with open(os.path.join(os.environ["OBJEKAT_SEPARATEUR_CACHE"], k + ".npz"), "wb") as f:
         f.write(b"not an npz")
-    sv.cached_analysis(k, compute)
-    check("cache: a corrupt file is recomputed, not an error", calls["n"] == 2, calls)
+    sv.cached_features(k, compute)
+    check("features cache: a corrupt file is recomputed, not an error", calls["n"] == 2, calls)
+
+    # words: one entry PER MODEL and language; a transcription is made once
+    wk = {m: sv.words_cache_key(wav, 0.0, 3.0, 1.0, "fr", m) for m in ("whisper", "parakeet", "align")}
+    check("words keys differ per model, per language, and from the features key",
+          len(set(wk.values())) == 3 and sv.words_cache_key(wav, 0.0, 3.0, 1.0, "en", "whisper") != wk["whisper"]
+          and wk["whisper"] != sv.cache_key(wav, 0.0, 3.0, 1.0))
+    wcalls = {"n": 0}
+
+    def wcompute():
+        wcalls["n"] += 1
+        return words, 1.5
+
+    w1 = sv.cached_words(wk["whisper"], wcompute)
+    w2 = sv.cached_words(wk["whisper"], wcompute)
+    check("words cache: made once, then read (from_cache flips)", wcalls["n"] == 1
+          and w1[2] is False and w2[2] is True and w2[0] == words and w2[1] == 1.5, (wcalls, w1[2], w2[2]))
+    sv.cached_words(wk["parakeet"], wcompute)
+    check("words cache: another model is another entry", wcalls["n"] == 2)
+
+    # the Transcriber hands a backend's failure back as a value, never as a crash
+    import threading
+    obj = {"file": wav, "source_offset": 0.0, "duration": 3.0, "speed": 1.0}
+    t = sv.Transcriber(obj, "es", lambda: (sig, SR))
+    tr_orig = tr.transcribe
+    tr.transcribe = lambda model, mono, sr, lang: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        t.request("whisper")
+        for _ in range(100):
+            if t.collect():
+                break
+            time.sleep(0.05)
+    finally:
+        tr.transcribe = tr_orig
+    check("Transcriber: a failing backend is a RuntimeError value and frees the worker",
+          isinstance(t.done.get("whisper"), RuntimeError) and t.running is None, t.done)
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

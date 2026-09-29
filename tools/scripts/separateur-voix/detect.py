@@ -379,6 +379,156 @@ def _gaps_from_words(words, duration, min_gap_ms=MIN_GAP_MS):
     return gaps
 
 
+# MARK: - The evaluation grid (four criteria, fine time grid)
+
+# The breath evaluation looks at the signal on a grid FINER than the historical 10 ms one: what a
+# hand tunes against is where a zone's edges fall, and a 10 ms hop with a 25 ms window smears every
+# edge by a dozen milliseconds. Two things are measured, each with the window it needs:
+#   - the VOICING, on a 25 ms window (an autocorrelation needs a few periods of a 70 Hz voice —
+#     shorter and the score means nothing), read every `EVAL_HOP_MS`;
+#   - the LOW-PASSED ENERGY, on a `EVAL_LP_WINDOW_MS` window (an edge in energy is a step, and the
+#     window is what blurs it), at the same hop.
+# Frames are CENTRED on their instant (frame k is about `k * hop`), so a frame's cell
+# `[t - hop/2, t + hop/2)` is what a run of frames is drawn as — no half-window bias on a zone.
+EVAL_HOP_MS = 2.5
+EVAL_VOICING_WINDOW_MS = 25.0
+EVAL_LP_WINDOW_MS = 12.0
+EVAL_CUTOFFS = np.arange(100.0, 8000.1, 100.0)      # the panel's slider grid, Hz
+EVAL_FEATURES_VERSION = 1
+
+
+@dataclass
+class EvalFeatures:
+    times: np.ndarray        # frame CENTRES, seconds, relative to the portion
+    voicing: np.ndarray      # the normalised autocorrelation peak, 0…1 (25 ms window)
+    lp_db: np.ndarray        # (frames, len(cutoffs)) float16: 10*log10 of the window's energy below
+                             # each cutoff — the low-pass is a cumulative sum over the frame's own
+                             # spectrum, so moving the cutoff costs nothing and refilters nothing
+    cutoffs: np.ndarray
+    hop_s: float
+
+
+def compute_eval_features(samples: np.ndarray, sr: float) -> EvalFeatures:
+    hop = max(1, int(round(EVAL_HOP_MS / 1000.0 * sr)))
+    vlen = max(4, int(round(EVAL_VOICING_WINDOW_MS / 1000.0 * sr)))
+    llen = max(4, int(round(EVAL_LP_WINDOW_MS / 1000.0 * sr)))
+    n = len(samples)
+    n_frames = n // hop + 1 if n else 0
+    times = np.arange(n_frames) * hop / sr
+    voicing = np.zeros(n_frames)
+    lp_db = np.full((n_frames, len(EVAL_CUTOFFS)), -120.0, dtype=np.float16)
+    if n_frames == 0:
+        return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr)
+
+    x = np.asarray(samples, dtype=np.float64)
+    pad = max(vlen, llen)
+    padded = np.pad(x, (pad, pad + max(vlen, llen)))
+    # frame k is centred on sample k*hop: its window starts half a window before it
+    vview = np.lib.stride_tricks.sliding_window_view(padded, vlen)
+    lview = np.lib.stride_tricks.sliding_window_view(padded, llen)
+    v0 = pad - vlen // 2
+    l0 = pad - llen // 2
+    window = np.hanning(llen)
+    wnorm = float(np.sum(window ** 2))
+    freqs = np.fft.rfftfreq(llen, d=1.0 / sr)
+    cut_idx = np.clip(np.searchsorted(freqs, EVAL_CUTOFFS, side="right") - 1, 0, len(freqs) - 1)
+    lag_min = int(sr / 400.0)
+    lag_max = min(int(sr / 70.0), vlen - 1)
+    fft_len = 2 * vlen
+    eps = 1e-12
+    for c0 in range(0, n_frames, _CHUNK_FRAMES):
+        c1 = min(n_frames, c0 + _CHUNK_FRAMES)
+        starts = np.arange(c0, c1) * hop
+        lf = lview[l0 + starts]
+        spec = np.fft.rfft(lf * window, axis=1)
+        cum = np.cumsum(spec.real ** 2 + spec.imag ** 2, axis=1)[:, cut_idx]
+        lp_db[c0:c1] = (10.0 * np.log10(cum / (wnorm * llen) + eps)).astype(np.float16)
+        if lag_max > lag_min:
+            vf = vview[v0 + starts]
+            xv = vf - vf.mean(axis=1, keepdims=True)
+            sp = np.fft.rfft(xv, n=fft_len, axis=1)
+            r = np.fft.irfft(sp.real ** 2 + sp.imag ** 2, n=fft_len, axis=1)
+            e0 = r[:, 0]
+            best = np.maximum(r[:, lag_min:lag_max + 1].max(axis=1), 0.0)
+            ok = e0 > 1e-12
+            voicing[c0:c1] = np.where(ok, best / np.where(ok, e0, 1.0), 0.0)
+    return EvalFeatures(times, voicing, lp_db, EVAL_CUTOFFS.copy(), hop / sr)
+
+
+@dataclass
+class EvalParams:
+    """The four criteria of the evaluation, each with its own on / off. A zone is a run of frames
+    where every CHECKED frame criterion holds; nothing else — no words, no floor, no flatness."""
+    unvoiced: float = 0.45          # voicing score at or below this = not voiced
+    cutoff: float = 6000.0          # Hz — the low-pass both energies are measured after
+    below_speech: float = 10.0      # dB under the median low-passed energy of the voiced frames
+    min_len: float = 80.0           # ms — the shortest zone kept
+    end_margin: float = 5.0         # ms — a zone stops this long before the first voiced frame after it
+    unvoiced_on: bool = True
+    below_speech_on: bool = True
+    min_len_on: bool = True
+    end_margin_on: bool = True
+
+    @classmethod
+    def from_values(cls, values: dict) -> "EvalParams":
+        p = cls()
+        for name in cls.__dataclass_fields__:
+            if name in values:
+                setattr(p, name, type(getattr(p, name))(values[name]))
+        return p
+
+
+def eval_lp_column(feats: EvalFeatures, cutoff: float) -> np.ndarray:
+    """The low-passed energy (dB) per frame at the grid cutoff nearest `cutoff`."""
+    i = int(np.argmin(np.abs(feats.cutoffs - cutoff)))
+    return feats.lp_db[:, i].astype(np.float64)
+
+
+def eval_speech_level(feats: EvalFeatures, unvoiced: float, cutoff: float) -> float:
+    """What "speech" measures, measured the SAME way as the frames it is compared with: the median
+    low-passed energy of the voiced frames (the median of everything when nothing is voiced)."""
+    col = eval_lp_column(feats, cutoff)
+    voiced = feats.voicing > unvoiced
+    return float(np.median(col[voiced])) if voiced.any() else float(np.median(col)) if col.size else 0.0
+
+
+def eval_mask(feats: EvalFeatures, speech_db: float, params: EvalParams,
+              duration: float | None = None) -> list[tuple[float, float]]:
+    """The zones, as (start, end) seconds — PURE and array-only, what every setting a hand moves
+    re-runs. `speech_db` must be `eval_speech_level` for `params.unvoiced` and `params.cutoff`.
+    Zones are clamped to `[0, duration]` (a frame's cell reaches half a hop past both ends)."""
+    p = params
+    n = feats.times.size
+    if n == 0:
+        return []
+    candidate = np.ones(n, dtype=bool)
+    if p.unvoiced_on:
+        candidate &= feats.voicing <= p.unvoiced
+    if p.below_speech_on:
+        candidate &= eval_lp_column(feats, p.cutoff) < speech_db - p.below_speech
+    hop = feats.hop_s
+    runs = _frame_runs(candidate, hop, 0.0, 0.0)
+    if not runs:
+        return []
+    i0 = np.array([r[0] for r in runs])
+    j0 = np.array([r[1] for r in runs])
+    lo = feats.times[i0] - hop / 2.0
+    hi = feats.times[j0 - 1] + hop / 2.0
+    lo = np.maximum(lo, 0.0)
+    if duration is not None:
+        hi = np.minimum(hi, duration)
+    if p.end_margin_on:
+        vidx = np.flatnonzero(feats.voicing > p.unvoiced)
+        if vidx.size:
+            k = np.searchsorted(vidx, i0, side="left")
+            has = k < vidx.size
+            first = feats.times[vidx[np.clip(k, 0, vidx.size - 1)]]
+            hi = np.where(has, np.minimum(hi, first - p.end_margin / 1000.0), hi)
+    min_len = (p.min_len / 1000.0) if p.min_len_on else 0.0
+    keep = (hi - lo) >= max(min_len, 1e-9)
+    return list(zip(lo[keep].tolist(), hi[keep].tolist()))
+
+
 # MARK: - Sibilants / CH
 
 def _refine_hf_bounds(feats: Features, i: int, j: int) -> tuple[float, float]:
