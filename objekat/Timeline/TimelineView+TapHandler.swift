@@ -343,7 +343,7 @@ extension TimelineView {
             } else {
                 viewModel.timeSelection = nil
                 if case .group = child.kind, isDoubleTap {
-                    viewModel.toggleGroupExpansion(id: child.id)
+                    viewModel.doubleClickGroup(id: child.id)
                 } else if cmd {
                     if viewModel.selectedIDs.contains(child.id) {
                         viewModel.selectedIDs.remove(child.id)
@@ -371,7 +371,7 @@ extension TimelineView {
                 } else {
                     viewModel.timeSelection = nil
                     if isDoubleTap {
-                        viewModel.toggleGroupExpansion(id: group.id)
+                        viewModel.doubleClickGroup(id: group.id)
                     } else if cmd {
                         viewModel.select(group.id, additive: true)
                     } else if shift {
