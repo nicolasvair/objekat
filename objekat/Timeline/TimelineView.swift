@@ -1038,8 +1038,15 @@ struct TimelineView: View {
                             // edge, the columns start after it (@see ToolSendLayer), and a link
                             // setting off from the old origin would leave its knob behind.
                             let inset = sendLeadingInset(for: clipID)
-                            let colW = sendColWidth(blockWidth: max(0, cr.width - inset),
-                                                    count: auxes.count)
+                            // …and from the block's VISIBLE portion, read from the exact scroll
+                            // here in the drawing closure (like the wire's far end below).
+                            let vis = visibleSpan(blockX: cr.minX, blockWidth: cr.width,
+                                                  scrollOffsetX: scrollAnchor.x,
+                                                  viewportWidth: viewportWidth)
+                            let lay = sendColumnsLayout(blockWidth: cr.width, leadingInset: inset,
+                                                        count: auxes.count,
+                                                        visibleX: vis.x - cr.minX, visibleWidth: vis.width)
+                            let colW = sendColWidth(blockWidth: lay.width, count: auxes.count)
                             for (idx, aux) in auxes.enumerated() {
                                 let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
                                 let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
@@ -1048,7 +1055,7 @@ struct TimelineView: View {
                                 let ar = at.rect
                                 // The link sets off from the centre of that aux's on/off button (the
                                 // bottom of its column), horizontally aligned on the knob.
-                                let src = CGPoint(x: cr.minX + inset + (Double(idx) + 0.5) * colW,
+                                let src = CGPoint(x: cr.minX + lay.origin + (Double(idx) + 0.5) * colW,
                                                   y: cr.maxY - 2 - sendToggleZoneHeight / 2)
                                 // It lands on the middle of the aux's VISIBLE part, not of the block:
                                 // a long aux (an infinite bus above all) has its middle screens

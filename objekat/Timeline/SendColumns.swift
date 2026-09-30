@@ -22,22 +22,48 @@ func sendColWidth(blockWidth: Double, count: Int) -> Double {
 /// The height of the on/off button's clickable area (at the BOTTOM of each column).
 let sendToggleZoneHeight: Double = 22
 
-/// Which column a point falls in, `localX` being measured from the block's LEFT EDGE. `nil` = none.
+/// Where the columns lie inside a block, in px LOCAL to its left edge: `origin` is where the first
+/// one sets off and `width` the span the columns share.
 ///
-/// `leadingInset` is the span of that edge a CROSSFADE holds — the width the block shares with the
-/// neighbour it fades into. The columns set off after it, and that is the whole point: a crossfade
-/// zone belongs to TWO objects at once, so knobs drawn inside it were drawn over pixels the
-/// neighbour occupies too, and the click landed on whichever of the pair the hit-test reached
-/// first. Past the inset, every pixel belongs to this object alone.
+/// Two things move that origin, and they compose. `leadingInset` is the span of the left edge a
+/// CROSSFADE holds — the width the block shares with the neighbour it fades into. A crossfade zone
+/// belongs to TWO objects at once, so knobs drawn inside it were drawn over pixels the neighbour
+/// occupies too, and the click landed on whichever of the pair the hit-test reached first; past the
+/// inset, every pixel belongs to this object alone.
 ///
-/// What is left of the block carries the columns, so a heavily crossfaded edge makes them thinner
-/// rather than pushing them off the end.
-func sendColumnIndex(localX: Double, blockWidth: Double, leadingInset: Double, count: Int) -> Int? {
-    guard count > 0 else { return nil }
+/// `visibleX` / `visibleWidth` are the block's VISIBLE portion (@see `visibleSpan`, local
+/// coordinates). A block whose left edge is scrolled off screen would otherwise carry its knobs
+/// off screen with it, unreachable: the columns set off from the visible portion's left edge
+/// instead and share what is visible, exactly as the other tools' controls do. With the whole block
+/// visible (`visibleX == 0`, `visibleWidth >= blockWidth`, or no window given) nothing changes.
+/// The two bounds are intersected: if the visible portion lies entirely inside the crossfade's span
+/// there is nothing of this object alone to see, and the layout is the one the inset alone gives.
+///
+/// What is left carries the columns, so a heavily crossfaded edge or a thin visible sliver makes
+/// them thinner rather than pushing them off the end.
+func sendColumnsLayout(blockWidth: Double, leadingInset: Double, count: Int,
+                       visibleX: Double = 0, visibleWidth: Double? = nil) -> (origin: Double, width: Double) {
     let inset = max(0, leadingInset)
-    let colW = sendColWidth(blockWidth: max(0, blockWidth - inset), count: count)
+    let whole = (origin: min(inset, max(0, blockWidth)), width: max(0, blockWidth - inset))
+    guard let vw = visibleWidth else { return whole }
+    let lo = max(inset, visibleX)
+    let hi = min(blockWidth, visibleX + vw)
+    guard hi > lo else { return whole }
+    // The columns' ceiling (@see sendColWidth) applies to what is shared out here, so a wide
+    // visible portion keeps its knobs on its left and the rest of it carries nothing.
+    return (lo, hi - lo)
+}
+
+/// Which column a point falls in, `localX` being measured from the block's LEFT EDGE. `nil` = none.
+/// The layout is `sendColumnsLayout`'s — the display, the hit-testing and the send links all read it.
+func sendColumnIndex(localX: Double, blockWidth: Double, leadingInset: Double, count: Int,
+                     visibleX: Double = 0, visibleWidth: Double? = nil) -> Int? {
+    guard count > 0 else { return nil }
+    let lay = sendColumnsLayout(blockWidth: blockWidth, leadingInset: leadingInset, count: count,
+                                visibleX: visibleX, visibleWidth: visibleWidth)
+    let colW = sendColWidth(blockWidth: lay.width, count: count)
     guard colW > 0 else { return nil }
-    let x = localX - inset
+    let x = localX - lay.origin
     guard x >= 0 else { return nil }
     let idx = Int(x / colW)
     return idx < count ? idx : nil
