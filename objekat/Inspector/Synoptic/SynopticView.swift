@@ -2434,11 +2434,11 @@ struct SynopticBoundView: View {
                 let rev = !(obj?.isReversed ?? false)
                 viewModel.edit { viewModel.updateReversed(id: objectID, reversed: rev) }
             },
-            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
             onToggleLoop: {
                 let loop = !(obj?.loopEnabled ?? false)
                 viewModel.edit { viewModel.updateLoopEnabled(id: objectID, enabled: loop) }
             },
+            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
             onBeginSpeedEdit: { viewModel.pushUndo() },
             // Touching a control: it names the 'future automation' row, without changing anything. An
             // aux lists the sends it RECEIVES, so the send row belongs to the SENDER — the same
