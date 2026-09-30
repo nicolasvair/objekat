@@ -115,6 +115,57 @@ extension TimelineView {
                 return nil
             }
 
+            // MARK: Automation line by value (the wheel over a HIGHLIGHTED line)
+            // Another way into the drag's own operation: the grab (`automationLineGrab`) and the
+            // carry (`shiftAutomationLine`) are the model's, shared with AutomationBandView, so the
+            // detent, the clamp, the selection's semantics and the push cannot drift. The wheel is
+            // swallowed ONLY where the line would light up under the hand; elsewhere in the band
+            // it scrolls the timeline as before. ⌥ keeps its meaning (curvature, above).
+            //
+            // A wheel gesture = notches less than `valueScrollUndoGap` apart: ONE undo point, and
+            // the grab stays FROZEN for its duration, since raising the line carries it away from
+            // the pointer and a hover re-test would let go of it at the second notch (a drag holds
+            // its grab the same way). The steps are the TOTAL since the grab, applied from the
+            // anchors. A trackpad's inertia does not edit: it is swallowed while a gesture is held.
+            // A sideways scroll over the line is still the timeline's: only a mainly VERTICAL event
+            // reads as a value.
+            if !flags.contains(.option), abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+                let now = ProcessInfo.processInfo.systemUptime
+                let held: AutomationLineWheel? = {
+                    guard let w = hs.automationLineWheel,
+                          now - hs.lastValueScrollTime <= Self.valueScrollUndoGap,
+                          !event.phase.contains(.began), w.bandRect.contains(pos) else { return nil }
+                    return w
+                }()
+                if held != nil, !event.momentumPhase.isEmpty { return nil }
+                if let w = held ?? self.automationLineWheelHit(at: pos) {
+                    if held == nil { hs.automationLineScrollAccumulator = 0 }
+                    hs.automationLineWheel = w
+                    hs.automationLineScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
+                    let n = Int(hs.automationLineScrollAccumulator.rounded())
+                    if n != 0 {
+                        hs.automationLineScrollAccumulator -= Float(n)
+                        _ = opensNewValueGesture(event)     // only to keep the gesture's clock
+                        hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
+                        let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)
+                        hs.automationLineWheel?.undoPushed = true
+                        let snap = hs.automationLineWheel!
+                        DispatchQueue.main.async {
+                            if needsUndo {
+                                // As `beginDrag` opens a line drag: select, then one undo point.
+                                vm.select(snap.objectID, additive: false)
+                                vm.beginAutomationEdit()
+                            }
+                            vm.wheelShiftAutomationLine(snap.grab, objectID: snap.objectID,
+                                                        param: snap.param, row: snap.row,
+                                                        steps: snap.steps, geo: snap.geo)
+                        }
+                    }
+                    return nil
+                }
+                hs.automationLineWheel = nil
+            }
+
             // MARK: Volume scroll (deltaY, the ≥ 60% right zone)
             if vm.activeTool == .toolVolume {
                 guard let entry = vm.laneEntries.first(where: { e in

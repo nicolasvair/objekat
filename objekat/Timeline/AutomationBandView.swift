@@ -140,15 +140,9 @@ struct AutomationBandView: View {
     /// whether the grips show: a row crosses the whole band, and the zone is a rectangle inside it.
     @State private var hoverAt: CGPoint? = nil
 
-    /// One row under a transform: which curve, which of its points, and what the WHOLE lane was.
-    /// The lane whole and not just the selected points, exactly as `BandDrag.origPoints` already
-    /// does for the single-row modes — the mutation writes the lane back, by storage index.
-    private struct TransformRow {
-        let param:      ParamRef
-        let row:        Int                  // display row: geometry and nothing else
-        let indices:    [Int]                // storage indices, validated at the grab
-        let origPoints: [AutomationPoint]
-    }
+    /// One row under a transform — the model's own `AutomationMovedRow`, shared with the wheel
+    /// (@see EditViewModel+AutomationLine).
+    private typealias TransformRow = AutomationMovedRow
 
     /// The gesture under way. The mode is decided ONCE, on the first movement, from the zone
     /// grabbed and ⌥; the points are named by their STORAGE index, stable even if the drag takes a
@@ -648,6 +642,17 @@ struct AutomationBandView: View {
         return path
     }
 
+    /// The figure of a line being moved by the mouse WHEEL (@see EditViewModel.wheelShiftAutomationLine):
+    /// the wheel has no pointer travel to hang a hover readout on, so the model holds the value and
+    /// it is drawn where the hover's would be — by the pointer, at the line's new height. Yields to
+    /// any readout of the band's own.
+    private var wheelReadout: (row: Int, x: Double, y: Double?, text: String)? {
+        guard let w = viewModel.automationLineWheelReadout, w.objectID == object.id,
+              let row = rows.firstIndex(of: w.param), let at = hoverAt else { return nil }
+        return (row: row, x: Double(at.x), y: geo.y(of: w.value, ref: w.param, row: row),
+                text: viewModel.automationReadout(w.param, value: w.value, on: object))
+    }
+
     /// The figure for the gesture under way — or for the point hovered. One badge, one wording,
     /// ONE anchor: the point's own height, hover and gesture alike. Only the clearance differs
     /// (@see readoutOffset), the pointer sitting on the point during a gesture. The curvature is
@@ -658,7 +663,7 @@ struct AutomationBandView: View {
     /// flips underneath when there is no room left over it — a choice FROZEN for the whole of a
     /// gesture (@see BandDrag.badgeBelow), since under the hand it is the point that moves.
     private func drawReadout(in ctx: inout GraphicsContext) {
-        guard let r = readout, rows.indices.contains(r.row) else { return }
+        guard let r = readout ?? wheelReadout, rows.indices.contains(r.row) else { return }
         let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
         let text = Text(r.text)
             .font(.system(size: 9, weight: .semibold).monospacedDigit())
@@ -944,28 +949,13 @@ struct AutomationBandView: View {
             setReadout(row: d.row, x: location.x, ref: ref, value: v)
 
         case .segment(let idxs):
-            // Dragging a straight whose two ends are taken moves the WHOLE selection, and not just
-            // that straight: the line is a handle on the matter, and "drag by the line" is how one
-            // moves a stretch of curve without aiming at any single point of it.
-            if let trows = d.groupRows {
-                applyGroupMove(trows, dt: 0, dy: dy, x: location.x, startedRow: d.row, ref: ref)
-                return
+            // The line's move is the model's (@see EditViewModel.shiftAutomationLine): the wheel
+            // goes through the very same function, from its own anchors.
+            if let v = viewModel.shiftAutomationLine(
+                .segment(indices: idxs, orig: d.origPoints, carried: d.groupRows),
+                objectID: object.id, param: ref, row: d.row, dy: dy, geo: g) {
+                setReadout(row: d.row, x: location.x, ref: ref, value: v)
             }
-            let origs = idxs.compactMap { d.origPoints.indices.contains($0) ? d.origPoints[$0].v : nil }
-            guard let lo = origs.min(), let hi = origs.max() else { return }
-            // The segment moves by a SINGLE difference: clamping it point by point would flatten it
-            // against the bound instead of holding it whole.
-            let range = ref.valueRange
-            // The DIFFERENCE is rounded, not each value: a segment sitting on round figures stays
-            // there, and one that was not keeps its internal differences.
-            let dv = detentedDelta(g.valueDelta(dy: dy, ref: ref), ref: ref)
-                .clamped(to: (range.lowerBound - lo)...(range.upperBound - hi))
-            viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
-                for i in idxs where pts.indices.contains(i) && d.origPoints.indices.contains(i) {
-                    pts[i].v = d.origPoints[i].v + dv
-                }
-            }
-            setReadout(row: d.row, x: location.x, ref: ref, value: origs[0] + dv)
 
         case .curve(let i):
             guard d.origPoints.indices.contains(i) else { return }
@@ -979,9 +969,11 @@ struct AutomationBandView: View {
                        text: String(format: L("automation.curveReadout"), c))
 
         case .staticValue:
-            let v = detentedValue((d.origStatic + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
-            viewModel.setAutomationStaticValue(ref, on: object.id, to: v)
-            setReadout(row: d.row, x: location.x, ref: ref, value: v)
+            if let v = viewModel.shiftAutomationLine(.staticValue(orig: d.origStatic),
+                                                     objectID: object.id, param: ref,
+                                                     row: d.row, dy: dy, geo: g) {
+                setReadout(row: d.row, x: location.x, ref: ref, value: v)
+            }
 
         case .timeZone(let base):
             // X = a stretch of time, SNAPPED like every other time this band lays down (⌘ inverts
@@ -1044,46 +1036,10 @@ struct AutomationBandView: View {
     ///   to anyway — the rows' own `valueStep`s differ.
     private func applyGroupMove(_ trows: [TransformRow], dt: Double, dy: Double,
                                 x: Double, startedRow: Int, ref: ParamRef) {
-        let g = geo
-        let multi = trows.count > 1
-        let dn = multi ? g.normalizedDelta(dy: dy) : 0
-        var shown: Float? = nil
-        viewModel.updateAutomationRows(objectID: object.id) { lanes in
-            for tr in trows {
-                guard let li = lanes.firstIndex(where: { $0.param == tr.param }) else { continue }
-                let taken = tr.indices.filter {
-                    tr.origPoints.indices.contains($0) && lanes[li].points.indices.contains($0)
-                }
-                guard !taken.isEmpty else { continue }
-
-                var dv: Float = 0
-                if !multi {
-                    let origs = taken.map { tr.origPoints[$0].v }
-                    let range = tr.param.valueRange
-                    let low  = range.lowerBound - (origs.min() ?? 0)
-                    let high = range.upperBound - (origs.max() ?? 0)
-                    dv = detentedDelta(g.valueDelta(dy: dy, ref: tr.param), ref: tr.param)
-                    // A selection already spanning the parameter's WHOLE range leaves no room to
-                    // move at all, and the bounds cross: then nothing moves, rather than a range
-                    // built the wrong way round.
-                    if low <= high { dv = dv.clamped(to: low...high) }
-                    else           { dv = 0 }
-                }
-
-                for i in taken {
-                    let o = tr.origPoints[i]
-                    lanes[li].points[i].t = o.t + dt
-                    lanes[li].points[i].v = multi
-                        ? g.denormalized((g.normalized(o.v, ref: tr.param) + dn).clamped(to: 0...1),
-                                         ref: tr.param)
-                        : o.v + dv
-                }
-                if tr.row == startedRow, let first = taken.first {
-                    shown = lanes[li].points[first].v
-                }
-            }
+        if let v = viewModel.moveAutomationRows(trows, objectID: object.id, dt: dt, dy: dy,
+                                                startedRow: startedRow, geo: geo) {
+            setReadout(row: startedRow, x: x, ref: ref, value: v)
         }
-        if let v = shown { setReadout(row: startedRow, x: x, ref: ref, value: v) }
     }
 
     /// The figure a transform shows: ×k and nothing else — the one thing common to every row the
@@ -1147,31 +1103,26 @@ struct AutomationBandView: View {
         var groupRows: [TransformRow]? = nil
 
         if pts.isEmpty {
-            // A row with no point = a fader. A plugin parameter has no static value on the model's
-            // side: its empty row cannot be set, it waits for its first point.
-            if let sv = viewModel.automationStaticValue(ref, on: object),
-               geo.nearLine(p, lineY: geo.y(of: sv, ref: ref, row: row)) {
+            // A row with no point = a fader, grabbed ON its line (@see automationLineGrab, which
+            // the wheel reads too: a plugin parameter's empty row cannot be set).
+            if case .staticValue? = viewModel.automationLineGrab(object: object, rows: rows, geo: geo,
+                                                                 row: row, at: p) {
                 mode = .staticValue
             } else {
                 mode = zoneMode()
             }
         } else if let i = geo.pointHit(at: p, row: row, ref: ref, points: pts) {
             groupRows = carriedSelection(containing:
-                [AutomationPointRef(objectID: object.id, param: ref, index: i)], sel)
+                [AutomationPointRef(objectID: object.id, param: ref, index: i)])
             mode = .point(i)
-        } else if let lineY = geo.curveY(atX: p.x, ref: ref, row: row, points: pts),
-                  geo.nearLine(p, lineY: lineY) {
-            if option, let owner = curvableSegment(atX: p.x, ref: ref, points: pts) {
-                mode = .curve(owner)
-            } else if let seg = geo.segment(atX: p.x, points: pts), !seg.movedPoints.isEmpty {
-                groupRows = carriedSelection(
-                    containing: Set(seg.movedPoints.map {
-                        AutomationPointRef(objectID: object.id, param: ref, index: $0)
-                    }), sel)
-                mode = .segment(seg.movedPoints)
-            } else {
-                mode = zoneMode()
-            }
+        } else if option, let lineY = geo.curveY(atX: p.x, ref: ref, row: row, points: pts),
+                  geo.nearLine(p, lineY: lineY),
+                  let owner = curvableSegment(atX: p.x, ref: ref, points: pts) {
+            mode = .curve(owner)
+        } else if case .segment(let idxs, _, let carried)? = viewModel.automationLineGrab(
+                    object: object, rows: rows, geo: geo, row: row, at: p) {
+            groupRows = carried
+            mode = .segment(idxs)
         } else {
             mode = zoneMode()
         }
@@ -1198,16 +1149,8 @@ struct AutomationBandView: View {
     /// dropped. "What one grabs decides", the rule the crossfades and the plugin cards already
     /// follow: taking hold of something outside the selection is how one says one has finished
     /// with it.
-    private func carriedSelection(
-        containing grabbed: Set<AutomationPointRef>,
-        _ sel: [(row: Int, ref: ParamRef, indices: [Int], points: [AutomationPoint])]
-    ) -> [TransformRow]? {
-        guard !grabbed.isEmpty, grabbed.isSubset(of: viewModel.selectedAutomationPoints) else {
-            viewModel.clearAutomationPointSelection()
-            return nil
-        }
-        return sel.map { TransformRow(param: $0.ref, row: $0.row,
-                                      indices: $0.indices, origPoints: $0.points) }
+    private func carriedSelection(containing grabbed: Set<AutomationPointRef>) -> [TransformRow]? {
+        viewModel.carriedAutomationRows(containing: grabbed, object: object, rows: rows)
     }
 
     /// A passage just traced puts the cursor on its START — so space plays from there, which is
@@ -1307,18 +1250,12 @@ struct AutomationBandView: View {
     /// reasoning as the pan's detent (@see EditViewModel+Pan, which says why a modifier leaving
     /// 13 % behind in the file is the intermediate value under another name).
     ///
-    /// It lives HERE, at the hand's door, and never in the model: a plugin parameter has no step
+    /// It is a helper of the hand's doors (the drag here, the wheel in the scroll monitor), never
+    /// of the model's own writes: a plugin parameter has no step
     /// (a normalised 0…1 has no unit to round to), `setAutomationStaticValue` goes on through the
     /// exact doors, and what a curve pushes to the engine is untouched.
     private func detentedValue(_ v: Float, ref: ParamRef) -> Float {
-        guard let step = ref.valueStep, step > 0 else { return v }
-        return ((v / step).rounded() * step).clamped(to: ref.valueRange)
-    }
-
-    /// The same detent, for a DIFFERENCE: no bounding to the range, a difference is not a value.
-    private func detentedDelta(_ dv: Float, ref: ParamRef) -> Float {
-        guard let step = ref.valueStep, step > 0 else { return dv }
-        return (dv / step).rounded() * step
+        EditViewModel.automationDetentedValue(v, ref: ref)
     }
 
     /// A local x → the time relative to the object, snapped to the GLOBAL grid (snapping is

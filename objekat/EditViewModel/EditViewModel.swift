@@ -366,6 +366,13 @@ final class EditViewModel {
     /// project would cost twenty times a second what nobody is looking at.
     var liveAutomationValues: [UUID: [ParamRef: Float]] = [:]
 
+    /// The value an automation LINE was just given by the mouse wheel, shown in the band's readout
+    /// while the hand is wheeling (the wheel has no pointer movement to hang a hover readout on).
+    /// Cleared a moment after the last notch. @see wheelShiftAutomationLine
+    var automationLineWheelReadout: (objectID: UUID, param: ParamRef, value: Float)? = nil
+    /// Tells the clearing timer whether a later notch has superseded it. Not observed.
+    @ObservationIgnored var automationLineWheelGeneration: Int = 0
+
     /// The PLUGIN PARAMETER curves already pushed to the engine, per object. A session memory, outside
     /// observation: it serves only to know what to ERASE when a row disappears from the model
     /// (@see pushAutomation, which explains why those targets are not swept on every

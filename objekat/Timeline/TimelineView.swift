@@ -285,6 +285,10 @@ struct TimelineView: View {
         var panScrollAccumulator: Float = 0
         var sendScrollAccumulator: Float = 0
         var automationScrollAccumulator: Float = 0
+        var automationLineScrollAccumulator: Float = 0
+        /// The automation line the wheel holds, frozen at its first notch and kept for as long as
+        /// the notches follow each other (@see registerScrollMonitor).
+        var automationLineWheel: AutomationLineWheel? = nil
         /// The timestamp of the last continuous setting notch on the wheel (volume / pan / send).
         /// Two notches less than `valueScrollUndoGap` apart belong to the same gesture and share ONE
         /// undo — otherwise the wheel was not undoable at all.
@@ -1811,6 +1815,41 @@ struct TimelineView: View {
                   pts.indices.contains(owner), pts.indices.contains(right),
                   pts[owner].v != pts[right].v else { return nil }
             return (e.item.id, ref, owner)
+        }
+        return nil
+    }
+
+    /// What the wheel holds while it moves an automation line: the drag's own grab, frozen, plus
+    /// the anchors' geometry and the TOTAL steps since (a total, like the drag's travel).
+    struct AutomationLineWheel {
+        let objectID: UUID
+        let param: ParamRef
+        let row: Int
+        let grab: AutomationLineGrab
+        let geo: AutomationBandGeometry
+        let bandRect: CGRect
+        var steps: Int = 0
+        /// The gesture's undo point is pushed at its first EFFECTIVE notch, not at its first event.
+        var undoPushed = false
+    }
+
+    /// The automation LINE under a point of the timeline (content coordinates), as the drag would
+    /// grab it — the band's hover highlight and this are one condition
+    /// (@see EditViewModel.automationLineGrab). nil anywhere else, so that the wheel goes on
+    /// scrolling the timeline. Taking the grab can drop the point selection, as a drag's does.
+    func automationLineWheelHit(at point: CGPoint) -> AutomationLineWheel? {
+        for e in viewModel.laneEntries {
+            guard let r = automationBandRect(for: e), r.contains(point) else { continue }
+            let g = AutomationBandGeometry(rows: e.item.automationRows,
+                                           pixelsPerSecond: pixelsPerSecond,
+                                           laneStep: laneStep, rowHeight: blockHeight,
+                                           bandWidth: r.width)
+            let local = CGPoint(x: point.x - r.minX, y: point.y - r.minY)
+            guard let row = g.rowIndex(atY: local.y),
+                  let grab = viewModel.automationLineGrab(object: e.item, rows: g.rows, geo: g,
+                                                          row: row, at: local) else { return nil }
+            return AutomationLineWheel(objectID: e.item.id, param: g.rows[row], row: row,
+                                       grab: grab, geo: g, bandRect: r)
         }
         return nil
     }
