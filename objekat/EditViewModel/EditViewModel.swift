@@ -372,6 +372,12 @@ final class EditViewModel {
     /// timer. @see wheelShiftAutomationLine
     var automationLineWheelReadout: (objectID: UUID, param: ParamRef, value: Float)? = nil
 
+    /// Bumped by everything that must drop an ARMED wheel grab (@see cancelAutomationLineWheel):
+    /// a click, a key, an undo / redo, a project or tab change. The wheel's grab records the value
+    /// it was taken at and is only honoured while the two still agree. Not observed: nothing draws
+    /// from it.
+    @ObservationIgnored var automationLineWheelEpoch = 0
+
     /// The PLUGIN PARAMETER curves already pushed to the engine, per object. A session memory, outside
     /// observation: it serves only to know what to ERASE when a row disappears from the model
     /// (@see pushAutomation, which explains why those targets are not swept on every

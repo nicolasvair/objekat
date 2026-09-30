@@ -291,6 +291,14 @@ struct TimelineView: View {
         /// The automation line the wheel holds, frozen at its first notch and kept for as long as
         /// the notches follow each other (@see registerScrollMonitor).
         var automationLineWheel: AutomationLineWheel? = nil
+        /// When the last wheel event handled for that grab arrived (momentum included), and where the
+        /// pointer was: the grab is ARMED for `automationLineWheelArmDuration` after that, for as
+        /// long as the pointer has not travelled.
+        var automationLineWheelLastEvent: TimeInterval = 0
+        var automationLineWheelPointer: CGPoint? = nil
+        /// The one scheduled clear that lets go of the grab and takes its figure down when the
+        /// arming lapses; every wheel event replaces it.
+        var automationLineWheelExpiry: DispatchWorkItem? = nil
         /// The timestamp of the last continuous setting notch on the wheel (volume / pan / send).
         /// Two notches less than `valueScrollUndoGap` apart belong to the same gesture and share ONE
         /// undo — otherwise the wheel was not undoable at all.
@@ -1130,6 +1138,9 @@ struct TimelineView: View {
                 HoverTracker { pos in
                     if let p = pos {
                         updateCursor(at: p)
+                        // ANY travel of the pointer ends an armed wheel grab (a replay of the same
+                        // point, as `refreshHover` does, is not a travel).
+                        if hoverState.position != p { viewModel.cancelAutomationLineWheel() }
                         hoverState.position = p
                         updateToolHover(at: p)
                     } else {
@@ -1140,6 +1151,7 @@ struct TimelineView: View {
                         // handle, the transport's fields…
                         TimelineCursorKeeper.relinquish()
                         hoverState.position = nil
+                        viewModel.cancelAutomationLineWheel()
                         toolHoveredID = nil
                         toolZoneHelpText = nil
                         cutHover = nil
@@ -1842,10 +1854,16 @@ struct TimelineView: View {
         let objectID: UUID
         let param: ParamRef
         let row: Int
-        let grab: AutomationLineGrab
+        /// Re-anchored when a new undo step resumes on the same line (@see refreshedAutomationLineGrab).
+        var grab: AutomationLineGrab
         let geo: AutomationBandGeometry
         let bandRect: CGRect
         var steps: Int = 0
+        /// `EditViewModel.automationLineWheelEpoch` at the grab: a cancel door bumps it.
+        var epoch: Int = 0
+        /// True once the gesture has selected its object, from which a different selection is a
+        /// change of mind that ends the arming.
+        var confirmed = false
         /// The gesture's undo point is pushed at its first EFFECTIVE notch, not at its first event.
         var undoPushed = false
     }

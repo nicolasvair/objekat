@@ -198,6 +198,49 @@ extension EditViewModel {
         return (r.upperBound - r.lowerBound) / 100
     }
 
+    /// Lets go of an armed wheel grab and takes its figure down. Called from every door that means
+    /// "the hand is doing something else now": a click or a drag in the canvas or the band, a key,
+    /// an undo / redo, a project or tab change (@see automationLineWheelEpoch).
+    func cancelAutomationLineWheel() {
+        automationLineWheelEpoch &+= 1
+        if automationLineWheelReadout != nil { automationLineWheelReadout = nil }
+    }
+
+    /// True while the line an armed wheel grab holds still exists (the object is on the timeline and
+    /// the row is still in its band).
+    func automationLineWheelTargetExists(objectID: UUID, param ref: ParamRef) -> Bool {
+        laneEntries.first(where: { $0.item.id == objectID })?.item.automationRows.contains(ref) ?? false
+    }
+
+    /// The same grab, re-anchored on what the line is worth NOW: a wheel gesture that resumes on
+    /// the same line after a pause (a new undo step) measures its total travel from the present
+    /// values, exactly as a fresh grab would, without asking a hit test — the line has moved away
+    /// from the pointer. No selection side effect. nil if the line changed shape in between.
+    func refreshedAutomationLineGrab(_ grab: AutomationLineGrab, objectID: UUID,
+                                     param ref: ParamRef) -> AutomationLineGrab? {
+        guard let object = laneEntries.first(where: { $0.item.id == objectID })?.item else { return nil }
+        let pts = object.automation.first(where: { $0.param == ref })?.points ?? []
+        switch grab {
+        case .staticValue:
+            guard pts.isEmpty, let sv = automationStaticValue(ref, on: object) else { return nil }
+            return .staticValue(orig: sv)
+        case .segment(let idxs, _, let carried):
+            guard !pts.isEmpty, idxs.allSatisfy({ pts.indices.contains($0) }) else { return nil }
+            var fresh: [AutomationMovedRow]? = nil
+            if let carried {
+                var out: [AutomationMovedRow] = []
+                for tr in carried {
+                    let lane = object.automation.first(where: { $0.param == tr.param })?.points ?? []
+                    guard tr.indices.allSatisfy({ lane.indices.contains($0) }) else { return nil }
+                    out.append(AutomationMovedRow(param: tr.param, row: tr.row,
+                                                  indices: tr.indices, origPoints: lane))
+                }
+                fresh = out
+            }
+            return .segment(indices: idxs, orig: pts, carried: fresh)
+        }
+    }
+
     /// The wheel's way into `shiftAutomationLine`: `steps` (TOTAL since the gesture's grab, upwards
     /// positive) become the vertical travel a drag of the same amount would have made, so
     /// everything downstream — detent, clamping, selection, push — is the drag's own code. Shows the
@@ -210,8 +253,9 @@ extension EditViewModel {
         guard span > 0 else { return }
         let dy = -(Double(steps) * Double(Self.automationWheelStepValue(ref))) / span * geo.usableHeight
         if let v = shiftAutomationLine(grab, objectID: objectID, param: ref, row: row, dy: dy, geo: geo) {
-            // No timer: the figure stays as long as the pointer stays (the band drops it when the
-            // pointer travels or leaves, the wheel handler when the wheel goes elsewhere).
+            // The figure stays as long as the grab is armed and the pointer stays (the band drops it
+            // when the pointer travels or leaves, the wheel handler when the wheel goes elsewhere or
+            // the arming lapses — @see TimelineView.automationLineWheelArmDuration).
             automationLineWheelReadout = (objectID: objectID, param: ref, value: v)
         }
     }

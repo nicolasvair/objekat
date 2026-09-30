@@ -7,6 +7,12 @@ extension TimelineView {
     /// undo). Below it, the notches chain within the same gesture.
     static let valueScrollUndoGap: TimeInterval = 0.5
 
+    /// How long a wheel grab on an automation line stays ARMED after the last wheel event (momentum
+    /// included), while the pointer has not moved: a finger lifted and put back within it continues
+    /// on the SAME line, and the value can be refined without hunting for the line again. The
+    /// figure shown by the band goes when it elapses.
+    static let automationLineWheelArmDuration: TimeInterval = 2.0
+
     func registerScrollMonitor() {
         let vm       = viewModel
         let hs       = hoverState
@@ -43,6 +49,11 @@ extension TimelineView {
             // phase) or after a long silence (a mouse with no usable phase).
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.shift) {
+                if hs.automationLineWheel != nil {   // the zoom changes the band's geometry: the grab is void
+                    hs.automationLineWheel = nil
+                    hs.automationLineWheelExpiry?.cancel()
+                    vm.cancelAutomationLineWheel()
+                }
                 let now = ProcessInfo.processInfo.systemUptime
                 let hasPhase = !event.phase.isEmpty || !event.momentumPhase.isEmpty
 
@@ -118,33 +129,89 @@ extension TimelineView {
             // MARK: Automation line by value (the wheel over a HIGHLIGHTED line)
             // Another way into the drag's own operation: the grab (`automationLineGrab`) and the
             // carry (`shiftAutomationLine`) are the model's, shared with AutomationBandView, so the
-            // detent, the clamp, the selection's semantics and the push cannot drift. The wheel is
-            // swallowed ONLY where the line would light up under the hand; elsewhere in the band
-            // it scrolls the timeline as before. ⌥ keeps its meaning (curvature, above).
+            // detent, the clamp, the selection's semantics and the push cannot drift. ⌥ keeps its
+            // meaning (curvature, above).
             //
-            // A wheel gesture = notches less than `valueScrollUndoGap` apart: ONE undo point, and
-            // the grab stays FROZEN for its duration, since raising the line carries it away from
-            // the pointer and a hover re-test would let go of it at the second notch (a drag holds
-            // its grab the same way). The steps are the TOTAL since the grab, applied from the
-            // anchors. A trackpad's inertia does not edit: it is swallowed while a gesture is held.
+            // ACTIVATION (unchanged): with nothing armed, the wheel acts only where the line lights up
+            // under the pointer, and the pointer position is the one the hover tracker last reported
+            // — so a line that merely scrolled in under a pointer that has not moved is not taken.
+            //
+            // ARMED: once a gesture has taken a line, the grab stays armed for
+            // `automationLineWheelArmDuration` after the LAST wheel event (momentum included — each
+            // one re-arms), for as long as the pointer has not travelled. While armed the wheel
+            // keeps adjusting that same frozen grab even though the raised line has left the pointer
+            // (even over empty space or another row), and is swallowed; a finger lifted and put back
+            // within the window continues on the same line. It ends on any pointer travel, a click,
+            // a key, an undo / redo, a project or tab change (@see EditViewModel.cancelAutomationLineWheel),
+            // the line disappearing, the selection changing, the window elapsing, or a ⇧ / ⌥ /
+            // sideways wheel (below). Then the wheel scrolls the timeline as usual.
+            //
+            // UNDO: notches less than `valueScrollUndoGap` apart belong to ONE undo point; a swipe
+            // resuming after a longer pause (or a new `.began`) opens a NEW one on the same line, its
+            // grab RE-ANCHORED on the present values so that the total-travel arithmetic stays exact
+            // (steps are the TOTAL since the anchors, rounding lands on the result and never feeds
+            // the next frame). A trackpad's inertia re-arms but does not edit.
             // A sideways scroll over the line is still the timeline's: only a mainly VERTICAL event
             // reads as a value.
             if !flags.contains(.option), abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
                 let now = ProcessInfo.processInfo.systemUptime
-                let held: AutomationLineWheel? = {
-                    guard let w = hs.automationLineWheel,
-                          now - hs.lastValueScrollTime <= Self.valueScrollUndoGap,
-                          !event.phase.contains(.began), w.bandRect.contains(pos) else { return nil }
+                let armed: AutomationLineWheel? = {
+                    guard let w = hs.automationLineWheel else { return nil }
+                    guard now - hs.automationLineWheelLastEvent <= Self.automationLineWheelArmDuration,
+                          hs.automationLineWheelPointer == pos,
+                          w.epoch == vm.automationLineWheelEpoch,
+                          !(w.confirmed && vm.selectedIDs != [w.objectID]),
+                          vm.automationLineWheelTargetExists(objectID: w.objectID, param: w.param)
+                    else { return nil }
                     return w
                 }()
-                if held != nil, !event.momentumPhase.isEmpty { return nil }
-                if let w = held ?? self.automationLineWheelHit(at: pos) {
-                    if held == nil { hs.automationLineScrollAccumulator = 0 }
-                    hs.automationLineWheel = w
+                if armed == nil, hs.automationLineWheel != nil {
+                    hs.automationLineWheel = nil
+                    hs.automationLineWheelExpiry?.cancel()
+                    vm.cancelAutomationLineWheel()
+                }
+                // Every event of a live grab re-arms it, and replaces the one scheduled clear that
+                // takes the figure down when the window elapses with the pointer still.
+                func rearm() {
+                    hs.automationLineWheelLastEvent = now
+                    hs.automationLineWheelPointer = pos
+                    hs.automationLineWheelExpiry?.cancel()
+                    let item = DispatchWorkItem {
+                        hs.automationLineWheel = nil
+                        vm.cancelAutomationLineWheel()
+                    }
+                    hs.automationLineWheelExpiry = item
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.automationLineWheelArmDuration,
+                                                  execute: item)
+                }
+                if armed != nil, !event.momentumPhase.isEmpty { rearm(); return nil }
+                if let w = armed ?? self.automationLineWheelHit(at: pos) {
+                    if armed == nil {
+                        hs.automationLineScrollAccumulator = 0
+                        hs.automationLineWheel = w
+                        hs.automationLineWheel?.epoch = vm.automationLineWheelEpoch
+                    }
+                    rearm()
                     hs.automationLineScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
                     let n = Int(hs.automationLineScrollAccumulator.rounded())
                     if n != 0 {
                         hs.automationLineScrollAccumulator -= Float(n)
+                        // A resumed swipe after a pause longer than the undo gap: same line, NEW
+                        // undo step, anchors taken again from the model as it is now.
+                        let resumes = armed != nil
+                            && (event.phase.contains(.began) || now - hs.lastValueScrollTime > Self.valueScrollUndoGap)
+                        if resumes {
+                            guard let fresh = vm.refreshedAutomationLineGrab(w.grab, objectID: w.objectID,
+                                                                             param: w.param) else {
+                                hs.automationLineWheel = nil
+                                hs.automationLineWheelExpiry?.cancel()
+                                vm.cancelAutomationLineWheel()
+                                return nil
+                            }
+                            hs.automationLineWheel?.grab = fresh
+                            hs.automationLineWheel?.steps = 0
+                            hs.automationLineWheel?.undoPushed = false
+                        }
                         _ = opensNewValueGesture(event)     // only to keep the gesture's clock
                         hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
                         let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)
@@ -155,6 +222,7 @@ extension TimelineView {
                                 // As `beginDrag` opens a line drag: select, then one undo point.
                                 vm.select(snap.objectID, additive: false)
                                 vm.beginAutomationEdit()
+                                hs.automationLineWheel?.confirmed = true
                             }
                             vm.wheelShiftAutomationLine(snap.grab, objectID: snap.objectID,
                                                         param: snap.param, row: snap.row,
@@ -163,9 +231,13 @@ extension TimelineView {
                     }
                     return nil
                 }
-                hs.automationLineWheel = nil
                 // The wheel left the line (or the band): its figure goes with it.
                 if vm.automationLineWheelReadout != nil { vm.automationLineWheelReadout = nil }
+            } else if hs.automationLineWheel != nil {
+                // A ⌥ or sideways wheel: the timeline's (or the curvature's) business, not the grab's.
+                hs.automationLineWheel = nil
+                hs.automationLineWheelExpiry?.cancel()
+                vm.cancelAutomationLineWheel()
             }
 
             // MARK: Volume scroll (deltaY, the ≥ 60% right zone)
@@ -965,6 +1037,8 @@ extension TimelineView {
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
+            // Any key press (a modifier alone is a `.flagsChanged`, not this) ends an armed wheel grab.
+            if event.type == .keyDown { vm.cancelAutomationLineWheel() }
             if event.type == .flagsChanged {
                 let held = event.modifierFlags.contains(.command)
                 let opt  = event.modifierFlags.contains(.option)
@@ -1071,6 +1145,7 @@ extension TimelineView {
             guard let pos = MainActor.assumeIsolated({ TimelineCursorKeeper.canvasPoint(of: event) })
             else { return event }
             hs.position = pos   // the hover is brought into line, for the readers that still use it
+            vm.cancelAutomationLineWheel()
             // Nothing is remembered from the previous menu: its action proxies die with it.
             proxies = []
 
