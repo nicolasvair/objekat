@@ -270,6 +270,8 @@ struct TimeSelection: Equatable {
 
     /// The selection's fill, read by the timeline's overlay (and the ruler header's band).
     static let overlayColor: Color = Color.cyan.opacity(0.18)
+    /// The 1 px lines marking the bounds in the ruler header's band: the same hue, more opaque.
+    static let edgeColor: Color = Color.cyan.opacity(0.85)
 }
 
 extension Comparable {

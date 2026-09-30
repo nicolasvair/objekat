@@ -552,7 +552,35 @@ final class EditViewModel {
         // every way it can move, from a traced zone to ↑ / ↓ to an undo, passes through here.
         // Written as a `didSet` rather than called from each of those: one of them would be
         // forgotten, and the symptom is points staying lit under a frame that has left them.
-        didSet { if timeSelection != nil { syncAutomationSelectionToTimeSelection() } }
+        didSet {
+            // Any write that is not the ruler's own drops the ruler origin (@see
+            // `timeSelectionFromRuler`): the timeline's rubber band, ⇧-click, ↑ / ↓, an undo, a
+            // load, a tab switch, Esc and the API all pass through here.
+            if !rulerWriteInProgress { timeSelectionFromRuler = false }
+            if timeSelection != nil { syncAutomationSelectionToTimeSelection() }
+        }
+    }
+
+    /// True when the current `timeSelection` was traced by a drag in the time RULER (the
+    /// all-lanes selection), which is the only one the ruler header draws as a band. Transient:
+    /// not saved, not in the undo snapshot. Reset by `timeSelection`'s `didSet` on every write
+    /// that is not the ruler's own — so ↑ / ↓ on a ruler selection, which writes the property,
+    /// hands it back to the timeline (the simplest rule: only the ruler's own writes keep it).
+    private(set) var timeSelectionFromRuler: Bool = false
+    private var rulerWriteInProgress: Bool = false
+
+    /// The ruler drag's way of writing the selection: the only door that sets the ruler origin.
+    /// `nil` clears the selection (and the origin with it).
+    func setTimeSelectionFromRuler(_ selection: TimeSelection?) {
+        rulerWriteInProgress = true
+        timeSelection = selection
+        rulerWriteInProgress = false
+        timeSelectionFromRuler = selection != nil
+    }
+
+    /// The span the ruler header draws as a band, or nil (a selection not traced in the ruler).
+    var rulerBandRange: ClosedRange<Double>? {
+        timeSelectionFromRuler ? timeSelection?.timeRange : nil
     }
 
     var loopModeEnabled: Bool = false

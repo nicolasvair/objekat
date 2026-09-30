@@ -429,7 +429,7 @@ extension TimelineView {
                                                extending: state.extending) else {
             // Nothing traced (the hand is back on its start): no selection, and at the end the
             // cursor goes where the press was, as a click would have put it.
-            viewModel.timeSelection = nil
+            viewModel.setTimeSelectionFromRuler(nil)
             if phase == .ended {
                 rulerSelectionDrag = nil
                 onMoveCursor(state.anchorTime)
@@ -441,12 +441,12 @@ extension TimelineView {
 
         let sel = TimeSelection(timeRange: range, lanes: viewModel.allObjectLanes())
         if phase == .ended {
-            viewModel.timeSelection = sel
+            viewModel.setTimeSelectionFromRuler(sel)
             selectInDisplayLanes(sel)
             onMoveCursor(max(0, range.lowerBound))
             rulerSelectionDrag = nil
         } else {
-            viewModel.timeSelection = sel
+            viewModel.setTimeSelectionFromRuler(sel)
             rulerSelectionDrag = state
         }
     }

@@ -567,3 +567,38 @@ struct HoverTracker: NSViewRepresentable {
         func dropCursorClaim() { claim.drop() }
     }
 }
+
+
+/// The time selection traced in the ruler, drawn as one band from just below the time numbers to
+/// the bottom of the header (ruler and marker rows), so it reads as a continuation of the
+/// selection in the lanes. Pure display: no hit-testing. The header lives in content coordinates
+/// horizontally (it scrolls with the canvas) and is pinned vertically by its parent, so the
+/// band needs no scroll value.
+struct RulerSelectionBand: View {
+    let range: ClosedRange<Double>
+    let pixelsPerSecond: Double
+    /// Distances from the header's top edge.
+    let top: Double
+    let bottom: Double
+
+    var body: some View {
+        let x0 = range.lowerBound * pixelsPerSecond
+        let x1 = range.upperBound * pixelsPerSecond
+        let h = max(0, bottom - top)
+        ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(TimeSelection.overlayColor)
+                .frame(width: max(0, x1 - x0), height: h)
+                .offset(x: x0, y: top)
+            // Crisp 1 px edges.
+            ForEach(0..<2, id: \.self) { i in
+                let x = i == 0 ? x0 : x1
+                Rectangle()
+                    .fill(TimeSelection.edgeColor)
+                    .frame(width: 1, height: h)
+                    .offset(x: x.rounded(.down), y: top)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}

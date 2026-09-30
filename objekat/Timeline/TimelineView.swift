@@ -435,6 +435,15 @@ struct TimelineView: View {
                 }
             )
         }
+        .overlay(alignment: .topLeading) {
+            // The selection traced in the RULER, continued down the whole header. Non-hit-testing,
+            // so the ruler's and the marker band's gestures are untouched.
+            if let range = viewModel.rulerBandRange {
+                RulerSelectionBand(range: range, pixelsPerSecond: pixelsPerSecond,
+                                   top: MarkerBandGeometry.rulerCoreHeight * 0.32,
+                                   bottom: rulerHeight)
+            }
+        }
         }
     }
     }
