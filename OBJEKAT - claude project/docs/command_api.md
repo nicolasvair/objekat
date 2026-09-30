@@ -203,6 +203,12 @@ finalise) and are **never learned or remembered** from one load to the next. `ph
 `current_plugin` are only present during `plugins`. Once the load is over, `loading` goes back to
 `false` and a `last_load` object appears (`success`, `cancelled`, `duration_ms`, `path`, and
 `error` on a decode failure) — read it if a poll arrives after the load has already ended.
+`last_load.repaired_plugin_ids` counts the plugin ids the load had to re-key because the file held
+the same `ObjectPlugin.id` under two hosts (a session whose JSON was edited outside the app; the
+engine holds ONE instance per id and would leave the first host playing dry): the first occurrence
+keeps its id, the others get fresh ones, their host's automation follows, and `[LOAD] … re-keyed`
+goes to the log. `0` for a sound file. A load that repaired something leaves the project
+**modified** (`app.info` `dirty: true`, no alert) so the next save writes the repaired model.
 
 **While a project is loading, almost every other command answers `invalid_state` ("project
 loading")** — the model is being rewritten under it. The only exceptions: `app.info`,
@@ -704,6 +710,13 @@ knowing before driving one:
   `baselines` = reference chunk size per instance, `gesture_open`, `pending`, `unstable_types`,
   `timer_running`). None of them opens an editor, so headless can drive the whole path except the
   editor-bound triggers (timer, close).
+  DEBUG builds also add `debug.plugin_id_audit {}` → `{duplicates: [{id, hosts}], count,
+  engine_foreign_refusals}`: every plugin id held more than once in the live project (leaves, rack
+  carriers, bin blocks and their instances, instruments, bus chains) with the hosts holding it, and
+  the number of compiles the engine refused because another host's chain still held the key. A sound
+  project answers `0` and `0`; a non-zero `count` mid-session means an in-app path minted a copy
+  without fresh ids. `OBJ_NO_PLUGIN_ID_REPAIR=1` (DEBUG, read once at launch) skips the load repair so
+  the engine's own net can be exercised with a file that still carries duplicates.
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
