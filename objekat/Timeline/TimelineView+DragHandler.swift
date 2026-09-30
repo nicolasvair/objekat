@@ -57,6 +57,13 @@ struct TimeSelectionDragState {
     }
 }
 
+/// A drag begun in the time ruler: the instant pressed, and the range ⇧ asked to grow (read once,
+/// at the first frame — the modifiers decided at the first pixel are never re-read).
+struct RulerSelectionDragState {
+    var anchorTime: Double
+    var extending: ClosedRange<Double>?
+}
+
 enum FadeSide { case `in`, out }
 
 enum LoopMarkerSide { case start, end }
@@ -405,6 +412,45 @@ final class CanvasDragScrollFollow {
 
 extension TimelineView {
 
+    /// The ruler's drag: a TimeSelection from the instant pressed to the instant under the hand,
+    /// over every object lane (@see EditViewModel.allObjectLanes). Snapped as the timeline's own
+    /// rubber band is (⌘ inverts it, through `snapTime`); ⇧ at the start grows the range already
+    /// held. Like the rubber band, it selects the objects it encloses and lays the cursor on the
+    /// selection's start when the hand lets go — playback reads the cursor and nothing else.
+    func handleRulerDrag(_ value: CanvasDrag, phase: DragPhase) {
+        let state = rulerSelectionDrag ?? RulerSelectionDragState(
+            anchorTime: viewModel.snapTime(max(0, value.startLocation.x / pixelsPerSecond)),
+            extending: NSEvent.modifierFlags.contains(.shift)
+                ? viewModel.baseTimeSelection()?.timeRange : nil)
+        let current = viewModel.snapTime(max(0, value.location.x / pixelsPerSecond))
+        viewModel.caretLane = nil
+
+        guard let range = RulerSelection.range(anchor: state.anchorTime, current: current,
+                                               extending: state.extending) else {
+            // Nothing traced (the hand is back on its start): no selection, and at the end the
+            // cursor goes where the press was, as a click would have put it.
+            viewModel.timeSelection = nil
+            if phase == .ended {
+                rulerSelectionDrag = nil
+                onMoveCursor(state.anchorTime)
+            } else {
+                rulerSelectionDrag = state
+            }
+            return
+        }
+
+        let sel = TimeSelection(timeRange: range, lanes: viewModel.allObjectLanes())
+        if phase == .ended {
+            viewModel.timeSelection = sel
+            selectInDisplayLanes(sel)
+            onMoveCursor(max(0, range.lowerBound))
+            rulerSelectionDrag = nil
+        } else {
+            viewModel.timeSelection = sel
+            rulerSelectionDrag = state
+        }
+    }
+
     func handleCanvasDrag(_ value: CanvasDrag, phase: DragPhase) {
         // Remembered for a scroll that might come while the hand holds still (@see
         // CanvasDragScrollFollow). Only for the drags that PLACE something under the hand: the
@@ -438,11 +484,12 @@ extension TimelineView {
             }
         }
 
-        // A drag STARTED in the ruler: the cursor follows the mouse, and nothing else moves (the same
-        // contract as the click — see moveCursorFromRuler). Once it has set off from the ruler, the
-        // gesture goes on scrubbing even if the mouse comes down into the lanes.
-        if rulerBandContains(value.startLocation) {
-            moveCursorFromRuler(atX: value.location.x)
+        // A drag STARTED in the ruler traces a time selection over EVERY object lane (a plain click
+        // there still only moves the cursor: the tap fires only when the hand did not travel, see
+        // moveCursorFromRuler). Once it has set off from the ruler, the gesture goes on even if the
+        // mouse comes down into the lanes: the lane the hand is over means nothing to it.
+        if rulerSelectionDrag != nil || rulerBandContains(value.startLocation) {
+            handleRulerDrag(value, phase: phase)
             return
         }
 

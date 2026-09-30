@@ -568,6 +568,19 @@ with ObjekatClient(SOCK) as c:
     step("edit.undo (one, every lane)", lambda: c.send("edit.undo"))
     check("…one undo gives it all back", near(rp_layout(g3), init) and near(rp_win(g3), win0))
 
+    # 3b. timesel.set all_lanes — what a drag in the time ruler traces: every OBJECT lane the
+    # timeline has, so a ripple / delete / copy reads it like any other range. Read-only here (a
+    # ripple over the whole timeline would reach the other fixtures of this file).
+    c.send("selection.clear")
+    r = step("timesel.set all_lanes", lambda: c.send("timesel.set", {"start": LO, "end": HI, "all_lanes": True}))
+    ts_all = r and r.get("time_selection")
+    every_dl = {o["display_lane"] for o in c.send("object.list")["objects"]}
+    check("all_lanes covers the display lane of every object",
+          ts_all and every_dl <= set(ts_all["lanes"]), "%s vs %s" % (ts_all and ts_all["lanes"], sorted(every_dl)))
+    check("all_lanes starts at row 0", ts_all and ts_all["lanes"][0] == 0, str(ts_all and ts_all["lanes"]))
+    check("all_lanes keeps the range asked", ts_all and near(ts_all["start"], LO) and near(ts_all["end"], HI), str(ts_all))
+    step("timesel.clear after all_lanes", lambda: c.send("timesel.clear"))
+
     # 4. object.ripple_delete: the lane of the object only, then every lane.
     g4, i4 = rp_group(230)
     init = rp_layout(g4); win0 = rp_win(g4)

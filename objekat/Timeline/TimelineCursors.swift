@@ -58,6 +58,21 @@ enum TimelineCursorKeeper {
         (host as? TimelineCursorClaiming)?.syncCursorClaim()
     }
 
+    /// Where a mouse event landed, in the timeline's CANVAS coordinates — the space the hover, the
+    /// hit-tests and the lane arithmetic all speak — read off the event itself. nil when the event
+    /// is not over the timeline: another window, or outside the visible part of the canvas (the
+    /// inspector, the transport…).
+    ///
+    /// It exists for the right click, which used to be aimed at the last HOVER position instead.
+    /// The hover only moves with `mouseMoved`, and none is delivered while a context menu is being
+    /// tracked: the click that dismisses a menu therefore arrived with the point the PREVIOUS menu
+    /// was opened from (@see TimelineView.registerRightClickMonitor).
+    static func canvasPoint(of event: NSEvent) -> CGPoint? {
+        guard let host, let window = host.window, event.window === window else { return nil }
+        let p = host.convert(event.locationInWindow, from: nil)
+        return host.visibleRect.contains(p) ? p : nil
+    }
+
     /// Hands back: the cursors of the rest of the window (the ruler's markers, the transport's
     /// zoom handles…) go back into service.
     static func relinquish() {

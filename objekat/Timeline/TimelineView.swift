@@ -250,6 +250,8 @@ struct TimelineView: View {
     @State var trimDrag: TrimDragState? = nil
     @State var fadeDrag: FadeDragState? = nil
     @State var timeSelectionDrag: TimeSelectionDragState? = nil
+    /// A drag begun in the time ruler (@see handleRulerDrag).
+    @State var rulerSelectionDrag: RulerSelectionDragState? = nil
     @State var volumeDrag: VolumeDragState? = nil
     @State var panDrag: PanDragState? = nil
     @State var sendDrag: SendDragState? = nil

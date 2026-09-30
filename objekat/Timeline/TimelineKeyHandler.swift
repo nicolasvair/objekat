@@ -1062,7 +1062,17 @@ extension TimelineView {
         var proxies: [MenuActionProxy] = []
 
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
-            guard let pos = hs.position else { return event }
+            // The menu is decided from WHERE THIS CLICK LANDED, read off the event, and never from
+            // the last hover position: `mouseMoved` is not delivered while a context menu is being
+            // tracked, so a right click made to dismiss one (or made straight after, with the
+            // pointer having travelled while the menu was open) carried the point the previous
+            // menu was opened from — and got that surface's menu again, until the pointer moved
+            // enough to refresh the hover (the third click).
+            guard let pos = MainActor.assumeIsolated({ TimelineCursorKeeper.canvasPoint(of: event) })
+            else { return event }
+            hs.position = pos   // the hover is brought into line, for the readers that still use it
+            // Nothing is remembered from the previous menu: its action proxies die with it.
+            proxies = []
 
             // Read at EVERY event, never captured: showing a marker row makes the header taller,
             // and a height frozen at registration would put every lane's menu one row out.
