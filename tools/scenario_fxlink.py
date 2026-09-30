@@ -84,6 +84,17 @@ try:
         def idle():
             cmd("wait_idle", timeout_ms=30000)
 
+        # A plugin id is unique in the project (an in-app path that minted a copy without fresh ids
+        # would break it, and the engine can hold one instance per key). DEBUG builds only.
+        has_audit = refused("debug.plugin_id_audit") is None
+
+        def audit_clean(phase):
+            if not has_audit:
+                return
+            a = cmd("debug.plugin_id_audit")
+            check("no duplicated plugin id %s" % phase,
+                  a["count"] == 0 and a["engine_foreign_refusals"] == 0, str(a))
+
         info = cmd("app.info")
         check("--no-recent honoured", info.get("records_recent_projects") is False)
         cmd("app.set_dialog_policy", policy="assume_yes")
@@ -298,6 +309,7 @@ try:
         before = cmd("fxlink.get", link=LID)
         proj = os.path.join(TMP, "p.objekat")
         cmd("project.save_as", path=proj); idle()
+        audit_clean("after the bin's life (create, attach, reorder, detach, release)")
         cmd("project.new")
         check("a new project starts with no bin", cmd("fxlink.list")["count"] == 0)
         cmd("project.open", path=proj); idle()
@@ -333,6 +345,7 @@ try:
         check("...and ONE undo gives the bin back", cmd("fxlink.list")["count"] == 1)
 
         # ── AUTOMATIC creation: a copy of plain plugins joins a bin ───────
+        audit_clean("after the save / reopen and delete / undo phase")
         cmd("project.new")
         D = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         add(D, "4bandEq"); add(D, "reverb")
@@ -406,12 +419,14 @@ try:
               and not any(p.get("is_fx_block") for p in chain(D)))
 
         # 4. the automatic bin survives a save and a reopen
+        audit_clean("after automatic creation (split, duplicate, paste, ⌥-copy)")
         cmd("project.new")
         D = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         add(D, "4bandEq"); add(D, "reverb")
         cmd("object.split_at", ids=[D], seconds=0.3); idle()
         proj2 = os.path.join(TMP, "auto.objekat")
         cmd("project.save_as", path=proj2); idle()
+        audit_clean("after the automatic bin's save and reopen (first reopen)")
         cmd("project.new")
         cmd("project.open", path=proj2); idle()
         lst = cmd("fxlink.list")
@@ -419,6 +434,7 @@ try:
               lst["count"] == 1 and len(lst["links"][0]["members"]) == 2)
 
         # ── CROSS-PROJECT paste: the bin is recreated as a NEW one ────────
+        audit_clean("after the automatic bin's save and reopen")
         cmd("project.new")
         cmd("tab.new"); idle()               # a tab switch keeps the clipboard, a new document does not
         cmd("tab.select", index=1); idle()
@@ -448,6 +464,7 @@ try:
         cmd("tab.close", index=2, discard=True); idle()
 
         # ── CONSOLIDATE: a bin inside is recreated as a NEW one on opening ─
+        audit_clean("after the cross-project paste")
         cmd("project.new")
         cproj = os.path.join(TMP, "consol.objekat")
         K1 = cmd("object.add", path=BIP, lane=0, start=0)["id"]
@@ -471,6 +488,7 @@ try:
         check("...and its name",  lst["links"][0]["name"] == "Inner")
 
         # ── the ENGINE follows: an export re-read ──────────────────────────
+        audit_clean("after the consolidation")
         cmd("project.new")
         X = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         Y = cmd("object.add", path=BIP, lane=1, start=0)["id"]
@@ -531,6 +549,7 @@ try:
         # ── the SIGNAL VIEW: a bin's cards carry no link badge of their own ─────
         # (the block does), while the old ⌘-links keep theirs. `synoptic.cards` reads what the view
         # builds from the model, so this is asserted with no screen.
+        audit_clean("after the export proof")
         cmd("project.new")
         SA = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         SB = cmd("object.add", path=BIP, lane=1, start=0)["id"]
@@ -642,6 +661,8 @@ try:
               ovn["members"] == [SC] and ovn["fx_link"] is None)
         check("an unknown plugin is refused",
               refused("plugin.link_overlay", plugin="00000000-0000-0000-0000-000000000000") == "not_found")
+
+        audit_clean("at the end of the scenario (signal view, overlay)")
 
 finally:
     shutil.rmtree(TMP, ignore_errors=True)

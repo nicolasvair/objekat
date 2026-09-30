@@ -154,7 +154,8 @@ extension EditViewModel {
                     probe.plugins = adopted
                     if probe == stem {
                         for change in Self.changedPluginStates(liveStem.plugins, stem.plugins) {
-                            engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString)
+                            engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
+                                                        forObjectID: stem.id.uuidString)
                         }
                         continue
                     }
@@ -384,7 +385,8 @@ extension EditViewModel {
         defer { pushAutomationTree(object) }
         if let live {
             for change in Self.changedPluginStates(live, object) {
-                engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString)
+                engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
+                                            forObjectID: object.id.uuidString)
             }
         }
         // The channel choice of a stereo clip (no-op for every other kind: the engine looks the

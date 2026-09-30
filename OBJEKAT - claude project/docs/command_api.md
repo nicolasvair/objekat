@@ -181,6 +181,9 @@ overlay existed.
 → {"path": "…", "name": "Project", "object_count": 42}
 ```
 
+`repair_plugin_ids: true` (default `false`) re-keys plugin ids that the file holds under several
+hosts — see "Duplicated plugin ids" below.
+
 Pass `"async": true` to get an immediate answer instead, and follow the load with
 `project.load_status` and/or `wait_idle`:
 
@@ -203,6 +206,29 @@ finalise) and are **never learned or remembered** from one load to the next. `ph
 `current_plugin` are only present during `plugins`. Once the load is over, `loading` goes back to
 `false` and a `last_load` object appears (`success`, `cancelled`, `duration_ms`, `path`, and
 `error` on a decode failure) — read it if a poll arrives after the load has already ended.
+**Duplicated plugin ids — detected at every load, repaired only on request.** A session whose JSON
+was edited outside the app can carry the same `ObjectPlugin.id` under several hosts; the engine holds
+ONE instance per id, so only one of them gets the plugin and the others play dry. The load always
+DETECTS it and never repairs on its own: `project.open` and `tab.open` take `repair_plugin_ids`
+(bool, default `false`). `false` leaves the file's duplicates in the model (the engine copes: the first
+host to compile an id keeps the instance, the others play without it, and the operations addressed by
+(plugin, host) are refused for a foreign host); `true` gives a fresh id to every later occurrence
+(the first keeps its id, the host's automation follows) and the project opens **modified**
+(`app.info` `dirty: true`; nothing is written until a save). The API NEVER raises the alert the
+interface shows (Repair / Copy report / Don't repair), with or without a window, so `app.dialogs`
+stays empty. There is no command to repair after the load: reopen with `repair_plugin_ids: true`.
+`last_load` carries:
+
+- `repaired_plugin_ids`: the ids re-keyed (`0` for a sound file, or when not asked to repair);
+- `duplicate_plugin_id_count`: how many ids the FILE held more than once (repaired or not);
+- `duplicate_plugin_ids`: `[{id, sites: [{host_id, host_kind ("object" | "stem"), host_name,
+  plugin_name, fx_link, fx_link_id, json_path, keeps_id}]}]`, in file order — `json_path` is a path
+  from the root of the manifest (`items[3].kind.children[1].plugins[0].fxBlock.plugins[2]`,
+  `stems[2].plugins[4]`, `….rack.voices[0][2]`, `….instruments[0]`), and `keeps_id` is true on the
+  first site only (the entry that keeps its id);
+- `plugin_id_report`: a plain-ASCII English text (`null` when the file is sound) that tells a language
+  model how to fix the file by hand (new UUID per FIX entry, that object's own automation re-pointed,
+  nothing else touched). It is what the alert's "Copy report" puts on the pasteboard.
 
 **While a project is loading, almost every other command answers `invalid_state` ("project
 loading")** — the model is being rewritten under it. The only exceptions: `app.info`,
@@ -260,7 +286,7 @@ caret, time selection, loop, viewport).
 {"cmd": "tab.select", "params": {"index": 2}}   → that tab's object, now active
 {"cmd": "tab.select", "params": {"id": "…"}}    → same, by id
 
-{"cmd": "tab.open", "params": {"path": "/…/Other.objekat"}}
+{"cmd": "tab.open", "params": {"path": "/…/Other.objekat"}}           // + "repair_plugin_ids": true, see "Loading a project"
 → {…, "already_open": false}        // opened in a NEW tab
 → {…, "already_open": true}         // was already open elsewhere: switched to it instead
 
@@ -704,6 +730,14 @@ knowing before driving one:
   `baselines` = reference chunk size per instance, `gesture_open`, `pending`, `unstable_types`,
   `timer_running`). None of them opens an editor, so headless can drive the whole path except the
   editor-bound triggers (timer, close).
+  DEBUG builds also add `debug.plugin_id_audit {}` → `{duplicates: [{id, hosts}], count,
+  engine_foreign_refusals}`: every plugin id held more than once in the live project (leaves, rack
+  carriers, bin blocks and their instances, instruments, bus chains) with the hosts holding it, and
+  the number of compiles the engine refused because another host's chain still held the key. A sound
+  project answers `0` and `0`; a non-zero `count` mid-session means an in-app path minted a copy
+  without fresh ids — or that the project was opened with its duplicates left as they are (the
+  default of `project.open`): then `count` is what the file held and `engine_foreign_refusals`
+  counts the operations the engine refused for a foreign host.
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the

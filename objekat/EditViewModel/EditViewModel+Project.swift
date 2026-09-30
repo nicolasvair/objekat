@@ -429,15 +429,19 @@ extension EditViewModel {
         return doc
     }
 
+    ///
+    /// Never asks about duplicated plugin ids and never repairs them (@see `PluginIDRepairChoice.keep`):
+    /// this door has no run loop to show an alert on (`HeadlessRunner --project`), and no hand.
     @discardableResult
     func loadProject(from url: URL) -> Bool {
         guard !exportPinsActiveDocument else { return false }
         do {
             let doc = try decodeProjectDocument(at: url)
             applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
+            lastProjectLoad?.path = url.path
             projectURL = url
             projectName = displayName(for: url)
-            isDirty = false
+            settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
             return true
         } catch {
@@ -452,17 +456,22 @@ extension EditViewModel {
     /// confirmed alive — the menu (a window is open) and `project.open {"async": true}` /
     /// the plain awaited path once the command server is serving (both imply `app.run()` has
     /// already been entered). NEVER call this from `HeadlessRunner`'s pre-`app.run()` opening.
+    ///
+    /// `pluginIDRepair` says what to do about plugin ids duplicated across hosts, settled right after
+    /// the file is decoded and BEFORE anything is torn down (@see `resolvePluginIDRepair`).
     @discardableResult
-    func loadProjectAsync(from url: URL) async -> Bool {
+    func loadProjectAsync(from url: URL, pluginIDRepair: PluginIDRepairChoice = .ask) async -> Bool {
         guard !exportPinsActiveDocument else { return false }
         do {
             let doc = try decodeProjectDocument(at: url)
-            let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url))
+            let repair = resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
+            let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url),
+                                                     repairPluginIDs: repair)
             lastProjectLoad?.path = url.path
             guard ok else { return false }
             projectURL = url
             projectName = displayName(for: url)
-            isDirty = false
+            settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
             return true
         } catch {
@@ -623,8 +632,13 @@ extension EditViewModel {
     /// what `ProjectLoadOverlay` and `project.load_status` show WHILE it runs — `loadProject(from:)`
     /// knows it before the document is even decoded, `applyProjectDocument`/`project.get_state`'s
     /// other, name-less callers fall back on the current `projectName`.
-    func applyProjectDocument(_ doc: ProjectDocument, displayName: String? = nil) {
-        runProjectLoad(doc, displayName: displayName)
+    ///
+    /// `repairPluginIDs`: re-key the plugin ids more than one entry carries (@see `PluginIDUniqueness`).
+    /// False by default — a load always DETECTS them (`lastProjectLoad.duplicatePluginIDs`) and never
+    /// repairs on its own: the decision is the user's, taken by the caller before this is reached.
+    func applyProjectDocument(_ doc: ProjectDocument, displayName: String? = nil,
+                              repairPluginIDs: Bool = false) {
+        runProjectLoad(doc, displayName: displayName, repairPluginIDs: repairPluginIDs)
     }
 
     /// The breathing twin: same phases, same result on the model, but yields the run loop between
@@ -633,9 +647,11 @@ extension EditViewModel {
     @discardableResult
     func applyProjectDocumentAsync(_ doc: ProjectDocument, displayName: String? = nil,
                                    cancellable: Bool = true,
-                                   preservingClipboard: Bool = false) async -> Bool {
+                                   preservingClipboard: Bool = false,
+                                   repairPluginIDs: Bool = false) async -> Bool {
         await runProjectLoadAsync(doc, displayName: displayName, cancellable: cancellable,
-                                  preservingClipboard: preservingClipboard)
+                                  preservingClipboard: preservingClipboard,
+                                  repairPluginIDs: repairPluginIDs)
     }
 
     /// Shows a confirmation listing the plugins the engine could not load during

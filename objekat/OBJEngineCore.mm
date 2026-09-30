@@ -1174,6 +1174,15 @@ struct OBJRenderChain {
     };
     std::unordered_map<std::string, OBJObjectChain> _objectChainMap;  // objectID → chaîne user
 
+    // GARDE-FOU « un id de plugin = un seul hôte » (the app repairs duplicated ids at load —
+    // PluginIDUniqueness — this is the engine's own net for whatever slips past it). pluginKey → key
+    // of the host whose chain compiled it (written by compileUserRackForObjectID:). compileSeries
+    // refuses to reuse or MOVE a key another host's live chain still lists: `movePluginBefore`
+    // detaches the instance from that chain, which would leave the first host playing dry.
+    std::unordered_map<std::string, std::string>     _pluginOwnerHost;
+    std::string                                      _compilingHostKey;   // host being compiled, "" outside
+    int                                              _foreignKeyRefusals; // refusals since launch (debug counter)
+
     // LINK d'instances de plugin (voir setPluginLinkGroup:).
     std::unordered_map<std::string, std::string>           _linkGroup;     // pluginKey → groupID
     std::unordered_map<std::string, std::unique_ptr<OBJParamMirror>> _mirrors; // pluginKey → listener
@@ -1589,6 +1598,7 @@ static BOOL gOBJAudioDisabled = NO;
     _midiClipMap.clear();
     _instrumentMap.clear();
     _objectChainMap.clear();
+    _pluginOwnerHost.clear();
     _stemBusMap.clear();
     _stemRouteToMain.clear();
     _stemGainMap.clear();
@@ -2306,6 +2316,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         if (pit->second.get() == inst.get()) {
             [self teardownPluginLink:pit->first];
             _editorWindows.erase(pit->first);
+            _pluginOwnerHost.erase(pit->first);
             pit = _pluginMap.erase(pit);
         } else {
             ++pit;
@@ -2438,6 +2449,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
             [self teardownPluginLink:pk];
             _editorWindows.erase(pk);
             _pluginMap.erase(pk);
+            _pluginOwnerHost.erase(pk);
         }
         _objectChainMap.erase(cit);
     }
@@ -2449,6 +2461,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
             if (it->second.get() == p) {
                 [self teardownPluginLink:it->first];  // retire les listeners (params encore vivants)
                 _editorWindows.erase(it->first);   // détache l'éditeur du processor
+                _pluginOwnerHost.erase(it->first);
                 it = _pluginMap.erase(it);
             } else {
                 ++it;
@@ -5700,6 +5713,10 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
     return _linkStatePending.count(std::string([pluginKey UTF8String])) > 0;
 }
 
+- (NSInteger)foreignPluginKeyRefusals {
+    return _foreignKeyRefusals;
+}
+
 - (NSDictionary*)linkStateDebugInfo {
     NSMutableDictionary* pushes   = [NSMutableDictionary dictionary];
     NSMutableDictionary* baseline = [NSMutableDictionary dictionary];
@@ -5758,17 +5775,20 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
 
 - (void)removePlugin:(NSString*)pluginKey fromObjectID:(NSString*)uuid {
     std::string pk([pluginKey UTF8String]);
+    if ([self refuseForeignPluginKey:pk forHost:std::string([uuid UTF8String]) operation:"removePlugin"]) return;
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;
     [self teardownPluginLink:pk];  // retire les listeners AVANT de détruire le plugin
     _editorWindows.erase(pk);   // ferme l'éditeur si ouvert
     it->second->deleteFromParent();
     _pluginMap.erase(it);
+    _pluginOwnerHost.erase(pk);
     NSLog(@"[OBJ] removePlugin: %@ from %@", pluginKey, uuid);
 }
 
 - (void)setPlugin:(NSString*)pluginKey enabled:(BOOL)enabled forObjectID:(NSString*)uuid {
     std::string pk([pluginKey UTF8String]);
+    if ([self refuseForeignPluginKey:pk forHost:std::string([uuid UTF8String]) operation:"setPlugin"]) return;
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;
     it->second->setEnabled(enabled);
@@ -5776,6 +5796,7 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
 
 - (void)movePlugin:(NSString*)pluginKey toIndex:(int)toIndex forObjectID:(NSString*)uuid {
     std::string pk([pluginKey UTF8String]);
+    if ([self refuseForeignPluginKey:pk forHost:std::string([uuid UTF8String]) operation:"movePlugin"]) return;
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;
     auto pluginState = it->second->state;
@@ -6225,6 +6246,12 @@ static void objDumpPluginList(te::PluginList& pl,
     for (auto& n : series) {
         if (n.key.empty()) continue;
 
+        // A key another host's live chain still holds (a duplicated plugin id): neither reuse nor
+        // move it, and claim it neither in `order` nor in `here` — this host's cleanup must never
+        // destroy the other host's instance. Not added to `failed` either: Swift would drop the
+        // plugin from the model, and the model is what a repaired save should keep.
+        if ([self isPluginKeyHeldByAnotherHost:n.key]) continue;
+
         if (n.isGain) {
             // Sortie d'un bac FX : un ObjGain posé à la suite des feuilles du bac (l'ordre est
             // remis en place par la passe de fin de série, comme pour tout le reste).
@@ -6350,6 +6377,49 @@ static void objDumpPluginList(te::PluginList& pl,
                 movePluginBefore(pl, pit->second, anchor);
 }
 
+// True when `pk` belongs to the live chain of a host OTHER than `hostKey`: its owner (the host that
+// compiled it first, `_pluginOwnerHost`) is another one AND that owner's chain still lists it. A stale
+// entry — owner gone, key dropped from its chain — answers NO, so the normal path runs exactly as it
+// did before the guard existed. Only a duplicated plugin id (a file opened without repairing it) can
+// make this answer YES: nothing else ever shares a key between two hosts.
+- (BOOL)pluginKey:(const std::string&)pk isForeignTo:(const std::string&)hostKey {
+    if (hostKey.empty()) return NO;
+    auto oit = _pluginOwnerHost.find(pk);
+    if (oit == _pluginOwnerHost.end() || oit->second == hostKey) return NO;
+    auto cit = _objectChainMap.find(oit->second);
+    if (cit == _objectChainMap.end()) return NO;
+    const auto& keys = cit->second.pluginKeys;
+    return std::find(keys.begin(), keys.end(), pk) != keys.end();
+}
+
+// The compile's own use of the test above: refuse (logged, counted) to reuse or move a key another
+// host's live chain still holds. `_compilingHostKey` is the host being compiled.
+- (BOOL)isPluginKeyHeldByAnotherHost:(const std::string&)pk {
+    if (![self pluginKey:pk isForeignTo:_compilingHostKey]) return NO;
+    NSLog(@"[FX] compile: '%s' already held by chain '%s' — duplicated plugin id, NOT moved",
+          pk.c_str(), _pluginOwnerHost[pk].c_str());
+    ++_foreignKeyRefusals;
+    return YES;
+}
+
+// The same test for an operation addressed by (plugin key, host): when the key belongs to another
+// host's chain, the operation must NOT reach its instance. In a project opened without repairing its
+// duplicated plugin ids the key designates the instance of whichever host compiled it first, so
+// removing, bypassing, moving or automating the "copy" of another host would act on the OWNER's
+// plugin. Refused here instead: logged, counted (`foreignPluginKeyRefusals`), and the caller simply
+// returns — the model keeps the user's intent, the owner's sound is never touched. Methods addressed
+// by the key ALONE (`setPluginParam:`, `openPluginEditor:`, the link groups…) cannot tell the two
+// apart and stay ambiguous on a duplicated id: documented, accepted.
+- (BOOL)refuseForeignPluginKey:(const std::string&)pk
+                       forHost:(const std::string&)hostKey
+                     operation:(const char*)operation {
+    if (![self pluginKey:pk isForeignTo:hostKey]) return NO;
+    NSLog(@"[FX] %s: '%s' belongs to chain '%s' — duplicated plugin id, ignored",
+          operation, pk.c_str(), _pluginOwnerHost[pk].c_str());
+    ++_foreignKeyRefusals;
+    return YES;
+}
+
 // Vrai si les plugins de `keys` occupent DÉJÀ `pl` dans cet ordre, tous devant `anchor` —
 // l'invariant que la passe de remise en ordre doit établir. Les clés non résolues (plugin
 // introuvable) sont sautées : elles n'ont rien à ordonner.
@@ -6406,6 +6476,8 @@ static void objDumpPluginList(te::PluginList& pl,
             pit->second->deleteFromParent();
             _pluginMap.erase(pit);
         }
+        if (auto oit = _pluginOwnerHost.find(pk); oit != _pluginOwnerHost.end() && oit->second == key)
+            _pluginOwnerHost.erase(oit);
     }
 
     // 2) Trims de début / fin de chaîne : créés une fois, jamais détruits (ils bornent le
@@ -6421,8 +6493,11 @@ static void objDumpPluginList(te::PluginList& pl,
     // 3) Créer / réutiliser / ordonner, récursivement : un bloc parallèle descend dans la
     //    PluginList de chacune de ses branches.
     std::vector<std::string> newOrder;
+    _compilingHostKey = key;
     [self compileSeries:root into:*pl anchor:chain.trimOut order:newOrder failed:failed];
+    _compilingHostKey.clear();
     chain.pluginKeys = newOrder;
+    for (auto& pk : newOrder) _pluginOwnerHost[pk] = key;
 
     NSLog(@"[FX] compile '%@' OK — %lu plugins", uuid, (unsigned long)newOrder.size());
     [self dumpChainOrderForKey:key in:*pl];
@@ -6473,14 +6548,16 @@ static void objDumpPluginList(te::PluginList& pl,
 // draguant, et c'est aussi ce qui porte le MUTE de voie : le modèle pousse un gain EFFECTIF).
 //
 // Le plugin visé est l'ObjGain de FIN de branche posé par compileSeries:, retrouvé par
-// voiceGainKey() — l'id du bloc est unique dans l'Edit, `uuid` ne sert qu'à la symétrie d'API.
+// voiceGainKey() — l'id du bloc est unique dans l'Edit (hors projet à ids dupliqués : `uuid` sert
+// alors à refuser un gain que la chaîne d'un AUTRE hôte tient — @see refuseForeignPluginKey:).
 // Silencieux si le bloc n'a jamais été compilé ou si la voie n'existe pas : la valeur vit dans le
 // modèle, la prochaine compilation la posera (cf. rackSpec / effectiveWetDb côté Swift).
 - (void)setVoiceGain:(float)dB forBlockID:(NSString*)blockID voiceIndex:(int)vi objectID:(NSString*)uuid {
-    (void)uuid;
     if (!blockID || vi < 0) return;
 
-    auto it = _pluginMap.find(voiceGainKey(std::string([blockID UTF8String]), (size_t)vi));
+    const std::string gk = voiceGainKey(std::string([blockID UTF8String]), (size_t)vi);
+    if ([self refuseForeignPluginKey:gk forHost:std::string([uuid UTF8String]) operation:"setVoiceGain"]) return;
+    auto it = _pluginMap.find(gk);
     if (it == _pluginMap.end()) return;
 
     if (auto* g = dynamic_cast<te::ObjGainPlugin*>(it->second.get()))
@@ -6555,8 +6632,12 @@ static void objDumpPluginList(te::PluginList& pl,
 
         case OBJAutomationTargetPlugin:
             // Étape 4 : les params de plugins USER. La cible est le plugin lui-même, pas l'objet
-            // — `uuid` ne sert qu'à la symétrie d'API (le pluginKey est unique dans l'Edit).
+            // — le pluginKey est unique dans l'Edit, sauf dans un projet ouvert sans réparer ses
+            // ids dupliqués : l'instance appartient alors à l'hôte qui l'a compilée d'abord, et la
+            // courbe d'un autre objet ne doit jamais la piloter (@see refuseForeignPluginKey:).
             if (!targetKey || !paramID) return {};
+            if ([self refuseForeignPluginKey:std::string([targetKey UTF8String]) forHost:key
+                                   operation:"automation"]) return {};
             if (auto it = _pluginMap.find(std::string([targetKey UTF8String])); it != _pluginMap.end())
                 plugin = it->second;
             wantedID = juce::String([paramID UTF8String]);
@@ -6608,6 +6689,19 @@ static void objDumpPluginList(te::PluginList& pl,
     // Courbe vidée : rien à forcer. L'itérateur tombe à nul au prochain tick et le paramètre
     // reprend sa valeur explicite — celle du dernier setGainDb/setLevelDb (@see
     // AutomatableParameter::updateToFollowCurve).
+}
+
+// The host-aware door of the same: the state is not applied when the key belongs to the chain of
+// ANOTHER host (a duplicated plugin id — @see refuseForeignPluginKey:), so undoing an object never
+// rewrites the instance of the host that owns the key.
+- (BOOL)applyPluginStateXML:(NSString*)stateXML
+                  forPlugin:(NSString*)pluginKey
+                forObjectID:(NSString*)uuid {
+    if (!pluginKey || !uuid) return NO;
+    if ([self refuseForeignPluginKey:std::string([pluginKey UTF8String])
+                             forHost:std::string([uuid UTF8String])
+                           operation:"applyPluginState"]) return NO;
+    return [self applyPluginStateXML:stateXML forPlugin:pluginKey];
 }
 
 - (BOOL)applyPluginStateXML:(NSString*)stateXML forPlugin:(NSString*)pluginKey {

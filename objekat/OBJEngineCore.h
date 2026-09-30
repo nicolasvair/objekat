@@ -340,6 +340,13 @@
 // repousse de son côté) NI l'identité du plugin.
 - (BOOL)applyPluginStateXML:(NSString*)stateXML forPlugin:(NSString*)pluginKey;
 
+// Idem, adressé par (plugin, hôte) : ne fait rien quand la clé appartient à la chaîne d'un AUTRE hôte
+// (id de plugin dupliqué dans un projet ouvert sans réparation — @see foreignPluginKeyRefusals). C'est
+// la porte de l'annulation d'un objet ou d'un bus ; celle de dessus, par clé seule, reste ambiguë.
+- (BOOL)applyPluginStateXML:(NSString * _Nonnull)stateXML
+                  forPlugin:(NSString * _Nonnull)pluginKey
+                forObjectID:(NSString * _Nonnull)uuid;
+
 // removePlugin:fromObjectID : retire le plugin (par pluginKey = ObjectPlugin.id.uuidString)
 - (void)removePlugin:(NSString*)pluginKey fromObjectID:(NSString*)uuid;
 
@@ -462,6 +469,13 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Diagnostic : compteurs de pushes, baselines (taille du chunk), gestes ouverts, instances en
 // attente, modèles instables, état du minuteur.
 - (NSDictionary * _Nonnull)linkStateDebugInfo;
+// How many times the engine refused to reuse, move or act on a plugin key that another host's chain
+// holds — a compile, or one of the operations addressed by (plugin key, host): removePlugin, setPlugin,
+// movePlugin, setVoiceGain, plugin-parameter automation, applyPluginStateXML:forObjectID: — since
+// launch. A duplicated plugin id (a file opened without repairing it) is the only thing that makes
+// it climb: 0 in a sound project. Methods addressed by the key alone cannot refuse, and are ambiguous
+// on such an id.
+- (NSInteger)foreignPluginKeyRefusals;
 // Un tick de la synchro d'état sur UNE instance, à la demande (API de debug) — les clés des
 // instances écrasées. `force` NO exige la stabilité, comme le minuteur ; OUI pousse tel quel.
 - (NSArray<NSString *> * _Nonnull)debugLinkStateTick:(NSString * _Nonnull)pluginKey force:(BOOL)force;
