@@ -178,7 +178,9 @@ extension TimelineView {
                     hs.automationLineWheelExpiry?.cancel()
                     let item = DispatchWorkItem {
                         hs.automationLineWheel = nil
-                        vm.cancelAutomationLineWheel()
+                        // The item is scheduled on the main queue, but a DispatchWorkItem's body is a
+                        // plain synchronous closure: the actor hop has to be stated.
+                        MainActor.assumeIsolated { vm.cancelAutomationLineWheel() }
                     }
                     hs.automationLineWheelExpiry = item
                     DispatchQueue.main.asyncAfter(deadline: .now() + Self.automationLineWheelArmDuration,
