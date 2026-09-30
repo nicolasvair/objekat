@@ -44,37 +44,20 @@ extension TimelineView {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.shift) {
                 let now = ProcessInfo.processInfo.systemUptime
-                let hasPhase = !event.phase.isEmpty || !event.momentumPhase.isEmpty
-
-                // Rearming: a new trackpad gesture (.began) OR, failing a phase (a mouse),
-                // a generous idle timeout. NB: we most certainly do NOT reset on .ended, otherwise
-                // the first inertia event would decide the axis again → both axes felt zooming
-                // during a single gesture.
-                let newGesture = event.phase.contains(.began)
-                              || (!hasPhase && now - hs.shiftZoomLastEventTime > 0.4)
-                if newGesture {
-                    hs.shiftZoomAxis = nil
-                    hs.shiftZoomAccumX = 0
-                    hs.shiftZoomAccumY = 0
-                }
-                hs.shiftZoomLastEventTime = now
+                // Rearming (a new trackpad gesture, or an idle gap for a mouse) and the axis decision
+                // itself are `ScrollAxisLock`'s — shared with the wheel over an automation line.
+                // NB: we most certainly do NOT reset on .ended, otherwise the first inertia event
+                // would decide the axis again → both axes felt zooming during a single gesture.
+                hs.shiftZoomLock.observe(event, now: now)
 
                 let dx = event.scrollingDeltaX
                 let dy = event.scrollingDeltaY
 
-                // The axis is locked over a small accumulation window (noise protection for the
-                // very first event, where dx≈dy). While the accumulated signal is too weak, we
-                // engage no zoom (a dead zone of a few points, imperceptible).
-                if hs.shiftZoomAxis == nil {
-                    hs.shiftZoomAccumX += dx
-                    hs.shiftZoomAccumY += dy
-                    let ax = abs(hs.shiftZoomAccumX)
-                    let ay = abs(hs.shiftZoomAccumY)
-                    guard max(ax, ay) >= 3 else { return nil }
-                    hs.shiftZoomAxis = ax >= ay ? .horizontal : .vertical
-                }
+                // While the accumulated signal is too weak, we engage no zoom (a dead zone of a few
+                // points, imperceptible).
+                guard let zoomAxis = hs.shiftZoomLock.decide(event, wheelDecidesAtOnce: false) else { return nil }
 
-                switch hs.shiftZoomAxis! {
+                switch zoomAxis {
                 case .horizontal:
                     guard dx != 0 else { return nil }
                     let mult = exp(Double(dx) * 0.01)
@@ -127,43 +110,64 @@ extension TimelineView {
             // the pointer and a hover re-test would let go of it at the second notch (a drag holds
             // its grab the same way). The steps are the TOTAL since the grab, applied from the
             // anchors. A trackpad's inertia does not edit: it is swallowed while a gesture is held.
-            // A sideways scroll over the line is still the timeline's: only a mainly VERTICAL event
-            // reads as a value.
-            if !flags.contains(.option), abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+            //
+            // AXIS LOCK, as ⇧-zoom has (`ScrollAxisLock`, ONE implementation for both): over a line,
+            // the gesture's axis is decided from its first events and never again. VERTICAL = the
+            // value: the horizontal component of every event of that gesture, momentum included, is
+            // swallowed so the timeline does not drift sideways while one adjusts. HORIZONTAL = the
+            // timeline's: the event goes through untouched for the whole gesture and the value is
+            // not edited. A trackpad decides after the 3 pt dead zone; a notch wheel on its single
+            // event (a dead zone would eat notches). The lock rearms at the next gesture only.
+            if !flags.contains(.option) {
                 let now = ProcessInfo.processInfo.systemUptime
-                let held: AutomationLineWheel? = {
-                    guard let w = hs.automationLineWheel,
-                          now - hs.lastValueScrollTime <= Self.valueScrollUndoGap,
-                          !event.phase.contains(.began), w.bandRect.contains(pos) else { return nil }
-                    return w
-                }()
-                if held != nil, !event.momentumPhase.isEmpty { return nil }
-                if let w = held ?? self.automationLineWheelHit(at: pos) {
-                    if held == nil { hs.automationLineScrollAccumulator = 0 }
-                    hs.automationLineWheel = w
-                    hs.automationLineScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
-                    let n = Int(hs.automationLineScrollAccumulator.rounded())
-                    if n != 0 {
-                        hs.automationLineScrollAccumulator -= Float(n)
-                        _ = opensNewValueGesture(event)     // only to keep the gesture's clock
-                        hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
-                        let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)
-                        hs.automationLineWheel?.undoPushed = true
-                        let snap = hs.automationLineWheel!
-                        DispatchQueue.main.async {
-                            if needsUndo {
-                                // As `beginDrag` opens a line drag: select, then one undo point.
-                                vm.select(snap.objectID, additive: false)
-                                vm.beginAutomationEdit()
+                hs.automationLineWheelLock.observe(event, now: now)
+                if hs.automationLineWheelLock.axis == nil { hs.automationLineWheelEngaged = false }
+                if hs.automationLineWheelLock.axis != .horizontal {
+                    let held: AutomationLineWheel? = {
+                        guard let w = hs.automationLineWheel,
+                              now - hs.lastValueScrollTime <= Self.valueScrollUndoGap,
+                              !event.phase.contains(.began), w.bandRect.contains(pos) else { return nil }
+                        return w
+                    }()
+                    if (held != nil || hs.automationLineWheelEngaged), !event.momentumPhase.isEmpty { return nil }
+                    if let w = held ?? self.automationLineWheelHit(at: pos) {
+                        guard let axis = hs.automationLineWheelLock.decide(event, wheelDecidesAtOnce: true)
+                        else { return nil }   // inside the dead zone: nothing moves yet
+                        if axis == .vertical {
+                            hs.automationLineWheelEngaged = true
+                            if held == nil { hs.automationLineScrollAccumulator = 0 }
+                            hs.automationLineWheel = w
+                            hs.automationLineScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
+                            let n = Int(hs.automationLineScrollAccumulator.rounded())
+                            if n != 0 {
+                                hs.automationLineScrollAccumulator -= Float(n)
+                                _ = opensNewValueGesture(event)     // only to keep the gesture's clock
+                                hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
+                                let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)
+                                hs.automationLineWheel?.undoPushed = true
+                                let snap = hs.automationLineWheel!
+                                DispatchQueue.main.async {
+                                    if needsUndo {
+                                        // As `beginDrag` opens a line drag: select, then one undo point.
+                                        vm.select(snap.objectID, additive: false)
+                                        vm.beginAutomationEdit()
+                                    }
+                                    vm.wheelShiftAutomationLine(snap.grab, objectID: snap.objectID,
+                                                                param: snap.param, row: snap.row,
+                                                                steps: snap.steps, geo: snap.geo)
+                                }
                             }
-                            vm.wheelShiftAutomationLine(snap.grab, objectID: snap.objectID,
-                                                        param: snap.param, row: snap.row,
-                                                        steps: snap.steps, geo: snap.geo)
+                            return nil   // vertical-locked: the sideways component never reaches the timeline
                         }
+                        // Horizontal gesture: the timeline's, falls through to the cleanup below.
+                    } else if hs.automationLineWheelEngaged {
+                        // A vertical gesture already owns this wheel, but its line is no longer
+                        // under the pointer (raised away, grab lapsed mid-gesture): still swallowed.
+                        return nil
                     }
-                    return nil
                 }
                 hs.automationLineWheel = nil
+                hs.automationLineWheelEngaged = false
                 // The wheel left the line (or the band): its figure goes with it.
                 if vm.automationLineWheelReadout != nil { vm.automationLineWheelReadout = nil }
             }

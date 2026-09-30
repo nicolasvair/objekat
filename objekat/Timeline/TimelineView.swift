@@ -281,6 +281,48 @@ struct TimelineView: View {
 
     enum ScrollZoomAxis { case horizontal, vertical }
 
+    /// The axis lock of a scroll GESTURE (a trackpad's fingers AND its inertia, or a mouse wheel's
+    /// run of notches): decided from its first events, then held until the next gesture. Shared by
+    /// ⇧-zoom and the wheel over an automation line, so the two cannot drift apart.
+    struct ScrollAxisLock {
+        var axis: ScrollZoomAxis? = nil
+        private var lastEventTime: TimeInterval = 0
+        private var accumX: Double = 0
+        private var accumY: Double = 0
+
+        /// Call at EVERY event, first. Rearms on a new trackpad gesture (`.began`) or, failing a
+        /// phase (a mouse), after a generous idle gap — NEVER on `.ended`, or the first inertia
+        /// event would decide the axis again.
+        mutating func observe(_ event: NSEvent, now: TimeInterval) {
+            let hasPhase = !event.phase.isEmpty || !event.momentumPhase.isEmpty
+            if event.phase.contains(.began) || (!hasPhase && now - lastEventTime > 0.4) {
+                axis = nil
+                accumX = 0
+                accumY = 0
+            }
+            lastEventTime = now
+        }
+
+        /// The gesture's axis, nil while it is still undecided. A trackpad accumulates over a 3 pt
+        /// dead zone (a diagonal swipe's first events are ambiguous); with `wheelDecidesAtOnce`, a
+        /// notch wheel decides on its single event, because a dead zone would EAT notches.
+        mutating func decide(_ event: NSEvent, wheelDecidesAtOnce: Bool) -> ScrollZoomAxis? {
+            if let axis { return axis }
+            let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+            if wheelDecidesAtOnce && !event.hasPreciseScrollingDeltas {
+                guard dx != 0 || dy != 0 else { return nil }
+                axis = abs(dx) >= abs(dy) ? .horizontal : .vertical
+                return axis
+            }
+            accumX += dx
+            accumY += dy
+            let ax = abs(accumX), ay = abs(accumY)
+            guard max(ax, ay) >= 3 else { return nil }
+            axis = ax >= ay ? .horizontal : .vertical
+            return axis
+        }
+    }
+
     final class HoverState {
         var position: CGPoint? = nil
         var scrollAccumulator: Float = 0
@@ -295,10 +337,11 @@ struct TimelineView: View {
         /// Two notches less than `valueScrollUndoGap` apart belong to the same gesture and share ONE
         /// undo — otherwise the wheel was not undoable at all.
         var lastValueScrollTime: TimeInterval = 0
-        var shiftZoomAxis: ScrollZoomAxis? = nil
-        var shiftZoomLastEventTime: TimeInterval = 0
-        var shiftZoomAccumX: Double = 0
-        var shiftZoomAccumY: Double = 0
+        var shiftZoomLock = ScrollAxisLock()
+        /// The same lock for the wheel over a highlighted automation line, and whether the current
+        /// gesture was identified as a VERTICAL one there (the sideways component is then swallowed).
+        var automationLineWheelLock = ScrollAxisLock()
+        var automationLineWheelEngaged = false
 
         // MARK: Vertical lane snap (D6) — the scroll monitor's own axis lock and step state,
         // independent of the ⇧-zoom fields above (a different gesture: no modifier held).
