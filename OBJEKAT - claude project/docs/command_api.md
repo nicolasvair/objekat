@@ -1395,9 +1395,9 @@ end, the row's place in the band, then the id), grouped by row in the window.
 **Which are ticked.** All of them the first time, and a region laid later is ticked too — the state is
 kept as the set of *unticked* regions. The ticks live in the session's memory only (not in the project
 file, no format bump), and are emptied whenever a project is loaded or a tab is switched to. The window
-makes it plain which files will be written: a ticked row is lit and shows its file name, an unticked row
-is dimmed and says "Not exported", one line counts them ("5 regions of 14 will be exported"), and
-*Select all* / *Select none* / *Invert* sit above the list. The list is read live, so a region renamed,
+makes it plain which files will be written: each region is one line (checkbox, output file name with its
+extension, the region's duration), a ticked row is lit and an unticked one dimmed, and each marker lane's
+header has one all/none button for that lane's regions. The list is read live, so a region renamed,
 added or removed while the window is open shows at once.
 
 **File names** (`objekat/Export/RegionExportNaming.swift`, asserted by `tools/test_region_export_naming.swift`).

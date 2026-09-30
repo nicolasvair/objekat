@@ -3037,25 +3037,48 @@
         }
       }
     },
-    "export.regions.invert": {
+    "export.regions.lane.all": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Invert"
+            "value": "All"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Invertir"
+            "value": "Todas"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Inverser"
+            "value": "Toutes"
+          }
+        }
+      }
+    },
+    "export.regions.lane.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ninguna"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune"
           }
         }
       }
@@ -3102,29 +3125,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ce projet n'a aucune région. Tracez une sélection temporelle, puis faites un clic droit dans la bande des marqueurs pour en créer une."
-          }
-        }
-      }
-    },
-    "export.regions.notExported": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not exported"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se exporta"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Non exportée"
           }
         }
       }
@@ -3309,121 +3309,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d exporté(s), %d en échec : %@"
-          }
-        }
-      }
-    },
-    "export.regions.selectAll": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Select all"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Seleccionar todo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tout sélectionner"
-          }
-        }
-      }
-    },
-    "export.regions.selectNone": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Select none"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No seleccionar nada"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ne rien sélectionner"
-          }
-        }
-      }
-    },
-    "export.regions.summary.one": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d region of %d will be exported"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Se exportará %d región de %d"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d région sur %d sera exportée"
-          }
-        }
-      }
-    },
-    "export.regions.summary.other": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d regions of %d will be exported"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Se exportarán %d regiones de %d"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d régions sur %d seront exportées"
-          }
-        }
-      }
-    },
-    "export.regions.unnamed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "(unnamed)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "(sin nombre)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "(sans nom)"
           }
         }
       }
