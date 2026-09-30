@@ -351,11 +351,11 @@ final class Workspace {
             guard ok else { return .failure(.loadFailed) }
             vm.projectURL = url
             vm.projectName = displayName
-            vm.isDirty = false
+            vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             vm.recordRecentProject(url)
             let newID = UUID()
             tabs.append(WorkspaceTab(id: newID, parked: nil, name: displayName, url: url,
-                                     cachedDirty: false))
+                                     cachedDirty: vm.isDirty))
             activeTabID = newID
             return .success(OpenOutcome(tabID: newID, alreadyOpen: false))
         } else {
@@ -369,7 +369,7 @@ final class Workspace {
             guard ok else { return .failure(.loadFailed) }
             vm.projectURL = url
             vm.projectName = displayName
-            vm.isDirty = false
+            vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             vm.recordRecentProject(url)
             return .success(OpenOutcome(tabID: activeTabID, alreadyOpen: false))
         }

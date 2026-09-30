@@ -56,6 +56,9 @@ struct ProjectLoadOutcome: Equatable {
     var cancelled: Bool = false
     var errorMessage: String? = nil
     var durationMs: Int
+    /// How many plugin ids `PluginIDUniqueness` had to re-key in this load (0 = the file was sound).
+    /// A load that re-keyed something leaves the session MODIFIED — @see `settleDirtyAfterLoad`.
+    var repairedPluginIDs: Int = 0
 }
 
 /// Fixed weights for the progress bar's fraction (project_load_progress_plan's own numbers).
@@ -168,7 +171,15 @@ extension EditViewModel {
     /// switching back would find nothing. Every other caller (a genuine New/Open) leaves this
     /// false: pasting the OLD document's ids into a truly different one is exactly the dangling
     /// stemID/auxID/consolidateID corruption this reset exists to prevent.
-    private func performStructureSetup(_ doc: ProjectDocument, preservingClipboard: Bool = false) {
+    ///
+    /// Also the one place a plugin id that appears under two hosts is repaired (@see
+    /// `PluginIDUniqueness`): every load path — Cmd+O, `project.open`, a tab's open or restore,
+    /// `HeadlessRunner --project` — goes through here. When it re-keyed something the project is
+    /// left MODIFIED (@see `settleDirtyAfterLoad`), so the next save writes the repaired model
+    /// instead of the file's duplicates.
+    /// - Returns: the number of plugin ids re-keyed, for `ProjectLoadOutcome.repairedPluginIDs`.
+    private func performStructureSetup(_ doc: ProjectDocument, preservingClipboard: Bool = false) -> Int {
+        let fixed = Self.repairedForLoad(items: doc.items, stems: doc.stems ?? [])
         consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
         fxLinks = doc.fxLinks ?? []
         clearPendingFXSources()
@@ -191,8 +202,8 @@ extension EditViewModel {
             pendingViewRestore = vp
         }
 
-        if let docStems = doc.stems, !docStems.isEmpty {
-            stems = docStems
+        if !fixed.stems.isEmpty {
+            stems = fixed.stems
         } else {
             stems = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
         }
@@ -201,8 +212,45 @@ extension EditViewModel {
         // Arms the queue: from here on, every `syncAdd` below defers its chain/instrument compiles
         // instead of running them inline (@see EditViewModel+Plugins.scheduleChainCompile).
         deferredChainCompiles = []
-        items = doc.items
+        items = fixed.items
+        return fixed.repairs.count
     }
+
+    /// What the dirty flag says once a load has succeeded (the four places that used to write
+    /// `isDirty = false` there call this instead): clean, UNLESS the load re-keyed plugin ids
+    /// (`lastProjectLoad.repairedPluginIDs`) — then the file on disk no longer matches the model,
+    /// and the project is marked modified so the next save writes the repaired version and the
+    /// repair is not redone at every open. No alert: the title's edited mark and the usual
+    /// "save before closing?" say it. Only to be called right after a SUCCESSFUL load.
+    func settleDirtyAfterLoad() {
+        isDirty = (lastProjectLoad?.repairedPluginIDs ?? 0) > 0
+    }
+
+    /// `PluginIDUniqueness.deduplicated` plus the `[LOAD]` line when it re-keyed something. DEBUG
+    /// builds can switch the repair off (`OBJ_NO_PLUGIN_ID_REPAIR=1`, read once, like `OBJ_FX_DUMP`)
+    /// to exercise the engine's own net (`_pluginOwnerHost`) with a file that still has duplicates.
+    private static func repairedForLoad(items: [SoundObject], stems: [Stem])
+        -> (items: [SoundObject], stems: [Stem], repairs: [PluginIDUniqueness.Repair]) {
+        #if DEBUG
+        if skipPluginIDRepair { return (items, stems, []) }
+        #endif
+        let fixed = PluginIDUniqueness.deduplicated(items: items, stems: stems)
+        if !fixed.repairs.isEmpty {
+            // Truncated to 8 characters each: a machine-facing line, not a list to read in full.
+            let detail = fixed.repairs.prefix(8).map {
+                "\($0.oldID.uuidString.prefix(8)) -> \($0.newID.uuidString.prefix(8)) @ \($0.hostID.uuidString.prefix(8))"
+            }.joined(separator: ", ")
+            let more = fixed.repairs.count > 8 ? ", … (+\(fixed.repairs.count - 8))" : ""
+            NSLog("[LOAD] %d plugin id(s) duplicated across hosts — re-keyed: %@%@",
+                  fixed.repairs.count, detail, more)
+        }
+        return fixed
+    }
+
+    #if DEBUG
+    private static let skipPluginIDRepair =
+        ProcessInfo.processInfo.environment["OBJ_NO_PLUGIN_ID_REPAIR"] == "1"
+    #endif
 
     /// Adds ONE top-level item to the engine — `syncAdd` + its own fade — exactly what the old
     /// monolithic loop did per iteration.
@@ -316,7 +364,7 @@ extension EditViewModel {
         loadState?.phase = .structure
         loadState?.fraction = min(1, done / plan.total)
 
-        performStructureSetup(doc)
+        let repairedPluginIDs = performStructureSetup(doc)
         for item in items {
             addTopLevelItemToEngine(item)
             done += ProjectLoadWeight.structurePerObject * Double(1 + descendantCount(item))
@@ -354,7 +402,8 @@ extension EditViewModel {
 
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         NSLog("[LOAD] total %d ms", durationMs)
-        lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs)
+        lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
+                                             repairedPluginIDs: repairedPluginIDs)
         loadState = nil
     }
 
@@ -416,7 +465,7 @@ extension EditViewModel {
         loadState?.fraction = min(1, done / plan.total)
         await breathIfNeeded(&nextBreath)
 
-        performStructureSetup(doc, preservingClipboard: preservingClipboard)
+        let repairedPluginIDs = performStructureSetup(doc, preservingClipboard: preservingClipboard)
         for item in items {
             addTopLevelItemToEngine(item)
             done += ProjectLoadWeight.structurePerObject * Double(1 + descendantCount(item))
@@ -478,7 +527,8 @@ extension EditViewModel {
 
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         NSLog("[LOAD] total %d ms", durationMs)
-        lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs)
+        lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
+                                             repairedPluginIDs: repairedPluginIDs)
         loadState = nil
         return true
     }

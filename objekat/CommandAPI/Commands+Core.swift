@@ -221,6 +221,7 @@ extension CommandRegistry {
                     "cancelled": .bool(last.cancelled),
                     "duration_ms": .int(last.durationMs),
                     "path": .stringOrNull(last.path),
+                    "repaired_plugin_ids": .int(last.repairedPluginIDs),
                 ]
                 if let msg = last.errorMessage { lastPayload["error"] = .string(msg) }
                 payload["last_load"] = .object(lastPayload)

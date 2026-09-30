@@ -437,7 +437,7 @@ extension EditViewModel {
             applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
             projectURL = url
             projectName = displayName(for: url)
-            isDirty = false
+            settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
             return true
         } catch {
@@ -462,7 +462,7 @@ extension EditViewModel {
             guard ok else { return false }
             projectURL = url
             projectName = displayName(for: url)
-            isDirty = false
+            settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
             return true
         } catch {
