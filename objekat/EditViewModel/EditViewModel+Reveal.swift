@@ -48,7 +48,7 @@ extension EditViewModel {
                 guard let current = find(id: ancestor.id) else { continue }
                 if current.automationOpen { setAutomationOpen(id: current.id, false) }
                 if !isGroupExpanded(current.id) {
-                    toggleGroupExpansion(id: current.id)
+                    toggleGroupExpansion(id: current.id, restoringAutomation: false)
                     opened.append(current.id)
                 }
             }

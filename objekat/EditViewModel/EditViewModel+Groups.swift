@@ -570,11 +570,20 @@ extension EditViewModel {
                 guard case .group(let children, _) = obj.kind else { return }
                 obj.kind = .group(children: children, isExpanded: false)
             }
+            // Remembered AFTER the fold, which is the only place it is ever set: reopening the
+            // group (any door, @see toggleGroupExpansion) brings the curves back, not the content.
+            groupsFoldedFromAutomation.insert(id)
             isDirty = true
         }
     }
 
-    func toggleGroupExpansion(id: UUID) {
+    /// THE door that folds or unfolds a group — the double click, the hem, the sound list, the
+    /// API and the reveal all come through here, so the "reopen on the automation band" rule lives
+    /// once. A group folded from its curves (`doubleClickGroup`) reopens on them, the state being
+    /// found again exactly as it was left; every other way of folding forgets that memory, and
+    /// `restoringAutomation: false` is for a caller that wants the CONTENT whatever happened before
+    /// (`revealInTimeline` — a hidden child cannot be shown by a band).
+    func toggleGroupExpansion(id: UUID, restoringAutomation: Bool = true) {
         // The automation band is open: it takes the children's place. Toggling `isExpanded`
         // would then change nothing on screen — the gesture would look dead. The content is given back
         // first, the unfolded state being found again as it was left.
@@ -583,9 +592,14 @@ extension EditViewModel {
             return
         }
         let willExpand = !isGroupExpanded(id)
+        // The memory is consumed by an unfold and dropped by a fold; either way it is gone after.
+        let reopenOnAutomation = willExpand && restoringAutomation
+            && groupsFoldedFromAutomation.contains(id)
+        groupsFoldedFromAutomation.remove(id)
         update(id: id) { obj in
             guard case .group(let children, let isExpanded) = obj.kind else { return }
             obj.kind = .group(children: children, isExpanded: !isExpanded)
+            if reopenOnAutomation { obj.automationOpen = true }
         }
         // Two groups open on the SAME lane unfold their insides onto the same band of
         // sub-lanes: the two contents overlap and neither is legible any more. As long as there
