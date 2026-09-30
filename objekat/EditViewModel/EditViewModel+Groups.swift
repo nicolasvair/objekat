@@ -540,6 +540,40 @@ extension EditViewModel {
 
     // MARK: - Expansion
 
+    /// What a double click on a group's body does. PURE, so the rule can be read (and asserted)
+    /// without a model behind it.
+    enum GroupDoubleClickOutcome: Equatable {
+        /// The ordinary toggle (`toggleGroupExpansion`): fold or unfold the content.
+        case toggleContent
+        /// The group's automation band is showing: fold the group AND drop the band in one go.
+        case closeGroupAndAutomation
+    }
+
+    /// With the automation band open the children are hidden, so the ordinary toggle only gives
+    /// the content back (band closed, group still open) and closing the group took a second double
+    /// click, through the objects. A double click on the group while its curves are showing means
+    /// "I am done with this group": it folds, and the band goes with it.
+    static func groupDoubleClickOutcome(automationOpen: Bool) -> GroupDoubleClickOutcome {
+        automationOpen ? .closeGroupAndAutomation : .toggleContent
+    }
+
+    /// The group's double click (@see TimelineView+TapHandler). `toggleGroupExpansion` itself is
+    /// left alone: the hem, the list and the API rely on its "band first, content second" order.
+    func doubleClickGroup(id: UUID) {
+        let automationOpen = find(id: id)?.automationOpen ?? false
+        switch Self.groupDoubleClickOutcome(automationOpen: automationOpen) {
+        case .toggleContent:
+            toggleGroupExpansion(id: id)
+        case .closeGroupAndAutomation:
+            update(id: id) { obj in
+                obj.automationOpen = false
+                guard case .group(let children, _) = obj.kind else { return }
+                obj.kind = .group(children: children, isExpanded: false)
+            }
+            isDirty = true
+        }
+    }
+
     func toggleGroupExpansion(id: UUID) {
         // The automation band is open: it takes the children's place. Toggling `isExpanded`
         // would then change nothing on screen — the gesture would look dead. The content is given back
