@@ -317,8 +317,12 @@ final class Workspace {
     /// - Parameter inNewTab: true opens a FRESH tab (a double-click in the Finder, `tab.open`);
     ///   false replaces the ACTIVE tab's document in place (the "Recent projects" menu, which kept
     ///   its historical one-tab-at-a-time meaning).
+    /// - Parameter pluginIDRepair: what to do about plugin ids duplicated across hosts, settled
+    ///   BEFORE anything is parked or torn down (@see `EditViewModel.resolvePluginIDRepair`): `.ask`
+    ///   for a hand (the default), `.repair` / `.keep` for a script.
     @discardableResult
-    func open(url: URL, inNewTab: Bool) async -> Result<OpenOutcome, TabError> {
+    func open(url: URL, inNewTab: Bool,
+              pluginIDRepair: PluginIDRepairChoice = .ask) async -> Result<OpenOutcome, TabError> {
         if let existing = existingTab(for: url) {
             if existing.id != activeTabID {
                 if case .failure(let e) = await select(existing.id) { return .failure(e) }
@@ -337,6 +341,9 @@ final class Workspace {
 
         if inNewTab {
             if let reason = vm.tabSwitchBlocker { return .failure(.blocked(reasonKey: reason)) }
+            // Asked BEFORE the current tab is parked: a question put after would sit over a window
+            // already half taken apart, and a "no" would have nothing to go back to.
+            let repair = vm.resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
             isSwitching = true
             session.stop()
             vm.closeAllPluginEditors()
@@ -345,10 +352,12 @@ final class Workspace {
                 tabs[outgoingIdx].parked = outgoingParked
             }
             vm.engine?.beginHoldingParkedPlugins(forTab: activeTabID.uuidString)
-            let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName, cancellable: false)
+            let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName, cancellable: false,
+                                                        repairPluginIDs: repair)
             vm.engine?.endHoldingParkedPlugins()
             isSwitching = false
             guard ok else { return .failure(.loadFailed) }
+            vm.lastProjectLoad?.path = url.path
             vm.projectURL = url
             vm.projectName = displayName
             vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
@@ -365,8 +374,11 @@ final class Workspace {
                 return .failure(.blocked(reasonKey: "tabs.switch.refused.export"))
             }
             guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
-            let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName)
+            let repair = vm.resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
+            let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName,
+                                                        repairPluginIDs: repair)
             guard ok else { return .failure(.loadFailed) }
+            vm.lastProjectLoad?.path = url.path
             vm.projectURL = url
             vm.projectName = displayName
             vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids

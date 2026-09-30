@@ -11,10 +11,14 @@ import Foundation
 // 1 October 2026 on sessions whose JSON had been edited outside the app — FX link block entries
 // copied from one object to another with a fresh block id but the SAME instance ids).
 //
-// Nothing the app itself does writes such a file (every copy path mints fresh ids), so the repair
-// lives here, PURE, at the one funnel every load goes through (`performStructureSetup`): the first
-// occurrence keeps its id, every later one is re-keyed. The engine has its own net for whatever
-// could slip past (`_pluginOwnerHost` in `OBJEngineCore`) — see `plugin_id_audit`.
+// Nothing the app itself does writes such a file (every copy path mints fresh ids), so the check
+// lives here, PURE, at the one funnel every load goes through (`performStructureSetup`). It is a
+// DECISION for the user, not a silent fix: a load always DETECTS (`duplicateDetails`), and only
+// REPAIRS (`deduplicated`) when asked — the alert's "Repair" button, or `repair_plugin_ids` on the
+// API. Repairing re-keys: the first occurrence keeps its id, every later one gets a fresh one. A
+// project opened without repair keeps its duplicates, and the engine copes with them on its own
+// (`_pluginOwnerHost` in `OBJEngineCore`: the first host to compile a key keeps the instance, the
+// others play without it) — see `plugin_id_audit`.
 //
 // Deliberately out of scope: `consolidateDefinitions` (a sidecar's chains never live in the engine
 // at the same time as the project's own), and the FX link registry's definition plugins (never
@@ -73,6 +77,99 @@ enum PluginIDUniqueness {
             let hosts = hostsByID[id] ?? []
             return hosts.count > 1 ? (id: id, hosts: hosts) : nil
         }
+    }
+
+    // MARK: Detail (read-only, for the alert and the report)
+
+    /// What kind of host holds an occurrence.
+    enum HostKind: String, Equatable {
+        case object
+        case stem
+    }
+
+    /// One place an id sits in the FILE: who holds it, what it is called, which bin it belongs to (if
+    /// any), and where to find it in the JSON.
+    struct Site: Equatable {
+        let hostID: UUID
+        let hostKind: HostKind
+        /// `SoundObject.displayName`, or `Stem.name`.
+        let hostName: String
+        let pluginName: String
+        /// The bin the entry belongs to: a block entry itself and every instance inside its `fxBlock`
+        /// carry it. `fxLinkName` is nil when the registry does not know the bin.
+        let fxLinkID: UUID?
+        let fxLinkName: String?
+        /// From the root of the document, with the real array indexes and the real Codable keys:
+        /// `items[3].kind.children[1].plugins[0].fxBlock.plugins[2]`, `items[0].plugins[1].rack.voices[0][2]`,
+        /// `items[5].instruments[0]`, `stems[2].plugins[4]`.
+        let jsonPath: String
+    }
+
+    /// One id held more than once. `sites` follows the traversal order, so `sites[0]` is the
+    /// occurrence that KEEPS its id (the one `deduplicated` leaves alone); the others are the copies
+    /// to re-key.
+    struct DuplicateDetail: Equatable {
+        let id: UUID
+        let sites: [Site]
+    }
+
+    /// The ids held more than once, with every place they sit. Same walk as `occurrences` and
+    /// `deduplicated` (an object's chain, then its instruments, then its children; the stems last), so
+    /// `sites[0]` of each detail is the very occurrence the repair keeps — asserted by
+    /// `tools/test_plugin_id_uniqueness.swift`. Pure: reads `items`, `stems` and the bins' registry (for
+    /// their names) and nothing else.
+    ///
+    /// Two passes on purpose. The load calls this on EVERY opening, to know whether to ask: the first
+    /// pass is the cheap count `duplicates` already does; the second, which builds paths and host names
+    /// (a group's `displayName` composes its children's names), only runs for a file that has a problem.
+    static func duplicateDetails(items: [SoundObject], stems: [Stem], fxLinks: [FXLink])
+        -> [DuplicateDetail] {
+        let dupIDs = duplicates(items: items, stems: stems).map(\.id)
+        if dupIDs.isEmpty { return [] }
+        let wanted = Set(dupIDs)
+        let linkNames = Dictionary(fxLinks.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        var sitesByID: [UUID: [Site]] = [:]
+
+        func walk(_ chain: [ObjectPlugin], path: String, hostID: UUID, hostKind: HostKind,
+                  hostName: () -> String, link: UUID?) {
+            for (k, p) in chain.enumerated() {
+                let here = "\(path)[\(k)]"
+                // The block's own entry belongs to its bin; so does everything it holds.
+                let entryLink = p.fxBlock?.linkID ?? link
+                if wanted.contains(p.id) {
+                    sitesByID[p.id, default: []].append(
+                        Site(hostID: hostID, hostKind: hostKind, hostName: hostName(), pluginName: p.name,
+                             fxLinkID: entryLink, fxLinkName: entryLink.flatMap { linkNames[$0] },
+                             jsonPath: here))
+                }
+                if let rack = p.rack {
+                    for (v, voice) in rack.voices.enumerated() {
+                        walk(voice, path: "\(here).rack.voices[\(v)]", hostID: hostID, hostKind: hostKind,
+                             hostName: hostName, link: entryLink)
+                    }
+                } else if let block = p.fxBlock {
+                    walk(block.plugins, path: "\(here).fxBlock.plugins", hostID: hostID, hostKind: hostKind,
+                         hostName: hostName, link: entryLink)
+                }
+            }
+        }
+        func walkItems(_ arr: [SoundObject], path: String) {
+            for (i, obj) in arr.enumerated() {
+                let here = "\(path)[\(i)]"
+                let name = { obj.displayName }
+                walk(obj.plugins, path: "\(here).plugins", hostID: obj.id, hostKind: .object,
+                     hostName: name, link: nil)
+                walk(obj.instruments, path: "\(here).instruments", hostID: obj.id, hostKind: .object,
+                     hostName: name, link: nil)
+                if case .group(let children, _) = obj.kind { walkItems(children, path: "\(here).kind.children") }
+            }
+        }
+        walkItems(items, path: "items")
+        for (s, stem) in stems.enumerated() {
+            walk(stem.plugins, path: "stems[\(s)].plugins", hostID: stem.id, hostKind: .stem,
+                 hostName: { stem.name }, link: nil)
+        }
+        return dupIDs.compactMap { id in sitesByID[id].map { DuplicateDetail(id: id, sites: $0) } }
     }
 
     // MARK: Repair

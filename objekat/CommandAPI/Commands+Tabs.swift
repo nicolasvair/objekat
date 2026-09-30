@@ -135,8 +135,14 @@ extension CommandRegistry {
 
         register("tab.open",
                  summary: "Opens a project file in a NEW tab. A file already open in another tab "
-                        + "switches to it instead of opening a second copy ('already_open': true).",
-                 params: [ParamSpec("path", "string", "Path to the project file.")],
+                        + "switches to it instead of opening a second copy ('already_open': true). "
+                        + "Plugin ids carried by more than one entry are left as they are unless "
+                        + "`repair_plugin_ids` is true — no alert either way, even with an interface "
+                        + "(@see project.open, project.load_status).",
+                 params: [ParamSpec("path", "string", "Path to the project file."),
+                          ParamSpec("repair_plugin_ids", "bool", required: false,
+                                    "true = give a fresh id to every duplicated plugin id at load "
+                                    + "(the project then opens modified). Default false.")],
                  undo: .none) { p in
             let workspace = try self.requireWorkspace()
             let path = try p.string("path")
@@ -144,7 +150,9 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
             let url = URL(fileURLWithPath: path)
-            switch await workspace.open(url: url, inNewTab: true) {
+            let repair = try p.bool("repair_plugin_ids", or: false)
+            switch await workspace.open(url: url, inNewTab: true,
+                                        pluginIDRepair: repair ? .repair : .keep) {
             case .success(let outcome):
                 let idx = workspace.tabs.firstIndex { $0.id == outcome.tabID }!
                 var obj = self.tabJSON(workspace, workspace.tabs[idx], index: idx).objectValue!

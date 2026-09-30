@@ -145,9 +145,15 @@ extension CommandRegistry {
                         + "command answers invalid_state ('project loading').",
                  params: [ParamSpec("path", "string", "Path to the project file."),
                           ParamSpec("async", "bool", required: false,
-                                    "true = return immediately (default false: wait for completion).")]) { p in
+                                    "true = return immediately (default false: wait for completion)."),
+                          ParamSpec("repair_plugin_ids", "bool", required: false,
+                                    "true = give a fresh id to every plugin id carried by more than "
+                                    + "one entry, at load (the project then opens modified). Default "
+                                    + "false: the duplicates are left as they are and reported by "
+                                    + "project.load_status. Never an alert, with or without an interface.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
+            let pluginIDRepair: PluginIDRepairChoice = try p.bool("repair_plugin_ids", or: false) ? .repair : .keep
             guard FileManager.default.fileExists(atPath: path) else {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
@@ -181,7 +187,7 @@ extension CommandRegistry {
                 vm.loadState = ProjectLoadState(phase: .teardown, fraction: 0,
                                                 projectName: EditViewModel.projectDisplayName(for: url),
                                                 startedAt: Date())
-                Task { @MainActor in await vm.loadProjectAsync(from: url) }
+                Task { @MainActor in await vm.loadProjectAsync(from: url, pluginIDRepair: pluginIDRepair) }
                 return .object(["path": .string(path), "status": .string("loading")])
             }
             // The run loop is confirmed alive here (this handler only runs once the command server
@@ -189,7 +195,7 @@ extension CommandRegistry {
             // the default, awaited case, so a synchronous `project.open` also shows the overlay,
             // answers wait_idle correctly meanwhile, and the whole thing plays through
             // `beginBulkLoad`/`endBulkLoad` exactly once.
-            guard await vm.loadProjectAsync(from: url) else {
+            guard await vm.loadProjectAsync(from: url, pluginIDRepair: pluginIDRepair) else {
                 throw CommandError(code: .invalid_state, message: "could not read the project: \(path)")
             }
             return .object(["path": .string(path), "name": .string(vm.projectName),
@@ -222,6 +228,25 @@ extension CommandRegistry {
                     "duration_ms": .int(last.durationMs),
                     "path": .stringOrNull(last.path),
                     "repaired_plugin_ids": .int(last.repairedPluginIDs),
+                    // What the file held as it was READ, repaired or not.
+                    "duplicate_plugin_id_count": .int(last.duplicatePluginIDs.count),
+                    "duplicate_plugin_ids": .array(last.duplicatePluginIDs.map { d in
+                        .object([
+                            "id": .string(d.id.uuidString),
+                            "sites": .array(d.sites.enumerated().map { i, s in
+                                .object([
+                                    "host_id": .string(s.hostID.uuidString),
+                                    "host_kind": .string(s.hostKind.rawValue),
+                                    "host_name": .string(s.hostName),
+                                    "plugin_name": .string(s.pluginName),
+                                    "fx_link": .stringOrNull(s.fxLinkName),
+                                    "fx_link_id": .stringOrNull(s.fxLinkID?.uuidString),
+                                    "json_path": .string(s.jsonPath),
+                                    "keeps_id": .bool(i == 0),
+                                ])
+                            }),
+                        ])
+                    }),
                 ]
                 if let msg = last.errorMessage { lastPayload["error"] = .string(msg) }
                 payload["last_load"] = .object(lastPayload)
