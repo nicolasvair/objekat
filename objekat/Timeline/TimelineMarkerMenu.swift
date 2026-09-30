@@ -87,8 +87,6 @@ func addAnnotationItems(_ menu: NSMenu, _ proxies: inout [MenuActionProxy],
     reset.target = pReset
     reset.state = current == nil ? .on : .off
     menu.addItem(reset)
-    // Same layout as an object's menu: the 'inherit' entry, a separator, then the palette.
-    menu.addItem(.separator())
 
     let swatch = NSMenuItem()
     swatch.view = ColorSwatchGridView(currentColorIndex: current) { picked in
