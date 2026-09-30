@@ -520,6 +520,27 @@ extension CommandRegistry {
                             "unstable_types": names("unstable_types"),
                             "timer_running": .bool((info["timer_running"] as? NSNumber)?.boolValue ?? false)])
         }
+
+        register("debug.plugin_id_audit",
+                 summary: """
+                 DEBUG. The plugin-id uniqueness audit: `duplicates` lists every plugin id held more \
+                 than once in the live project (leaves, rack carriers, FX link blocks and their \
+                 instances, instruments, bus chains) with the hosts holding it; `count` is their \
+                 number. `engine_foreign_refusals` counts the compiles that refused to move a key \
+                 another host's chain holds. A sound project answers 0 and 0 — the load repairs a \
+                 file that does not (`project.load_status` `last_load.repaired_plugin_ids`).
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let dups = vm.duplicatePluginIDs()
+            return .object(["duplicates": .array(dups.map { d in
+                                .object(["id": .string(d.id.uuidString),
+                                         "hosts": .array(d.hosts.map { .string($0.uuidString) })])
+                            }),
+                            "count": .int(dups.count),
+                            "engine_foreign_refusals": .int(engine.foreignPluginKeyRefusals())])
+        }
         #endif
 
         // MARK: instruments (MIDI clips)

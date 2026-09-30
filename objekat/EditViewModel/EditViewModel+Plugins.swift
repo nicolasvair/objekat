@@ -987,4 +987,14 @@ extension EditViewModel {
             syncInstruments(object, rewireLinks: rewireLinks)
         }
     }
+
+    // MARK: - Plugin id uniqueness (audit)
+
+    /// Plugin ids held more than once in the LIVE model (`items` + `stems`), each with the hosts
+    /// involved. Empty is the invariant: the load repairs a file that breaks it
+    /// (`PluginIDUniqueness.deduplicated`), so a non-empty answer mid-session means an in-app path
+    /// minted a copy without fresh ids. Read by `debug.plugin_id_audit`.
+    func duplicatePluginIDs() -> [(id: UUID, hosts: [UUID])] {
+        PluginIDUniqueness.duplicates(items: items, stems: stems)
+    }
 }
