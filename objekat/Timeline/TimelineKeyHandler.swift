@@ -1383,7 +1383,9 @@ extension TimelineView {
                 resetItem.target = pReset
                 resetItem.state = currentIndex == nil ? .on : .off
                 menu.addItem(resetItem)
-                menu.addItem(.separator())
+                // No separator between 'Stem colour' and the palette: the entry is part of the
+                // colour choice (the object's own colour, or none = the stem's), and keeping the
+                // two together says so.
 
                 let swatchItem = NSMenuItem()
                 swatchItem.view = ColorSwatchGridView(currentColorIndex: currentIndex) { picked in
