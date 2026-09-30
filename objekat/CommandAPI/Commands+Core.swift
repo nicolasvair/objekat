@@ -230,6 +230,11 @@ extension CommandRegistry {
                     "repaired_plugin_ids": .int(last.repairedPluginIDs),
                     // What the file held as it was READ, repaired or not.
                     "duplicate_plugin_id_count": .int(last.duplicatePluginIDs.count),
+                    // The instructions a language model can follow to fix the file (the alert's
+                    // "Copy report"); null for a sound file.
+                    "plugin_id_report": last.duplicatePluginIDs.isEmpty ? .null
+                        : .string(PluginIDReport.text(filePath: last.path ?? "",
+                                                      details: last.duplicatePluginIDs)),
                     "duplicate_plugin_ids": .array(last.duplicatePluginIDs.map { d in
                         .object([
                             "id": .string(d.id.uuidString),
