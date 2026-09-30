@@ -214,11 +214,11 @@ struct AutomationBandView: View {
                 .gesture(SpatialTapGesture().onEnded { handleTap(at: $0.location) })
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 3)
-                        .onChanged { handleDragChanged($0) }
+                        .onChanged { dropWheelReadout(); handleDragChanged($0) }
                         .onEnded   { _ in
                             settleZoneAfterTransform()
                             seekToTracedZone()
-                            drag = nil; readout = nil; clearHover()
+                            drag = nil; readout = nil; clearHover(); dropWheelReadout()
                         }
                 )
                 .onContinuousHover { phase in
@@ -229,7 +229,7 @@ struct AutomationBandView: View {
                     // the timeline goes through the tracking view's `mouseExited`. This `.ended`
                     // can arrive AFTER the hover that succeeds it — it would take its claim away
                     // from it.
-                    case .ended:         clearHover(); hoverRowIndex = nil; hoverAt = nil
+                    case .ended:         clearHover(); dropWheelReadout(); hoverRowIndex = nil; hoverAt = nil
                     }
                 }
                 .contextMenu { newLaneMenu }
@@ -644,8 +644,10 @@ struct AutomationBandView: View {
 
     /// The figure of a line being moved by the mouse WHEEL (@see EditViewModel.wheelShiftAutomationLine):
     /// the wheel has no pointer travel to hang a hover readout on, so the model holds the value and
-    /// it is drawn where the hover's would be — by the pointer, at the line's new height. Yields to
-    /// any readout of the band's own.
+    /// it is drawn where the hover's would be — by the pointer, at the line's NEW height. It stays
+    /// for as long as the pointer does (no timer): it goes when the pointer travels, leaves the
+    /// band, or another gesture starts (@see dropWheelReadout). It WINS over the hover readout,
+    /// which the wheel leaves stale (the pointer has not moved, the line has).
     private var wheelReadout: (row: Int, x: Double, y: Double?, text: String)? {
         guard let w = viewModel.automationLineWheelReadout, w.objectID == object.id,
               let row = rows.firstIndex(of: w.param), let at = hoverAt else { return nil }
@@ -663,7 +665,7 @@ struct AutomationBandView: View {
     /// flips underneath when there is no room left over it — a choice FROZEN for the whole of a
     /// gesture (@see BandDrag.badgeBelow), since under the hand it is the point that moves.
     private func drawReadout(in ctx: inout GraphicsContext) {
-        guard let r = readout ?? wheelReadout, rows.indices.contains(r.row) else { return }
+        guard let r = wheelReadout ?? readout, rows.indices.contains(r.row) else { return }
         let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
         let text = Text(r.text)
             .font(.system(size: 9, weight: .semibold).monospacedDigit())
@@ -697,6 +699,10 @@ struct AutomationBandView: View {
         // `hoverLine` are both nil — is precisely where one aims one.
         let inRow = geo.rowIndex(atY: p.y)
         if hoverRowIndex != inRow { hoverRowIndex = inRow }
+        // The wheel's figure belongs to a pointer that has NOT moved: the wheel carries the line
+        // away from under it, and a hover replayed on the spot must not take the figure down. A
+        // pointer that really travels hands the readout back to the hover.
+        if hoverAt != p { dropWheelReadout() }
         hoverAt = p
 
         // A GRIP answers before everything else, in the same order `beginDrag` branches in: a
@@ -774,6 +780,10 @@ struct AutomationBandView: View {
     /// stays on screen no longer than the hand that asked for it. The gesture's own figure is out
     /// of reach here: the hover is shut off for the whole of a drag (@see body), so this clears a
     /// HOVER readout only; the guard says so.
+    private func dropWheelReadout() {
+        if viewModel.automationLineWheelReadout != nil { viewModel.automationLineWheelReadout = nil }
+    }
+
     private func clearHover() {
         setHover(point: nil, line: nil)
         if drag == nil, readout != nil { readout = nil }
