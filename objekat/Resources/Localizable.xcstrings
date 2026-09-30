@@ -7338,6 +7338,213 @@
         }
       }
     },
+    "pluginIDs.duplicate.copyReport": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy report"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copiar el informe"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copier le rapport"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.dontRepair": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't repair"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No reparar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne pas réparer"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%1$@” contains plugins copied from one object to another without receiving a new identifier. An identifier can only designate one plugin: until the project is repaired, these objects play without that effect:\n\n%2$@\n\nRepair gives every copy a new identifier (automations included). The project is then marked as modified, and nothing is written to disk until you save.\nCopy report puts on the pasteboard a text to hand to an AI assistant so it can correct the file. The project then opens without repair."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%1$@» contiene plugins copiados de un objeto a otro sin recibir un identificador nuevo. Un identificador solo puede designar un plugin: mientras el proyecto no se repare, estos objetos suenan sin ese efecto:\n\n%2$@\n\nReparar da un identificador nuevo a cada copia (automatizaciones incluidas). El proyecto queda entonces marcado como modificado, y no se escribe nada en el disco hasta que lo guardes.\nCopiar el informe coloca en el portapapeles un texto para dárselo a un asistente de IA y que corrija el archivo. El proyecto se abre entonces sin reparar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %1$@ » contient des plugins copiés d'un objet à l'autre sans recevoir de nouvel identifiant. Un identifiant ne peut désigner qu'un seul plugin : tant que le projet n'est pas réparé, ces objets jouent sans cet effet :\n\n%2$@\n\nRéparer donne un identifiant neuf à chaque copie (automations comprises). Le projet est alors marqué modifié, et rien n'est écrit sur le disque avant l'enregistrement.\nCopier le rapport place dans le presse-papiers un texte à donner à un assistant IA pour corriger le fichier. Le projet s'ouvre alors sans réparation."
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.lineInLink": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@ (fx link “%3$@”)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@ (fx link «%3$@»)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@ (fx link « %3$@ »)"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.more.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… and %d more"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… y %d más"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… et %d autre"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.more.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… and %d more"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… y %d más"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… et %d autres"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.repair": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reparar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réparer"
+          }
+        }
+      }
+    },
+    "pluginIDs.duplicate.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some plugins in this project share the same identifier"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Algunos plugins de este proyecto comparten el mismo identificador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Des plugins de ce projet partagent le même identifiant"
+          }
+        }
+      }
+    },
     "plugins.category.distortion": {
       "extractionState": "manual",
       "localizations": {

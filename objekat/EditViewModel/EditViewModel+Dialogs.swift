@@ -143,6 +143,64 @@ extension EditViewModel {
         }
     }
 
+    // MARK: - Ask (repair duplicated plugin ids)
+
+    /// The lines the alert lists, at most this many: a file edited by hand can carry dozens, and an
+    /// alert taller than the screen cannot be answered.
+    private static let maxPluginIDAlertLines = 8
+
+    /// The question a file carrying duplicated plugin ids raises when it is opened by hand: repair it
+    /// (re-key the copies), leave it as it is, or take a report to have it corrected elsewhere. The
+    /// answer is `true` ONLY for "Repair".
+    ///
+    /// NEVER repairs on its own: an automatic policy (`assume_yes` included) or a session without
+    /// interface answers "not repaired" and writes the question in the journal, so that a script can see
+    /// it WOULD have been asked. The user wants this to be a decision; `repair_plugin_ids` is the API's
+    /// explicit way to make it. "Copy report" puts `PluginIDReport.text` on the pasteboard and opens the
+    /// file as it is — the report is for correcting the file elsewhere, which rules out repairing here
+    /// at the same time (reopening the project asks again).
+    func askPluginIDRepair(details: [PluginIDUniqueness.DuplicateDetail],
+                           projectName: String, filePath: String) -> Bool {
+        // One line per copy that lost its effect: every site after the first of its id.
+        let lines = details.flatMap { detail in
+            detail.sites.dropFirst().map { site in
+                site.fxLinkName.map { L("pluginIDs.duplicate.lineInLink", site.hostName, site.pluginName, $0) }
+                    ?? L("pluginIDs.duplicate.line", site.hostName, site.pluginName)
+            }
+        }
+        var shown = lines.prefix(Self.maxPluginIDAlertLines).map { "\u{2022} " + $0 }
+        if lines.count > Self.maxPluginIDAlertLines {
+            let rest = lines.count - Self.maxPluginIDAlertLines
+            shown.append(Ln("pluginIDs.duplicate.more", rest, rest))
+        }
+        let title = L("pluginIDs.duplicate.title")
+        let info = L("pluginIDs.duplicate.info", projectName, shown.joined(separator: "\n"))
+
+        guard dialogPolicy == .ask, hasInterface else {
+            recordDialog(title, info, answer: "not repaired")
+            return false
+        }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("pluginIDs.duplicate.repair"))
+        alert.addButton(withTitle: L("pluginIDs.duplicate.copyReport"))
+        let dont = alert.addButton(withTitle: L("pluginIDs.duplicate.dontRepair"))
+        dont.keyEquivalent = "\u{1b}"
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return true
+        case .alertSecondButtonReturn:
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(PluginIDReport.text(filePath: filePath, details: details), forType: .string)
+            return false
+        default:
+            return false
+        }
+    }
+
     // MARK: - Ask (a choice from a list)
 
     /// A choice among several titles. Returns the chosen index, or `nil` if cancelled.

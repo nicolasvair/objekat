@@ -260,8 +260,12 @@ extension EditViewModel {
         case .repair: return true
         case .keep:   return false
         case .ask:
-            // The question itself comes with the alert; until then an `.ask` opens the file as it is.
-            return false
+            let details = PluginIDUniqueness.duplicateDetails(items: doc.items, stems: doc.stems ?? [],
+                                                              fxLinks: doc.fxLinks ?? [])
+            guard !details.isEmpty else { return false }
+            return askPluginIDRepair(details: details,
+                                     projectName: EditViewModel.projectDisplayName(for: url),
+                                     filePath: url.path)
         }
     }
 
