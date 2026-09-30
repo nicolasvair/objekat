@@ -791,8 +791,57 @@ with ObjekatClient(SOCK) as c:
     step("object.remove buses", lambda: c.send("object.remove", {"ids": [id1, id2]}))
     c.send("selection.clear")
 
+    # --- paste of N lanes onto a lane INSIDE an open group: the WHOLE batch lands in the group
+    #     The target is the row the batch's first lane lands on. A clipboard of three lanes set down
+    #     on a group's first sub-lane used to leave lane 1 (and the group's spare row) inside and
+    #     spill the third lane onto the parent's rows; every lane now becomes a child, the group's
+    #     lane span growing by itself, in ONE undo step. Fixture at high lanes so nothing else moves.
+    pn_before = {o["id"] for o in c.send("object.list")["objects"]}
+    def pn_add(lane, start):
+        return c.send("object.add", {"path": BIP, "lane": lane, "start": start})["id"]
+    pn_c1, pn_c2 = pn_add(400, 0.0), pn_add(400, 3 * D)
+    pn_g = c.send("group.create", {"ids": [pn_c1, pn_c2]})["id"]
+    c.send("group.expand", {"id": pn_g, "expanded": True})
+    pn_src = [pn_add(410 + k, 0.0) for k in range(3)]
+    def pn_children():
+        return [o for o in c.send("object.list")["objects"] if o["parent"] == pn_g]
+    def pn_top():
+        return {o["id"] for o in c.send("object.list")["objects"] if o["parent"] is None}
+    pn_top0 = pn_top()
+    check("paste fixture: a group of two children on sub-lane 0",
+          sorted(o["lane"] for o in pn_children()) == [0, 0], str(pn_children()))
+    c.send("selection.set", {"ids": pn_src})
+    step("clipboard.copy 3 lanes", lambda: c.send("clipboard.copy"))
+    pn_first = c.send("object.get", {"id": pn_c1})["display_lane"]
+    step("caret.set on the group's first sub-lane",
+         lambda: c.send("caret.set", {"lane": pn_first, "time": 1.5 * D}))
+    step("clipboard.paste 3 lanes into a group", lambda: c.send("clipboard.paste"))
+    kids = pn_children()
+    check("all three lanes landed INSIDE the group (2 + 3 children)", len(kids) == 5, str(kids))
+    check("...on consecutive sub-lanes 0, 1, 2 from the target down",
+          sorted({o["lane"] for o in kids}) == [0, 1, 2], str(sorted(o["lane"] for o in kids)))
+    check("...nothing spilled onto the top level", pn_top() == pn_top0, str(pn_top() - pn_top0))
+    check("...the group's existing children stayed on sub-lane 0",
+          all(c.send("object.get", {"id": i})["lane"] == 0 for i in (pn_c1, pn_c2)))
+    step("edit.undo the paste", lambda: c.send("edit.undo"))
+    check("ONE undo takes the whole batch away", len(pn_children()) == 2 and pn_top() == pn_top0,
+          str(pn_children()))
+    # A single lane onto the same sub-lane is unchanged: one child, on the target sub-lane.
+    c.send("selection.set", {"ids": [pn_src[0]]})
+    c.send("clipboard.copy")
+    c.send("caret.set", {"lane": pn_first, "time": 1.5 * D})
+    c.send("clipboard.paste")
+    check("a single lane still lands in the group on the target sub-lane",
+          len(pn_children()) == 3 and sorted(o["lane"] for o in pn_children()) == [0, 0, 0],
+          str(pn_children()))
+    c.send("selection.clear")
+    # Top-level only: removing the group takes its children with it.
+    pn_gone = [i for i in pn_top() if i not in pn_before]
+    step("object.remove paste fixtures",
+         lambda: c.send("object.remove", {"ids": pn_gone}))
+
     # --- stems
-    s = step("stem.add",      lambda: c.send("stem.add", {"name": "Voice", "format": "mono"}))
+    s = step("stem.add",     lambda: c.send("stem.add", {"name": "Voice", "format": "mono"}))
     sid = s["id"]
     step("stem.list",         lambda: c.send("stem.list"))
     step("stem.assign",       lambda: c.send("stem.assign", {"stem": sid, "ids": [ida]}))

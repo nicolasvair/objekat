@@ -56,16 +56,8 @@ extension EditViewModel {
 
         for copy in result.clips {
             let targetDL = copy.lane
-            if let gEntry = snapshot
-                .filter({ e in
-                    guard e.item.showsChildrenInline else { return false }
-                    return targetDL >= e.displayLane + 1 && targetDL <= e.displayLane + e.item.childLaneCount
-                })
-                .max(by: { $0.displayLane < $1.displayLane }) {
-                targets.append((copy, gEntry.item.id, targetDL - (gEntry.displayLane + 1)))
-            } else {
-                targets.append((copy, nil, baseLaneForDisplay(targetDL)))
-            }
+            let spot = pastePlacement(targetDL: targetDL, anchorDL: pasteLane, snapshot: snapshot)
+            targets.append((copy, spot.groupID, spot.lane))
             maxAbsEnd = max(maxAbsEnd, copy.startTime + copy.duration)
         }
 

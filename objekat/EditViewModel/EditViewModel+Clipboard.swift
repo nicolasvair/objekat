@@ -55,6 +55,38 @@ extension EditViewModel {
         return b
     }
 
+    /// Where ONE pasted item lands: the group that receives it (nil = top level) and its lane in
+    /// that container's own frame. Shared by `paste()` and `pasteCrossProjectPlan`, so the two
+    /// paths cannot disagree on the rule.
+    ///
+    /// The rule: the paste TARGET is the lane the batch's first row lands on (`anchorDL`). When it
+    /// falls inside an open group, the WHOLE batch goes into that group — a clipboard of N lanes
+    /// dropped on a group's last sub-lane used to leave lane 1 inside and spill lanes 2…N onto the
+    /// parent's rows (or onto the next group's header). Rows past the group's current span are
+    /// legitimate sub-lanes: `childLaneCount` derives from the children, so the span grows by
+    /// itself. An item whose own row falls inside a group NESTED in the target one still goes into
+    /// that innermost group, as it always did. With no group under the anchor, nothing changes.
+    func pastePlacement(targetDL: Int, anchorDL: Int,
+                        snapshot: [LaneEntry]) -> (groupID: UUID?, lane: Int) {
+        func innermost(_ dl: Int) -> LaneEntry? {
+            snapshot
+                .filter { e in
+                    guard e.item.showsChildrenInline else { return false }
+                    return dl >= e.displayLane + 1 && dl <= e.displayLane + e.item.childLaneCount
+                }
+                .max(by: { $0.displayLane < $1.displayLane })
+        }
+        let own = innermost(targetDL)
+        guard let anchorGroup = innermost(anchorDL) else {
+            if let g = own { return (g.item.id, targetDL - (g.displayLane + 1)) }
+            return (nil, baseLaneForDisplay(targetDL))
+        }
+        if let g = own, isSelfOrDescendant(g.item.id, of: anchorGroup.item.id) {
+            return (g.item.id, targetDL - (g.displayLane + 1))
+        }
+        return (anchorGroup.item.id, max(0, targetDL - (anchorGroup.displayLane + 1)))
+    }
+
     /// Places a clip (absolute startTime, lane = a display lane) according to `snapshot`'s state.
     /// - If the display lane falls inside the child range of an expanded group → addChild.
     /// - Otherwise → add top-level with the corresponding base lane.
@@ -269,16 +301,9 @@ extension EditViewModel {
             let copy        = makeCopy(src, startTime: newAbsStart, lane: targetDL, idMap: &idMap)
             maxAbsEnd       = max(maxAbsEnd, newAbsStart + src.duration)
 
-            if let gEntry = snapshot
-                .filter({ e in
-                    guard e.item.showsChildrenInline else { return false }
-                    return targetDL >= e.displayLane + 1 && targetDL <= e.displayLane + e.item.childLaneCount
-                })
-                .max(by: { $0.displayLane < $1.displayLane }) {
-                targets.append((copy, gEntry.item.id, targetDL - (gEntry.displayLane + 1)))
-            } else {
-                targets.append((copy, nil, baseLaneForDisplay(targetDL)))
-            }
+            let spot = pastePlacement(targetDL: targetDL, anchorDL: cb.originLane + laneShift,
+                                      snapshot: snapshot)
+            targets.append((copy, spot.groupID, spot.lane))
         }
 
         var allPasted: [SoundObject] = []
