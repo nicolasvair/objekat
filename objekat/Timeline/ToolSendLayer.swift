@@ -21,11 +21,18 @@ struct ToolSendLayer: View {
     /// there). The SAME value the hit-testing offsets by (@see sendRowHit): two readings of one
     /// geometry, so a knob one can see is a knob one can turn.
     var leadingInset: Double = 0
+    /// The block's VISIBLE portion, local to the block (@see visibleSpan, LiveVisibleSpan): the
+    /// columns set off from its left edge so they stay reachable when the block's own edge is
+    /// scrolled away. nil = the whole block. The SAME input the hit-testing reads.
+    var visibleX: Double = 0
+    var visibleWidth: Double? = nil
 
-    /// What is left of the block once the shared span is taken off it. The columns are laid out
-    /// in there, so a heavily crossfaded edge makes them thinner rather than pushing them out.
-    private var usableWidth: Double { max(0, blockWidth - leadingInset) }
-    private var colW: Double { sendColWidth(blockWidth: usableWidth, count: rows.count) }
+    /// Where the columns lie: one definition, shared with the hit-testing (@see sendColumnsLayout).
+    private var layout: (origin: Double, width: Double) {
+        sendColumnsLayout(blockWidth: blockWidth, leadingInset: leadingInset, count: rows.count,
+                          visibleX: visibleX, visibleWidth: visibleWidth)
+    }
+    private var colW: Double { sendColWidth(blockWidth: layout.width, count: rows.count) }
 
     var body: some View {
         Color.clear
@@ -39,7 +46,7 @@ struct ToolSendLayer: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.leading, leadingInset)
+                    .padding(.leading, layout.origin)
                     .allowsHitTesting(false)
                 }
             }

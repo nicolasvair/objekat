@@ -1953,6 +1953,15 @@ extension TimelineView {
         return crossfadeSharedPx(for: obj).leading
     }
 
+    /// The block's visible portion, LOCAL to its left edge, read from the EXACT scroll — what the
+    /// send columns set off from (@see sendColumnsLayout). The display reads the same span through
+    /// `LiveVisibleSpan`.
+    func sendVisibleSpan(blockX: Double, blockWidth: Double) -> (x: Double, width: Double) {
+        let s = visibleSpan(blockX: blockX, blockWidth: blockWidth,
+                            scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
+        return (s.x - blockX, s.width)
+    }
+
     /// The knob column (aux) under a point: it resolves the clip then the column by its width.
     /// The columns start AFTER the crossfade holding the left edge, so the shared span belongs to
     /// neither object's knobs — and the object whose columns are really aimed at is the one that
@@ -1960,10 +1969,12 @@ extension TimelineView {
     func sendRowHit(at p: CGPoint) -> (clipID: UUID, auxID: UUID, bx: Double, by: Double, bw: Double)? {
         for hit in sendClipHits(at: p) {
             let rows = viewModel.sendRows(for: hit.id)
+            let span = sendVisibleSpan(blockX: hit.bx, blockWidth: hit.bw)
             guard !rows.isEmpty,
                   let idx = sendColumnIndex(localX: p.x - hit.bx, blockWidth: hit.bw,
                                             leadingInset: sendLeadingInset(for: hit.id),
-                                            count: rows.count)
+                                            count: rows.count,
+                                            visibleX: span.x, visibleWidth: span.width)
             else { continue }
             return (hit.id, rows[idx].auxID, hit.bx, hit.by, hit.bw)
         }
