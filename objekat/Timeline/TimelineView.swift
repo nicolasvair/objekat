@@ -409,7 +409,6 @@ struct TimelineView: View {
             loopRegion: viewModel.loopRegion,
             loopModeEnabled: viewModel.loopModeEnabled,
             onLoopRegionChanged: { viewModel.loopRegion = $0 },
-            timeSelectionRange: viewModel.timeSelection?.timeRange,
             tempo: viewModel.tempo,
             timeSigNumerator: viewModel.timeSigNumerator,
             timeSigDenominator: viewModel.timeSigDenominator,

@@ -268,11 +268,8 @@ struct TimeSelection: Equatable {
     var timeRange: ClosedRange<Double>
     var lanes: Set<Int>
 
-    /// The selection's fill, read by the timeline's overlay AND by the ruler's strip so that the
-    /// two cannot drift apart.
+    /// The selection's fill, read by the timeline's overlay (and the ruler header's band).
     static let overlayColor: Color = Color.cyan.opacity(0.18)
-    /// The 1 px lines marking the bounds in the ruler: the same hue, more opaque, so the edges read exactly.
-    static let edgeColor: Color = Color.cyan.opacity(0.85)
 }
 
 extension Comparable {
