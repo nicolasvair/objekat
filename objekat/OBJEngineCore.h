@@ -462,6 +462,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Diagnostic : compteurs de pushes, baselines (taille du chunk), gestes ouverts, instances en
 // attente, modèles instables, état du minuteur.
 - (NSDictionary * _Nonnull)linkStateDebugInfo;
+// How many times a compile refused to reuse / move a plugin key that another host's chain still
+// holds (a duplicated plugin id the load repair did not catch) since launch. 0 in a sound project.
+- (NSInteger)foreignPluginKeyRefusals;
 // Un tick de la synchro d'état sur UNE instance, à la demande (API de debug) — les clés des
 // instances écrasées. `force` NO exige la stabilité, comme le minuteur ; OUI pousse tel quel.
 - (NSArray<NSString *> * _Nonnull)debugLinkStateTick:(NSString * _Nonnull)pluginKey force:(BOOL)force;
