@@ -10,11 +10,16 @@ struct ExportSettings: Equatable {
     /// export panel edits in place: setting the export MOVES the markers, and that is intended.
     enum TimeRangeMode: String, CaseIterable, Identifiable {
         case wholeProject, inOut
+        /// One file per ticked REGION of the marker band, each rendered over its own span. The
+        /// panel asks for a destination FOLDER, and the files are named after the regions.
+        /// @see EditViewModel+ExportRegions
+        case regions
         var id: String { rawValue }
         var label: String {
             switch self {
             case .wholeProject: return L("export.range.wholeProject")
             case .inOut:        return L("export.range.inOut")
+            case .regions:      return L("export.range.regions")
             }
         }
     }
@@ -68,6 +73,9 @@ struct ExportSettings: Equatable {
     /// export a range WITHOUT moving the user's markers: a script has no business leaving traces
     /// in the project to render a file. @see EditViewModel.exportTimeRange
     var explicitRange: ClosedRange<Double>? = nil
+    /// `regions` scope only: the regions to render, imposed — the API's way, which must not touch
+    /// the ticks the panel keeps. nil = the panel's own selection. @see EditViewModel+ExportRegions
+    var regionIDs: [UUID]? = nil
 
     /// The final file, extension included.
     var destinationURL: URL {
@@ -135,6 +143,9 @@ struct ExportJob: Equatable {
     /// The span being rendered, frozen at the launch for the same reason: the panel reopened from
     /// another tab must not read that tab's IN/OUT markers to describe this render.
     var renderedRange: ClosedRange<Double> = 0...0
+    /// Set when the LAST region of a regions batch has ended: the sentence that sums the batch up,
+    /// which then replaces the last file's path as the result line. @see ExportBatch
+    var batchResult: String? = nil
 
     var isRunning: Bool { phase == .preparing || phase == .rendering || phase == .encoding }
 
@@ -155,6 +166,7 @@ struct ExportJob: Equatable {
     /// failure. ONE definition — the panel keeps a direct render under its own eye and the strip
     /// takes over the rest, so the same sentence is written in two places or in none.
     var resultDetail: String {
+        if let batchResult { return batchResult }
         if case .failed(let message) = phase { return message }
         return destination.path.replacingOccurrences(
             of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")

@@ -31,7 +31,18 @@ extension CommandRegistry {
                                     "Dither noise on render (default true). WAV only."),
                           ParamSpec("range", "string", required: false,
                                     "project (default) = all the content; inout = the range between "
-                                    + "the project's IN/OUT markers."),
+                                    + "the project's IN/OUT markers; regions = one file PER REGION "
+                                    + "of the marker band, named after it, in `folder`."),
+                          ParamSpec("scope", "string", required: false,
+                                    "An alias of `range` (same values). Giving both with different "
+                                    + "values is refused."),
+                          ParamSpec("regions", "uuid[]", required: false,
+                                    "regions scope only: the regions to render, by marker id. Absent = "
+                                    + "the ones currently ticked (`export.regions`, `export.set_regions`). "
+                                    + "Given, they are used as they are and the ticks are left alone."),
+                          ParamSpec("folder", "string", required: false,
+                                    "regions scope only: the destination FOLDER (must exist). Default: "
+                                    + "the project folder. `path` is refused in this scope."),
                           ParamSpec("start", "number|string", required: false,
                                     "Start. A number = seconds; a string = 'm:ss,cc' (1:30,5) or "
                                     + "'bar:beat:tick' (3:1:0), like the panel's own "
@@ -51,7 +62,7 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             _ = try CommandContext.shared.requireEngine()
 
-            guard vm.exportJob?.isRunning != true else {
+            guard vm.exportJob?.isRunning != true, vm.exportBatch?.isActive != true else {
                 throw CommandError(code: .invalid_state, message: "an export is already running")
             }
 
@@ -73,9 +84,89 @@ extension CommandRegistry {
             settings.dithering = try p.optionalBool("dithering") ?? true
             settings.renderInBackground = try p.optionalBool("background") ?? false
 
+            // The span scope. `scope` is the name the regions feature introduced; `range` is the
+            // historical one. Both name the same thing.
+            let scopeParam = try p.optionalString("scope")?.lowercased()
+            let rangeParam = try p.optionalString("range")?.lowercased()
+            if let a = scopeParam, let b = rangeParam, a != b {
+                throw CommandError(code: .bad_params,
+                                   message: "'scope' and 'range' name the same thing and disagree")
+            }
+            let scope = scopeParam ?? rangeParam ?? "project"
+
             // The range: both bounds or neither. Giving only one would leave the other to be
             // guessed, and a command does not guess.
             let hasStart = p.raw["start"] != nil, hasEnd = p.raw["end"] != nil
+
+            // REGIONS: a batch of renders, one per region, into a FOLDER. It has nothing to do with
+            // a single span or a single file name, so those are refused rather than ignored.
+            if scope == "regions" {
+                if hasStart || hasEnd {
+                    throw CommandError(code: .bad_params,
+                                       message: "'start'/'end' do not apply to the regions scope "
+                                              + "(each region brings its own span)")
+                }
+                if p.raw["path"] != nil {
+                    throw CommandError(code: .bad_params,
+                                       message: "the regions scope writes into a folder: use 'folder', "
+                                              + "not 'path'")
+                }
+                settings.rangeMode = .regions
+                if p.raw["regions"] != nil {
+                    let ids = try p.uuids("regions")
+                    let known = Set(vm.exportRegions.map(\.id))
+                    if let bad = ids.first(where: { !known.contains($0) }) {
+                        throw CommandError(code: .not_found,
+                                           message: "unknown region: \(bad.uuidString) "
+                                                  + "(see export.regions)")
+                    }
+                    settings.regionIDs = ids
+                }
+                if let raw = try p.optionalString("folder") {
+                    settings.folder = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath,
+                                          isDirectory: true)
+                } else {
+                    guard let folder = vm.projectFolder else {
+                        throw CommandError(code: .invalid_state,
+                                           message: "project not saved: give 'folder'")
+                    }
+                    settings.folder = folder
+                }
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: settings.folder.path, isDirectory: &isDir),
+                      isDir.boolValue else {
+                    throw CommandError(code: .invalid_state,
+                                       message: "folder not found: \(settings.folder.path)")
+                }
+                let targets = vm.exportRegionTargets(ids: settings.regionIDs)
+                guard !targets.isEmpty else {
+                    throw CommandError(code: .invalid_state,
+                                       message: "no region selected (see export.regions / "
+                                              + "export.set_regions)")
+                }
+
+                let jobID = JobRegistry.shared.begin(command: "export.run")
+                vm.runExport(settings, persistingPreferences: false)
+                // Refused before any work (unwritable folder, an overwrite turned down by the
+                // dialogue policy), or every region refused: no batch under way.
+                guard vm.exportBatch?.isActive == true else {
+                    JobRegistry.shared.finish(jobID, result: .object(["started": .bool(false)]))
+                    throw CommandError(code: .engine_error,
+                                       message: "export refused — see `app.dialogs` for the reason")
+                }
+                CommandAdapters.followExport(jobID, in: vm, destination: settings.folder)
+                return .object([
+                    "job_id": .string(jobID),
+                    "destination": .string(settings.folder.path),
+                    "regions": .array(targets.map { t in
+                        .object(["id": .string(t.id.uuidString),
+                                 "name": .string(t.regionName),
+                                 "file": .string(t.fileBase + "." + settings.format.fileExtension),
+                                 "start": .number(t.start), "end": .number(t.end)])
+                    }),
+                ])
+            }
+
             if hasStart != hasEnd {
                 throw CommandError(code: .bad_params,
                                    message: "'start' and 'end' come as a pair")
@@ -96,7 +187,7 @@ extension CommandRegistry {
                     vm.setExportInPoint(start)
                 }
             } else {
-                switch try p.string("range", or: "project").lowercased() {
+                switch scope {
                 case "project":
                     settings.rangeMode = .wholeProject
                     guard vm.projectContentEnd > 0 else {
@@ -112,7 +203,7 @@ extension CommandRegistry {
                     }
                 default:
                     throw CommandError(code: .bad_params,
-                                       message: "'range' expected: project or inout")
+                                       message: "'range' expected: project, inout or regions")
                 }
             }
 
@@ -179,7 +270,11 @@ extension CommandRegistry {
                         + "`momentary` / `short_term` (the latest windows, LUFS), "
                         + "`momentary_max` / `short_term_max`, and `blocks` (the number of 100 ms "
                         + "sub-blocks measured). A value that does not exist yet, or is "
-                        + "silence (-infinity), is null.") { _ in
+                        + "silence (-infinity), is null. A regions export adds `batch`: "
+                        + "`total`, `current` (1-based, the region under way), `name`, `file`, "
+                        + "`progress` (0…1 over the whole batch) and `results` (per region: id, name, "
+                        + "file, status pending|running|done|failed|cancelled, error). The top-level "
+                        + "`progress`/`phase` stay those of the region under way.") { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let job = vm.exportJob else {
                 return .object(["running": .bool(false),
@@ -190,6 +285,10 @@ extension CommandRegistry {
                 return CommandAdapters.exportPayload(job)
             }
             payload["panel_open"] = .bool(vm.exportPanelPresented)
+            // A regions export: which region of how many, and what became of each.
+            if let batch = vm.exportBatch {
+                payload["batch"] = CommandAdapters.exportBatchPayload(batch, currentProgress: job.progress)
+            }
             // Read from the ENGINE now, not from what the panel's timer last cached.
             vm.readExportLoudness()
             payload["loudness"] = CommandAdapters.loudnessPayload(vm.exportLoudness)
@@ -272,11 +371,100 @@ extension CommandRegistry {
             ])
         }
 
+        // MARK: Regions scope — the picker's two doors
+
+        register("export.regions",
+                 summary: "The regions the `regions` export scope works on: every region of the "
+                        + "marker band (hidden rows included, flagged `lane_visible`; marks carried by "
+                        + "objects are not regions), in start-time order, with whether it is ticked "
+                        + "and the file it would write. `file_name` (with its extension) is null for "
+                        + "an unticked region; names are made unique among the TICKED ones only. "
+                        + "`warnings` may hold empty_name, duplicate_name, file_exists. Read-only.",
+                 params: [ParamSpec("format", "string", required: false,
+                                    "mp3 (default) or wav — decides the extension of `file_name`."),
+                          ParamSpec("folder", "string", required: false,
+                                    "The destination folder `file_exists` is checked against. Default: "
+                                    + "the project folder; without one, file_exists is never reported.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            var settings = ExportSettings()
+            settings.format = try CommandAdapters.exportFormat(p)
+            let folder: URL? = try p.optionalString("folder").map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+            } ?? vm.projectFolder
+            if let folder { settings.folder = folder }
+
+            let names = vm.exportRegionFileNames
+            let warnings: [UUID: [ExportRegionWarning]] = folder == nil
+                ? [:] : vm.exportRegionWarnings(names: names, settings: settings)
+            let entries = vm.exportRegions
+            return .object([
+                "count": .int(entries.count),
+                "selected_count": .int(entries.filter { vm.isExportRegionSelected($0.id) }.count),
+                "folder": .stringOrNull(folder?.path),
+                "regions": .array(entries.map { e -> JSONValue in
+                    let selected = vm.isExportRegionSelected(e.id)
+                    var o: [String: JSONValue] = [
+                        "id": .string(e.id.uuidString),
+                        "lane": .string(e.laneID.uuidString),
+                        "lane_name": .string(e.laneName),
+                        "lane_visible": .bool(e.laneVisible),
+                        "name": .string(e.name),
+                        "start": .number(e.start),
+                        "end": .number(e.end),
+                        "duration": .number(e.duration),
+                        "number": .int(e.number),
+                        "selected": .bool(selected),
+                        "file_name": .null,
+                        "warnings": .array((warnings[e.id] ?? []).map { .string($0.rawValue) }),
+                    ]
+                    if selected, let a = names[e.id] {
+                        o["file_name"] = .string(a.base + "." + settings.format.fileExtension)
+                    }
+                    return .object(o)
+                }),
+            ])
+        }
+
+        register("export.set_regions",
+                 summary: "Ticks or unticks regions for the `regions` export scope — what the picker's "
+                        + "checkboxes and its Select all / Select none / Invert buttons do. The ticks "
+                        + "live in the session (memory), not in the project file. `action`: select, "
+                        + "deselect (both take `regions`), only (ticks exactly `regions`), all, none, "
+                        + "invert. Answers with the ticked ids.",
+                 params: [ParamSpec("action", "string", "select | deselect | only | all | none | invert."),
+                          ParamSpec("regions", "uuid[]", required: false,
+                                    "The regions concerned (select, deselect, only).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let action = try p.string("action").lowercased()
+            switch action {
+            case "all":    vm.selectAllExportRegions()
+            case "none":   vm.selectNoExportRegions()
+            case "invert": vm.invertExportRegions()
+            case "select", "deselect", "only":
+                let ids = try p.uuids("regions")
+                let known = Set(vm.exportRegions.map(\.id))
+                if let bad = ids.first(where: { !known.contains($0) }) {
+                    throw CommandError(code: .not_found, message: "unknown region: \(bad.uuidString)")
+                }
+                if action == "only" { vm.selectNoExportRegions() }
+                for id in ids { vm.setExportRegion(id, selected: action != "deselect") }
+            default:
+                throw CommandError(code: .bad_params,
+                                   message: "'action' expected: select, deselect, only, all, none or invert")
+            }
+            let ticked = vm.selectedExportRegions
+            return .object(["selected_count": .int(ticked.count),
+                            "selected": .array(ticked.map { .string($0.id.uuidString) })])
+        }
+
         register("export.cancel",
-                 summary: "Cancels the running export (the engine stops at the next block).",
+                 summary: "Cancels the running export (the engine stops at the next block). A regions "
+                        + "export stops cleanly: the region under way is interrupted, the following "
+                        + "ones are never started (status `cancelled`), those already written stay.",
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            guard vm.exportJob?.isRunning == true else {
+            guard vm.exportJob?.isRunning == true || vm.exportBatch?.isActive == true else {
                 throw CommandError(code: .invalid_state, message: "no export running")
             }
             vm.cancelExport()

@@ -2019,6 +2019,45 @@ What has landed since mid-August, in order:
   sub-groups' windows. Known and left: model labels ("not installed") are computed with the
   INTERFACE language, not the remembered spoken one.
 
+- **Export, `regions` scope: one file per region** (30 September 2026, ON THE BRANCH
+  `feature/export-regions`, NOT on `main`; **written on a Linux machine: nothing compiled, nothing
+  run, nothing seen** — only `xcstrings.py check`/`orphans` (528 keys) and `py_compile` on the
+  scenario; the code was read as a compiler would). The span selector gets a third value beside
+  whole project / IN–OUT: the window lists every region of the marker band (hidden rows included and
+  flagged; object-carried marks and plain markers are not regions here), each with a checkbox, its
+  file name, its span in the export's time unit and its duration, and the export renders the MASTER
+  over each ticked region into `<folder>/<region name>.<ext>`. The design choice worth keeping: **a
+  batch is not a second export machinery** — each region is an ordinary `runExport` with an imposed
+  `explicitRange` (the API's own way of saying "this range, leave the IN/OUT alone"); the batch only
+  sits above (`ExportBatch`, `EditViewModel+ExportRegions`), chaining the next region from the two
+  places where a render ends (`placeExportResult`, `finishExportWithFailure` → `exportBatchRegionDidEnd`).
+  So progress, waveform, listening, cancel and the MP3 path are unchanged. Three traps: the next
+  region is launched ASYNCHRONOUSLY (`DispatchQueue.main.async`) — started from inside the ending
+  render's callback, the new `.preparing` job would be mistaken by `runExport`'s own tail for the job
+  it just launched and flipped to `.rendering`, and the next launch's guard would then never fire;
+  the batch counts as running BETWEEN two regions (`exportBatch.isActive`: `followExport`,
+  `export.cancel`, `Quiescence`, `openExportPanel`) or a poller sees a finished job in the gap;
+  and the batch PINS the active document for its whole length even for a render on a copy
+  (`exportPinsActiveDocument`, `tabSwitchBlocker`) — every region clones the live Edit afresh.
+  The ticks are the set of UNTICKED regions (`exportRegionsDeselected`, transient, emptied by
+  `resetTransientSessionState`): all ticked the first time, a later region ticked by default, no
+  session-format change. File names are pure (`Export/RegionExportNaming.swift`,
+  `tools/test_region_export_naming.swift`): sanitised (no `/ : \`, control chars or leading dot, 100
+  characters / 200 bytes), empty → `Region <n>` (n = place among ALL regions), collisions ` (2)` in
+  start order, compared case- and Unicode-form-insensitively, resolved among the TICKED regions only.
+  The overwrite question is asked once for the batch. A failure does not stop the others; one modal
+  at the end names them; Cancel interrupts the region under way and never starts the rest.
+  New commands `export.regions`, `export.set_regions`; `export.run` takes `scope`/`range: "regions"`,
+  `folder`, `regions`; `export.status` and the `job.wait` result gain `batch`. Documented in
+  `command_api.md` ("The `regions` scope"). 24 new i18n keys (`export.regions.*`,
+  `export.range.regions`, `export.error.noRegions.*`).
+  **Not compiled, not run**: the Swift (a Debug build against the 1550-warning baseline is the first
+  thing to do), `tools/test_region_export_naming.swift`, `tools/scenario_export_regions.py` (headless,
+  `--language=en`: the fallback name is localised). **Not seen, not heard**: the whole picker — the lit /
+  dimmed rows, the summary line, the warning triangles, the 210 pt scroll area in a 460 pt sheet, the
+  three-segment selector, the per-row outcome icons, the batch line in the panel and the strip, the
+  grey-out while a batch runs — in three languages.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -48,7 +48,7 @@ extension EditViewModel {
     }
 
     func openExportPanel() {
-        if exportJob?.isRunning == true {
+        if exportJob?.isRunning == true || exportBatch?.isActive == true {
             exportAlert(L("export.error.alreadyRunning.title"), L("export.error.alreadyRunning.info"))
             return
         }
@@ -122,7 +122,7 @@ extension EditViewModel {
                               name: name)
     }
 
-    private func persistExportPreferences(_ s: ExportSettings) {
+    func persistExportPreferences(_ s: ExportSettings) {
         let d = UserDefaults.standard
         d.set(s.format.rawValue, forKey: Self.exportFormatKey)
         d.set(s.sampleRate, forKey: Self.exportSampleRateKey)
@@ -154,6 +154,10 @@ extension EditViewModel {
         case .inOut:
             guard let r = loopRegion, r.upperBound > r.lowerBound else { return nil }
             return r
+        case .regions:
+            // No single span: a regions export is a batch of renders, each over its own region's
+            // (@see runRegionsExport). Only an imposed span — one region of the batch — lands here.
+            return nil
         }
     }
 
@@ -215,9 +219,18 @@ extension EditViewModel {
     ///   remembers. False for an export driven by the API: a script rendering a check MP3
     ///   has no business changing what the window will offer next. The API already READS no
     ///   preference; it would be inconsistent for it to WRITE one.
-    func runExport(_ settings: ExportSettings, persistingPreferences: Bool = true) {
+    ///   - confirmedOverwrite: the overwrite question has already been asked — a regions batch asks
+    ///     ONCE for all its files, not once per region.
+    func runExport(_ settings: ExportSettings, persistingPreferences: Bool = true,
+                   confirmedOverwrite: Bool = false) {
         guard let engine else { return }
         guard exportJob?.isRunning != true else { return }
+        // The regions scope is a batch of renders, not one: it has its own launcher, which comes
+        // back here once per region with an imposed span (and so not through this branch).
+        if settings.rangeMode == .regions && settings.explicitRange == nil {
+            runRegionsExport(settings, persistingPreferences: persistingPreferences)
+            return
+        }
         guard let range = exportTimeRange(for: settings) else {
             exportAlert(L("export.error.emptyRange.title"),
                         settings.rangeMode == .inOut
@@ -235,7 +248,7 @@ extension EditViewModel {
         }
 
         let destination = settings.destinationURL
-        if fm.fileExists(atPath: destination.path), !confirmOverwrite(destination) { return }
+        if !confirmedOverwrite, fm.fileExists(atPath: destination.path), !confirmOverwrite(destination) { return }
 
         // Working files in the destination folder: the same volume, so the final
         // putting in place is a simple (atomic) rename, with no copying.
@@ -322,6 +335,9 @@ extension EditViewModel {
     /// Cancels the export under way: the engine stops at the next block, the MP3 encoder at the next
     /// packet. The cleaning up is done in the common failure path.
     func cancelExport() {
+        // A regions batch stops cleanly: the region under way is interrupted and the ones after it
+        // are never started. The flag is also read when a region ends BEFORE its render began.
+        if exportBatch?.isActive == true { exportBatch?.cancelRequested = true }
         exportCancelFlag?.cancel()
         engine?.cancelExport()
     }
@@ -393,6 +409,7 @@ extension EditViewModel {
         exportAudition.probe(source: destination, force: true)
         exportCancelFlag = nil
         scheduleExportStatusClear(after: 20)
+        exportBatchRegionDidEnd(failure: nil, cancelled: false)
     }
 
     private func finishExportWithFailure(_ message: String) {
@@ -403,22 +420,31 @@ extension EditViewModel {
         exportJob?.phase = .failed(wasCancelled ? L("export.error.cancelledShort") : message)
         exportJob?.progress = 0
         scheduleExportStatusClear(after: wasCancelled ? 4 : 12)
+        // A regions batch reports its failures ONCE, at the end, with the region named: one modal
+        // per region would stack up, and the batch goes on with the next one.
+        if exportBatch?.isActive == true {
+            exportBatchRegionDidEnd(failure: wasCancelled ? L("export.error.cancelledShort") : message,
+                                    cancelled: wasCancelled)
+            return
+        }
         // A cancellation is the user's decision: the banner is enough, no modal.
         if !wasCancelled { exportAlert(L("export.phase.failed"), message) }
     }
 
     /// Clears the banner afterwards (it stays a while so the result can be read and the
     /// file revealed).
-    private func scheduleExportStatusClear(after seconds: Double) {
+    func scheduleExportStatusClear(after seconds: Double) {
         exportStatusClearWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.exportJob?.isRunning != true else { return }
+            guard let self, self.exportJob?.isRunning != true,
+                  self.exportBatch?.isActive != true else { return }
             // The panel is a place one STAYS: the result, its waveform and the file one is
             // listening to must not vanish from under the eyes after a delay. The strip is the
             // transient one — it is there that a few seconds is the right lifetime.
             guard !self.exportPanelPresented else { return }
             self.exportAudition.forget()
             self.exportJob = nil
+            self.exportBatch = nil
             self.exportPeaks = []
             self.exportLoudness.removeAll()
         }
@@ -428,16 +454,23 @@ extension EditViewModel {
 
     /// Closes the banner at once (the ✕ button after an export has finished or failed).
     func dismissExportStatus() {
-        guard exportJob?.isRunning != true else { return }
+        guard exportJob?.isRunning != true, exportBatch?.isActive != true else { return }
         exportStatusClearWork?.cancel()
         exportStatusClearWork = nil
         exportAudition.forget()
         exportJob = nil
+        exportBatch = nil
         exportPeaks = []
         exportLoudness.removeAll()
     }
 
     func revealExportedFileInFinder() {
+        // A regions batch: select ALL the files it wrote, not just the last one.
+        if let written = exportBatch?.writtenURLs.filter({ FileManager.default.fileExists(atPath: $0.path) }),
+           !written.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(written)
+            return
+        }
         guard let url = exportJob?.destination,
               FileManager.default.fileExists(atPath: url.path) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])

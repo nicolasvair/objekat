@@ -605,6 +605,15 @@ final class EditViewModel {
     /// The export under way, or finished a short while ago (the progress banner shows it for a few
     /// seconds before it disappears). nil = nothing to show.
     var exportJob: ExportJob? = nil
+    /// The REGIONS export under way (one render per region), or finished a short while ago with its
+    /// per-region results. nil for every other scope. Cleared with `exportJob`.
+    /// @see EditViewModel+ExportRegions
+    var exportBatch: ExportBatch? = nil
+    /// The regions the export panel has UNTICKED. Stored as the exception and not as the selection:
+    /// a region laid after the panel was first opened is ticked by default (nobody has said no to
+    /// it), and "all selected the first time" needs no initialisation. Transient — it belongs to
+    /// the session in memory, not to the project file — and emptied whenever a project is loaded.
+    var exportRegionsDeselected: Set<UUID> = []
     /// The peaks of the render in progress, min/max interleaved, one pair per bucket already
     /// filled — so its LENGTH says how far the render has got. Read from the engine's tap by the
     /// same timer that reads the progress. @see OBJEngineCore `exportPeaks`, ExportWaveformView.

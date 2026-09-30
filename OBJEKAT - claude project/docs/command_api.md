@@ -588,7 +588,7 @@ That is end-of-process noise, with no effect on the result.
 | `aux.*` / `send.*` | create an auxiliary, lay and set sends |
 | `midi.*` | create a clip, list/add/delete/modify notes, transpose |
 | `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
-| `export.*` | render the mix into a file, follow the progress and the waveform as it grows, cancel |
+| `export.*` | render the mix into a file (or one file per region), follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
 | `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
@@ -1349,14 +1349,14 @@ concerns the first export — after that, the last format kept takes precedence.
 
 | window | command |
 |---|---|
-| Span: The whole project / IN–OUT | `range: "project"` (default) / `"inout"` |
+| Span: The whole project / IN–OUT / Regions | `range: "project"` (default) / `"inout"` / `"regions"` (`scope` is an alias) |
 | The IN and OUT fields | `start` / `end` |
 | The Time / BPM unit selector | the shape of `start` and `end` (see below) |
 | WAV / MP3 format | `format` |
 | Rate | `sample_rate` |
 | 16 / 24 bits | `bit_depth` (WAV) |
 | Dithering | `dithering` (WAV) |
-| Location + Name | `path` |
+| Location + Name | `path` (regions scope: the folder, `folder`) |
 | Render in the background | `background` |
 
 `start` and `end` accept the three notations of the window's fields, told apart by the number
@@ -1377,6 +1377,60 @@ the path.
 Format constraints, refused with a message that names the values allowed: MP3 knows
 only 44 100 and 48 000 Hz and its bitrate is fixed at 320 kbit/s (the window does not set it either);
 depth (16/24) and dithering exist in WAV only.
+
+#### The `regions` scope: one file per region
+
+The span selector has a third value beside *whole project* and *IN–OUT*: **Regions**. The window then
+lists every region of the project with a checkbox, and the export renders the **master** over each
+ticked region's own span — exactly the way the IN–OUT scope renders its range (same engine path, same
+format, rate, bit depth, dither and MP3 settings) — into **one file per region**, named after it, in
+the chosen **folder**. The "Location" row is the destination folder; there is no name field.
+
+**Which regions.** A region is a marker with a length (`duration > 0`) on a row of the marker band.
+Rows that are **hidden** count: hiding a row is a display choice, not a deletion — the picker flags
+them with a slashed eye (`lane_visible: false`). Plain markers (points) and the marks an object
+carries are not regions for this purpose. They are listed in **start-time order** (a total order: start,
+end, the row's place in the band, then the id), grouped by row in the window.
+
+**Which are ticked.** All of them the first time, and a region laid later is ticked too — the state is
+kept as the set of *unticked* regions. The ticks live in the session's memory only (not in the project
+file, no format bump), and are emptied whenever a project is loaded or a tab is switched to. The window
+makes it plain which files will be written: a ticked row is lit and shows its file name, an unticked row
+is dimmed and says "Not exported", one line counts them ("5 regions of 14 will be exported"), and
+*Select all* / *Select none* / *Invert* sit above the list. The list is read live, so a region renamed,
+added or removed while the window is open shows at once.
+
+**File names** (`objekat/Export/RegionExportNaming.swift`, asserted by `tools/test_region_export_naming.swift`).
+The region's name, with `/` `:` `\`, control characters and leading dots stripped, trimmed, and cut to
+100 characters and 200 bytes. An empty result falls back on `Region <n>` (localised; `n` is the region's
+place among ALL the project's regions, so it does not change when another one is ticked). Names that still
+collide take ` (2)`, ` (3)`… in start-time order; the comparison ignores case and Unicode form, because
+APFS does. Collisions are resolved among the **ticked** regions only — a file that will not be written
+cannot collide, so unticking the first "Verse" makes the second one "Verse". Warnings shown on a row (and
+returned as `warnings`): `empty_name`, `duplicate_name`, `file_exists` (a file of that name is already in
+the folder). The overwrite question is asked **once** for the whole batch (`dialog policy` applies as
+for any export), never once per region.
+
+**The batch.** Regions are rendered **one after the other** — never two at once, and the Edit is not
+modified during an export. Each region is an ordinary export job; the batch sits above them and pins the
+active document for its whole length (even a render on a copy: every region clones the live Edit afresh, so
+`tab.*`, `project.new` and `project.open` answer `invalid_state` until it is over). A region that fails does
+not stop the others: the batch goes on, then reports which ones failed. **Cancel** (`export.cancel`, the
+window's button) interrupts the region under way and never starts the following ones (`cancelled`); the files
+already written stay, and no working file or half-written region is left behind.
+
+| command | what it does |
+|---|---|
+| `export.regions {format?, folder?}` | Lists the regions: `id`, `lane`, `lane_name`, `lane_visible`, `name`, `start`, `end`, `duration`, `number`, `selected`, `file_name` (with extension; `null` if unticked) and `warnings`. `format` (default mp3) decides the extension, `folder` (default: the project folder) is what `file_exists` is checked against. Read-only. |
+| `export.set_regions {action, regions?}` | `action`: `select` / `deselect` (with `regions`), `only` (ticks exactly `regions`), `all`, `none`, `invert`. Answers `selected_count` and `selected`. `not_found` for an unknown id. |
+| `export.run {scope: "regions", folder?, regions?, …}` | Launches the batch. `regions` (marker ids) is used as given and **leaves the ticks alone**; absent, the ticked regions. `folder` must exist (default: the project folder). `path`, `start` and `end` are refused (`bad_params`): each region brings its own span and the files are named after the regions. `invalid_state` if nothing is ticked, `not_found` for an unknown id, `engine_error` if the launch is refused (an overwrite turned down by the dialogue policy). Answers `job_id`, `destination` (the folder) and `regions` (`id`, `name`, `file`, `start`, `end` — the files to come). `job.wait` resolves when the **whole batch** is over. |
+| `export.status` | Gains `batch` while a regions export exists (and until it is cleared): `active`, `total`, `current` (1-based, the region under way; `total` when over), `name`, `file`, `progress` (0…1 over the whole batch), `done` / `failed` / `cancelled`, `cancel_requested`, `folder`, and `results` (per region: `id`, `name`, `file`, `path`, `start`, `end`, `status` = pending / running / done / failed / cancelled, `error`). The top-level `phase` / `progress` / `destination` are those of the region under way; once the batch is over `phase` is `finished` if every region was written and `failed` (with `error` = the summary) if any failed or was cancelled. |
+
+The `job.wait` result of an `export.run` carries the same `batch` object. A script never opens a window
+here either: `export.run` keeps the export panel, it does not open one, and on an instance with no
+interface the picker is state only (`tools/scenario_export_regions.py` asserts no window on the pid).
+The scenario also re-reads the written files at 24 bits: each as long as its region, signal where the
+master has signal and silence where it has none.
 
 #### Where a render shows itself, and what it shows
 

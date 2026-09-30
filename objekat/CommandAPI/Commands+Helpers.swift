@@ -237,6 +237,50 @@ extension CommandAdapters {
         return .object(payload)
     }
 
+    /// A regions export, for `export.status` and the `job.wait` result: which region of how many is
+    /// under way, the progress over the whole batch, and what became of each region.
+    static func exportBatchPayload(_ batch: ExportBatch, currentProgress: Double) -> JSONValue {
+        let results: [JSONValue] = zip(batch.targets, batch.outcomes).map { t, o -> JSONValue in
+            var status = "pending"
+            var error: String? = nil
+            switch o {
+            case .pending:          status = "pending"
+            case .running:          status = "running"
+            case .done:             status = "done"
+            case .failed(let m):    status = "failed"; error = m
+            case .cancelled:        status = "cancelled"
+            }
+            let url = batch.url(for: t)
+            var r: [String: JSONValue] = [
+                "id": .string(t.id.uuidString),
+                "name": .string(t.regionName),
+                "file": .string(url.lastPathComponent),
+                "path": .string(url.path),
+                "start": .number(t.start),
+                "end": .number(t.end),
+                "status": .string(status),
+            ]
+            if let error { r["error"] = .string(error) }
+            return .object(r)
+        }
+        let cur = batch.currentTarget
+        return .object([
+            "active": .bool(batch.isActive),
+            "total": .int(batch.total),
+            // 1-based index of the region under way; `total` once the batch is over.
+            "current": .int(batch.isActive ? batch.current + 1 : batch.total),
+            "name": .stringOrNull(cur?.regionName),
+            "file": .stringOrNull(cur.map { batch.url(for: $0).lastPathComponent }),
+            "progress": .number(batch.overallProgress(currentRegion: currentProgress)),
+            "done": .int(batch.doneCount),
+            "failed": .int(batch.failedCount),
+            "cancelled": .int(batch.cancelledCount),
+            "cancel_requested": .bool(batch.cancelRequested),
+            "folder": .string(batch.settings.folder.path),
+            "results": .array(results),
+        ])
+    }
+
     /// The loudness measured so far. A value that does not exist yet (a window that has not filled)
     /// or is silence (−infinity) is `null`: JSON has no infinity, and "nothing yet" and "silence"
     /// deserve the same honest answer.
@@ -262,7 +306,8 @@ extension CommandAdapters {
     /// the file does not exist yet.
     static func followExport(_ jobID: String, in vm: EditViewModel, destination: URL) {
         Task { @MainActor in
-            while vm.exportJob?.isRunning == true {
+            // A regions batch counts as running between two of its regions too.
+            while vm.exportJob?.isRunning == true || vm.exportBatch?.isActive == true {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             guard let job = vm.exportJob else {
@@ -275,7 +320,12 @@ extension CommandAdapters {
                 ]))
                 return
             }
-            JobRegistry.shared.finish(jobID, result: exportPayload(job))
+            var result = exportPayload(job)
+            if let batch = vm.exportBatch, case .object(var o) = result {
+                o["batch"] = exportBatchPayload(batch, currentProgress: job.progress)
+                result = .object(o)
+            }
+            JobRegistry.shared.finish(jobID, result: result)
         }
     }
 }

@@ -45,6 +45,15 @@ struct ExportProgressBar: View {
                         .foregroundStyle(.secondary)
                         .fixedSize()
 
+                    // A regions export: which region of how many is being made.
+                    if let batchLabel = viewModel.exportBatchProgressLabel {
+                        Text(verbatim: batchLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
                     // A direct render: playback is suspended for the length of the export. Saying so here
                     // saves you looking for why the transport has stopped answering.
                     if job.isRunning && !job.settings.renderInBackground {

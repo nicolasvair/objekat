@@ -58,7 +58,7 @@ enum Quiescence {
             }
             // An export started FROM THE PANEL creates no job: without this test, `wait_idle` would
             // call itself idle while a render is writing a file.
-            if vm.exportJob?.isRunning == true {
+            if vm.exportJob?.isRunning == true || vm.exportBatch?.isActive == true {
                 reasons.append("export running")
             }
             if vm.isScanning {

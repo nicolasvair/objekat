@@ -47,7 +47,11 @@ extension EditViewModel {
         // can go and work in another tab meanwhile (the whole point of rendering in the background).
         // Only a DIRECT render (it reads the live Edit) and the clone being made (`.preparing`)
         // need the document in front to stay put. @see ExportJob.pinsActiveDocument
-        if exportJob?.pinsActiveDocument == true { return "tabs.switch.refused.export" }
+        if exportJob?.pinsActiveDocument == true || exportBatch?.isActive == true {
+            // A regions batch pins the document for its whole length, a render on a copy included:
+            // every region clones the live Edit afresh. @see EditViewModel+ExportRegions
+            return "tabs.switch.refused.export"
+        }
         if !bakingIDs.isEmpty || !recomputingConsolidateIDs.isEmpty || isCascadingRebake {
             return "tabs.switch.refused.render"
         }
@@ -60,7 +64,9 @@ extension EditViewModel {
     /// True while an export needs the active document untouched — the same condition as a tab
     /// switch's, but read by the doors that REPLACE the active document in place (New, Open,
     /// Recent): they tear the Edit down exactly as a switch does, and a direct render is reading it.
-    var exportPinsActiveDocument: Bool { exportJob?.pinsActiveDocument == true }
+    var exportPinsActiveDocument: Bool {
+        exportJob?.pinsActiveDocument == true || exportBatch?.isActive == true
+    }
 
     /// The refusal a hand sees when one of those doors is used while `exportPinsActiveDocument`.
     /// Returns true when it refused (so callers write `guard !refuseWhileExportPins() else { return }`).

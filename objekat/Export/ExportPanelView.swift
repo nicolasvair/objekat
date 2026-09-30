@@ -50,24 +50,48 @@ struct ExportPanelView: View {
         return viewModel.exportTimeRange(for: settings)
     }
 
+    /// The regions scope: one file per ticked region, so there is no single span — the duration
+    /// shown is the total of what will be rendered.
+    private var regionsMode: Bool { settings.rangeMode == .regions }
+
+    /// The length of audio the export will render, in seconds: the range's, or for the regions
+    /// scope the sum over the regions to be written (the batch's own while one runs). nil = nothing.
+    private var exportedSeconds: Double? {
+        if regionsMode {
+            let total: Double
+            if let b = viewModel.exportBatch, b.isActive {
+                total = b.targets.reduce(0) { $0 + ($1.end - $1.start) }
+            } else {
+                total = viewModel.selectedExportRegions.reduce(0) { $0 + $1.duration }
+            }
+            return total > 0 ? total : nil
+        }
+        return range.map { $0.upperBound - $0.lowerBound }
+    }
+
+    /// Whether the Export button has something to do.
+    private var canRun: Bool { regionsMode ? exportedSeconds != nil : range != nil }
+
     private var durationLabel: String {
-        guard let r = range else { return "—" }
-        return ExportTimecode.string(r.upperBound - r.lowerBound)
+        guard let seconds = exportedSeconds else { return "—" }
+        return ExportTimecode.string(seconds)
     }
 
     /// The length in bars, alongside the time when one thinks musically. It is a LENGTH, not an
     /// instant: it counts from zero, hence the direct computation rather than going through
     /// `MusicalTimecode` (which numbers the first bar '1').
     private var durationInBars: String? {
-        guard timeFieldMode == .bpm, let r = range else { return nil }
-        let beats = (r.upperBound - r.lowerBound) * viewModel.tempo / 60
+        guard timeFieldMode == .bpm, let seconds = exportedSeconds else { return nil }
+        let beats = seconds * viewModel.tempo / 60
         let bars = beats / Double(max(1, viewModel.timeSigNumerator))
         return String(format: bars < 10 ? L("export.duration.barsFine") : L("export.duration.bars"), bars)
     }
 
     /// The render this panel is showing — its own, since a direct render no longer closes it.
     private var job: ExportJob? { viewModel.exportJob }
-    private var isRendering: Bool { job?.isRunning == true }
+    /// A regions batch counts as rendering between two of its regions too, so the settings do not
+    /// flicker back to editable for the instant the next render takes to start.
+    private var isRendering: Bool { job?.isRunning == true || viewModel.exportBatch?.isActive == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -126,6 +150,20 @@ struct ExportPanelView: View {
                                    duration: viewModel.exportAuditionDuration)
 
                 loudnessLine
+
+                // A regions export: which region of how many, and the progress of the whole batch
+                // (the bar below stays the current region's own).
+                if let label = viewModel.exportBatchProgressLabel, let batch = viewModel.exportBatch {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(verbatim: label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        ProgressView(value: batch.overallProgress(currentRegion: job.progress))
+                            .progressViewStyle(.linear)
+                            .controlSize(.small)
+                    }
+                }
 
                 HStack(spacing: 10) {
                     Button { viewModel.toggleExportAudition() } label: {
@@ -264,7 +302,7 @@ struct ExportPanelView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L("export.panel.run")) { viewModel.runExport(viewModel.exportSettings) }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(range == nil)
+                    .disabled(!canRun)
             }
         }
     }
@@ -290,7 +328,13 @@ struct ExportPanelView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                if settings.rangeMode == .inOut { timeFieldModePicker }
+                // The unit also decides how the regions' bounds are read in the picker.
+                if settings.rangeMode == .inOut || regionsMode { timeFieldModePicker }
+            }
+
+            if regionsMode {
+                ExportRegionPicker(viewModel: viewModel, settings: settings,
+                                   formatTime: { formatTime($0) })
             }
 
             if settings.rangeMode == .inOut {
@@ -316,7 +360,7 @@ struct ExportPanelView: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
-                if range == nil {
+                if range == nil && !regionsMode {
                     Text(L("export.range.empty"))
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
@@ -482,21 +526,29 @@ struct ExportPanelView: View {
                     .controlSize(.small)
             }
 
-            HStack(spacing: 12) {
-                Text(L("export.field.name"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 78, alignment: .leading)
-                TextField(noLabel, text: bound(\.name))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-                    .focused($focusedField, equals: .name)
-                Text(verbatim: ".\(settings.format.fileExtension)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            if !regionsMode {
+                HStack(spacing: 12) {
+                    Text(L("export.field.name"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 78, alignment: .leading)
+                    TextField(noLabel, text: bound(\.name))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                        .focused($focusedField, equals: .name)
+                    Text(verbatim: ".\(settings.format.fileExtension)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            if FileManager.default.fileExists(atPath: settings.destinationURL.path) {
+            if regionsMode {
+                // The file names come from the regions; the picker shows each one.
+                Text(L("export.regions.destination.note", settings.format.fileExtension))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if FileManager.default.fileExists(atPath: settings.destinationURL.path) {
                 Label(L("export.file.exists"), systemImage: "exclamationmark.triangle")
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
@@ -529,9 +581,8 @@ struct ExportPanelView: View {
     /// The file's approximate size: useful for an MP3 as for a 96 kHz/24-bit WAV, where the order
     /// of magnitude surprises. A constant bitrate on the MP3 side, exact arithmetic on the PCM side.
     private var estimatedSizeLabel: String {
-        guard let r = range else { return "" }
         // The prefix is carried by the label itself: the line stays empty when the range is.
-        let seconds = r.upperBound - r.lowerBound
+        guard let seconds = exportedSeconds else { return "" }
         let bytes: Double = settings.format == .mp3
             ? seconds * Double(ExportSettings.mp3BitrateKbps) * 1000 / 8
             : seconds * settings.sampleRate * Double(settings.bitDepth) / 8 * 2
