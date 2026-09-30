@@ -302,6 +302,15 @@ struct GroupBlockView: View {
                     .padding(.top, TimelineLabelMetrics.topInset)
                     Spacer()
                 }
+                // The label never decides the block's size. A narrow block holds a name plus its
+                // meta and chevron whose intrinsic width can exceed it: that oversize content made the
+                // ZStack itself wider, and the enclosing `.frame(width:)` then centred it, so the
+                // block's body was drawn WIDER than its duration (by an amount that followed the
+                // label's width, hence differing from one lane to the next) and overlapped its
+                // neighbour. Pinning the label to the block and clipping it keeps the geometry the
+                // model's.
+                .frame(width: blockWidth, height: blockHeight, alignment: .topLeading)
+                .clipped()
                 .allowsHitTesting(isRenaming)
                 // See SoundBlockView: without this reset, `renameFocused` stays true after the field
                 // disappears and the next rename of the same group never gets focus.
