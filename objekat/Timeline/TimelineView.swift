@@ -394,6 +394,52 @@ struct TimelineView: View {
                    Double(viewportHeight))
     }
 
+    /// The sticky header (ruler + marker band), a property of its own: built inline in `body` its
+    /// long initialisers were part of the one expression the type-checker gave up on.
+    @ViewBuilder private var rulerHeaderLayer: some View {
+    StickyToViewportTop(anchor: scrollAnchor) {
+        VStack(spacing: 0) {
+        TimeRulerView(
+            totalDuration: totalDuration,
+            pixelsPerSecond: pixelsPerSecond,
+            height: MarkerBandGeometry.rulerCoreHeight,
+            snapEnabled: viewModel.effectiveSnapEnabled,
+            snapGrid: viewModel.effectiveSnapGrid,
+            gridLevels: viewModel.gridLevels,
+            loopRegion: viewModel.loopRegion,
+            loopModeEnabled: viewModel.loopModeEnabled,
+            timeSelectionRange: viewModel.timeSelection?.timeRange,
+            onLoopRegionChanged: { viewModel.loopRegion = $0 },
+            tempo: viewModel.tempo,
+            timeSigNumerator: viewModel.timeSigNumerator,
+            timeSigDenominator: viewModel.timeSigDenominator,
+            gridMode: viewModel.gridMode,
+            scrollOffsetX: cullScrollX,
+            viewportWidth: cullViewportWidth
+        )
+        let bandLanes = viewModel.visibleMarkerLanes
+        if !bandLanes.isEmpty {
+            MarkerBandView(
+                lanes: bandLanes,
+                pixelsPerSecond: pixelsPerSecond,
+                totalDuration: totalDuration,
+                scrollOffsetX: cullScrollX,
+                viewportWidth: cullViewportWidth,
+                selected: viewModel.selectedAnnotation,
+                renamingID: viewModel.renamingID,
+                onRename: { id, name in
+                    viewModel.renamingID = nil
+                    guard let name, !name.isEmpty,
+                          case .laneMarker(let l, let m)? = viewModel.selectedAnnotation,
+                          m == id else { return }
+                    viewModel.renameMarker(laneID: l, markerID: m, to: name)
+                }
+            )
+        }
+        }
+    }
+    }
+
     var body: some View {
         ScrollView([.horizontal, .vertical], showsIndicators: true) {
             ZStack(alignment: .topLeading) {
@@ -619,47 +665,7 @@ struct TimelineView: View {
                 // A sticky header: it follows the vertical scroll so as to stay at the top of the viewport,
                 // above all the content (blocks, piano rolls). The horizontal scroll is still handled
                 // internally (the graduations follow the content).
-                StickyToViewportTop(anchor: scrollAnchor) {
-                    VStack(spacing: 0) {
-                    TimeRulerView(
-                        totalDuration: totalDuration,
-                        pixelsPerSecond: pixelsPerSecond,
-                        height: MarkerBandGeometry.rulerCoreHeight,
-                        snapEnabled: viewModel.effectiveSnapEnabled,
-                        snapGrid: viewModel.effectiveSnapGrid,
-                        gridLevels: viewModel.gridLevels,
-                        loopRegion: viewModel.loopRegion,
-                        loopModeEnabled: viewModel.loopModeEnabled,
-                        timeSelectionRange: viewModel.timeSelection?.timeRange,
-                        onLoopRegionChanged: { viewModel.loopRegion = $0 },
-                        tempo: viewModel.tempo,
-                        timeSigNumerator: viewModel.timeSigNumerator,
-                        timeSigDenominator: viewModel.timeSigDenominator,
-                        gridMode: viewModel.gridMode,
-                        scrollOffsetX: cullScrollX,
-                        viewportWidth: cullViewportWidth
-                    )
-                    let bandLanes = viewModel.visibleMarkerLanes
-                    if !bandLanes.isEmpty {
-                        MarkerBandView(
-                            lanes: bandLanes,
-                            pixelsPerSecond: pixelsPerSecond,
-                            totalDuration: totalDuration,
-                            scrollOffsetX: cullScrollX,
-                            viewportWidth: cullViewportWidth,
-                            selected: viewModel.selectedAnnotation,
-                            renamingID: viewModel.renamingID,
-                            onRename: { id, name in
-                                viewModel.renamingID = nil
-                                guard let name, !name.isEmpty,
-                                      case .laneMarker(let l, let m)? = viewModel.selectedAnnotation,
-                                      m == id else { return }
-                                viewModel.renameMarker(laneID: l, markerID: m, to: name)
-                            }
-                        )
-                    }
-                    }
-                }
+                rulerHeaderLayer
                 .zIndex(4)
 
                 // The snap guide. Drawn for the WHOLE of a move / crop / trim and not only when
