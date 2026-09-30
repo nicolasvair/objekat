@@ -713,6 +713,7 @@ struct AutomationBandView: View {
             if let sv = viewModel.automationStaticValue(ref, on: object),
                geo.nearLine(p, lineY: geo.y(of: sv, ref: ref, row: row)) {
                 setHover(point: nil, line: (row: row, x: Double(p.x)))
+                showLineValue(row: row, x: Double(p.x), value: sv, ref: ref)
                 TimelineCursorKeeper.set(.resizeUpDown)
             } else {
                 clearHover()
@@ -731,6 +732,12 @@ struct AutomationBandView: View {
         guard let lineY = geo.curveY(atX: p.x, ref: ref, row: row, points: pts),
               geo.nearLine(p, lineY: lineY) else { clearHover(); TimelineCursorKeeper.set(.arrow); return }
         setHover(point: nil, line: (row: row, x: Double(p.x)))
+        // The line speaks too, but only after the point has had its say (the `pointHit` branch
+        // above returned already): the curve's value AT THE POINTER'S TIME, read through the same
+        // `AutomationCurveMath.value` the drawing and the engine push use.
+        if let v = lineValue(atT: geo.t(atX: p.x), ref: ref, points: pts) {
+            showLineValue(row: row, x: Double(p.x), value: v, ref: ref)
+        }
         if NSEvent.modifierFlags.contains(.option), curvableSegment(atX: p.x, ref: ref, points: pts) != nil {
             TimelineCursorKeeper.set(.crosshair)      // ⌥ = curvature
         } else {
@@ -1346,6 +1353,18 @@ struct AutomationBandView: View {
     /// piece of information. The badge does not shiver under the hand either, and the state is
     /// written once per point hovered instead of once per pixel travelled (the same concern as
     /// `setHover`).
+    /// The figure the LINE shows on hover: the curve's value at the pointer's time, in the point
+    /// hover's own badge and wording (@see showPointValue, automationReadout). Anchored on the
+    /// pointer's x and on the curve's height there, which is where the eye already is. Written
+    /// only when something changed, like every hover state here.
+    private func showLineValue(row: Int, x: Double, value: Float, ref: ParamRef) {
+        let y = geo.y(of: value, ref: ref, row: row)
+        let text = viewModel.automationReadout(ref, value: value, on: object)
+        if readout?.row != row || readout?.x != x || readout?.y != y || readout?.text != text {
+            readout = (row: row, x: x, y: y, text: text)
+        }
+    }
+
     private func showPointValue(row: Int, index: Int, ref: ParamRef, points pts: [AutomationPoint]) {
         guard pts.indices.contains(index) else { return }
         let p = pts[index]
