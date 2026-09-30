@@ -2059,9 +2059,9 @@ What has landed since mid-August, in order:
   dimmed rows, the summary line, the warning triangles, the 210 pt scroll area in a 460 pt sheet, the
   three-segment selector, the per-row outcome icons, the batch line in the panel and the strip, the
   grey-out while a batch runs — in three languages.
-- **A plugin id is unique in the project, repaired at load; the engine no longer steals** (1 October 2026,
-  ON THE BRANCH `fix/fxlink-bypass-au-chargement`) — sessions reopened with some objects of an FX bin
-  playing DRY (Pro-Q 4 of the DPA / KANUN / MOM / POP / VAHO bins, Pro-C 2 of DAF), "fixed" by switching the
+- **A plugin id is unique in the project: detected at load, repaired on demand; the engine no longer steals**
+  (1 October 2026, ON THE BRANCH `fix/fxlink-bypass-au-chargement`) — sessions reopened with some objects of an FX
+  bin playing DRY (Pro-Q 4 of the DPA / KANUN / MOM / POP / VAHO bins, Pro-C 2 of DAF), "fixed" by switching the
   link off and on, back at the next opening. Cause, PROVEN (headless, 24-bit export re-read at peak):
   the file held the same `ObjectPlugin.id` under 4 to 6 hosts (JSON retouched outside the app: block
   entries copied from one object to another with a NEW block id but the SAME instance ids). The id IS the
@@ -2069,25 +2069,40 @@ What has landed since mid-August, in order:
   and `movePluginBefore` → `removeFromParent` tore it out of the previous host's chain, so only the LAST
   host compiled kept the plugin. The save rewrote the same duplicates, hence the bug at every reopening;
   the "off/on" that seemed to cure it was a detach / reattach, which recompiles one host and steals from
-  the other. Three layers: (1) `PluginIDUniqueness.deduplicated` (pure, `SoundObject/PluginIDUniqueness.swift`)
-  runs in `performStructureSetup`, the funnel of every load (Cmd+O, `project.open`, tab open / restore,
-  `--project`): the FIRST occurrence keeps its id, later ones get fresh ids (leaves, rack carriers, bin
-  blocks and instances, instruments, group children, stem chains), the automation of the re-keyed HOST
-  follows (partial per-host table — `SoundObject.remapping(_:with:)` would DROP an unmapped reference),
-  `linkGroupID` / state / colour untouched (an instance stays its bin's mirror); `[LOAD] … re-keyed` in the
-  log, `project.load_status` `last_load.repaired_plugin_ids`. **A load that repaired something leaves the
-  project MODIFIED** (`settleDirtyAfterLoad`, replacing the four `isDirty = false` that followed a load; no
-  alert) so the next save writes the repaired file. (2) The engine's net: `_pluginOwnerHost` /
-  `_compilingHostKey` — `compileSeries` refuses to reuse or move a key another host's live chain still
-  lists (`[FX] compile: … duplicated plugin id, NOT moved`, `foreignPluginKeyRefusals`), without claiming
-  it and without reporting it missing (Swift would drop the plugin from the model). No Tracktion patch.
-  (3) DEBUG: `debug.plugin_id_audit` (duplicates in the live model + refusals) and
-  `OBJ_NO_PLUGIN_ID_REPAIR=1` (skips the repair, to exercise the net); `tools/scenario_fxlink.py` asserts
-  the audit clean after each big phase, which would catch an IN-APP path minting duplicates.
-  `tools/test_plugin_id_uniqueness.swift` (39 assertions), `tools/scenario_fxlink_duplicate_ids.py`
-  (repair, processed render of each host, mirror, gestures, save / reopen, the net). Out of scope:
-  `consolidateDefinitions` and the bins' definition plugins (never compiled; their ids are NAMED by the
-  members' `linkGroupID`). Not heard in real playback: the bench measures exports, not the live graph.
+  the other. **v2 decision (same day): NO silent repair.** The user wants the file's duplicates to be a
+  DECISION, so four layers: (1) DETECTION at every load — `PluginIDUniqueness.duplicateDetails` (pure,
+  `SoundObject/PluginIDUniqueness.swift`) runs in `performStructureSetup`, the funnel of every load, and
+  returns each duplicated id with its sites (host, plugin, bin, exact JSON path). (2) REPAIR on request only —
+  `PluginIDUniqueness.deduplicated`: the FIRST occurrence keeps its id, later ones get fresh ids (leaves, rack
+  carriers, bin blocks and instances, instruments, group children, stem chains), the automation of the
+  re-keyed HOST follows (partial per-host table — `SoundObject.remapping(_:with:)` would DROP an unmapped
+  reference), `linkGroupID` / state / colour untouched. Asked through `enum PluginIDRepairChoice { ask, repair,
+  keep }`, resolved BEFORE the load from the decoded document (one load, whatever the answer;
+  `resolvePluginIDRepair`): `.ask` (menu, Cmd+O, Finder, recent projects — `Workspace.open`,
+  `loadProjectAsync`) opens the alert (`askPluginIDRepair`: Repair / Copy report / Don't repair; Copy puts
+  `PluginIDReport.text` on the pasteboard and opens the file as it is); an automatic policy or a session with no
+  interface journals `"not repaired"` and NEVER repairs, even under `assume_yes`. The API passes `.repair` or
+  `.keep` only (`repair_plugin_ids` on `project.open` / `tab.open`, default false) — never an alert; tab
+  restoration and `--project` never ask. **Only a repaired load leaves the project MODIFIED**
+  (`settleDirtyAfterLoad`); an unrepaired one is clean. `project.load_status` `last_load` reports
+  `repaired_plugin_ids`, `duplicate_plugin_id_count`, `duplicate_plugin_ids` and `plugin_id_report` (English
+  ASCII instructions for a language model to fix the file by hand: `PluginIDReport`, asserted word for word by
+  the pure test); the session `_readme` states the rule in an "IDS" section (format number unchanged, 18).
+  (3) The engine's net, now also on the operations ADDRESSED BY (key, host): `_pluginOwnerHost` /
+  `_compilingHostKey` — the first host to compile a key owns the instance; `compileSeries` AND `removePlugin`,
+  `setPlugin:enabled`, `movePlugin`, `setVoiceGain`, plugin-target automation and
+  `applyPluginStateXML:forPlugin:forObjectID:` refuse a foreign host (`[FX] … ignored`,
+  `foreignPluginKeyRefusals`), without claiming it and without reporting it missing. Methods that only receive
+  the key stay ambiguous by nature (documented in `OBJEngineCore.mm`). An unrepaired project therefore plays
+  ONE host per duplicated id, the others dry, and nothing gets stolen. No Tracktion patch. (4) DEBUG:
+  `debug.plugin_id_audit` (duplicates in the live model + refusals). `tools/scenario_fxlink.py` asserts the
+  audit clean after each big phase, which would catch an IN-APP path minting duplicates.
+  `tools/test_plugin_id_uniqueness.swift` (detection, paths, agreement with the repair, the report),
+  `tools/scenario_fxlink_duplicate_ids.py` (paths A keep / B repair / C tabs, a simulated language model
+  following the report, gestures on a dry copy, save / reopen). Out of scope: `consolidateDefinitions` and the
+  bins' definition plugins (never compiled; their ids are NAMED by the members' `linkGroupID`). Not heard in
+  real playback: the bench measures exports, not the live graph. Not seen: the alert itself (three languages,
+  the eight-line list, the Copy button).
 
 ### What is owed
 
@@ -2247,9 +2262,11 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
 - `NSEvent.addLocalMonitorForEvents`: a `@State` token, removed in `.onDisappear`.
 - **A session JSON edited outside the app must mint FRESH ids for every copied plugin, container or
   bin block.** A plugin id is the engine's key for ONE instance: the same id under two hosts makes the
-  last chain compiled steal the instance from the others (they play dry, silently). The load repairs
-  it (`PluginIDUniqueness`) and the engine refuses to steal, but the file should not carry duplicates —
-  `debug.plugin_id_audit` says whether a live project does.
+  last chain compiled steal the instance from the others (they play dry, silently). The load DETECTS it
+  and offers a repair (the alert's Repair, or `repair_plugin_ids` on the API) — it never repairs on its own —
+  and the engine refuses to steal, but the file should not carry duplicates: the `_readme` states the rule,
+  and `project.load_status` hands a fixing recipe (`plugin_id_report`). `debug.plugin_id_audit` says whether
+  a live project holds any.
 - **A click that makes a window key is THROWN AWAY unless the view under it accepts it** — and no
   SwiftUI view does (`acceptsFirstMouse` is false by default). So any window of ours opened beside
   the main one — a plugin editor above all, JUCE's or our own — costs the next click made back in

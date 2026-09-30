@@ -1,5 +1,5 @@
-// `PluginIDUniqueness` — the load-time repair of plugin ids held by two hosts (1 October 2026),
-// asserted with no screen. Same model dependencies as `test_cross_project_import.swift`, minus the
+// `PluginIDUniqueness` and `PluginIDReport` — the load-time DETECTION of plugin ids held by two hosts,
+// their repair on demand, and the report for a language model (1 October 2026), asserted with no screen. Same model dependencies as `test_cross_project_import.swift`, minus the
 // import itself; run from `tools/`:
 //
 //     swiftc -parse-as-library \
@@ -18,6 +18,7 @@
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/PluginIDUniqueness.swift \
+//         ../objekat/SoundObject/PluginIDReport.swift \
 //         test_plugin_id_uniqueness.swift \
 //         -o /tmp/pidu && /tmp/pidu
 //
@@ -41,8 +42,8 @@ enum PluginIDUniquenessTest {
         // MARK: - Fixture builders
 
         func plugin(id: UUID = UUID(), state: String? = "<state/>", linkGroupID: UUID? = nil,
-                    enabled: Bool = true, colorIndex: Int = 3) -> ObjectPlugin {
-            ObjectPlugin(id: id, name: "EQ", manufacturer: "Objekat", identifier: "eq",
+                    enabled: Bool = true, colorIndex: Int = 3, name: String = "EQ") -> ObjectPlugin {
+            ObjectPlugin(id: id, name: name, manufacturer: "Objekat", identifier: "eq",
                          formatName: "TracktionInternal", isEnabled: enabled, stateXML: state,
                          linkGroupID: linkGroupID, colorIndex: colorIndex)
         }
@@ -285,6 +286,149 @@ enum PluginIDUniquenessTest {
             check("the first pass repairs", once.repairs.count == 4)
             check("a second pass repairs nothing and changes nothing",
                   twice.repairs.isEmpty && twice.items == once.items && twice.stems == once.stems)
+        }
+
+        // MARK: 9. Detail: no duplicate, nothing to say
+
+        check("duplicateDetails of a sound project is empty",
+              PluginIDUniqueness.duplicateDetails(
+                items: [clip(plugins: [plugin(), rack(voices: [[plugin()], [plugin()]])],
+                             instruments: [plugin()]),
+                        group(children: [clip(plugins: [plugin()])])],
+                stems: [stem(plugins: [plugin()])], fxLinks: []).isEmpty)
+
+        // MARK: 10. Detail: two hosts sharing a bin instance
+
+        do {
+            let bin = FXLink(id: UUID(), name: "DPA", colorIndex: 0, plugins: [])
+            let def = UUID(), shared = UUID()
+            let a = clip(plugins: [block(linkID: bin.id, instances: [plugin(id: shared, linkGroupID: def)])])
+            let b = clip(plugins: [block(linkID: bin.id, instances: [plugin(id: shared, linkGroupID: def)])])
+            let details = PluginIDUniqueness.duplicateDetails(items: [a, b], stems: [], fxLinks: [bin])
+            check("one shared instance → one detail with two sites",
+                  details.count == 1 && details[0].id == shared && details[0].sites.count == 2)
+            let sites = details.first?.sites ?? []
+            check("sites[0] is the host walked first, sites[1] the other",
+                  sites.count == 2 && sites[0].hostID == a.id && sites[1].hostID == b.id
+                  && sites.allSatisfy { $0.hostKind == .object })
+            check("the JSON paths are exact",
+                  sites.count == 2 && sites[0].jsonPath == "items[0].plugins[0].fxBlock.plugins[0]"
+                  && sites[1].jsonPath == "items[1].plugins[0].fxBlock.plugins[0]")
+            check("the bin's id and name come from the registry",
+                  sites.allSatisfy { $0.fxLinkID == bin.id && $0.fxLinkName == "DPA" })
+            check("the host and plugin names are carried",
+                  sites.count == 2 && sites[0].hostName == a.displayName && sites[0].pluginName == "EQ")
+            // A bin the registry does not know keeps its id but has no name.
+            let unknown = PluginIDUniqueness.duplicateDetails(items: [a, b], stems: [], fxLinks: [])
+            check("a bin absent from the registry has an id and no name",
+                  unknown.first?.sites.allSatisfy { $0.fxLinkID == bin.id && $0.fxLinkName == nil } == true)
+        }
+
+        // MARK: 11. Detail: paths at depth (group child, rack voice, instrument, stem)
+
+        do {
+            let x = UUID(), y = UUID(), z = UUID(), w = UUID()
+            let top = clip(plugins: [plugin(), rack(voices: [[plugin()], [plugin(), plugin(id: x)]])],
+                           instruments: [plugin(id: y)])
+            let child0 = clip(plugins: [plugin()])
+            let child1 = clip(plugins: [plugin(id: x), plugin(id: z)], instruments: [plugin(id: y)])
+            let g = group(children: [child0, child1])
+            let s = stem(plugins: [plugin(), plugin(id: z)])
+            // `w` sits twice in the very same stem's chain.
+            let s2 = stem(plugins: [plugin(id: w), plugin(id: w)])
+            let details = PluginIDUniqueness.duplicateDetails(items: [top, g], stems: [s, s2], fxLinks: [])
+            func paths(_ id: UUID) -> [String] { details.first { $0.id == id }?.sites.map(\.jsonPath) ?? [] }
+            check("a rack voice and a group child, in file order",
+                  paths(x) == ["items[0].plugins[1].rack.voices[1][1]", "items[1].kind.children[1].plugins[0]"],
+                  "\(paths(x))")
+            check("an instrument, in an object and in a group child",
+                  paths(y) == ["items[0].instruments[0]", "items[1].kind.children[1].instruments[0]"],
+                  "\(paths(y))")
+            check("a stem's chain",
+                  paths(z) == ["items[1].kind.children[1].plugins[1]", "stems[0].plugins[1]"], "\(paths(z))")
+            check("a stem site is marked as a stem and named after it",
+                  details.first { $0.id == z }?.sites.last.map { $0.hostKind == .stem && $0.hostName == s.name
+                                                               && $0.hostID == s.id } == true)
+            check("the same id twice in one host gives two sites of that host",
+                  paths(w) == ["stems[1].plugins[0]", "stems[1].plugins[1]"], "\(paths(w))")
+            check("the details come in first-seen order of their ids",
+                  details.map(\.id) == [x, y, z, w], "\(details.map(\.id))")
+        }
+
+        // MARK: 12. Detail agrees with the repair
+
+        do {
+            let x = UUID(), y = UUID(), z = UUID()
+            let bin = FXLink(id: UUID(), name: "Bin", colorIndex: 0, plugins: [])
+            let items = [clip(plugins: [plugin(id: x), block(linkID: bin.id, instances: [plugin(id: y)])]),
+                         clip(plugins: [plugin(id: x), plugin(id: x)],
+                              instruments: [plugin(id: y)]),
+                         group(children: [clip(plugins: [block(linkID: bin.id, instances: [plugin(id: y)])]),
+                                          clip(plugins: [plugin(id: z)])])]
+            let stems = [stem(plugins: [plugin(id: z), plugin(id: y)])]
+            let details = PluginIDUniqueness.duplicateDetails(items: items, stems: stems, fxLinks: [bin])
+            let fixed = PluginIDUniqueness.deduplicated(items: items, stems: stems)
+            // Every site after the first of its id = one repair, paired by (id, host), in the same order.
+            // Repairs are emitted in walk order, the details by id: compare them as ordered pairs per id.
+            let fromDetails = details.flatMap { d in d.sites.dropFirst().map { "\(d.id)/\($0.hostID)" } }
+            let fromRepairs = fixed.repairs.map { "\($0.oldID)/\($0.hostID)" }
+            check("the sites after the first are exactly the repairs, same count",
+                  fromDetails.count == fixed.repairs.count, "\(fromDetails.count) vs \(fixed.repairs.count)")
+            check("...and the same (id, host) pairs",
+                  Set(fromDetails) == Set(fromRepairs) && fromDetails.sorted() == fromRepairs.sorted())
+            // Per id, the repairs come in the order of the sites.
+            var sameOrder = true
+            for d in details {
+                let expected = d.sites.dropFirst().map(\.hostID)
+                let got = fixed.repairs.filter { $0.oldID == d.id }.map(\.hostID)
+                if expected != got { sameOrder = false }
+            }
+            check("...and, per id, in the same order", sameOrder)
+            check("sites[0] of each id is the occurrence the repair leaves alone",
+                  details.allSatisfy { d in
+                      let kept = fixed.repairs.filter { $0.oldID == d.id }.count
+                      return kept == d.sites.count - 1
+                  })
+        }
+
+        // MARK: 13. The report for a language model
+
+        do {
+            let bin = FXLink(id: UUID(), name: "KANUN \u{00e9}", colorIndex: 0, plugins: [])
+            let def = UUID(), shared = UUID(), other = UUID()
+            let a = clip(plugins: [block(linkID: bin.id, instances: [plugin(id: shared, linkGroupID: def)])])
+            let b = clip(plugins: [block(linkID: bin.id, instances: [plugin(id: shared, linkGroupID: def)])])
+            let c = clip(plugins: [plugin(id: other, name: "Pro-Q")])
+            let d = clip(plugins: [plugin(id: other, name: "Pro-Q")])
+            let e = clip(plugins: [plugin(id: other, name: "Pro-Q")])
+            let details = PluginIDUniqueness.duplicateDetails(items: [a, b, c, d, e], stems: [], fxLinks: [bin])
+            let path = "/tmp/Projet \u{00e9}t\u{00e9}/x.objekat"
+            let text = PluginIDReport.text(filePath: path, details: details)
+            check("the report names the file", text.contains("File: \(path)"))
+            check("the report states the rule and the count (3 copies, 2 ids, 5 entries)",
+                  text.contains("RULE. Every \"id\" in this file must be unique in the whole project.")
+                  && text.contains("breaks the rule 3 time(s): 2 plugin id(s)")
+                  && text.contains("carried by 5 entries in all"))
+            check("the report lists every id", text.contains(shared.uuidString) && text.contains(other.uuidString))
+            let lines = text.components(separatedBy: "\n")
+            check("one KEEP per id and one FIX per copy",
+                  lines.filter { $0.hasPrefix("   KEEP") }.count == 2
+                  && lines.filter { $0.hasPrefix("   FIX") }.count == 3)
+            check("the paths of the copies are in the report",
+                  text.contains("path: items[1].plugins[0].fxBlock.plugins[0]")
+                  && text.contains("path: items[3].plugins[0]") && text.contains("path: items[4].plugins[0]"))
+            check("a bin's name is shown on its sites", text.contains("fx link \"KANUN"))
+            check("the six steps of the fix are there",
+                  (1...6).allSatisfy { n in lines.contains { $0.hasPrefix("\(n). ") } })
+            check("the report is deterministic",
+                  text == PluginIDReport.text(filePath: path, details: details))
+            check("no unresolved localisation key", !text.contains("pluginIDs."))
+            // Everything but what the user typed (the path, the bin's name) is ASCII.
+            let ours = PluginIDReport.text(filePath: "/tmp/x.objekat", details: PluginIDUniqueness
+                .duplicateDetails(items: [c, d], stems: [], fxLinks: []))
+            check("the report is strictly ASCII apart from typed names", ours.unicodeScalars.allSatisfy { $0.isASCII })
+            check("a typed newline cannot break the layout",
+                  !PluginIDReport.text(filePath: "/tmp/a\nb.objekat", details: details).contains("a\nb"))
         }
 
         print("\n\(total - fails.count)/\(total) passed")
