@@ -21,7 +21,10 @@ extension CommandRegistry {
                           ParamSpec("lane_count", "int", required: false,
                                     "When 'lanes' is absent: how many lanes from 'lane'.") ,
                           ParamSpec("lane", "int", required: false,
-                                    "First lane when using 'lane_count' (default 0).")]) { p in
+                                    "First lane when using 'lane_count' (default 0)."),
+                          ParamSpec("all_lanes", "bool", required: false,
+                                    "Every OBJECT lane the timeline has (automation rows left out) "
+                                  + "— what a drag in the time ruler traces. Wins over 'lanes'.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let start = max(0, try p.double("start"))
             let end = try p.double("end")
@@ -29,7 +32,9 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'end' must come after 'start'")
             }
             var lanes = Set<Int>()
-            if p.raw["lanes"] != nil {
+            if (try p.bool("all_lanes", or: false)) {
+                lanes = vm.allObjectLanes()
+            } else if p.raw["lanes"] != nil {
                 for value in try p.array("lanes") {
                     guard let lane = value.intValue else {
                         throw CommandError(code: .bad_params, message: "'lanes': a list of integers was expected")
