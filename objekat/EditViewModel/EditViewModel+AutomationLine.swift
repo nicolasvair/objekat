@@ -210,14 +210,9 @@ extension EditViewModel {
         guard span > 0 else { return }
         let dy = -(Double(steps) * Double(Self.automationWheelStepValue(ref))) / span * geo.usableHeight
         if let v = shiftAutomationLine(grab, objectID: objectID, param: ref, row: row, dy: dy, geo: geo) {
-            automationLineWheelGeneration &+= 1
-            let generation = automationLineWheelGeneration
+            // No timer: the figure stays as long as the pointer stays (the band drops it when the
+            // pointer travels or leaves, the wheel handler when the wheel goes elsewhere).
             automationLineWheelReadout = (objectID: objectID, param: ref, value: v)
-            // A figure read stays on screen no longer than the hand that asked for it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-                guard let self, self.automationLineWheelGeneration == generation else { return }
-                self.automationLineWheelReadout = nil
-            }
         }
     }
 }

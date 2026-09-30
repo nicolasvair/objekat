@@ -164,6 +164,8 @@ extension TimelineView {
                     return nil
                 }
                 hs.automationLineWheel = nil
+                // The wheel left the line (or the band): its figure goes with it.
+                if vm.automationLineWheelReadout != nil { vm.automationLineWheelReadout = nil }
             }
 
             // MARK: Volume scroll (deltaY, the ≥ 60% right zone)
