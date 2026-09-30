@@ -622,6 +622,7 @@ struct TimelineView: View {
                         gridLevels: viewModel.gridLevels,
                         loopRegion: viewModel.loopRegion,
                         loopModeEnabled: viewModel.loopModeEnabled,
+                        timeSelectionRange: viewModel.timeSelection?.timeRange,
                         onLoopRegionChanged: { viewModel.loopRegion = $0 },
                         tempo: viewModel.tempo,
                         timeSigNumerator: viewModel.timeSigNumerator,
@@ -952,7 +953,7 @@ struct TimelineView: View {
                     let x = sel.timeRange.lowerBound * pixelsPerSecond
                     ForEach(Array(sel.lanes), id: \.self) { lane in
                         Rectangle()
-                            .fill(Color.cyan.opacity(0.18))
+                            .fill(TimeSelection.overlayColor)
                             .frame(width: w, height: blockHeight)
                             .offset(x: x, y: rulerHeight + Double(lane) * laneStep)
                             .allowsHitTesting(false)
