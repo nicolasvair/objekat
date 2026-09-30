@@ -50,8 +50,7 @@ struct ExportPanelView: View {
         return viewModel.exportTimeRange(for: settings)
     }
 
-    /// The regions scope: one file per ticked region, so there is no single span — the duration
-    /// shown is the total of what will be rendered.
+    /// The regions scope: one file per ticked region, so there is no single span (no total is shown).
     private var regionsMode: Bool { settings.rangeMode == .regions }
 
     /// The length of audio the export will render, in seconds: the range's, or for the regions
@@ -328,13 +327,11 @@ struct ExportPanelView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                // The unit also decides how the regions' bounds are read in the picker.
-                if settings.rangeMode == .inOut || regionsMode { timeFieldModePicker }
+                if settings.rangeMode == .inOut { timeFieldModePicker }
             }
 
             if regionsMode {
-                ExportRegionPicker(viewModel: viewModel, settings: settings,
-                                   formatTime: { formatTime($0) })
+                ExportRegionPicker(viewModel: viewModel, settings: settings)
             }
 
             if settings.rangeMode == .inOut {
@@ -349,6 +346,8 @@ struct ExportPanelView: View {
                 }
             }
 
+            // A regions export has no single span: a total would mislead, each row shows its own.
+            if !regionsMode {
             HStack(spacing: 6) {
                 Text(L("export.field.duration"))
                     .font(.system(size: 11))
@@ -360,11 +359,12 @@ struct ExportPanelView: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
-                if range == nil && !regionsMode {
+                if range == nil {
                     Text(L("export.range.empty"))
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
                 }
+            }
             }
         }
     }

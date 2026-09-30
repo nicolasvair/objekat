@@ -4,9 +4,11 @@ import SwiftUI
 // checkbox on each, and — the point of the thing — no doubt about which ones will be written.
 //
 // How "clear" is obtained, in three layers that say the same thing:
-//   • a ticked row is lit (accent-tinted ground, full ink) and shows the FILE it will write;
-//     an unticked row is dimmed and says it is not exported;
-//   • one summary line counts them ("5 of 14 regions will be exported"), orange at zero;
+//   • a row is ONE line: checkbox, the FILE it will write (name + extension) and the region's
+//     own duration — no in/out bounds, no separate region name, no summary, no total;
+//   • a ticked row is lit (accent-tinted ground), an unticked one dimmed;
+//   • each lane's header carries ONE button that ticks all of that lane's regions, or unticks
+//     them when they all are already;
 //   • warnings sit on the row they concern: an empty name (the file takes "Region n"), a name
 //     another ticked region already has (the file takes " (2)"), a file that will be replaced.
 //
@@ -20,8 +22,6 @@ struct ExportRegionPicker: View {
     @Bindable var viewModel: EditViewModel
     /// The settings the window is showing (the running job's own while a render runs).
     let settings: ExportSettings
-    /// Formats an instant in the export's time unit (seconds or bar:beat:tick).
-    let formatTime: (Double) -> String
 
     private var batch: ExportBatch? { viewModel.exportBatch }
     private var frozen: Bool { batch?.isActive == true }
@@ -40,8 +40,6 @@ struct ExportRegionPicker: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                toolbar(total: total)
-
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(groups) { group in
@@ -58,29 +56,6 @@ struct ExportRegionPicker: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12)))
             }
         }
-    }
-
-    // MARK: - Summary and bulk buttons
-
-    private func selectedCount(total: Int) -> Int {
-        if let b = batch, frozen { return b.total }
-        return viewModel.selectedExportRegions.count
-    }
-
-    @ViewBuilder
-    private func toolbar(total: Int) -> some View {
-        let n = selectedCount(total: total)
-        HStack(spacing: 8) {
-            Text(Ln("export.regions.summary", n, n, total))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(n == 0 ? Color.orange : Color.primary)
-            Spacer(minLength: 4)
-            Button(L("export.regions.selectAll")) { viewModel.selectAllExportRegions() }
-            Button(L("export.regions.selectNone")) { viewModel.selectNoExportRegions() }
-            Button(L("export.regions.invert")) { viewModel.invertExportRegions() }
-        }
-        .controlSize(.small)
-        .disabled(frozen)
     }
 
     // MARK: - A row of the marker band
@@ -101,6 +76,17 @@ struct ExportRegionPicker: View {
                     .help(L("export.regions.laneHidden"))
             }
             Spacer()
+            // One button per lane: "none" when every region of THIS lane is ticked, else "all".
+            let allTicked = group.entries.allSatisfy { isTicked($0.id) }
+            Button {
+                for e in group.entries { viewModel.setExportRegion(e.id, selected: !allTicked) }
+            } label: {
+                Text(L(allTicked ? "export.regions.lane.none" : "export.regions.lane.all"))
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.link)
+            .controlSize(.small)
+            .disabled(frozen)
         }
         .padding(.top, 4)
         .padding(.horizontal, 4)
@@ -124,11 +110,13 @@ struct ExportRegionPicker: View {
             if frozen, let t = batch?.targets.first(where: { $0.id == e.id }) {
                 return t.fileBase + "." + ext
             }
-            return names[e.id].map { $0.base + "." + ext }
+            if let assigned = names[e.id] { return assigned.base + "." + ext }
+            // Unticked: the name it would take on its own (dimmed, and not checked for collisions).
+            let base = RegionExportNaming.sanitise(e.name)
+            return (base.isEmpty ? L("export.regions.fallbackName", e.number) : base) + "." + ext
         }()
-        let displayName = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             Toggle(isOn: Binding(get: { ticked },
                                  set: { viewModel.setExportRegion(e.id, selected: $0) })) {
                 EmptyView()
@@ -140,49 +128,26 @@ struct ExportRegionPicker: View {
             Circle()
                 .fill(ObjectColorPalette.color(at: e.colorIndex ?? e.laneColorIndex))
                 .frame(width: 8, height: 8)
-                .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName.isEmpty ? L("export.regions.unnamed") : displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .italic(displayName.isEmpty)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            Text(verbatim: fileName ?? "")
+                .font(.system(size: 11, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
 
-                if ticked, let fileName {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 8))
-                        Text(verbatim: fileName)
-                            .font(.system(size: 10, design: .monospaced))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        ForEach(warnings, id: \.rawValue) { w in
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.orange)
-                                .help(warningHelp(w))
-                        }
-                    }
-                    .foregroundStyle(.secondary)
-                } else {
-                    Text(L("export.regions.notExported"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
+            ForEach(warnings, id: \.rawValue) { w in
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+                    .help(warningHelp(w))
             }
 
             Spacer(minLength: 4)
 
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(verbatim: "\(formatTime(e.start)) – \(formatTime(e.end))")
-                    .font(.system(size: 10, design: .monospaced))
-                Text(verbatim: ExportTimecode.string(e.duration))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-            .lineLimit(1)
-            .fixedSize()
+            Text(verbatim: ExportTimecode.string(e.duration))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
 
             outcomeIcon(e.id)
         }

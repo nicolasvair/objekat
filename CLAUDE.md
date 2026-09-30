@@ -2024,8 +2024,10 @@ What has landed since mid-August, in order:
   run, nothing seen** — only `xcstrings.py check`/`orphans` (528 keys) and `py_compile` on the
   scenario; the code was read as a compiler would). The span selector gets a third value beside
   whole project / IN–OUT: the window lists every region of the marker band (hidden rows included and
-  flagged; object-carried marks and plain markers are not regions here), each with a checkbox, its
-  file name, its span in the export's time unit and its duration, and the export renders the MASTER
+  flagged; object-carried marks and plain markers are not regions here), each a ONE-line row: a
+  checkbox, the output file name WITH its extension and the region's own duration (no in/out, no
+  total, no "N of M" summary — simplified on 30 September on the user's reading; the only bulk
+  control is ONE all/none button in each marker lane's header, acting on that lane's regions), and the export renders the MASTER
   over each ticked region into `<folder>/<region name>.<ext>`. The design choice worth keeping: **a
   batch is not a second export machinery** — each region is an ordinary `runExport` with an imposed
   `explicitRange` (the API's own way of saying "this range, leave the IN/OUT alone"); the batch only
