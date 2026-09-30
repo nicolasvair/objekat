@@ -124,12 +124,14 @@ extension EditViewModel {
             switch keeping {
             case nil:      result.formUnion([id, newID])
             case .left?:   remove(id: newID)
+                           forgetSolo([newID])   // inherited in `_splitInternal`, then thrown away
                            if keptFadeOut > 0 {
                                updateFadeOut(id: id, fadeOut: keptFadeOut)
                                updateFadeCurve(id: id, fadeOut: keptFadeOutCurve)
                            }
                            result.insert(id)
             case .right?:  remove(id: id);    result.insert(newID)
+                           forgetSolo([id])      // the survivor (`newID`) already inherited it
             }
             // The selection follows the matter, and only for an object it was already watching.
             // The `.left` case writes NOTHING: the left half already carries the id `selectedIDs`
@@ -525,6 +527,7 @@ extension EditViewModel {
             // object had on the very edge the cut has just cleared.
             pushFadeCurveTree(items[i])
             pushFadeCurveTree(rightObject)
+            inheritSolo([(id, newID)])   // last: the listening reads the finished tree
             return newID
         }
 
@@ -598,6 +601,7 @@ extension EditViewModel {
             pushFadeCurveTree(rightChild)
 
             isDirty = true
+            inheritSolo([(id, rightID)])
             return rightID
         }
 
@@ -662,6 +666,7 @@ extension EditViewModel {
             duplicateSendsTarget(from: id, to: rightID)
 
             isDirty = true
+            inheritSolo([(id, rightID)])
             return rightID
         }
 
@@ -737,6 +742,7 @@ extension EditViewModel {
             syncSends(right)
 
             isDirty = true
+            inheritSolo([(id, rightID)])
             return rightID
         }
 
@@ -842,6 +848,11 @@ extension EditViewModel {
                 syncAdd(right)
             }
             isDirty = true
+            // The group's own solo goes to its right half; a soloed DESCENDANT (a child soloed on
+            // its own) goes to its right-hand fragment, which `rightIDMap` names (origin → copy).
+            var soloPairs: [(from: UUID, to: UUID)] = [(id, rightID)]
+            for (from, to) in rightIDMap { soloPairs.append((from, to)) }
+            inheritSolo(soloPairs)
             return rightID
         }
 

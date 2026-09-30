@@ -224,6 +224,48 @@ extension EditViewModel {
         refreshSolo()
     }
 
+    // MARK: Solo across a cut
+
+    /// A cut hands the pieces it makes NEW ids (the right half of a division, the right-hand
+    /// fragments of a group's content), and a solo is keyed by id: without this, cutting a soloed
+    /// object left its right half out of the listening — silent under the very solo that made its
+    /// twin heard. Each `to` inherits the DIRECT solo of its `from`, in whichever layer held it
+    /// (confirmed and/or temporary). A group's descendants need nothing of their own when the group
+    /// itself is the root: the closure over ancestors covers them, so only the roots are copied.
+    ///
+    /// The listening is then recomputed in every case where a solo is active, inherited or not:
+    /// `soloAudibleObjectIDs` is a cache keyed by id too, and a new piece cut out of a child of a
+    /// soloed group (or of a soloed stem) is audible by ancestry but absent from that cache until
+    /// it is rebuilt. Called once the model AND the engine hold the new pieces, since
+    /// `refreshAudibility` reads the tree. `pairs` is origin → new id.
+    func inheritSolo(_ pairs: [(from: UUID, to: UUID)]) {
+        guard hasAnySolo else { return }
+        for (from, to) in pairs {
+            if soloedIDs.contains(from) { soloedIDs.insert(to) }
+            if var temp = tempSoloRoots, temp.contains(from) {
+                temp.insert(to)
+                tempSoloRoots = temp
+            }
+        }
+        refreshSolo()
+    }
+
+    /// Takes an object that no longer exists out of the solo roots — the half of a cut that was
+    /// thrown away (@see `cut(ids:atTime:keeping:)`). A root naming nothing would keep `soloActive`
+    /// true with nothing left to hear.
+    func forgetSolo(_ ids: [UUID]) {
+        var changed = false
+        for id in ids {
+            if soloedIDs.remove(id) != nil { changed = true }
+            if var temp = tempSoloRoots, temp.remove(id) != nil {
+                tempSoloRoots = temp.isEmpty ? nil : temp
+                if tempSoloRoots == nil { heldSoloActive = false }
+                changed = true
+            }
+        }
+        if changed { refreshSolo() }
+    }
+
     // MARK: The set of sound objects on a set of lanes
 
     /// Everything sitting on `lanes`, with NO time bound at all. The one reader of rows solo has:

@@ -385,6 +385,101 @@ with ObjekatClient(SOCK) as c:
     check("a selected CHILD of an open group keeps its own selection after being cut near its start",
           c.send("selection.get")["ids"] == [e], str(c.send("selection.get")))
 
+    # --- SOLO ACROSS A CUT (30 September 2026). Solo is keyed by id, and a cut gives the right
+    #     piece a fresh one: the piece has to inherit the DIRECT solo of the object cut, and a piece
+    #     cut out of a child of a soloed group has to be audible by ancestry. `solo.get` answers
+    #     `confirmed` (the roots) and `audible` (the cached closure the listening is built from).
+    #     Every solo is cleared at the end of each case so the others start from the full mix.
+    def solo_state():
+        return c.send("solo.get")
+
+    # S1. Plain division of a soloed clip: BOTH halves are roots and audible.
+    a = add(70)
+    c.send("solo.set", {"ids": [a], "on": True})
+    r = step("solo: split_at a soloed clip", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.5 * D}))
+    other = [i for i in r["ids"] if i != a][0]
+    st = solo_state()
+    check("a soloed clip cut in two: the new half is soloed too",
+          a in st["confirmed"] and other in st["confirmed"], str(st))
+    check("…and both halves are audible under the solo",
+          a in st["audible"] and other in st["audible"], str(st))
+    c.send("solo.clear")
+
+    # S2. Oriented cut, keep='right': the survivor (a new id) is soloed, the removed original is
+    #     not left behind as a root naming nothing.
+    a = add(71)
+    c.send("solo.set", {"ids": [a], "on": True})
+    r = step("solo: split_at keep=right", lambda: c.send("object.split_at", {"ids": [a], "seconds": 0.3 * D, "keep": "right"}))
+    st = solo_state()
+    check("keep='right' on a soloed clip: the surviving piece is soloed and audible",
+          len(r["ids"]) == 1 and r["ids"][0] in st["confirmed"] and r["ids"][0] in st["audible"], str(st))
+    check("…and the discarded original is no longer a solo root",
+          a not in st["confirmed"], str(st))
+    c.send("solo.clear")
+
+    # S3. keep='left': the survivor keeps the id (still soloed), no phantom root for the discarded half.
+    a = add(72)
+    c.send("solo.set", {"ids": [a], "on": True})
+    c.send("object.split_at", {"ids": [a], "seconds": 0.7 * D, "keep": "left"})
+    st = solo_state()
+    check("keep='left' on a soloed clip: exactly the survivor is a root",
+          st["confirmed"] == [a] and a in st["audible"], str(st))
+    c.send("solo.clear")
+
+    # S4. A soloed GROUP cut in two: the right half (new id) is a root, and the children of BOTH
+    #     halves are audible (by ancestry — the fragments are new ids the cache has never seen).
+    ga = add(73); gb = add(74)
+    g = c.send("group.create", {"ids": [ga, gb]})["id"]
+    gdur = c.send("object.get", {"id": g})["duration"]
+    c.send("solo.set", {"ids": [g], "on": True})
+    r = step("solo: split_at a soloed group", lambda: c.send("object.split_at", {"ids": [g], "seconds": 0.5 * gdur}))
+    st = solo_state()
+    right_g = [i for i in r["ids"] if i != g][0]
+    check("a soloed group cut in two: the right half is soloed as well",
+          g in st["confirmed"] and right_g in st["confirmed"], str(st))
+    for gid in (g, right_g):
+        c.send("group.expand", {"id": gid, "expanded": True})
+    kids = [o["id"] for o in c.send("object.list")["objects"] if o["parent"] in (g, right_g)]
+    check("…and every child of both halves is audible",
+          len(kids) >= 2 and all(k in st["audible"] for k in kids), str(st))
+    c.send("solo.clear")
+
+    # S5. A CHILD of an open group, soloed on its own and cut: the fragment is a root too, and the
+    #     group above stays lit.
+    ha = add(75); hb = add(76)
+    h = c.send("group.create", {"ids": [ha, hb]})["id"]
+    c.send("group.expand", {"id": h, "expanded": True})
+    e = [o["id"] for o in c.send("object.list")["objects"] if o["parent"] == h][0]
+    edur = c.send("object.get", {"id": e})["duration"]
+    c.send("solo.set", {"ids": [e], "on": True})
+    r = c.send("object.split_at", {"ids": [e], "seconds": 0.5 * edur})
+    piece = [i for i in r["ids"] if i != e][0]
+    st = solo_state()
+    check("a soloed child of an open group: its right fragment is soloed and audible",
+          piece in st["confirmed"] and piece in st["audible"] and h in st["audible"], str(st))
+    c.send("solo.clear")
+
+    # S6. A child of a SOLOED group cut on its own: the fragment has no solo of its own, but it
+    #     is inside the soloed group, so the recomputed closure must hear it.
+    ia = add(77); ib = add(78)
+    i_g = c.send("group.create", {"ids": [ia, ib]})["id"]
+    c.send("group.expand", {"id": i_g, "expanded": True})
+    f = [o["id"] for o in c.send("object.list")["objects"] if o["parent"] == i_g][0]
+    fdur = c.send("object.get", {"id": f})["duration"]
+    c.send("solo.set", {"ids": [i_g], "on": True})
+    r = c.send("object.split_at", {"ids": [f], "seconds": 0.5 * fdur})
+    piece = [i for i in r["ids"] if i != f][0]
+    st = solo_state()
+    check("a child of a soloed group, cut: its new fragment is audible by ancestry",
+          piece in st["audible"] and f in st["audible"], str(st))
+    c.send("solo.clear")
+
+    # S7. Nothing soloed: a cut must not invent a solo.
+    a = add(79)
+    c.send("object.split_at", {"ids": [a], "seconds": 0.5 * D})
+    check("cutting with no solo active leaves no solo behind",
+          not solo_state()["active"], str(solo_state()))
+
     # Sweep up everything this block introduced (@see the note at the top of it) — whatever is
     # NEW relative to `before_ids`, whichever of the splits, ripples and groups above left it
     # standing. Removing the survivors is enough: a group taken out cascades to its descendants.
