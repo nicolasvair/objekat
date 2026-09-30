@@ -1046,7 +1046,15 @@ struct TimelineView: View {
                                 // bottom of its column), horizontally aligned on the knob.
                                 let src = CGPoint(x: cr.minX + inset + (Double(idx) + 0.5) * colW,
                                                   y: cr.maxY - 2 - sendToggleZoneHeight / 2)
-                                let dst = CGPoint(x: ar.midX, y: ar.midY)
+                                // It lands on the middle of the aux's VISIBLE part, not of the block:
+                                // a long aux (an infinite bus above all) has its middle screens
+                                // away. Read from the EXACT scroll, here in the drawing closure, so
+                                // a frame of scroll redraws this Canvas and nothing else
+                                // (@see WireAnchor, TimelineScrollAnchor).
+                                let dstX = wireAnchorX(blockX: ar.minX, blockWidth: ar.width,
+                                                       scrollX: Double(scrollAnchor.x),
+                                                       viewportWidth: Double(viewportWidth))
+                                let dst = CGPoint(x: dstX, y: ar.midY)
                                 var path = Path()
                                 LinkOverlay.appendCurve(&path, from: src, to: dst)
                                 if isFocus {
