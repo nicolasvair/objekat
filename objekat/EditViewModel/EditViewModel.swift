@@ -607,6 +607,12 @@ final class EditViewModel {
     var exportJob: ExportJob? = nil
     /// The REGIONS export under way (one render per region), or finished a short while ago with its
     /// per-region results. nil for every other scope. Cleared with `exportJob`.
+    /// Groups folded by a double click WHILE their automation band was open: reopening one gives the
+    /// band back (@see toggleGroupExpansion). Transient on purpose — a view habit, not content: not
+    /// saved, not in the undo snapshot (folding pushes no undo point either), emptied on a load and
+    /// a tab switch (both go through `resetTransientSessionState`), dropped by any explicit band
+    /// choice (`setAutomationOpen`) or other fold. A stale id is harmless: it only acts on an unfold.
+    var groupsFoldedFromAutomation: Set<UUID> = []
     /// @see EditViewModel+ExportRegions
     var exportBatch: ExportBatch? = nil
     /// The regions the export panel has UNTICKED. Stored as the exception and not as the selection:

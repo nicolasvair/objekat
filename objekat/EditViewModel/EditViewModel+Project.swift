@@ -516,6 +516,7 @@ extension EditViewModel {
         pianoRollBasePitchByClip = [:]
         pianoRollCropByClip = [:]
         pianoRollCropOffsetByClip = [:]
+        groupsFoldedFromAutomation = []
         exportRegionsDeselected = []   // the export panel's ticks belong to the session, not to the next project
     }
 

@@ -26,6 +26,8 @@ extension EditViewModel {
     /// selector, which wants to set a value rather than toggle the other one.
     func setAutomationOpen(id: UUID, _ open: Bool) {
         update(id: id) { obj in obj.automationOpen = open }
+        // An explicit choice about the band supersedes "folded from the curves".
+        groupsFoldedFromAutomation.remove(id)
         isDirty = true
     }
 
@@ -49,7 +51,7 @@ extension EditViewModel {
             setAutomationOpen(id: id, true)
         case .objects:
             setAutomationOpen(id: id, false)
-            if obj.isGroup, !isGroupExpanded(id)   { toggleGroupExpansion(id: id) }
+            if obj.isGroup, !isGroupExpanded(id)   { toggleGroupExpansion(id: id, restoringAutomation: false) }
             if obj.isMIDI,  !obj.pianoRollOpen     { togglePianoRoll(id: id) }
         case .collapse:
             if obj.expandedSpan > 0 {
