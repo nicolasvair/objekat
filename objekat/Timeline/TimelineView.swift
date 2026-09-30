@@ -444,7 +444,6 @@ struct TimelineView: View {
             loopRegion: viewModel.loopRegion,
             loopModeEnabled: viewModel.loopModeEnabled,
             onLoopRegionChanged: { viewModel.loopRegion = $0 },
-            timeSelectionRange: viewModel.timeSelection?.timeRange,
             tempo: viewModel.tempo,
             timeSigNumerator: viewModel.timeSigNumerator,
             timeSigDenominator: viewModel.timeSigDenominator,
@@ -470,6 +469,15 @@ struct TimelineView: View {
                     viewModel.renameMarker(laneID: l, markerID: m, to: name)
                 }
             )
+        }
+        .overlay(alignment: .topLeading) {
+            // The selection traced in the RULER, continued down the whole header. Non-hit-testing,
+            // so the ruler's and the marker band's gestures are untouched.
+            if let range = viewModel.rulerBandRange {
+                RulerSelectionBand(range: range, pixelsPerSecond: pixelsPerSecond,
+                                   top: MarkerBandGeometry.rulerCoreHeight * 0.32,
+                                   bottom: rulerHeight)
+            }
         }
         }
     }

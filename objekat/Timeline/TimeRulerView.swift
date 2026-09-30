@@ -15,9 +15,6 @@ struct TimeRulerView: View {
     var loopRegion: ClosedRange<Double>? = nil
     var loopModeEnabled: Bool = false
     var onLoopRegionChanged: ((ClosedRange<Double>) -> Void)? = nil
-    /// The time selection's span (time only, whatever lanes it covers), shown as a strip under the
-    /// time numbers. Pure display: the ruler's gestures are resolved elsewhere and never read it.
-    var timeSelectionRange: ClosedRange<Double>? = nil
     var tempo: Double = 120.0
     var timeSigNumerator: Int = 4
     var timeSigDenominator: Int = 4
@@ -252,30 +249,6 @@ struct TimeRulerView: View {
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(isBpm ? Color.secondary.opacity(0.5) : Color.secondary)
                     context.draw(label, at: CGPoint(x: x + 3, y: height * 0.05), anchor: .topLeading)
-                }
-            }
-
-            // The time selection: a strip UNDER the time numbers (which end near 28 % of the height)
-            // and above the BPM mode's bar numbers (which start at 55 %), so it covers neither.
-            // The ruler lives in content coordinates and scrolls with the canvas, so no scroll
-            // value is needed beyond the culling window. Drawn before the loop markers, which stay
-            // on top. The colour is the timeline overlay's own (@see TimeSelection.overlayColor).
-            if let sr = timeSelectionRange {
-                let x0 = sr.lowerBound * pixelsPerSecond
-                let x1 = sr.upperBound * pixelsPerSecond
-                if x1 >= visX0 && x0 <= visX1 {
-                    let top = height * 0.32
-                    let bandH = height * 0.20
-                    context.fill(Path(CGRect(x: x0, y: top, width: max(0, x1 - x0), height: bandH)),
-                                 with: .color(TimeSelection.overlayColor))
-                    // Crisp 1 px edges, centred on the pixel so they do not blur.
-                    for x in [x0, x1] {
-                        let px = x.rounded(.down) + 0.5
-                        var edge = Path()
-                        edge.move(to: CGPoint(x: px, y: top))
-                        edge.addLine(to: CGPoint(x: px, y: top + bandH))
-                        context.stroke(edge, with: .color(TimeSelection.edgeColor), lineWidth: 1)
-                    }
                 }
             }
 
@@ -592,5 +565,40 @@ struct HoverTracker: NSViewRepresentable {
         }
 
         func dropCursorClaim() { claim.drop() }
+    }
+}
+
+
+/// The time selection traced in the ruler, drawn as one band from just below the time numbers to
+/// the bottom of the header (ruler and marker rows), so it reads as a continuation of the
+/// selection in the lanes. Pure display: no hit-testing. The header lives in content coordinates
+/// horizontally (it scrolls with the canvas) and is pinned vertically by its parent, so the
+/// band needs no scroll value.
+struct RulerSelectionBand: View {
+    let range: ClosedRange<Double>
+    let pixelsPerSecond: Double
+    /// Distances from the header's top edge.
+    let top: Double
+    let bottom: Double
+
+    var body: some View {
+        let x0 = range.lowerBound * pixelsPerSecond
+        let x1 = range.upperBound * pixelsPerSecond
+        let h = max(0, bottom - top)
+        ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(TimeSelection.overlayColor)
+                .frame(width: max(0, x1 - x0), height: h)
+                .offset(x: x0, y: top)
+            // Crisp 1 px edges.
+            ForEach(0..<2, id: \.self) { i in
+                let x = i == 0 ? x0 : x1
+                Rectangle()
+                    .fill(TimeSelection.edgeColor)
+                    .frame(width: 1, height: h)
+                    .offset(x: x.rounded(.down), y: top)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
