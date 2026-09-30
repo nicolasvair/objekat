@@ -1036,63 +1036,7 @@ struct TimelineView: View {
                 // The send in focus (dragging/hovering a knob) is emphasised (a vivid red plus a
                 // glow); the same clip's other wired sends stay discreet.
                 if viewModel.activeTool == .toolAux {
-                    Canvas { ctx, _ in
-                        let focus = viewModel.sendToolFocus
-                        // Every selected clip keeps its links visible; the clip
-                        // hovered (focused) is merely emphasised, it does not erase the others.
-                        var clipIDs = Array(viewModel.selectedIDs)
-                        if let f = focus, !clipIDs.contains(f.objectID) { clipIDs.append(f.objectID) }
-                        for clipID in clipIDs {
-                            guard let cr = clipRect(for: clipID) else { continue }
-                            let auxes = viewModel.sendToolAuxes(for: clipID)
-                            // The same offset as the knobs themselves: a crossfade holds the left
-                            // edge, the columns start after it (@see ToolSendLayer), and a link
-                            // setting off from the old origin would leave its knob behind.
-                            let inset = sendLeadingInset(for: clipID)
-                            // …and from the block's VISIBLE portion, read from the exact scroll
-                            // here in the drawing closure (like the wire's far end below).
-                            let vis = visibleSpan(blockX: cr.minX, blockWidth: cr.width,
-                                                  scrollOffsetX: scrollAnchor.x,
-                                                  viewportWidth: viewportWidth)
-                            let lay = sendColumnsLayout(blockWidth: cr.width, leadingInset: inset,
-                                                        count: auxes.count,
-                                                        visibleX: vis.x - cr.minX, visibleWidth: vis.width)
-                            let colW = sendColWidth(blockWidth: lay.width, count: auxes.count)
-                            for (idx, aux) in auxes.enumerated() {
-                                let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
-                                let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
-                                guard isFocus || routed else { continue }
-                                guard let at = linkTarget(for: aux.id) else { continue }
-                                let ar = at.rect
-                                // The link sets off from the centre of that aux's on/off button (the
-                                // bottom of its column), horizontally aligned on the knob.
-                                let src = CGPoint(x: cr.minX + lay.origin + (Double(idx) + 0.5) * colW,
-                                                  y: cr.maxY - 2 - sendToggleZoneHeight / 2)
-                                // It lands on the middle of the aux's VISIBLE part, not of the block:
-                                // a long aux (an infinite bus above all) has its middle screens
-                                // away. Read from the EXACT scroll, here in the drawing closure, so
-                                // a frame of scroll redraws this Canvas and nothing else
-                                // (@see WireAnchor, TimelineScrollAnchor).
-                                let dstX = wireAnchorX(blockX: ar.minX, blockWidth: ar.width,
-                                                       scrollX: Double(scrollAnchor.x),
-                                                       viewportWidth: Double(viewportWidth))
-                                let dst = CGPoint(x: dstX, y: ar.midY)
-                                var path = Path()
-                                LinkOverlay.appendCurve(&path, from: src, to: dst)
-                                if isFocus {
-                                    ctx.stroke(path, with: .color(.red.opacity(0.35)), lineWidth: 9)
-                                    ctx.stroke(path, with: .color(.red.opacity(0.95)), lineWidth: 2.6)
-                                    let halo = Path(roundedRect: ar.insetBy(dx: -5, dy: -5),
-                                                    cornerRadius: at.cornerRadius + 5)
-                                    ctx.stroke(halo, with: .color(.red.opacity(0.35)), lineWidth: 6)
-                                    ctx.stroke(halo, with: .color(.red.opacity(0.9)), lineWidth: 2)
-                                } else {
-                                    ctx.stroke(path, with: .color(.red.opacity(0.18)), lineWidth: 6)
-                                    ctx.stroke(path, with: .color(.red.opacity(0.45)), lineWidth: 1.8)
-                                }
-                            }
-                        }
-                    }
+                    Canvas { ctx, _ in drawSendLinks(&ctx) }
                     .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
                     .allowsHitTesting(false)
                     .zIndex(2.7)
@@ -1784,6 +1728,67 @@ struct TimelineView: View {
     // without it, everything set on that rect — the link halos first and foremost — stayed at the
     // MODEL's position while the block was being moved, so hanging in empty space until release.
     //
+    /// The red links of the Send tool, drawn by a method of their own: left inline in `body` this
+    /// closure (plus the rest) was more than the type-checker would take in reasonable time.
+    private func drawSendLinks(_ ctx: inout GraphicsContext) {
+        let focus = viewModel.sendToolFocus
+        // Every selected clip keeps its links visible; the clip
+        // hovered (focused) is merely emphasised, it does not erase the others.
+        var clipIDs = Array(viewModel.selectedIDs)
+        if let f = focus, !clipIDs.contains(f.objectID) { clipIDs.append(f.objectID) }
+        for clipID in clipIDs {
+            guard let cr = clipRect(for: clipID) else { continue }
+            let auxes = viewModel.sendToolAuxes(for: clipID)
+            // The same offset as the knobs themselves: a crossfade holds the left
+            // edge, the columns start after it (@see ToolSendLayer), and a link
+            // setting off from the old origin would leave its knob behind.
+            let inset = sendLeadingInset(for: clipID)
+            // …and from the block's VISIBLE portion, read from the exact scroll
+            // here in the drawing closure (like the wire's far end below).
+            let vis = visibleSpan(blockX: cr.minX, blockWidth: cr.width,
+                                  scrollOffsetX: scrollAnchor.x,
+                                  viewportWidth: viewportWidth)
+            let lay = sendColumnsLayout(blockWidth: cr.width, leadingInset: inset,
+                                        count: auxes.count,
+                                        visibleX: vis.x - cr.minX, visibleWidth: vis.width)
+            let colW = sendColWidth(blockWidth: lay.width, count: auxes.count)
+            for (idx, aux) in auxes.enumerated() {
+                let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
+                let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
+                guard isFocus || routed else { continue }
+                guard let at = linkTarget(for: aux.id) else { continue }
+                let ar = at.rect
+                // The link sets off from the centre of that aux's on/off button (the
+                // bottom of its column), horizontally aligned on the knob.
+                let srcX: Double = cr.minX + lay.origin + (Double(idx) + 0.5) * colW
+                let srcY: Double = cr.maxY - 2 - sendToggleZoneHeight / 2
+                let src = CGPoint(x: srcX, y: srcY)
+                // It lands on the middle of the aux's VISIBLE part, not of the block:
+                // a long aux (an infinite bus above all) has its middle screens
+                // away. Read from the EXACT scroll, here in the drawing closure, so
+                // a frame of scroll redraws this Canvas and nothing else
+                // (@see WireAnchor, TimelineScrollAnchor).
+                let dstX = wireAnchorX(blockX: ar.minX, blockWidth: ar.width,
+                                       scrollX: Double(scrollAnchor.x),
+                                       viewportWidth: Double(viewportWidth))
+                let dst = CGPoint(x: dstX, y: ar.midY)
+                var path = Path()
+                LinkOverlay.appendCurve(&path, from: src, to: dst)
+                if isFocus {
+                    ctx.stroke(path, with: .color(.red.opacity(0.35)), lineWidth: 9)
+                    ctx.stroke(path, with: .color(.red.opacity(0.95)), lineWidth: 2.6)
+                    let halo = Path(roundedRect: ar.insetBy(dx: -5, dy: -5),
+                                    cornerRadius: at.cornerRadius + 5)
+                    ctx.stroke(halo, with: .color(.red.opacity(0.35)), lineWidth: 6)
+                    ctx.stroke(halo, with: .color(.red.opacity(0.9)), lineWidth: 2)
+                } else {
+                    ctx.stroke(path, with: .color(.red.opacity(0.18)), lineWidth: 6)
+                    ctx.stroke(path, with: .color(.red.opacity(0.45)), lineWidth: 1.8)
+                }
+            }
+        }
+    }
+
     private func clipRect(for id: UUID) -> CGRect? {
         guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
         let dy = previewOffset(for: e.item)?.dy ?? 0
