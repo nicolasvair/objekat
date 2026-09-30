@@ -86,10 +86,6 @@ struct ObjectInspectorView: View {
 
     private func pluginsSynopticColumn(id: UUID, obj: SoundObject) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            // At the HEAD, before the signal view: the choice acts on the SOURCE, ahead of every
-            // effect below. Only appears for a stereo clip.
-            channelModeRow(ids: [id])
-                .padding(.horizontal, 8)
             SynopticBoundView(viewModel: viewModel, objectID: id, scrolls: false)
 
             HStack(spacing: 12) {
@@ -111,8 +107,9 @@ struct ObjectInspectorView: View {
 
     // MARK: - Channel choice (stereo clips)
 
-    /// LR / L / R / C for the clip(s) in `ids` — shown ONLY when every one of them is a stereo
-    /// audio clip (exactly two channels: @see `EditViewModel.channelModeRefusal`, the one rule the
+    /// LR / L / R / C for the clip(s) in `ids`, laid INSIDE the multiple selection's 'audio file'
+    /// box (a single object's is drawn by the signal view's own zone, @see AudioFileZoneView).
+    /// Shown ONLY when every one of them is a stereo audio clip (exactly two channels: @see `EditViewModel.channelModeRefusal`, the one rule the
     /// API and the setter read too). A selection that mixes a stereo clip with anything else has no
     /// meaningful single answer, so it shows nothing rather than a choice that would silently skip
     /// some of what is selected. Mixed values light no pill and say so in the tooltip; a click on
@@ -171,7 +168,6 @@ struct ObjectInspectorView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L("inspector.selection.count", selectedObjects.count))
                     .font(.caption).foregroundStyle(.secondary)
-                channelModeRow(ids: selectedObjects.map(\.id))
                 selectionItems
                     .padding(.bottom, 4)
                 if !selectedSounds.isEmpty && selectedSounds.count == selectedObjects.count {
@@ -316,6 +312,8 @@ struct ObjectInspectorView: View {
                     .help(uniformReversed == nil ? L("inspector.reverse.mixed")
                           : (uniformReversed! ? L("synoptic.reverse.on") : L("synoptic.reverse.off")))
                 }
+                // Inside the box, under its header: only when EVERY sound is stereo.
+                channelModeRow(ids: sounds.map(\.id))
                 HStack(spacing: 6) {
                     DragValueBox(
                         value: relSemis,

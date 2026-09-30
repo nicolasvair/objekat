@@ -59,6 +59,7 @@ struct SynopticActions {
     var onSetBaseBPM: ((Double?) -> Void)? = nil       // the base bpm (nil = clear)
     var onToggleReverse: (() -> Void)? = nil
     var onToggleLoop: (() -> Void)? = nil
+    var onSetChannelMode: ((ChannelMode) -> Void)? = nil   // stereo files only (LR / L / R / C)
     var onBeginSpeedEdit: (() -> Void)? = nil          // push an undo point before a drag
 
     /// A parameter control has just been TOUCHED — clicked, taken in a drag, or received from the
@@ -122,6 +123,10 @@ struct SynopticAudioFile: Equatable {
     var isReversed: Bool
     /// True ⇒ the content repeats for as long as the object's window exceeds its source range.
     var isLooping: Bool
+    /// Non-nil ⇒ the source is a STEREO file (exactly two channels) and the zone carries the
+    /// LR / L / R / C selector, holding the current choice. nil for a mono file (or one that cannot
+    /// be read): no selector, and the zone keeps its original height.
+    var channelMode: ChannelMode? = nil
 }
 
 /// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
@@ -313,7 +318,8 @@ struct SynopticView: View {
 
     var body: some View {
         let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
-                                       midi: isMIDI, audioFile: audioFile != nil, mix: mix != nil,
+                                       midi: isMIDI, audioFile: audioFile != nil,
+                                       audioStereo: audioFile?.channelMode != nil, mix: mix != nil,
                                        mixWide: mix?.attrLinks != nil,
                                        stems: stems != nil || groupRouting != nil,
                                        sendRows: sends.count, receivedRows: receivedSends.count,
@@ -1620,6 +1626,32 @@ struct AudioFileZoneView: View {
                     .help(file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
                 }
 
+                // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
+                // SynopticLayout.audioZoneStereoExtraH).
+                if let current = file.channelMode {
+                    HStack(spacing: 4) {
+                        Text(L("inspector.channelMode.title"))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize()
+                        ForEach(ChannelMode.allCases, id: \.self) { mode in
+                            Button { actions.onSetChannelMode?(mode) } label: {
+                                Text(channelModeLabel(mode))
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(current == mode ? Color.white : Color.secondary)
+                                    .padding(.horizontal, 6).frame(height: 16)
+                                    .background(RoundedRectangle(cornerRadius: 4)
+                                        .fill(current == mode ? Color.accentColor : Color.secondary.opacity(0.18)))
+                                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                        .strokeBorder(Color.secondary.opacity(0.35)))
+                            }
+                            .buttonStyle(.plain)
+                            .help(channelModeHelp(mode))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+
                 // 1× / st / bpm on the same line (saving height).
                 HStack(spacing: 6) {
                     DragValueBox(value: semis,
@@ -1703,6 +1735,25 @@ struct AudioFileZoneView: View {
         }
         .onAppear { syncBaseText() }
         .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
+    }
+
+    // One literal key per case, on purpose: `orphans` reads the code for key-shaped strings.
+    private func channelModeLabel(_ mode: ChannelMode) -> String {
+        switch mode {
+        case .lr: return L("inspector.channelMode.lr")
+        case .l:  return L("inspector.channelMode.l")
+        case .r:  return L("inspector.channelMode.r")
+        case .c:  return L("inspector.channelMode.c")
+        }
+    }
+
+    private func channelModeHelp(_ mode: ChannelMode) -> String {
+        switch mode {
+        case .lr: return L("inspector.channelMode.lr.help")
+        case .l:  return L("inspector.channelMode.l.help")
+        case .r:  return L("inspector.channelMode.r.help")
+        case .c:  return L("inspector.channelMode.c.help")
+        }
     }
 
     private func syncBaseText() {
@@ -2214,7 +2265,8 @@ struct SynopticBoundView: View {
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
         let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
-            ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled) }
+            ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
+                                                       channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
@@ -2382,6 +2434,7 @@ struct SynopticBoundView: View {
                 let rev = !(obj?.isReversed ?? false)
                 viewModel.edit { viewModel.updateReversed(id: objectID, reversed: rev) }
             },
+            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
             onToggleLoop: {
                 let loop = !(obj?.loopEnabled ?? false)
                 viewModel.edit { viewModel.updateLoopEnabled(id: objectID, enabled: loop) }
