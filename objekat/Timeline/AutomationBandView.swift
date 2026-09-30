@@ -792,7 +792,6 @@ struct AutomationBandView: View {
     // MARK: - Taps (creating / deleting)
 
     private func handleTap(at p: CGPoint) {
-        viewModel.cancelAutomationLineWheel()   // a click ends an armed wheel grab
         let now = Date()
         let isDouble = now.timeIntervalSince(lastTap.time) < 0.35
             && hypot(p.x - lastTap.loc.x, p.y - lastTap.loc.y) < 18
@@ -922,7 +921,6 @@ struct AutomationBandView: View {
     // MARK: - Dragging
 
     private func handleDragChanged(_ value: DragGesture.Value) {
-        viewModel.cancelAutomationLineWheel()   // a drag ends an armed wheel grab
         if drag == nil { beginDrag(value) }
         guard drag != nil else { return }
         drag?.last = value.location

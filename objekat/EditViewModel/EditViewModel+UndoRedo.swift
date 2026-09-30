@@ -89,7 +89,6 @@ extension EditViewModel {
     func applySnapshot(_ snapshot: EditSnapshot, live: EditSnapshot? = nil) {
         let t0 = CFAbsoluteTimeGetCurrent()
         clearPendingFXSources()   // the snapshot brings back plain plugins under the same ids: never re-adopt them
-        cancelAutomationLineWheel()   // the grab's anchors are the state being replaced
         let live = live ?? currentSnapshot()
 
         // Tempo / time signature first: the engine must have the right tempo BEFORE the clips

@@ -493,7 +493,6 @@ extension EditViewModel {
     /// exists to prevent.
     func resetTransientSessionState(preservingClipboard: Bool = false) {
         selectedAnnotation = nil
-        cancelAutomationLineWheel()
         resetScriptSessionState()
         clearAutomationPointSelection()
         if !preservingClipboard {

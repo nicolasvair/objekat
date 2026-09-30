@@ -452,7 +452,6 @@ extension TimelineView {
     }
 
     func handleCanvasDrag(_ value: CanvasDrag, phase: DragPhase) {
-        if phase == .changed { viewModel.cancelAutomationLineWheel() }   // a drag ends an armed wheel grab
         // Remembered for a scroll that might come while the hand holds still (@see
         // CanvasDragScrollFollow). Only for the drags that PLACE something under the hand: the
         // Volume, Pan and Send tools read the travel as an amount, and a scroll would change the

@@ -4,7 +4,6 @@ import AppKit
 extension TimelineView {
 
     func handleCanvasTap(at point: CGPoint) {
-        viewModel.cancelAutomationLineWheel()   // a click ends an armed wheel grab
         // A hand back in the timeline takes the keyboard back from the signal view: ⌫ ⌘C ⌘V ⌘D
         // stop aiming at plugin cards and aim at objects again. It is the OTHER half of the claim
         // made in `setPluginSelection`, and it lives at the door of the gesture rather than in the
