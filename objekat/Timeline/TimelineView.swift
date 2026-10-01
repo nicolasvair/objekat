@@ -760,6 +760,7 @@ struct TimelineView: View {
                     richReasons: partition.reasons)
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
+                                  rows: cullRows,
                                   toolOverlays: partition.toolOverlays,
                                   hidesClipMuteVeil: tools.tool == .volume)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
@@ -3019,7 +3020,8 @@ struct TimelineView: View {
         if viewModel.renamingID == item.id { return .rename }
         if viewModel.isBaking(item.id) { return .bake }
         if item.isConsolidateInstance { return .consolidate }   // a link/freshness badge → a rich view
-        if item.colorIndex != nil { return .color }   // a 10%/90% band → a rich view
+        // A custom colour (its name band and its border) is drawn by the Canvas: @see phase 1 of
+        // `plainBlocksCanvas`, `CustomColorBatch`.
         // The active tool's overlay (@see `toolRichReason`).
         if let why = toolRichReason(entry, isGroup: false, tools: tools) { return why }
         // A drag/preview under way on this clip → a live SwiftUI view.
@@ -3065,6 +3067,7 @@ struct TimelineView: View {
     /// shows no mute veil (its own red tint says it), a group's stays.
     private func plainBlocksCanvas(_ entries: [LaneEntry], groups: [CanvasGroup],
                                    selectedIDs: Set<UUID>,
+                                   rows: (y0: Double, y1: Double),
                                    toolOverlays: [UUID: CanvasToolOverlay] = [:],
                                    hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
@@ -3106,14 +3109,37 @@ struct TimelineView: View {
                 var rectsDim: [Color: Path] = [:]
                 var rectsSel: [Color: Path] = [:]
                 var rectsSelDim: [Color: Path] = [:]
+                // The clips carrying their OWN colour (@see `CustomColorBatch`), batched the same
+                // way: by (selected, dim), then by (custom colour, stem colour).
+                var custom: [CustomColorKey: CustomColorBatch] = [:]
+                var customDim: [CustomColorKey: CustomColorBatch] = [:]
+                var customSel: [CustomColorKey: CustomColorBatch] = [:]
+                var customSelDim: [CustomColorKey: CustomColorBatch] = [:]
                 var anySelected = false
                 for entry in entries {
-                    var rr = Path()
-                    rr.addRoundedRect(in: rectFor(entry), cornerSize: CGSize(width: 4, height: 4))
-                    let stem = viewModel.stemColor(for: entry.item.id)
-                    let selected = selectedIDs.contains(entry.item.id)
+                    let item = entry.item
+                    let rect = rectFor(entry)
+                    let r = item.blockCornerRadius
+                    let stem = viewModel.stemColor(for: item.id)
+                    let selected = selectedIDs.contains(item.id)
                     if selected { anySelected = true }
-                    switch (selected, isDim(entry.item)) {
+                    let dim = isDim(item)
+                    if let own = item.customColor {
+                        // Bounded to the rows on screen, too (the plain path below is not: a Path
+                        // of rounded rects is cheap and this is not the loop that costs).
+                        guard rect.maxY >= rows.y0, rect.minY <= rows.y1 else { continue }
+                        let key = CustomColorKey(custom: own, stem: stem)
+                        switch (selected, dim) {
+                        case (false, false): custom[key, default: .init()].add(rect, radius: r, blockHeight: blockHeight)
+                        case (false, true):  customDim[key, default: .init()].add(rect, radius: r, blockHeight: blockHeight)
+                        case (true, false):  customSel[key, default: .init()].add(rect, radius: r, blockHeight: blockHeight)
+                        case (true, true):   customSelDim[key, default: .init()].add(rect, radius: r, blockHeight: blockHeight)
+                        }
+                        continue
+                    }
+                    var rr = Path()
+                    rr.addRoundedRect(in: rect, cornerSize: CGSize(width: r, height: r))
+                    switch (selected, dim) {
                     case (false, false): rects[stem, default: Path()].addPath(rr)
                     case (false, true):  rectsDim[stem, default: Path()].addPath(rr)
                     case (true, false):  rectsSel[stem, default: Path()].addPath(rr)
@@ -3132,10 +3158,29 @@ struct TimelineView: View {
                         c.stroke(path, with: .color(color.opacity(selected ? 0.9 : 0.3)), lineWidth: 1.5)
                     }
                 }
+                // A block with its own colour: white base, the name band in that colour over its
+                // top 20 % (at least 3 pt), the body in the stem's, and the border in the OWN colour
+                // (`effectiveColor` in the rich view).
+                func fillCustomBackgrounds(_ groups: [CustomColorKey: CustomColorBatch],
+                                           opacity: Double, selected: Bool) {
+                    guard !groups.isEmpty else { return }
+                    var c = ctx; c.opacity = opacity
+                    let tint = selected ? 0.55 : 0.30
+                    for (key, batch) in groups {
+                        c.fill(batch.full, with: .color(.white))
+                        c.fill(batch.band, with: .color(key.custom.opacity(tint)))
+                        c.fill(batch.body, with: .color(key.stem.opacity(tint)))
+                        c.stroke(batch.full, with: .color(key.custom.opacity(selected ? 0.9 : 0.3)), lineWidth: 1.5)
+                    }
+                }
                 fillBackgrounds(rects, opacity: 1.0, selected: false)
+                fillCustomBackgrounds(custom, opacity: 1.0, selected: false)
                 fillBackgrounds(rectsDim, opacity: 0.25, selected: false)
+                fillCustomBackgrounds(customDim, opacity: 0.25, selected: false)
                 fillBackgrounds(rectsSel, opacity: 1.0, selected: true)
+                fillCustomBackgrounds(customSel, opacity: 1.0, selected: true)
                 fillBackgrounds(rectsSelDim, opacity: 0.25, selected: true)
+                fillCustomBackgrounds(customSelDim, opacity: 0.25, selected: true)
                 // The GROUPS' blocks (`GroupBlocksCanvas`): above the clips' backgrounds, as a rich
                 // `GroupBlockView` (z 0) sat above the Canvas, and before every waveform below.
                 let groupGeo = GroupBlocksCanvas.Geometry(
@@ -3336,7 +3381,7 @@ struct TimelineView: View {
                             blockWidth: w, blockHeight: blockHeight)
                         var gc = c
                         gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
-                        gc.fill(grips, with: .color(viewModel.stemColor(for: item.id)))
+                        gc.fill(grips, with: .color(item.customColor ?? viewModel.stemColor(for: item.id)))
                     }
 
                     // The active tool's overlay: over the waveform, the fades and the loop's grips,

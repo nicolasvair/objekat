@@ -45,8 +45,6 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     /// The neighbour of a spilling fade (`spillPlan`): it moves with the drag without being in
     /// any of its id sets.
     case spill
-    /// A custom colour (`colorIndex`): the 10 % / 90 % band is a rich view.
-    case color
     /// A MIDI clip (always rich).
     case midi
     /// An aux (always rich).
@@ -77,7 +75,6 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
         case .stemHover: return "stem_hover"
         case .preview: return "preview"
         case .spill: return "spill"
-        case .color: return "color"
         case .midi: return "midi"
         case .aux: return "aux"
         case .consolidate: return "consolidate"

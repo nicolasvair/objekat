@@ -550,7 +550,7 @@ p99 / max / mean), `late_frames` (intervals of 2 frames or more), `dropped_frame
 ### The tool and the colour a harness needs (`tool.*`, `object.set_color`)
 
 Two things nothing headless could set before, and that decide how the timeline draws its blocks
-(@see `perf.census.regimes.rich_reasons`): the ACTIVE TOOL and an object's CUSTOM COLOUR.
+(@see `perf.census.regimes.rich_reasons`): the ACTIVE TOOL and an object's CUSTOM COLOUR (the latter no longer decides the regime).
 
 - `tool.set {tool, stem?}` arms `selection | cut | volume | pan | aux | stem` and writes exactly
   what the ⇧ branches of the key handler (and the palette's buttons) write: `activeTool`,
@@ -561,8 +561,8 @@ Two things nothing headless could set before, and that decide how the timeline d
   Session state: undo policy `.none`, never saved.
 - `object.set_color {color_index?, ids?}` is `setObjectColor(ids:colorIndex:)` — one undo point for
   the whole batch — with `color_index` 0…15 into the object palette, or absent / null to go back to
-  the stem's colour. A coloured clip is a RICH block (`rich_reasons.color`), so painting 600 clips is
-  the way to put 600 blocks on the rich path.
+  the stem's colour. A coloured clip is drawn by the batched Canvas like any other (its name band and
+  its border are part of phase 1), so painting 600 clips no longer puts anything on the rich path.
 - **Not implemented, on purpose (TODO): `input.drag`.** A synthetic mouse drag (down, moved, up
   through the app's queue, the way `input.scroll` goes) is what measuring a gesture's frames would
   need — `preview`, `spill`, the rich blocks a drag makes — and is out of this harness's scope.
