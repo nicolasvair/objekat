@@ -1998,25 +1998,22 @@ extension TimelineView {
     /// to hold first, so the neighbour's knobs were unreachable there. The caller asks each
     /// candidate in turn and keeps the one whose columns really contain the point.
     func sendClipHits(at p: CGPoint) -> [(id: UUID, bx: Double, by: Double, bw: Double)] {
-        // Clips AND groups (a group can feed an aux), top level…
-        var hits = viewModel.items.compactMap { o -> (id: UUID, bx: Double, by: Double, bw: Double)? in
-            guard !o.isAux else { return nil }
-            let bx = o.startTime * pixelsPerSecond
-            let bw = max(o.duration * pixelsPerSecond, 2)
-            let by = laneY(for: o.lane)
-            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { return nil }
-            return (o.id, bx, by, bw)
-        }
-        // …and descendants of expanded groups (clips AND subgroups).
-        hits += viewModel.laneEntries.compactMap { e -> (id: UUID, bx: Double, by: Double, bw: Double)? in
-            guard e.depth > 0, !e.item.isAux else { return nil }
+        // ONE walk of `laneEntries`, whose `displayLane` is already resolved. This used to call
+        // `laneY(for:)` per top-level item — `displayLane(forBase:)` is an `items.reduce`, so the
+        // whole hit-test was O(N²) (2–3 times per mouse move on the Aux tool).
+        // Clips AND groups (a group can feed an aux), top level first, then the descendants of
+        // expanded groups (clips AND subgroups): the order the callers were always handed.
+        var top: [(id: UUID, bx: Double, by: Double, bw: Double)] = []
+        var nested: [(id: UUID, bx: Double, by: Double, bw: Double)] = []
+        for e in viewModel.laneEntries where !e.item.isAux {
             let bx = e.absStart * pixelsPerSecond
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
-            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { return nil }
-            return (e.item.id, bx, by, bw)
+            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { continue }
+            if e.depth == 0 { top.append((e.item.id, bx, by, bw)) }
+            else { nested.append((e.item.id, bx, by, bw)) }
         }
-        return hits
+        return top + nested
     }
 
     /// The span of a block's LEFT edge that a crossfade holds, in px — the offset the send columns
