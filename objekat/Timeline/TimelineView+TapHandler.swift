@@ -614,12 +614,7 @@ extension TimelineView {
         let tool = viewModel.activeTool
         guard tool == .toolVolume || tool == .toolPan || tool == .toolCut,
               point.y > rulerHeight else { return nil }
-        guard let e = viewModel.laneEntries.first(where: { e in
-            let bx = e.absStart * pixelsPerSecond
-            let bw = max(e.item.duration * pixelsPerSecond, 2)
-            let by = rulerHeight + Double(e.displayLane) * laneStep
-            return point.x >= bx && point.x <= bx + bw && point.y >= by && point.y <= by + blockHeight
-        }) else { return nil }
+        guard let e = blockEntry(at: point) else { return nil }
 
         // Cut: two zones only, the dead band at the edges and everything else. The 10 px are
         // those of `cutTargets`, in the block's ABSOLUTE coordinates (not the visible portion).
