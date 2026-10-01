@@ -27,6 +27,71 @@ extension CommandRegistry {
             try Self.viewState()
         }
 
+        register("view.state.hover",
+                 summary: """
+                 What the timeline's hover has resolved at the pointer — to check that a synthetic \
+                 `input.hover` landed where it was aimed. `position` (canvas) and `viewport` (the \
+                 visible area, origin top-left) are null when the pointer is not over the timeline. \
+                 `hovered_id` is the block aimed at (under Volume / Pan / Stem: `tool_hovered_id`; \
+                 under the selection tool: the block of `zone`, one of fadeIn, fadeOut, trimLeft, \
+                 resizeRight, timeSelect, move, loopIn, loopOut; under Cut: `cut_hover`); under the \
+                 Aux tool the focused send knob is `send_focus`. `cursor` is the cursor the timeline \
+                 wants (`cursor_owned: false` = it has handed the cursor back). The hover resolves in \
+                 the hover callback itself, but its redraw does not: `wait_idle` first when reading \
+                 what is on screen. UI mode only.
+                 """) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try InputSynth.timelineHost()
+            guard let probe = vm.hoverProbe?() else {
+                throw CommandError(code: .invalid_state, message: "the timeline has not appeared yet")
+            }
+            let v = host.visibleRect
+            let viewport = probe.position.map {
+                CGPoint(x: $0.x - v.minX, y: $0.y - v.minY)
+            }
+            let idJSON = { (id: UUID?) -> JSONValue in JSONValue.stringOrNull(id?.uuidString) }
+            // Each piece of hover state is only meaningful under the tool that keeps it up to date
+            // (`updateToolHover` / `updateCursor` leave the others as they were — under the Aux
+            // tool `toolHoveredID` is a leftover), so it is reported under that tool alone.
+            let toolHovered: UUID?
+            let hovered: UUID?
+            var zone: ClipEditZone? = nil
+            var zoneID: UUID? = nil
+            var cutHover = JSONValue.null
+            switch vm.activeTool {
+            case .toolVolume, .toolPan, .toolStemAssign:
+                toolHovered = probe.toolHoveredID; hovered = toolHovered
+            case .toolSelection:
+                toolHovered = nil; hovered = probe.editZoneID
+                zone = probe.editZone; zoneID = probe.editZoneID
+            case .toolCut:
+                toolHovered = nil; hovered = probe.cutHoverID
+                if let id = probe.cutHoverID {
+                    cutHover = .object(["id": .string(id.uuidString),
+                                        "local_x": .number(probe.cutHoverLocalX ?? 0)])
+                }
+            case .toolAux:
+                toolHovered = nil; hovered = nil
+            }
+            return .object([
+                "position": Self.pointJSON(probe.position),
+                "viewport": Self.pointJSON(viewport),
+                "tool": .string(Self.toolName(vm.activeTool)),
+                "hovered_id": idJSON(hovered),
+                "tool_hovered_id": idJSON(toolHovered),
+                "zone": .stringOrNull(zone.map { String(describing: $0) }),
+                "zone_id": idJSON(zoneID),
+                "cut_hover": cutHover,
+                "send_focus": vm.sendToolFocus.map {
+                    JSONValue.object(["object": .string($0.objectID.uuidString),
+                                      "aux": .string($0.auxID.uuidString)])
+                } ?? JSONValue.null,
+                "help": .stringOrNull(probe.helpText),
+                "cursor": .string(TimelineCursors.name(of: TimelineCursorKeeper.current)),
+                "cursor_owned": .bool(TimelineCursorKeeper.owned),
+            ])
+        }
+
         register("view.set",
                  summary: """
                  Puts the view in a known state before a test: zoom and/or scroll, through the \

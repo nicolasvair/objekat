@@ -134,6 +134,28 @@ enum TimelineCursors {
     /// every hover event and on every drag step.
     private static var edgeCache: [EdgeKey: NSCursor] = [:]
 
+    /// A cursor's name, for `view.state.hover` (a script cannot look at the screen): the ones the
+    /// timeline makes itself by their role, the system's by theirs, and "custom" for anything
+    /// else. Identity, not appearance — every cursor here is made once and reused.
+    static func name(of cursor: NSCursor) -> String {
+        if cursor === fadeIn { return "fade_in" }
+        if cursor === fadeOut { return "fade_out" }
+        if cursor === crossfade { return "crossfade" }
+        if cursor === loopEdgeOpen { return "loop_edge_open" }
+        if cursor === loopEdgeClose { return "loop_edge_close" }
+        if let (key, _) = edgeCache.first(where: { $0.value === cursor }) {
+            return "edge_\(key.open ? "open" : "close")_\(key.canLeft ? "L" : "-")\(key.canRight ? "R" : "-")"
+        }
+        let system: [(String, NSCursor)] = [
+            ("arrow", .arrow), ("iBeam", .iBeam), ("crosshair", .crosshair),
+            ("openHand", .openHand), ("closedHand", .closedHand), ("pointingHand", .pointingHand),
+            ("resizeLeftRight", .resizeLeftRight), ("resizeUpDown", .resizeUpDown),
+            ("resizeLeft", .resizeLeft), ("resizeRight", .resizeRight),
+            ("operationNotAllowed", .operationNotAllowed),
+        ]
+        return system.first { $0.1 === cursor }?.0 ?? "custom"
+    }
+
     /// The edge cursor ON A LOOPED OBJECT: the same bracket, but an '∞' in place of the small
     /// arrows — beyond the edge, it REPEATS the content, it no longer reveals more of it. No
     /// `canLeft`/`canRight` variant: while looping the travel is unbounded on both sides

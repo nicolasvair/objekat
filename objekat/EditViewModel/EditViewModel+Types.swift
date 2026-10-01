@@ -112,6 +112,24 @@ struct VerticalSnapProbe {
     var viewportHeight: Double
 }
 
+/// What the timeline's hover has resolved, read by `view.state.hover` for a test to verify with no
+/// screen (and for a bench to know that a synthetic `input.hover` landed on a block). Purely
+/// diagnostic: a copy of state the canvas already keeps for the pointer, nothing here writes.
+struct TimelineHoverProbe {
+    /// The pointer, in the timeline's CANVAS coordinates; nil = it is not over the timeline.
+    var position: CGPoint?
+    /// The block aimed at under the Volume / Pan / Stem tools (`toolHoveredID`).
+    var toolHoveredID: UUID?
+    /// The block aimed at under the selection tool, and the zone of it (`editZoneHover`).
+    var editZoneID: UUID?
+    var editZone: ClipEditZone?
+    /// The cut position under the Cut tool (`cutHover`).
+    var cutHoverID: UUID?
+    var cutHoverLocalX: Double?
+    /// The tool-zone help line shown for the pointer (`toolZoneHelpText`).
+    var helpText: String?
+}
+
 // MARK: - Snapshot for undo/redo
 
 struct EditSnapshot {

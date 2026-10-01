@@ -1275,6 +1275,12 @@ struct TimelineView: View {
             viewModel.applyVerticalZoom = { newH in applyVerticalZoom(newH) }
             viewModel.verticalSnapProbe = { verticalSnapProbeSnapshot() }
             viewModel.zoomBoundsProbe = { (min: minZoom, max: maxZoom) }
+            viewModel.hoverProbe = {
+                TimelineHoverProbe(position: hoverState.position, toolHoveredID: toolHoveredID,
+                                   editZoneID: editZoneHover?.id, editZone: editZoneHover?.zone,
+                                   cutHoverID: cutHover?.id, cutHoverLocalX: cutHover?.localX,
+                                   helpText: toolZoneHelpText)
+            }
         }
         .onDisappear { unregisterKeyMonitor() }
         // ⌥ pressed or released WITHOUT moving the mouse: the drag under way flips in place between

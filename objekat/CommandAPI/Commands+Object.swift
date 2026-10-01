@@ -341,6 +341,35 @@ extension CommandRegistry {
             return .object(["count": .int(ids.count), "muted": .object(states)])
         }
 
+        register("object.set_color",
+                 summary: "Gives objects a custom colour (an index into the 16-hue object palette, "
+                        + "independent of the stem) or takes it away — WITHOUT `color_index` (or with "
+                        + "null) the object goes back to its stem's colour. One undo point for the "
+                        + "whole batch, however many ids. The colour of a consolidated object is "
+                        + "shared by every placement of its definition, so those follow (`count` is "
+                        + "the ids asked, not the placements painted). Note that a coloured clip is "
+                        + "drawn as a rich SwiftUI view, not in the batched Canvas "
+                        + "(`perf.census.regimes.rich_reasons.color`).",
+                 params: [ParamSpec("color_index", "int", required: false,
+                                    "A hue from the object palette (0…15). Absent / null = no custom colour."),
+                          ParamSpec("ids", "array<uuid>", required: false,
+                                    "Target objects; default = current selection.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ids = try CommandAdapters.targetIDs(p, in: vm)
+            var color: Int? = nil
+            if let raw = p.raw["color_index"], raw != .null {
+                let i = try p.int("color_index")
+                guard i >= 0, i < ObjectColorPalette.count else {
+                    throw CommandError(code: .bad_params,
+                                       message: "'color_index': 0…\(ObjectColorPalette.count - 1)")
+                }
+                color = i
+            }
+            vm.setObjectColor(ids: Set(ids), colorIndex: color)
+            return .object(["count": .int(ids.count), "color_index": color.map { JSONValue.int($0) } ?? JSONValue.null])
+        }
+
         register("object.set_infinite",
                  summary: "Turns the INFINITE on or off for an aux or a group: a bus with no start "
                         + "and no end, running the length of the project. Top level only. Turning "

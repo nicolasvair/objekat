@@ -846,6 +846,9 @@ final class EditViewModel {
     /// The horizontal zoom's current bounds, read by `view.state.min_pps` / `max_pps`. nil with
     /// no interface or before the timeline has appeared.
     @ObservationIgnored var zoomBoundsProbe: (() -> (min: Double, max: Double))?
+    /// What the timeline's hover has resolved, read by `view.state.hover`. nil with no interface
+    /// or before the timeline has appeared (@see TimelineHoverProbe).
+    @ObservationIgnored var hoverProbe: (() -> TimelineHoverProbe)?
 
     /// Asks the timeline to compute the waveforms of these files now, whether or not their
     /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`

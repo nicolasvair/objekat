@@ -247,6 +247,7 @@ final class CommandRegistry {
         registerCrossfadeCommands()
         registerMarkerCommands()
         registerViewCommands()
+        registerToolCommands()
         registerTabCommands()
         registerAudioCommands()
         registerScriptCommands()

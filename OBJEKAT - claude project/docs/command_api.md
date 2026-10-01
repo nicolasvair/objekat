@@ -454,6 +454,7 @@ long that took, and `view_after` is read after it.
 | `input.scroll` | `direction` (`up/down/left/right`) + `distance_px`, or raw `dx`/`dy`; `style: trackpad` (`duration_ms`, `rate_hz`, `momentum`) or `wheel` (`notches`, `interval_ms`); `modifiers` |
 | `input.zoom` | `factor`, `axis` (`horizontal/vertical`), `via: shift_scroll` (the timeline's law, e^(0.01·dx), e^(0.012·dy) vertically) or `keys` (`t`/`r` = ×/÷1.5, ⇧ for vertical); answers `requested_factor`, `achieved_factor`, `presses` |
 | `input.key` | `key`, `modifiers`, `repeat`, `interval_ms`, `hold_ms`; `claimed` / `claimed_by` says whether a text field or a `KeyboardClaim` owner took it before the timeline |
+| `view.state.hover` | what the hover has resolved at the pointer: `position` (canvas) / `viewport` (visible area), the active `tool`, `hovered_id` (the block aimed at, resolved by whichever tool keeps it: `tool_hovered_id` under Volume / Pan / Stem, the block of `zone` under the selection tool — `fadeIn`, `fadeOut`, `trimLeft`, `resizeRight`, `timeSelect`, `move`, `loopIn`, `loopOut` — and `cut_hover {id, local_x}` under Cut; each is null under the other tools), `send_focus` (Aux), `help`, the `cursor` the timeline wants (a name: `arrow`, `iBeam`, `openHand`, `resizeUpDown`, `edge_open_LR`, `fade_in`…, `custom`) and `cursor_owned`. Read-only. The hover resolves inside the hover callback itself, but its redraw does not — `wait_idle` before reading what is on screen. UI mode only |
 | `input.hover` | lays or clears the hover (see above) |
 | `input.record.start` / `.stop` | records what the timeline's monitors see (real or synthetic), with `t` relative to the first event |
 | `input.replay` | replays a recording through the same pump (`speed` stretches time) |
@@ -537,6 +538,27 @@ p99 / max / mean), `late_frames` (intervals of 2 frames or more), `dropped_frame
   swipe had momentum, in steps of exactly one finger event. The pump's schedule is exact to a
   millisecond or two, so the spread comes from the scroll view folding one event into a
   different frame, and a hand is subject to that too.
+
+### The tool and the colour a harness needs (`tool.*`, `object.set_color`)
+
+Two things nothing headless could set before, and that decide how the timeline draws its blocks
+(@see `perf.census.regimes.rich_reasons`): the ACTIVE TOOL and an object's CUSTOM COLOUR.
+
+- `tool.set {tool, stem?}` arms `selection | cut | volume | pan | aux | stem` and writes exactly
+  what the ⇧ branches of the key handler (and the palette's buttons) write: `activeTool`,
+  `isToolPermanent = true`, `heldToolKeyCode = nil`. It is the LOCKED form on purpose: a held key
+  is released by a key-up, and a script has no key to release. `tool.set {tool: "selection"}` is how
+  a tool is released; Esc also does. `stem` (1-based, 1 = Main; default 1) goes with `stem` alone.
+  `tool.get` answers `tool`, `locked`, `held_by_key`, and for the stem tool `stem` / `stem_name`.
+  Session state: undo policy `.none`, never saved.
+- `object.set_color {color_index?, ids?}` is `setObjectColor(ids:colorIndex:)` — one undo point for
+  the whole batch — with `color_index` 0…15 into the object palette, or absent / null to go back to
+  the stem's colour. A coloured clip is a RICH block (`rich_reasons.color`), so painting 600 clips is
+  the way to put 600 blocks on the rich path.
+- **Not implemented, on purpose (TODO): `input.drag`.** A synthetic mouse drag (down, moved, up
+  through the app's queue, the way `input.scroll` goes) is what measuring a gesture's frames would
+  need — `preview`, `spill`, the rich blocks a drag makes — and is out of this harness's scope.
+  Until it exists, a drag has to be felt by hand.
 
 ### The tools
 
@@ -645,7 +667,8 @@ That is end-of-process noise, with no effect on the result.
 | `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position: `playhead` is the red line, `displayed` what the time readout shows — the playhead while playing or paused, the cursor while stopped) |
 | `selection.*` | all, clear, set, read, **context_click** (the decision of a right click on an object or an empty lane, minus the menu) |
-| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
+| `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, **colour**, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
+| `tool.*` | the timeline's active tool: `tool.set` arms selection / cut / volume / pan / aux / stem, LOCKED as ⇧ + the key does (a script holds no key), `tool.get` reads it |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
 | `solo.*` | the confirmed solo: read, set / unset objects, clear — and which windows a direct solo holds open |
