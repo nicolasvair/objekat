@@ -66,7 +66,7 @@ extension EditViewModel {
         pushUndo()
         // A selection pointing into the row that is going would survive it, and ⌫ would then be
         // aimed at nothing.
-        if case .laneMarker(let l, _) = selectedAnnotation, l == id { selectedAnnotation = nil }
+        selectedAnnotations.removeAll { if case .laneMarker(let l, _) = $0 { return l == id }; return false }
         markerLanes.remove(at: idx)
         isDirty = true
         return true
@@ -120,14 +120,15 @@ extension EditViewModel {
         return (lid, m.id)
     }
 
+    /// `pushesUndo == false` is for `removeAnnotations`, which takes several marks in ONE undo.
     @discardableResult
-    func removeMarker(laneID: UUID, markerID: UUID) -> Bool {
+    func removeMarker(laneID: UUID, markerID: UUID, pushesUndo: Bool = true) -> Bool {
         guard let li = markerLanes.firstIndex(where: { $0.id == laneID }),
               let mi = markerLanes[li].markers.firstIndex(where: { $0.id == markerID })
         else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         markerLanes[li].markers.remove(at: mi)
-        if selectedAnnotation == .laneMarker(lane: laneID, marker: markerID) { selectedAnnotation = nil }
+        deselectAnnotation(.laneMarker(lane: laneID, marker: markerID))
         isDirty = true
         return true
     }
@@ -162,11 +163,12 @@ extension EditViewModel {
 
     /// A marker's own hue. nil = it goes back to taking the row's (@see Marker.colorIndex).
     @discardableResult
-    func setMarkerColor(laneID: UUID, markerID: UUID, colorIndex: Int?) -> Bool {
+    func setMarkerColor(laneID: UUID, markerID: UUID, colorIndex: Int?,
+                        pushesUndo: Bool = true) -> Bool {
         guard let li = markerLanes.firstIndex(where: { $0.id == laneID }),
               let mi = markerLanes[li].markers.firstIndex(where: { $0.id == markerID })
         else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         markerLanes[li].markers[mi].colorIndex = colorIndex
         isDirty = true
         return true
@@ -191,9 +193,13 @@ extension EditViewModel {
         if pushesUndo { pushUndo() }
         let m = markerLanes[si].markers.remove(at: mi)
         markerLanes[ti].markers.append(m)
-        if selectedAnnotation == .laneMarker(lane: source, marker: markerID) {
-            selectedAnnotation = .laneMarker(lane: target, marker: markerID)
+        // The selection is re-aimed wherever it holds the mark — one of several as well as alone.
+        let from = AnnotationSel.laneMarker(lane: source, marker: markerID)
+        let to   = AnnotationSel.laneMarker(lane: target, marker: markerID)
+        if selectedAnnotations.contains(from) {
+            selectedAnnotations = selectedAnnotations.map { $0 == from ? to : $0 }
         }
+        if annotationAnchor == from { annotationAnchor = to }
         isDirty = true
         return true
     }
@@ -230,14 +236,12 @@ extension EditViewModel {
     }
 
     @discardableResult
-    func removeObjectMarker(objectID: UUID, markerID: UUID) -> Bool {
+    func removeObjectMarker(objectID: UUID, markerID: UUID, pushesUndo: Bool = true) -> Bool {
         guard let object = find(id: objectID),
               object.markers.contains(where: { $0.id == markerID }) else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         update(id: objectID) { $0.markers.removeAll { $0.id == markerID } }
-        if selectedAnnotation == .objectMarker(object: objectID, marker: markerID) {
-            selectedAnnotation = nil
-        }
+        deselectAnnotation(.objectMarker(object: objectID, marker: markerID))
         isDirty = true
         return true
     }
@@ -281,10 +285,11 @@ extension EditViewModel {
     /// The hue of a marker carried by an object. nil = white, which is what a mark laid on matter
     /// wants by default: it has to read against any waveform under it.
     @discardableResult
-    func setObjectMarkerColor(objectID: UUID, markerID: UUID, colorIndex: Int?) -> Bool {
+    func setObjectMarkerColor(objectID: UUID, markerID: UUID, colorIndex: Int?,
+                              pushesUndo: Bool = true) -> Bool {
         guard let object = find(id: objectID),
               object.markers.contains(where: { $0.id == markerID }) else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         update(id: objectID) { obj in
             if let i = obj.markers.firstIndex(where: { $0.id == markerID }) {
                 obj.markers[i].colorIndex = colorIndex
@@ -408,11 +413,11 @@ extension EditViewModel {
     }
 
     @discardableResult
-    func removeComment(id: UUID) -> Bool {
+    func removeComment(id: UUID, pushesUndo: Bool = true) -> Bool {
         guard let idx = comments.firstIndex(where: { $0.id == id }) else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         comments.remove(at: idx)
-        if selectedAnnotation == .comment(id) { selectedAnnotation = nil }
+        deselectAnnotation(.comment(id))
         isDirty = true
         return true
     }
@@ -429,9 +434,9 @@ extension EditViewModel {
 
     /// A comment's hue. nil = back to white, the colour that says 'this is not matter'.
     @discardableResult
-    func setCommentColor(id: UUID, colorIndex: Int?) -> Bool {
+    func setCommentColor(id: UUID, colorIndex: Int?, pushesUndo: Bool = true) -> Bool {
         guard let idx = comments.firstIndex(where: { $0.id == id }) else { return false }
-        pushUndo()
+        if pushesUndo { pushUndo() }
         comments[idx].colorIndex = colorIndex
         isDirty = true
         return true
@@ -475,10 +480,8 @@ extension EditViewModel {
         walk(items)
         let kept = comments.filter { $0.parentID == nil || alive.contains($0.parentID!) }
         guard kept.count != comments.count else { return }
-        if case .comment(let c)? = selectedAnnotation, !kept.contains(where: { $0.id == c }) {
-            selectedAnnotation = nil
-        }
         comments = kept
+        pruneAnnotationSelection()
         isDirty = true
     }
 
@@ -537,16 +540,156 @@ extension EditViewModel {
         return marker(for: sel) != nil
     }
 
-    /// ⌫ on a selected annotation. Returns false if there was nothing to delete, so the key handler
-    /// can fall through to its next branch rather than swallowing the key.
+    /// ⌫ on the selected annotations — ONE, or all of them, in a single undo. Returns false if
+    /// there was nothing to delete, so the key handler can fall through to its next branch rather
+    /// than swallowing the key.
     @discardableResult
     func deleteSelectedAnnotation() -> Bool {
-        guard let sel = selectedAnnotation else { return false }
-        switch sel {
-        case .laneMarker(let l, let m):   return removeMarker(laneID: l, markerID: m)
-        case .objectMarker(let o, let m): return removeObjectMarker(objectID: o, markerID: m)
-        case .comment(let c):             return removeComment(id: c)
+        removeAnnotations(selectedAnnotations) > 0
+    }
+
+    /// Deletes several marks — of the band, carried by objects, comments — as ONE gesture: one undo
+    /// point, pushed before the first removal and only if something will really go. The marks that
+    /// no longer exist are skipped rather than refused, so a stale selection still deletes what is
+    /// left of it. Returns how many went.
+    @discardableResult
+    func removeAnnotations(_ sels: [AnnotationSel]) -> Int {
+        let live = uniqueLiveAnnotations(sels)
+        guard !live.isEmpty else { return 0 }
+        pushUndo()
+        var gone = 0
+        for sel in live {
+            let ok: Bool
+            switch sel {
+            case .laneMarker(let l, let m):   ok = removeMarker(laneID: l, markerID: m, pushesUndo: false)
+            case .objectMarker(let o, let m): ok = removeObjectMarker(objectID: o, markerID: m, pushesUndo: false)
+            case .comment(let c):             ok = removeComment(id: c, pushesUndo: false)
+            }
+            if ok { gone += 1 }
         }
+        return gone
+    }
+
+    /// The selections that still name something, each once, in the order given.
+    private func uniqueLiveAnnotations(_ sels: [AnnotationSel]) -> [AnnotationSel] {
+        var seen = Set<AnnotationSel>()
+        return sels.filter { annotationExists($0) && seen.insert($0).inserted }
+    }
+
+    /// The selection as a set — what the drawing layers ask, for membership only.
+    var selectedAnnotationSet: Set<AnnotationSel> { Set(selectedAnnotations) }
+
+    /// The mark an id names, whichever kind it is — for the inline fields, which carry only the id
+    /// of what they are editing and must find it again when they commit, selection or no selection.
+    /// Object markers are looked up among the objects ON SCREEN (`laneEntries`): that is where a
+    /// field for one can exist.
+    func annotationSel(forMarkerID id: UUID) -> AnnotationSel? {
+        for lane in markerLanes where lane.markers.contains(where: { $0.id == id }) {
+            return .laneMarker(lane: lane.id, marker: id)
+        }
+        if comments.contains(where: { $0.id == id }) { return .comment(id) }
+        for e in laneEntries where e.item.markers.contains(where: { $0.id == id }) {
+            return .objectMarker(object: e.item.id, marker: id)
+        }
+        return nil
+    }
+
+    /// Takes one mark out of the selection (and out of the ⇧ anchor's reach) — what every removal
+    /// does for the mark that goes.
+    func deselectAnnotation(_ sel: AnnotationSel) {
+        if selectedAnnotations.contains(sel) { selectedAnnotations.removeAll { $0 == sel } }
+        if annotationAnchor == sel { annotationAnchor = selectedAnnotations.last }
+    }
+
+    /// Lets go of the marks that no longer exist — after an undo, a cut that swallowed them, a
+    /// deleted row or group. A selection can outlive its targets, and ⌫ aimed at a ghost would
+    /// either do nothing or, worse, delete the one mark left beside it.
+    func pruneAnnotationSelection() {
+        if !selectedAnnotations.isEmpty {
+            let kept = selectedAnnotations.filter(annotationExists)
+            if kept.count != selectedAnnotations.count { selectedAnnotations = kept }
+        }
+        if let a = annotationAnchor, !annotationExists(a) { annotationAnchor = selectedAnnotations.last }
+    }
+
+    // MARK: Picking marks — the click's logic, which the hand and the API share
+
+    /// A click on a mark (or on nothing) and what it does to the selection. The LOGIC lives here
+    /// rather than in the timeline so that a script can drive exactly what a hand does
+    /// (`marker.select`), and so that no assertion has to mean 'the view would have done…'.
+    ///
+    /// - plain: the mark alone is selected (the ⇧ anchor is laid on it). On a mark of the BAND —
+    ///   a region or a point marker — the cursor also goes to its start, caret off: the same
+    ///   gesture that selects says where one is. Dragging is not a click and never gets here.
+    /// - ⌘: the mark goes in or out of the selection, the others staying.
+    /// - ⇧: the marks of the band between the anchor and this one — in TIME (a region counts when
+    ///   it overlaps the span) and in ROWS — replace the selection, the anchor holding still, so a
+    ///   second ⇧-click aimed back inside SHORTENS it, as the time selection's does. With no
+    ///   anchor on the band (a comment, a mark of an object, nothing yet) it simply adds the mark.
+    /// - nothing under the hand: a plain click lets go of everything; with ⇧ or ⌘ it does nothing,
+    ///   a slip of the hand near the edge of a mark not being a reason to lose the selection.
+    ///
+    /// `seek` moves the cursor (the caller knows whether the engine is playing).
+    func handleMarkBandClick(hit: AnnotationSel?, shift: Bool, cmd: Bool,
+                             seek: ((Double) -> Void)? = nil) {
+        guard let hit else {
+            if !shift && !cmd { selectedAnnotations = [] }
+            return
+        }
+        if cmd {
+            if selectedAnnotations.contains(hit) {
+                deselectAnnotation(hit)
+            } else {
+                selectAnnotations([hit], additive: true)
+                annotationAnchor = hit
+            }
+            return
+        }
+        if shift {
+            if !extendAnnotationSelection(to: hit) {
+                selectAnnotations([hit], additive: true)
+                if annotationAnchor == nil { annotationAnchor = hit }
+            }
+            return
+        }
+        selectAnnotations([hit])
+        annotationAnchor = hit
+        if case .laneMarker = hit, let t = marker(for: hit)?.time {
+            caretLane = nil
+            seek?(t)
+        }
+    }
+
+    /// The ⇧ half of `handleMarkBandClick`: false when there is no usable anchor on the band, and
+    /// the caller then falls back on adding the mark. The anchor is VALIDATED here every time —
+    /// it may have gone with an undo or a deletion since it was laid.
+    private func extendAnnotationSelection(to hit: AnnotationSel) -> Bool {
+        guard case .laneMarker(let hitLane, _) = hit,
+              let anchor = annotationAnchor, annotationExists(anchor),
+              case .laneMarker(let anchorLane, _) = anchor,
+              let a = marker(for: anchor), let h = marker(for: hit)
+        else { return false }
+        let rows = visibleMarkerLanes
+        guard let ra = rows.firstIndex(where: { $0.id == anchorLane }),
+              let rh = rows.firstIndex(where: { $0.id == hitLane }) else { return false }
+        let lo = min(a.time, h.time), hi = max(a.endTime, h.endTime)
+        var picked: [AnnotationSel] = []
+        for row in rows[min(ra, rh)...max(ra, rh)] {
+            for m in row.sortedMarkers where m.time <= hi + 1e-9 && m.endTime >= lo - 1e-9 {
+                picked.append(.laneMarker(lane: row.id, marker: m.id))
+            }
+        }
+        selectAnnotations(picked)
+        return true
+    }
+
+    /// What a right click on `hit` is about: the whole selection when the mark aimed at belongs to
+    /// it, else that mark ALONE — selected on the spot, so that what the menu acts on is what one
+    /// sees highlighted. The menu then reads its targets from here and never from a selection that
+    /// might have moved by the time an item is chosen.
+    func annotationsForContextMenu(hit: AnnotationSel) -> [AnnotationSel] {
+        if !selectedAnnotations.contains(hit) { selectAnnotation(hit) }
+        return selectedAnnotations
     }
 
     /// The text an inline rename starts from, and where it is committed. Going through the
@@ -563,12 +706,27 @@ extension EditViewModel {
     /// `setAnnotationName`, and for the same reason: the right click has ONE colour item to build,
     /// not three.
     @discardableResult
-    func setAnnotationColor(_ sel: AnnotationSel, colorIndex: Int?) -> Bool {
+    func setAnnotationColor(_ sel: AnnotationSel, colorIndex: Int?, pushesUndo: Bool = true) -> Bool {
         switch sel {
-        case .laneMarker(let l, let m):   return setMarkerColor(laneID: l, markerID: m, colorIndex: colorIndex)
-        case .objectMarker(let o, let m): return setObjectMarkerColor(objectID: o, markerID: m, colorIndex: colorIndex)
-        case .comment(let c):             return setCommentColor(id: c, colorIndex: colorIndex)
+        case .laneMarker(let l, let m):
+            return setMarkerColor(laneID: l, markerID: m, colorIndex: colorIndex, pushesUndo: pushesUndo)
+        case .objectMarker(let o, let m):
+            return setObjectMarkerColor(objectID: o, markerID: m, colorIndex: colorIndex, pushesUndo: pushesUndo)
+        case .comment(let c):
+            return setCommentColor(id: c, colorIndex: colorIndex, pushesUndo: pushesUndo)
         }
+    }
+
+    /// The same hue on SEVERAL marks, in ONE undo — the right click on a multiple selection.
+    /// Returns how many took it.
+    @discardableResult
+    func setAnnotationsColor(_ sels: [AnnotationSel], colorIndex: Int?) -> Int {
+        let live = uniqueLiveAnnotations(sels)
+        guard !live.isEmpty else { return 0 }
+        pushUndo()
+        var done = 0
+        for sel in live where setAnnotationColor(sel, colorIndex: colorIndex, pushesUndo: false) { done += 1 }
+        return done
     }
 
     /// The hue that selection currently carries, nil when it inherits one.

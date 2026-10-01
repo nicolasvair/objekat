@@ -238,9 +238,14 @@ extension EditViewModel {
     ///
     /// One undo point for the whole batch, one recompilation per chain touched, and the cards laid
     /// down IN the source chain's order: a set has none, and a reordered chain is a different sound.
+    ///
+    /// `place` is where they land in the target chain (a series and an index, the first card's);
+    /// nil = the end of the root series. `undo: false` when a larger gesture has already pushed its
+    /// own point and this is one of its parts.
     @discardableResult
     func transferPlugins(_ ids: [UUID], from sourceHostID: UUID, to targetHostID: UUID,
-                         mode: PluginTransferMode) -> [UUID] {
+                         mode: PluginTransferMode, at place: (SeriesLocation, Int)? = nil,
+                         undo: Bool = true) -> [UUID] {
         guard let engine, chainPlugins(targetHostID) != nil,
               let sourcePlugins = chainPlugins(sourceHostID) else { return [] }
         // Moving or linking a chain onto ITSELF means nothing: a move would be a no-op that still
@@ -255,7 +260,7 @@ extension EditViewModel {
         }
         guard !ordered.isEmpty else { return [] }
 
-        pushUndo()
+        if undo { pushUndo() }
 
         // A LINK needs the source registered in a group before the copy can join it. Gathered
         // first, in one pass over the source, so the writes below stay a single update.
@@ -307,7 +312,13 @@ extension EditViewModel {
                 p = Self.simplifyTree(Self.removingPlugins(wanted, from: p))
             }
         }
-        updateChainPlugins(targetHostID) { $0.append(contentsOf: placed) }
+        updateChainPlugins(targetHostID) { p in
+            guard let (loc, idx) = place else { p.append(contentsOf: placed); return }
+            for (offset, c) in placed.enumerated() {
+                p = Self.inserting(c, into: loc, at: idx + offset, plugins: p)
+            }
+            p = Self.simplifyTree(p)
+        }
 
         if mode == .move { compileRack(objectID: sourceHostID) }
         compileRack(objectID: targetHostID)   // creates the target instances (state restored)

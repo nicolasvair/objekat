@@ -17,6 +17,16 @@ enum SynopticMarquee {
         init(id: UUID, frame: CGRect) { self.id = id; self.frame = frame }
     }
 
+    /// Whether a drag that begins at `point` is a MARQUEE at all. It is not when the point is on a
+    /// card (that drag is the card's own: reorder, move, copy) or on a `blocker` — the header card and
+    /// the mix box of an FX link's block, which carry gestures of their own (the header's drag moves the
+    /// whole block, the mix box's boxes are dragged for their value). A rectangle that started there
+    /// would fight them for the same pixels. Frames are taken as they are laid: edges inclusive on the
+    /// low side, as `CGRect.contains` has it.
+    static func startsMarquee(at point: CGPoint, cards: [Card], blockers: [CGRect]) -> Bool {
+        !cards.contains { $0.frame.contains(point) } && !blockers.contains { $0.contains(point) }
+    }
+
     /// A MARQUEE takes every card it TOUCHES — a card half caught is caught. Containment was the
     /// first rule here (the clips' rubber band applies it, and on a canvas where parallel branches
     /// sit side by side it was meant to keep a rectangle drawn down one branch from sweeping up its

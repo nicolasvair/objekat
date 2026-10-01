@@ -79,7 +79,8 @@ struct MarkerBandView: View {
     /// screen is worth drawing. The same mechanism as the ruler's.
     var scrollOffsetX: CGFloat = 0
     var viewportWidth: CGFloat = 0
-    var selected: AnnotationSel? = nil
+    /// Every mark selected, of any kind (only the band's own are looked up here).
+    var selected: Set<AnnotationSel> = []
     /// The marker being renamed, if any (compared against `EditViewModel.renamingID`).
     var renamingID: UUID? = nil
     var onRename: (UUID, String?) -> Void = { _, _ in }
@@ -95,7 +96,7 @@ struct MarkerBandView: View {
     }
 
     private func isSelected(_ lane: MarkerLane, _ m: Marker) -> Bool {
-        selected == .laneMarker(lane: lane.id, marker: m.id)
+        selected.contains(.laneMarker(lane: lane.id, marker: m.id))
     }
 
     var body: some View {

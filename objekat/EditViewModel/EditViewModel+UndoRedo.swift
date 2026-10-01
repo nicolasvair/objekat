@@ -176,7 +176,7 @@ extension EditViewModel {
         // than assigning them.
         if let lanes = snapshot.markerLanes { markerLanes = lanes }
         if let cs = snapshot.comments { comments = cs }
-        if let sel = selectedAnnotation, !annotationExists(sel) { selectedAnnotation = nil }
+        pruneAnnotationSelection()
         pruneScriptOverlays()
         // The automation points selected: dropped WHOLESALE rather than pruned. They are named by
         // STORAGE INDEX (@see AutomationPointRef), and a snapshot restores curves whose points

@@ -162,16 +162,27 @@ extension EditViewModel {
         return TimeSelection(timeRange: t0...t1, lanes: Set(lo...hi))
     }
 
-    /// Selects a marker, a region or a comment — exclusive with the objects, the crossfade, the
-    /// time range and the notes, so that ⌫ and ⌘R have exactly one thing in front of them.
-    /// @see AnnotationSel, which says why this is a slot of its own.
+    /// Selects ONE marker, region or comment — replacing whatever was selected. The single-mark
+    /// door kept for the gestures that can only mean one (a menu item, a drag's grab, the creation
+    /// of a mark); the clicks go through `handleMarkBandClick` and its modifiers.
     func selectAnnotation(_ sel: AnnotationSel?) {
+        selectAnnotations(sel.map { [$0] } ?? [], additive: false)
+    }
+
+    /// Selects marks — markers and regions of the band, markers carried by objects, comments —
+    /// exclusive with the objects, the crossfade, the time range and the notes, so that ⌫ and ⌘R
+    /// have exactly one thing in front of them. `additive` adds to the marks already selected
+    /// instead of replacing them (the objects and the rest were cleared by the first of them).
+    /// @see AnnotationSel, which says why this is a slot of its own.
+    func selectAnnotations(_ sels: [AnnotationSel], additive: Bool = false) {
         selectedIDs = []
         selectedCrossfade = nil
         timeSelection = nil
         selectedMidiNoteIDs = []
         clearAutomationPointSelection()
-        selectedAnnotation = sel
+        var merged = additive ? selectedAnnotations : []
+        for sel in sels where !merged.contains(sel) { merged.append(sel) }
+        if selectedAnnotations != merged { selectedAnnotations = merged }
     }
 
     /// Selects a crossfade — the zone, not its two objects. Exclusive with the object selection,
@@ -180,7 +191,7 @@ extension EditViewModel {
         selectedIDs = []
         timeSelection = nil
         selectedMidiNoteIDs = []
-        selectedAnnotation = nil
+        selectedAnnotations = []
         clearAutomationPointSelection()
         selectedCrossfade = (left, right)
     }
@@ -189,7 +200,7 @@ extension EditViewModel {
         selectedCrossfade = nil
         selectedIDs = []
         timeSelection = nil
-        selectedAnnotation = nil
+        selectedAnnotations = []
         clearAutomationPointSelection()
     }
 

@@ -384,9 +384,34 @@ private struct StemStripDropDelegate: DropDelegate {
     /// The band at the bottom of the timeline (@see PluginDropHint), under this strip's own key.
     private var hintKey: String { "strip:\(stemID.uuidString)" }
 
+    /// What a release here would do with the drag in flight (@see EditViewModel.pluginDropOutcome);
+    /// nil when there is none to read (the legacy reading then holds).
+    private func outcome() -> PluginDropOutcome? {
+        guard let payload = PluginDragSession.shared.current else { return nil }
+        return viewModel.pluginDropOutcome(payload, toHost: stemID, at: .hostEnd, flags: NSEvent.modifierFlags)
+    }
+
+    /// Lights the strip and speaks on the band when the release would DO something; withdraws both,
+    /// and shows the refusing cursor, when it would not.
+    private func present(_ info: DropInfo) -> DropProposal {
+        guard let o = outcome() else {
+            onHover(true, linkPoint(info))
+            PluginDropHint.shared.present(hintKey, context: .host)
+            return DropProposal(operation: PluginDrop.operation(for: NSEvent.modifierFlags))
+        }
+        guard let ctx = o.hintContext(plainContext: .host) else {
+            onHover(false, nil)
+            PluginDropHint.shared.leave(hintKey)
+            return DropProposal(operation: .forbidden)
+        }
+        onHover(true, o.isLinking ? info.location : nil)
+        PluginDropHint.shared.present(hintKey, context: ctx)
+        return DropProposal(operation: o.operation)
+    }
+
     func dropEntered(info: DropInfo) {
-        onHover(true, linkPoint(info))
-        if carriesPlugin(info) { PluginDropHint.shared.present(hintKey, context: .host) }
+        guard carriesPlugin(info) else { onHover(true, linkPoint(info)); return }
+        _ = present(info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -395,9 +420,7 @@ private struct StemStripDropDelegate: DropDelegate {
             PluginDropHint.shared.leave(hintKey)
             return DropProposal(operation: .forbidden)
         }
-        onHover(true, linkPoint(info))
-        PluginDropHint.shared.present(hintKey, context: .host)
-        return DropProposal(operation: PluginDrop.operation(for: NSEvent.modifierFlags))
+        return present(info)
     }
 
     func dropExited(info: DropInfo) {

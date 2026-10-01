@@ -9,6 +9,18 @@ import UniformTypeIdentifiers
 // these closures. They are wired either onto a mock (a local @State, the phase A demo),
 // or onto `EditViewModel`/the engine (phase B — step 1: a real series).
 
+/// Where in the signal view a plugin drag is aimed. A drop target knows only what it is laid on — a
+/// cable (a series and an index), a card, a bin's header — and the bound view resolves it to a
+/// `PluginDropSite` of the host's chain.
+enum SynopticDropTarget: Equatable {
+    /// A cable or a '+': the series `seriesID`, at `index`.
+    case series(UUID, Int)
+    /// A card: just before it, in the series it sits in.
+    case beforeCard(UUID)
+    /// A bin's header: the end of the bin's block.
+    case blockEnd(UUID)
+}
+
 struct SynopticActions {
     var onOpenEditor: ((UUID) -> Void)? = nil
     var onToggleBypass: (UUID) -> Void = { _ in }
@@ -26,13 +38,12 @@ struct SynopticActions {
 
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
-    // A drop on a '+' (or a branch's axis): reorders/moves the plugin into the target series;
-    // `copy` (⌥ held) → an independent copy instead of a move.
-    var onReorder: ((_ pluginID: UUID, _ seriesID: UUID, _ toIndex: Int, _ copy: Bool) -> Void)? = nil
-    // Dropping a plugin ONTO a card (a branch's axis): inserts it into the same branch, just
-    // before the target card. `copy` = ⌥ (an independent copy). It allows dropping on the axis
-    // and not only on the small '+'.
-    var onDropOntoCard: ((_ targetPluginID: UUID, _ draggedPluginID: UUID, _ copy: Bool) -> Void)? = nil
+    // What a release at `target` would do with the drag in flight, for the cursor and the band
+    // (@see PluginDropOutcome). nil = no drag in flight to answer for → the legacy reading.
+    var dropOutcome: ((_ target: SynopticDropTarget, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
+    // A plugin (or a whole bin's block) let go at `target`: the view-model resolves it and carries it out —
+    // reorder, move, copy, join a bin, leave one. nil = the view does not receive (the demo).
+    var onDrop: ((_ target: SynopticDropTarget, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
 
     // The dB gain at the end of a parallel branch (drag ↑/↓).
     var onSetVoiceGain: ((_ blockID: UUID, _ voiceIndex: Int, _ dB: Float) -> Void)? = nil
@@ -98,7 +109,7 @@ struct SynopticActions {
     /// The start of a drag on the block's output section: push an undo point.
     var onFXBeginEdit: (() -> Void)? = nil
     var onFXRename: ((UUID, String) -> Void)? = nil
-    /// A click on the colour dot: the next colour of the palette.
+    /// "Next colour" of the header's right-click menu: the next colour of the palette.
     var onFXCycleColor: ((UUID) -> Void)? = nil
     /// Detach / reattach (the same button: the state says which).
     var onFXToggleDetach: ((UUID) -> Void)? = nil
@@ -373,21 +384,25 @@ struct SynopticView: View {
             // 'Cable' drop zones: rendered FIRST (hence under the cards) so that dropping a plugin on a
             // branch's axis inserts it there — even an empty parallel branch. A hovered card keeps
             // priority (inserting just before it) since it is drawn on top.
-            if let onReorder = actions.onReorder {
+            if let onDrop = actions.onDrop {
                 ForEach(d.placement.cableDrops) { z in
-                    CableDropView(rect: z.rect, previewFrame: z.previewFrame) { dragged, copy in
-                        onReorder(dragged, z.seriesID, z.insertIndex, copy)
+                    let target = SynopticDropTarget.series(z.seriesID, z.insertIndex)
+                    CableDropView(rect: z.rect, previewFrame: z.previewFrame,
+                                  outcome: { actions.dropOutcome?(target, $0) }) { payload, flags in
+                        onDrop(target, payload, flags)
                     }
                 }
             }
 
-            // A bin's block: its header (colour · name · on/off · menu) and its footer (mute ·
-            // volume · pan) are laid over the wire the frame is drawn round (@see draw).
+            // A bin's block: its header card (on/off · name · link badge · ✕) straddling the top of the
+            // body, and its mix box (pan · volume · mute) nested at the body's foot. The wire stops at
+            // each and starts again on the other side, so neither is laid over it (@see draw).
             ForEach(d.placement.fxBlocks) { b in
-                FXBlockHeaderView(link: b.link, width: b.rect.width, actions: actions)
-                    .position(b.headerCenter)
-                FXBlockFooterView(link: b.link, actions: actions)
-                    .position(b.footerCenter)
+                FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
+                                  actions: actions)
+                    .position(x: b.headerRect.midX, y: b.headerRect.midY)
+                FXBlockMixView(link: b.link, block: b, actions: actions)
+                    .position(x: b.mixRect.midX, y: b.mixRect.midY)
             }
 
             ForEach(d.placement.cards) { c in
@@ -400,7 +415,8 @@ struct SynopticView: View {
                     onRemove: { actions.onRemove(c.plugin.id) },
                     dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
                     dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
-                    onDropPlugin: actions.onDropOntoCard.map { f in { dragged, copy in f(c.plugin.id, dragged, copy) } },
+                    dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
+                    onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
                     linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
@@ -498,7 +514,8 @@ struct SynopticView: View {
         }
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
         .contentShape(Rectangle())
-        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards))
+        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards,
+                                                   blockers: d.placement.fxBlocks.flatMap { [$0.headerRect, $0.mixRect] }))
         .contextMenu { fxLinkMenu(ids: Array(selection)) }
     }
 
@@ -554,17 +571,20 @@ struct SynopticView: View {
     ///
     ///  • whether there is a marquee at all — a drag that STARTS on a card is that card's own
     ///    (reorder, move, copy), and a container gesture that stole it would make the chain
-    ///    unorderable. The test is the card frames, which this view has and AppKit has not;
+    ///    unorderable; so is one that starts on a bin's header card or mix box (the header's drag
+    ///    moves the block, the mix box's boxes are dragged for their value). The test is the frames,
+    ///    which this view has and AppKit has not (@see SynopticMarquee.startsMarquee);
     ///  • what the modifiers mean — ⇧ adds to what was already taken, ⌘ flips it, neither
     ///    replaces it. Read at the start, because a hand that lets go of ⇧ mid-drag is resting a
     ///    finger, not changing its mind;
     ///  • what was already selected (`marqueeBase`), so that widening AND narrowing the rectangle
     ///    both recompute from the same ground instead of piling up.
-    private func marqueeGesture(cards: [SynopticLayout.CardPlacement]) -> some Gesture {
+    private func marqueeGesture(cards: [SynopticLayout.CardPlacement], blockers: [CGRect]) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { g in
                 if marqueeOrigin == nil {
-                    guard !cards.contains(where: { $0.frame.contains(g.startLocation) }) else { return }
+                    guard SynopticMarquee.startsMarquee(at: g.startLocation, cards: marqueeCards(cards),
+                                                        blockers: blockers) else { return }
                     let flags = NSEvent.modifierFlags
                     marqueeAdds = flags.contains(.shift)
                     marqueeFlips = flags.contains(.command)
@@ -701,9 +721,10 @@ struct SynopticView: View {
             ctx.fill(path, with: .color(Color.gray.opacity(0.06 + Double(s.depth) * 0.05)))
         }
 
-        // A bin's block: its colour round its series (dashed once the host has left the bin).
+        // A bin's block: its colour round its series (dashed once the host has left the bin). The BODY
+        // alone: the header card that straddles its top edge is a view of its own, opaque, laid over it.
         for b in d.placement.fxBlocks {
-            let path = Path(roundedRect: b.rect, cornerRadius: 12)
+            let path = Path(roundedRect: b.bodyRect, cornerRadius: 12)
             ctx.fill(path, with: .color(b.link.color.opacity(b.link.isEnabled ? 0.16 : 0.06)))
             ctx.stroke(path, with: .color(b.link.color.opacity(b.link.isDetached ? 0.6 : 0.95)),
                        style: StrokeStyle(lineWidth: 1.5, dash: b.link.isDetached ? [4, 3] : []))
@@ -712,7 +733,7 @@ struct SynopticView: View {
         for cable in d.placement.cables {
             var path = Path()
             path.move(to: cable.from)
-            if cable.style == .connector {
+            if cable.style == .connector || cable.style == .plain {
                 path.addLine(to: cable.to)
             } else {
                 // A vertical flow: the fork/merge curve bends vertically (control points on midY).
@@ -745,102 +766,160 @@ struct SynopticView: View {
     }
 }
 
-// MARK: - FX link block (header and footer)
+// MARK: - FX link block (header card and mix box)
 
-/// The strip above a bin's block: the colour dot (a click moves on to the next colour), the name
-/// (a double click renames it, a drag moves the whole block), the link badge (solid = follows the
-/// bin, hollow = detached; a click flips it), the common on/off and a menu with the rest.
+/// The card that straddles the top edge of a bin's block — a plugin card's sibling, built on
+/// `SynopticCardView`'s model: an opaque body with square-edged on/off at the left (the bin's common
+/// on/off), then the name (the drag handle: it moves the whole block; a double click renames it), the
+/// link badge (solid = follows the bin, hollow = detached; a click flips it), the ✕ and a thin level
+/// line under the name. The ✕ is a small menu rather than a delete, because a bin is shared: removing
+/// it from THIS object, leaving it while keeping the plugins, and dissolving it everywhere are three
+/// different gestures. The colour is the card's rim; there is no colour dot — "next colour" is in the
+/// right-click menu.
 struct FXBlockHeaderView: View {
     let link: SynopticFXLink
-    let width: CGFloat
+    let rect: CGRect
+    let pluginCount: Int
     let actions: SynopticActions
 
     @State private var renaming = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
+    @State private var dropTargeted = false
+    @State private var dropHintID = UUID()
 
+    private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button { actions.onFXCycleColor?(link.blockID) } label: {
-                Circle().fill(link.color).frame(width: 10, height: 10)
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("fxlink.help.color"))
-
-            if renaming {
-                TextField(noLabel, text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .focused($fieldFocused)
-                    .onSubmit { commitRename() }
-                    .onExitCommand { renaming = false }
-                    .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(link.name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { beginRename() }
-                    .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } })
-                    .help(help)
-            }
-
-            Button { actions.onFXToggleDetach?(link.blockID) } label: {
-                Image(systemName: "link")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(link.isDetached ? link.color.opacity(0.9) : .white)
-                    .padding(3)
-                    .background {
-                        if link.isDetached {
-                            Circle().strokeBorder(link.color.opacity(0.7), lineWidth: 1.5)
-                        } else {
-                            Circle().fill(link.color)
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
-
+        HStack(spacing: 0) {
+            // on/off — a REAL button, full height, square edges (the bin's colour = on)
             Button { actions.onFXToggleEnabled?(link.blockID) } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(link.isEnabled ? .white : .secondary)
-                    .frame(width: 18, height: 18)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18)))
-                    .contentShape(Rectangle())
+                ZStack {
+                    Rectangle().fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18))
+                    Image(systemName: "power")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(link.isEnabled ? .white : .secondary)
+                }
+                .frame(width: toggleW)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(L("fxlink.help.power"))
 
-            Menu { menuItems } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    if renaming {
+                        TextField(noLabel, text: $draft)
+                            .textFieldStyle(.plain)
+                            .font(Font(SynopticLayout.cardNameFont))
+                            .focused($fieldFocused)
+                            .onSubmit { commitRename() }
+                            .onExitCommand { renaming = false }
+                            .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(link.name)
+                            .font(Font(SynopticLayout.cardNameFont))
+                            .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { beginRename() }
+                            .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } }) {
+                                FXBlockDragPreview(link: link, pluginCount: pluginCount)
+                            }
+                            .help(help)
+                    }
+
+                    // 🔗 — solid: follows the bin; hollow: detached. A click flips it. The same badge
+                    // (size and look) as a plugin card's.
+                    Button { actions.onFXToggleDetach?(link.blockID) } label: {
+                        Image(systemName: "link")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(link.isDetached ? link.color.opacity(0.8) : .white)
+                            .padding(3)
+                            .background {
+                                if link.isDetached {
+                                    Circle().strokeBorder(link.color.opacity(0.55), lineWidth: 1.5)
+                                } else {
+                                    Circle().fill(link.color)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
+
+                    // ✕ — a small menu: remove from this object / leave and keep the plugins / dissolve.
+                    Menu {
+                        Button(L("fxlink.menu.remove")) { actions.onFXRemove?(link.blockID) }
+                        Button(L("fxlink.menu.release")) { actions.onFXRelease?(link.blockID) }
+                        Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 12, height: 14)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(L("fxlink.help.close"))
+                }
+
+                Spacer(minLength: 0)
+
+                // A thin level line under the name, like a card's — the track only for now: the bin has
+                // no level of its own to read yet.
+                Capsule()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(height: 2)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(L("fxlink.help.menu"))
+            .padding(.horizontal, 8)
+            .padding(.top, 5)
+            .padding(.bottom, 4)
         }
-        .padding(.horizontal, 8)
-        .frame(width: width, height: SynopticLayout.fxHeaderH)
+        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))   // OPAQUE: it straddles the body's edge
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(link.color.opacity(link.isDetached ? 0.6 : 1), lineWidth: 1.5)
+        )
+        // A bin that is OFF reads like a card of a disabled container: greyed and dimmed.
+        .saturation(link.isEnabled ? 1 : 0.25)
+        .opacity(link.isEnabled ? 1 : 0.6)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        // A plugin let go on the header goes to the END of the bin; a place where nothing would happen
+        // does not light up (@see PluginDropDelegate). The drop layer is a SIBLING behind the content,
+        // like the cards': the name carrying the `.onDrag` is a descendant of this view.
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
+        )
+        .background(dropLayer)
         .contextMenu { menuItems }
+    }
+
+    @ViewBuilder private var dropLayer: some View {
+        if let onDrop = actions.onDrop {
+            let target = SynopticDropTarget.blockEnd(link.blockID)
+            Color.clear
+                .contentShape(Rectangle())
+                .onDrop(of: [.plainText],
+                        delegate: PluginDropDelegate(isTargeted: $dropTargeted,
+                                                     hintKey: "header:\(dropHintID.uuidString)",
+                                                     outcome: { actions.dropOutcome?(target, $0) },
+                                                     onDrop: { payload, flags in onDrop(target, payload, flags) }))
+        }
     }
 
     @ViewBuilder private var menuItems: some View {
         Button(L("fxlink.menu.rename")) { beginRename() }
+        Button(L("fxlink.menu.next_color")) { actions.onFXCycleColor?(link.blockID) }
         Button(link.isDetached ? L("fxlink.menu.reattach") : L("fxlink.menu.detach")) {
             actions.onFXToggleDetach?(link.blockID)
         }
@@ -864,10 +943,40 @@ struct FXBlockHeaderView: View {
     }
 }
 
-/// The strip under a bin's block: its OUTPUT section — mute · volume · pan. While the block follows
-/// the bin these are the bin's (every member moves together); once detached they are the block's own.
-struct FXBlockFooterView: View {
+/// The image under the pointer while a bin's block is dragged by its header: its name, its colour and
+/// how many plugins it carries. Same constraint as `PluginDragPreview` — rendered outside the view
+/// hierarchy, so explicit colours throughout.
+struct FXBlockDragPreview: View {
     let link: SynopticFXLink
+    let pluginCount: Int
+
+    private var width: CGFloat { SynopticLayout.fxHeaderW(name: link.name) }
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(link.name)
+                .font(Font(SynopticLayout.cardNameFont))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+            Text(Ln("fxlink.drag.plugins", pluginCount, pluginCount))
+                .font(.system(size: 10))
+                .foregroundStyle(Color.secondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(width: width, height: SynopticLayout.fxHeaderCardH)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(link.color, lineWidth: 1.5))
+    }
+}
+
+/// The bin's OUTPUT SECTION, as a rounded box nested at the foot of its block — pan · volume · mute,
+/// left to right, in the order and the style of the 'clip' zone (@see ClipMixZoneView) but with no title:
+/// the box has nothing to name, the block already does. While the block follows the bin these are the
+/// bin's (every member moves together); once detached they are the block's own. The wire stops at the
+/// box's head and starts again at its foot, so the controls sit on a plain background.
+struct FXBlockMixView: View {
+    let link: SynopticFXLink
+    let block: SynopticLayout.FXBlockPlacement
     let actions: SynopticActions
 
     private func panLabel(_ p: Double) -> String {
@@ -875,29 +984,60 @@ struct FXBlockFooterView: View {
         return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
     }
 
+    /// A slot's centre in the box's own coordinates.
+    private func local(_ slot: CGRect) -> CGPoint {
+        CGPoint(x: slot.midX - block.mixRect.minX, y: slot.midY - block.mixRect.minY)
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
-                          muted: link.muted,
-                          onToggleMute: {
-                              actions.onFXBeginEdit?()
-                              actions.onFXToggleMute?(link.blockID)
-                          },
-                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
-                actions.onFXSetGain?(link.blockID, newDB)
-            }
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+
             DragValueBox(value: Double(link.pan),
                          format: { panLabel($0) },
-                         range: -1...1, pointsPerStep: 80, snap: false, width: 52,
+                         range: -1...1, pointsPerStep: 80, snap: false, width: block.panSlot.width,
                          keyStep: 0.1,
                          parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                          help: L("help.drag.pan"),
                          onBegin: { actions.onFXBeginEdit?() },
                          onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
                          onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
+                .position(local(block.panSlot))
+
+            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
+                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
+                actions.onFXSetGain?(link.blockID, newDB)
+            }
+            .position(local(block.volumeSlot))
+
+            muteButton
+                .position(local(block.muteSlot))
         }
-        .frame(height: SynopticLayout.fxFooterH)
+        .frame(width: block.mixRect.width, height: block.mixRect.height)
         .opacity(link.isEnabled ? 1 : 0.5)
+    }
+
+    /// The same button as the 'clip' zone's (@see ClipMixZoneView.muteButton).
+    private var muteButton: some View {
+        Button {
+            actions.onFXBeginEdit?()
+            actions.onFXToggleMute?(link.blockID)
+        } label: {
+            Image(systemName: link.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(link.muted ? Color.red : Color.secondary)
+                .frame(width: block.muteSlot.width, height: block.muteSlot.height)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(link.muted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder((link.muted ? Color.red : Color.secondary).opacity(0.45)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("common.mute"))
     }
 }
 
@@ -915,9 +1055,11 @@ struct SynopticCardView: View {
     /// carries (a card taken FROM the selection drags the whole selection, one taken from outside
     /// drags itself alone), so the preview's "+N-1" badge never disagrees with what a drop receives.
     var dragCount: Int = 1
-    /// Dropping ANOTHER plugin on this card (the branch's axis): `(draggedPluginID, copy)`.
-    /// `copy` = ⌥ held. nil = the card does not receive (the demo).
-    var onDropPlugin: ((_ draggedPluginID: UUID, _ copy: Bool) -> Void)? = nil
+    /// What a release on this card would do, for the cursor and the band (@see PluginDropOutcome).
+    var dropOutcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    /// Dropping ANOTHER plugin on this card (the branch's axis): the payload and the modifiers held at the
+    /// release. nil = the card does not receive (the demo).
+    var onDropPlugin: ((_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
     /// Unlinks this instance from its group (nil = the card cannot be driven, e.g. the demo).
     var onUnlink: (() -> Void)? = nil
     var onRelink: (() -> Void)? = nil
@@ -1077,6 +1219,7 @@ struct SynopticCardView: View {
                 .onDrop(of: [.plainText],
                         delegate: PluginDropDelegate(isTargeted: $dropTargeted,
                                                      hintKey: "card:\(dropHintID.uuidString)",
+                                                     outcome: dropOutcome,
                                                      onDrop: onDropPlugin))
         }
     }
@@ -1134,7 +1277,9 @@ struct PluginDragPreview: View {
 struct CableDropView: View {
     let rect: CGRect          // the DETECTION zone (wide, transparent)
     let previewFrame: CGRect  // the PREVIEW shown on hover (card-sized, on the cable)
-    let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
+    /// What a release here would do, for the cursor and the band (@see PluginDropOutcome).
+    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
     @State private var targeted = false
     @State private var dropHintID = UUID()
 
@@ -1148,6 +1293,7 @@ struct CableDropView: View {
             .onDrop(of: [.plainText],
                     delegate: PluginDropDelegate(isTargeted: $targeted,
                                                  hintKey: "cable:\(dropHintID.uuidString)",
+                                                 outcome: outcome,
                                                  onDrop: onDrop))
             .overlay(alignment: .topLeading) {
                 if targeted {
@@ -1164,40 +1310,76 @@ struct CableDropView: View {
     }
 }
 
-/// Reliable delivery of a plugin drop (on a card's axis OR on a branch's cable). We go through
-/// a `DropDelegate` — for the card, laid on a `.background` layer, because an `.onDrop` laid on
-/// an ANCESTOR of an `.onDrag` view is not delivered by macOS. `dropUpdated` returns the
-/// .copy/.move operation depending on ⌥ so as to show the right cursor; the copy is reread at the drop.
-private struct PluginDropDelegate: DropDelegate {
+/// Reliable delivery of a plugin drop (on a card's axis, on a branch's cable or on a bin's header). We go
+/// through a `DropDelegate` — for the card, laid on a `.background` layer, because an `.onDrop` laid on
+/// an ANCESTOR of an `.onDrag` view is not delivered by macOS.
+///
+/// The CURSOR and the band say what a release would do NOW: `outcome` asks the resolver
+/// (@see EditViewModel.pluginDropOutcome) about the drag in flight (@see PluginDragSession), which is the
+/// only way a target can answer "forbidden" before the hand lets go. A forbidden place does not light up,
+/// does not show the band and shows the refusing cursor. With no drag in flight to read (nil) the legacy
+/// reading holds: ⌥ copies, anything else moves.
+struct PluginDropDelegate: DropDelegate {
     let isTargeted: Binding<Bool>
     /// This target's key for the band at the bottom of the timeline (@see PluginDropHint):
     /// one per card / cable, since neighbours overlap their enter and exit.
     let hintKey: String
-    let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
+    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
 
-    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
-    func dropEntered(info: DropInfo) {
+    private func carriesPlugin(_ info: DropInfo) -> Bool {
+        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
+
+    /// Reads the drag in flight: lights the target and speaks on the band when the release would DO
+    /// something, withdraws both when it would not. Returns the cursor's proposal.
+    private func present() -> DropProposal {
+        let flags = NSEvent.modifierFlags
+        guard let o = outcome(flags) else {
+            isTargeted.wrappedValue = true
+            PluginDropHint.shared.present(hintKey, context: .sameChain)
+            return DropProposal(operation: flags.contains(.option) ? .copy : .move)
+        }
+        guard let ctx = o.hintContext(plainContext: .sameChain) else {
+            isTargeted.wrappedValue = false
+            PluginDropHint.shared.leave(hintKey)
+            return DropProposal(operation: .forbidden)
+        }
         isTargeted.wrappedValue = true
-        PluginDropHint.shared.present(hintKey, context: .sameChain)
+        PluginDropHint.shared.present(hintKey, context: ctx)
+        return DropProposal(operation: o.operation)
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard carriesPlugin(info) else { return }
+        _ = present()
     }
     func dropExited(info: DropInfo) {
         isTargeted.wrappedValue = false
         PluginDropHint.shared.leave(hintKey)
     }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        PluginDropHint.shared.present(hintKey, context: .sameChain)
-        return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
+        guard carriesPlugin(info) else {
+            isTargeted.wrappedValue = false
+            PluginDropHint.shared.leave(hintKey)
+            return DropProposal(operation: .forbidden)
+        }
+        return present()
     }
     func performDrop(info: DropInfo) -> Bool {
         isTargeted.wrappedValue = false
         PluginDropHint.shared.leave(hintKey)
-        guard let p = info.itemProviders(for: [.plainText]).first else { return false }
-        let copy = NSEvent.modifierFlags.contains(.option)
+        guard let p = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries) else { return false }
+        // The modifiers are read NOW: the provider answers later, when the hand has let go of them.
+        let flags = NSEvent.modifierFlags
+        PluginDragSession.shared.end()
         p.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
             guard let data,
                   let payload = try? JSONDecoder().decode(PluginDragPayload.self, from: data)
             else { return }
-            DispatchQueue.main.async { onDrop(payload.pluginID, copy) }
+            DispatchQueue.main.async { onDrop(payload, flags) }
         }
         return true
     }
@@ -2341,6 +2523,20 @@ struct SynopticBoundView: View {
             (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
         }
 
+        // A drop target's aim, as a place of THIS host's chain: the table of series ids is the one of the
+        // build being rendered, and a card's place is looked up in the model as it is now.
+        let dropSite: (SynopticDropTarget) -> PluginDropSite? = { target in
+            switch target {
+            case .series(let seriesID, let index):
+                return locations[seriesID].map { .series($0, index: index) }
+            case .beforeCard(let cardID):
+                return EditViewModel.locate(cardID, in: model).map { .series($0.0, index: $0.1) }
+            case .blockEnd(let blockID):
+                return EditViewModel.findBlock(blockID, in: model)?.fxBlock
+                    .map { .series(.block(blockID: blockID), index: $0.plugins.count) }
+            }
+        }
+
         return SynopticView(root: root, selection: pluginSelection,
                             selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
                             chainInDb: gains.inDb, chainOutDb: gains.outDb,
@@ -2387,18 +2583,18 @@ struct SynopticBoundView: View {
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
             dragProvider: { dragProvider($0) },
-            onReorder: { pluginID, seriesID, toIndex, copy in
-                if let loc = locations[seriesID] {
-                    if copy {
-                        viewModel.synopticCopyPlugin(objectID: objectID, pluginID: pluginID, to: loc, at: toIndex)
-                    } else {
-                        viewModel.synopticReorder(objectID: objectID, pluginID: pluginID, to: loc, at: toIndex)
-                    }
-                }
+            dropOutcome: { target, flags in
+                // The drag in flight says what it carries (@see PluginDragSession); with none to read,
+                // the target falls back on its legacy reading.
+                guard let payload = PluginDragSession.shared.current else { return nil }
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return .refuse("dropped on itself") }
+                guard let site = dropSite(target) else { return .refuse("no such place in the chain") }
+                return viewModel.pluginDropOutcome(payload, toHost: objectID, at: site, flags: flags)
             },
-            onDropOntoCard: { targetPluginID, draggedPluginID, copy in
-                viewModel.synopticDropOnPlugin(objectID: objectID, pluginID: draggedPluginID,
-                                               targetPluginID: targetPluginID, copy: copy)
+            onDrop: { target, payload, flags in
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return }
+                guard let site = dropSite(target) else { return }
+                viewModel.synopticDrop(payload, host: objectID, at: site, flags: flags)
             },
             onSetVoiceGain: { blockID, voiceIndex, dB in
                 viewModel.setVoiceGain(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, dB: dB)
@@ -2642,6 +2838,8 @@ struct SynopticBoundView: View {
         let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID,
                                         pluginIDs: all)
         let data = (try? JSONEncoder().encode(payload)) ?? Data()
+        // The drag begins: the targets read what it carries from here (@see PluginDragSession).
+        PluginDragSession.shared.begin(payload)
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
                                              visibility: .all) { completion in

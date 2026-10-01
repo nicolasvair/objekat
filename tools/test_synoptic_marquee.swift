@@ -129,6 +129,32 @@ enum MarqueeTest {
           SynopticMarquee.boundingBox(of: [ids[1]], extendedTo: ids[2], cards: cards).count == 2,
           "intersection here, unlike the marquee: the box's edges fall ON the cards")
 
+    // MARK: - Where a marquee may START: not on a card, not on a bin's header card or mix box
+
+    // The header card (124 pt wide, straddling the top of a bin's body) and the mix box laid by the
+    // layout: a drag that begins on them is theirs (the header moves the block, the mix box's boxes are
+    // dragged for their value), never a rectangle's.
+    let header = CGRect(x: 100, y: 240, width: 124, height: 30)
+    let mix = CGRect(x: 87, y: 330, width: 150, height: 26)
+    let blockers = [header, mix]
+
+    check("a marquee may start on empty canvas",
+          SynopticMarquee.startsMarquee(at: CGPoint(x: 400, y: 400), cards: cards, blockers: blockers))
+    check("a marquee may start beside a block, on the body's own margin",
+          SynopticMarquee.startsMarquee(at: CGPoint(x: 90, y: 280), cards: cards, blockers: blockers),
+          "the body is neither the header card nor the mix box")
+    check("a marquee never starts on a card",
+          !SynopticMarquee.startsMarquee(at: CGPoint(x: 150, y: 15), cards: cards, blockers: blockers))
+    check("a marquee never starts on a bin's header card",
+          !SynopticMarquee.startsMarquee(at: CGPoint(x: 150, y: 255), cards: cards, blockers: blockers))
+    check("a marquee never starts on a bin's mix box",
+          !SynopticMarquee.startsMarquee(at: CGPoint(x: 160, y: 343), cards: cards, blockers: blockers))
+    check("just outside the header card a marquee may start again",
+          SynopticMarquee.startsMarquee(at: CGPoint(x: 150, y: 271), cards: cards, blockers: blockers),
+          "the card ends at y=270")
+    check("with no blockers it is the cards' rule alone",
+          SynopticMarquee.startsMarquee(at: CGPoint(x: 150, y: 255), cards: cards, blockers: []))
+
     // MARK: -
 
     print("")

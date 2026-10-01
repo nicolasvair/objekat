@@ -416,6 +416,183 @@ extension EditViewModel {
         return true
     }
 
+    /// A block let go on ANOTHER host (an object or a bus), by the header's drag: the target gets a block
+    /// of the bin at `place` (the end of its chain by default) and, unless `copy`, the source loses its own.
+    ///
+    ///  • An ATTACHED block: the target JOINS the bin (`attachFXLink`: instances born from the state the
+    ///    bin plays now), then the source's block goes (`removeFXBlock`) — in that order, so the bin is
+    ///    never left without a member between the two. A copy is the join alone: every copy of a bin
+    ///    stays on it.
+    ///  • A DETACHED block travels AS IT IS — its own copy of the chain, its output section (`local`), its
+    ///    memory of the group — with fresh instance ids (two hosts never share an id: the engine's key).
+    ///    A copy of it makes the target JOIN the bin, attached, like any other copy.
+    ///
+    /// Refuses (false, nothing touched) what the resolver refuses: the same host, a target that already
+    /// holds the bin, a block aimed inside a block. One undo point, the parts run with `undo: false`.
+    @discardableResult
+    func transferFXBlock(blockID: UUID, from sourceID: UUID, to targetID: UUID,
+                         at place: (SeriesLocation, Int)? = nil, copy: Bool, undo: Bool = true) -> Bool {
+        guard engine != nil, sourceID != targetID,
+              let source = chainPlugins(sourceID), let block = Self.findBlock(blockID, in: source),
+              let fb = block.fxBlock, let target = chainPlugins(targetID) else { return false }
+        if case .block? = place?.0 { return false }                     // a bin does not hold a bin
+        if Self.fxBlocks(in: target).contains(where: { $0.fxBlock?.linkID == fb.linkID }) { return false }
+        guard fxLink(fb.linkID) != nil else { return false }
+
+        if undo { pushUndo() }
+
+        if fb.isDetached && !copy {
+            let instances = fb.plugins.map { inst in
+                ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
+                             identifier: inst.identifier, formatName: inst.formatName,
+                             isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
+                             linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
+                             colorIndex: inst.colorIndex)
+            }
+            var entry = FXLink.blockEntry(linkID: fb.linkID, name: block.name, instances: instances)
+            entry.fxBlock?.isDetached = true
+            entry.fxBlock?.local = fb.local
+            let (loc, idx) = place ?? (.root, target.count)
+            updateChainPlugins(targetID) {
+                $0 = Self.simplifyTree(Self.inserting(entry, into: loc, at: idx, plugins: $0))
+            }
+            compileRack(objectID: targetID)
+            removeFXBlock(hostID: sourceID, blockID: blockID, undo: false)
+            isDirty = true
+            return true
+        }
+
+        guard attachFXLink(fb.linkID, to: targetID, at: place, undo: false) != nil else { return false }
+        if !copy { removeFXBlock(hostID: sourceID, blockID: blockID, undo: false) }
+        return true
+    }
+
+    // MARK: Plugins going into / out of a bin by a drag
+
+    /// PLAIN plugins of `hostID` JOIN bin `linkID`, which this host already follows: each becomes a plugin of
+    /// the DEFINITION, born from its live state, and every other attached member gets an instance of it. This
+    /// host's own instances keep their ids (nothing is reloaded, an open editor and the automation stay
+    /// aimed at them): they leave their place in the chain and enter the block at `index`, in the chain's
+    /// reading order. Returns the definition plugins' ids.
+    ///
+    /// Refuses (nothing touched) what cannot be a bin's plugin: a container, a legacy-linked plugin, one
+    /// already in a block; and a host without an attached block of this bin.
+    @discardableResult
+    func fxAdoptPlugins(hostID: UUID, pluginIDs: [UUID], linkID: UUID, at index: Int? = nil,
+                        undo: Bool = true) -> [UUID] {
+        guard engine != nil, fxLink(linkID) != nil, let chain = chainPlugins(hostID),
+              let block = Self.fxBlocks(in: chain).first(where: {
+                  $0.fxBlock?.linkID == linkID && $0.fxBlock?.isDetached == false })
+        else { return [] }
+        let wanted = Set(pluginIDs)
+        let leaves = Self.flattenLeaves(chain).filter { wanted.contains($0.id) }
+        guard !leaves.isEmpty, leaves.count == wanted.count,
+              leaves.allSatisfy({ Self.isFXLinkEligible($0) && Self.enclosingFXBlock(of: $0.id, in: chain) == nil })
+        else { return [] }
+        if undo { pushUndo() }
+
+        var definition: [ObjectPlugin] = []
+        var instances: [ObjectPlugin] = []
+        for leaf in leaves {
+            let state = fxLiveState(of: leaf)
+            let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
+                                 identifier: leaf.identifier, formatName: leaf.formatName,
+                                 isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex)
+            definition.append(d)
+            var inst = leaf
+            inst.stateXML = state
+            inst.linkGroupID = d.id
+            instances.append(inst)
+        }
+        // This host's chain first (the instances out of their place, into the block's series), so that
+        // `reconcileFXLinkMembers` finds them and REUSES them; the other members' new instances are born
+        // from the state those answer with.
+        updateChainPlugins(hostID) { c in
+            var rest = Self.removingPlugins(wanted, from: c)
+            let at = min(max(0, index ?? Int.max), Self.findBlock(block.id, in: rest)?.fxBlock?.plugins.count ?? 0)
+            for (k, inst) in instances.enumerated() {
+                rest = Self.inserting(inst, into: .block(blockID: block.id), at: at + k, plugins: rest)
+            }
+            c = rest
+        }
+        updateFXLink(linkID) { l in
+            let at = min(max(0, index ?? Int.max), l.plugins.count)
+            l.plugins.insert(contentsOf: definition, at: at)
+        }
+        reconcileFXLinkMembers(linkID)
+        return definition.map(\.id)
+    }
+
+    /// An instance of an ATTACHED bin leaves it, for EVERY member: the plugin goes out of the definition,
+    /// and stays on this host as a PLAIN one — same id, same live state, no link — at `place`. The bin's
+    /// other members lose their instance. (The bin is not left behind: only the plugin is.)
+    ///
+    /// `place` is in a series that is not the bin's own block (that would be a reorder of the bin).
+    @discardableResult
+    func fxExtractPlugins(hostID: UUID, pluginIDs: [UUID], at place: (SeriesLocation, Int),
+                          undo: Bool = true) -> [UUID] {
+        guard let engine, let chain = chainPlugins(hostID) else { return [] }
+        var linkID: UUID?
+        var wanted: [UUID: UUID] = [:]            // instance id → definition id
+        for id in pluginIDs {
+            guard let def = fxDefinition(ofInstance: id, on: hostID) else { return [] }
+            if let linkID, linkID != def.linkID { return [] }
+            linkID = def.linkID
+            wanted[id] = def.definitionID
+        }
+        guard let linkID, !wanted.isEmpty, fxLink(linkID) != nil else { return [] }
+        if case .block(let b) = place.0, let target = Self.findBlock(b, in: chain),
+           target.fxBlock?.linkID == linkID, target.fxBlock?.isDetached == false { return [] }
+        if undo { pushUndo() }
+        // The definition remembers what the bin sounded like BEFORE the plugins leave it.
+        refreshFXDefinitionStates(linkID)
+
+        let ordered = Self.flattenLeaves(chain).filter { wanted[$0.id] != nil }
+        var plain: [ObjectPlugin] = []
+        for inst in ordered {
+            var q = inst
+            q.stateXML = fxLiveState(of: inst)
+            q.linkGroupID = nil
+            q.detachedLinkGroupID = nil
+            engine.clearPluginLinkGroup(inst.id.uuidString)
+            plain.append(q)
+        }
+        updateChainPlugins(hostID) { c in
+            var rest = Self.removingPlugins(Set(wanted.keys), from: c)
+            for (k, q) in plain.enumerated() {
+                rest = Self.inserting(q, into: place.0, at: place.1 + k, plugins: rest)
+            }
+            c = Self.simplifyTree(rest)
+        }
+        let gone = Set(wanted.values)
+        updateFXLink(linkID) { $0.plugins.removeAll { gone.contains($0.id) } }
+        reconcileFXLinkMembers(linkID)
+        return plain.map(\.id)
+    }
+
+    /// INDEPENDENT copies of `plugins` (leaves of any host's chain) are added to bin `linkID`'s definition at
+    /// `index`: every attached member gets an instance, none of them linked to the source. One undo point.
+    /// Returns the definition plugins' ids.
+    @discardableResult
+    func fxAddPluginCopies(linkID: UUID, of plugins: [ObjectPlugin], at index: Int? = nil,
+                           undo: Bool = true) -> [UUID] {
+        guard engine != nil, fxLink(linkID) != nil, !plugins.isEmpty,
+              !plugins.contains(where: { $0.isContainer }) else { return [] }
+        if undo { pushUndo() }
+        var added: [UUID] = []
+        for (k, p) in plugins.enumerated() {
+            // No colour carried over: the copy draws its own, as every independent copy does.
+            let template = ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
+                                        identifier: p.identifier, formatName: p.formatName,
+                                        isEnabled: p.isEnabled)
+            if let d = fxAddPlugin(linkID: linkID, template: template, state: fxLiveState(of: p),
+                                   at: index.map { $0 + k }, undo: false) {
+                added.append(d)
+            }
+        }
+        return added
+    }
+
     // MARK: Editing the definition (every attached member follows)
 
     /// Adds a plugin to the bin's definition, at `index` (the end by default); every attached member

@@ -105,6 +105,85 @@ extension CommandAdapters {
         return ids
     }
 
+    /// The ENTRIES a drop command aims at: like `transferTargets`, except that an id may also be an FX
+    /// link's BLOCK of the source chain (what a hand takes by the bin's header) — a block travels alone.
+    static func dropTargets(_ p: CommandParams, on hostID: UUID,
+                            in vm: EditViewModel) throws -> [UUID] {
+        let ids = p.raw["plugins"] != nil ? try p.uuids("plugins") : [try p.uuid("plugin")]
+        guard !ids.isEmpty else {
+            throw CommandError(code: .bad_params, message: "'plugins' is empty")
+        }
+        guard let chain = vm.chainPlugins(hostID) else {
+            throw CommandError(code: .not_found, message: "unknown host: \(hostID.uuidString)")
+        }
+        for id in ids where EditViewModel.findBlock(id, in: chain) == nil {
+            try requirePlugin(id, on: hostID, in: vm)
+        }
+        return ids
+    }
+
+    /// The place of a drop command: `series` ("root", {"block": id} or {"voice": id, "index": n}) and `at`.
+    /// No `series` = the host as a whole. An id of an FX link's block that is not a series is read as
+    /// its series, so that aiming at the bin by its header id works.
+    static func dropSite(_ p: CommandParams, chain: [ObjectPlugin]) throws -> PluginDropSite {
+        guard let raw = p.raw["series"] else {
+            if p.raw["at"] != nil { throw CommandError(code: .bad_params, message: "'at' needs a 'series'") }
+            return .hostEnd
+        }
+        func rackBlock(_ id: UUID, in plugins: [ObjectPlugin]) -> ObjectPlugin? {
+            for q in plugins {
+                if q.id == id, q.rack != nil { return q }
+                for s in q.childSeries { if let f = rackBlock(id, in: s) { return f } }
+            }
+            return nil
+        }
+        let location: SeriesLocation
+        let count: Int
+        if let name = raw.stringValue {
+            guard name == "root" else {
+                throw CommandError(code: .bad_params, message: "series: \"root\", {\"block\": id} or {\"voice\": id, \"index\": n}")
+            }
+            location = .root; count = chain.count
+        } else if case .object(let o) = raw, let b = o["block"]?.stringValue {
+            guard let id = UUID(uuidString: b) else {
+                throw CommandError(code: .bad_params, message: "series.block: invalid UUID")
+            }
+            guard let block = EditViewModel.findBlock(id, in: chain), let fb = block.fxBlock else {
+                throw CommandError(code: .not_found, message: "unknown block: \(id.uuidString)")
+            }
+            location = .block(blockID: id); count = fb.plugins.count
+        } else if case .object(let o) = raw, let v = o["voice"]?.stringValue {
+            guard let id = UUID(uuidString: v) else {
+                throw CommandError(code: .bad_params, message: "series.voice: invalid UUID")
+            }
+            guard let index = o["index"]?.intValue else {
+                throw CommandError(code: .bad_params, message: "series.index (the branch) required")
+            }
+            guard let block = rackBlock(id, in: chain), let rack = block.rack,
+                  rack.voices.indices.contains(index) else {
+                throw CommandError(code: .not_found, message: "unknown branch \(index) of block \(id.uuidString)")
+            }
+            location = .voice(blockID: id, voiceIndex: index); count = rack.voices[index].count
+        } else {
+            throw CommandError(code: .bad_params, message: "series: \"root\", {\"block\": id} or {\"voice\": id, \"index\": n}")
+        }
+        let at = try p.int("at", or: count)
+        guard (0...count).contains(at) else {
+            throw CommandError(code: .bad_params, message: "'at' out of range 0…\(count)")
+        }
+        return .series(location, index: at)
+    }
+
+    /// The modifiers a drag command's `mode` stands for: move = none, copy = ⌥, link = ⌘.
+    static func dropModifiers(_ mode: String) throws -> NSEvent.ModifierFlags {
+        switch mode {
+        case "move": return []
+        case "copy": return .option
+        case "link": return .command
+        default: throw CommandError(code: .bad_params, message: "mode must be move, copy or link")
+        }
+    }
+
     /// Names a catalogue entry by `identifier` (exact) or, failing that, by `name` (first
     /// match, case-insensitive), with `format` settling ties between namesakes.
     static func resolvePlugin(_ p: CommandParams, in vm: EditViewModel) throws -> AvailablePlugin {

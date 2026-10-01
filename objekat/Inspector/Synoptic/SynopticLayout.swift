@@ -22,12 +22,26 @@ enum SynopticLayout {
     static let scopePad: CGFloat = 14      // the inner margin of a parallel's backing area
     static let plusW: CGFloat = 20         // the diameter of a '+' zone
     static let plusGap: CGFloat = 12       // the space before the '+' zone at the end of a series
-    // An FX link's block: a coloured rounded rectangle round its series, a header band above it (colour
-    // dot · name · on/off) and a footer band under it (mute · volume · pan). The wire runs through both.
-    static let fxHeaderH: CGFloat = 26
-    static let fxFooterH: CGFloat = 32
-    static let fxPad: CGFloat = 10         // the inner margin on each side of the block's series
-    static let fxMinW: CGFloat = 176       // wide enough for the footer's three controls
+    // An FX link's block: a coloured rounded rectangle (the BODY) round its series, with a header CARD
+    // (on/off · name · link badge · ✕) straddling its top edge and a mix box (pan · volume · mute) nested at
+    // its foot. The wire STOPS at each of those two (an arrow into the mix box) and starts again on the other
+    // side: it never runs behind them.
+    static let fxHeaderCardH: CGFloat = cardH
+    /// How much of the header card hangs INSIDE the body — the ONE constant that decides how the card
+    /// straddles the body's top edge (half of it: the body starts at the card's middle line).
+    static let fxHeaderOverlap: CGFloat = fxHeaderCardH / 2
+    static let fxHeaderGap: CGFloat = 10   // the wire between the header card and the first '+' of the series (room for the arrow)
+    static let fxMixH: CGFloat = 26
+    static let fxMixW: CGFloat = 150
+    static let fxMixGap: CGFloat = 12      // the wire between the series' last '+' and the mix box (room for the arrow)
+    static let fxPad: CGFloat = 10         // the inner margin on each side of the block's series, and under the mix box
+    static let fxMinW: CGFloat = 176
+    /// The mix box's three slots, left → right: pan · volume · mute.
+    static let fxPanW: CGFloat = 52
+    static let fxVolumeW: CGFloat = 46
+    static let fxMuteW: CGFloat = 18
+    static let fxSlotGap: CGFloat = 6
+    static let fxSlotH: CGFloat = 18
     static let gainBandH: CGFloat = 30     // the band reserved for the mute plus end-of-branch dB gain of a parallel branch (under the branches)
 
     /// A card's width: wide enough for its whole name and its link badge, from `cardW` (the old
@@ -45,6 +59,21 @@ enum SynopticLayout {
 
     static let cardNameFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
+    /// A bin's header card width: its name whole, from `cardW` up to the 'audio file' zone's width, like a
+    /// plugin card (@see cardWidth) — the chrome is the same, and the link badge is always there:
+    /// on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack.
+    static func fxHeaderW(name: String) -> CGFloat {
+        let nameW = ceil((name as NSString).size(withAttributes: [.font: cardNameFont]).width)
+        let chrome: CGFloat = 26 + 16 + 15 + 24 + 4
+        return min(audioZoneW, max(cardW, nameW + chrome))
+    }
+
+    /// A bin's block width: its series plus the margins, never narrower than its header card or its
+    /// mix box (with its margins), nor than `fxMinW`.
+    static func fxBlockWidth(innerWidth: CGFloat, name: String) -> CGFloat {
+        max(fxMinW, innerWidth + 2 * fxPad, fxHeaderW(name: name), fxMixW + 2 * fxPad)
+    }
+
     /// A rectangle the size of a card, centred on `(cx, cy)`: it serves as a drop preview.
     static func cardFrame(_ cx: CGFloat, _ cy: CGFloat) -> CGRect {
         CGRect(x: cx - cardW / 2, y: cy - cardH / 2, width: cardW, height: cardH)
@@ -58,7 +87,9 @@ enum SynopticLayout {
         let frame: CGRect
     }
 
-    enum CableStyle { case connector, fork, merge, ghost }
+    /// `plain` = a straight wire with NO arrowhead: the wire that starts again after a control it stopped at
+    /// (the arrow belongs to the segment that ARRIVES, never to the one that leaves).
+    enum CableStyle { case connector, fork, merge, ghost, plain }
 
     struct Cable: Identifiable {
         let id = UUID()
@@ -106,13 +137,23 @@ enum SynopticLayout {
         var id: String { "\(blockID.uuidString):\(voiceIndex)" }
     }
 
-    /// One FX link's block, as laid: its frame, and where its header and footer controls sit.
+    /// One FX link's block, as laid: three NESTED rectangles — the header card straddling the top of the
+    /// body, the body itself (what is filled and outlined), and the mix box inside the body at its foot — and
+    /// the mix box's three slots. No wire is ever laid across the header or the mix box.
     struct FXBlockPlacement: Identifiable {
         var id: UUID { link.blockID }
         let link: SynopticFXLink
+        /// The whole extent: the header card's top down to the body's bottom (= the node's measured size).
         let rect: CGRect
-        let headerCenter: CGPoint
-        let footerCenter: CGPoint
+        let headerRect: CGRect
+        let bodyRect: CGRect
+        let mixRect: CGRect
+        /// Left → right inside `mixRect`: pan, volume, mute.
+        let panSlot: CGRect
+        let volumeSlot: CGRect
+        let muteSlot: CGRect
+        /// How many entries the block's series holds (where a drop on the header lands: the end).
+        let pluginCount: Int
     }
 
     struct Placement {
@@ -146,10 +187,10 @@ enum SynopticLayout {
     }
 
     static func measure(_ node: SynopticNode) -> CGSize {
-        if node.fxLink != nil {
+        if let fx = node.fxLink {
             let inner = measure(bare(node))
-            return CGSize(width: max(fxMinW, inner.width + 2 * fxPad),
-                          height: fxHeaderH + inner.height + fxFooterH)
+            return CGSize(width: fxBlockWidth(innerWidth: inner.width, name: fx.name),
+                          height: fxHeaderCardH + fxHeaderGap + inner.height + fxMixGap + fxMixH + fxPad)
         }
         switch node.kind {
         case .plugin(let p):
@@ -188,19 +229,41 @@ enum SynopticLayout {
             let innerSize = measure(inner)
             let total = measure(node)
             let cx = origin.x + total.width / 2
-            let ipl = place(inner, at: CGPoint(x: origin.x + (total.width - innerSize.width) / 2,
-                                               y: origin.y + fxHeaderH), depth: depth + 1)
+            let headerW = fxHeaderW(name: fx.name)
+            let headerRect = CGRect(x: cx - headerW / 2, y: origin.y, width: headerW, height: fxHeaderCardH)
+            let innerOrigin = CGPoint(x: origin.x + (total.width - innerSize.width) / 2,
+                                      y: headerRect.maxY + fxHeaderGap)
+            let ipl = place(inner, at: innerOrigin, depth: depth + 1)
+            let mixRect = CGRect(x: cx - fxMixW / 2, y: innerOrigin.y + innerSize.height + fxMixGap,
+                                 width: fxMixW, height: fxMixH)
+            // The body starts at the header card's middle line (`fxHeaderOverlap` of the card hangs inside).
+            let bodyTop = headerRect.maxY - fxHeaderOverlap
+            let bodyRect = CGRect(x: origin.x, y: bodyTop, width: total.width,
+                                  height: mixRect.maxY + fxPad - bodyTop)
+            // The three slots, centred as a group on the mix box.
+            let groupW = fxPanW + fxVolumeW + fxMuteW + 2 * fxSlotGap
+            let slotY = mixRect.midY - fxSlotH / 2
+            let panSlot = CGRect(x: mixRect.midX - groupW / 2, y: slotY, width: fxPanW, height: fxSlotH)
+            let volumeSlot = CGRect(x: panSlot.maxX + fxSlotGap, y: slotY, width: fxVolumeW, height: fxSlotH)
+            let muteSlot = CGRect(x: volumeSlot.maxX + fxSlotGap, y: slotY, width: fxMuteW, height: fxSlotH)
+
             var pl = Placement(size: total,
-                               entry: CGPoint(x: cx, y: origin.y),
-                               exit: CGPoint(x: cx, y: origin.y + total.height))
-            // The wire runs through the header and the footer (their controls are drawn over it).
-            pl.cables.append(Cable(from: pl.entry, to: ipl.entry, style: .connector))
-            pl.cables.append(Cable(from: ipl.exit, to: pl.exit, style: .connector))
+                               entry: CGPoint(x: cx, y: headerRect.minY),
+                               exit: CGPoint(x: cx, y: bodyRect.maxY))
+            // The wire STOPS at the header card's foot and at the mix box's head (an arrow into each),
+            // and starts again at the mix box's foot (plain: the arrow is the next element's). Nothing is
+            // laid across the header or the mix box.
+            pl.cables.append(Cable(from: CGPoint(x: cx, y: headerRect.maxY), to: ipl.entry, style: .connector))
+            pl.cables.append(Cable(from: ipl.exit, to: CGPoint(x: cx, y: mixRect.minY), style: .connector))
+            pl.cables.append(Cable(from: CGPoint(x: cx, y: mixRect.maxY), to: pl.exit, style: .plain))
+            var pluginCount = 0
+            if case .series(let kids) = inner.kind { pluginCount = kids.count }
             pl.fxBlocks.append(FXBlockPlacement(
                 link: fx,
                 rect: CGRect(origin: origin, size: total),
-                headerCenter: CGPoint(x: cx, y: origin.y + fxHeaderH / 2),
-                footerCenter: CGPoint(x: cx, y: origin.y + total.height - fxFooterH / 2)))
+                headerRect: headerRect, bodyRect: bodyRect, mixRect: mixRect,
+                panSlot: panSlot, volumeSlot: volumeSlot, muteSlot: muteSlot,
+                pluginCount: pluginCount))
             pl.absorb(ipl)
             return pl
         }

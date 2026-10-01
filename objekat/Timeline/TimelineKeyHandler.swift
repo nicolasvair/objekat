@@ -524,10 +524,11 @@ extension TimelineView {
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
                 else if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
-                } else if vm.selectedAnnotation != nil {
-                    // A marker, a region or a comment: ⌫ takes the ANNOTATION and nothing else. It
-                    // can afford to come first because the selection is exclusive — selecting one
-                    // clears the objects, and selecting an object clears it (@see selectedIDs).
+                } else if !vm.selectedAnnotations.isEmpty {
+                    // Markers, regions, comments: ⌫ takes the ANNOTATIONS and nothing else — all of
+                    // them, in ONE undo. It can afford to come first because the selection is
+                    // exclusive — selecting one clears the objects, and selecting an object clears
+                    // them (@see selectedIDs).
                     DispatchQueue.main.async { vm.deleteSelectedAnnotation() }  // internal undo push
                 } else if let xf = vm.selectedCrossfade {
                     // A selected CROSSFADE: ⌫ takes the zone, not the two objects. The pair comes
@@ -859,6 +860,8 @@ extension TimelineView {
                         } else if let a = vm.selectedAnnotation {
                             // The same shortcut for a marker's name, a region's and a comment's
                             // text: one gesture to name a thing, whatever kind of thing it is.
+                            // `selectedAnnotation` is nil for SEVERAL marks: there is no one name
+                            // to type over all of them, so ⌘R then does nothing.
                             DispatchQueue.main.async { vm.renamingID = a.markerID }
                         }
                         return nil
@@ -1062,6 +1065,10 @@ extension TimelineView {
         let vm     = viewModel
         let hs     = hoverState
         let lg     = 4.0
+        // The closure the left click calls, captured by value like the key monitor's: `self` is
+        // the struct as it was at registration, and only the view-model is live inside a monitor
+        // (so `isTransportPlaying`, never the stale `isPlaying` prop).
+        let moveCursor = onMoveCursor
 
         var proxies: [MenuActionProxy] = []
 
@@ -1144,17 +1151,21 @@ extension TimelineView {
                 return nil
             }
 
-            typealias HitResult = (group: SoundObject?, clip: SoundObject?, consolidateInstance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, isEditingConsolidate: Bool, colorable: SoundObject?, clickedIsEditFrame: Bool)
-            let hit: HitResult = MainActor.assumeIsolated {
+            // What lies under the point, found ONCE on the flat display list (laneEntries) → it
+            // covers top-level AND nested visible objects (the actions possible inside an open
+            // group). The zone is the left click's own 50 % line: the upper half of a block is
+            // TIME, the lower half is the OBJECT.
+            typealias Probe = (entry: LaneEntry?, zone: ContextMenuPlan.BlockZone?, lane: Int,
+                               time: Double, clickedIsEditFrame: Bool, isEditingConsolidate: Bool)
+            let probe: Probe = MainActor.assumeIsolated {
                 let pps  = vm.pixelsPerSecond
                 let bh   = vm.blockHeight
                 let step = bh + lg
-
-                // Hit-testing on the flat display list (laneEntries) → it covers top-level AND
-                // nested visible objects (the actions possible inside an open group).
+                var topY = 0.0
                 let entry = vm.laneEntries.first { e in
                     let by = rulerH + Double(e.displayLane) * step
                     guard pos.y >= by && pos.y <= by + bh else { return false }
+                    topY = by
                     // An infinite bus: its surface is its whole lane (0 → the content's width).
                     if e.item.isInfiniteBus {
                         return pos.x >= 0 && pos.x <= self.contentWidth
@@ -1163,33 +1174,88 @@ extension TimelineView {
                     let bw = max(e.item.duration * pps, 2)
                     return pos.x >= bx && pos.x <= bx + bw
                 }
+                return (entry,
+                        entry.map { _ in ContextMenuPlan.BlockZone.zone(localY: pos.y - topY, blockHeight: bh) },
+                        entry?.displayLane ?? max(0, Int((pos.y - rulerH) / step)),
+                        max(0, pos.x / pps),
+                        entry.map { vm.isInConsolidateEditStack($0.item.id) } ?? false,
+                        vm.isEditingConsolidate)
+            }
+
+            // An OPEN consolidated object: closing goes through the double click and cancelling through
+            // Esc / the ✕ button (a design decision). So a right click on the editing frame no
+            // longer offers a dedicated entry — we simply swallow the event (a right click on a
+            // child that is NOT being edited falls back on its normal menu, below). It comes
+            // BEFORE the selection below: a click that is swallowed changes nothing.
+            if probe.isEditingConsolidate, probe.clickedIsEditFrame {
+                return nil
+            }
+
+            // WHAT THIS RIGHT CLICK MEANS (@see ContextMenuPlan — the decision is pure and asserted
+            // alone). Inside the time selection: the range's menu, untouched. On NO object (an empty
+            // lane, a piano roll's or an automation band's row): the same range's menu whenever a
+            // time selection exists, wherever it lies; with none but clips selected, 'Group the
+            // selection' alone; with neither, no menu at all, the event going on to the views. Upper half of a block: time, so the annotation items
+            // and NOTHING selected, the cursor left where it is. Lower half: the object — selected
+            // first, as a left click would (unless it is already part of the selection, which then
+            // stays whole).
+            let plan: ContextMenuPlan.Decision = MainActor.assumeIsolated {
+                vm.contextClickPlan(objectID: probe.entry?.item.id, displayLane: probe.lane,
+                                    time: probe.time, zone: probe.zone)
+            }
+            if plan.layout == .nothing { return event }
+            if plan.selectsObject, let e = probe.entry {
+                // Synchronous, and BEFORE the snapshot below: the menu is built from the selection
+                // this click has just made.
+                MainActor.assumeIsolated {
+                    vm.selectForContextClick(e, isPlaying: vm.isTransportPlaying,
+                                             onMoveCursor: moveCursor)
+                }
+            }
+
+            typealias HitResult = (group: SoundObject?, clip: SoundObject?, consolidateInstance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, colorable: SoundObject?)
+            let hit: HitResult = MainActor.assumeIsolated {
+                let entry       = probe.entry
                 let grp         = entry.flatMap { $0.item.isGroup ? $0.item : nil }
                 let instanceHit = entry.flatMap { $0.item.isConsolidateInstance ? $0.item : nil }
                 let clipHit     = entry.flatMap { e -> SoundObject? in
                     if (e.item.isClip || e.item.isMIDI), !e.item.isConsolidateInstance { return e.item }
                     return nil
                 }
-                let hasClip = vm.selectedIDs.contains { id in
-                    guard let item = vm.find(id: id), (item.isClip || item.isMIDI),
-                          !item.isConsolidateInstance else { return false }
-                    return true
+                let hasClip = vm.hasGroupableSelection
+                // The range only reaches the menu when the plan says so: the point INSIDE it, or
+                // no object under the hand. A range lying elsewhere has nothing to do with an
+                // object aimed at.
+                return (grp, clipHit, instanceHit, vm.selectedIDs, hasClip,
+                        plan.layout == .rangeMenu ? vm.timeSelection : nil, entry?.item)
+            }
+
+            // The upper half of a block, outside any range: TIME. The one entry the object offers
+            // there is a marker laid inside it at the instant aimed at — and no comment, since a
+            // comment is about a range and none lies under the hand. Not a word of the object's own
+            // menu (group, consolidate, colour, scripts…): that one belongs to its lower half.
+            if plan.layout == .objectTimeMenu {
+                let timeMenu = NSMenu(title: "")
+                timeMenu.autoenablesItems = false
+                proxies = []
+                MainActor.assumeIsolated {
+                    if plan.offersObjectMarker, let target = hit.colorable {
+                        let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
+                        addObjectMarkerItem(menu: timeMenu, proxies: &proxies, vm: vm,
+                                            objectID: target.id, atAbsoluteTime: t)
+                    }
                 }
-                let clickedIsEditFrame = entry.map { vm.isInConsolidateEditStack($0.item.id) } ?? false
-                return (grp, clipHit, instanceHit, vm.selectedIDs, hasClip, vm.timeSelection,
-                        vm.isEditingConsolidate, entry?.item, clickedIsEditFrame)
+                guard !timeMenu.items.isEmpty else { return event }
+                if let window = NSApp.keyWindow {
+                    let screenPt = window.convertPoint(toScreen: event.locationInWindow)
+                    timeMenu.popUp(positioning: nil, at: screenPt, in: nil)
+                }
+                return nil
             }
 
             let menu = NSMenu(title: "")
             menu.autoenablesItems = false   // we drive isEnabled by hand (during a bake, say)
             proxies = []
-
-            // An OPEN consolidated object: closing goes through the double click and cancelling through
-            // Esc / the ✕ button (a design decision). So a right click on the editing frame no
-            // longer offers a dedicated entry — we simply swallow the event (a right click on a
-            // child that is NOT being edited falls back on its normal menu, below).
-            if hit.isEditingConsolidate, hit.clickedIsEditFrame {
-                return nil
-            }
 
             if let group = hit.group {
                 let gid = group.id
@@ -1326,16 +1392,18 @@ extension TimelineView {
                 }
             }
 
-            // The annotations. A marker goes INSIDE the object aimed at, at the instant aimed at —
-            // it is the object's own mark, and it travels with it. A comment goes over the RANGE
-            // traced, because a comment is about a passage and a passage is what a range says.
+            // The annotations — the range's menu ONLY (@see ContextMenuPlan: the object's own menu
+            // offers neither, they live in its upper half and over a range). A marker goes INSIDE
+            // the object aimed at, at the instant aimed at — it is the object's own mark, and it
+            // travels with it. A comment goes over the RANGE traced, because a comment is about a
+            // passage and a passage is what a range says.
             MainActor.assumeIsolated {
-                if let target = hit.colorable {
+                if plan.offersObjectMarker, let target = hit.colorable {
                     let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
                     addObjectMarkerItem(menu: menu, proxies: &proxies, vm: vm,
                                         objectID: target.id, atAbsoluteTime: t)
                 }
-                if let sel = hit.timeSelection {
+                if plan.offersComment, let sel = hit.timeSelection {
                     if !menu.items.isEmpty { menu.addItem(.separator()) }
                     addCommentItem(menu: menu, proxies: &proxies, vm: vm, selection: sel)
                 }
@@ -1359,25 +1427,6 @@ extension TimelineView {
                 if let target = hit.colorable {
                     addScriptsMenu(menu: menu, proxies: &proxies, vm: vm,
                                   targetID: target.id, selectedIDs: hit.selectedIDs)
-                }
-            }
-
-            // An 'infinite' bus: a top-level aux or group can lose its start/end and run over the whole
-            // project (a permanent processing bus). It is toggled here, with a mirror menu in the
-            // inspector's attributes.
-            if let infObj = hit.colorable, infObj.canBeInfinite {
-                let iid = infObj.id
-                let isInf = infObj.isInfinite
-                let topLevel = MainActor.assumeIsolated { vm.items.contains(where: { $0.id == iid }) }
-                if topLevel {
-                    if !menu.items.isEmpty { menu.addItem(.separator()) }
-                    let pInf = MenuActionProxy { Task { @MainActor in vm.toggleObjectInfinite(id: iid) } }
-                    proxies.append(pInf)
-                    let it = NSMenuItem(title: isInf ? L("menu.context.infinite.off") : L("menu.context.infinite.on"),
-                                        action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                    it.target = pInf
-                    it.state = isInf ? .on : .off
-                    menu.addItem(it)
                 }
             }
 

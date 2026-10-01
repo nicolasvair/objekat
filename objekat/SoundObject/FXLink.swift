@@ -24,6 +24,12 @@ import SwiftUI
 //    settings of the moment (and of the output section, `local`). Reattaching realigns the host on
 //    the bin — it adopts the bin's settings, never the reverse.
 //  • Manual ⌘-links (`linkGroupID` on a plain plugin) are untouched and live beside the bins.
+//  • DRAGGING (@see EditViewModel+PluginDrop, one resolver for the cursor, the band and the drop):
+//    the block moves by its header — the target joins the bin and the source loses its block (⌥ / ⌘: it
+//    keeps it; every copy of a bin stays on the bin; a detached block travels as it is). A plain plugin
+//    let go inside a bin JOINS its definition (⌥: an independent copy is added); an instance let go
+//    outside its bin LEAVES it for every member and stays here as a plain plugin (⌥: a copy; ⌘ is
+//    refused). An instance never moves to another host on its own: ⌘ makes that host join the bin.
 
 /// The output section of a bin, as a detached block keeps its own copy of it.
 struct FXLinkOutput: Codable, Equatable {

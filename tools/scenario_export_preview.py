@@ -130,6 +130,7 @@ with ObjekatClient(SOCK) as c:
     # --- the panel is KEPT, never opened
     st = step("status, panel closed", lambda: c.send("export.status"))
     check("panel closed at rest", st and st.get("panel_open") is False, st)
+    check("and not visible either", st and st.get("panel_visible") is False, st)
 
     r = step("run, no panel open", lambda: c.send("export.run", {
         "format": "wav", "sample_rate": 44100,
@@ -216,6 +217,9 @@ with ObjekatClient(SOCK) as c:
               done["rendered_duration"])
     st = c.send("export.status")
     check("the panel keeps the result", st.get("panel_open") is True, st)
+    # `panel_open` is a STATE; `panel_visible` is the screen. This scenario runs --headless, where
+    # `export.panel` sets the one and no window can ever show it.
+    check("headless: open is a state, not a window", st.get("panel_visible") is False, st)
 
     # --- the listening goes out on OBJEKAT's own card, not the system's default output.
     #     `output_device` is read back from the listening engine's AudioUnit, `audio.status.device`
@@ -283,6 +287,7 @@ with ObjekatClient(SOCK) as c:
         st = c.send("export.status")
         check("panel_open reads true, the job still running",
               st.get("panel_open") is True and st.get("running") is True, st)
+        check("headless: panel_visible stays false", st.get("panel_visible") is False, st)
         check("the job's project_name is unchanged", st.get("project_name") == origin, st)
         if pid is not None:
             wc = window_count_for_pid(pid)

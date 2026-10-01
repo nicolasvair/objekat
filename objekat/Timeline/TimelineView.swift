@@ -459,13 +459,16 @@ struct TimelineView: View {
                 totalDuration: totalDuration,
                 scrollOffsetX: cullScrollX,
                 viewportWidth: cullViewportWidth,
-                selected: viewModel.selectedAnnotation,
+                selected: viewModel.selectedAnnotationSet,
                 renamingID: viewModel.renamingID,
                 onRename: { id, name in
                     viewModel.renamingID = nil
+                    // Resolved by the id the field carries, NOT through the selection: leaving the
+                    // field is often what deselects, and the commit on the way out must still find
+                    // its mark.
                     guard let name, !name.isEmpty,
-                          case .laneMarker(let l, let m)? = viewModel.selectedAnnotation,
-                          m == id else { return }
+                          case .laneMarker(let l, let m)? = viewModel.annotationSel(forMarkerID: id)
+                    else { return }
                     viewModel.renameMarker(laneID: l, markerID: m, to: name)
                 }
             )
@@ -647,7 +650,7 @@ struct TimelineView: View {
                     rulerHeight: rulerHeight,
                     laneStep: laneStep,
                     blockHeight: blockHeight,
-                    selected: viewModel.selectedAnnotation,
+                    selected: viewModel.selectedAnnotationSet,
                     renamingID: viewModel.renamingID,
                     scrollOffsetX: cullScrollX,
                     viewportWidth: cullViewportWidth,
@@ -657,8 +660,8 @@ struct TimelineView: View {
                     onRename: { id, name in
                         viewModel.renamingID = nil
                         guard let name, !name.isEmpty,
-                              case .objectMarker(let o, let m)? = viewModel.selectedAnnotation,
-                              m == id else { return }
+                              case .objectMarker(let o, let m)? = viewModel.annotationSel(forMarkerID: id)
+                        else { return }
                         viewModel.renameObjectMarker(objectID: o, markerID: m, to: name)
                     }
                 )
@@ -693,7 +696,7 @@ struct TimelineView: View {
                         rulerHeight: rulerHeight,
                         laneStep: laneStep,
                         blockHeight: blockHeight,
-                        selected: viewModel.selectedAnnotation,
+                        selected: viewModel.selectedAnnotationSet,
                         editingID: viewModel.renamingID,
                         previewOffsets: commentPreviewOffsets,
                         onCommit: { id, text in
@@ -828,7 +831,10 @@ struct TimelineView: View {
                 // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan,
                 // and like them they own their clicks: the canvas steps aside over them
                 // (@see openAutomationBandContains).
-                ForEach(visibleEntries) { entry in
+                // Pre-filtered on `automationBandRect`'s own first condition (an open band): a
+                // ForEach over every visible entry cost one node per object for a layer that is
+                // empty almost everywhere.
+                ForEach(visibleEntries.filter { $0.item.automationOpen }) { entry in
                     if let r = automationBandRect(for: entry) {
                         AutomationBandView(
                             viewModel: viewModel,
@@ -966,7 +972,9 @@ struct TimelineView: View {
                 // clip): INSIDE the block, risen from the lower edge — its belonging is beyond question,
                 // nested too. Pure rendering (like the rest of the canvas's controls); the click is
                 // resolved geometrically by the tap handler.
-                ForEach(visibleEntries) { entry in
+                // Pre-filtered on `automationBezel`'s own first conditions (a selector to show, a
+                // content to choose from): only groups and MIDI clips ever get here.
+                ForEach(visibleEntries.filter { viewModel.hasAutomationSelector($0.item) && $0.item.expandedSpan > 0 }) { entry in
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry)
@@ -1171,6 +1179,11 @@ struct TimelineView: View {
                                 if editZoneHover != nil { editZoneHover = nil }
                                 if cutHover != nil { cutHover = nil }
                             }
+                        },
+                        pluginOutcome: { loc, flags in
+                            guard let payload = PluginDragSession.shared.current else { return nil }
+                            guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
+                            return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
                         }))
         }
         .scrollPosition($scrollPosition)
@@ -2864,16 +2877,25 @@ struct TimelineView: View {
             HStack(spacing: 7) {
                 Image(systemName: s.isLink ? "link"
                                   : s.isCopy ? "plus.square.on.square"
+                                  : s.context == .intoBin ? "tray.and.arrow.down"
+                                  : s.context == .outOfBin ? "tray.and.arrow.up"
                                   : "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(s.isLink ? LinkColor.plugin : Color.accentColor)
-                Text(s.isLink ? L("hud.pluginDrop.linkedCopy")
-                     : s.isCopy ? L("hud.move.copy") : L("hud.move.move"))
+                Text(pluginDropTitle(s))
                     .font(.system(size: 11, weight: .bold))
-                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy, locked: false)
-                if s.context == .host {
+                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy && s.alt, locked: false)
+                switch s.context {
+                case .host:
                     modifierChip("⌘", L("hud.pluginDrop.chip.link"), on: s.isLink, locked: false)
-                } else {
+                case .blockMove:
+                    // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
+                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .intoBin, .outOfBin:
+                    Text(L("hud.pluginDrop.binNoCmd"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                case .sameChain:
                     Text(L("hud.pluginDrop.sameChainNoLink"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -2885,6 +2907,20 @@ struct TimelineView: View {
                 .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
             .padding(.bottom, 12)
             .allowsHitTesting(false)   // it must never intercept the drop
+        }
+    }
+
+    /// The band's title for what a release would do (@see PluginDropHint.Context).
+    private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
+        switch s.context {
+        case .host, .sameChain:
+            return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .intoBin:
+            return s.alt ? L("hud.pluginDrop.intoBin.copy") : L("hud.pluginDrop.intoBin")
+        case .outOfBin:
+            return s.alt ? L("hud.move.copy") : L("hud.pluginDrop.outOfBin")
+        case .blockMove:
+            return s.isCopy ? L("hud.pluginDrop.blockCopy") : L("hud.pluginDrop.blockMove")
         }
     }
 

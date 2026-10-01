@@ -98,7 +98,7 @@ struct SynopticPlugin: Identifiable, Equatable {
 }
 
 /// What a `.series` node carries when it IS a bin's block (an FX link): the rounded rectangle drawn
-/// round it, and the header / footer controls. The series inside is the block's own instances, so
+/// round it, and the header card and mix box controls. The series inside is the block's own instances, so
 /// every '+' / drop zone / card of it is laid by the ordinary series code.
 struct SynopticFXLink: Equatable {
     var blockID: UUID

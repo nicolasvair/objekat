@@ -604,7 +604,7 @@ That is end-of-process noise, with no effect on the result.
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position: `playhead` is the red line, `displayed` what the time readout shows — the playhead while playing or paused, the cursor while stopped) |
-| `selection.*` | all, clear, set, read |
+| `selection.*` | all, clear, set, read, **context_click** (the decision of a right click on an object or an empty lane, minus the menu) |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
@@ -616,7 +616,7 @@ That is end-of-process noise, with no effect on the result.
 | `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
 | `export.*` | render the mix into a file (or one file per region), follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
-| `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
+| `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them — including picking several (`marker.select`, `marker.selection`, `marker.remove_selected`) |
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
 | `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
@@ -639,7 +639,8 @@ commands drive.
 | `plugin.toggle_selected` | on/off over the lot, in one undo step. Mixed states go to OFF: one still on turns them all off |
 | `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
-| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip |
+| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip; `plugin` may also be an FX link's BLOCK id (what the bin's header carries); answers `outcome`, `refused`, `reason` |
+| `plugin.drop_at` | the same drop at a PLACE of a host's chain — `series` (`"root"`, `{"block": id}` = into a bin, `{"voice": id, "index": n}` = a parallel branch) and `at` — with `dry_run` returning the resolver's `outcome` and refusal `reason` without touching anything |
 
 Three things are worth knowing before driving them:
 
@@ -659,6 +660,20 @@ Three things are worth knowing before driving them:
   rather than at the timeline's objects. `plugin.select` with an empty list therefore means something
   precise — claim the keyboard for that chain, choose nothing — which is what lets `plugin.paste`
   land in a chain that has no card yet to click on. `has_keyboard` reports it.
+
+**What a drop does — one resolver, for the hand and the API alike** (`pluginDropOutcome`; the cursor, the
+band at the bottom of the timeline and the drop itself all read it, so what the hand is told is what
+happens). `outcome` is one of `move`, `copy`, `link` (a plain plugin: nothing / ⌥ / ⌘; within ONE chain ⌘ is
+a plain move), `join_bin` (an instance of an FX link dropped with ⌘ on another host: that host joins the
+WHOLE bin), `move_block` / `copy_block` (a block dragged by its header: the target joins the bin and the
+source loses its block, or — ⌥ / ⌘ — keeps it; every copy of a bin stays on the bin; a DETACHED block
+moves as it is, local output and all, with fresh instance ids), `adopt_into_bin` (a plain plugin let go
+INSIDE an attached bin joins its definition: its instance keeps its id, every other member gets one —
+from another host it is moved first), `copy_into_bin` (⌥: an independent copy is added to the definition),
+`extract_from_bin` (an instance let go OUTSIDE its bin leaves it for EVERY member and stays a plain
+plugin: same id, live state) or `refuse` (`reason` says why: ⌘ into a bin, an instance moved onto another
+host, a bin onto a host that already holds it or into another bin, a plugin that is linked or already in
+a block). A refused drop places nothing and pushes no undo point. Every other outcome is ONE `edit.undo`.
 
 `plugin.move`, `plugin.copy` and `plugin.link` take **`plugins`** (a list) in place of `plugin`: one
 card or a whole selection, the same three gestures either way. A link of several ties each card to
@@ -757,8 +772,10 @@ knowing before driving one:
 
 Persisted as the optional `fxLinks` registry of the session file (**format 17**; a file with no key
 opens as before; an older build has no notion of the block entry, so a project holding bins is not
-meant to be edited by one). `tools/scenario_fxlink.py` (headless, 91 assertions, the export + RMS proof that the
-ENGINE followed) is the reference for every rule above.
+meant to be edited by one). `tools/scenario_fxlink.py` (headless, the export + RMS proof that the
+ENGINE followed) is the reference for every rule above; `tools/scenario_fxlink_drag.py` (headless, 91
+assertions: block and plugin drags, refusals by dry run, one undo each, save / reopen, export at 24 bit)
+is the one for the drag gestures.
 
 ### Fade shapes
 
@@ -1000,6 +1017,22 @@ holding an edge, which watched the zone go on growing out of the end it was not 
 "start"` or `pin: "end"` holds that edge of the zone described by `start` and `width`, and clamps
 the WIDTH instead. Compare `requested_width` with `zone.width` to know that it bit.
 
+Two more facts about the gesture, neither of which a script can reach (the API has no pointer) —
+the arithmetic underneath them is `crossfade.open` with `start`/`pin`, asserted by
+`tools/scenario_crossfade_grab.py`. A **fade handle of an object engaged in a crossfade is that
+crossfade's side, wherever on the handle band the hand lands**: the band is a quarter of the block
+(up to 50 px), the zone is often narrower, and the part of the band beyond the zone used to change
+ONE fade and leave the other at the old overlap — which stops the pair being a crossfade. Its
+fade-in is the zone's start side, its fade-out the end side; a double click there closes the
+crossfade (both fades) like a double click in the zone. And with **several objects selected**, a
+drag of a crossfade takes the others of the selection along, by the SAME travel, each keeping its
+own width and place: a side drives every selected object's crossfade on that same side, the whole
+zone (top and bottom triangles) every crossfade touching a selected object; a zone grabbed with
+the object that owns what is held unselected (a side's edge belongs to one object, the whole zone
+to both) moves alone, as a fade grabbed on an unselected object does. One undo point for the whole
+drag. The decisions are
+`Shared/CrossfadeGrab.swift`, asserted by `tools/test_crossfade_grab.swift`.
+
 A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it
 touches: the fade overflows the join, and the overlap it makes IS the crossfade. The join itself is
 not a target — it is a line with no surface, exactly where the two blocks' own trim and resize
@@ -1110,6 +1143,30 @@ either way. `snap` behaves exactly as `marker.move`'s, the mark left out of its 
 negative `rel` is legal and is NOT clamped here: that is a mark pushed behind an edge, kept and not
 drawn. The HAND's drag clamps to the object's window instead, because a mark that vanished under
 the hand moving it would have no way back but ⌘Z.
+
+**Several marks can be selected at once** — markers and regions of the band, markers carried by
+objects, comments — and the three commands below speak exactly what the hand's clicks do (they call
+`handleMarkBandClick` and `removeAnnotations`, the code of the click and of ⌫):
+
+- `marker.select {items, mode}` — `items` are `{lane, marker}` (band), `{object, marker}` (carried
+  by an object) or `{comment}`. `mode: replace` (default): the first item is a plain click — the
+  selection becomes it alone, and for a mark of the band the **cursor goes to its start** — and
+  the others are ⌘-clicks; an empty list is a click on nothing and lets go of everything.
+  `toggle`: each item is a ⌘-click (in or out, the cursor left alone). `extend`: each item is a
+  ⇧-click — the marks of the band between the **anchor** (the last plain or ⌘ clicked mark) and
+  the item, in time (a region counts when it overlaps the span) AND in rows, replace the
+  selection; the anchor holds still, so a second ⇧-click aimed back inside shortens it. With no
+  usable anchor it just adds the mark. An unknown mark is refused (`not_found`).
+- `marker.selection` — the marks selected, in the order they were picked (`kind` =
+  `lane_marker` / `object_marker` / `comment`, plus their ids — the shape `marker.select` takes
+  back), the `anchor` and the `cursor`.
+- `marker.remove_selected` — deletes them all: **one undo step**, whatever their kinds.
+
+The selection is **exclusive with the objects'** (`selection.get` answers empty while marks are
+selected, and selecting an object lets go of the marks) and is **pruned** when its targets go —
+an undo, a cut that moved a mark onto another half, a deleted row or group, a new project. The
+hand's drag of a group (in time only, one undo) and the right-click menu are not reachable from
+here.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 
@@ -1235,6 +1292,60 @@ not a passage anybody traced.
 With neither a time selection nor a usable object selection it answers `invalid_state`. At an end it
 returns having touched NOTHING, the object selection included. The answer is the selection payload,
 plus `moved`.
+
+### What a carried time selection lands on
+
+Dragging a traced range by its body (without ⌥ it moves the matter it covers, with ⌥ it copies) goes
+through ONE snap whose subject is the **range**, not the object grabbed inside it. The precedence,
+the first step that finds something deciding:
+
+1. a **real mark** — an object's edge, a marker, a region's bound; the grid is *not* one — within
+   8 px of the range's **start** (the caret) or of its **end**. The nearer wins and a tie goes to the
+   start. A real mark is never beaten by the grid, even a nearer one;
+2. else a real mark within reach of the **grabbed object's** edges (clipped to the range) — what an
+   object's own move has always done, now second;
+3. else the **grid**, on the range's start or end (again the nearer, ties to the start).
+
+With the snap off (or ⌘ held, which inverts it) the range follows the hand. The range itself stops at
+**zero**: it is the selection that is walled, so an object lying later than the range's start does not
+limit the travel. Without ⌥ the scraps the cut leaves at the two bounds are kept out of the targets
+(otherwise the range would stick to a travel of zero, a magnet on itself); with ⌥ nothing is cut, the
+originals stay in place and **are** targets.
+
+`timesel.snap_probe` (`dt`, optional `copy`, `grab`, `snap`) asks that snap without touching anything
+— no move, no undo, no change of selection — over the current time selection. It answers `dt` (the
+travel the drag would apply), `guide_time` (where the guide line would stand), `on_target` (a real
+mark was hit: the yellow guide), `edge` (`start` | `end` | `object_start` | `object_end`), `clamped`
+(the wall at zero stopped it) and the range's bounds after the travel (`start`, `end`).
+`invalid_state` without a time selection. The decision table is asserted alone by
+`tools/test_selection_move_snap.swift`, the model half by `tools/scenario_selection_snap.py`. What
+neither reaches is the gesture itself.
+
+### What a right click decides
+
+`selection.context_click` (`id`, optional `zone` `time` | `body`, `lane`, `time`, `apply`) plays the part
+of the timeline's right-click monitor that comes BEFORE the menu is built: `ContextMenuPlan` (pure,
+asserted alone by `tools/test_context_menu_plan.swift`) and the selection a click on an object's BODY
+makes (`EditViewModel.selectForContextClick`, the left click's own: range cleared, object selected,
+cursor on its absolute start).
+
+With `id`, the click is on that object: `zone` is the half of the block (the upper half is TIME, the
+lower the OBJECT); the point's lane is the object's display lane and `time` its instant (default: the
+object's middle). Without `id`, the click is on an EMPTY lane (no object under the point, which the
+caller states): `lane` (the display row) and `time` are then both required, and `zone` is ignored.
+
+It answers `layout` — `range_menu` (today's menu: group, aux clip, MIDI clip, comment. The point lies
+INSIDE the time selection, or it lands on NO object while a time selection exists ANYWHERE, inside the
+range or not, on its lanes or not — a click on an empty lane has never cared where the range lies),
+`group_selection_menu` ('Group the clip / the selection (N)' alone: an empty lane, NO time selection,
+and at least one clip or MIDI clip that is not a consolidated instance selected — the click selects
+nothing, the selection is what the menu is about), `object_time_menu` (upper half: the object marker
+only), `object_body_menu` (lower half: the object's own menu) or `nothing` (no menu, the event goes on
+to the views: an empty lane with no time selection and nothing groupable selected) — plus `selects_object`, `offers_object_marker`, `offers_comment`, `applied` and the resulting
+`selection`. On an OBJECT, a range lying elsewhere does not drive the menu. An object ALREADY selected
+is never re-selected (the multiple selection is kept, the range too); a click on an empty lane never
+selects. `apply: false` only asks. The menu itself is not reachable from here;
+`tools/scenario_context_click.py` asserts the rest.
 
 ### Walking the insertion caret
 
@@ -1475,6 +1586,12 @@ closes it and the strip under the transport takes over. Closing the window by ha
 render falls back to the strip too: the rule is one and the same, the strip shows whenever a job
 exists with no window to show it in. `export.status` answers `panel_open` for that.
 
+`panel_open` is a **state** — what `export.panel` set, what the strip reads — not a statement
+about the screen. `panel_visible` is the reality: `panel_open` AND an interface able to show a
+window, so it is always `false` with `--headless` (where `export.panel {open: true}` still sets
+`panel_open`, on purpose: the scenarios read the state through it) and equals `panel_open` in the
+UI mode. A script that wants to know whether somebody can SEE the panel reads `panel_visible`.
+
 `export.run` **keeps** a window, it never opens one — same doctrine as the plugin editors: an
 export driven by a script must not put a window on the screen of whoever is working.
 
@@ -1483,7 +1600,7 @@ export driven by a script must not put a window on the screen of whoever is work
 running" — it brings the window back onto THAT render. The window then shows the job's own settings
 and span (greyed, frozen at the launch), never the active tab's: the render may have been launched
 from another one. On an instance with no interface (`--headless`) it only sets the state, readable as
-`export.status.panel_open`; no window ever appears there (`CGWindowListCopyWindowInfo` on the pid
+`export.status.panel_open` (with `panel_visible: false`); no window ever appears there (`CGWindowListCopyWindowInfo` on the pid
 returns nothing, and `tools/scenario_tabs.py` / `scenario_export_preview.py` assert it). With no
 job, or a finished one, `open: true` is the window's ordinary opening on fresh settings.
 
@@ -1764,6 +1881,9 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
+| `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
+| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range keeps today's menu, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
+| `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |

@@ -8,9 +8,11 @@ A clip of EXACTLY two channels can be heard as it is (`lr`), as its left channel
 the HEAD of the clip's chain (`ObjChannelMode`), so an EXPORT is what proves the engine followed
 and not just the model: every claim of the sound is measured on a 24-bit WAV re-read here.
 
-The witness file is stereo, L = a sine at -20 dBFS, R = silence. The engine attenuates a centred
-stereo signal by 3 dB (found by lot L7), so nothing is compared to an absolute level — everything
-is compared to the LR export of the same clip:
+The witness file is stereo, L = a sine at -20 dBFS, R = silence. A first section pins the ABSOLUTE
+level (a centred source exports at the source's own level, mono and stereo, before and after an
+undo — the engine used to start the session 3 dB low, its default master volume, until the first
+undo pushed the model's 0 dB: found and fixed 2026-10-01). The rest compares to the LR export of
+the same clip:
 
     lr  -> R silent, L at the reference
     l   -> both sides at the reference
@@ -169,15 +171,45 @@ try:
 
         def baseline():
             """The LR left-side level of a fresh project: the reference of everything else there.
-            Measured in each project because the engine's level for a centred stereo signal is not
-            the same before and after an undo (found while writing this: ANY undo, a gain's
-            included, shifts an export by +3 dB for the rest of the process — a pre-existing
-            trait of the engine, unrelated to the channel choice, reported rather than fixed)."""
+            Measured in each project all the same, so a comparison never leans on another one's
+            level (the level itself is pinned absolutely by the first section)."""
             _, oid_ = fresh("baseline")
             return render("baseline")[0]
 
         def near(a, b, tol):
             return abs(a - b) <= tol
+
+        # ══════════════════════════════════════════════════════════ the absolute level
+        # The very first exports of the process, BEFORE any undo: the engine's master volume used
+        # to default to -3 dB (Edit::Options::defaultMasterVolumedB) while the model said 0 dB, and
+        # only an undo / a master gain gesture brought the two back in step.
+        section("level: a centred source keeps its own, undo or not")
+        SINE_RMS_DB = -23.01          # a sine peaking at -20 dBFS
+        manifest, oid = fresh("level")
+        lv0 = render("level_stereo")
+        check("stereo, first export of the process: L at the source's level (0 dB law, 0 dB master)",
+              near(lv0[0], SINE_RMS_DB, 0.1) and lv0[1] < -120, lv0)
+        send("object.set_gain", {"ids": [oid], "db": -6.0})
+        lv1 = render("level_stereo_m6")
+        check("stereo, -6 dB gain: exactly 6 dB lower", near(lv1[0], SINE_RMS_DB - 6, 0.1), lv1)
+        send("edit.undo")
+        lv2 = render("level_stereo_undo")
+        check("stereo, after the undo: the level of BEFORE the gain", near(lv2[0], lv0[0], 0.05), (lv2, lv0))
+        send("edit.redo"); send("edit.undo")
+        lv3 = render("level_stereo_redo_undo")
+        check("stereo, after redo + undo: still the source's level", near(lv3[0], SINE_RMS_DB, 0.1), lv3)
+
+        send("project.new")
+        send("project.save_as", {"path": os.path.join(WORK, "level_mono.objekat")})
+        send("object.add", {"path": MONO, "lane": 0, "start": 0.0})
+        mv0 = render("level_mono")
+        check("mono, centred on both sides: each at the source's level",
+              near(mv0[0], SINE_RMS_DB, 0.1) and near(mv0[1], SINE_RMS_DB, 0.1), mv0)
+        send("edit.undo")   # the add
+        send("edit.redo")
+        mv1 = render("level_mono_undo_redo")
+        check("mono, after an undo + redo: the same level", near(mv1[0], mv0[0], 0.05) and near(mv1[1], mv0[1], 0.05),
+              (mv1, mv0))
 
         # ══════════════════════════════════════════════════════════ the sound of each mode
         section("the sound of each mode (export, 24 bits)")
@@ -189,8 +221,8 @@ try:
 
         lr_l, lr_r = render("lr")
         check("lr: right side is silent", lr_r < -120, lr_r)
-        check("lr: left side carries the sine (about -20 dB rms minus 3 dB of law minus 3 dB of sine)",
-              -40 < lr_l < -15, lr_l)
+        check("lr: left side carries the sine at its own level (-23 dB rms)",
+              near(lr_l, SINE_RMS_DB, 0.1), lr_l)
         REF = lr_l
 
         send("object.set_channel_mode", {"id": oid, "mode": "l"})
