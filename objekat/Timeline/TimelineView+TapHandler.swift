@@ -194,7 +194,7 @@ extension TimelineView {
             // would stay laid on a fade that no longer exists. We replay it on the same point,
             // once the model is up to date — the zone aimed at becomes the handle.
             DispatchQueue.main.async {
-                editZoneHover = selectionZoneHover(at: point)?.hover
+                hoverStore.setEditZoneHover(selectionZoneHover(at: point)?.hover)
             }
             return
         }

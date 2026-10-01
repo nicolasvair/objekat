@@ -374,17 +374,17 @@ struct TimelineView: View {
         var vSnapLastEventTime: TimeInterval = 0
     }
     @State var hoverState = HoverState()
+    /// The block aimed at under the Volume / Pan / Stem tools: the ONE piece of hover state the body
+    /// reads (the partition needs the identity of the block that goes rich, and the rich blocks carry
+    /// `isToolHovered`). Written only when that identity CHANGES. A plain `@State` on purpose, and not
+    /// a property of `hoverStore`: it is the one trigger the body legitimately has, and routing it
+    /// through Observation measured ~25 % slower per hover on a heavy project (@see TimelineHoverStore).
     @State private var toolHoveredID: UUID? = nil
-    // The hovered cut position (a top-level item OR a child) resolved by the canvas on
-    // laneEntries, rendered at canvas level. localX = the snapped offset inside the block.
-    @State private var cutHover: (id: UUID, localX: Double)? = nil
-    // The hovered block under the selection tool plus the editing zone aimed at: it reveals the
-    // block's six zones. Resolved by the canvas (like cutHover), rendered by ClipEditZonesOverlay.
-    // (internal: a double click on a fade replays it from TimelineView+TapHandler)
-    @State var editZoneHover: EditZoneHover? = nil
-    /// The tooltip of the hovered tool zone. Carried by the CANVAS (the timeline's only
-    /// hit-testable layer) and recomputed on every movement — @see toolZoneHelp.
-    @State var toolZoneHelpText: String? = nil
+    /// The rest of what the pointer is aiming at (the block's editing zone, the hovered cut position,
+    /// the tooltip). A REFERENCE out of the view's state on purpose: read by leaf views alone, so a
+    /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
+    /// (internal: a double click on a fade replays the hover from TimelineView+TapHandler)
+    @State var hoverStore = TimelineHoverStore()
     var laneStep: Double { blockHeight + laneGap }
 
     private var maxOccupiedLane: Int {
@@ -880,15 +880,12 @@ struct TimelineView: View {
                         .zIndex(2.63)
                 }
 
-                if viewModel.activeTool == .toolCut, cutDrag == nil,
-                   let hover = cutHover,
-                   let entry = viewModel.laneEntry(forID: hover.id) {
-                    let absX = entry.absStart * pixelsPerSecond + hover.localX
-                    let by   = rulerHeight + Double(entry.displayLane) * laneStep
-                    Rectangle()
-                        .fill(Color.yellow.opacity(0.85))
-                        .frame(width: 1.5, height: blockHeight)
-                        .offset(x: absX - 0.75, y: by)
+                // The position itself is read by the LEAF (`CutHoverLine`, @see TimelineHoverStore): it
+                // changes at every snapped step of the pointer, and must not re-evaluate this body.
+                if viewModel.activeTool == .toolCut, cutDrag == nil {
+                    CutHoverLine(store: hoverStore, viewModel: viewModel,
+                                 pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                                 laneStep: laneStep, blockHeight: blockHeight)
                         .allowsHitTesting(false)
                         .zIndex(2.6)  // above the selected blocks (1) and the masks (0)
                 }
@@ -896,13 +893,16 @@ struct TimelineView: View {
                 // The hovered block's editing zones (the selection tool): thin separations plus a
                 // discreet veil over the zone that would answer the click. Hidden during a gesture — once
                 // the drag is engaged, the gesture's preview already says what is happening.
-                if viewModel.activeTool == .toolSelection, let hover = editZoneHover,
+                // The hovered zone is read by the LEAF (`EditZoneVeilLayer`, @see TimelineHoverStore),
+                // not here: it changes with every zone the pointer crosses.
+                if viewModel.activeTool == .toolSelection,
                    !dragActive, fadeDrag == nil, timeSelectionDrag == nil {
                     // UNDER the 'objects / automations' hem (2.57): the veil darkens the block's
                     // clickable zone, not the switch laid on it — which has its own material and its
                     // own hover state (@see updateCursor, which puts the veil out as soon as one
                     // comes into the hem).
-                    ClipEditZonesOverlay(hover: hover)
+                    EditZoneVeilLayer(store: hoverStore)
+                        .allowsHitTesting(false)
                         .zIndex(2.565)
                 }
 
@@ -1049,7 +1049,7 @@ struct TimelineView: View {
             }
             .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
             .contentShape(Rectangle())
-            .helpIf(toolZoneHelpText)
+            .timelineHoverHelp(hoverStore)
             .onTapGesture(coordinateSpace: .local) { handleCanvasTap(at: $0) }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 3, coordinateSpace: .local)
@@ -1070,10 +1070,8 @@ struct TimelineView: View {
                         // handle, the transport's fields…
                         TimelineCursorKeeper.relinquish()
                         hoverState.position = nil
-                        toolHoveredID = nil
-                        toolZoneHelpText = nil
-                        cutHover = nil
-                        editZoneHover = nil
+                        if toolHoveredID != nil { toolHoveredID = nil }
+                        hoverStore.clearAll()
                     }
                 }
             )
@@ -1095,10 +1093,7 @@ struct TimelineView: View {
                             // emits NO mouseMoved: the hover veil would stay frozen on the last block
                             // pointed at while the drop ghost follows the cursor. We put it out for the
                             // length of the session.
-                            if active {
-                                if editZoneHover != nil { editZoneHover = nil }
-                                if cutHover != nil { cutHover = nil }
-                            }
+                            if active { hoverStore.clearZoneAndCut() }
                         },
                         pluginOutcome: { loc, flags in
                             guard let payload = PluginDragSession.shared.current else { return nil }
@@ -1209,10 +1204,13 @@ struct TimelineView: View {
             viewModel.verticalSnapProbe = { verticalSnapProbeSnapshot() }
             viewModel.zoomBoundsProbe = { (min: minZoom, max: maxZoom) }
             viewModel.hoverProbe = {
-                TimelineHoverProbe(position: hoverState.position, toolHoveredID: toolHoveredID,
-                                   editZoneID: editZoneHover?.id, editZone: editZoneHover?.zone,
-                                   cutHoverID: cutHover?.id, cutHoverLocalX: cutHover?.localX,
-                                   helpText: toolZoneHelpText)
+                TimelineHoverProbe(position: hoverState.position,
+                                   toolHoveredID: toolHoveredID,
+                                   editZoneID: hoverStore.editZoneHover?.id,
+                                   editZone: hoverStore.editZoneHover?.zone,
+                                   cutHoverID: hoverStore.cutHover?.id,
+                                   cutHoverLocalX: hoverStore.cutHover?.localX,
+                                   helpText: hoverStore.toolZoneHelpText)
             }
         }
         .onDisappear { unregisterKeyMonitor() }
@@ -1352,8 +1350,7 @@ struct TimelineView: View {
         // (the bottom of the block is otherwise `.move`).
         if viewModel.activeTool == .toolSelection, automationBezelHit(at: pos) != nil {
             TimelineCursorKeeper.set(NSCursor.pointingHand)
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // Hovering the ruler: nothing to edit underneath, even when it covers lanes (a sticky
@@ -1364,8 +1361,7 @@ struct TimelineView: View {
             // (@see TimeRulerView.resetCursorRects). We hand back to it, and set NOTHING: setting the
             // arrow here would take it away from the hovered marker on every mouse movement.
             TimelineCursorKeeper.relinquish()
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // The marker band: it has its own gestures, and nothing under it is reachable (it is a
@@ -1378,16 +1374,14 @@ struct TimelineView: View {
             TimelineCursorKeeper.set(zone == nil ? NSCursor.arrow
                                      : zone!.part == .move ? NSCursor.openHand
                                                            : NSCursor.resizeLeftRight)
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // A COMMENT: the ends crop, the body moves — the cursor says which, exactly as it does on a
         // clip. Asked before the blocks, like the click and the drag.
         if viewModel.activeTool == .toolSelection, let z = commentZone(at: pos) {
             TimelineCursorKeeper.set(z.part == .move ? NSCursor.openHand : NSCursor.resizeLeftRight)
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // A marker carried by an OBJECT: the open hand, the one word the band's marks and a comment
@@ -1395,8 +1389,7 @@ struct TimelineView: View {
         // object moves along it and nothing else. Same order as the click and the drag.
         if viewModel.activeTool == .toolSelection, objectMarkerHit(at: pos) != nil {
             TimelineCursorKeeper.set(NSCursor.openHand)
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // A CROSSFADE zone: the same priority as in the drag, and for the same reason — the
@@ -1406,16 +1399,15 @@ struct TimelineView: View {
         // hand for the body, and one fade cursor per side (@see crossfadeCursor).
         if viewModel.activeTool == .toolSelection, let c = crossfadeCursor(at: pos) {
             TimelineCursorKeeper.set(c)
-            if editZoneHover != nil { editZoneHover = nil }
-            if cutHover != nil { cutHover = nil }
+            hoverStore.clearZoneAndCut()
             return
         }
         // The editing zones are only revealed under the selection tool.
-        if viewModel.activeTool != .toolSelection, editZoneHover != nil { editZoneHover = nil }
+        if viewModel.activeTool != .toolSelection { hoverStore.setEditZoneHover(nil) }
         switch viewModel.activeTool {
         case .toolCut:
             guard let entry = blockEntry(at: pos)
-            else { TimelineCursorKeeper.set(NSCursor.arrow); cutHover = nil; return }
+            else { TimelineCursorKeeper.set(NSCursor.arrow); hoverStore.setCutHover(nil); return }
             // Uniform handling top-level / children (depth immaterial).
             let bx     = entry.absStart * pixelsPerSecond
             let bw     = max(entry.item.duration * pixelsPerSecond, 2)
@@ -1424,7 +1416,7 @@ struct TimelineView: View {
             TimelineCursorKeeper.set(canCut ? NSCursor.crosshair : NSCursor.operationNotAllowed)
             // A line set on the snap (the same computation as handleCutTap)
             let snappedX = viewModel.snappedTimePure(max(0, pos.x / pixelsPerSecond)) * pixelsPerSecond - bx
-            cutHover = canCut ? (id: entry.item.id, localX: snappedX) : nil
+            hoverStore.setCutHover(canCut ? TimelineHoverStore.CutHover(id: entry.item.id, localX: snappedX) : nil)
         case .toolVolume:
             TimelineCursorKeeper.set(NSCursor.resizeUpDown)
         case .toolPan:
@@ -1453,7 +1445,7 @@ struct TimelineView: View {
             // that gesture, and a cursor promising one would be lying.
             if infiniteBusBandHit(at: pos) != nil {
                 TimelineCursorKeeper.set(NSCursor.openHand)
-                if editZoneHover != nil { editZoneHover = nil }
+                hoverStore.setEditZoneHover(nil)
                 return
             }
             let zoneHover = selectionZoneHover(at: pos)
@@ -1467,10 +1459,10 @@ struct TimelineView: View {
 
             guard let (hover, item) = zoneHover else {
                 TimelineCursorKeeper.set(slipping ? NSCursor.resizeLeftRight : NSCursor.arrow)
-                if editZoneHover != nil { editZoneHover = nil }
+                hoverStore.setEditZoneHover(nil)
                 return
             }
-            if editZoneHover != hover { editZoneHover = hover }
+            hoverStore.setEditZoneHover(hover)
             if slipping { TimelineCursorKeeper.set(NSCursor.resizeLeftRight); return }
 
             switch hover.zone {
@@ -1594,7 +1586,7 @@ struct TimelineView: View {
 
     private func updateToolHover(at pos: CGPoint) {
         let help = toolZoneHelp(at: pos)
-        if toolZoneHelpText != help { toolZoneHelpText = help }
+        hoverStore.setHelpText(help)
         // See updateCursor: under the ruler, no object is aimed at.
         if rulerBandContains(pos) {
             if toolHoveredID != nil { toolHoveredID = nil }
