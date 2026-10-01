@@ -6395,52 +6395,6 @@
         }
       }
     },
-    "menu.context.infinite.off": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn infinite off"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desactivar el infinito"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Désactiver l'infini"
-          }
-        }
-      }
-    },
-    "menu.context.infinite.on": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Make infinite"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Volver infinito"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rendre infini"
-          }
-        }
-      }
-    },
     "menu.context.marker.create": {
       "extractionState": "manual",
       "localizations": {
