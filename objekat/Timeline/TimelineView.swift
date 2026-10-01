@@ -831,7 +831,10 @@ struct TimelineView: View {
                 // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan,
                 // and like them they own their clicks: the canvas steps aside over them
                 // (@see openAutomationBandContains).
-                ForEach(visibleEntries) { entry in
+                // Pre-filtered on `automationBandRect`'s own first condition (an open band): a
+                // ForEach over every visible entry cost one node per object for a layer that is
+                // empty almost everywhere.
+                ForEach(visibleEntries.filter { $0.item.automationOpen }) { entry in
                     if let r = automationBandRect(for: entry) {
                         AutomationBandView(
                             viewModel: viewModel,
@@ -969,7 +972,9 @@ struct TimelineView: View {
                 // clip): INSIDE the block, risen from the lower edge — its belonging is beyond question,
                 // nested too. Pure rendering (like the rest of the canvas's controls); the click is
                 // resolved geometrically by the tap handler.
-                ForEach(visibleEntries) { entry in
+                // Pre-filtered on `automationBezel`'s own first conditions (a selector to show, a
+                // content to choose from): only groups and MIDI clips ever get here.
+                ForEach(visibleEntries.filter { viewModel.hasAutomationSelector($0.item) && $0.item.expandedSpan > 0 }) { entry in
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry)
