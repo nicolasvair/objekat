@@ -2983,8 +2983,9 @@ struct TimelineView: View {
         if previewTrimDX(for: item) != 0 { return .preview }
         if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
         if spillPlan(for: item.id) != nil { return .spill }
-        // A looping group: the composite repeats and the IN/OUT grips are views.
-        if previewLoopRange(for: item) != nil { return .loop }
+        // A looping group at rest is drawn by the Canvas (the composite repeats, the IN / OUT grips
+        // are drawn); only the DRAG of one of its bounds keeps the live rich view.
+        if loopRangeDrag?.id == item.id { return .loop }
         return nil
     }
 
@@ -3015,7 +3016,8 @@ struct TimelineView: View {
                 mutedInMix: viewModel.isMutedInMix(item),
                 expanded: item.showsChildrenInline,
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
-                toolOverlay: toolOverlays[item.id])
+                toolOverlay: toolOverlays[item.id],
+                loopRange: previewLoopRange(for: item))
         }
         guard resolved.contains(where: { $0.selected }) else { return resolved }
         return resolved.filter { !$0.selected } + resolved.filter { $0.selected }

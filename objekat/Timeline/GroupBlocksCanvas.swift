@@ -6,7 +6,7 @@ import SwiftUI
 // groups on screen the cost of a frame was SwiftUI's diff of those views and their layers, not
 // the drawing. The batched Canvas (`TimelineView.plainBlocksCanvas`) now draws every "simple"
 // group — one that is not renamed, baked, open for editing, under a tool overlay, previewing a
-// drag, or looping — and this file is that drawing.
+// drag, or having its loop's bounds dragged — and this file is that drawing.
 //
 // It is `GroupBlockView`'s `body`, redrawn value for value (radius 20, tint 0.30 / 0.55, inset
 // 2 pt border at 0.5 / 0.9, the custom colour's name band on 20 % of the height, the composite of
@@ -45,6 +45,9 @@ struct CanvasGroup {
     /// What the active tool lays over the block (Volume's minimal veil, Pan's panel…), resolved by
     /// the blocks layer's body. Drawn between the fades and the mute veil.
     var toolOverlay: CanvasToolOverlay? = nil
+    /// The loop's IN / OUT bounds, in seconds LOCAL to the block (`previewLoopRange(for:)`): the
+    /// composite repeats from the block's left edge and the two grips are drawn. nil = no loop.
+    var loopRange: (start: Double, end: Double)? = nil
 
     var customColor: Color? { item.customColor }
     var outlineColor: Color { item.customColor ?? stem }   // GroupBlockView.effectiveColor
@@ -221,7 +224,7 @@ enum GroupBlocksCanvas {
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: nil)
+                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange)
         }
     }
 
@@ -250,7 +253,8 @@ enum GroupBlocksCanvas {
             let fadeInPx = item.fadeIn * geo.pixelsPerSecond
             let fadeOutPx = item.fadeOut * geo.pixelsPerSecond
             let needsLabel = w >= 30
-            guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil else { continue }
+            guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil
+                    || g.loopRange != nil else { continue }
 
             var c = ctx
             if g.dim { c.opacity = 0.25 }
@@ -269,6 +273,19 @@ enum GroupBlocksCanvas {
                                               side: .out, in: box).applying(move),
                            with: .color(.black.opacity(0.30)))
                 }
+            }
+
+            // The loop's IN / OUT grips (a bar and a flag at each bound), over the fades and under
+            // the tool's overlay, as the rich view stacks them. Always shown on a looping group.
+            if let lr = g.loopRange {
+                var grips = Path()
+                LoopRangeMarkersView.appendGrips(
+                    to: &grips, originX: x, originY: y,
+                    startPx: lr.start * geo.pixelsPerSecond, endPx: lr.end * geo.pixelsPerSecond,
+                    blockWidth: w, blockHeight: rect.height)
+                var gc = c
+                gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
+                gc.fill(grips, with: .color(g.outlineColor))
             }
 
             // The tool's overlay, under the mute veil (a GROUP's mute veil stays under every tool,

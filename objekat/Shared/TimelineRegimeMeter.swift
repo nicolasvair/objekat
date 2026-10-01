@@ -56,7 +56,8 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     case rename
     /// A bake is running on it.
     case bake
-    /// A looping group (the composite repeats and the IN/OUT grips are views).
+    /// A looping group whose IN / OUT bound is being dragged (at rest the Canvas repeats the
+    /// composite and draws the grips).
     case loop
     /// An infinite bus (`InfiniteBusBandView`).
     case infinite
