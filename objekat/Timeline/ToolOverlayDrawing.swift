@@ -8,9 +8,11 @@ import SwiftUI
 // `ToolStemLayer`), and they read the SAME numbers: the zones, the sizes, the labels and the veil
 // opacities all come from `ToolOverlayGeometry`, so the two renderings cannot drift apart.
 //
-// NOT WIRED to the blocks' Canvas yet. Only the two knobs are shared with the rich layers
-// (`PanKnob`, `ToolSendLayer.knob` call `drawPanKnob` / `drawSendKnob`: same strokes, same numbers,
-// nothing visible changes).
+// WIRED to the blocks' Canvas (`TimelineView.plainBlocksCanvas` and `GroupBlocksCanvas`) through
+// `CanvasToolOverlay` / `drawToolOverlay` at the bottom of this file: a block the tool draws on but
+// that is not aimed at (and not cut by a viewport edge) no longer needs its rich view
+// (@see ToolOverlayPartition). The two knobs are also shared with the rich layers (`PanKnob`,
+// `ToolSendLayer.knob` call `drawPanKnob` / `drawSendKnob`: same strokes, same numbers).
 //
 // WHAT IS NOT HERE, on purpose — three asymmetries that belong to the BLOCKS, whoever draws them:
 //   • a CLIP's mute veil is hidden under the Volume tool; a GROUP's is not;
@@ -36,6 +38,8 @@ enum ToolOverlayTextStyle: Hashable {
     case stepGlyph              // 12 medium
     case panLabel               // 9 semibold monospaced
     case stemLabel              // 9 semibold
+    case sendLabel              // 9 medium (a send column's aux name)
+    case sendLevel              // 12 bold monospaced (a send column's level)
 
     var font: Font {
         switch self {
@@ -45,6 +49,8 @@ enum ToolOverlayTextStyle: Hashable {
         case .stepGlyph:          return .system(size: 12, weight: .medium)
         case .panLabel:           return .system(size: 9, weight: .semibold, design: .monospaced)
         case .stemLabel:          return .system(size: 9, weight: .semibold)
+        case .sendLabel:          return .system(size: 9, weight: .medium)
+        case .sendLevel:          return .system(size: 12, weight: .bold, design: .monospaced)
         }
     }
 }
@@ -448,4 +454,144 @@ func drawStemVeil(_ ctx: GraphicsContext, size: CGSize, label: String, color: Co
     drawOverlayText(c, label, style: .stemLabel, color: .white,
                     at: CGPoint(x: left + dot + gap + textW / 2, y: midY),
                     maxWidth: avail, minScale: 0.6)
+}
+
+// MARK: - Send columns
+
+/// One send column's values — what `SendRow` carries, without the model (this file compiles alone).
+struct ToolOverlaySendColumn: Equatable {
+    let label: String
+    let level: Float
+    let enabled: Bool
+    let focused: Bool
+    /// A CURVE drives the level: the knob is faded and carries the lock's glyph, the level reads
+    /// faded too. Under the Send tool only.
+    let automated: Bool
+}
+
+/// The Send tool's columns over a block of `size` — `ToolSendLayer`, redrawn value for value: a
+/// 66 % (82 % focused) black ground, a red ring when focused, then — bottom-aligned, in the rich
+/// layer's order — the knob, the aux's name and the level (only when the column is wide and tall
+/// enough, @see `ToolOverlayGeometry.sendShowsText`), and the on/off button in its 22 px zone.
+///
+/// The columns lie where `ToolOverlayGeometry.sendLayout` puts them — the hit-testing reads the
+/// same function, which is what keeps a knob one sees a knob one can turn. `leadingInset` is the
+/// span a crossfade holds at the block's left edge; `span` the visible portion (LOCAL), nil = the
+/// whole block. The block's mute veil is NOT drawn here: it lies on top of the columns.
+///
+/// One departure from the layer: a name wider than its column is CLIPPED, where the layer's
+/// `lineLimit(1)` ends it with an ellipsis.
+func drawSendColumns(_ ctx: GraphicsContext, size: CGSize, columns: [ToolOverlaySendColumn],
+                     leadingInset: Double, span: (x: Double, width: Double)? = nil,
+                     minDb: Float = sendMinDb, maxDb: Float = sendMaxDb) {
+    guard !columns.isEmpty else { return }
+    let lay = ToolOverlayGeometry.sendLayout(blockWidth: size.width, leadingInset: leadingInset,
+                                             count: columns.count,
+                                             visibleX: span?.x ?? 0, visibleWidth: span?.width)
+    let colW = lay.columnWidth
+    guard colW > 0 else { return }
+    for (i, column) in columns.enumerated() {
+        let rect = CGRect(x: lay.origin + Double(i) * colW, y: 0, width: colW, height: size.height)
+        drawSendColumn(ctx, column, in: rect, minDb: minDb, maxDb: maxDb)
+    }
+}
+
+private func drawSendColumn(_ ctx: GraphicsContext, _ col: ToolOverlaySendColumn, in rect: CGRect,
+                            minDb: Float, maxDb: Float) {
+    let routed = col.enabled && col.level > minDb
+    let accent: Color = routed ? .red : .white.opacity(0.35)
+    let showText = ToolOverlayGeometry.sendShowsText(columnWidth: rect.width, blockHeight: rect.height)
+    let knobD = ToolOverlayGeometry.sendKnobDiameter(columnWidth: rect.width, blockHeight: rect.height,
+                                                     showText: showText)
+
+    // The ground, inset by 1 (the layer's `.padding(1)`), and the focus ring over it.
+    let ground = Path(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: ToolOverlayGeometry.cornerRadius)
+    ctx.fill(ground, with: .color(.black.opacity(col.focused ? 0.82 : 0.66)))
+    if col.focused {
+        ctx.stroke(ground, with: .color(.red.opacity(0.9)), lineWidth: 1.5)
+    }
+
+    // Bottom-aligned content, in the VStack(spacing: 2) / padding(.vertical, 2) the layer has:
+    // the on/off zone at the very bottom, the level above it, the name above that, the knob on top.
+    let cx = rect.midX
+    var bottom = rect.maxY - 2
+
+    let toggleY = bottom - sendToggleZoneHeight / 2
+    let button = CGRect(x: cx - 8, y: toggleY - 8, width: 16, height: 16)
+    ctx.stroke(Path(ellipseIn: button), with: .color(accent.opacity(0.8)), lineWidth: 2)
+    if routed {
+        ctx.fill(Path(ellipseIn: button.insetBy(dx: 3, dy: 3)), with: .color(.red))
+    }
+    bottom -= sendToggleZoneHeight + 2
+
+    if showText {
+        let cache = ToolOverlayResolveCache.shared
+        let huge = CGSize(width: 10_000, height: 10_000)
+
+        // The level.
+        var level = cache.text(ToolOverlayGeometry.sendLevelLabel(db: col.level, minDb: minDb),
+                               style: .sendLevel, in: ctx)
+        let levelSize = level.measure(in: huge)
+        level.shading = .color(routed ? Color.red.opacity(0.95) : Color.white.opacity(0.6))
+        var levelCtx = ctx
+        if col.automated { levelCtx.opacity = 0.35 }
+        levelCtx.draw(level, at: CGPoint(x: cx, y: bottom - levelSize.height / 2), anchor: .center)
+        bottom -= levelSize.height + 2
+
+        // The name: centred when it fits, else cut at the column's padding (2 px each side).
+        var label = cache.text(col.label, style: .sendLabel, in: ctx)
+        let labelSize = label.measure(in: huge)
+        label.shading = .color(.white.opacity(0.9))
+        let avail = max(0, rect.width - 4)
+        let labelY = bottom - labelSize.height / 2
+        if labelSize.width <= avail {
+            ctx.draw(label, at: CGPoint(x: cx, y: labelY), anchor: .center)
+        } else {
+            var cut = ctx
+            cut.clip(to: Path(CGRect(x: rect.minX + 2, y: rect.minY, width: avail, height: rect.height)))
+            cut.draw(label, at: CGPoint(x: rect.minX + 2, y: labelY), anchor: .leading)
+        }
+        bottom -= labelSize.height + 2
+    }
+
+    // The knob. The automation lock (faded knob + a bright glyph) is `drawSendKnob`'s own.
+    var knobCtx = ctx
+    knobCtx.translateBy(x: cx - knobD / 2, y: bottom - knobD)
+    drawSendKnob(knobCtx, level: col.level, enabled: routed, focused: col.focused,
+                 automated: col.automated, size: CGSize(width: knobD, height: knobD),
+                 minDb: minDb, maxDb: maxDb)
+}
+
+// MARK: - What the Canvas draws over a block
+
+/// What the active tool lays over ONE block drawn in the Canvas, resolved by the blocks layer's
+/// body (the Canvas reads nothing from the view model: a renderer closure is not a place to count
+/// on observation tracking). `span` is the visible sub-window the controls sit in, LOCAL to the
+/// block, nil = the whole block. Only blocks whose visible span does not follow the exact scroll
+/// come here (@see ToolOverlayPartition).
+struct CanvasToolOverlay {
+    enum Content {
+        /// The Volume tool's minimal veil: a selected block, or a narrow one.
+        case volumeMinimal(volume: Float, isMuted: Bool)
+        /// The Pan tool's panel: a selected block, or a narrow one.
+        case pan(pan: Float)
+        /// The Send tool's columns.
+        case sends(columns: [ToolOverlaySendColumn], leadingInset: Double)
+    }
+    let content: Content
+    let span: (x: Double, width: Double)?
+}
+
+/// Draws `overlay` over a block of `size`; `ctx` must already be translated to the block's origin.
+/// The block's own mute veil is the caller's, and goes AFTER this (it lies over the overlay under
+/// the Pan and Send tools; a CLIP's is not drawn at all under the Volume tool, a group's is).
+func drawToolOverlay(_ ctx: GraphicsContext, _ overlay: CanvasToolOverlay, size: CGSize) {
+    switch overlay.content {
+    case .volumeMinimal(let volume, let isMuted):
+        drawVolumeVeilMinimal(ctx, size: size, volume: volume, isMuted: isMuted, span: overlay.span)
+    case .pan(let pan):
+        drawPanOverlay(ctx, size: size, pan: pan, span: overlay.span)
+    case .sends(let columns, let leadingInset):
+        drawSendColumns(ctx, size: size, columns: columns, leadingInset: leadingInset, span: overlay.span)
+    }
 }

@@ -42,6 +42,9 @@ struct CanvasGroup {
     /// out there, so the neighbour's content still reads (@see `OpaqueBaseMask`).
     let sharedLeading: Double
     let sharedTrailing: Double
+    /// What the active tool lays over the block (Volume's minimal veil, Pan's panel…), resolved by
+    /// the blocks layer's body. Drawn between the fades and the mute veil.
+    var toolOverlay: CanvasToolOverlay? = nil
 
     var customColor: Color? { item.customColor }
     var outlineColor: Color { item.customColor ?? stem }   // GroupBlockView.effectiveColor
@@ -247,7 +250,7 @@ enum GroupBlocksCanvas {
             let fadeInPx = item.fadeIn * geo.pixelsPerSecond
             let fadeOutPx = item.fadeOut * geo.pixelsPerSecond
             let needsLabel = w >= 30
-            guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix else { continue }
+            guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil else { continue }
 
             var c = ctx
             if g.dim { c.opacity = 0.25 }
@@ -266,6 +269,14 @@ enum GroupBlocksCanvas {
                                               side: .out, in: box).applying(move),
                            with: .color(.black.opacity(0.30)))
                 }
+            }
+
+            // The tool's overlay, under the mute veil (a GROUP's mute veil stays under every tool,
+            // the Volume one included).
+            if let overlay = g.toolOverlay {
+                var oc = c
+                oc.translateBy(x: x, y: y)
+                drawToolOverlay(oc, overlay, size: CGSize(width: w, height: rect.height))
             }
 
             if g.mutedInMix {

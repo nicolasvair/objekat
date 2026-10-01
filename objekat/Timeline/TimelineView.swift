@@ -749,7 +749,8 @@ struct TimelineView: View {
                 // The groups the Canvas draws, resolved HERE (their name, colour, mute, missing
                 // flag…) and not in its renderer closure: what their look depends on must be read
                 // where a change re-evaluates this layer.
-                let canvasGroups = canvasGroups(for: partition.plainGroups, selectedIDs: selectedIDs)
+                let canvasGroups = canvasGroups(for: partition.plainGroups, selectedIDs: selectedIDs,
+                                                toolOverlays: partition.toolOverlays)
                 let _ = TimelineRegimeMeter.recordPass(
                     clipsCanvas: plainVisible.count,
                     clipsRich: richVisible.count - partition.richGroups,
@@ -758,7 +759,9 @@ struct TimelineView: View {
                     groupBandsRich: forceRichBands ? inlineBands.count : 0,
                     richReasons: partition.reasons)
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
-                plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs)
+                plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
+                                  toolOverlays: partition.toolOverlays,
+                                  hidesClipMuteVeil: tools.tool == .volume)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
                 ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane,
@@ -2753,6 +2756,8 @@ struct TimelineView: View {
         /// Why each rich block is rich, per `RichReason` (for `perf.census`): summed in this
         /// pass, from the very answer that decided the block's regime.
         var reasons = [Int](repeating: 0, count: RichReason.count)
+        /// What the active tool lays over the blocks the Canvas draws (clips AND groups), by id.
+        var toolOverlays: [UUID: CanvasToolOverlay] = [:]
     }
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
@@ -2770,12 +2775,14 @@ struct TimelineView: View {
                     p.reasons[why.rawValue] += 1
                 } else {
                     p.plainGroups.append(entry)
+                    if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
                 }
             } else if let why = clipRichReason(entry, forceRichSelected: forceRichSelected, tools: tools) {
                 p.rich.append(entry)
                 p.reasons[why.rawValue] += 1
             } else {
                 p.plain.append(entry)
+                if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
             }
         }
         return p
@@ -2786,7 +2793,7 @@ struct TimelineView: View {
     /// The tools whose overlays the batched Canvas draws (@see `ToolOverlayPartition`). A tool that
     /// is not in this set keeps the regime it had before the Canvas drew anything over a block:
     /// every block rich under Volume / Pan / Aux, the hovered one under Stem.
-    private static let canvasTools: Set<ToolOverlayPartition.Tool> = []
+    private static let canvasTools: Set<ToolOverlayPartition.Tool> = [.volume, .pan]
 
     /// What the active tool contributes to the partition, read ONCE per pass (and only under a
     /// tool: `toolHoveredID`, the drags and the send focus are not read otherwise, so a hover under
@@ -2873,6 +2880,45 @@ struct TimelineView: View {
         return verdict == .richSpan ? .toolSpan : nil
     }
 
+    /// What the active tool lays over a block the Canvas draws, nil if nothing: the Volume tool's
+    /// minimal veil (a selected block, or a narrow one), the Pan tool's panel. The values are read
+    /// HERE, in the layer's body — the Canvas's renderer closure reads nothing from the model.
+    ///
+    /// The SPAN the controls sit in: a block no viewport edge can cut shows itself whole
+    /// (`LiveScroll.spanIsInvariant`, which is exactly what `LiveVisibleSpan` answers for it); a
+    /// NARROW block keeps the culling window's span, in the rich views as here. A wide block that an
+    /// edge can cut never gets here — the partition keeps it rich.
+    private func canvasToolOverlay(for entry: LaneEntry, tools: ToolPartitionContext) -> CanvasToolOverlay? {
+        guard tools.tool != .none, tools.tool != .stem, !tools.forceRich,
+              Self.canvasTools.contains(tools.tool) else { return nil }
+        let item = entry.item
+        let y = rulerHeight + Double(entry.displayLane) * laneStep
+        guard y + blockHeight >= tools.rows.y0, y <= tools.rows.y1 else { return nil }
+
+        let w = max(2, item.duration * pixelsPerSecond)
+        let x = item.startTime * pixelsPerSecond
+        let selected = tools.selected.contains(item.id)
+        func span(exact: Bool) -> (x: Double, width: Double) {
+            if exact, tools.live?.spanIsInvariant(blockX: x, blockWidth: w) ?? true { return (0, w) }
+            let s = visibleSpan(blockX: x, blockWidth: w,
+                                scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth)
+            return (s.x - x, s.width)
+        }
+        switch tools.tool {
+        case .volume:
+            let plan = ToolOverlayGeometry.volumePlan(blockWidth: w, isSelected: selected, isToolHovered: false)
+            guard plan.showMinimal else { return nil }
+            return CanvasToolOverlay(content: .volumeMinimal(volume: item.volume, isMuted: item.isMuted),
+                                     span: span(exact: plan.needsExactSpan))
+        case .pan:
+            let plan = ToolOverlayGeometry.panPlan(blockWidth: w, isSelected: selected, isToolHovered: false)
+            guard plan.shown else { return nil }
+            return CanvasToolOverlay(content: .pan(pan: item.pan), span: span(exact: plan.needsExactSpan))
+        default:
+            return nil
+        }
+    }
+
     /// The Send tool's rows for a block a rich view draws: the pass's memo when there is one (it
     /// holds every block shown), else asked of the view model (the drag ghost).
     private func sendRowsFor(_ id: UUID, memo: [UUID: [SendRow]]?) -> [SendRow] {
@@ -2916,7 +2962,8 @@ struct TimelineView: View {
 
     /// Resolves what the Canvas needs for each group it draws (@see `CanvasGroup`), with the
     /// SELECTED ones last: they are drawn above the others, as their `zIndex(1)` put them.
-    private func canvasGroups(for entries: [LaneEntry], selectedIDs: Set<UUID>) -> [CanvasGroup] {
+    private func canvasGroups(for entries: [LaneEntry], selectedIDs: Set<UUID>,
+                              toolOverlays: [UUID: CanvasToolOverlay] = [:]) -> [CanvasGroup] {
         guard !entries.isEmpty else { return [] }
         let filterText = viewModel.filterText
         // Read ONCE, ahead of the loop: with nothing missing (the common case) the recursive
@@ -2939,7 +2986,8 @@ struct TimelineView: View {
                 missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
                 mutedInMix: viewModel.isMutedInMix(item),
                 expanded: item.showsChildrenInline,
-                sharedLeading: shared.leading, sharedTrailing: shared.trailing)
+                sharedLeading: shared.leading, sharedTrailing: shared.trailing,
+                toolOverlay: toolOverlays[item.id])
         }
         guard resolved.contains(where: { $0.selected }) else { return resolved }
         return resolved.filter { !$0.selected } + resolved.filter { $0.selected }
@@ -3002,8 +3050,15 @@ struct TimelineView: View {
     /// its neighbours (drawn after them, as its `zIndex(1)` used to put it). Everything about the
     /// selection that is not a PAINT (hit-testing, hover, drags) is resolved on `laneEntries` by
     /// the parent canvas and does not pass through here.
+    ///
+    /// `toolOverlays`: what the active tool lays over the blocks drawn here (resolved by the body,
+    /// like everything else this closure reads), drawn in the final phase between the fades and the
+    /// mute veil, as the rich views stack them. `hidesClipMuteVeil`: under the Volume tool a CLIP
+    /// shows no mute veil (its own red tint says it), a group's stays.
     private func plainBlocksCanvas(_ entries: [LaneEntry], groups: [CanvasGroup],
-                                   selectedIDs: Set<UUID>) -> some View {
+                                   selectedIDs: Set<UUID>,
+                                   toolOverlays: [UUID: CanvasToolOverlay] = [:],
+                                   hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
                 TimelineRegimeMeter.recordCanvasDraw()
                 let filterText = viewModel.filterText
@@ -3230,12 +3285,13 @@ struct TimelineView: View {
                     let w = max(2, item.duration * pixelsPerSecond)
                     let needsLabel = w > 10
                     let needsFade  = item.fadeIn > 0 || item.fadeOut > 0
-                    let needsMute  = isMutedItem(item)
+                    let needsMute  = isMutedItem(item) && !hidesClipMuteVeil
+                    let toolOverlay = toolOverlays[item.id]
                     // The loop's grips (a bar and a flag at each bound) belong to a SELECTED clip, as
                     // they do in its rich view: they are what one takes hold of to move IN / OUT.
                     let loopGrips = selectedIDs.contains(item.id) && !item.isReversed
                         ? item.loopMarkerLocalRange : nil
-                    guard needsLabel || needsFade || needsMute || loopGrips != nil else { continue }
+                    guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil else { continue }
 
                     let rect = rectFor(entry)
                     let x = rect.minX, y = rect.minY
@@ -3273,6 +3329,14 @@ struct TimelineView: View {
                         var gc = c
                         gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
                         gc.fill(grips, with: .color(viewModel.stemColor(for: item.id)))
+                    }
+
+                    // The active tool's overlay: over the waveform, the fades and the loop's grips,
+                    // under the mute veil (which lies on top of it, as in the rich view).
+                    if let toolOverlay {
+                        var oc = c
+                        oc.translateBy(x: x, y: y)
+                        drawToolOverlay(oc, toolOverlay, size: CGSize(width: w, height: blockHeight))
                     }
 
                     if needsMute {
