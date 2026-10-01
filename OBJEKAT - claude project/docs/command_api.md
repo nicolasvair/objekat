@@ -1558,6 +1558,12 @@ closes it and the strip under the transport takes over. Closing the window by ha
 render falls back to the strip too: the rule is one and the same, the strip shows whenever a job
 exists with no window to show it in. `export.status` answers `panel_open` for that.
 
+`panel_open` is a **state** — what `export.panel` set, what the strip reads — not a statement
+about the screen. `panel_visible` is the reality: `panel_open` AND an interface able to show a
+window, so it is always `false` with `--headless` (where `export.panel {open: true}` still sets
+`panel_open`, on purpose: the scenarios read the state through it) and equals `panel_open` in the
+UI mode. A script that wants to know whether somebody can SEE the panel reads `panel_visible`.
+
 `export.run` **keeps** a window, it never opens one — same doctrine as the plugin editors: an
 export driven by a script must not put a window on the screen of whoever is working.
 
@@ -1566,7 +1572,7 @@ export driven by a script must not put a window on the screen of whoever is work
 running" — it brings the window back onto THAT render. The window then shows the job's own settings
 and span (greyed, frozen at the launch), never the active tab's: the render may have been launched
 from another one. On an instance with no interface (`--headless`) it only sets the state, readable as
-`export.status.panel_open`; no window ever appears there (`CGWindowListCopyWindowInfo` on the pid
+`export.status.panel_open` (with `panel_visible: false`); no window ever appears there (`CGWindowListCopyWindowInfo` on the pid
 returns nothing, and `tools/scenario_tabs.py` / `scenario_export_preview.py` assert it). With no
 job, or a finished one, `open: true` is the window's ordinary opening on fresh settings.
 

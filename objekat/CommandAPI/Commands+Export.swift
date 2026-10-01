@@ -264,7 +264,11 @@ extension CommandRegistry {
         register("export.status",
                  summary: "State of the running export, or of the last one to finish. "
                         + "`panel_open` says whether the export panel is showing it: a DIRECT "
-                        + "render keeps the panel, a background one closes it. `loudness` is what "
+                        + "render keeps the panel, a background one closes it. It is a STATE, "
+                        + "not a fact about the screen: with no interface (`--headless`) "
+                        + "`export.panel` sets it all the same, and no window ever appears. "
+                        + "`panel_visible` is the reality: `panel_open` AND a window able to "
+                        + "show it, so it is always false headless. `loudness` is what "
                         + "the render has measured so far (ITU-R BS.1770-4 / EBU R128): "
                         + "`integrated` (LUFS, gated), `lra` (LU), `true_peak` (dBTP), "
                         + "`momentary` / `short_term` (the latest windows, LUFS), "
@@ -279,12 +283,14 @@ extension CommandRegistry {
             guard let job = vm.exportJob else {
                 return .object(["running": .bool(false),
                                 "panel_open": .bool(vm.exportPanelPresented),
+                                "panel_visible": .bool(vm.exportPanelPresented && vm.hasInterface),
                                 "loudness": .null])
             }
             guard case .object(var payload) = CommandAdapters.exportPayload(job) else {
                 return CommandAdapters.exportPayload(job)
             }
             payload["panel_open"] = .bool(vm.exportPanelPresented)
+            payload["panel_visible"] = .bool(vm.exportPanelPresented && vm.hasInterface)
             // A regions export: which region of how many, and what became of each.
             if let batch = vm.exportBatch {
                 payload["batch"] = CommandAdapters.exportBatchPayload(batch, currentProgress: job.progress)
