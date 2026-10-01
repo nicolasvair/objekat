@@ -351,18 +351,19 @@ block that is not a group and kept a SwiftUI view — an aux and a MIDI clip alw
 counts of the LAST evaluation of the blocks layer, never summed across frames, visible blocks only
 (the viewport plus an 80 px margin) — and the two cumulative `passes` (evaluations of the blocks
 layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census {reset: true}`.
-`groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or looping — and ALL of them under the Debug A/B switch. Zero everywhere in
+`groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or having one of its loop bounds dragged — and ALL of them under the Debug A/B switch. Zero everywhere in
 `--headless` mode: nothing is drawn there. `tools/bench_groups.py` prints them on its `setup` line.
 
 `regimes.rich_reasons` says WHY the rich blocks are rich: a histogram with one entry per block
 (`clips_rich + groups_rich` in all), counted in the same loop as the partition, from the very
 answer that put the block there — the FIRST rule met, in the order `TimelineView.clipRichReason` /
-`groupRichReason` test them, so a block that is both coloured and under the Volume tool counts as
-`color`. Every key is present, at 0 when unused: `tool` (Volume / Pan / Aux armed), `stem_hover`
+`groupRichReason` test them, so a block that is both renamed and under the Volume tool counts as
+`rename`. Every key is present, at 0 when unused: `tool` (Volume / Pan / Aux armed), `stem_hover`
 (Stem tool armed and the pointer on the block), `preview` (a drag / trim / resize / fade under
-way), `spill` (the neighbour of a spilling fade), `color` (a custom colour), `midi`, `aux`,
-`consolidate` (an instance of a consolidated object), `rename`, `bake`, `loop` (a looping group),
-`infinite` (an infinite bus), `editing` (an open consolidated object), `force_rich` (the Debug A/B
+way), `spill` (the neighbour of a spilling fade), `midi` (a MIDI clip whose piano roll is open),
+`aux` (never produced any more: an aux is drawn by the Canvas, an infinite one counts as `infinite`),
+`consolidate` (an instance whose definition is being re-baked), `rename`, `bake`, `loop` (a group
+whose IN / OUT bound is being dragged), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object), `force_rich` (the Debug A/B
 switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
 each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
 `piano_rolls`, `automation_bands`, `automation_bezels`) and their sum — an element is the root of

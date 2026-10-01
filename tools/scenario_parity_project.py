@@ -56,9 +56,9 @@ radius 20, tint, inset border, composite, fades, mute veil, glyph, name, meta, c
     from 30 px, the chevron from 60, the meta from 80) · a LONG group (40 s: scroll it at 100 pps
     and zoom to ~2000 pps, the block is millions of px wide).
 
-What it cannot make: the salmon / pink NAME BAND is an object's own colour, which keeps a clip on
-its rich view whatever its selection (`colorIndex != nil` is excluded from the Canvas) and has no
-API door — set one by hand (right click) if you want to see the red on salmon.
+E5 rows (own colour, MIDI, looping MIDI, aux, looping group): the blocks the batched Canvas now
+draws that used to stay on their rich view for a static reason. A consolidated object is not made
+here (an asynchronous bake): do it by hand.
 
 It leaves the project saved and the file of the MISSING rows deleted from disk, which is how a
 file goes missing in real life. Exit 0 when the project was built.
@@ -229,6 +229,51 @@ def main():
         cmd("crossfade.open", {"left": a, "right": b, "width": 2.0})
         rows.append((lane[0], label))
         lane[0] += 1
+
+    # ---- E5: the blocks that used to stay on their rich view for a STATIC reason. Each row has
+    # its reference column and the one to select (the same `both` rule): look at them with the
+    # A/B switch in each state, selected and not, light and dark.
+    def b_colour(start):
+        o = add(mono, start, dur=6.0)
+        cmd("object.set_color", {"ids": [o], "color_index": 3})
+    both("OWN COLOUR (salmon name band over the stem body, border in the own colour)", b_colour)
+
+    def b_colour_muted(start):
+        o = add(mono, start, dur=6.0, stem=stems[6])
+        cmd("object.set_color", {"ids": [o], "color_index": 8})
+        cmd("object.set_mute", {"ids": [o], "muted": True})
+    both("own colour on the RED stem, muted (the red name on the band, the veil)", b_colour_muted)
+
+    def b_midi(start):
+        r = cmd("midi.create_clip", {"start": start, "end": start + 6.0, "lane": lane[0]})
+        for k, (pitch, sb) in enumerate(((60, 0.0), (64, 1.0), (67, 2.0), (72, 3.5), (55, 5.0))):
+            cmd("midi.add_note", {"id": r["id"], "pitch": pitch, "start_beat": sb,
+                                  "length_beats": 0.8, "velocity": 40 + 20 * k})
+    both("MIDI clip (the notes: range, margins, velocity opacity)", b_midi)
+
+    def b_midi_loop(start):
+        r = cmd("midi.create_clip", {"start": start, "end": start + 9.0, "lane": lane[0]})
+        for pitch, sb in ((60, 0.0), (64, 0.5), (67, 1.0)):
+            cmd("midi.add_note", {"id": r["id"], "pitch": pitch, "start_beat": sb,
+                                  "length_beats": 0.4, "velocity": 100})
+        cmd("object.set_loop", {"id": r["id"], "enabled": True})
+    both("LOOPING MIDI clip (the pattern repeats from the left edge, the grips are always shown)", b_midi_loop)
+
+    def b_aux(start):
+        cmd("aux.create", {"start": start, "end": start + 6.0, "lane": lane[0]})
+    both("AUX (glyph chequerboard, radius 20)", b_aux)
+
+    def b_aux_colour(start):
+        r = cmd("aux.create", {"start": start, "end": start + 6.0, "lane": lane[0]})
+        cmd("object.set_color", {"ids": [r["id"]], "color_index": 5})
+    both("aux with its own colour", b_aux_colour)
+
+    def b_loop_group(start):
+        o = add(mono, start, dur=3.0)
+        g = cmd("group.create", {"ids": [o]})["id"]
+        cmd("group.expand", {"id": g, "expanded": False})
+        cmd("object.set_loop", {"id": g, "enabled": True})
+    both("LOOPING group, closed (the composite repeats, the IN / OUT grips)", b_loop_group)
 
     # ---- OPEN GROUPS: one per root lane (a band spans the whole timeline). Built after every
     # row above so that their lane numbers do not move. `object.add`'s lane is a DISPLAY row: a
@@ -417,8 +462,7 @@ Select the "to SELECT" group and the open "SELECT as a whole" one, then flip it 
    - what must stay RICH (counters: `perf.census` → `regimes.groups_rich`): an infinite group, a
      group being renamed (double click its name), one being dragged / trimmed / resized / faded,
      under the Volume / Pan / Aux tools, and a CONSOLIDATED object open for editing (its ✕). Not
-     makeable here: a name band in a custom colour (no API door: set one by hand, right click) and
-     a consolidated object (an asynchronous bake) — do both by hand.
+     makeable here: a consolidated object (an asynchronous bake) — do it by hand.
 
 THE GROUPS' A/B (the open-groups section, bottom of the project; nothing to select unless said).
 Flip the same switch with each of these in view, light AND dark appearance (the base of the rise
