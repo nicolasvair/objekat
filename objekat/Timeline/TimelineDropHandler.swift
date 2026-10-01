@@ -44,6 +44,11 @@ struct TimelineDropDelegate: DropDelegate {
     /// A drop session under way over the timeline (true on entry and on every movement, false on
     /// leaving / on the drop). It serves the decorations refreshed only by ORDINARY mouse
     var onDropHover: ((Bool) -> Void)? = nil
+    /// What releasing the plugin drag in flight HERE would do, for the cursor and the band (the
+    /// resolver, @see EditViewModel.pluginDropOutcome): the drag's payload comes from
+    /// `PluginDragSession` — a drop target gets only an `NSItemProvider` whose payload loads
+    /// asynchronously, too late to refuse in time. nil = not known (no session): the old answer.
+    var pluginOutcome: ((CGPoint, NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
 
     /// movements, which are absent during a system drag. `nil` = nothing to warn.
     private func fileProviders(in info: DropInfo) -> [NSItemProvider] {
@@ -62,8 +67,19 @@ struct TimelineDropDelegate: DropDelegate {
         onDropHover?(true)
         let providers = info.itemProviders(for: types)
         if providers.contains(where: dragCarriesPlugin) {
-            PluginDropHint.shared.present("timeline", context: .host)
             let f = NSEvent.modifierFlags
+            // The resolver's verdict when it is known: a refusal is `.forbidden` (and no band, no
+            // maillon), a link is what lights the maillon and the band's ⌘ — not the bare modifier.
+            if let outcome = pluginOutcome?(info.location, f) {
+                if let ctx = outcome.hintContext(plainContext: .host) {
+                    PluginDropHint.shared.present("timeline", context: ctx)
+                } else {
+                    PluginDropHint.shared.leave("timeline")
+                }
+                onLinkIndicator(outcome.isLinking ? info.location : nil)
+                return DropProposal(operation: outcome.operation)
+            }
+            PluginDropHint.shared.present("timeline", context: .host)
             onLinkIndicator(f.contains(.command) ? info.location : nil)
             return DropProposal(operation: PluginDrop.operation(for: f))
         }

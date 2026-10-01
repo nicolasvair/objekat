@@ -173,49 +173,50 @@ extension EditViewModel {
     /// Drag-reordering in the signal view: moves `pluginID` to the series `location` at the given
     /// index (the same branch, another branch, or the root). The engine instance is preserved
     /// (the same id, reused by the reconciliation). A no-op if the plugin is not in the object.
-    func synopticReorder(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
+    @discardableResult
+    func synopticReorder(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) -> Bool {
         // A bin's BLOCK dragged by its header moves as one piece, instances and all.
         if let plugins = chainPlugins(objectID), Self.findBlock(pluginID, in: plugins) != nil {
-            moveFXBlock(hostID: objectID, blockID: pluginID, to: location, at: index)
-            return
+            return moveFXBlock(hostID: objectID, blockID: pluginID, to: location, at: index)
         }
         guard let plugins = chainPlugins(objectID),
               let (srcLoc, srcIdx) = Self.locate(pluginID, in: plugins),
-              let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+              let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return false }
         // Inside an ATTACHED block the order is the bin's: reordering there reorders the definition,
         // for every member; and an instance does not leave its block, nor does a plugin enter one
         // from outside by this gesture (the drop of a plugin ON a bin adds to the definition — see
         // fxAddPlugin — and belongs to the timeline drag, not to a reorder).
         if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
             guard case .block(let dst) = location,
-                  let block = Self.findBlock(dst, in: plugins), block.fxBlock?.linkID == def.linkID else { return }
+                  let block = Self.findBlock(dst, in: plugins), block.fxBlock?.linkID == def.linkID else { return false }
             var target = index
             if srcLoc == location && srcIdx < index { target = index - 1 }
-            fxMovePlugin(linkID: def.linkID, definitionID: def.definitionID, to: target)
-            return
+            return fxMovePlugin(linkID: def.linkID, definitionID: def.definitionID, to: target)
         }
         if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
-           block.fxBlock?.isDetached == false { return }
+           block.fxBlock?.isDetached == false { return false }
         // The same series: removing upstream shifts the following indices → adjust the target.
         var target = index
         if srcLoc == location && srcIdx < index { target = index - 1 }
-        if srcLoc == location && target == srcIdx { return }   // no movement
+        if srcLoc == location && target == srcIdx { return false }   // no movement
         pushUndo()
         let removed = Self.removingPlugins([pluginID], from: plugins)
         let inserted = Self.inserting(plug, into: location, at: target, plugins: removed)
         updateChainPlugins(objectID) { $0 = Self.simplifyTree(inserted) }
         compileRack(objectID: objectID)
         isDirty = true
+        return true
     }
 
     /// The signal view's ⌥-drag: an independent COPY of `pluginID` into the series `location` at
     /// `index` (a new UUID, the state captured from the live instance, no link). A no-op if absent.
-    func synopticCopyPlugin(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) {
+    @discardableResult
+    func synopticCopyPlugin(objectID: UUID, pluginID: UUID, to location: SeriesLocation, at index: Int) -> Bool {
         guard let plugins = chainPlugins(objectID),
-              let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return }
+              let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else { return false }
         // A copy does not land INSIDE an attached block: the instances are the bin's to decide.
         if case .block(let dst) = location, let block = Self.findBlock(dst, in: plugins),
-           block.fxBlock?.isDetached == false { return }
+           block.fxBlock?.isDetached == false { return false }
         let live = engine?.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
@@ -227,20 +228,17 @@ extension EditViewModel {
         }
         compileRack(objectID: objectID)
         isDirty = true
+        return true
     }
 
-    /// Dropping a plugin ONTO a card (a branch's axis): inserts `pluginID` into the SAME branch
-    /// as `targetPluginID`, just before it. `copy` (⌥) → a copy, otherwise a move. It allows
-    /// dropping on the axis and not only on the small '+'.
-    func synopticDropOnPlugin(objectID: UUID, pluginID: UUID, targetPluginID: UUID, copy: Bool) {
-        guard pluginID != targetPluginID,
-              let plugins = chainPlugins(objectID),
-              let (loc, idx) = Self.locate(targetPluginID, in: plugins) else { return }
-        if copy {
-            synopticCopyPlugin(objectID: objectID, pluginID: pluginID, to: loc, at: idx)
-        } else {
-            synopticReorder(objectID: objectID, pluginID: pluginID, to: loc, at: idx)
-        }
+    /// A drop in the signal view, whatever it carries: a plugin or several, an instance of a bin, a whole
+    /// bin's block; wherever it comes from (this host's chain or another's) and wherever it lands (a cable,
+    /// before a card, the end of a bin). The single door: the cursor read the same resolver, so what the hand
+    /// was told is what happens (@see pluginDropOutcome).
+    @discardableResult
+    func synopticDrop(_ payload: PluginDragPayload, host hostID: UUID, at site: PluginDropSite,
+                      flags: NSEvent.ModifierFlags) -> Bool {
+        performPluginDrop(payload, on: hostID, at: site, modifiers: flags)
     }
 
     /// Locates a plugin in the tree: (the containing series, the index within that series).

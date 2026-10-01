@@ -1179,6 +1179,11 @@ struct TimelineView: View {
                                 if editZoneHover != nil { editZoneHover = nil }
                                 if cutHover != nil { cutHover = nil }
                             }
+                        },
+                        pluginOutcome: { loc, flags in
+                            guard let payload = PluginDragSession.shared.current else { return nil }
+                            guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
+                            return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
                         }))
         }
         .scrollPosition($scrollPosition)
@@ -2872,16 +2877,25 @@ struct TimelineView: View {
             HStack(spacing: 7) {
                 Image(systemName: s.isLink ? "link"
                                   : s.isCopy ? "plus.square.on.square"
+                                  : s.context == .intoBin ? "tray.and.arrow.down"
+                                  : s.context == .outOfBin ? "tray.and.arrow.up"
                                   : "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(s.isLink ? LinkColor.plugin : Color.accentColor)
-                Text(s.isLink ? L("hud.pluginDrop.linkedCopy")
-                     : s.isCopy ? L("hud.move.copy") : L("hud.move.move"))
+                Text(pluginDropTitle(s))
                     .font(.system(size: 11, weight: .bold))
-                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy, locked: false)
-                if s.context == .host {
+                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy && s.alt, locked: false)
+                switch s.context {
+                case .host:
                     modifierChip("⌘", L("hud.pluginDrop.chip.link"), on: s.isLink, locked: false)
-                } else {
+                case .blockMove:
+                    // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
+                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .intoBin, .outOfBin:
+                    Text(L("hud.pluginDrop.binNoCmd"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                case .sameChain:
                     Text(L("hud.pluginDrop.sameChainNoLink"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -2893,6 +2907,20 @@ struct TimelineView: View {
                 .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
             .padding(.bottom, 12)
             .allowsHitTesting(false)   // it must never intercept the drop
+        }
+    }
+
+    /// The band's title for what a release would do (@see PluginDropHint.Context).
+    private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
+        switch s.context {
+        case .host, .sameChain:
+            return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .intoBin:
+            return s.alt ? L("hud.pluginDrop.intoBin.copy") : L("hud.pluginDrop.intoBin")
+        case .outOfBin:
+            return s.alt ? L("hud.move.copy") : L("hud.pluginDrop.outOfBin")
+        case .blockMove:
+            return s.isCopy ? L("hud.pluginDrop.blockCopy") : L("hud.pluginDrop.blockMove")
         }
     }
 

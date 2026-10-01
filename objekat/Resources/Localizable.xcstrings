@@ -4716,6 +4716,75 @@
         }
       }
     },
+    "hud.pluginDrop.binNoCmd": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ has no effect here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ no tiene efecto aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌘ n'a pas d'effet ici"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.blockCopy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPY, STAYING LINKED"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIA, SIGUE VINCULADA"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIE, RESTE LIÉE"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.blockMove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MOVE THE FX LINK"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MOVER EL FX LINK"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DÉPLACER LE FX LINK"
+          }
+        }
+      }
+    },
     "hud.pluginDrop.chip.link": {
       "extractionState": "manual",
       "localizations": {
@@ -4739,6 +4808,52 @@
         }
       }
     },
+    "hud.pluginDrop.intoBin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "INTO THE FX LINK"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EN EL FX LINK"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DANS LE FX LINK"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.intoBin.copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPY INTO THE FX LINK"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIA EN EL FX LINK"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "COPIE DANS LE FX LINK"
+          }
+        }
+      }
+    },
     "hud.pluginDrop.linkedCopy": {
       "extractionState": "manual",
       "localizations": {
@@ -4758,6 +4873,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "COPIE LIÉE"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.outOfBin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OUT OF THE FX LINK, FOR EVERY OBJECT"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FUERA DEL FX LINK, PARA TODOS LOS OBJETOS"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HORS DU FX LINK, POUR TOUS LES OBJETS"
           }
         }
       }

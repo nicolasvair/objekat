@@ -20,10 +20,19 @@ import Observation
 final class PluginDropHint {
     static let shared = PluginDropHint()
 
-    /// Where the card would land. `.sameChain` = a card or a cable of the synoptic: moving within
-    /// a chain, where ⌘ does not link (two linked instances in one chain are refused on purpose,
-    /// @see transferPlugins) — the band says so instead of lighting a ⌘ that would do nothing.
-    enum Context: Equatable { case host, sameChain }
+    /// Where the card would land, which decides what the band says.
+    ///  • `.host` — an object or a bus: nothing = move, ⌥ = an independent copy, ⌘ = a linked copy
+    ///    (or, for an FX link's plugin, the target joining the bin).
+    ///  • `.sameChain` — a card or a cable of the synoptic, moving within a chain: ⌘ does not link
+    ///    there (two linked instances in one chain are refused on purpose, @see transferPlugins) —
+    ///    the band says so instead of lighting a ⌘ that would do nothing.
+    ///  • `.intoBin` — a place INSIDE an FX link's block: the plugin joins the bin (every object
+    ///    sharing it gets one), or ⌥ adds an independent copy of it; ⌘ does nothing.
+    ///  • `.outOfBin` — an instance of an FX link let go OUTSIDE it: it leaves the bin for every
+    ///    object and stays a plain plugin here; ⌥ takes an independent copy and leaves the bin alone.
+    ///  • `.blockMove` — a whole FX link block: it moves to the target, which joins the bin (⌥ or ⌘ =
+    ///    the source keeps its own, still on the same bin).
+    enum Context: Equatable { case host, sameChain, intoBin, outOfBin, blockMove }
 
     struct State: Equatable {
         var context: Context
@@ -31,9 +40,12 @@ final class PluginDropHint {
         var cmd: Bool
 
         /// The gesture a release would make NOW — the same reading as `acceptPluginDrop`
-        /// (⌘ wins over ⌥) and as the synoptic's delegate (⌥ only, ⌘ = a move).
+        /// (⌘ wins over ⌥) and as the synoptic's delegate (⌥ only, ⌘ = a move). Only a host has a
+        /// link to make: every other context says what ⌘ does (or does not) in its own words.
         var isLink: Bool { context == .host && cmd }
-        var isCopy: Bool { !isLink && alt }
+        /// A copy is what the release makes: ⌥, except where ⌘ is a copy too (a block's second
+        /// gesture — it is never an independent one, the copy stays on the bin).
+        var isCopy: Bool { !isLink && (alt || (context == .blockMove && cmd)) }
     }
 
     private(set) var state: State?
@@ -65,7 +77,9 @@ final class PluginDropHint {
             watch?.cancel(); watch = nil
             return
         }
-        let context: Context = targets.values.contains(.sameChain) ? .sameChain : .host
+        // The most specific place wins: a bin's own contexts, then a plain chain, then a host.
+        let present = Set(targets.values)
+        let context: Context = [Context.blockMove, .intoBin, .outOfBin, .sameChain].first(where: present.contains) ?? .host
         let f = NSEvent.modifierFlags
         let next = State(context: context, alt: f.contains(.option), cmd: f.contains(.command))
         // Reassigned only if it changes: the timeline reads it, and rewriting the same value on

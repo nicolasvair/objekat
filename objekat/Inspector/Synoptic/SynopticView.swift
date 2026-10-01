@@ -9,6 +9,18 @@ import UniformTypeIdentifiers
 // these closures. They are wired either onto a mock (a local @State, the phase A demo),
 // or onto `EditViewModel`/the engine (phase B — step 1: a real series).
 
+/// Where in the signal view a plugin drag is aimed. A drop target knows only what it is laid on — a
+/// cable (a series and an index), a card, a bin's header — and the bound view resolves it to a
+/// `PluginDropSite` of the host's chain.
+enum SynopticDropTarget: Equatable {
+    /// A cable or a '+': the series `seriesID`, at `index`.
+    case series(UUID, Int)
+    /// A card: just before it, in the series it sits in.
+    case beforeCard(UUID)
+    /// A bin's header: the end of the bin's block.
+    case blockEnd(UUID)
+}
+
 struct SynopticActions {
     var onOpenEditor: ((UUID) -> Void)? = nil
     var onToggleBypass: (UUID) -> Void = { _ in }
@@ -26,13 +38,12 @@ struct SynopticActions {
 
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
-    // A drop on a '+' (or a branch's axis): reorders/moves the plugin into the target series;
-    // `copy` (⌥ held) → an independent copy instead of a move.
-    var onReorder: ((_ pluginID: UUID, _ seriesID: UUID, _ toIndex: Int, _ copy: Bool) -> Void)? = nil
-    // Dropping a plugin ONTO a card (a branch's axis): inserts it into the same branch, just
-    // before the target card. `copy` = ⌥ (an independent copy). It allows dropping on the axis
-    // and not only on the small '+'.
-    var onDropOntoCard: ((_ targetPluginID: UUID, _ draggedPluginID: UUID, _ copy: Bool) -> Void)? = nil
+    // What a release at `target` would do with the drag in flight, for the cursor and the band
+    // (@see PluginDropOutcome). nil = no drag in flight to answer for → the legacy reading.
+    var dropOutcome: ((_ target: SynopticDropTarget, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
+    // A plugin (or a whole bin's block) let go at `target`: the view-model resolves it and carries it out —
+    // reorder, move, copy, join a bin, leave one. nil = the view does not receive (the demo).
+    var onDrop: ((_ target: SynopticDropTarget, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
 
     // The dB gain at the end of a parallel branch (drag ↑/↓).
     var onSetVoiceGain: ((_ blockID: UUID, _ voiceIndex: Int, _ dB: Float) -> Void)? = nil
@@ -373,10 +384,12 @@ struct SynopticView: View {
             // 'Cable' drop zones: rendered FIRST (hence under the cards) so that dropping a plugin on a
             // branch's axis inserts it there — even an empty parallel branch. A hovered card keeps
             // priority (inserting just before it) since it is drawn on top.
-            if let onReorder = actions.onReorder {
+            if let onDrop = actions.onDrop {
                 ForEach(d.placement.cableDrops) { z in
-                    CableDropView(rect: z.rect, previewFrame: z.previewFrame) { dragged, copy in
-                        onReorder(dragged, z.seriesID, z.insertIndex, copy)
+                    let target = SynopticDropTarget.series(z.seriesID, z.insertIndex)
+                    CableDropView(rect: z.rect, previewFrame: z.previewFrame,
+                                  outcome: { actions.dropOutcome?(target, $0) }) { payload, flags in
+                        onDrop(target, payload, flags)
                     }
                 }
             }
@@ -402,7 +415,8 @@ struct SynopticView: View {
                     onRemove: { actions.onRemove(c.plugin.id) },
                     dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
                     dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
-                    onDropPlugin: actions.onDropOntoCard.map { f in { dragged, copy in f(c.plugin.id, dragged, copy) } },
+                    dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
+                    onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
                     linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
@@ -771,6 +785,8 @@ struct FXBlockHeaderView: View {
     @State private var renaming = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
+    @State private var dropTargeted = false
+    @State private var dropHintID = UUID()
 
     private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
@@ -877,7 +893,28 @@ struct FXBlockHeaderView: View {
         .saturation(link.isEnabled ? 1 : 0.25)
         .opacity(link.isEnabled ? 1 : 0.6)
         .contentShape(RoundedRectangle(cornerRadius: 8))
+        // A plugin let go on the header goes to the END of the bin; a place where nothing would happen
+        // does not light up (@see PluginDropDelegate). The drop layer is a SIBLING behind the content,
+        // like the cards': the name carrying the `.onDrag` is a descendant of this view.
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
+        )
+        .background(dropLayer)
         .contextMenu { menuItems }
+    }
+
+    @ViewBuilder private var dropLayer: some View {
+        if let onDrop = actions.onDrop {
+            let target = SynopticDropTarget.blockEnd(link.blockID)
+            Color.clear
+                .contentShape(Rectangle())
+                .onDrop(of: [.plainText],
+                        delegate: PluginDropDelegate(isTargeted: $dropTargeted,
+                                                     hintKey: "header:\(dropHintID.uuidString)",
+                                                     outcome: { actions.dropOutcome?(target, $0) },
+                                                     onDrop: { payload, flags in onDrop(target, payload, flags) }))
+        }
     }
 
     @ViewBuilder private var menuItems: some View {
@@ -1018,9 +1055,11 @@ struct SynopticCardView: View {
     /// carries (a card taken FROM the selection drags the whole selection, one taken from outside
     /// drags itself alone), so the preview's "+N-1" badge never disagrees with what a drop receives.
     var dragCount: Int = 1
-    /// Dropping ANOTHER plugin on this card (the branch's axis): `(draggedPluginID, copy)`.
-    /// `copy` = ⌥ held. nil = the card does not receive (the demo).
-    var onDropPlugin: ((_ draggedPluginID: UUID, _ copy: Bool) -> Void)? = nil
+    /// What a release on this card would do, for the cursor and the band (@see PluginDropOutcome).
+    var dropOutcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    /// Dropping ANOTHER plugin on this card (the branch's axis): the payload and the modifiers held at the
+    /// release. nil = the card does not receive (the demo).
+    var onDropPlugin: ((_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
     /// Unlinks this instance from its group (nil = the card cannot be driven, e.g. the demo).
     var onUnlink: (() -> Void)? = nil
     var onRelink: (() -> Void)? = nil
@@ -1180,6 +1219,7 @@ struct SynopticCardView: View {
                 .onDrop(of: [.plainText],
                         delegate: PluginDropDelegate(isTargeted: $dropTargeted,
                                                      hintKey: "card:\(dropHintID.uuidString)",
+                                                     outcome: dropOutcome,
                                                      onDrop: onDropPlugin))
         }
     }
@@ -1237,7 +1277,9 @@ struct PluginDragPreview: View {
 struct CableDropView: View {
     let rect: CGRect          // the DETECTION zone (wide, transparent)
     let previewFrame: CGRect  // the PREVIEW shown on hover (card-sized, on the cable)
-    let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
+    /// What a release here would do, for the cursor and the band (@see PluginDropOutcome).
+    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
     @State private var targeted = false
     @State private var dropHintID = UUID()
 
@@ -1251,6 +1293,7 @@ struct CableDropView: View {
             .onDrop(of: [.plainText],
                     delegate: PluginDropDelegate(isTargeted: $targeted,
                                                  hintKey: "cable:\(dropHintID.uuidString)",
+                                                 outcome: outcome,
                                                  onDrop: onDrop))
             .overlay(alignment: .topLeading) {
                 if targeted {
@@ -1267,40 +1310,76 @@ struct CableDropView: View {
     }
 }
 
-/// Reliable delivery of a plugin drop (on a card's axis OR on a branch's cable). We go through
-/// a `DropDelegate` — for the card, laid on a `.background` layer, because an `.onDrop` laid on
-/// an ANCESTOR of an `.onDrag` view is not delivered by macOS. `dropUpdated` returns the
-/// .copy/.move operation depending on ⌥ so as to show the right cursor; the copy is reread at the drop.
-private struct PluginDropDelegate: DropDelegate {
+/// Reliable delivery of a plugin drop (on a card's axis, on a branch's cable or on a bin's header). We go
+/// through a `DropDelegate` — for the card, laid on a `.background` layer, because an `.onDrop` laid on
+/// an ANCESTOR of an `.onDrag` view is not delivered by macOS.
+///
+/// The CURSOR and the band say what a release would do NOW: `outcome` asks the resolver
+/// (@see EditViewModel.pluginDropOutcome) about the drag in flight (@see PluginDragSession), which is the
+/// only way a target can answer "forbidden" before the hand lets go. A forbidden place does not light up,
+/// does not show the band and shows the refusing cursor. With no drag in flight to read (nil) the legacy
+/// reading holds: ⌥ copies, anything else moves.
+struct PluginDropDelegate: DropDelegate {
     let isTargeted: Binding<Bool>
     /// This target's key for the band at the bottom of the timeline (@see PluginDropHint):
     /// one per card / cable, since neighbours overlap their enter and exit.
     let hintKey: String
-    let onDrop: (_ draggedPluginID: UUID, _ copy: Bool) -> Void
+    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
+    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
 
-    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
-    func dropEntered(info: DropInfo) {
+    private func carriesPlugin(_ info: DropInfo) -> Bool {
+        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
+
+    /// Reads the drag in flight: lights the target and speaks on the band when the release would DO
+    /// something, withdraws both when it would not. Returns the cursor's proposal.
+    private func present() -> DropProposal {
+        let flags = NSEvent.modifierFlags
+        guard let o = outcome(flags) else {
+            isTargeted.wrappedValue = true
+            PluginDropHint.shared.present(hintKey, context: .sameChain)
+            return DropProposal(operation: flags.contains(.option) ? .copy : .move)
+        }
+        guard let ctx = o.hintContext(plainContext: .sameChain) else {
+            isTargeted.wrappedValue = false
+            PluginDropHint.shared.leave(hintKey)
+            return DropProposal(operation: .forbidden)
+        }
         isTargeted.wrappedValue = true
-        PluginDropHint.shared.present(hintKey, context: .sameChain)
+        PluginDropHint.shared.present(hintKey, context: ctx)
+        return DropProposal(operation: o.operation)
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard carriesPlugin(info) else { return }
+        _ = present()
     }
     func dropExited(info: DropInfo) {
         isTargeted.wrappedValue = false
         PluginDropHint.shared.leave(hintKey)
     }
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        PluginDropHint.shared.present(hintKey, context: .sameChain)
-        return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
+        guard carriesPlugin(info) else {
+            isTargeted.wrappedValue = false
+            PluginDropHint.shared.leave(hintKey)
+            return DropProposal(operation: .forbidden)
+        }
+        return present()
     }
     func performDrop(info: DropInfo) -> Bool {
         isTargeted.wrappedValue = false
         PluginDropHint.shared.leave(hintKey)
-        guard let p = info.itemProviders(for: [.plainText]).first else { return false }
-        let copy = NSEvent.modifierFlags.contains(.option)
+        guard let p = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries) else { return false }
+        // The modifiers are read NOW: the provider answers later, when the hand has let go of them.
+        let flags = NSEvent.modifierFlags
+        PluginDragSession.shared.end()
         p.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
             guard let data,
                   let payload = try? JSONDecoder().decode(PluginDragPayload.self, from: data)
             else { return }
-            DispatchQueue.main.async { onDrop(payload.pluginID, copy) }
+            DispatchQueue.main.async { onDrop(payload, flags) }
         }
         return true
     }
@@ -2444,6 +2523,20 @@ struct SynopticBoundView: View {
             (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
         }
 
+        // A drop target's aim, as a place of THIS host's chain: the table of series ids is the one of the
+        // build being rendered, and a card's place is looked up in the model as it is now.
+        let dropSite: (SynopticDropTarget) -> PluginDropSite? = { target in
+            switch target {
+            case .series(let seriesID, let index):
+                return locations[seriesID].map { .series($0, index: index) }
+            case .beforeCard(let cardID):
+                return EditViewModel.locate(cardID, in: model).map { .series($0.0, index: $0.1) }
+            case .blockEnd(let blockID):
+                return EditViewModel.findBlock(blockID, in: model)?.fxBlock
+                    .map { .series(.block(blockID: blockID), index: $0.plugins.count) }
+            }
+        }
+
         return SynopticView(root: root, selection: pluginSelection,
                             selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
                             chainInDb: gains.inDb, chainOutDb: gains.outDb,
@@ -2490,18 +2583,18 @@ struct SynopticBoundView: View {
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
             dragProvider: { dragProvider($0) },
-            onReorder: { pluginID, seriesID, toIndex, copy in
-                if let loc = locations[seriesID] {
-                    if copy {
-                        viewModel.synopticCopyPlugin(objectID: objectID, pluginID: pluginID, to: loc, at: toIndex)
-                    } else {
-                        viewModel.synopticReorder(objectID: objectID, pluginID: pluginID, to: loc, at: toIndex)
-                    }
-                }
+            dropOutcome: { target, flags in
+                // The drag in flight says what it carries (@see PluginDragSession); with none to read,
+                // the target falls back on its legacy reading.
+                guard let payload = PluginDragSession.shared.current else { return nil }
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return .refuse("dropped on itself") }
+                guard let site = dropSite(target) else { return .refuse("no such place in the chain") }
+                return viewModel.pluginDropOutcome(payload, toHost: objectID, at: site, flags: flags)
             },
-            onDropOntoCard: { targetPluginID, draggedPluginID, copy in
-                viewModel.synopticDropOnPlugin(objectID: objectID, pluginID: draggedPluginID,
-                                               targetPluginID: targetPluginID, copy: copy)
+            onDrop: { target, payload, flags in
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return }
+                guard let site = dropSite(target) else { return }
+                viewModel.synopticDrop(payload, host: objectID, at: site, flags: flags)
             },
             onSetVoiceGain: { blockID, voiceIndex, dB in
                 viewModel.setVoiceGain(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, dB: dB)
@@ -2745,6 +2838,8 @@ struct SynopticBoundView: View {
         let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID,
                                         pluginIDs: all)
         let data = (try? JSONEncoder().encode(payload)) ?? Data()
+        // The drag begins: the targets read what it carries from here (@see PluginDragSession).
+        PluginDragSession.shared.begin(payload)
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
                                              visibility: .all) { completion in
