@@ -29,7 +29,7 @@ nonisolated struct TimelineRegimeStats: Sendable {
     /// Blocks that are NOT groups and went to a rich SwiftUI view (a clip kept rich by a drag
     /// preview, a tool overlay, a rename, a bake…, plus every aux and MIDI clip), last pass.
     var clipsRich = 0
-    /// Groups drawn in the Canvas. 0 until groups have a batched path.
+    /// Groups drawn in the Canvas (`GroupBlocksCanvas`). 0 under the Debug A/B switch.
     var groupsCanvas = 0
     /// Groups drawn as a rich view (`GroupBlockView`, or `InfiniteBusBandView` for a group that is
     /// an infinite bus). An infinite AUX is counted with the clips: it is not a group.

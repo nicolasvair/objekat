@@ -351,7 +351,7 @@ block that is not a group and kept a SwiftUI view — an aux and a MIDI clip alw
 counts of the LAST evaluation of the blocks layer, never summed across frames, visible blocks only
 (the viewport plus an 80 px margin) — and the two cumulative `passes` (evaluations of the blocks
 layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census {reset: true}`.
-`groups_canvas` reads 0 until a group's block has a batched path. Zero everywhere in
+`groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or looping — and ALL of them under the Debug A/B switch. Zero everywhere in
 `--headless` mode: nothing is drawn there. `tools/bench_groups.py` prints them on its `setup` line.
 
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
@@ -491,7 +491,7 @@ already does exactly that, so the plan for this feature does not duplicate it.
 
 **`debug.force_rich_blocks {enabled}`** (`#if DEBUG`, `Commands+Runtime.swift`) is the A/B switch of
 the "everything rich" switch of the batched-Canvas work (`Shared/DebugRenderSwitches.swift`): `true`
-forces every SELECTED clip back onto the rich SwiftUI view it used to be drawn with AND the bands of
+forces every SELECTED clip back onto the rich SwiftUI view it used to be drawn with, EVERY group block back onto `GroupBlockView`, AND the bands of
 the OPEN groups (tint, rise, '+') back onto their old SwiftUI layers; `false` is the production
 behaviour (both drawn in the Canvas). It is volatile — it
 writes nothing into the user's settings, as a test must not — and answers `{was, enabled}`. The

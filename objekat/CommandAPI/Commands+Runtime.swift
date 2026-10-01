@@ -192,7 +192,8 @@ extension CommandRegistry {
                 "undo_depth": .int(vm.undoStack.count),
                 // How the timeline's visible blocks were last drawn. `clips_rich` counts every
                 // block that is not a group and kept a SwiftUI view (an aux and a MIDI clip
-                // always do); `groups_canvas` reads 0 until groups' blocks are batched, while
+                // always do); `groups_canvas` counts the groups the Canvas draws (the others, and
+                // every group under the Debug A/B switch, are `groups_rich`), while
                 // `group_bands_canvas` counts the open groups whose bands the Canvas draws.
                 "regimes": .object([
                     "clips_canvas": .int(regimes.clipsCanvas),
@@ -335,13 +336,13 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. The "everything rich" A/B switch of the Canvas work (@see \
                  `Shared/DebugRenderSwitches.swift`): `enabled: true` forces every SELECTED clip \
-                 back onto its rich SwiftUI view AND the bands of the open groups back onto their \
-                 SwiftUI layers; `false` draws them in the batched Canvas (production). VOLATILE — it writes nothing \
+                 back onto its rich SwiftUI view, EVERY group block onto `GroupBlockView`, AND the \
+                 bands of the open groups back onto their SwiftUI layers; `false` draws them in the batched Canvas (production). VOLATILE — it writes nothing \
                  into the user's settings; the persistent form is the preference \
                  `objekat.debug.forceRichBlocks`, read at launch. Answers the previous and the \
                  current value. Not present in Release builds.
                  """,
-                 params: [ParamSpec("enabled", "bool", "true = rich views for selected clips and open groups' bands.")],
+                 params: [ParamSpec("enabled", "bool", "true = rich views for selected clips, group blocks and open groups' bands.")],
                  undo: .none) { p in
             let enabled = try p.bool("enabled")
             let was = DebugRenderSwitches.shared.forceRichBlocks

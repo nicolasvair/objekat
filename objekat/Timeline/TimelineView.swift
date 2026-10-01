@@ -753,14 +753,21 @@ struct TimelineView: View {
                 // clip differently, so a change of selection must re-evaluate this layer — and
                 // the Canvas's renderer closure is not a place to count on tracking it.
                 let selectedIDs = viewModel.selectedIDs
-                let (plainVisible, richVisible, richGroupCount) = partitionVisibleBlocks(visibleEntries)
+                let partition = partitionVisibleBlocks(visibleEntries)
+                let plainVisible = partition.plain
+                let richVisible = partition.rich
+                // The groups the Canvas draws, resolved HERE (their name, colour, mute, missing
+                // flag…) and not in its renderer closure: what their look depends on must be read
+                // where a change re-evaluates this layer.
+                let canvasGroups = canvasGroups(for: partition.plainGroups, selectedIDs: selectedIDs)
                 let _ = TimelineRegimeMeter.recordPass(
-                    clipsCanvas: plainVisible.count, clipsRich: richVisible.count - richGroupCount,
-                    groupsCanvas: 0, groupsRich: richGroupCount,
+                    clipsCanvas: plainVisible.count,
+                    clipsRich: richVisible.count - partition.richGroups,
+                    groupsCanvas: canvasGroups.count, groupsRich: partition.richGroups,
                     groupBandsCanvas: forceRichBands ? 0 : inlineBands.count,
                     groupBandsRich: forceRichBands ? inlineBands.count : 0)
-                let _ = ensureWaveformsLoaded(plainVisible)
-                plainBlocksCanvas(plainVisible, selectedIDs: selectedIDs)
+                let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
+                plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs)
                 ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane)
                         .allowsHitTesting(false)
@@ -2497,24 +2504,101 @@ struct TimelineView: View {
     /// Splits the visible entries into the clips the shared Canvas draws and the blocks that keep
     /// a rich view, in ONE pass (and counts the rich groups on the way, for `TimelineRegimeMeter`).
     /// The A/B switch of Debug builds (@see `DebugRenderSwitches`) is read here, once per pass.
-    private func partitionVisibleBlocks(_ entries: [LaneEntry])
-        -> (plain: [LaneEntry], rich: [LaneEntry], richGroups: Int) {
-        var plain: [LaneEntry] = [], rich: [LaneEntry] = []
-        var richGroups = 0
+    private struct BlockPartition {
+        var plain: [LaneEntry] = []        // clips drawn by the Canvas
+        var plainGroups: [LaneEntry] = []  // groups drawn by the Canvas
+        var rich: [LaneEntry] = []         // everything that keeps a SwiftUI view
+        var richGroups = 0                 // how many of `rich` are groups
+    }
+
+    private func partitionVisibleBlocks(_ entries: [LaneEntry]) -> BlockPartition {
+        var p = BlockPartition()
         #if DEBUG
         let forceRichSelected = DebugRenderSwitches.shared.forceRichBlocks
         #else
         let forceRichSelected = false
         #endif
         for entry in entries {
-            if isPlainCanvasClip(entry.item, forceRichSelected: forceRichSelected) {
-                plain.append(entry)
+            if entry.item.isGroup {
+                if isPlainCanvasGroup(entry.item, forceRich: forceRichSelected) {
+                    p.plainGroups.append(entry)
+                } else {
+                    p.rich.append(entry)
+                    p.richGroups += 1
+                }
+            } else if isPlainCanvasClip(entry.item, forceRichSelected: forceRichSelected) {
+                p.plain.append(entry)
             } else {
-                rich.append(entry)
-                if entry.item.isGroup { richGroups += 1 }
+                p.rich.append(entry)
             }
         }
-        return (plain, rich, richGroups)
+        return p
+    }
+
+    /// True = this group's block can be drawn in the shared Canvas (`GroupBlocksCanvas`): a plain
+    /// group, selected or not. Everything with a SwiftUI need keeps `GroupBlockView`: an infinite
+    /// bus (`InfiniteBusBandView`), a rename, a bake, an open consolidated object (its ✕ and
+    /// spinner), a volume / pan / aux tool, a drag / trim / resize / fade preview, a loop (the
+    /// composite repeats and the grips are views). `forceRich` is the Debug A/B switch: every
+    /// group back on its rich view (always false in Release).
+    private func isPlainCanvasGroup(_ item: SoundObject, forceRich: Bool) -> Bool {
+        guard item.isGroup, !item.isInfiniteBus else { return false }
+        #if DEBUG
+        if forceRich { return false }
+        #endif
+        if viewModel.renamingID == item.id { return false }
+        if viewModel.isBaking(item.id) { return false }
+        // `isEditing` / `isPreviewing` (the latter is a subset of the former).
+        if viewModel.editingPlacementID == item.id { return false }
+        switch viewModel.activeTool {
+        case .toolVolume, .toolPan, .toolAux: return false   // interactive overlays
+        case .toolStemAssign:
+            // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`), and a
+            // group always had it: the hovered one stays rich. The tool is tested FIRST, so that
+            // `toolHoveredID` is read (and this layer re-evaluated on every hover) under that
+            // tool alone.
+            if toolHoveredID == item.id { return false }
+        default: break
+        }
+        if previewOffset(for: item) != nil { return false }
+        if previewResizeDX(for: item) != 0 { return false }
+        if previewTrimDX(for: item) != 0 { return false }
+        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return false }
+        if spillPlan(for: item.id) != nil { return false }
+        // A looping group: the composite repeats and the IN/OUT grips are views.
+        if previewLoopRange(for: item) != nil { return false }
+        return true
+    }
+
+    /// Resolves what the Canvas needs for each group it draws (@see `CanvasGroup`), with the
+    /// SELECTED ones last: they are drawn above the others, as their `zIndex(1)` put them.
+    private func canvasGroups(for entries: [LaneEntry], selectedIDs: Set<UUID>) -> [CanvasGroup] {
+        guard !entries.isEmpty else { return [] }
+        let filterText = viewModel.filterText
+        // Read ONCE, ahead of the loop: with nothing missing (the common case) the recursive
+        // `containsMissingDescendant` is never asked.
+        let nothingMissing = viewModel.missingPaths.isEmpty
+        let resolved = entries.map { entry -> CanvasGroup in
+            let item = entry.item
+            let name = viewModel.displayName(of: item)
+            let dim = (!filterText.isEmpty && !name.localizedCaseInsensitiveContains(filterText))
+                || viewModel.isSoloDimmed(item.id)
+            let shared = crossfadeSharedPx(for: item)
+            return CanvasGroup(
+                entry: entry,
+                stem: viewModel.stemColor(for: item.id),
+                selected: selectedIDs.contains(item.id),
+                dim: dim,
+                name: name,
+                icon: ObjectKindIcon.name(for: item,
+                                          isOpenConsolidate: viewModel.isInConsolidateEditStack(item.id)),
+                missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
+                mutedInMix: viewModel.isMutedInMix(item),
+                expanded: item.showsChildrenInline,
+                sharedLeading: shared.leading, sharedTrailing: shared.trailing)
+        }
+        guard resolved.contains(where: { $0.selected }) else { return resolved }
+        return resolved.filter { !$0.selected } + resolved.filter { $0.selected }
     }
 
     /// True = this clip can be drawn in the shared Canvas (no SwiftUI need).
@@ -2557,9 +2641,18 @@ struct TimelineView: View {
     /// It triggers the loading of the waveforms of the Canvas blocks (which no longer have a
     /// SoundBlockView's `.onAppear`). `load` is idempotent; we defer it outside the render so
     /// as not to mutate state while the body is being evaluated.
-    private func ensureWaveformsLoaded(_ entries: [LaneEntry]) {
-        guard !entries.isEmpty else { return }
-        let paths = entries.map { $0.item.filePath }
+    /// The groups the Canvas draws load their DIRECT clip children's waveforms, as `groupBlock`'s
+    /// `.onAppear` did for the rich view (the composite reads them).
+    private func ensureWaveformsLoaded(_ entries: [LaneEntry], groups: [CanvasGroup] = []) {
+        guard !entries.isEmpty || !groups.isEmpty else { return }
+        var paths = entries.map { $0.item.filePath }
+        for g in groups {
+            if case .group(let children, _) = g.item.kind {
+                for child in children {
+                    if case .clip(let fp, _, _, _, _) = child.kind { paths.append(fp) }
+                }
+            }
+        }
         DispatchQueue.main.async {
             for p in paths { waveformCache.load(filePath: p) }
         }
@@ -2570,7 +2663,8 @@ struct TimelineView: View {
     /// its neighbours (drawn after them, as its `zIndex(1)` used to put it). Everything about the
     /// selection that is not a PAINT (hit-testing, hover, drags) is resolved on `laneEntries` by
     /// the parent canvas and does not pass through here.
-    private func plainBlocksCanvas(_ entries: [LaneEntry], selectedIDs: Set<UUID>) -> some View {
+    private func plainBlocksCanvas(_ entries: [LaneEntry], groups: [CanvasGroup],
+                                   selectedIDs: Set<UUID>) -> some View {
         Canvas { ctx, _ in
                 TimelineRegimeMeter.recordCanvasDraw()
                 let filterText = viewModel.filterText
@@ -2640,6 +2734,12 @@ struct TimelineView: View {
                 fillBackgrounds(rectsDim, opacity: 0.25, selected: false)
                 fillBackgrounds(rectsSel, opacity: 1.0, selected: true)
                 fillBackgrounds(rectsSelDim, opacity: 0.25, selected: true)
+                // The GROUPS' blocks (`GroupBlocksCanvas`): above the clips' backgrounds, as a rich
+                // `GroupBlockView` (z 0) sat above the Canvas, and before every waveform below.
+                let groupGeo = GroupBlocksCanvas.Geometry(
+                    pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                    laneStep: laneStep, blockHeight: blockHeight)
+                GroupBlocksCanvas.drawBackgrounds(into: ctx, groups: groups, geo: groupGeo)
                 // The order the next two phases walk the blocks in: unselected first, selected last.
                 let drawOrder: [LaneEntry] = anySelected
                     ? entries.filter { !selectedIDs.contains($0.item.id) }
@@ -2751,63 +2851,27 @@ struct TimelineView: View {
                                style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
                 }
 
+                GroupBlocksCanvas.drawComposites(
+                    into: ctx, groups: groups, geo: groupGeo, waveformCache: waveformCache,
+                    waveformDisplayDB: waveformDisplayDB,
+                    scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth)
+
                 // ── Phase 3: FADES / MUTE / LABEL per block (over the waveform) ──────
                 // Skipped when the block is too narrow → when scrolling zoomed out, an empty loop.
-                var resolvedLabels: [String: GraphicsContext.ResolvedText] = [:]
-                // TWO caches and not one keyed by the pair: the key is the STRING, and two clips
-                // can carry the same name while only one of them has lost its file — a single
-                // cache would hand the second one the first one's colour.
-                var resolvedMissingLabels: [String: GraphicsContext.ResolvedText] = [:]
-                // The GLYPH travels INSIDE the resolved text rather than being drawn as a second
-                // image beside it. `Text(Image(systemName:))` is an image that lays out and styles
-                // as a character, so the kind and the name are one run: one resolve, one cache
-                // entry, one `draw`, and the clip to the block's width crops the pair together —
-                // where a separately drawn icon would have needed its own width measured and its
-                // own clip, per block per frame, in the regime that exists precisely because
-                // there are too many blocks to afford that.
-                // The cache key must therefore carry the icon as well as the name: two clips can
-                // share a name and not a kind (a sound and the consolidated object made from it), and a
-                // key on the string alone would hand the second one the first one's glyph.
-                // The META summary (volume / pan / speed, 9 pt, grey) and the MUTE badge (9 pt, red)
-                // ride in the SAME run as the glyph and the name, as they sit in `SoundBlockView`'s
-                // row: one resolve, one cache entry, one draw, and nothing to measure. They are part
-                // of the cache key. (The run puts them on the name's baseline where the rich row
-                // centres them on its taller glyph — a pixel's difference, and the price of not
-                // measuring text per block per frame.)
+                // The run's construction and its two caches live in `CanvasLabelCache` (shared with
+                // the groups' pass, so the two regimes build the glyph + name + meta + badge run
+                // from ONE definition). The GLYPH travels INSIDE the resolved text rather than
+                // being drawn as a second image beside it: `Text(Image(systemName:))` lays out and
+                // styles as a character, so the kind and the name are one run — one resolve, one
+                // cache entry, one `draw`, cropped together by the clip to the block's width. The
+                // key carries the icon as well as the name (two clips can share a name and not a
+                // kind), the META summary and the MUTE badge (9 pt, in the same run, on the name's
+                // baseline where the rich row centres them: a pixel's difference, and the price of
+                // not measuring text per block per frame).
+                var labelCache = CanvasLabelCache()
                 func resolvedLabel(_ s: String, icon: String, missing: Bool,
                                    meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
-                    let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "")
-                    func build() -> GraphicsContext.ResolvedText {
-                        // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the
-                        // three rich views read too: this Canvas is the SECOND regime a clip can
-                        // be drawn in, and a red — or a glyph — that only one of the two knows
-                        // about is one that appears or disappears with the number of objects on
-                        // screen.
-                        let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
-                        let colour = missing ? MissingFileLabel.color : Color.black
-                        let glyph = Text(Image(systemName: icon))
-                            .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
-                        var run = glyph + Text(verbatim: " ") + Text(s)
-                        if !meta.isEmpty {
-                            run = run + Text(verbatim: " ").font(.system(size: 9))
-                                      + Text(verbatim: meta).font(.system(size: 9, weight: .regular))
-                                            .foregroundColor(.black.opacity(0.5))
-                        }
-                        if muteBadge {
-                            run = run + Text(verbatim: " ").font(.system(size: 9))
-                                      + Text(L("common.muteBadge")).font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(.red)
-                        }
-                        return ctx.resolve(run
-                            .font(.system(size: MissingFileLabel.size, weight: weight))
-                            .foregroundColor(colour))
-                    }
-                    if missing {
-                        if let r = resolvedMissingLabels[key] { return r }
-                        let r = build(); resolvedMissingLabels[key] = r; return r
-                    }
-                    if let r = resolvedLabels[key] { return r }
-                    let r = build(); resolvedLabels[key] = r; return r
+                    labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta, muteBadge: muteBadge)
                 }
                 // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
                 // dictionary lookup — that is exactly why it may be read from a drawing pass at
@@ -2914,6 +2978,10 @@ struct TimelineView: View {
                                 anchor: .topLeading)
                     }
                 }
+
+                // The groups' fades, mute veil and name row, over their composites.
+                GroupBlocksCanvas.drawOverlays(into: ctx, groups: groups, geo: groupGeo,
+                                               labels: &labelCache)
         }
         .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
         .allowsHitTesting(false)

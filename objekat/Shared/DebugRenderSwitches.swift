@@ -15,7 +15,9 @@ import Observation
 //   • the BANDS of the OPEN groups (the tinted rows under a group, its rise under the block, the
 //     '+' of its drop lane) go back to their old SwiftUI layers — compare with a group open,
 //     nested open groups, a selected open group, a muted open group, light and dark.
-// (Groups' own blocks will join it when they get a batched path.)
+//   • EVERY group block (selected or not) goes back onto its rich view (`GroupBlockView`) —
+//     compare a closed group, an open one, a selected one, a muted one, one with a custom colour
+//     band, one holding a missing file, a consolidated object open for editing.
 //
 // Two doors, and only these:
 //   • the preference `objekat.debug.forceRichBlocks` (bool), read ONCE at launch — set it from a
