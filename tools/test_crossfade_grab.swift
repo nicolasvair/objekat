@@ -91,6 +91,14 @@ enum CrossfadeGrabTest {
     check("start side, only A selected, grab AB: nothing follows (A has no left partner)",
           CrossfadeGrab.followers(part: .sideStart, grabbed: ab, selected: [a],
                                   partners: partners).isEmpty)
+    // The edge a side holds belongs to ONE object: grabbing AB's START (B's left edge) with only A
+    // selected is grabbing something that is not selected, even though A is one of the pair.
+    check("start side, A+C selected, grab AB (B not selected): alone, as a fade on an unselected object",
+          CrossfadeGrab.followers(part: .sideStart, grabbed: ab, selected: [a, c],
+                                  partners: partners).isEmpty)
+    check("end side, B+C selected, grab AB (A not selected): alone",
+          CrossfadeGrab.followers(part: .sideEnd, grabbed: ab, selected: [b, c],
+                                  partners: partners).isEmpty)
     check("end side, A+C selected, grab AB: CD follows through C's right partner",
           CrossfadeGrab.followers(part: .sideEnd, grabbed: ab, selected: [a, c],
                                   partners: partners) == [cd])

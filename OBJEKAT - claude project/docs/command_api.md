@@ -1011,7 +1011,9 @@ crossfade (both fades) like a double click in the zone. And with **several objec
 drag of a crossfade takes the others of the selection along, by the SAME travel, each keeping its
 own width and place: a side drives every selected object's crossfade on that same side, the whole
 zone (top and bottom triangles) every crossfade touching a selected object; a zone grabbed with
-neither of its objects selected moves alone. One undo point for the whole drag. The decisions are
+the object that owns what is held unselected (a side's edge belongs to one object, the whole zone
+to both) moves alone, as a fade grabbed on an unselected object does. One undo point for the whole
+drag. The decisions are
 `Shared/CrossfadeGrab.swift`, asserted by `tools/test_crossfade_grab.swift`.
 
 A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it

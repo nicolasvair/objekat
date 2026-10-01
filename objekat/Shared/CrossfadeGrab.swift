@@ -64,8 +64,12 @@ enum CrossfadeGrab {
     /// The crossfades, other than the one under the hand, that follow it.
     ///
     /// The model is the fades' own: grabbing something that is part of the selection drives the whole
-    /// selection, grabbing something that is not drives only itself — so a zone neither of whose two
-    /// objects is selected is a gesture alone, and nothing else moves.
+    /// selection, grabbing something that is not drives only itself (the fade drag re-aims the
+    /// selection at the object it grabbed; here nothing is re-aimed, the gesture just goes alone).
+    /// What one "grabs" is the OBJECT that owns what is held: a side's edge belongs to ONE object —
+    /// the start of a zone to its right-hand object, the end to its left-hand one — and the whole
+    /// zone belongs to both. A zone whose grabbed object is not selected is a gesture alone, and
+    /// nothing else moves.
     ///
     /// What "follows" depends on the PART, and it is the fade's "same side" carried over:
     ///  • a side (`.sideStart` / `.sideEnd`) is ONE edge, and it is an object's — the start of the
@@ -82,7 +86,13 @@ enum CrossfadeGrab {
                           selected: Set<UUID>,
                           partners: (UUID) -> (left: UUID?, right: UUID?))
         -> Set<Pair> {
-        guard selected.contains(grabbed.left) || selected.contains(grabbed.right) else { return [] }
+        let owned: Bool
+        switch part {
+        case .sideStart:   owned = selected.contains(grabbed.right)
+        case .sideEnd:     owned = selected.contains(grabbed.left)
+        case .both, .move: owned = selected.contains(grabbed.left) || selected.contains(grabbed.right)
+        }
+        guard owned else { return [] }
         var out = Set<Pair>()
         for id in selected {
             let p = partners(id)
