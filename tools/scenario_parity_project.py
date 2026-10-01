@@ -30,6 +30,20 @@ Rows, top to bottom (the lane numbers are printed by the run):
     ten stem colours (one lane of clips, and a copy of it below to select) · a CROSSFADE pair
     (and a copy below: select only the left one, only the right one, both).
 
+Then, below those rows, a section of OPEN GROUPS (the second A/B: the tinted bands under an open
+group, the rise under its block and the '+' of its drop lane, which the Canvas draws now — the same
+switch brings back the old SwiftUI layers). One group per root lane, each its own row, none shares a
+lane with another (a band spans the whole timeline, two groups on one lane would stack their
+tints and read as a nesting that is not there):
+
+    open group, 2 child lanes (the reference) · the same, odd/even parity flipped by the
+    group above (a group with ONE child lane has a span of 2 rows, so the next group lands on the
+    other parity) · open group on the RED stem · MUTED open group · open group to SELECT as a
+    whole · open group to SELECT A CHILD of (its band goes stronger: "you are in this group") ·
+    NESTED, three levels all open (outer > mid > inner, a clip at each level) · nested, two levels,
+    the inner one on the red stem (two hues stacking) · a very NARROW open group (0.5 s) · an
+    INFINITE open group (a full-width band, last because it adds a row of its own).
+
 What it cannot make: the salmon / pink NAME BAND is an object's own colour, which keeps a clip on
 its rich view whatever its selection (`colorIndex != nil` is excluded from the Canvas) and has no
 API door — set one by hand (right click) if you want to see the red on salmon.
@@ -204,6 +218,89 @@ def main():
         rows.append((lane[0], label))
         lane[0] += 1
 
+    # ---- OPEN GROUPS: one per root lane (a band spans the whole timeline). Built after every
+    # row above so that their lane numbers do not move. `object.add`'s lane is a DISPLAY row: a
+    # clip added on a row an open group holds would join that group (the drop rule), so every group
+    # is made CLOSED, on rows that are free, and they are all OPENED together at the end.
+    group_rows = []
+    to_open = []
+
+    def put(path, lane_, start, dur, stem=None):
+        oid = cmd("object.add", {"path": path, "lane": lane_, "start": start, "duration": dur})["id"]
+        if stem is not None:
+            cmd("stem.assign", {"stem": stem, "ids": [oid]})
+        return oid
+
+    def close_and_remember(gid, stem=None, muted=False, keep_closed=False):
+        cmd("group.expand", {"id": gid, "expanded": False})
+        if stem is not None:
+            cmd("stem.assign", {"stem": stem, "ids": [gid]})
+        if muted:
+            cmd("object.set_mute", {"ids": [gid], "muted": True})
+        if not keep_closed:
+            to_open.append(gid)
+        return gid
+
+    def make_group(root, parts, stem=None, muted=False, remember=True):
+        """parts = [(child lane, start, duration)]. A CLOSED group, opened at the end."""
+        ids = [put(mono, root + dl, st, du) for dl, st, du in parts]
+        gid = cmd("group.create", {"ids": ids})["id"]
+        return close_and_remember(gid, stem, muted, keep_closed=not remember)
+
+    def nest(first_lane, inner, levels):
+        """Wraps the group `inner` (at root lane `first_lane`) in `levels` NEW groups, one inside
+        the next. A wrapper is made from ONE clip (`group.create` on a group plus a clip names the
+        wrong new group in its answer, the inner one being rebuilt) and the inner group is then
+        moved into it (`group.reparent`). Wrapper k lives on root lane `first_lane + k`. Returns
+        the outermost group's id."""
+        cur = inner
+        for k in range(1, levels + 1):
+            clip = put(mono, first_lane + k, 0.2, 8.0)
+            wrapper = cmd("group.create", {"ids": [clip]})["id"]
+            cmd("group.expand", {"id": wrapper, "expanded": False})
+            cmd("group.reparent", {"ids": [cur], "group": wrapper, "child_lane": 1})
+            to_open.append(wrapper)
+            cur = wrapper
+        return cur
+
+    two = [(0, 0.0, 4.0), (0, 5.0, 3.0), (1, 2.0, 5.0)]     # 2 child lanes -> span 3 (+ drop lane)
+    root = lane[0]
+
+    def next_row(name):
+        nonlocal root
+        group_rows.append((root, name))
+        root += 1
+
+    make_group(root, two);                                   next_row("open group, 2 child lanes (reference, leave it)")
+    make_group(root, [(0, 0.0, 4.0), (0, 5.0, 3.0)]);        next_row("open group, 1 child lane (its span is odd: the next row flips the lane parity)")
+    make_group(root, two, stem=stems[6]);                    next_row("open group on the RED stem (another tint)")
+    make_group(root, two, muted=True);                       next_row("MUTED open group (the band does not change; the block does)")
+    make_group(root, two);                                   next_row("open group to SELECT as a whole (click its header)")
+    make_group(root, two);                                   next_row("open group to SELECT A CHILD of (its band goes stronger)")
+
+    # nested, three levels: inner (2 lanes) < mid < outer, a clip beside the inner one at each level
+    inner = make_group(root, [(0, 0.5, 3.0), (1, 2.0, 3.0)])
+    nest(root, inner, 2)
+    root += 2
+    next_row("NESTED, 3 levels all open (outer > mid > inner): the tints stack, deeper = stronger")
+
+    # nested, two levels, the inner one on another colour
+    inner = make_group(root, [(0, 0.5, 3.0), (1, 2.0, 3.0)], stem=stems[6])
+    nest(root, inner, 1)
+    root += 1
+    next_row("NESTED, 2 levels, the inner one on the RED stem (two hues stack)")
+
+    make_group(root, [(0, 0.0, 0.5), (1, 0.0, 0.5)]);        next_row("NARROW open group, 0.5 s (50 px at 100 pps: the rise and the '+' on a short block)")
+    inf = make_group(root, two)
+    cmd("object.set_infinite", {"id": inf, "on": True})      # while closed: it takes the row below
+    next_row("INFINITE open group (full-width band; it took a row of its own just below)")
+
+    # Open them all, the outermost last (a group opens in place, order does not matter for the
+    # model, but the nested ones must be open for their bands to exist at all).
+    for gid in to_open:
+        cmd("group.expand", {"id": gid, "expanded": True})
+    lane[0] = root
+
     cmd("selection.clear")
     manifest = os.path.join(out, "parity.objekat")
     cmd("project.save_as", {"path": manifest})
@@ -213,9 +310,12 @@ def main():
     wf = cmd("perf.waveforms")
 
     print("Parity project written: %s" % manifest)
-    print("  %d lanes, %d paths missing (the two MISSING rows), media in %s" % (lane[0], scan["path_count"], media))
+    print("  %d root lanes, %d paths missing (the two MISSING rows), media in %s" % (lane[0], scan["path_count"], media))
     print("\nLanes (display row, top = 0):")
     for row, name in rows:
+        print("  %2d  %s" % (row, name))
+    print("\nOpen groups (ROOT lane — the display row shifts down by what the groups above hold open):")
+    for row, name in group_rows:
         print("  %2d  %s" % (row, name))
     print("""
 OPEN IT in a Debug build (the A/B switch exists in Debug only), in the app: File > Open, then
@@ -239,6 +339,9 @@ THE A/B: select the right column, then flip the switch and compare pixel against
  And compare the right column (selected) with the left one (unselected) for what must NOT jump on
  selection: the border should only get brighter, not move.
 
+ The switch is ONE "everything rich" switch: `true` also puts the OPEN GROUPS' bands back on their
+ old SwiftUI layers (below, "THE GROUPS' A/B"), `false` draws them in the one Canvas.
+
 WHAT TO LOOK AT, selected clips, Canvas vs rich:
    - the border: bright (0.9) and 1.5 pt, and no 0.75 px jump when selecting (the Canvas keeps
      its centred stroke, the rich view had an inset one: a hair thinner inside the block)
@@ -250,7 +353,30 @@ WHAT TO LOOK AT, selected clips, Canvas vs rich:
    - the META (volume / pan / speed) and the M badge, now drawn for every clip
    - the loop's grips (a bar and a flag at each bound) on the selected looped clip
    - the stem-muted row: waveform grey in the Canvas, stem-coloured under the veil in the rich view
-   - the stem colours, fades (straight and bent), reverse, speed, stereo separator""" % (
+   - the stem colours, fades (straight and bent), reverse, speed, stereo separator
+
+THE GROUPS' A/B (the open-groups section, bottom of the project; nothing to select unless said).
+Flip the same switch with each of these in view, light AND dark appearance (the base of the rise
+is a dynamic colour, `controlBackgroundColor`), at 5 / 20 / 100 pps, and at ~2000 pps for the
+group's start and end (the band must not stop short and the borders must keep their gaps):
+   - the RISE under each group block: the block and the row below it must read as ONE material,
+     no seam, no lighter or darker strip across the gutter, at the block's two bottom corners
+   - the BAND tint and its borders: top border interrupted under the block, bottom border whole,
+     1 px; no half-pixel shimmer at a fractional vertical zoom
+   - the PARITY of the alternating rows: the groups sit on rows of both parities (the 1-lane
+     group flips it for the next one); the rise must carry the same 2%% of black as the row it
+     continues, on both
+   - NESTED groups: the tints stack deeper = stronger, each level's rise matches its first row;
+     the two-hue stack (the red inner one)
+   - SELECTED group (select the "SELECT as a whole" group by its header) and a SELECTED CHILD of
+     the "SELECT A CHILD" group: the band goes from 0.11 to 0.22 and the border from 0.35 to 0.8
+     ("you are in this group"); the same on the parent when the child of a nested group is selected
+   - the MUTED open group: the bands are the same as the unmuted one (only the block changes)
+   - the '+' in the drop lane: size, grey, centred on the group's in/out range, also on the
+     narrow group, and absent on a CLOSED group
+   - the INFINITE group: full-width band, its rise spanning the whole width
+   - scroll sideways at 100 pps: the band edges, the borders' gaps and the '+' must not flicker
+     or pop at the viewport's edge""" % (
         manifest, manifest, wf.get("sample_mode_threshold", 0)))
     return 0
 
