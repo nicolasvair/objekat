@@ -62,6 +62,28 @@ struct DrawingSmoke {
             drawSendKnob(b, level: -10, enabled: true, focused: false, automated: true, size: CGSize(width: 32, height: 32))
         }
 
+        // The Send columns (the Canvas counterpart of ToolSendLayer) and the dispatcher the blocks'
+        // Canvas calls: a focused column, an automated one, a faded (off) one; a narrow block.
+        let cols = [
+            ToolOverlaySendColumn(label: "Reverb", level: -6, enabled: true, focused: true, automated: false),
+            ToolOverlaySendColumn(label: "Delay with a long name", level: -18, enabled: true, focused: false, automated: true),
+            ToolOverlaySendColumn(label: "Room", level: -60, enabled: false, focused: false, automated: false),
+        ]
+        r("columns", w: 300, h: 110) { c, s in drawSendColumns(c, size: s, columns: cols, leadingInset: 0) }
+        r("columns-inset-span", w: 300, h: 110) { c, s in
+            drawSendColumns(c, size: s, columns: cols, leadingInset: 40, span: (x: 20, width: 250))
+        }
+        r("columns-short", w: 300, h: 50) { c, s in drawSendColumns(c, size: s, columns: cols, leadingInset: 0) }
+        r("overlay-columns", w: 60, h: 90) { c, s in
+            drawToolOverlay(c, CanvasToolOverlay(content: .sends(columns: Array(cols.prefix(2)), leadingInset: 0), span: nil), size: s)
+        }
+        r("overlay-volume", w: 120, h: 40) { c, s in
+            drawToolOverlay(c, CanvasToolOverlay(content: .volumeMinimal(volume: -3, isMuted: true), span: (x: 10, width: 100)), size: s)
+        }
+        r("overlay-pan", w: 120, h: 80) { c, s in
+            drawToolOverlay(c, CanvasToolOverlay(content: .pan(pan: 0.3), span: nil), size: s)
+        }
+
         // The cache stays bounded however many distinct strings go through it.
         r("cache", w: 100, h: 20) { c, _ in
             for i in 0..<2000 {

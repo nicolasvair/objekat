@@ -58,9 +58,11 @@ the landing check); an older build is refused with a clear message:
     S0@T      S0 with the tool T armed (LOCKED, as ⇧+key arms it) — T is volume, pan, aux or stem
     S3@T      S3 (600 children selected, group open) with the tool T armed
     `--only tools` selects every `@T` scenario, `--only nav` the eight of the first table.
-    Under Volume / Pan / Aux the census must read clips_rich = V (the visible clips) and
-    rich_reasons.tool = V; under Stem only the HOVERED block goes rich (`stem_hover`, and for a
-    clip only when selected: S3), so the sweep below is what makes it move.
+    Under Volume / Pan / Aux only the block AIMED AT (`tool_hover`) and the blocks a viewport edge
+    can cut (`tool_span`, at most ~2 per lane on screen) are rich; the rest is the Canvas's. The old
+    regime — every visible clip rich, `rich_reasons.tool = V` — is `debug.force_rich_tools true`.
+    Under Stem only the HOVERED block goes rich (`stem_hover`, clip or group), so the sweep below
+    is what makes it move.
 
 Two more steps, run on S0, S3, S8 and every `@T` scenario (S0 / S3 with the selection tool are the
 references for the `@T` ones):

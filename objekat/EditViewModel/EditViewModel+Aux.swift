@@ -93,26 +93,104 @@ extension EditViewModel {
     /// The auxes overlapping the object, ordered by vertical position (display lane) top → bottom.
     /// That is the order of the Send tool's knob rows.
     func sendToolAuxes(for objectID: UUID) -> [SoundObject] {
-        let auxes = overlappingAuxes(for: objectID)
-        func laneOf(_ id: UUID) -> Int {
-            laneEntries.first { $0.item.id == id }?.displayLane ?? (find(id: id)?.lane ?? 0)
+        guard let obj = find(id: objectID) else { return [] }
+        return sendToolAuxes(forObjects: [obj])[objectID] ?? []
+    }
+
+    /// `sendToolAuxes(for:)` for MANY senders at once — what the timeline asks for every block it
+    /// shows under the Send tool, once per pass. Per sender the answer is the same as
+    /// `overlappingAuxes(for:)` (overlap in time AND scope, @see `canRouteSend`), in the Send
+    /// tool's order: display lane, then start, then the project's own order.
+    ///
+    /// The cost is the point. Asked sender by sender this was O(V·A·N): every pair paid a `find` and
+    /// a `parentGroup` walk of the whole tree, and every sort looked its lanes up in `laneEntries`
+    /// by scanning. Here the auxes are collected and sorted ONCE, the lanes come from one
+    /// dictionary, the parents from one `parentIDMap()`, the main stem is read once, and a pair
+    /// costs a couple of comparisons. Senders with nothing to send to have no entry in the answer.
+    func sendToolAuxes(forObjects senders: [SoundObject]) -> [UUID: [SoundObject]] {
+        let senders = senders.filter { !$0.isAux }
+        guard !senders.isEmpty else { return [:] }
+        let auxes = allAuxes
+        guard !auxes.isEmpty else { return [:] }
+
+        // The Send tool's order, once for everybody: top → bottom by display lane (the model's own
+        // lane for an aux that is not on screen — it sits in a closed group, where no sender
+        // that matters sees it), ties by start, then by position in `allAuxes`. This is what the
+        // sort by start followed by the (stable) sort by lane gave, as one key.
+        var laneOf: [UUID: Int] = [:]
+        for e in laneEntries where e.item.isAux { laneOf[e.item.id] = e.displayLane }
+        let ordered = auxes.enumerated().sorted { l, r in
+            let ll = laneOf[l.element.id] ?? l.element.lane
+            let rl = laneOf[r.element.id] ?? r.element.lane
+            if ll != rl { return ll < rl }
+            if l.element.startTime != r.element.startTime { return l.element.startTime < r.element.startTime }
+            return l.offset < r.offset
+        }.map(\.element)
+
+        let parents = parentIDMap()
+        let mainID = mainStemID
+        var result: [UUID: [SoundObject]] = [:]
+        for s in senders {
+            let sParent = parents[s.id]
+            let sStem = s.stemID ?? mainID
+            let oStart = s.startTime
+            let oEnd = s.startTime + s.duration
+            let reachable = ordered.filter { aux in
+                guard aux.id != s.id, parents[aux.id] == sParent else { return false }
+                // The scope (@see canRouteSend): inside a group the container makes the boundary; at
+                // the top level, the same stem or an aux of the Main.
+                if sParent == nil {
+                    let auxStem = aux.stemID ?? mainID
+                    guard auxStem == mainID || auxStem == sStem else { return false }
+                }
+                // An infinite aux: a bus always active → it overlaps any sender.
+                if aux.isInfiniteBus { return true }
+                return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
+            }
+            if !reachable.isEmpty { result[s.id] = reachable }
         }
-        return auxes.sorted { laneOf($0.id) < laneOf($1.id) }
+        return result
     }
 
     /// The send-knob rows for the Send tool's overlay on `objectID`.
     func sendRows(for objectID: UUID) -> [SendRow] {
-        sendToolAuxes(for: objectID).map { aux in
-            let e = sendEntry(from: objectID, to: aux.id)
-            return SendRow(
-                auxID:   aux.id,
-                label:   aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded())),
-                level:   e?.levelDb ?? sendMinDb,
-                enabled: e?.enabled ?? false,
-                focused: sendToolFocus == SendFocus(objectID: objectID, auxID: aux.id),
-                automated: isAutomated(.send(auxID: aux.id), on: objectID)
-            )
+        guard let obj = find(id: objectID) else { return [] }
+        return sendRows(forObjects: [obj])[objectID] ?? []
+    }
+
+    /// The rows for MANY senders at once (@see `sendToolAuxes(forObjects:)`): the timeline computes
+    /// them ONCE per pass for the blocks it shows, and both the partition (which blocks have
+    /// columns) and the drawing (the columns themselves) read that one answer. A sender with no row
+    /// has no entry.
+    func sendRows(forObjects senders: [SoundObject]) -> [UUID: [SendRow]] {
+        let auxesBySender = sendToolAuxes(forObjects: senders)
+        guard !auxesBySender.isEmpty else { return [:] }
+        let focus = sendToolFocus
+        var labels: [UUID: String] = [:]
+        var result: [UUID: [SendRow]] = [:]
+        for s in senders {
+            guard let auxes = auxesBySender[s.id] else { continue }
+            var rows: [SendRow] = []
+            rows.reserveCapacity(auxes.count)
+            for aux in auxes {
+                let label: String
+                if let known = labels[aux.id] { label = known }
+                else {
+                    label = aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded()))
+                    labels[aux.id] = label
+                }
+                let e = s.sends.first { $0.auxID == aux.id }
+                rows.append(SendRow(
+                    auxID:   aux.id,
+                    label:   label,
+                    level:   e?.levelDb ?? sendMinDb,
+                    enabled: e?.enabled ?? false,
+                    focused: focus == SendFocus(objectID: s.id, auxID: aux.id),
+                    automated: isAutomated(.send(auxID: aux.id), on: s)))
+            }
+            result[s.id] = rows
         }
+        return result
     }
 
     // MARK: - Multi-selection sends

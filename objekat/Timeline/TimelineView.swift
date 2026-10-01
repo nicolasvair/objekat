@@ -2790,11 +2790,6 @@ struct TimelineView: View {
 
     // MARK: What the tools ask of the partition
 
-    /// The tools whose overlays the batched Canvas draws (@see `ToolOverlayPartition`). A tool that
-    /// is not in this set keeps the regime it had before the Canvas drew anything over a block:
-    /// every block rich under Volume / Pan / Aux, the hovered one under Stem.
-    private static let canvasTools: Set<ToolOverlayPartition.Tool> = [.volume, .pan, .stem]
-
     /// What the active tool contributes to the partition, read ONCE per pass (and only under a
     /// tool: `toolHoveredID`, the drags and the send focus are not read otherwise, so a hover under
     /// another tool never re-evaluates the layer).
@@ -2846,6 +2841,17 @@ struct TimelineView: View {
         t.selected = selectedIDs
         t.rows = cullRows
         t.live = liveScroll
+        if t.tool == .aux {
+            // The Send tool's columns for every block on screen, in ONE walk (one sort of the auxes,
+            // one parent map) instead of one per block — read by the partition (which blocks have
+            // columns), by the Canvas (the columns themselves) and by the rich views.
+            let (y0, y1) = t.rows
+            let senders = entries.compactMap { e -> SoundObject? in
+                let y = rulerHeight + Double(e.displayLane) * laneStep
+                return !e.item.isAux && y + blockHeight >= y0 && y <= y1 ? e.item : nil
+            }
+            t.sendRows = viewModel.sendRows(forObjects: senders)
+        }
         return t
     }
 
@@ -2858,12 +2864,11 @@ struct TimelineView: View {
 
         if tools.tool == .stem {
             guard aimed else { return nil }
-            // The pre-Canvas rule: a group hovered, but a clip only if selected as well.
-            if tools.forceRich || !Self.canvasTools.contains(.stem),
-               !isGroup, !tools.selected.contains(item.id) { return nil }
+            // The pre-Canvas rule (Debug switch): a group hovered, but a clip only if selected as well.
+            if tools.forceRich, !isGroup, !tools.selected.contains(item.id) { return nil }
             return .stemHover
         }
-        if tools.forceRich || !Self.canvasTools.contains(tools.tool) { return .tool }
+        if tools.forceRich { return .tool }
         if aimed { return .toolHover }
 
         // Outside the lanes on screen nothing is seen, whatever the tool would draw there.
@@ -2889,8 +2894,7 @@ struct TimelineView: View {
     /// NARROW block keeps the culling window's span, in the rich views as here. A wide block that an
     /// edge can cut never gets here — the partition keeps it rich.
     private func canvasToolOverlay(for entry: LaneEntry, tools: ToolPartitionContext) -> CanvasToolOverlay? {
-        guard tools.tool != .none, tools.tool != .stem, !tools.forceRich,
-              Self.canvasTools.contains(tools.tool) else { return nil }
+        guard tools.tool != .none, tools.tool != .stem, !tools.forceRich else { return nil }
         let item = entry.item
         let y = rulerHeight + Double(entry.displayLane) * laneStep
         guard y + blockHeight >= tools.rows.y0, y <= tools.rows.y1 else { return nil }
@@ -2914,6 +2918,18 @@ struct TimelineView: View {
             let plan = ToolOverlayGeometry.panPlan(blockWidth: w, isSelected: selected, isToolHovered: false)
             guard plan.shown else { return nil }
             return CanvasToolOverlay(content: .pan(pan: item.pan), span: span(exact: plan.needsExactSpan))
+        case .aux:
+            // One column per aux the block can send to, from the pass's memo. The columns follow
+            // the exact scroll, so a block an edge can cut is never here (it is rich): its visible
+            // span is the block itself.
+            guard let rows = tools.sendRows?[item.id], !rows.isEmpty else { return nil }
+            let columns = rows.map {
+                ToolOverlaySendColumn(label: $0.label, level: $0.level, enabled: $0.enabled,
+                                      focused: $0.focused, automated: $0.automated)
+            }
+            return CanvasToolOverlay(content: .sends(columns: columns,
+                                                     leadingInset: crossfadeSharedPx(for: item).leading),
+                                     span: span(exact: true))
         default:
             return nil
         }

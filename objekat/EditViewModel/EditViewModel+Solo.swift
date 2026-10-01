@@ -368,8 +368,9 @@ extension EditViewModel {
     }
 
     /// child id → id of its IMMEDIATE parent group, for every object under a group (a top-level
-    /// object has no entry). One walk, O(N).
-    private func parentIDMap() -> [UUID: UUID] {
+    /// object has no entry). One walk, O(N). Internal: the Send tool's batch reads it too
+    /// (@see `sendToolAuxes(forObjects:)`).
+    func parentIDMap() -> [UUID: UUID] {
         var map: [UUID: UUID] = [:]
         func walk(_ arr: [SoundObject]) {
             for o in arr {

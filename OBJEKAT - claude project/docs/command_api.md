@@ -517,6 +517,14 @@ persistent form is the preference `objekat.debug.forceRichBlocks`, read once at 
 (`defaults delete …` to go back), or `-objekat.debug.forceRichBlocks YES` for a single launch.
 A Release build has neither the switch nor the command.
 
+**`debug.force_rich_tools {enabled}`** (`#if DEBUG`, `Commands+Runtime.swift`) is the same A/B switch for
+the Volume / Pan / Aux tool overlays (`Shared/DebugRenderSwitches.swift`): `true` puts every block
+back on its rich view under those tools — the regime before the Canvas drew the overlays, census
+reason `tool` — and keeps the Stem tool's old rule (a group hovered, a clip only if selected as well);
+`false` is the production behaviour, where only the block aimed at (`tool_hover`) and the blocks a
+viewport edge can cut (`tool_span`) stay rich. Volatile, answers `{was, enabled}`; the persistent form
+is the preference `objekat.debug.forceRichTools`. A Release build has neither.
+
 ### The frame report
 
 A `CADisplayLink` on the timeline's own view gives one tick per refresh of **that** screen. The
