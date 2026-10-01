@@ -380,9 +380,9 @@ struct TimelineView: View {
         viewModel.items.map(\.lane).max() ?? 0
     }
 
-    private var totalExtraLanes: Int {
-        viewModel.items.reduce(0) { acc, item in acc + item.expandedSpan }
-    }
+    /// Cached by the view model with `laneEntries` (@see `EditViewModel.totalExtraLanes`): read
+    /// once per `canvasHeight`, i.e. some fifteen times per pass.
+    private var totalExtraLanes: Int { viewModel.totalExtraLanes }
 
     /// The empty rows that carry the bottom headroom, for a GIVEN row height. Real rows and not a
     /// bare padding: they get their alternating band, they can be aimed at, a range traced on them
@@ -905,8 +905,8 @@ struct TimelineView: View {
                 // roll). It greys the outside of the content out so as to focus on the inside. See SoundObject.expandedSpan.
                 // An infinite bus: no range any more → no out-of-range. Its inside is open over
                 // the whole timeline, so no grey mask.
-                ForEach(viewModel.laneEntries.filter { $0.item.expandedSpan > 0 && !$0.item.isInfiniteBus }) { entry in
-                    let span = entry.item.expandedSpan
+                ForEach(viewModel.laneEntries.filter { $0.expandedSpan > 0 && !$0.item.isInfiniteBus }) { entry in
+                    let span = entry.expandedSpan
                     let item   = entry.item
                     let subY   = rulerHeight + Double(entry.displayLane + 1) * laneStep
                     let laneH  = Double(span) * laneStep
@@ -938,12 +938,12 @@ struct TimelineView: View {
                 // resolved geometrically by the tap handler.
                 // Pre-filtered on `automationBezel`'s own first conditions (a selector to show, a
                 // content to choose from): only groups and MIDI clips ever get here.
-                ForEach(visibleEntries.filter { viewModel.hasAutomationSelector($0.item) && $0.item.expandedSpan > 0 }) { entry in
+                ForEach(visibleEntries.filter { $0.expandedSpan > 0 && viewModel.hasAutomationSelector($0.item) }) { entry in
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry, bands: inlineBands)
                         AutomationBezelView(placement: b, fill: paint, tint: tint,
-                                            state: AutomationBezel.displayState(for: entry.item))
+                                            state: AutomationBezel.displayState(for: entry.item, expandedSpan: entry.expandedSpan))
                             .zIndex(2.57)
                         // No 'weld' across the gutter under the plateau: it had the PLATEAU's width,
                         // not the block's, and so read as an added shape spilling out of the hem
@@ -1940,7 +1940,7 @@ struct TimelineView: View {
     /// block itself — without which the hem would come away from its block during the gesture.
     ///
     func automationBezel(for e: LaneEntry) -> AutomationBezel.Placement? {
-        guard viewModel.hasAutomationSelector(e.item), e.item.expandedSpan > 0 else { return nil }
+        guard e.expandedSpan > 0, viewModel.hasAutomationSelector(e.item) else { return nil }
         let item = e.item
         let offset = previewOffset(for: item)
         let bx: Double
@@ -2030,7 +2030,7 @@ struct TimelineView: View {
     /// `inlineGroupBands`; the band layer, its rise and `interiorPaint` all read it.
     struct InlineGroupBand {
         let entry: LaneEntry
-        let span: Int                  // `childLaneCount`, asked of the group ONCE
+        let span: Int                  // `childLaneCount`, carried by the entry (`expandedSpan`)
         let range: ClosedRange<Int>    // displayLane + 1 ... displayLane + span
         let color: Color
         let inside: Bool               // the caret / time selection / a selected object is in it
@@ -2040,7 +2040,9 @@ struct TimelineView: View {
     /// `focused` = `focusedDisplayLanes`, computed by the caller ONCE for the whole pass.
     func inlineGroupBands(_ groups: [LaneEntry], focused: Set<Int>) -> [InlineGroupBand] {
         groups.map { entry in
-            let span = entry.item.childLaneCount
+            // `expandedSpan` IS `childLaneCount` for a group that shows its children inline (the
+            // only ones handed here), and it was computed when the entry was built.
+            let span = entry.expandedSpan
             let range = (entry.displayLane + 1)...(entry.displayLane + max(1, span))
             // `focused ∩ range ≠ ∅`, walking the SMALLER of the two.
             let inside: Bool
@@ -2920,6 +2922,7 @@ struct TimelineView: View {
     private func groupBlock(for group: SoundObject, displayLane dl: Int) -> some View {
         GroupBlockView(
             group: group,
+            displayName: viewModel.displayName(of: group),
             pixelsPerSecond: pixelsPerSecond,
             rulerHeight: rulerHeight,
             blockHeight: blockHeight,

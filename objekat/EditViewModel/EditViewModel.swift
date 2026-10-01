@@ -42,6 +42,7 @@ final class EditViewModel {
         didSet {
             // Lazy and unconditional (batch or not): rebuilt by the next reader, never stale.
             crossfadePartnersCache = nil
+            composedNameCache.removeAll(keepingCapacity: true)
             findIndex = nil
             findsSinceMutation = 0
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
@@ -52,6 +53,9 @@ final class EditViewModel {
     @ObservationIgnored var findsSinceMutation = 0
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
     @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
+    /// @see displayName(of:) — a group's composed name by group id, emptied on EVERY write to
+    /// `items` (the name is a function of the group's subtree, which lives in `items`).
+    @ObservationIgnored private var composedNameCache: [UUID: String] = [:]
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
@@ -933,7 +937,30 @@ final class EditViewModel {
 
     func rebuildLaneEntries() {
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
+        // The total of the rows the open objects reserve: the timeline's `canvasHeight` reads it
+        // some fifteen times per pass, and it used to be an `expandedSpan` sum (an `occupiedLanes`
+        // sort per open group) every time. The top-level entries are the ones that carry the
+        // spans already computed by the build.
+        totalExtraLanes = laneEntries.reduce(0) { $1.depth == 0 ? $0 + $1.expandedSpan : $0 }
         referencedAudioPathsCache = nil
+    }
+
+    /// Σ `expandedSpan` over the TOP-LEVEL objects — what the timeline adds to its lane count for
+    /// the rows open groups / piano rolls / automation bands take. Rebuilt with `laneEntries`
+    /// (the same funnel, so as stale as it is during a coalesced mutation, and no more).
+    private(set) var totalExtraLanes: Int = 0
+
+    /// The name to DRAW for `item`. For everything but an unnamed group it is `item.displayName`
+    /// untouched; for an unnamed group (`composedGroupName`: a sort of its children and one
+    /// string per child, recursive through sub-groups) it is memoised per group id until `items`
+    /// next changes. ⚠️ Only for an item TAKEN FROM `items` / `laneEntries` — the cache is keyed
+    /// by id alone and a modified copy of a group would be handed the original's name.
+    func displayName(of item: SoundObject) -> String {
+        guard item.label == nil, item.isGroup else { return item.displayName }
+        if let cached = composedNameCache[item.id] { return cached }
+        let name = item.displayName
+        composedNameCache[item.id] = name
+        return name
     }
 
     /// Grouped mutations of `items`: a single rebuild of laneEntries at the end instead
@@ -967,8 +994,11 @@ final class EditViewModel {
         // The prefix sum of expandedSpan by lane → extraAbove in O(N) instead of O(N²).
         // prefixBelowLane[L] = Σ expandedSpan of the items of a lane strictly < L (identical
         // to the old `items.filter { $0.lane < item.lane }.reduce(...)`).
+        // Each span is asked of its item ONCE (it is an `occupiedLanes` sort for an open group),
+        // kept for the prefix sum AND for the entry that carries it.
+        let spans = items.map { $0.expandedSpan }
         var spanByLane: [Int: Int] = [:]
-        for it in items { spanByLane[it.lane, default: 0] += it.expandedSpan }
+        for (i, it) in items.enumerated() { spanByLane[it.lane, default: 0] += spans[i] }
         var prefixBelowLane: [Int: Int] = [:]
         var running = 0
         for lane in spanByLane.keys.sorted() {
@@ -978,7 +1008,7 @@ final class EditViewModel {
 
         var result: [LaneEntry] = []
         result.reserveCapacity(items.count)
-        for item in items {
+        for (i, item) in items.enumerated() {
             let extraAbove = prefixBelowLane[item.lane] ?? 0
             let dl = displayLaneOffset + item.lane + extraAbove
 
@@ -987,7 +1017,8 @@ final class EditViewModel {
                 item:        item,
                 absStart:    item.startTime,
                 depth:       depth,
-                parentID:    parentID
+                parentID:    parentID,
+                expandedSpan: spans[i]
             ))
 
             // `showsChildrenInline` and not `isExpanded`: a group in automation mode keeps

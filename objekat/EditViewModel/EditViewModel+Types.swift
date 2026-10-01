@@ -293,4 +293,10 @@ struct LaneEntry: Identifiable {
     let absStart:    Double
     let depth:       Int
     let parentID:    UUID?
+    /// `item.expandedSpan`, read ONCE when the entry is built (`buildLaneEntries` needs it anyway
+    /// for its prefix sums). For an open group it is `occupiedLanes` — a sort over the children,
+    /// recursive through open sub-groups — and the timeline asked the ITEM for it several times
+    /// per pass; the entry carries the answer. For a group that `showsChildrenInline` it is also
+    /// `childLaneCount` (the two differ only under an automation band, which hides the children).
+    let expandedSpan: Int
 }

@@ -2,6 +2,10 @@ import SwiftUI
 
 struct GroupBlockView: View {
     let group: SoundObject   // was SoundGroup — the same top-level interface
+    /// The name to draw, told by the parent (`EditViewModel.displayName(of:)`, memoised): an unnamed
+    /// group composes its name from its children — a sort and a string per child — and this body
+    /// runs on every pass of the timeline.
+    var displayName: String
     let pixelsPerSecond: Double
     let rulerHeight: Double
     let blockHeight: Double
@@ -277,7 +281,7 @@ struct GroupBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(group.label) }
                         } else {
-                            Text(group.displayName)
+                            Text(displayName)
                                 .blockNameStyle(missingFile: containsMissingFile)
                                 .lineLimit(1)
                                 .layoutPriority(1)

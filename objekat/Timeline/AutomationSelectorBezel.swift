@@ -151,9 +151,11 @@ enum AutomationBezel {
     /// click on the chevron does have to recognise an already folded object.
     enum DisplayState { case objects, automations, collapsed }
 
-    static func displayState(for item: SoundObject) -> DisplayState {
+    /// `expandedSpan` is the object's own, handed in: the caller (a `LaneEntry`) already holds it,
+    /// and recomputing it is an `occupiedLanes` sort for an open group.
+    static func displayState(for item: SoundObject, expandedSpan: Int) -> DisplayState {
         if item.automationOpen { return .automations }
-        if item.expandedSpan > 0 { return .objects }
+        if expandedSpan > 0 { return .objects }
         return .collapsed
     }
 }
