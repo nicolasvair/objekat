@@ -31,7 +31,8 @@ extension EditViewModel {
         let inRange = timeSelection.map {
             ContextMenuPlan.contains(lane: displayLane, time: time, lanes: $0.lanes, range: $0.timeRange)
         } ?? false
-        return ContextMenuPlan.decide(pointInTimeSelection: inRange, zone: zone,
+        return ContextMenuPlan.decide(pointInTimeSelection: inRange, hasTimeSelection: timeSelection != nil,
+                                      zone: zone,
                                       objectAlreadySelected: objectID.map { selectedIDs.contains($0) } ?? false)
     }
 

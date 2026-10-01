@@ -2,12 +2,12 @@ import Foundation
 
 // MARK: - What a right click on the LANES means — the part with no view and no model behind it
 //
-// The right click on an object is decided by three facts and nothing else: whether the point lies
-// INSIDE the time selection, which half of the block it landed on (the upper half is TIME, the
-// lower half is the OBJECT — the 50 % line the left click already uses, @see
-// TimelineView.handleCanvasTap) and whether that object is already part of the selection. From
-// them follow which menu is built, whether the click selects the object first, and which of the
-// two annotation items it offers.
+// The right click is decided by four facts and nothing else: whether the point lies INSIDE the
+// time selection, whether a time selection exists at all, which half of the block it landed on
+// (the upper half is TIME, the lower half is the OBJECT — the 50 % line the left click already
+// uses, @see TimelineView.handleCanvasTap) and whether that object is already part of the
+// selection. From them follow which menu is built, whether the click selects the object first, and
+// which of the two annotation items it offers.
 //
 // It lives here so that `tools/test_context_menu_plan.swift` can compile and assert it alone, the
 // way `CrossfadeGrab` / `CutSelection` are: the monitor that builds the menu is AppKit and cannot
@@ -22,7 +22,9 @@ import Foundation
 //   • Lower half: the object. The click selects it first, as the left click does (range cleared,
 //     cursor moved) — unless it is already selected, in which case NOTHING changes: that is what
 //     keeps a multiple selection alive for 'Consolidate N linked' and the FX link.
-//   • No object under the hand and no range: no menu at all.
+//   • No object under the hand (an empty lane): a time selection ANYWHERE gives the range's menu,
+//     inside it or not — nothing about the range has changed for a click that lands on no object.
+//     With no time selection at all: no menu, the event goes on to the views.
 
 enum ContextMenuPlan {
 
@@ -41,7 +43,8 @@ enum ContextMenuPlan {
 
     /// Which menu gets built.
     enum Layout: Equatable {
-        /// The point is inside the time selection: today's menu (group, aux, MIDI clip, comment…).
+        /// The range's menu (group, aux, MIDI clip, comment…): the point is inside the time
+        /// selection, or on an empty lane while a time selection exists.
         case rangeMenu
         /// The upper half of a block: the annotation items only.
         case objectTimeMenu
@@ -63,8 +66,9 @@ enum ContextMenuPlan {
     }
 
     /// `pointInTimeSelection`: the point lies inside the range (its lanes AND its time span).
+    /// `hasTimeSelection`: a range exists, wherever it lies (implied by `pointInTimeSelection`).
     /// `zone`: nil when there is no object under the point.
-    static func decide(pointInTimeSelection: Bool, zone: BlockZone?,
+    static func decide(pointInTimeSelection: Bool, hasTimeSelection: Bool, zone: BlockZone?,
                        objectAlreadySelected: Bool) -> Decision {
         if pointInTimeSelection {
             return Decision(layout: .rangeMenu, selectsObject: false,
@@ -72,8 +76,9 @@ enum ContextMenuPlan {
         }
         switch zone {
         case .none:
-            return Decision(layout: .nothing, selectsObject: false,
-                            offersObjectMarker: false, offersComment: false)
+            // An empty lane: the range's menu if there is a range, wherever it lies.
+            return Decision(layout: hasTimeSelection ? .rangeMenu : .nothing, selectsObject: false,
+                            offersObjectMarker: false, offersComment: hasTimeSelection)
         case .time:
             return Decision(layout: .objectTimeMenu, selectsObject: false,
                             offersObjectMarker: true, offersComment: false)

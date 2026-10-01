@@ -7,9 +7,10 @@
 //         ../objekat/Shared/ContextMenuPlan.swift test_context_menu_plan.swift \
 //         -o /tmp/ctxplan && /tmp/ctxplan
 //
-// Four questions: which half of a block the point is on, whether it lies inside the time selection,
-// which menu the combination builds (and which annotation items it offers), and whether the click
-// selects the object first.
+// Five questions: which half of a block the point is on, whether it lies inside the time selection,
+// whether a time selection exists at all (it decides an empty lane: a range ANYWHERE gives the
+// range's menu there, none gives no menu), which menu the combination builds (and which annotation
+// items it offers), and whether the click selects the object first.
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
 
@@ -55,7 +56,8 @@ enum ContextMenuPlanTest {
 
     for zone in [Z.time, Z.body, nil] {
         for already in [true, false] {
-            let d = P.decide(pointInTimeSelection: true, zone: zone, objectAlreadySelected: already)
+            let d = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: zone,
+                             objectAlreadySelected: already)
             let tag = "in range, zone \(String(describing: zone)), selected \(already)"
             check(tag + ": the range's menu", d.layout == .rangeMenu)
             check(tag + ": nothing is selected", !d.selectsObject)
@@ -68,52 +70,85 @@ enum ContextMenuPlanTest {
     // MARK: - Upper half, no range: time
 
     do {
-        let d = P.decide(pointInTimeSelection: false, zone: .time, objectAlreadySelected: false)
+        let d = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: .time,
+                         objectAlreadySelected: false)
         check("upper half: the time menu", d.layout == .objectTimeMenu)
         check("upper half: the object marker is offered", d.offersObjectMarker)
         check("upper half: no comment (no range under the hand)", !d.offersComment)
         check("upper half: nothing is selected, the cursor stays", !d.selectsObject)
-        let s = P.decide(pointInTimeSelection: false, zone: .time, objectAlreadySelected: true)
+        let s = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: .time,
+                         objectAlreadySelected: true)
         check("upper half on a selected object: still nothing selected, same menu",
               s.layout == .objectTimeMenu && !s.selectsObject
                 && s.offersObjectMarker && !s.offersComment)
+        let e = P.decide(pointInTimeSelection: false, hasTimeSelection: true, zone: .time,
+                         objectAlreadySelected: false)
+        check("upper half with a range lying elsewhere: the same time menu, no comment",
+              e.layout == .objectTimeMenu && !e.selectsObject
+                && e.offersObjectMarker && !e.offersComment)
     }
 
     // MARK: - Lower half, no range: the object
 
     do {
-        let d = P.decide(pointInTimeSelection: false, zone: .body, objectAlreadySelected: false)
+        let d = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: .body,
+                         objectAlreadySelected: false)
         check("lower half: the object's menu", d.layout == .objectBodyMenu)
         check("lower half, not selected: the click selects it first", d.selectsObject)
         check("lower half: no object marker (it lives in the upper half)", !d.offersObjectMarker)
         check("lower half: no comment", !d.offersComment)
-        let k = P.decide(pointInTimeSelection: false, zone: .body, objectAlreadySelected: true)
+        let k = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: .body,
+                         objectAlreadySelected: true)
         check("lower half, already selected: the selection is kept whole (nothing selected)",
               k.layout == .objectBodyMenu && !k.selectsObject)
+        let e = P.decide(pointInTimeSelection: false, hasTimeSelection: true, zone: .body,
+                         objectAlreadySelected: false)
+        check("lower half with a range lying elsewhere: the object's menu, which selects it",
+              e.layout == .objectBodyMenu && e.selectsObject
+                && !e.offersObjectMarker && !e.offersComment)
     }
 
-    // MARK: - Nothing under the hand
+    // MARK: - Nothing under the hand (an empty lane)
 
     do {
-        let d = P.decide(pointInTimeSelection: false, zone: nil, objectAlreadySelected: false)
+        let d = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: nil,
+                         objectAlreadySelected: false)
         check("no object, no range: no menu", d.layout == .nothing)
         check("no object, no range: nothing selected, nothing offered",
               !d.selectsObject && !d.offersObjectMarker && !d.offersComment)
     }
 
+    // A range lying ELSEWHERE still gives the range's menu on an empty lane: nothing changed there.
+    do {
+        let d = P.decide(pointInTimeSelection: false, hasTimeSelection: true, zone: nil,
+                         objectAlreadySelected: false)
+        check("no object, a range lying elsewhere: the range's menu", d.layout == .rangeMenu)
+        check("no object, a range lying elsewhere: the comment is offered", d.offersComment)
+        check("no object, a range lying elsewhere: no object marker, nothing selected",
+              !d.offersObjectMarker && !d.selectsObject)
+        let i = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: nil,
+                         objectAlreadySelected: false)
+        check("no object, a point inside the range: the very same decision", i == d)
+    }
+
     // MARK: - A sweep: the invariants that hold for every combination
 
-    for inRange in [true, false] {
+    for (inRange, hasRange) in [(true, true), (false, true), (false, false)] {
         for zone in [Z.time, Z.body, nil] {
             for already in [true, false] {
-                let d = P.decide(pointInTimeSelection: inRange, zone: zone, objectAlreadySelected: already)
-                let tag = "range \(inRange), zone \(String(describing: zone)), selected \(already)"
+                let d = P.decide(pointInTimeSelection: inRange, hasTimeSelection: hasRange,
+                                 zone: zone, objectAlreadySelected: already)
+                let tag = "range \(inRange)/\(hasRange), zone \(String(describing: zone)), selected \(already)"
                 check(tag + ": selecting implies the body, outside the range, unselected",
                       !d.selectsObject || (!inRange && zone == .body && !already))
-                check(tag + ": a comment only over a range", !d.offersComment || inRange)
+                check(tag + ": a comment only with a time selection", !d.offersComment || hasRange)
                 check(tag + ": an object marker only with an object", !d.offersObjectMarker || zone != nil)
                 check(tag + ": a nothing-menu offers nothing",
                       d.layout != .nothing || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
+                check(tag + ": no object, the menu follows the existence of a range",
+                      zone != nil || (d.layout == .rangeMenu) == hasRange)
+                check(tag + ": a range lying elsewhere never drives an object's menu",
+                      zone == nil || inRange || (d.layout != .rangeMenu && !d.offersComment))
             }
         }
     }
