@@ -6,11 +6,16 @@ import Observation
 // They exist in Debug builds ONLY: a Release build has no such switch, no read of it and no cost
 // (every use is inside `#if DEBUG`).
 //
-// `forceRichBlocks` — the A/B switch of the "selected blocks in the batched Canvas" work. OFF (the
-// default) is the production behaviour: a selected clip is drawn in the Canvas like any other. ON
-// forces every SELECTED clip back onto the rich SwiftUI view it used to be drawn with
-// (`SoundBlockView`), so the two can be compared on the same project, pixel against pixel, by
-// toggling it with the clip selected. (Groups will join it when they get a batched path.)
+// `forceRichBlocks` — the "everything rich" A/B switch of the batched-Canvas work. OFF (the
+// default) is the production behaviour. ON puts back the SwiftUI drawing the Canvas replaced, for
+// what has a Canvas path so far, so the two can be compared on the same project, pixel against
+// pixel, by toggling it:
+//   • every SELECTED clip goes back onto its rich view (`SoundBlockView`) — compare with the
+//     clip selected;
+//   • the BANDS of the OPEN groups (the tinted rows under a group, its rise under the block, the
+//     '+' of its drop lane) go back to their old SwiftUI layers — compare with a group open,
+//     nested open groups, a selected open group, a muted open group, light and dark.
+// (Groups' own blocks will join it when they get a batched path.)
 //
 // Two doors, and only these:
 //   • the preference `objekat.debug.forceRichBlocks` (bool), read ONCE at launch — set it from a

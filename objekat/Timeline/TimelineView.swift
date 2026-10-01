@@ -514,68 +514,23 @@ struct TimelineView: View {
                 // conditions, moved out; the content is unchanged.
                 let visibleEntries = viewModel.laneEntries.filter { isEntryVisible($0) }
                 let inlineGroupEntries = viewModel.laneEntries.filter { $0.item.showsChildrenInline }
-                ForEach(inlineGroupEntries) { entry in
-                    let gY     = rulerHeight + Double(entry.displayLane) * laneStep
-                    let color  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
-                    let span   = entry.item.childLaneCount
-                    let bandH  = Double(span) * laneStep
-                    let bandW  = totalDuration * pixelsPerSecond
-                    let inside = !focusedLanes.isDisjoint(
-                        with: (entry.displayLane + 1)...(entry.displayLane + span))
-                    // The group block's HORIZONTAL span, in the MODEL's geometry (not a gesture
-                    // preview): the border's rise and its interruption belong to the BAND, which
-                    // does not follow a movement under way — otherwise they would stay hooked to
-                    // the block and leave a hole.
-                    let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
-                    let gW = entry.item.isInfiniteBus
-                           ? contentWidth : max(1, entry.item.duration * pixelsPerSecond)
-                    let lisX = min(max(0, gX), bandW)               // the start of the interruption
-                    let lisR = min(max(0, gX + gW), bandW)          // ... and its end
-                    ZStack(alignment: .topLeading) {
-                        Rectangle()
-                            .fill(color.opacity(inside ? 0.22 : 0.11))
-                            .frame(width: bandW, height: bandH)
-                        // The TOP border in TWO segments, interrupted under the block: the group's
-                        // material rises there right up under the object (see just after), and a line
-                        // across it would restore the very break we have just erased. The BOTTOM
-                        // border, for its part, runs from one edge to the other: nothing crosses it.
-                        Rectangle()
-                            .fill(color.opacity(inside ? 0.8 : 0.35))
-                            .frame(width: lisX, height: 1)
-                        Rectangle()
-                            .fill(color.opacity(inside ? 0.8 : 0.35))
-                            .frame(width: bandW - lisR, height: 1)
-                            .offset(x: lisR)
-                        Rectangle()
-                            .fill(color.opacity(inside ? 0.8 : 0.35))
-                            .frame(width: bandW, height: 1)
-                            .offset(y: bandH - 1)
-                    }
-                    .frame(width: bandW, height: bandH, alignment: .topLeading)
-                    .offset(x: 0, y: gY + laneStep)
-                    .allowsHitTesting(false)
-
-                    // The RISE under the block: the group's inside crosses the gutter and slips
-                    // under the BOTTOM rounded corners (hence the height `laneGap + radius`), so
-                    // that the block sits on its own material instead of floating above it. It
-                    // does not go any higher: the block is opaque, and lets only what its bottom
-                    // corners cut out be seen — the TOP corners stay on the canvas's background.
-                    //
-                    // Painted with `interiorPaint` — the EXACT stack of the first inner row, its
-                    // opaque base included, the very one the hem fills itself with. Taking only
-                    // `color.opacity(...)` would not do: the canvas's alternating band changes
-                    // parity from one row to the next, and the rise, laid on the GROUP's row,
-                    // would take 2 % too much black (or too little) with respect to the row it
-                    // continues.
-                    ZStack(alignment: .topLeading) {
-                        ForEach(Array(interiorPaint(for: entry).enumerated()), id: \.offset) { _, layer in
-                            Rectangle().fill(layer)
-                        }
-                    }
-                    .frame(width: gW, height: laneGap + entry.item.blockCornerRadius)
-                    .offset(x: gX, y: gY + blockHeight - entry.item.blockCornerRadius)
-                    .allowsHitTesting(false)
+                // What every consumer of an open group's band needs, computed ONCE per pass: the
+                // band's rows, its colour, whether the editing point is inside it. The band layer,
+                // its rise and the automation bezel's fill all read this one list — each used to
+                // rebuild it per open group (`focusedDisplayLanes` and `occupiedLanes`' sort, both
+                // O(objects), once per group).
+                let inlineBands = inlineGroupBands(inlineGroupEntries, focused: focusedLanes)
+                // The bands of the open groups: ONE Canvas (the 'selected clips' work's A/B switch,
+                // in Debug builds, puts the old SwiftUI layers back — @see `DebugRenderSwitches`).
+                #if DEBUG
+                if forceRichBands {
+                    richGroupBands(inlineGroupEntries, focusedLanes: focusedLanes)
+                } else {
+                    groupBandsCanvas(inlineBands)
                 }
+                #else
+                groupBandsCanvas(inlineBands)
+                #endif
 
                 // A sub-lane background for MIDI clips whose piano roll is open: the same principle
                 // as the expanded groups' band (it clarifies the MIDI clip's inside), more discreetly
@@ -592,18 +547,15 @@ struct TimelineView: View {
                     }
                 }
 
-                // A '+' in the drop lane of each expanded group, centred on the in/out range
-                ForEach(inlineGroupEntries) { entry in
-                    let dropLaneY  = rulerHeight + Double(entry.displayLane + entry.item.childLaneCount) * laneStep
-                    let groupStartX = entry.absStart * pixelsPerSecond
-                    let groupW      = entry.item.duration * pixelsPerSecond
-                    Text(verbatim: "+")
-                        .font(.system(size: 64, weight: .light))
-                        .foregroundColor(Color.gray.opacity(0.45))
-                        .frame(width: groupW, height: blockHeight, alignment: .center)
-                        .offset(x: groupStartX, y: dropLaneY)
-                        .allowsHitTesting(false)
+                // The '+' of each open group's drop lane is drawn by the bands' Canvas above (the
+                // piano-roll tint just before touches only a MIDI clip's own sub-lanes, never a
+                // group's drop lane, so the order between the two is not visible). Only the Debug
+                // A/B switch brings the old SwiftUI layer back, at its old place.
+                #if DEBUG
+                if forceRichBands {
+                    richGroupPluses(inlineGroupEntries)
                 }
+                #endif
 
                 // Grid
                 Canvas { context, size in
@@ -805,7 +757,8 @@ struct TimelineView: View {
                 let _ = TimelineRegimeMeter.recordPass(
                     clipsCanvas: plainVisible.count, clipsRich: richVisible.count - richGroupCount,
                     groupsCanvas: 0, groupsRich: richGroupCount,
-                    groupBandsCanvas: 0, groupBandsRich: inlineGroupEntries.count)
+                    groupBandsCanvas: forceRichBands ? 0 : inlineBands.count,
+                    groupBandsRich: forceRichBands ? inlineBands.count : 0)
                 let _ = ensureWaveformsLoaded(plainVisible)
                 plainBlocksCanvas(plainVisible, selectedIDs: selectedIDs)
                 ForEach(richVisible) { entry in
@@ -988,7 +941,7 @@ struct TimelineView: View {
                 ForEach(visibleEntries.filter { viewModel.hasAutomationSelector($0.item) && $0.item.expandedSpan > 0 }) { entry in
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
-                        let paint = interiorPaint(for: entry)
+                        let paint = interiorPaint(for: entry, bands: inlineBands)
                         AutomationBezelView(placement: b, fill: paint, tint: tint,
                                             state: AutomationBezel.displayState(for: entry.item))
                             .zIndex(2.57)
@@ -2042,7 +1995,229 @@ struct TimelineView: View {
     /// the ruler's put the hem out of step with the material opening underneath. That base is
     /// indispensable: the hem is laid OVER the block, which is opaque, while the inner layers are
     /// all translucent.
-    func interiorPaint(for e: LaneEntry) -> [Color] {
+    ///
+    /// `bands` is the list of the open groups' bands, built ONCE per pass (`inlineGroupBands`):
+    /// this used to rebuild it on every call — `focusedDisplayLanes` and each group's
+    /// `childLaneCount` (a sort), once per open group per frame.
+    func interiorPaint(for e: LaneEntry, bands: [InlineGroupBand]) -> [Color] {
+        let lane = e.displayLane + 1                 // the row that opens just under the object
+        var layers: [Color] = [Self.editingAreaBackground]
+        if lane % 2 == 0 { layers.append(Color.black.opacity(0.02)) }
+        for band in bands where band.range.contains(lane) {
+            layers.append(band.color.opacity(band.inside ? 0.22 : 0.11))
+        }
+        if e.item.showsPianoRollInline {
+            layers.append(viewModel.stemColor(for: e.item.id).opacity(0.06))
+        }
+        if e.item.automationOpen {
+            // The background of the band's FIRST row: the 'future automation' row is more muted
+            // than the others, and it comes first when nothing is automated yet
+            // (@see SoundObject.automationRows, which puts the real curves first).
+            let tint = e.item.customColor ?? viewModel.stemColor(for: e.item.id)
+            let isFuture = e.item.automation.allSatisfy { $0.points.isEmpty }
+            layers.append(tint.opacity(isFuture ? 0.05 : 0.10))
+        }
+        return layers
+    }
+
+    /// The opaque base of every `interiorPaint`: the editing area's background.
+    static let editingAreaBackground = Color(nsColor: .controlBackgroundColor)
+
+    // MARK: - Open groups' bands
+
+    /// One OPEN group's band, in the terms every layer that reads it needs: the display lanes it
+    /// covers, its colour, and whether the editing point is inside it. Built once per pass by
+    /// `inlineGroupBands`; the band layer, its rise and `interiorPaint` all read it.
+    struct InlineGroupBand {
+        let entry: LaneEntry
+        let span: Int                  // `childLaneCount`, asked of the group ONCE
+        let range: ClosedRange<Int>    // displayLane + 1 ... displayLane + span
+        let color: Color
+        let inside: Bool               // the caret / time selection / a selected object is in it
+    }
+
+    /// The bands of the open groups, in `laneEntries` order (the order they stack in).
+    /// `focused` = `focusedDisplayLanes`, computed by the caller ONCE for the whole pass.
+    func inlineGroupBands(_ groups: [LaneEntry], focused: Set<Int>) -> [InlineGroupBand] {
+        groups.map { entry in
+            let span = entry.item.childLaneCount
+            let range = (entry.displayLane + 1)...(entry.displayLane + max(1, span))
+            // `focused ∩ range ≠ ∅`, walking the SMALLER of the two.
+            let inside: Bool
+            if focused.isEmpty { inside = false }
+            else if focused.count < range.count { inside = focused.contains { range.contains($0) } }
+            else { inside = range.contains { focused.contains($0) } }
+            return InlineGroupBand(entry: entry, span: span, range: range,
+                                   color: entry.item.customColor ?? viewModel.stemColor(for: entry.item.id),
+                                   inside: inside)
+        }
+    }
+
+    /// The A/B switch of the Debug builds (`DebugRenderSwitches.forceRichBlocks`) also puts the
+    /// open groups' bands back on their old SwiftUI layers. Always false in Release.
+    private var forceRichBands: Bool {
+        #if DEBUG
+        DebugRenderSwitches.shared.forceRichBlocks
+        #else
+        false
+        #endif
+    }
+
+    /// One band, as the Canvas draws it: every number resolved before the drawing loop.
+    private struct GroupBandDrawing {
+        let color: Color
+        let inside: Bool
+        let bandTop: Double, bandH: Double          // the band: rows under the group's block
+        let lisX: Double, lisR: Double              // the top border's interruption, under the block
+        let riseX: Double, riseW: Double            // the rise under the block (hence its own span)
+        let riseTop: Double, riseH: Double
+        let riseLayers: [Color]                     // `interiorPaint`, opaque base first
+        let plus: CGPoint                           // the centre of the '+' of the drop lane
+    }
+
+    /// The bands of the open groups, in ONE Canvas — pure geometry, no interaction (it was one
+    /// ZStack of four rectangles, a rise and a '+' per open group, each as wide as the whole
+    /// timeline: ~2 ms of SwiftUI per open group). Everything is the old layers' own values:
+    ///  • the band `color.opacity(inside ? 0.22 : 0.11)`, its top border in TWO segments
+    ///    interrupted under the block (the group's material rises there) and its bottom border
+    ///    whole, `opacity(inside ? 0.8 : 0.35)`, 1 px;
+    ///  • the RISE under the block: the group's inside crosses the gutter and slips under the
+    ///    block's bottom rounded corners, painted with `interiorPaint` — the exact stack of the
+    ///    first inner row, so block and row match;
+    ///  • the '+' (64 pt, light, grey 0.45) in the drop lane, centred on the group's in/out range.
+    /// Culled to the viewport like the other Canvases, so a band is no longer a rectangle of
+    /// millions of pixels at a high zoom. Drawing order is the old one: group by group, band then
+    /// rise, so a nested group's tint stacks on its parent's.
+    private func groupBandsCanvas(_ bands: [InlineGroupBand]) -> some View {
+        let pps = pixelsPerSecond
+        let bandW = totalDuration * pps
+        let drawings: [GroupBandDrawing] = bands.map { band in
+            let entry = band.entry
+            let gY = rulerHeight + Double(entry.displayLane) * laneStep
+            // The group block's horizontal span in the MODEL's geometry, not a gesture preview
+            // (@see the old layer: the rise and the interruption belong to the band, which does
+            // not follow a movement under way).
+            let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pps
+            let gW = entry.item.isInfiniteBus ? bandW : max(1, entry.item.duration * pps)
+            let radius = entry.item.blockCornerRadius
+            let dropLaneY = rulerHeight + Double(entry.displayLane + band.span) * laneStep
+            return GroupBandDrawing(
+                color: band.color, inside: band.inside,
+                bandTop: gY + laneStep, bandH: Double(band.span) * laneStep,
+                lisX: min(max(0, gX), bandW), lisR: min(max(0, gX + gW), bandW),
+                riseX: gX, riseW: gW,
+                riseTop: gY + blockHeight - radius, riseH: laneGap + radius,
+                riseLayers: interiorPaint(for: entry, bands: bands),
+                // `Text` centred in a (groupW × blockHeight) frame at (absStart, dropLaneY): this
+                // is its centre. Not the infinite-aware span: the old layer used the duration.
+                plus: CGPoint(x: entry.absStart * pps + entry.item.duration * pps / 2,
+                              y: dropLaneY + blockHeight / 2))
+        }
+        let visX0 = Double(cullScrollX) - 1
+        let visX1 = Double(cullScrollX) + Double(cullViewportWidth) + 1
+        return Canvas { ctx, _ in
+            // A rectangle [x0, x1) × [y, y + h), cut to the visible columns.
+            func fillRect(_ x0: Double, _ x1: Double, y: Double, h: Double, _ color: Color) {
+                let a = max(x0, visX0), b = min(x1, visX1)
+                guard b > a, h > 0 else { return }
+                ctx.fill(Path(CGRect(x: a, y: y, width: b - a, height: h)), with: .color(color))
+            }
+            // The '+' is resolved once for all the groups, and only if one of them shows it.
+            var plus: GraphicsContext.ResolvedText?
+            for d in drawings {
+                let band = d.color.opacity(d.inside ? 0.22 : 0.11)
+                let border = d.color.opacity(d.inside ? 0.8 : 0.35)
+                fillRect(0, bandW, y: d.bandTop, h: d.bandH, band)
+                fillRect(0, d.lisX, y: d.bandTop, h: 1, border)
+                fillRect(d.lisR, bandW, y: d.bandTop, h: 1, border)
+                fillRect(0, bandW, y: d.bandTop + d.bandH - 1, h: 1, border)
+                for layer in d.riseLayers {
+                    fillRect(d.riseX, d.riseX + d.riseW, y: d.riseTop, h: d.riseH, layer)
+                }
+                // A glyph about 40 pt wide: drawn while any part of it can show.
+                if d.plus.x + 40 >= visX0 && d.plus.x - 40 <= visX1 {
+                    if plus == nil {
+                        plus = ctx.resolve(Text(verbatim: "+")
+                            .font(.system(size: 64, weight: .light))
+                            .foregroundColor(Color.gray.opacity(0.45)))
+                    }
+                    if let plus { ctx.draw(plus, at: d.plus, anchor: .center) }
+                }
+            }
+        }
+        .frame(width: bandW, height: canvasHeight, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    #if DEBUG
+    /// The OLD drawing of the open groups' bands — one SwiftUI layer stack per group — kept ONLY
+    /// for the Debug A/B switch (`DebugRenderSwitches.forceRichBlocks`), so that the Canvas above
+    /// can be compared with what it replaced, on the same project. Deliberately untouched by the
+    /// optimisations of the new path, `legacyInteriorPaint` included.
+    @ViewBuilder private func richGroupBands(_ inlineGroupEntries: [LaneEntry],
+                                             focusedLanes: Set<Int>) -> some View {
+        ForEach(inlineGroupEntries) { entry in
+            let gY     = rulerHeight + Double(entry.displayLane) * laneStep
+            let color  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
+            let span   = entry.item.childLaneCount
+            let bandH  = Double(span) * laneStep
+            let bandW  = totalDuration * pixelsPerSecond
+            let inside = !focusedLanes.isDisjoint(
+                with: (entry.displayLane + 1)...(entry.displayLane + span))
+            let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
+            let gW = entry.item.isInfiniteBus
+                   ? contentWidth : max(1, entry.item.duration * pixelsPerSecond)
+            let lisX = min(max(0, gX), bandW)
+            let lisR = min(max(0, gX + gW), bandW)
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(color.opacity(inside ? 0.22 : 0.11))
+                    .frame(width: bandW, height: bandH)
+                Rectangle()
+                    .fill(color.opacity(inside ? 0.8 : 0.35))
+                    .frame(width: lisX, height: 1)
+                Rectangle()
+                    .fill(color.opacity(inside ? 0.8 : 0.35))
+                    .frame(width: bandW - lisR, height: 1)
+                    .offset(x: lisR)
+                Rectangle()
+                    .fill(color.opacity(inside ? 0.8 : 0.35))
+                    .frame(width: bandW, height: 1)
+                    .offset(y: bandH - 1)
+            }
+            .frame(width: bandW, height: bandH, alignment: .topLeading)
+            .offset(x: 0, y: gY + laneStep)
+            .allowsHitTesting(false)
+
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(legacyInteriorPaint(for: entry).enumerated()), id: \.offset) { _, layer in
+                    Rectangle().fill(layer)
+                }
+            }
+            .frame(width: gW, height: laneGap + entry.item.blockCornerRadius)
+            .offset(x: gX, y: gY + blockHeight - entry.item.blockCornerRadius)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The old '+' layer of the open groups' drop lanes (Debug A/B only).
+    @ViewBuilder private func richGroupPluses(_ inlineGroupEntries: [LaneEntry]) -> some View {
+        ForEach(inlineGroupEntries) { entry in
+            let dropLaneY  = rulerHeight + Double(entry.displayLane + entry.item.childLaneCount) * laneStep
+            let groupStartX = entry.absStart * pixelsPerSecond
+            let groupW      = entry.item.duration * pixelsPerSecond
+            Text(verbatim: "+")
+                .font(.system(size: 64, weight: .light))
+                .foregroundColor(Color.gray.opacity(0.45))
+                .frame(width: groupW, height: blockHeight, alignment: .center)
+                .offset(x: groupStartX, y: dropLaneY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The OLD `interiorPaint`, as it was before the bands got a precomputed list: it rebuilds
+    /// `focusedDisplayLanes` and every open group's `childLaneCount` on each call. Debug A/B only.
+    func legacyInteriorPaint(for e: LaneEntry) -> [Color] {
         let lane = e.displayLane + 1                 // the row that opens just under the object
         var layers: [Color] = [Color(nsColor: .controlBackgroundColor)]
         if lane % 2 == 0 { layers.append(Color.black.opacity(0.02)) }
@@ -2068,6 +2243,7 @@ struct TimelineView: View {
         }
         return layers
     }
+    #endif
 
     /// True if the point falls inside the band of an open MIDI piano roll. Those areas are owned
     /// by PianoRollView (interactive); the canvas (tap/drag) has to ignore them so as not to lay

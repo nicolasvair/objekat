@@ -35,9 +35,11 @@ nonisolated struct TimelineRegimeStats: Sendable {
     /// an infinite bus). An infinite AUX is counted with the clips: it is not a group.
     var groupsRich = 0
     /// The inline BANDS of open groups drawn in the Canvas (the tinted rows under a group's
-    /// block). 0 until they have a batched path.
+    /// block, its rise and its '+'): one per OPEN group, culled or not — all of them are handed
+    /// to the one Canvas, which cuts them to the viewport itself. The production path.
     var groupBandsCanvas = 0
-    /// The same bands, drawn as SwiftUI views (one per open group, culled or not).
+    /// The same bands, drawn as SwiftUI views (one per open group). 0 in production: only the
+    /// Debug A/B switch (`DebugRenderSwitches.forceRichBlocks`) puts them back.
     var groupBandsRich = 0
     /// How many times the blocks layer has been evaluated since the last `reset`.
     var passes = 0

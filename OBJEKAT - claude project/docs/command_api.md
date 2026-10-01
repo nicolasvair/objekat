@@ -347,11 +347,11 @@ as a rich SwiftUI view of its own, and the two cost very differently, so this is
 "it is slow with many objects" question starts with. Fields: `clips_canvas`, `clips_rich` (every
 block that is not a group and kept a SwiftUI view — an aux and a MIDI clip always do),
 `groups_canvas`, `groups_rich` (a group's block, or an infinite group's band), `group_bands_canvas`,
-`group_bands_rich` (the tinted inline bands of the open groups, culled or not) — all of them the
+`group_bands_rich` (the tinted inline bands of the open groups — one per OPEN group, culled or not; they are in `group_bands_canvas` in production, `group_bands_rich` only under the Debug A/B switch) — all of them the
 counts of the LAST evaluation of the blocks layer, never summed across frames, visible blocks only
 (the viewport plus an 80 px margin) — and the two cumulative `passes` (evaluations of the blocks
 layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census {reset: true}`.
-`groups_canvas` and `group_bands_canvas` read 0 until those have a batched path. Zero everywhere in
+`groups_canvas` reads 0 until a group's block has a batched path. Zero everywhere in
 `--headless` mode: nothing is drawn there. `tools/bench_groups.py` prints them on its `setup` line.
 
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
@@ -490,9 +490,10 @@ it too, with no command needed: it is read live). There is no `window_h` on `vie
 already does exactly that, so the plan for this feature does not duplicate it.
 
 **`debug.force_rich_blocks {enabled}`** (`#if DEBUG`, `Commands+Runtime.swift`) is the A/B switch of
-the "selected clips in the batched Canvas" work (`Shared/DebugRenderSwitches.swift`): `true` forces
-every SELECTED clip back onto the rich SwiftUI view it used to be drawn with, `false` is the
-production behaviour (a selected clip drawn in the Canvas like the others). It is volatile — it
+the "everything rich" switch of the batched-Canvas work (`Shared/DebugRenderSwitches.swift`): `true`
+forces every SELECTED clip back onto the rich SwiftUI view it used to be drawn with AND the bands of
+the OPEN groups (tint, rise, '+') back onto their old SwiftUI layers; `false` is the production
+behaviour (both drawn in the Canvas). It is volatile — it
 writes nothing into the user's settings, as a test must not — and answers `{was, enabled}`. The
 persistent form is the preference `objekat.debug.forceRichBlocks`, read once at launch:
 `defaults write org.labelpeche.objekat objekat.debug.forceRichBlocks -bool YES` then relaunch
