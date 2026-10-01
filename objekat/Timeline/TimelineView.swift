@@ -2793,7 +2793,7 @@ struct TimelineView: View {
     /// The tools whose overlays the batched Canvas draws (@see `ToolOverlayPartition`). A tool that
     /// is not in this set keeps the regime it had before the Canvas drew anything over a block:
     /// every block rich under Volume / Pan / Aux, the hovered one under Stem.
-    private static let canvasTools: Set<ToolOverlayPartition.Tool> = [.volume, .pan]
+    private static let canvasTools: Set<ToolOverlayPartition.Tool> = [.volume, .pan, .stem]
 
     /// What the active tool contributes to the partition, read ONCE per pass (and only under a
     /// tool: `toolHoveredID`, the drags and the send focus are not read otherwise, so a hover under
