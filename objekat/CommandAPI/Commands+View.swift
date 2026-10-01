@@ -321,6 +321,105 @@ extension CommandRegistry {
             return .object(o)
         }
 
+        register("input.drag",
+                 summary: """
+                 Drags with the left button through the app's event queue: a real press, `dragged` \
+                 events along a straight line, a release — met by the same `DragGesture` as a hand's \
+                 (the move, trim, resize, fade, time selection, rubber band… whichever the start \
+                 point falls on). `x`/`y` = where the button goes down (default: the centre), \
+                 `to_x`/`to_y` = where it goes (or `dx`/`dy` = the travel); both inside the VISIBLE \
+                 timeline. `release: false` keeps the button down at the end, so that the state \
+                 UNDER the gesture can be read (`perf.census`, `view.state.hover`…); `input.release` \
+                 then lets go. Modifiers: the events carry them, but the drag handlers read the \
+                 HARDWARE's (`NSEvent.modifierFlags`), which a synthetic event does not change — a \
+                 ⌥-copy cannot be driven from here. UI mode only.
+                 """,
+                 params: [ParamSpec("to_x", "number", required: false, "End x in the visible timeline."),
+                          ParamSpec("to_y", "number", required: false, "End y in the visible timeline."),
+                          ParamSpec("dx", "number", required: false, "Travel in x instead of `to_x` (positive = right)."),
+                          ParamSpec("dy", "number", required: false, "Travel in y instead of `to_y` (positive = down)."),
+                          ParamSpec("duration_ms", "number", required: false, "Press → release, moving (default 600)."),
+                          ParamSpec("rate_hz", "number", required: false, "Drag events per second (default 120)."),
+                          ParamSpec("hold_ms", "number", required: false, "Pause between the press and the first move (default 0)."),
+                          ParamSpec("release", "bool", required: false, "Let go at the end (default true); false = `input.release` later."),
+                          ParamSpec("modifiers", "array<string>", required: false, "shift, cmd, alt, ctrl (see the summary).")]
+                         + Self.runParams) { p in
+            guard Self.heldDrag == nil else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a drag is still held: call input.release first")
+            }
+            let host = try InputSynth.timelineHost()
+            // A press on a window that is not KEY is a "first mouse": AppKit makes the window key
+            // and throws the press away, and the rest of the drag has no press to belong to.
+            // Happens when the app cannot come to the front (screen locked, display asleep).
+            if try p.bool("activate", or: true) {
+                try InputSynth.activate()
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            guard host.window?.isKeyWindow == true else {
+                throw CommandError(code: .invalid_state,
+                                   message: "the timeline's window is not key (screen locked or app in the background?): a synthetic press would be swallowed")
+            }
+            let visible = host.visibleRect
+            let start = try Self.viewportPoint(p)
+                ?? CGPoint(x: visible.width / 2, y: visible.height / 2)
+            let end = CGPoint(x: try p.optionalDouble("to_x") ?? (Double(start.x) + (try p.double("dx", or: 0))),
+                              y: try p.optionalDouble("to_y") ?? (Double(start.y) + (try p.double("dy", or: 0))))
+            guard end != start else {
+                throw CommandError(code: .bad_params,
+                                   message: "no travel: give 'to_x'/'to_y' or 'dx'/'dy'")
+            }
+            let flags = try InputSynth.flags(try Self.strings(p, "modifiers"))
+            let rate = try Self.positive(p, "rate_hz", or: 120)
+            let steps = max(1, Int((try Self.positive(p, "duration_ms", or: 600) / 1000 * rate).rounded()))
+            var path: [InputSynth.Target] = []
+            for i in 0...steps {
+                let f = Double(i) / Double(steps)
+                path.append(try InputSynth.target(atViewport: CGPoint(x: Double(start.x) + (Double(end.x) - Double(start.x)) * f,
+                                                                      y: Double(start.y) + (Double(end.y) - Double(start.y)) * f)))
+            }
+            let release = try p.bool("release", or: true)
+            Self.mouseNumber += 1
+            let number = Self.mouseNumber
+            let inputs = GestureShape.drag(path: path, number: number, periodMs: 1000 / rate,
+                                           holdMs: try p.double("hold_ms", or: 0),
+                                           release: release, flags: flags)
+            guard case .object(var o) = try await Self.run(inputs, p, hover: true) else { return .null }
+            if !release, let last = path.last { Self.heldDrag = (last, number, flags) }
+            o["drag"] = .object(["from": Self.pointJSON(start), "to": Self.pointJSON(end),
+                                 "steps": .int(steps), "released": .bool(release)])
+            return .object(o)
+        }
+
+        register("input.release",
+                 summary: """
+                 Lets go of the left button held by `input.drag` with `release: false`, at the \
+                 point the drag ended on — the gesture commits there. Answers how long the timeline \
+                 took to come back to rest.
+                 """,
+                 params: [ParamSpec("route", "string", required: false, "auto (default) | cgevent | post | send.")]) { p in
+            guard let held = Self.heldDrag else {
+                throw CommandError(code: .invalid_state, message: "no drag is held")
+            }
+            let host = try InputSynth.timelineHost()
+            let route = try Self.route(p)
+            Self.heldDrag = nil
+            let probe = InputProbe.shared
+            probe.retain(); defer { probe.release() }
+            probe.resetCounters()
+            let outcome = await InputPump.run(
+                [TimedInput(at: 0, kind: .mouse(kind: .up, target: held.target, flags: held.flags,
+                                                number: held.number, dx: 0, dy: 0))],
+                target: held.target, route: route)
+            let deadline = Date().addingTimeInterval(2)
+            while probe.syntheticSeen < outcome.posted, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+            let settledMs = await Self.waitViewAtRest(host)
+            return .object(["released": .bool(true), "events_posted": .int(outcome.posted),
+                            "events_seen": .int(probe.syntheticSeen), "settle_ms": .number(settledMs)])
+        }
+
         register("input.record.start",
                  summary: """
                  Starts recording the scroll and key events the timeline receives, real or not — \
@@ -404,8 +503,11 @@ extension CommandRegistry {
                  summary: """
                  Checks, route by route (cgevent / post / send), that a synthetic scroll reaches \
                  the timeline's monitors with its phases intact and really moves the view (40 pt \
-                 sideways and back). Says which route `auto` will take. Run it once on a new machine \
-                 or macOS.
+                 sideways and back). Says which route `auto` will take. Then the DRAG canary: a \
+                 short left-button drag on an empty spot of the timeline, which must reach the \
+                 monitors, carry the right window and point, and start a gesture (a time selection \
+                 appears — the selection, the caret and the cursor are put back). Run it once on a \
+                 new machine or macOS.
                  """,
                  params: [ParamSpec("activate", "bool", required: false, "Bring the window to the front (default true).")]) { p in
             if try p.bool("activate", or: true) { try InputSynth.activate() }
@@ -418,8 +520,9 @@ extension CommandRegistry {
                 if chosen == nil, row["ok"]?.boolValue == true { chosen = route }
             }
             Self.autoRoute = chosen
+            let drag = try await Self.probeDrag(chosen ?? .post)
             return .object(["routes": .object(rows), "auto": .stringOrNull(chosen?.rawValue),
-                            "build": .string(Self.buildKind)])
+                            "drag": drag, "build": .string(Self.buildKind)])
         }
 
         // MARK: perf.frames.*
@@ -459,6 +562,10 @@ extension CommandRegistry {
     // MARK: - Shared machinery
 
     private static var frameSession: FrameRecording? = nil
+    /// A drag left with its button down (`input.drag` with `release: false`): where to let go.
+    private static var heldDrag: (target: InputSynth.Target, number: Int64, flags: CGEventFlags)? = nil
+    /// The event number of the last drag — one per press..release, like the window server's.
+    private static var mouseNumber: Int64 = 0
     /// Set by `input.selftest`; nil = not measured yet, `auto` then means `post` — the route
     /// measured to work on 24 September 2026 (macOS 15). `cgevent` (`postToPid`) never reached
     /// the app there: nothing is delivered, no error either.
@@ -707,6 +814,102 @@ extension CommandRegistry {
                     TimedInput(at: t + holdMs / 1000,
                                kind: .key(code: code, down: false, flags: flags, characters: characters))]
         }
+    }
+
+    /// A spot of the visible timeline where a 60 pt drag to the right grabs NOTHING: no block, no
+    /// bus, no band, on any row (rows an object expands over count as its own). In viewport
+    /// coordinates; nil when the whole visible area is occupied.
+    private static func emptyDragSpot(_ vm: EditViewModel, _ host: NSView) -> CGPoint? {
+        guard let probe = vm.verticalSnapProbe?() else { return nil }
+        let v = host.visibleRect
+        let pps = vm.pixelsPerSecond
+        guard pps > 0, probe.laneStep > 0 else { return nil }
+        let entries = vm.laneEntries
+        let firstRow = max(0, Int(((Double(v.minY) - probe.rulerHeight) / probe.laneStep).rounded(.down)))
+        let lastRow = Int(((Double(v.maxY) - probe.rulerHeight) / probe.laneStep).rounded(.up))
+        guard lastRow >= firstRow else { return nil }
+        for row in firstRow...lastRow {
+            let canvasY = probe.rulerHeight + Double(row) * probe.laneStep + vm.blockHeight / 2
+            let yv = canvasY - Double(v.minY)
+            guard yv >= 4, yv <= Double(v.height) - 4 else { continue }
+            var xv = 24.0
+            while xv + 100 <= Double(v.width) {
+                let x0 = Double(v.minX) + xv - 6, x1 = x0 + 72
+                let occupied = entries.contains { e in
+                    guard row >= e.displayLane, row <= e.displayLane + max(0, e.expandedSpan) else { return false }
+                    if e.item.isInfiniteBus { return true }
+                    return e.absStart * pps < x1 && (e.absStart + e.item.duration) * pps > x0
+                }
+                if !occupied { return CGPoint(x: xv, y: yv) }
+                xv += 40
+            }
+        }
+        return nil
+    }
+
+    /// The canary of `input.drag`: press, a few moves, release, on an empty spot. What it proves,
+    /// in order — the three events reached the monitors; AppKit puts them in the timeline's
+    /// window at the point aimed at (the private `CGEventSetWindowLocation` still works); and the
+    /// `DragGesture` took them (an empty-spot drag with the selection tool traces a time
+    /// selection, which would not exist otherwise). The selection, the caret and the cursor are
+    /// restored. With no empty spot to try, `ran: false` and `ok: null` — never a false alarm.
+    private static func probeDrag(_ route: InputSynth.Route) async throws -> JSONValue {
+        let vm = try CommandContext.shared.requireViewModel()
+        let host = try InputSynth.timelineHost()
+        guard vm.activeTool == .toolSelection else {
+            return .object(["ran": .bool(false), "ok": .null,
+                            "reason": .string("the selection tool is not armed")])
+        }
+        guard let spot = emptyDragSpot(vm, host) else {
+            return .object(["ran": .bool(false), "ok": .null,
+                            "reason": .string("no empty spot in the visible timeline")])
+        }
+        let steps = 6
+        var path: [InputSynth.Target] = []
+        for i in 0...steps {
+            path.append(try InputSynth.target(atViewport: CGPoint(x: Double(spot.x) + 60 * Double(i) / Double(steps),
+                                                                  y: Double(spot.y))))
+        }
+        let savedSelection = vm.timeSelection, savedIDs = vm.selectedIDs
+        let savedCursor = vm.cursorPosition, savedCaret = vm.caretLane
+        // What AppKit makes of the press, before anything is posted.
+        let press = InputSynth.mouseEvent(kind: .down, flags: [], target: path[0], number: 0, dx: 0, dy: 0)
+        let ns = press.flatMap { NSEvent(cgEvent: $0) }
+
+        let probe = InputProbe.shared
+        probe.retain(); defer { probe.release() }
+        probe.resetCounters()
+        mouseNumber += 1
+        let outcome = await InputPump.run(
+            GestureShape.drag(path: path, number: mouseNumber, periodMs: 16, holdMs: 0,
+                              release: true, flags: []),
+            target: path[0], route: route)
+        let deadline = Date().addingTimeInterval(1)
+        while probe.syntheticSeen < outcome.posted, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        try? await Task.sleep(for: .milliseconds(120))
+        let traced = vm.timeSelection != nil && vm.timeSelection != savedSelection
+        vm.timeSelection = savedSelection
+        vm.selectedIDs = savedIDs
+        vm.cursorPosition = savedCursor
+        vm.caretLane = savedCaret
+
+        let windowOK = ns?.window?.windowNumber == host.window?.windowNumber
+        let locOK = ns.map { hypot($0.locationInWindow.x - path[0].appKitWindowPoint.x,
+                                   $0.locationInWindow.y - path[0].appKitWindowPoint.y) < 0.75 } ?? false
+        let seenAll = probe.syntheticSeen == outcome.posted
+        return .object([
+            "ran": .bool(true),
+            "posted": .int(outcome.posted),
+            "seen_by_monitor": .int(probe.syntheticSeen),
+            "event_window": .int(ns?.window?.windowNumber ?? -1),
+            "timeline_window": .int(host.window?.windowNumber ?? -1),
+            "event_location_in_window": Self.pointJSON(ns?.locationInWindow),
+            "wanted_location_in_window": Self.pointJSON(path[0].appKitWindowPoint),
+            "gesture_started": .bool(traced),
+            "ok": .bool(seenAll && windowOK && locOK && traced),
+        ])
     }
 
     /// One route of `input.selftest`: a 1-px trackpad scroll down then back up, and what came of it.

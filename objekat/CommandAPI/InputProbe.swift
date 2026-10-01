@@ -38,8 +38,49 @@ final class InputProbe {
 
     var isActive: Bool { listeners > 0 || recording != nil }
 
-    func retain() { listeners += 1 }
-    func release() { listeners = max(0, listeners - 1) }
+    func retain() {
+        listeners += 1
+        if listeners == 1 { installMouseMonitor() }
+    }
+    func release() {
+        listeners = max(0, listeners - 1)
+        if listeners == 0 { removeMouseMonitor() }
+    }
+
+    // MARK: Mouse (a drag has no timeline monitor to hang a hook on)
+
+    /// The timeline takes a left-button gesture through SwiftUI (`DragGesture`), not through a
+    /// monitor of its own — so there is no first line of a handler to call `observe` from. A
+    /// monitor of ours counts the synthetic and the real mouse events instead, for as long as
+    /// someone listens (`retain`). It only COUNTS (a drag is not recorded or replayed): `run`
+    /// waits on `syntheticSeen` to know every posted event has gone through `NSApp.sendEvent`.
+    /// Like the other monitors it returns the event untouched. The order AppKit calls local
+    /// monitors in is undocumented, so an event another monitor swallows would not be counted
+    /// here: `run`'s deadline covers it.
+    private var mouseMonitor: Any?
+
+    private func installMouseMonitor() {
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { event in
+            MainActor.assumeIsolated { InputProbe.shared.countMouse(event) }
+            return event
+        }
+    }
+
+    private func removeMouseMonitor() {
+        if let m = mouseMonitor { NSEvent.removeMonitor(m) }
+        mouseMonitor = nil
+    }
+
+    private func countMouse(_ event: NSEvent) {
+        if InputSynth.isSynthetic(event) {
+            syntheticSeen += 1
+            lastSyntheticUptime = ProcessInfo.processInfo.systemUptime
+        } else {
+            realSeen += 1
+        }
+    }
 
     func resetCounters() { syntheticSeen = 0; realSeen = 0 }
 

@@ -83,8 +83,8 @@ names the block aimed at) and prints it as `hover landed n/5` (n/a under Aux, wh
 send knob). `perf.census` is read at pps 5 with the tool armed: the setup line carries the
 `rich_reasons` and the ForEach total.
 
-NOT measured: DRAGGING a block (`input.drag` does not exist — TODO, see docs/command_api.md): the
-`preview` / `spill` rich reasons cannot be put on screen by a script, so a drag has to be felt by hand.
+NOT measured here: DRAGGING a block. `input.drag` exists since E7 (docs/command_api.md) and
+`tools/bench_preview_drag.py` measures it (the `preview` / `spill` rich reasons).
 """
 
 import argparse, json, os, shutil, statistics, sys, tempfile, time

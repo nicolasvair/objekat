@@ -169,6 +169,43 @@ enum InputSynth {
         return e
     }
 
+    /// The three moments of a left-button drag.
+    enum MouseKind: String, Sendable {
+        case down, dragged, up
+        nonisolated var cgType: CGEventType {
+            switch self {
+            case .down:    return .leftMouseDown
+            case .dragged: return .leftMouseDragged
+            case .up:      return .leftMouseUp
+            }
+        }
+    }
+
+    /// One left-button event at `target`. `dx`/`dy` are the travel since the previous event (what
+    /// `NSEvent.deltaX/Y` reads); `number` is the gesture's event number (one per press..release,
+    /// as the window server numbers them). As for a real press, the click count is 1 and the
+    /// pressure 1 while the button is down, 0 on release.
+    ///
+    /// Mouse events are NOT hit-tested by the app from their global point: `NSApp.sendEvent` hands
+    /// them to `window`, which hit-tests `locationInWindow` — hence the same raw field 51 and the
+    /// same private `CGEventSetWindowLocation` as the scroll (@see `stamp`).
+    nonisolated static func mouseEvent(kind: MouseKind, flags: CGEventFlags, target: Target,
+                                       number: Int64, dx: Double, dy: Double,
+                                       timestamp: CGEventTimestamp? = nil) -> CGEvent? {
+        guard let e = CGEvent(mouseEventSource: nil, mouseType: kind.cgType,
+                              mouseCursorPosition: target.globalPoint, mouseButton: .left) else {
+            return nil
+        }
+        e.flags = flags
+        e.setIntegerValueField(.mouseEventClickState, value: 1)
+        e.setIntegerValueField(.mouseEventNumber, value: number)
+        e.setDoubleValueField(.mouseEventPressure, value: kind == .up ? 0 : 1)
+        e.setDoubleValueField(.mouseEventDeltaX, value: dx)
+        e.setDoubleValueField(.mouseEventDeltaY, value: dy)
+        stamp(e, target: target, timestamp: timestamp)
+        return e
+    }
+
     /// Raw field 51 of a CGEvent: the window the event is FOR. Undocumented, and the one
     /// `NSEvent(cgEvent:)` reads to fill `window` — measured on 24 September 2026 (macOS 15):
     /// without it `window` is nil, the monitors see the event and the scroll view never does,
@@ -291,6 +328,10 @@ struct TimedInput: Sendable {
                     phase: InputSynth.ScrollPhase, momentum: InputSynth.MomentumPhase,
                     flags: CGEventFlags)
         case key(code: CGKeyCode, down: Bool, flags: CGEventFlags, characters: String?)
+        /// A left-button event. Carries its OWN target: the pointer moves during a drag, where a
+        /// scroll or a key press is aimed at one point for the whole sequence.
+        case mouse(kind: InputSynth.MouseKind, target: InputSynth.Target, flags: CGEventFlags,
+                   number: Int64, dx: Double, dy: Double)
     }
     let at: Double
     let kind: Kind
@@ -351,6 +392,9 @@ nonisolated final class InputPump: @unchecked Sendable {
             case let .key(code, down, flags, characters):
                 event = InputSynth.keyEvent(keyCode: code, down: down, flags: flags,
                                             characters: characters, target: target, timestamp: when)
+            case let .mouse(kind, own, flags, number, dx, dy):
+                event = InputSynth.mouseEvent(kind: kind, flags: flags, target: own, number: number,
+                                              dx: dx, dy: dy, timestamp: when)
             }
             if let event { InputSynth.deliver(event, route: route); posted += 1 } else { failed += 1 }
         }
@@ -409,6 +453,33 @@ enum GestureShape {
         out.append(TimedInput(at: t + period, kind: .scroll(dx: 0, dy: 0, precise: true,
                                                             phase: .none, momentum: .end,
                                                             flags: flags)))
+        return out
+    }
+
+    /// A left-button drag along a straight line: press at `path[0]`, one `dragged` event per
+    /// step to the following points, then (if `release`) the button up at the last point. The
+    /// points are the caller's: one target per step, resolved on the main actor beforehand.
+    /// `holdMs` is the pause between the press and the first move, `periodMs` the step interval.
+    static func drag(path: [InputSynth.Target], number: Int64, periodMs: Double, holdMs: Double,
+                     release: Bool, flags: CGEventFlags) -> [TimedInput] {
+        guard let first = path.first else { return [] }
+        var out: [TimedInput] = [
+            TimedInput(at: 0, kind: .mouse(kind: .down, target: first, flags: flags, number: number,
+                                           dx: 0, dy: 0))]
+        var t = holdMs / 1000
+        var prev = first
+        for target in path.dropFirst() {
+            t += periodMs / 1000
+            out.append(TimedInput(at: t, kind: .mouse(
+                kind: .dragged, target: target, flags: flags, number: number,
+                dx: Double(target.globalPoint.x - prev.globalPoint.x),
+                dy: Double(target.globalPoint.y - prev.globalPoint.y))))
+            prev = target
+        }
+        if release {
+            out.append(TimedInput(at: t + periodMs / 1000, kind: .mouse(
+                kind: .up, target: prev, flags: flags, number: number, dx: 0, dy: 0)))
+        }
         return out
     }
 

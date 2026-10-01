@@ -460,7 +460,8 @@ long that took, and `view_after` is read after it.
 | `input.record.start` / `.stop` | records what the timeline's monitors see (real or synthetic), with `t` relative to the first event |
 | `input.replay` | replays a recording through the same pump (`speed` stretches time) |
 | `input.scenario` | `steps: [{cmd, params} | {wait_ms}]`, measured as a whole plus a report per step (the steps' own `measure` is forced off) |
-| `input.selftest` | see above |
+| `input.drag` / `input.release` | a left-button drag and the release of one kept down (see the E7 note below) |
+| `input.selftest` | see above, plus the drag canary |
 | `perf.frames.start` / `.stop` | a frame recording wrapped around anything, for long tests (`samples: true` adds every interval) |
 
 Shared parameters of the gestures: `x`, `y`, `route`, `activate`, `hover`, `measure`
@@ -564,10 +565,30 @@ Two things nothing headless could set before, and that decide how the timeline d
   the whole batch — with `color_index` 0…15 into the object palette, or absent / null to go back to
   the stem's colour. A coloured clip is drawn by the batched Canvas like any other (its name band and
   its border are part of phase 1), so painting 600 clips no longer puts anything on the rich path.
-- **Not implemented, on purpose (TODO): `input.drag`.** A synthetic mouse drag (down, moved, up
-  through the app's queue, the way `input.scroll` goes) is what measuring a gesture's frames would
-  need — `preview`, `spill`, the rich blocks a drag makes — and is out of this harness's scope.
-  Until it exists, a drag has to be felt by hand.
+- **`input.drag` / `input.release` (E7).** A synthetic left-button drag through the app's queue,
+  the way `input.scroll` goes: a press, `dragged` events along a straight line, a release. They are
+  real `CGEvent`s (`leftMouseDown/Dragged/Up`, click state 1, pressure 1 then 0, one event number per
+  gesture) stamped with the same raw field 51 and the private `CGEventSetWindowLocation` as the
+  scroll, so `NSApp.sendEvent` hands them to the timeline's window, which hit-tests
+  `locationInWindow` and gives them to the same SwiftUI `DragGesture` as a hand's. Parameters:
+  `x`, `y` (where the button goes down), `to_x`/`to_y` or `dx`/`dy` (both inside the VISIBLE
+  timeline), `duration_ms` (default 600), `rate_hz` (120), `hold_ms` (0), `release` (default true),
+  `modifiers`. `release: false` keeps the button down at the end, so the state UNDER the gesture
+  can be read (`perf.census`, `view.state.hover`, `object.get`…); `input.release` then lets go at
+  the point the drag ended on and answers once the view is at rest. The answer is the usual gesture
+  report (`frames` cover the press and the moves, not the release when it is deferred) plus `drag`.
+  Traps: (1) the window must be KEY — a press on a window that is not is a "first mouse" that AppKit
+  swallows; with the screen locked or the display asleep the app cannot come to the front and the
+  command answers `invalid_state` (and `perf.frames` would count 0 frames anyway: `caffeinate -u`
+  wakes the display, an unlock is the user's). A merely background app is brought to the front by `open <path>/objekat.app` (LaunchServices; `NSApp.activate` no longer steals the focus on macOS 14+). (2) The drag handlers read the HARDWARE's modifiers
+  (`NSEvent.modifierFlags`) and the events' own flags do not change them: a ⌥-copy or a ⇧-drag
+  cannot be driven from here. (3) The zone the press falls on decides the gesture, exactly as for a
+  hand (the upper half of a block is the time-selection zone, the lower half moves it): aim with
+  `view.state.hover`. (4) The mouse monitor that counts the events is installed only while a
+  command listens. `input.selftest` ends with a drag canary (`drag` in its answer): a 60 pt drag on an
+  empty spot that must reach the monitors, carry the right window and point, and start a gesture (a
+  time selection appears; it, the caret, the selection and the cursor are put back); `ran: false`,
+  `ok: null` when there is no empty spot or the selection tool is not armed.
 
 ### The tools
 
