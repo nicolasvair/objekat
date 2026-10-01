@@ -28,11 +28,12 @@ struct ToolSendLayer: View {
     var visibleWidth: Double? = nil
 
     /// Where the columns lie: one definition, shared with the hit-testing (@see sendColumnsLayout).
-    private var layout: (origin: Double, width: Double) {
-        sendColumnsLayout(blockWidth: blockWidth, leadingInset: leadingInset, count: rows.count,
-                          visibleX: visibleX, visibleWidth: visibleWidth)
+    private var layout: (origin: Double, width: Double, columnWidth: Double) {
+        ToolOverlayGeometry.sendLayout(blockWidth: blockWidth, leadingInset: leadingInset,
+                                       count: rows.count,
+                                       visibleX: visibleX, visibleWidth: visibleWidth)
     }
-    private var colW: Double { sendColWidth(blockWidth: layout.width, count: rows.count) }
+    private var colW: Double { layout.columnWidth }
 
     var body: some View {
         Color.clear
@@ -56,8 +57,9 @@ struct ToolSendLayer: View {
     private func sendColView(_ row: SendRow) -> some View {
         let routed = row.enabled && row.level > sendMinDb
         let accent: Color = routed ? .red : .white.opacity(0.35)
-        let showText = colW >= 34 && blockHeight >= 48
-        let knobD = max(11, min(colW - 12, blockHeight - sendToggleZoneHeight - (showText ? 32 : 6), 26))
+        let showText = ToolOverlayGeometry.sendShowsText(columnWidth: colW, blockHeight: blockHeight)
+        let knobD = ToolOverlayGeometry.sendKnobDiameter(columnWidth: colW, blockHeight: blockHeight,
+                                                         showText: showText)
 
         ZStack {
             // The column's background: emphasised if focused.
@@ -117,47 +119,16 @@ struct ToolSendLayer: View {
         }
     }
 
-    /// A rotary knob: a background arc plus a value arc (red), and a pointer. A 270° sweep.
+    /// A rotary knob: a background arc plus a value arc (red), and a pointer. A 270° sweep — drawn by
+    /// `drawSendKnob` (ToolOverlayDrawing.swift), which the Canvas blocks share. The automation lock
+    /// (faded knob + glyph) stays this layer's own, drawn above.
     private func knob(level: Float, enabled: Bool, focused: Bool) -> some View {
         Canvas { ctx, size in
-            let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let r = min(size.width, size.height) / 2 - 2
-            let startA = Angle.degrees(135)
-            let sweep  = 270.0
-            let frac   = Double((level.clamped(to: sendMinDb...sendMaxDb) - sendMinDb)
-                                 / (sendMaxDb - sendMinDb))
-            let valA   = Angle.degrees(135 + sweep * frac)
-
-            // The background arc
-            var bg = Path()
-            bg.addArc(center: c, radius: r, startAngle: startA,
-                      endAngle: .degrees(135 + sweep), clockwise: false)
-            ctx.stroke(bg, with: .color(.white.opacity(0.22)),
-                       style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-
-            // The value arc
-            if frac > 0.001 {
-                var val = Path()
-                val.addArc(center: c, radius: r, startAngle: startA,
-                           endAngle: valA, clockwise: false)
-                let col: Color = enabled ? .red : .white.opacity(0.4)
-                if focused && enabled {
-                    ctx.stroke(val, with: .color(.red.opacity(0.35)),
-                               style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                }
-                ctx.stroke(val, with: .color(col),
-                           style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-            }
-
-            // The pointer
-            let px = c.x + cos(valA.radians) * r
-            let py = c.y + sin(valA.radians) * r
-            ctx.fill(Path(ellipseIn: CGRect(x: px - 2.2, y: py - 2.2, width: 4.4, height: 4.4)),
-                     with: .color(enabled ? .red : .white.opacity(0.6)))
+            drawSendKnob(ctx, level: level, enabled: enabled, focused: focused, size: size)
         }
     }
 
     private func levelString(_ db: Float) -> String {
-        db <= sendMinDb ? "-∞" : String(format: "%.0f", db)
+        ToolOverlayGeometry.sendLevelLabel(db: db, minDb: sendMinDb)
     }
 }

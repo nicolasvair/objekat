@@ -25,8 +25,7 @@ struct ToolVolumeLayer: View {
     var span: (x: Double, width: Double)? = nil
 
     private var volumeLevelString: String {
-        if object.volume <= -96 { return "-∞ dB" }
-        return String(format: "%.0f dB", object.volume)
+        ToolOverlayGeometry.volumeLabel(db: object.volume, compact: false)
     }
 
     var body: some View {
@@ -36,14 +35,15 @@ struct ToolVolumeLayer: View {
                 if forceShow && showFullOverlay {
                     ZStack(alignment: .topLeading) {
                         // A full-block veil: it signals volume mode over the whole clip.
-                        Color.black.opacity(0.80)
+                        Color.black.opacity(ToolOverlayGeometry.volumeFullVeilOpacity)
                         // The controls (mute / ± / level) bounded by the block's visible portion.
                         GeometryReader { geo in
                             let sx = span?.x ?? 0
                             let sw = span?.width ?? geo.size.width
                             ZStack(alignment: .topLeading) {
                                 if object.isMuted {
-                                    Color.red.opacity(0.22).frame(width: sw * 0.4)
+                                    Color.red.opacity(ToolOverlayGeometry.volumeMuteTintOpacity)
+                                        .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(spanWidth: sw))
                                 }
                                 HStack(spacing: 0) {
                                     // — Mute (40%) —
@@ -56,9 +56,10 @@ struct ToolVolumeLayer: View {
                                         }
                                         .foregroundStyle(object.isMuted ? Color.red : Color.white.opacity(0.6))
                                     }
-                                    .frame(width: sw * 0.4)
+                                    .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(spanWidth: sw))
 
-                                    Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1)
+                                    Rectangle().fill(Color.white.opacity(0.2))
+                                        .frame(width: ToolOverlayGeometry.volumeDividerWidth)
 
                                     // — +/− (20%) —
                                     VStack(spacing: 0) {
@@ -72,9 +73,10 @@ struct ToolVolumeLayer: View {
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                                     }
-                                    .frame(width: sw * 0.2 - 2)
+                                    .frame(width: ToolOverlayGeometry.volumeStepColumnWidth(spanWidth: sw))
 
-                                    Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1)
+                                    Rectangle().fill(Color.white.opacity(0.2))
+                                        .frame(width: ToolOverlayGeometry.volumeDividerWidth)
 
                                     // — Drag (40%) —
                                     ZStack {
@@ -87,7 +89,7 @@ struct ToolVolumeLayer: View {
                                                 .foregroundStyle(Color.white.opacity(0.4))
                                         }
                                     }
-                                    .frame(width: sw * 0.4 - 2)
+                                    .frame(width: ToolOverlayGeometry.volumeDragColumnWidth(spanWidth: sw))
                                 }
                                 .frame(width: sw)
                             }
@@ -112,8 +114,7 @@ struct ToolVolumeLayerMinimal: View {
     var span: (x: Double, width: Double)? = nil
 
     private var volumeLevelString: String {
-        if object.volume <= -96 { return "-∞" }
-        return String(format: "%.0f dB", object.volume)
+        ToolOverlayGeometry.volumeLabel(db: object.volume, compact: true)
     }
 
     private var level: some View {
@@ -127,8 +128,8 @@ struct ToolVolumeLayerMinimal: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            Color.black.opacity(0.65)
-            if object.isMuted { Color.red.opacity(0.20) }
+            Color.black.opacity(ToolOverlayGeometry.volumeMinimalVeilOpacity)
+            if object.isMuted { Color.red.opacity(ToolOverlayGeometry.volumeMinimalMuteTintOpacity) }
             if let span {
                 level.frame(width: span.width).offset(x: span.x)
             } else {

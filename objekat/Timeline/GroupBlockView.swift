@@ -204,24 +204,28 @@ struct GroupBlockView: View {
 
             // Volume overlay
             if activeTool == .toolVolume {
-                let isNarrow = blockWidth < 50
+                // The rules (narrow = < 50 px, who shows what) are ToolOverlayGeometry's, shared
+                // with the gestures and the Canvas drawing.
+                let plan = ToolOverlayGeometry.volumePlan(blockWidth: blockWidth, isSelected: isSelected,
+                                                          isToolHovered: isToolHovered)
                 // A NARROW block keeps the culling window's span (`needed: false`): its label is a
                 // few pixels wide, and following the exact scroll costs a re-evaluation per frame
                 // for every block a viewport edge can cut — measured on 480 narrow blocks.
-                withToolSpan(needed: !isNarrow && (isSelected || isToolHovered)) { span in
-                    if isSelected || isNarrow {
+                withToolSpan(needed: plan.needsExactSpan) { span in
+                    if plan.showMinimal {
                         ToolVolumeLayerMinimal(object: group, span: span)
                     }
-                    ToolVolumeLayer(object: group, showFullOverlay: !isNarrow, forceShow: isToolHovered, span: span)
+                    ToolVolumeLayer(object: group, showFullOverlay: !ToolOverlayGeometry.isNarrow(blockWidth: blockWidth),
+                                    forceShow: isToolHovered, span: span)
                 }
             }
 
             // Pan overlay
             if activeTool == .toolPan {
-                let isNarrow = blockWidth < 50
-                let shown = isSelected || isNarrow || isToolHovered
-                withToolSpan(needed: !isNarrow && shown) { span in
-                    ToolPanLayer(object: group, alwaysShowOverlay: shown, span: span)
+                let plan = ToolOverlayGeometry.panPlan(blockWidth: blockWidth, isSelected: isSelected,
+                                                       isToolHovered: isToolHovered)
+                withToolSpan(needed: plan.needsExactSpan) { span in
+                    ToolPanLayer(object: group, alwaysShowOverlay: plan.shown, span: span)
                 }
             }
 

@@ -583,7 +583,8 @@ extension TimelineView {
         let localX = point.x - span.x
         let localY = point.y - hitByY
 
-        if localX < span.width * 0.4 {
+        let zone = ToolOverlayGeometry.volumeZone(localX: localX, spanWidth: span.width)
+        if zone == .mute {
             viewModel.edit { viewModel.toggleMuteSelected() }
             return
         }
@@ -592,12 +593,9 @@ extension TimelineView {
         // as the signal view's and the inspector's value boxes (@see DragValueBox.onTouch). Mute, on
         // the other hand, is not automatable: its zone names nothing.
         recordToolTouch(.volume)
-        if localX < span.width * 0.6 {
-            if localY < blockHeight * 0.5 {
-                viewModel.edit { viewModel.adjustVolumeDB(1) }
-            } else {
-                viewModel.edit { viewModel.adjustVolumeDB(-1) }
-            }
+        if zone == .step {
+            let dir = ToolOverlayGeometry.volumeStepDirection(localY: localY, blockHeight: blockHeight)
+            viewModel.edit { viewModel.adjustVolumeDB(Float(dir)) }
         }
     }
 
@@ -643,9 +641,11 @@ extension TimelineView {
                                blockWidth: max(e.item.duration * pixelsPerSecond, 2),
                                scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
         let localX = point.x - span.x
-        if localX < span.width * 0.4 { return L("help.mute.zone") }
-        if localX < span.width * 0.6 { return L("help.volume.clickZone") }
-        return L("help.volume.dragZone")
+        switch ToolOverlayGeometry.volumeZone(localX: localX, spanWidth: span.width) {
+        case .mute: return L("help.mute.zone")
+        case .step: return L("help.volume.clickZone")
+        case .drag: return L("help.volume.dragZone")
+        }
     }
 
     // MARK: - Pan tap (grabbing the parameter)
@@ -682,7 +682,7 @@ extension TimelineView {
         viewModel.sendToolFocus = SendFocus(objectID: hit.clipID, auxID: hit.auxID)
         // The bottom of the column = the on/off button; elsewhere = merely focusing.
         let localY = point.y - hit.by
-        if localY >= blockHeight - sendToggleZoneHeight - 4 {
+        if ToolOverlayGeometry.sendToggleHit(localY: localY, blockHeight: blockHeight) {
             // A clip grabbed inside a multiple selection → it flips the send of every object
             // overlapping that aux (mute-style: if one is left off, turn them all on).
             if viewModel.selectedIDs.count > 1 && viewModel.selectedIDs.contains(hit.clipID) {
