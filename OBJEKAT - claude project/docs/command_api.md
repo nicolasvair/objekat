@@ -1000,6 +1000,20 @@ holding an edge, which watched the zone go on growing out of the end it was not 
 "start"` or `pin: "end"` holds that edge of the zone described by `start` and `width`, and clamps
 the WIDTH instead. Compare `requested_width` with `zone.width` to know that it bit.
 
+Two more facts about the gesture, neither of which a script can reach (the API has no pointer) —
+the arithmetic underneath them is `crossfade.open` with `start`/`pin`, asserted by
+`tools/scenario_crossfade_grab.py`. A **fade handle of an object engaged in a crossfade is that
+crossfade's side, wherever on the handle band the hand lands**: the band is a quarter of the block
+(up to 50 px), the zone is often narrower, and the part of the band beyond the zone used to change
+ONE fade and leave the other at the old overlap — which stops the pair being a crossfade. Its
+fade-in is the zone's start side, its fade-out the end side; a double click there closes the
+crossfade (both fades) like a double click in the zone. And with **several objects selected**, a
+drag of a crossfade takes the others of the selection along, by the SAME travel, each keeping its
+own width and place: a side drives every selected object's crossfade on that same side, the whole
+zone (top and bottom triangles) every crossfade touching a selected object; a zone grabbed with
+neither of its objects selected moves alone. One undo point for the whole drag. The decisions are
+`Shared/CrossfadeGrab.swift`, asserted by `tools/test_crossfade_grab.swift`.
+
 A crossfade is **created by pulling a fade out past its object's edge** onto the neighbour it
 touches: the fade overflows the join, and the overlap it makes IS the crossfade. The join itself is
 not a target — it is a line with no surface, exactly where the two blocks' own trim and resize
