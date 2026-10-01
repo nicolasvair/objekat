@@ -3010,15 +3010,19 @@ struct TimelineView: View {
     private func clipRichReason(_ entry: LaneEntry, forceRichSelected: Bool = false,
                                 tools: ToolPartitionContext) -> RichReason? {
         let item = entry.item
-        // An aux / group → a rich view. A MIDI clip is drawn by the Canvas (its notes:
-        // `MidiNotesDrawing`) unless its piano roll is open, or its loop's IN / OUT is being dragged
-        // (the live bounds are the rich view's).
+        // A MIDI clip is drawn by the Canvas (its notes: `MidiNotesDrawing`) unless its piano roll
+        // is open, or its loop's IN / OUT is being dragged (the live bounds are the rich view's).
+        // An aux is drawn by the Canvas too (its glyph chequerboard: `GlyphTileDrawing`), except an
+        // INFINITE one, which `InfiniteBusBandView` replaces (the same reason as an infinite group).
         switch item.kind {
         case .clip: break
         case .midiClip:
             if item.showsPianoRollInline { return .midi }
             if loopRangeDrag?.id == item.id { return .preview }
-        default: return .aux
+        case .aux:
+            if item.isInfiniteBus { return .infinite }
+        case .group:
+            return .aux   // the partition never asks a group here (it tests `isGroup` first)
         }
         // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
         // few hundred selected clips were a few hundred rich views, and the timeline fell to
@@ -3240,6 +3244,22 @@ struct TimelineView: View {
                             color: stem, muted: item.isMuted, dim: isDim(item))
                         continue
                     }
+                    if item.isAux {
+                        // No waveform: the 'receives' glyph chequerboard in the block's effective
+                        // colour, clipped to its (large) rounded corners, and bounded to the
+                        // viewport's columns and rows.
+                        guard rect.maxY >= rows.y0, rect.minY <= rows.y1 else { continue }
+                        var ac = ctx
+                        if isDim(item) { ac.opacity = 0.25 }
+                        ac.clip(to: RoundedRectangle(cornerRadius: item.blockCornerRadius).path(in: rect))
+                        ac.translateBy(x: x, y: y)
+                        GlyphTileDrawing.draw(
+                            into: ac, size: CGSize(width: w, height: blockHeight),
+                            color: (item.customColor ?? stem).opacity(0.7), tile: 30, glyphSize: 17,
+                            iconName: "arrow.down.right.circle",
+                            visibleX: (Double(cullScrollX) - x - 1)...(Double(cullScrollX) + Double(cullViewportWidth) - x + 1))
+                        continue
+                    }
                     guard w >= 3 else { continue }
 
                     if isDim(item) {
@@ -3423,7 +3443,8 @@ struct TimelineView: View {
 
                     if needsMute {
                         var rr = Path()
-                        rr.addRoundedRect(in: rect, cornerSize: CGSize(width: 4, height: 4))
+                        let veilR = item.blockCornerRadius
+                        rr.addRoundedRect(in: rect, cornerSize: CGSize(width: veilR, height: veilR))
                         c.fill(rr, with: .color(.black.opacity(0.38)))
                     }
 

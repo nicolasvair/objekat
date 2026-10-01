@@ -582,21 +582,8 @@ struct GlyphTilePattern: View {
 
     var body: some View {
         Canvas { ctx, size in
-            let flake = Text(Image(systemName: iconName))
-                .font(.system(size: glyphSize, weight: .semibold))
-                .foregroundColor(color)
-            var row = 0
-            var y: CGFloat = tile / 2
-            while y < size.height + tile {
-                let xOffset: CGFloat = (row % 2 == 0) ? 0 : tile / 2   // staggered
-                var x = tile / 2 + xOffset
-                while x < size.width + tile {
-                    ctx.draw(flake, at: CGPoint(x: x, y: y))
-                    x += tile
-                }
-                y += tile
-                row += 1
-            }
+            GlyphTileDrawing.draw(into: ctx, size: size, color: color, tile: tile,
+                                  glyphSize: glyphSize, iconName: iconName)
         }
     }
 }
