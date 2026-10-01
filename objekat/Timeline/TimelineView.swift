@@ -116,6 +116,14 @@ struct TimelineView: View {
     /// The width to cull: the real viewport plus the possible notch of lag. @see cullScrollX
     private var cullViewportWidth: CGFloat { viewportWidth + Self.cullStepPx }
 
+    /// The VERTICAL notch, same contract as `cullScrollX`: the real vertical scroll rounded down to a
+    /// multiple of `cullStepPx`. The layers that iterate lanes (the bands, the tints, the masks,
+    /// the time selection and the carets…) cull on `[cullScrollY, cullScrollY + cullViewportHeight]`
+    /// instead of walking everything the timeline holds: what a frame costs follows what is SHOWN.
+    @State private var cullScrollY: CGFloat = 0
+    /// The height to cull: the real viewport plus the possible notch of lag. @see cullScrollY
+    private var cullViewportHeight: CGFloat { viewportHeight + Self.cullStepPx }
+
     // MARK: Zoom session
     // A zoom (the wheel, a drag or a scroll on the pill, a pinch) is a GESTURE, not a series of
     // independent notches: its anchor — the point that must not move under the fingers — is
@@ -489,19 +497,12 @@ struct TimelineView: View {
     var body: some View {
         ScrollView([.horizontal, .vertical], showsIndicators: true) {
             ZStack(alignment: .topLeading) {
-                // Alternating background bands
-                // (The `ForEach` layers below report their element count to
+                // Alternating background bands: ONE Canvas that only draws the rows the viewport
+                // shows (it was one SwiftUI rectangle per row, thousands of nodes on a tall
+                // timeline). (The `ForEach` layers below report their element count to
                 // `TimelineRegimeMeter.recordLayer`, one write per layer per pass: the number every
                 // "how many SwiftUI nodes does this layer cost" question starts with.)
-                let laneRows = visibleLanes
-                let _ = TimelineRegimeMeter.recordLayer("lane_rows", elements: laneRows)
-                ForEach(0..<laneRows, id: \.self) { lane in
-                    Rectangle()
-                        .fill(lane % 2 == 0 ? Color.black.opacity(0.02) : Color.black.opacity(0.0))
-                        .frame(width: totalDuration * pixelsPerSecond, height: laneStep)
-                        .offset(x: 0, y: rulerHeight + Double(lane) * laneStep)
-                        .allowsHitTesting(false)
-                }
+                laneBandsCanvas(laneRows: visibleLanes)
 
                 // The background of the INNER lanes of an expanded group (nesting included): 'those rows
                 // are in this group'. Tinted with the group's colour (custom, otherwise the stem's),
@@ -540,19 +541,8 @@ struct TimelineView: View {
                 // A sub-lane background for MIDI clips whose piano roll is open: the same principle
                 // as the expanded groups' band (it clarifies the MIDI clip's inside), more discreetly
                 // — the piano roll covers the band anyway.
-                let pianoRollTints = viewModel.laneEntries.filter { $0.item.showsPianoRollInline }
-                let _ = TimelineRegimeMeter.recordLayer("piano_roll_tints", elements: pianoRollTints.count)
-                ForEach(pianoRollTints) { entry in
-                    let gY    = rulerHeight + Double(entry.displayLane) * laneStep
-                    let color = viewModel.stemColor(for: entry.item.id)
-                    ForEach(0..<SoundObject.pianoRollLaneSpan, id: \.self) { ci in
-                        Rectangle()
-                            .fill(color.opacity(0.06))
-                            .frame(width: totalDuration * pixelsPerSecond, height: laneStep)
-                            .offset(x: 0, y: gY + Double(1 + ci) * laneStep)
-                            .allowsHitTesting(false)
-                    }
-                }
+                // ONE Canvas, from the cached list of the open objects.
+                pianoRollTintsCanvas()
 
                 // The '+' of each open group's drop lane is drawn by the bands' Canvas above (the
                 // piano-roll tint just before touches only a MIDI clip's own sub-lanes, never a
@@ -925,34 +915,9 @@ struct TimelineView: View {
                 // roll). It greys the outside of the content out so as to focus on the inside. See SoundObject.expandedSpan.
                 // An infinite bus: no range any more → no out-of-range. Its inside is open over
                 // the whole timeline, so no grey mask.
-                let rangeMasks = viewModel.laneEntries.filter { $0.expandedSpan > 0 && !$0.item.isInfiniteBus }
-                let _ = TimelineRegimeMeter.recordLayer("range_masks", elements: rangeMasks.count)
-                ForEach(rangeMasks) { entry in
-                    let span = entry.expandedSpan
-                    let item   = entry.item
-                    let subY   = rulerHeight + Double(entry.displayLane + 1) * laneStep
-                    let laneH  = Double(span) * laneStep
-                    // A trim/resize under way: the mask's bounds follow the hand, otherwise the veil
-                    // stayed at the old bounds and the inside was only revealed on release — the
-                    // gesture looked as if it MOVED the group's start.
-                    let gs     = item.startTime * pixelsPerSecond + previewTrimDX(for: item)
-                    let ge     = (item.startTime + item.duration) * pixelsPerSecond + previewResizeDX(for: item)
-                    let totalW = totalDuration * pixelsPerSecond
-                    if gs > 0 {
-                        Rectangle()
-                            .fill(Color.black.opacity(0.28))
-                            .frame(width: gs, height: laneH)
-                            .offset(x: 0, y: subY)
-                            .allowsHitTesting(false)
-                    }
-                    if ge < totalW {
-                        Rectangle()
-                            .fill(Color.black.opacity(0.28))
-                            .frame(width: totalW - ge, height: laneH)
-                            .offset(x: ge, y: subY)
-                            .allowsHitTesting(false)
-                    }
-                }
+                // ONE Canvas, ABOVE the blocks' own (declared after them, no zIndex: the same place the
+                // old per-object rectangles had), drawing only the masks that meet the viewport.
+                rangeMasksCanvas()
 
                 // The 'objects / automations' hem of the objects that have both to show (a group, a MIDI
                 // clip): INSIDE the block, risen from the lower edge — its belonging is beyond question,
@@ -1190,6 +1155,7 @@ struct TimelineView: View {
             viewModel.viewScrollY = Double(y)
             scrollFollow.offset.y = y
             followScrollDuringDrag()
+            refreshCullWindow()     // the vertical notch: same contract as the horizontal one
         }
         // D7 — the safety net: anything else that can leave `scrollY` between two lanes while
         // snapped (the scroller dragged by hand, a drag-follow scroll, a stray gesture) is caught
@@ -2178,6 +2144,121 @@ struct TimelineView: View {
             }
         }
         .frame(width: bandW, height: canvasHeight, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: - Background layers drawn by Canvas (E1)
+
+    /// The columns every culled layer draws: the viewport's notch window, clamped to the content.
+    private var cullColumns: (x0: Double, x1: Double) {
+        let bandW = totalDuration * pixelsPerSecond
+        return (max(0, Double(cullScrollX) - 1),
+                min(bandW, Double(cullScrollX) + Double(cullViewportWidth) + 1))
+    }
+
+    /// The vertical window every culled layer draws, in canvas coordinates (@see cullScrollY).
+    private var cullRows: (y0: Double, y1: Double) {
+        (Double(cullScrollY) - 1, Double(cullScrollY) + Double(cullViewportHeight) + 1)
+    }
+
+    /// The lane bands (every EVEN row is tinted, the odd ones are bare): ONE Canvas, bounded to the
+    /// viewport's rows and columns, in place of one SwiftUI rectangle per row. Same colour, same
+    /// geometry (a `laneStep`-tall row, the full width) as the layer it replaces.
+    private func laneBandsCanvas(laneRows: Int) -> some View {
+        let step = laneStep, ruler = rulerHeight
+        let bandW = totalDuration * pixelsPerSecond
+        let (x0, x1) = cullColumns
+        let win = cullRows
+        let rows = LaneCulling.rows(y0: win.y0, y1: win.y1, rulerHeight: ruler, laneStep: step,
+                                    count: laneRows)
+        let tint = Color.black.opacity(0.02)
+        return Canvas { ctx, _ in
+            guard x1 > x0 else { return }
+            for lane in rows where lane % 2 == 0 {
+                ctx.fill(Path(CGRect(x: x0, y: ruler + Double(lane) * step,
+                                     width: x1 - x0, height: step)),
+                         with: .color(tint))
+            }
+        }
+        .frame(width: bandW, height: canvasHeight, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    /// The sub-lane background of the MIDI clips whose piano roll is open, tinted with the clip's
+    /// stem colour: ONE Canvas, from the view model's cached list of open objects (never a filter
+    /// over every entry of the timeline), culled to the viewport. The band's two sub-lanes touch,
+    /// so they are one rectangle; each was a `laneStep`-tall rectangle of the same translucent
+    /// colour before.
+    private func pianoRollTintsCanvas() -> some View {
+        struct Tint { let y: Double; let h: Double; let color: Color }
+        let step = laneStep, ruler = rulerHeight
+        let bandW = totalDuration * pixelsPerSecond
+        let (x0, x1) = cullColumns
+        let win = cullRows
+        let tints: [Tint] = viewModel.expandedLaneEntries.compactMap { entry in
+            guard entry.item.showsPianoRollInline else { return nil }
+            let top = ruler + Double(entry.displayLane + 1) * step
+            let h = Double(SoundObject.pianoRollLaneSpan) * step
+            guard LaneCulling.meets(top: top, height: h, y0: win.y0, y1: win.y1) else { return nil }
+            return Tint(y: top, h: h, color: viewModel.stemColor(for: entry.item.id).opacity(0.06))
+        }
+        return Canvas { ctx, _ in
+            guard x1 > x0 else { return }
+            for t in tints {
+                ctx.fill(Path(CGRect(x: x0, y: t.y, width: x1 - x0, height: t.h)),
+                         with: .color(t.color))
+            }
+        }
+        .frame(width: bandW, height: canvasHeight, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    /// The out-of-range masks of OPEN objects (the zones before / after the played range, inside
+    /// the unfolded band of sub-lanes). A SHARED mechanism driven by `expandedSpan`: an expanded
+    /// group (the band = the children) AND an open MIDI clip (the band = the piano roll). It greys
+    /// the outside of the content out so as to focus on the inside. An infinite bus has no range any
+    /// more, hence no out-of-range: no mask. ONE Canvas, resolved HERE (the preview deltas of a trim
+    /// under way included: the mask's bounds follow the hand, otherwise the veil stayed at the old
+    /// bounds and the inside was only revealed on release) and culled to the viewport's rows and
+    /// columns. The caller declares it AFTER the blocks, with no zIndex — the z-order of the layer
+    /// it replaces: above the Canvas's blocks, below the selected rich ones (1).
+    private func rangeMasksCanvas() -> some View {
+        struct Mask { let y: Double; let h: Double; let gs: Double; let ge: Double }
+        let step = laneStep, ruler = rulerHeight
+        let totalW = totalDuration * pixelsPerSecond
+        let (x0, x1) = cullColumns
+        let win = cullRows
+        var masks: [Mask] = []
+        for entry in viewModel.expandedLaneEntries where !entry.item.isInfiniteBus {
+            let item = entry.item
+            let top = ruler + Double(entry.displayLane + 1) * step
+            let h = Double(entry.expandedSpan) * step
+            guard LaneCulling.meets(top: top, height: h, y0: win.y0, y1: win.y1) else { continue }
+            let gs = item.startTime * pixelsPerSecond + previewTrimDX(for: item)
+            let ge = (item.startTime + item.duration) * pixelsPerSecond + previewResizeDX(for: item)
+            masks.append(Mask(y: top, h: h, gs: gs, ge: ge))
+        }
+        let veil = Color.black.opacity(0.28)
+        return Canvas { ctx, _ in
+            guard x1 > x0 else { return }
+            for m in masks {
+                // The part before the start [0, gs) and the part after the end [ge, totalW),
+                // each cut to the visible columns.
+                if m.gs > 0 {
+                    let a = x0, b = min(x1, m.gs)
+                    if b > a {
+                        ctx.fill(Path(CGRect(x: a, y: m.y, width: b - a, height: m.h)), with: .color(veil))
+                    }
+                }
+                if m.ge < totalW {
+                    let a = max(x0, m.ge), b = x1
+                    if b > a {
+                        ctx.fill(Path(CGRect(x: a, y: m.y, width: b - a, height: m.h)), with: .color(veil))
+                    }
+                }
+            }
+        }
+        .frame(width: totalW, height: canvasHeight, alignment: .topLeading)
         .allowsHitTesting(false)
     }
 
@@ -4132,6 +4213,8 @@ struct TimelineView: View {
         let step = Self.cullStepPx
         let bucket = (scrollAnchor.x / step).rounded(.down) * step
         if bucket != cullScrollX { cullScrollX = bucket }
+        let bucketY = (scrollAnchor.y / step).rounded(.down) * step
+        if bucketY != cullScrollY { cullScrollY = bucketY }
     }
 
     // MARK: - Vertical lane snap: framing (D5, D6.5, D9, D10)

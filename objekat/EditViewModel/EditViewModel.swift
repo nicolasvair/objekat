@@ -945,8 +945,17 @@ final class EditViewModel {
         // sort per open group) every time. The top-level entries are the ones that carry the
         // spans already computed by the build.
         totalExtraLanes = laneEntries.reduce(0) { $1.depth == 0 ? $0 + $1.expandedSpan : $0 }
+        // The open objects alone (an unfolded group, an open piano roll, an open automation band):
+        // what the layers that only concern them — the piano rolls' tints, the out-of-range masks —
+        // iterate, instead of filtering every entry of the timeline on each pass.
+        expandedLaneEntries = laneEntries.filter { $0.expandedSpan > 0 }
         referencedAudioPathsCache = nil
     }
+
+    /// The entries of `laneEntries` that reserve rows under themselves (`expandedSpan > 0`), in the
+    /// same order. Rebuilt with `laneEntries` (the same funnel, so as stale as it is during a
+    /// coalesced mutation, and no more). Usually a handful, whatever the project holds.
+    private(set) var expandedLaneEntries: [LaneEntry] = []
 
     /// Σ `expandedSpan` over the TOP-LEVEL objects — what the timeline adds to its lane count for
     /// the rows open groups / piano rolls / automation bands take. Rebuilt with `laneEntries`
