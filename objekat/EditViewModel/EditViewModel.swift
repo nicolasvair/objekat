@@ -940,8 +940,12 @@ final class EditViewModel {
     /// drag/scroll frame) → the cache removes an O(N²) repeated on the main thread.
     private(set) var laneEntries: [LaneEntry] = []
     private var laneEntriesRebuildDepth = 0
+    /// @see EditViewModel+LaneEntryIndex — the spatial index over `laneEntries`, built lazily by the
+    /// first hit-test and DROPPED in `rebuildLaneEntries`, in the same breath as the list itself.
+    @ObservationIgnored var laneEntryIndexCache: LaneEntryIndex? = nil
 
     func rebuildLaneEntries() {
+        laneEntryIndexCache = nil
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
         // The total of the rows the open objects reserve: the timeline's `canvasHeight` reads it
         // some fifteen times per pass, and it used to be an `expandedSpan` sum (an `occupiedLanes`

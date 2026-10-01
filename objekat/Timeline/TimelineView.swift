@@ -874,7 +874,7 @@ struct TimelineView: View {
 
                 if viewModel.activeTool == .toolCut, cutDrag == nil,
                    let hover = cutHover,
-                   let entry = viewModel.laneEntries.first(where: { $0.item.id == hover.id }) {
+                   let entry = viewModel.laneEntry(forID: hover.id) {
                     let absX = entry.absStart * pixelsPerSecond + hover.localX
                     let by   = rulerHeight + Double(entry.displayLane) * laneStep
                     Rectangle()
@@ -1406,12 +1406,8 @@ struct TimelineView: View {
         if viewModel.activeTool != .toolSelection, editZoneHover != nil { editZoneHover = nil }
         switch viewModel.activeTool {
         case .toolCut:
-            guard let entry = viewModel.laneEntries.first(where: { e in
-                let bx = e.absStart * pixelsPerSecond
-                let bw = max(e.item.duration * pixelsPerSecond, 2)
-                let by = rulerHeight + Double(e.displayLane) * laneStep
-                return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + blockHeight
-            }) else { TimelineCursorKeeper.set(NSCursor.arrow); cutHover = nil; return }
+            guard let entry = blockEntry(at: pos)
+            else { TimelineCursorKeeper.set(NSCursor.arrow); cutHover = nil; return }
             // Uniform handling top-level / children (depth immaterial).
             let bx     = entry.absStart * pixelsPerSecond
             let bw     = max(entry.item.duration * pixelsPerSecond, 2)
@@ -1501,12 +1497,7 @@ struct TimelineView: View {
             }
         case .toolStemAssign:
             // A 'pointer' cursor on a paintable object, an arrow elsewhere.
-            let overItem = viewModel.laneEntries.contains { e in
-                let bx = e.absStart * pixelsPerSecond
-                let bw = max(e.item.duration * pixelsPerSecond, 2)
-                let by = rulerHeight + Double(e.displayLane) * laneStep
-                return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + blockHeight
-            }
+            let overItem = blockEntry(at: pos) != nil
             TimelineCursorKeeper.set(overItem ? NSCursor.pointingHand : NSCursor.arrow)
         }
     }
@@ -1555,12 +1546,7 @@ struct TimelineView: View {
     /// `handleCanvasDrag` (side handles, the upper half = fade / range selection, the lower half =
     /// trim / move, a set fade's triangle taking priority) — see `ClipEditZone.resolve`.
     func selectionZoneHover(at pos: CGPoint) -> (hover: EditZoneHover, item: SoundObject)? {
-        guard let entry = viewModel.laneEntries.first(where: { e in
-            let bx = e.absStart * pixelsPerSecond
-            let bw = max(e.item.duration * pixelsPerSecond, 2)
-            let by = rulerHeight + Double(e.displayLane) * laneStep
-            return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + blockHeight
-        }) else { return nil }
+        guard let entry = blockEntry(at: pos) else { return nil }
 
         let bx      = entry.absStart * pixelsPerSecond
         let bw      = max(entry.item.duration * pixelsPerSecond, 2)
@@ -1621,12 +1607,7 @@ struct TimelineView: View {
             if toolHoveredID != nil { toolHoveredID = nil }
             return
         }
-        let entry = viewModel.laneEntries.first { e in
-            let bx = e.absStart * pixelsPerSecond
-            let bw = max(e.item.duration * pixelsPerSecond, 2)
-            let by = rulerHeight + Double(e.displayLane) * laneStep
-            return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + blockHeight
-        }
+        let entry = blockEntry(at: pos)
         let newID = entry?.item.id
         if toolHoveredID != newID { toolHoveredID = newID }
     }
@@ -1697,7 +1678,7 @@ struct TimelineView: View {
     /// (`SoundObject.blockCornerRadius`): the halo then hugs the block instead of cutting its
     /// corners — visible above all on a GROUP, which is very rounded.
     private func linkTarget(for id: UUID) -> LinkTarget? {
-        guard let entry = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        guard let entry = viewModel.laneEntry(forID: id) else { return nil }
         return linkTarget(for: entry)
     }
 
@@ -1776,7 +1757,7 @@ struct TimelineView: View {
     }
 
     private func clipRect(for id: UUID) -> CGRect? {
-        guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        guard let e = viewModel.laneEntry(forID: id) else { return nil }
         return clipRect(for: e)
     }
 
