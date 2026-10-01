@@ -78,31 +78,24 @@ struct GroupBlockView: View {
     private var laneStep: Double { blockHeight + laneGap }
     private var effectiveColor: Color { group.customColor ?? stemColor }
 
-    private var blockWidth: Double {
-        let natural = group.duration * pixelsPerSecond + previewResizeDX - previewTrimDX
-        return max(natural, 2)
+    /// Everything that depends on a gesture under way is read from ONE definition shared with the
+    /// batched Canvas (@see BlockPreviewGeometry). A group shows its fades as they are (no
+    /// compression), and its effective start is where the window's left edge now stands: the
+    /// children do not move, the window moves over them.
+    private var geo: BlockPreviewGeometry {
+        BlockPreviewGeometry(object: group, pixelsPerSecond: pixelsPerSecond,
+                             previewOffset: previewOffset,
+                             resizeDX: previewResizeDX, trimDX: previewTrimDX,
+                             previewFadeIn: previewFadeIn, previewFadeOut: previewFadeOut,
+                             previewFadeInCurve: previewFadeInCurve,
+                             previewFadeOutCurve: previewFadeOutCurve,
+                             previewLoopRange: previewLoopRange)
     }
-
-    private var xPos: Double {
-        (group.startTime * pixelsPerSecond) + previewTrimDX + (previewOffset?.dx ?? 0)
-    }
-
-    /// The group's effective start during a left trim under way (a preview). The edge follows the
-    /// hand, but the children DO NOT MOVE: their startTime is absolute, and it is the group's
-    /// window that moves over them. Without that effective start, the composite was drawn relative
-    /// to the old edge while the block had already moved → the whole inside slid with the edge
-    /// ('it shifts the start') instead of being revealed / covered. See `effectiveSourceOffset`
-    /// in SoundBlockView, which plays exactly the same part for a clip.
-    /// `previewTrimDX` is already set on the whole pixel (see its definition): the composite is
-    /// sampled per pixel column, and a fractional delta would make it crawl — but the alignment
-    /// has to come from the SAME offset as `xPos`, otherwise the composite slides inside its block.
-    private var effectiveStartTime: Double {
-        guard previewTrimDX != 0, pixelsPerSecond > 0 else { return group.startTime }
-        return group.startTime + previewTrimDX / pixelsPerSecond
-    }
-
+    private var blockWidth: Double { geo.blockWidth }
+    private var xPos: Double { geo.xPos }
+    private var effectiveStartTime: Double { geo.effectiveStartTime }
     private var yPos: Double {
-        rulerHeight + Double(displayLane) * laneStep + (previewOffset?.dy ?? 0)
+        geo.yPos(rulerHeight: rulerHeight, displayLane: displayLane, laneStep: laneStep)
     }
 
     /// Hands `content` the block's visible sub-window (in LOCAL coordinates) on which to lay the
@@ -115,23 +108,20 @@ struct GroupBlockView: View {
                         needed: needed, content: content)
     }
 
-    private var effectiveFadeIn:  Double { previewFadeIn  ?? group.fadeIn  }
-    private var effectiveFadeOut: Double { previewFadeOut ?? group.fadeOut }
-    private var effectiveFadeInCurve:  FadeCurve { previewFadeInCurve  ?? group.fadeInCurve  }
-    private var effectiveFadeOutCurve: FadeCurve { previewFadeOutCurve ?? group.fadeOutCurve }
-    private var fadeInPx:  Double { effectiveFadeIn  * pixelsPerSecond }
-    private var fadeOutPx: Double { effectiveFadeOut * pixelsPerSecond }
+    private var effectiveFadeIn:  Double { geo.effectiveFadeIn }
+    private var effectiveFadeOut: Double { geo.effectiveFadeOut }
+    private var effectiveFadeInCurve:  FadeCurve { geo.effectiveFadeInCurve }
+    private var effectiveFadeOutCurve: FadeCurve { geo.effectiveFadeOutCurve }
+    private var fadeInPx:  Double { geo.fadeInPx }
+    private var fadeOutPx: Double { geo.fadeOutPx }
 
     /// The loop's IN/OUT bounds for display (px local to the block), @see SoundBlockView.loopMarkerPx.
-    private var loopMarkerPx: (start: Double, end: Double)? {
-        guard let r = previewLoopRange else { return nil }
-        return (r.start * pixelsPerSecond, r.end * pixelsPerSecond)
-    }
+    private var loopMarkerPx: (start: Double, end: Double)? { geo.loopMarkerPx }
 
     // The group's amplitude modifier (gain/fade/mute), applied to the composite of the
     // children by GroupWaveformView. Effective values (a drag preview included).
     private var rootMod: WaveformShaping.Modifier {
-        let effDur = max(0.01, group.duration + (previewResizeDX - previewTrimDX) / pixelsPerSecond)
+        let effDur = geo.effectiveDuration
         return GroupWaveformDrawing.rootModifier(
             for: group, absStart: effectiveStartTime, duration: effDur,
             fadeIn: effectiveFadeIn, fadeOut: effectiveFadeOut,

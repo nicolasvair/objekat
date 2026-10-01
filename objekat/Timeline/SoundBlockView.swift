@@ -80,50 +80,26 @@ struct SoundBlockView: View {
     @State private var editLabel: String = ""
     @FocusState private var renameFocused: Bool
 
-    // The effective length during a trim/resize (a preview)
-    private var effectiveDuration: Double {
-        max(0.01, object.duration + (previewResizeDX - previewTrimDX) / pixelsPerSecond)
+    /// Everything that depends on a gesture under way — length, fades, place, source offset, loop —
+    /// is read from ONE definition shared with the batched Canvas (@see BlockPreviewGeometry).
+    private var geo: BlockPreviewGeometry {
+        BlockPreviewGeometry(object: object, pixelsPerSecond: pixelsPerSecond,
+                             previewOffset: previewOffset,
+                             resizeDX: previewResizeDX, trimDX: previewTrimDX,
+                             previewFadeIn: previewFadeIn, previewFadeOut: previewFadeOut,
+                             previewFadeInCurve: previewFadeInCurve,
+                             previewFadeOutCurve: previewFadeOutCurve,
+                             previewLoopRange: previewLoopRange)
     }
-    // The effective fades: a fade drag preview takes priority, otherwise the stored values,
-    // then we apply the same compression logic as updateTrim/updateDuration so that the
-    // preview reflects the crop in real time.
-    private var effectiveFades: (fi: Double, fo: Double) {
-        var fi = previewFadeIn  ?? object.fadeIn
-        var fo = previewFadeOut ?? object.fadeOut
-        let D = effectiveDuration
-        if previewTrimDX != 0 {
-            // crop in, left
-            if D < fo { fo = D; fi = 0 }
-            else if D < fi + fo { fi = D - fo }
-        } else if previewResizeDX != 0 {
-            // crop out, right
-            if D < fi { fi = D; fo = 0 }
-            else if D < fi + fo { fo = D - fi }
-        } else {
-            // no trim/resize: the dragged fade takes priority, the other gives way
-            if fi + fo > D {
-                if previewFadeIn != nil  { fo = max(0, D - fi) }
-                else if previewFadeOut != nil { fi = max(0, D - fo) }
-                else { fi = min(fi, D * 0.5); fo = min(fo, D * 0.5) }
-            }
-        }
-        return (fi, fo)
-    }
-    private var effectiveFadeIn: Double  { effectiveFades.fi }
-    private var effectiveFadeOut: Double { effectiveFades.fo }
-    private var fadeInPx: Double  { effectiveFadeIn  * pixelsPerSecond }
-    private var fadeOutPx: Double { effectiveFadeOut * pixelsPerSecond }
-    // The shape being dragged takes priority over the stored one, exactly as the length does:
-    // the block shows what one is about to get, the straightening included.
-    private var effectiveFadeInCurve:  FadeCurve { previewFadeInCurve  ?? object.fadeInCurve  }
-    private var effectiveFadeOutCurve: FadeCurve { previewFadeOutCurve ?? object.fadeOutCurve }
-
-    /// The loop's IN/OUT bounds for display (px local to the block): a drag preview takes priority,
-    /// otherwise the bounds that are set. `nil` if the object does not loop.
-    private var loopMarkerPx: (start: Double, end: Double)? {
-        guard let r = previewLoopRange else { return nil }
-        return (r.start * pixelsPerSecond, r.end * pixelsPerSecond)
-    }
+    private var effectiveDuration: Double { geo.effectiveDuration }
+    private var effectiveFadeIn: Double  { geo.effectiveFadeIn }
+    private var effectiveFadeOut: Double { geo.effectiveFadeOut }
+    private var fadeInPx: Double  { geo.fadeInPx }
+    private var fadeOutPx: Double { geo.fadeOutPx }
+    private var effectiveFadeInCurve:  FadeCurve { geo.effectiveFadeInCurve }
+    private var effectiveFadeOutCurve: FadeCurve { geo.effectiveFadeOutCurve }
+    /// The loop's IN/OUT bounds for display (px local to the block). `nil` if the object does not loop.
+    private var loopMarkerPx: (start: Double, end: Double)? { geo.loopMarkerPx }
 
     private var laneStep: Double { blockHeight + laneGap }
     /// The block's effective colour (border, controls): a custom colour if one is assigned,
@@ -137,43 +113,14 @@ struct SoundBlockView: View {
     /// Defined on the model so that the link halos draw the same radius as the block
     /// (see SoundObject.blockCornerRadius).
     private var cornerRadius: Double { object.blockCornerRadius }
-    private var blockWidth: Double {
-        let natural = (object.duration * pixelsPerSecond) + previewResizeDX - previewTrimDX
-        if previewResizeDX != 0 { return max(natural, 1) }
-        return max(natural, 2)
-    }
-    private var xPos: Double {
-        let natural = (object.duration * pixelsPerSecond) + previewResizeDX - previewTrimDX
-        let offset = previewOffset?.dx ?? 0
-        // Anchoring on the right edge (a minimum width of 2px) is reserved for a left trim
-        // under way: the right edge is the fixed anchor while the left one follows the mouse.
-        if natural < 2 && previewTrimDX != 0 {
-            return (object.startTime * pixelsPerSecond) + (object.duration * pixelsPerSecond) - 2 + offset
-        }
-        return (object.startTime * pixelsPerSecond) + previewTrimDX + offset
-    }
-    /// The effective source offset. OUTSIDE a trim under way, it is EXACTLY `object.sourceOffset`:
-    /// the selected clip moves from the shared Canvas (which draws with the raw offset) to this
-    /// view, and the slightest difference shows as the waveform jumping on selection. During a trim,
-    /// it follows the edge to the pixel: `previewTrimDX` is ALREADY set on the whole pixel (see its
-    /// definition), so the preview does not shimmer at sub-pixel level without the content shifting
-    /// inside its block either — the block's position and the source offset derive from the same offset.
-    /// In reverse, it is the RIGHT edge that governs the source range: the preview then follows the
-    /// resizing and NOT the trimming (@see WaveformShaping.retrimmedSourceOffset).
-    private var effectiveSourceOffset: Double {
-        let moving = object.isReversed ? previewResizeDX : previewTrimDX
-        guard moving != 0, pixelsPerSecond > 0 else { return object.sourceOffset }
-        let dStart = previewTrimDX / pixelsPerSecond
-        let dEnd   = previewResizeDX / pixelsPerSecond
-        return WaveformShaping.retrimmedSourceOffset(
-            object.sourceOffset,
-            oldStart: object.startTime, oldDuration: object.duration,
-            newStart: object.startTime + dStart,
-            newDuration: object.duration - dStart + dEnd,
-            speedRatio: object.speedRatio, isReversed: object.isReversed)
-    }
+    private var blockWidth: Double { geo.blockWidth }
+    private var xPos: Double { geo.xPos }
+    /// The effective source offset (@see BlockPreviewGeometry.effectiveSourceOffset): EXACTLY
+    /// `object.sourceOffset` outside a trim under way, so the waveform does not jump when the block
+    /// moves between the shared Canvas and this view.
+    private var effectiveSourceOffset: Double { geo.effectiveSourceOffset }
     private var yPos: Double {
-        rulerHeight + Double(displayLane) * laneStep + (previewOffset?.dy ?? 0)
+        geo.yPos(rulerHeight: rulerHeight, displayLane: displayLane, laneStep: laneStep)
     }
 
     /// Hands `content` the block's visible sub-window (in LOCAL coordinates) on which to lay the
