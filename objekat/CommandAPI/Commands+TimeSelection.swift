@@ -59,6 +59,77 @@ extension CommandRegistry {
             return CommandAdapters.selectionPayload(vm)
         }
 
+        register("timesel.snap_probe",
+                 summary: "Asks the SNAP what a time selection carried by the hand would land on, "
+                        + "and touches nothing (no move, no undo, no selection change). `dt` is the "
+                        + "travel the hand asks for; the answer is the travel the drag would APPLY "
+                        + "(`dt`), where the guide line would stand (`guide_time`), whether it landed "
+                        + "on a real mark (`on_target`, the yellow guide), which edge decided "
+                        + "(`edge`: start | end | object_start | object_end) and whether the wall at "
+                        + "zero stopped it (`clamped`), plus the range's bounds after the travel "
+                        + "(`start`, `end`). Precedence: a real mark (an edge, a marker, a region's "
+                        + "bound — the grid is NOT one) within 8 px of the range's START, or of its "
+                        + "END (nearer wins, a tie goes to the start = the caret); else a real mark "
+                        + "within reach of the grabbed object's edges (`grab`); else the grid, on the "
+                        + "range's bounds. The range itself stops at zero, whatever objects lie later. "
+                        + "Without `copy` the scraps a cut leaves at the two bounds (and the objects "
+                        + "the range crosses) are kept out of the targets, as the drag does; with "
+                        + "`copy` (⌥) the originals stay in place and ARE targets.",
+                 params: [ParamSpec("dt", "number", "The travel the hand asks for, in seconds."),
+                          ParamSpec("copy", "bool", required: false,
+                                    "⌥: the range is COPIED, the originals stay and are targets "
+                                  + "(default false)."),
+                          ParamSpec("grab", "uuid", required: false,
+                                    "The object grabbed: its edges, clipped to the range, are the "
+                                  + "second-rank candidates."),
+                          ParamSpec("snap", "bool", required: false,
+                                    "Snap on or off for the probe (default true; ⌘ is neutralised).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let sel = vm.timeSelection else {
+                throw CommandError(code: .invalid_state, message: "no time selection")
+            }
+            let lo = sel.timeRange.lowerBound
+            let hi = sel.timeRange.upperBound
+            let rawDt = try p.double("dt")
+            let copy = try p.bool("copy", or: false)
+            var objectStart: Double? = nil
+            var objectEnd: Double? = nil
+            if let grab = try p.optionalUUID("grab") {
+                guard let e = vm.laneEntries.first(where: { $0.item.id == grab }) else {
+                    throw CommandError(code: .not_found, message: "unknown object: \(grab.uuidString)")
+                }
+                // What the drag's cuts at the bounds leave of it: the part inside the range.
+                objectStart = max(e.absStart, lo)
+                objectEnd = min(e.absStart + e.item.duration, hi)
+            }
+            var excluded: Set<UUID> = []
+            if !copy {
+                // Everything the range crosses is either carried or cut into scraps; both are kept
+                // out, which is what the drag's `selectionMoveExcluded` does with the real pieces.
+                let crossed = Set(vm.laneEntries.filter { e in
+                    sel.lanes.contains(e.displayLane)
+                        && e.absStart < hi && e.absStart + e.item.duration > lo
+                }.map(\.item.id))
+                excluded = vm.selectionMoveExcluded(range: sel.timeRange, lanes: sel.lanes, moved: crossed)
+            }
+            let snap = try p.bool("snap", or: true)
+            var r = SelectionMoveSnap.Result(dt: rawDt, guideTime: lo + rawDt, onTarget: false,
+                                             edge: .start, clamped: false)
+            CommandAdapters.withSnapping(snap, vm) {
+                r = vm.snappedSelectionMove(range: sel.timeRange, rawDt: rawDt,
+                                            objectStart: objectStart, objectEnd: objectEnd,
+                                            excluding: excluded)
+            }
+            return .object(["dt": .number(r.dt),
+                            "guide_time": .number(r.guideTime),
+                            "on_target": .bool(r.onTarget),
+                            "edge": .string(r.edge.rawValue),
+                            "clamped": .bool(r.clamped),
+                            "start": .number(lo + r.dt),
+                            "end": .number(hi + r.dt)])
+        }
+
         register("timesel.step_lane",
                  summary: "Slides the TIME SELECTION one displayed row up or down, keeping its span "
                         + "of time and its height — the traced passage travels, the matter does not: "

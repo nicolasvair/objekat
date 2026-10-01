@@ -1276,6 +1276,34 @@ With neither a time selection nor a usable object selection it answers `invalid_
 returns having touched NOTHING, the object selection included. The answer is the selection payload,
 plus `moved`.
 
+### What a carried time selection lands on
+
+Dragging a traced range by its body (without ⌥ it moves the matter it covers, with ⌥ it copies) goes
+through ONE snap whose subject is the **range**, not the object grabbed inside it. The precedence,
+the first step that finds something deciding:
+
+1. a **real mark** — an object's edge, a marker, a region's bound; the grid is *not* one — within
+   8 px of the range's **start** (the caret) or of its **end**. The nearer wins and a tie goes to the
+   start. A real mark is never beaten by the grid, even a nearer one;
+2. else a real mark within reach of the **grabbed object's** edges (clipped to the range) — what an
+   object's own move has always done, now second;
+3. else the **grid**, on the range's start or end (again the nearer, ties to the start).
+
+With the snap off (or ⌘ held, which inverts it) the range follows the hand. The range itself stops at
+**zero**: it is the selection that is walled, so an object lying later than the range's start does not
+limit the travel. Without ⌥ the scraps the cut leaves at the two bounds are kept out of the targets
+(otherwise the range would stick to a travel of zero, a magnet on itself); with ⌥ nothing is cut, the
+originals stay in place and **are** targets.
+
+`timesel.snap_probe` (`dt`, optional `copy`, `grab`, `snap`) asks that snap without touching anything
+— no move, no undo, no change of selection — over the current time selection. It answers `dt` (the
+travel the drag would apply), `guide_time` (where the guide line would stand), `on_target` (a real
+mark was hit: the yellow guide), `edge` (`start` | `end` | `object_start` | `object_end`), `clamped`
+(the wall at zero stopped it) and the range's bounds after the travel (`start`, `end`).
+`invalid_state` without a time selection. The decision table is asserted alone by
+`tools/test_selection_move_snap.swift`, the model half by `tools/scenario_selection_snap.py`. What
+neither reaches is the gesture itself.
+
 ### Walking the insertion caret
 
 With **nothing selected at all** the arrows are not idle: a plain click in the timeline lays a
@@ -1804,6 +1832,8 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
+| `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
+| `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
