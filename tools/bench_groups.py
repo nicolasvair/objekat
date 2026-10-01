@@ -55,6 +55,8 @@ batched Canvas does not cover. They need `tool.set`, `object.set_color` (and `vi
 the landing check); an older build is refused with a clear message:
 
     S8        600 plain clips, every one given a custom colour (`object.set_color`): rich reason `color`
+    S9..S12   (E5) 600 MIDI clips / auxes / instances of one consolidated object / looping groups:
+              the rich reasons `midi` / `aux` / `consolidate` / `loop` before E5, 0 after it
     S0@T      S0 with the tool T armed (LOCKED, as ⇧+key arms it) — T is volume, pan, aux or stem
     S3@T      S3 (600 children selected, group open) with the tool T armed
     `--only tools` selects every `@T` scenario, `--only nav` the eight of the first table.
@@ -128,6 +130,10 @@ SCENARIOS = [
     ("S6", "sub-group selected + select-all (12)"),
     ("S7", "nested open + select-all in a sub-group (50)"),
     ("S8", "600 clips, every one coloured (rich: color)"),
+    ("S9", "600 MIDI clips, 3 notes each (rich: midi)"),
+    ("S10", "600 auxes (rich: aux)"),
+    ("S11", "600 instances of ONE consolidated object (rich: consolidate)"),
+    ("S12", "600 looping groups of one clip (rich: loop)"),
 ] + [("%s@%s" % (base, tool), "%s, tool %s armed" % (desc, tool))
      for base, desc in (("S0", "600 plain"), ("S3", "open + 600 children selected"))
      for tool in TOOLS]
@@ -212,6 +218,41 @@ def build(c, wav, name, has_tools=True):
         c.send("selection.clear")
         ids = [o["id"] for o in c.send("object.list")["objects"] if o["kind"] == "clip"]
         c.send("object.set_color", {"ids": ids, "color_index": 3})
+        c.send("selection.clear")
+    elif base == "S9":
+        # E5/F2: 600 MIDI clips of 0.5 s (one beat at 120 bpm), three notes each, on 12 lanes.
+        for i in range(N_PIECES):
+            r = c.send("midi.create_clip", {"start": i * PIECE_S, "end": (i + 1) * PIECE_S, "lane": i % LANES})
+            for k, (pitch, sb) in enumerate(((60 + (i % 7), 0.0), (64 + (i % 5), 0.35), (67, 0.7))):
+                c.send("midi.add_note", {"id": r["id"], "pitch": pitch, "start_beat": sb,
+                                         "length_beats": 0.3, "velocity": 60 + 20 * k})
+        c.send("selection.clear")
+    elif base == "S10":
+        # E5/F3: 600 auxes of 0.5 s, 12 lanes.
+        for i in range(N_PIECES):
+            c.send("aux.create", {"start": i * PIECE_S, "end": (i + 1) * PIECE_S, "lane": i % LANES})
+        c.send("selection.clear")
+    elif base == "S11":
+        # E5/F4: ONE consolidated object (a real bake: the project must be saved first), the other
+        # 599 clips replaced by linked instances of it.
+        r = explode(c, wav, False)
+        c.send("group.disband", {"id": r["group"]})
+        c.send("selection.clear")
+        folder = tempfile.mkdtemp(prefix="bench_groups_proj_")
+        c.send("project.save_as", {"path": os.path.join(folder, "s11.objekat")})
+        ids = [o["id"] for o in c.send("object.list")["objects"] if o["kind"] == "clip"]
+        job = c.send("consolidate.make", {"id": ids[0], "also_link": ids[1:]})
+        c.send("job.wait", {"id": job["job_id"], "timeout_ms": 600000})
+        c.send("selection.clear")
+    elif base == "S12":
+        # E5/F5: 600 looping groups, each holding one 0.5 s piece (12 lanes).
+        r = explode(c, wav, False)
+        c.send("group.disband", {"id": r["group"]})
+        c.send("selection.clear")
+        ids = [o["id"] for o in c.send("object.list")["objects"] if o["kind"] == "clip"]
+        for i in ids:
+            g = c.send("group.create", {"ids": [i]})
+            c.send("object.set_loop", {"id": g["id"], "enabled": True})
         c.send("selection.clear")
     elif base in ("S1", "S2", "S3"):
         r = explode(c, wav, False)
@@ -599,7 +640,7 @@ def main():
             if token == "tools":
                 only |= {n for n, _ in SCENARIOS if "@" in n}
             elif token == "nav":
-                only |= {n for n, _ in SCENARIOS if n[1:].isdigit() and n != "S8"}
+                only |= {n for n, _ in SCENARIOS if n[1:].isdigit() and int(n[1:]) <= 7}
             else:
                 only.add(token)
         unknown = only - {n for n, _ in SCENARIOS}

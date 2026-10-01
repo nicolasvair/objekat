@@ -1,0 +1,151 @@
+{
+ "label": "before_S9",
+ "when": "2026-10-01 22:21:04",
+ "repeat": 1,
+ "pieces": 600,
+ "scenarios": {
+  "S9": {
+   "desc": "600 MIDI clips, 3 notes each (rich: midi)",
+   "setup": {
+    "objects_on_screen": 600,
+    "selected": 0,
+    "max_depth": 0,
+    "tool": "selection",
+    "regimes": {
+     "canvas_draws": 2409,
+     "clips_canvas": 0,
+     "clips_rich": 600,
+     "foreach_layers": {
+      "automation_bands": 0,
+      "automation_bezels": 0,
+      "piano_rolls": 0,
+      "rich_blocks": 600
+     },
+     "foreach_total": 600,
+     "group_bands_canvas": 0,
+     "group_bands_rich": 0,
+     "groups_canvas": 0,
+     "groups_rich": 0,
+     "passes": 2912,
+     "rich_reasons": {
+      "aux": 0,
+      "bake": 0,
+      "color": 0,
+      "consolidate": 0,
+      "editing": 0,
+      "force_rich": 0,
+      "infinite": 0,
+      "loop": 0,
+      "midi": 600,
+      "preview": 0,
+      "rename": 0,
+      "spill": 0,
+      "stem_hover": 0,
+      "tool": 0,
+      "tool_hover": 0,
+      "tool_span": 0
+     }
+    },
+    "rich_reasons": {
+     "midi": 600
+    },
+    "foreach_total": 600,
+    "foreach_layers": {
+     "automation_bands": 0,
+     "automation_bezels": 0,
+     "piano_rolls": 0,
+     "rich_blocks": 600
+    }
+   },
+   "steps": {
+    "scroll_right": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 105.1,
+     "frame p50": 8.333,
+     "frame p95": 8.333,
+     "frame p99": 54.82,
+     "frame max": 59.378,
+     "late frames": 8,
+     "dropped": 36,
+     "hitch ms/s": 111,
+     "busy p95": 2.217,
+     "busy total": 1050.165,
+     "fps_runs": [
+      105.1
+     ],
+     "moved_px": 3261,
+     "pps_end": 100
+    },
+    "zoom_in": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 56.5,
+     "frame p50": 14.543,
+     "frame p95": 36.991,
+     "frame p99": 58.052,
+     "frame max": 58.052,
+     "late frames": 32,
+     "dropped": 64,
+     "hitch ms/s": 529.65,
+     "busy p95": 31.659,
+     "busy total": 840.453,
+     "fps_runs": [
+      56.5
+     ],
+     "moved_px": 0,
+     "pps_end": 397.490163
+    },
+    "zoom_out_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 8.8,
+     "frame p50": 8.333,
+     "frame p95": 411.513,
+     "frame p99": 426.38,
+     "frame max": 426.38,
+     "late frames": 15,
+     "dropped": 428,
+     "hitch ms/s": 925.9,
+     "busy p95": 2.813,
+     "busy total": 3719.739,
+     "fps_runs": [
+      8.8
+     ],
+     "moved_px": 0,
+     "pps_end": 5.031571
+    },
+    "scroll_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 73.5,
+     "frame p50": 8.333,
+     "frame p95": 23.756,
+     "frame p99": 182.47,
+     "frame max": 286.58,
+     "late frames": 21,
+     "dropped": 80,
+     "hitch ms/s": 393.23,
+     "busy p95": 12.031,
+     "busy total": 1390.069,
+     "fps_runs": [
+      73.5
+     ],
+     "moved_px": 680,
+     "pps_end": 5
+    }
+   }
+  }
+ },
+ "window_by": null,
+ "has_tools": true,
+ "viewport": [
+  1151,
+  879
+ ],
+ "build": "release"
+}

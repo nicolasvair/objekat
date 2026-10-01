@@ -1,0 +1,581 @@
+{
+ "label": "before_S8_S10_S11_S12",
+ "when": "2026-10-01 22:25:48",
+ "repeat": 1,
+ "pieces": 600,
+ "scenarios": {
+  "S8": {
+   "desc": "600 clips, every one coloured (rich: color)",
+   "setup": {
+    "objects_on_screen": 600,
+    "selected": 0,
+    "max_depth": 0,
+    "tool": "selection",
+    "regimes": {
+     "canvas_draws": 2520,
+     "clips_canvas": 0,
+     "clips_rich": 600,
+     "foreach_layers": {
+      "automation_bands": 0,
+      "automation_bezels": 0,
+      "piano_rolls": 0,
+      "rich_blocks": 600
+     },
+     "foreach_total": 600,
+     "group_bands_canvas": 0,
+     "group_bands_rich": 0,
+     "groups_canvas": 0,
+     "groups_rich": 0,
+     "passes": 2998,
+     "rich_reasons": {
+      "aux": 0,
+      "bake": 0,
+      "color": 600,
+      "consolidate": 0,
+      "editing": 0,
+      "force_rich": 0,
+      "infinite": 0,
+      "loop": 0,
+      "midi": 0,
+      "preview": 0,
+      "rename": 0,
+      "spill": 0,
+      "stem_hover": 0,
+      "tool": 0,
+      "tool_hover": 0,
+      "tool_span": 0
+     }
+    },
+    "rich_reasons": {
+     "color": 600
+    },
+    "foreach_total": 600,
+    "foreach_layers": {
+     "automation_bands": 0,
+     "automation_bezels": 0,
+     "piano_rolls": 0,
+     "rich_blocks": 600
+    },
+    "hover_landed": "5/5",
+    "hover_targets": 14
+   },
+   "steps": {
+    "scroll_right": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 104,
+     "frame p50": 8.333,
+     "frame p95": 8.333,
+     "frame p99": 62.254,
+     "frame max": 66.113,
+     "late frames": 10,
+     "dropped": 41,
+     "hitch ms/s": 125.83,
+     "busy p95": 2.475,
+     "busy total": 1123.101,
+     "fps_runs": [
+      104
+     ],
+     "moved_px": 3261,
+     "pps_end": 100
+    },
+    "zoom_in": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 55.6,
+     "frame p50": 14.306,
+     "frame p95": 37.092,
+     "frame p99": 69.309,
+     "frame max": 69.309,
+     "late frames": 31,
+     "dropped": 65,
+     "hitch ms/s": 537.86,
+     "busy p95": 32.88,
+     "busy total": 845.362,
+     "fps_runs": [
+      55.6
+     ],
+     "moved_px": 0,
+     "pps_end": 397.490163
+    },
+    "zoom_out_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 5,
+     "frame p50": 8.333,
+     "frame p95": 816.455,
+     "frame p99": 861.077,
+     "frame max": 861.077,
+     "late frames": 16,
+     "dropped": 774,
+     "hitch ms/s": 957.2,
+     "busy p95": 161.529,
+     "busy total": 6590.337,
+     "fps_runs": [
+      5
+     ],
+     "moved_px": 0,
+     "pps_end": 5.031571
+    },
+    "scroll_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 51.9,
+     "frame p50": 8.333,
+     "frame p95": 25.444,
+     "frame p99": 42.416,
+     "frame max": 652.309,
+     "late frames": 27,
+     "dropped": 116,
+     "hitch ms/s": 462.54,
+     "busy p95": 15.661,
+     "busy total": 1771.157,
+     "fps_runs": [
+      51.9
+     ],
+     "moved_px": 670,
+     "pps_end": 5
+    },
+    "hover_sweep": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 118.4,
+     "frame p50": 8.333,
+     "frame p95": 8.333,
+     "frame p99": 8.333,
+     "frame max": 13.69,
+     "late frames": 1,
+     "dropped": 1,
+     "hitch ms/s": 2.78,
+     "busy p95": 4.588,
+     "busy total": 665.96,
+     "fps_runs": [
+      118.4
+     ],
+     "moved_px": 0,
+     "pps_end": 0
+    }
+   }
+  },
+  "S10": {
+   "desc": "600 auxes (rich: aux)",
+   "setup": {
+    "objects_on_screen": 600,
+    "selected": 0,
+    "max_depth": 0,
+    "tool": "selection",
+    "regimes": {
+     "canvas_draws": 3229,
+     "clips_canvas": 0,
+     "clips_rich": 600,
+     "foreach_layers": {
+      "automation_bands": 0,
+      "automation_bezels": 0,
+      "piano_rolls": 0,
+      "rich_blocks": 600
+     },
+     "foreach_total": 600,
+     "group_bands_canvas": 0,
+     "group_bands_rich": 0,
+     "groups_canvas": 0,
+     "groups_rich": 0,
+     "passes": 4176,
+     "rich_reasons": {
+      "aux": 600,
+      "bake": 0,
+      "color": 0,
+      "consolidate": 0,
+      "editing": 0,
+      "force_rich": 0,
+      "infinite": 0,
+      "loop": 0,
+      "midi": 0,
+      "preview": 0,
+      "rename": 0,
+      "spill": 0,
+      "stem_hover": 0,
+      "tool": 0,
+      "tool_hover": 0,
+      "tool_span": 0
+     }
+    },
+    "rich_reasons": {
+     "aux": 600
+    },
+    "foreach_total": 600,
+    "foreach_layers": {
+     "automation_bands": 0,
+     "automation_bezels": 0,
+     "piano_rolls": 0,
+     "rich_blocks": 600
+    }
+   },
+   "steps": {
+    "scroll_right": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 101.6,
+     "frame p50": 8.333,
+     "frame p95": 8.333,
+     "frame p99": 71.214,
+     "frame max": 75.652,
+     "late frames": 8,
+     "dropped": 47,
+     "hitch ms/s": 143.46,
+     "busy p95": 2.307,
+     "busy total": 1147.592,
+     "fps_runs": [
+      101.6
+     ],
+     "moved_px": 3261,
+     "pps_end": 100
+    },
+    "zoom_in": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 30.6,
+     "frame p50": 8.333,
+     "frame p95": 79.677,
+     "frame p99": 99.515,
+     "frame max": 99.515,
+     "late frames": 15,
+     "dropped": 96,
+     "hitch ms/s": 741.14,
+     "busy p95": 117.458,
+     "busy total": 921.279,
+     "fps_runs": [
+      30.6
+     ],
+     "moved_px": 0,
+     "pps_end": 397.490163
+    },
+    "zoom_out_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 6.2,
+     "frame p50": 8.333,
+     "frame p95": 538.456,
+     "frame p99": 548.512,
+     "frame max": 548.512,
+     "late frames": 15,
+     "dropped": 626,
+     "hitch ms/s": 947.06,
+     "busy p95": 153.596,
+     "busy total": 5352.666,
+     "fps_runs": [
+      6.2
+     ],
+     "moved_px": 0,
+     "pps_end": 5.031571
+    },
+    "scroll_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 89.8,
+     "frame p50": 8.333,
+     "frame p95": 8.333,
+     "frame p99": 170.546,
+     "frame max": 242.229,
+     "late frames": 7,
+     "dropped": 52,
+     "hitch ms/s": 253.87,
+     "busy p95": 9.726,
+     "busy total": 1302.247,
+     "fps_runs": [
+      89.8
+     ],
+     "moved_px": 680,
+     "pps_end": 5
+    }
+   }
+  },
+  "S11": {
+   "desc": "600 instances of ONE consolidated object (rich: consolidate)",
+   "setup": {
+    "objects_on_screen": 600,
+    "selected": 0,
+    "max_depth": 0,
+    "tool": "selection",
+    "regimes": {
+     "canvas_draws": 3318,
+     "clips_canvas": 0,
+     "clips_rich": 600,
+     "foreach_layers": {
+      "automation_bands": 0,
+      "automation_bezels": 0,
+      "piano_rolls": 0,
+      "rich_blocks": 600
+     },
+     "foreach_total": 600,
+     "group_bands_canvas": 0,
+     "group_bands_rich": 0,
+     "groups_canvas": 0,
+     "groups_rich": 0,
+     "passes": 4237,
+     "rich_reasons": {
+      "aux": 0,
+      "bake": 0,
+      "color": 0,
+      "consolidate": 600,
+      "editing": 0,
+      "force_rich": 0,
+      "infinite": 0,
+      "loop": 0,
+      "midi": 0,
+      "preview": 0,
+      "rename": 0,
+      "spill": 0,
+      "stem_hover": 0,
+      "tool": 0,
+      "tool_hover": 0,
+      "tool_span": 0
+     }
+    },
+    "rich_reasons": {
+     "consolidate": 600
+    },
+    "foreach_total": 600,
+    "foreach_layers": {
+     "automation_bands": 0,
+     "automation_bezels": 0,
+     "piano_rolls": 0,
+     "rich_blocks": 600
+    }
+   },
+   "steps": {
+    "scroll_right": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 85.7,
+     "frame p50": 8.333,
+     "frame p95": 30.572,
+     "frame p99": 64.292,
+     "frame max": 196.926,
+     "late frames": 18,
+     "dropped": 95,
+     "hitch ms/s": 286.84,
+     "busy p95": 2.202,
+     "busy total": 1357.693,
+     "fps_runs": [
+      85.7
+     ],
+     "moved_px": 3261,
+     "pps_end": 100
+    },
+    "zoom_in": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 54.4,
+     "frame p50": 13.854,
+     "frame p95": 37.774,
+     "frame p99": 61.869,
+     "frame max": 61.869,
+     "late frames": 30,
+     "dropped": 67,
+     "hitch ms/s": 553.64,
+     "busy p95": 35.289,
+     "busy total": 847.672,
+     "fps_runs": [
+      54.4
+     ],
+     "moved_px": 0,
+     "pps_end": 397.490163
+    },
+    "zoom_out_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 5.4,
+     "frame p50": 8.333,
+     "frame p95": 827.395,
+     "frame p99": 845.657,
+     "frame max": 845.657,
+     "late frames": 14,
+     "dropped": 719,
+     "hitch ms/s": 954.95,
+     "busy p95": 149.807,
+     "busy total": 6129.75,
+     "fps_runs": [
+      5.4
+     ],
+     "moved_px": 0,
+     "pps_end": 5.031571
+    },
+    "scroll_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 54.6,
+     "frame p50": 8.333,
+     "frame p95": 25.093,
+     "frame p99": 30.736,
+     "frame max": 632.484,
+     "late frames": 23,
+     "dropped": 108,
+     "hitch ms/s": 429.83,
+     "busy p95": 13.784,
+     "busy total": 1772.589,
+     "fps_runs": [
+      54.6
+     ],
+     "moved_px": 675,
+     "pps_end": 5
+    }
+   }
+  },
+  "S12": {
+   "desc": "600 looping groups of one clip (rich: loop)",
+   "setup": {
+    "objects_on_screen": 600,
+    "selected": 0,
+    "max_depth": 0,
+    "tool": "selection",
+    "regimes": {
+     "canvas_draws": 4618,
+     "clips_canvas": 0,
+     "clips_rich": 0,
+     "foreach_layers": {
+      "automation_bands": 0,
+      "automation_bezels": 0,
+      "piano_rolls": 0,
+      "rich_blocks": 600
+     },
+     "foreach_total": 600,
+     "group_bands_canvas": 0,
+     "group_bands_rich": 0,
+     "groups_canvas": 0,
+     "groups_rich": 600,
+     "passes": 5512,
+     "rich_reasons": {
+      "aux": 0,
+      "bake": 0,
+      "color": 0,
+      "consolidate": 0,
+      "editing": 0,
+      "force_rich": 0,
+      "infinite": 0,
+      "loop": 600,
+      "midi": 0,
+      "preview": 0,
+      "rename": 0,
+      "spill": 0,
+      "stem_hover": 0,
+      "tool": 0,
+      "tool_hover": 0,
+      "tool_span": 0
+     }
+    },
+    "rich_reasons": {
+     "loop": 600
+    },
+    "foreach_total": 600,
+    "foreach_layers": {
+     "automation_bands": 0,
+     "automation_bezels": 0,
+     "piano_rolls": 0,
+     "rich_blocks": 600
+    }
+   },
+   "steps": {
+    "scroll_right": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 85.8,
+     "frame p50": 8.333,
+     "frame p95": 30.653,
+     "frame p99": 75.781,
+     "frame max": 128.781,
+     "late frames": 18,
+     "dropped": 93,
+     "hitch ms/s": 284.07,
+     "busy p95": 2.426,
+     "busy total": 1532.721,
+     "fps_runs": [
+      85.8
+     ],
+     "moved_px": 3261,
+     "pps_end": 100
+    },
+    "zoom_in": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 48.8,
+     "frame p50": 21.11,
+     "frame p95": 43.914,
+     "frame p99": 70.202,
+     "frame max": 70.202,
+     "late frames": 28,
+     "dropped": 72,
+     "hitch ms/s": 589.75,
+     "busy p95": 39.742,
+     "busy total": 847.155,
+     "fps_runs": [
+      48.8
+     ],
+     "moved_px": 0,
+     "pps_end": 397.490163
+    },
+    "zoom_out_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 5.7,
+     "frame p50": 8.333,
+     "frame p95": 695.272,
+     "frame p99": 779.574,
+     "frame max": 779.574,
+     "late frames": 15,
+     "dropped": 707,
+     "hitch ms/s": 954.34,
+     "busy p95": 162.383,
+     "busy total": 6040.694,
+     "fps_runs": [
+      5.7
+     ],
+     "moved_px": 0,
+     "pps_end": 5.031571
+    },
+    "scroll_wide": {
+     "contaminated": false,
+     "thrown_runs": 0,
+     "build": "release",
+     "fps": 45.6,
+     "frame p50": 8.333,
+     "frame p95": 38.358,
+     "frame p99": 655.544,
+     "frame max": 655.544,
+     "late frames": 28,
+     "dropped": 140,
+     "hitch ms/s": 527.55,
+     "busy p95": 45.527,
+     "busy total": 1907.869,
+     "fps_runs": [
+      45.6
+     ],
+     "moved_px": 675,
+     "pps_end": 5
+    }
+   }
+  }
+ },
+ "window_by": null,
+ "has_tools": true,
+ "viewport": [
+  1151,
+  879
+ ],
+ "build": "release"
+}
