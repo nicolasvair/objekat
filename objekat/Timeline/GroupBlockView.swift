@@ -132,11 +132,10 @@ struct GroupBlockView: View {
     // children by GroupWaveformView. Effective values (a drag preview included).
     private var rootMod: WaveformShaping.Modifier {
         let effDur = max(0.01, group.duration + (previewResizeDX - previewTrimDX) / pixelsPerSecond)
-        return WaveformShaping.Modifier(
-            absStart: effectiveStartTime, duration: effDur,
+        return GroupWaveformDrawing.rootModifier(
+            for: group, absStart: effectiveStartTime, duration: effDur,
             fadeIn: effectiveFadeIn, fadeOut: effectiveFadeOut,
-            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve,
-            gain: WaveformShaping.linearGain(dB: group.waveformDisplayGainDb))
+            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve)
     }
 
     var body: some View {
