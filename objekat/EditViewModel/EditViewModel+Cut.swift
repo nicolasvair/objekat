@@ -152,7 +152,7 @@ extension EditViewModel {
         }
         // A marker or a region left on a piece the cut swallowed no longer names anything —
         // the same pruning `applySnapshot` does after an undo (@see EditViewModel+UndoRedo).
-        if let sel = selectedAnnotation, !annotationExists(sel) { selectedAnnotation = nil }
+        pruneAnnotationSelection()
         // And a crossfade zone naming one of the cut objects: the zone it named may no longer
         // exist (cut through, or one member gone), and ⌫ must not aim at it regardless
         // (@see TimelineKeyHandler).

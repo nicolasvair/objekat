@@ -149,8 +149,14 @@ extension TimelineView {
         // Double click = rename here as everywhere: the same gesture on a marker's name, on a
         // comment's text and on an object's name.
         if let hit = commentHit(at: point) ?? objectMarkerHit(at: point) {
-            viewModel.selectAnnotation(hit)
-            if isDoubleTap { viewModel.renamingID = hit.markerID }
+            // The same picking as the band's (⌘ toggles, ⇧ adds), with no cursor: these marks sit
+            // on the lanes, where a click has always meant 'select this', not 'go there'.
+            let flags = NSEvent.modifierFlags
+            let shift = flags.contains(.shift), cmd = flags.contains(.command)
+            viewModel.handleMarkBandClick(hit: hit, shift: shift, cmd: cmd)
+            if isDoubleTap, !shift, !cmd, viewModel.selectedAnnotations == [hit] {
+                viewModel.renamingID = hit.markerID
+            }
             return
         }
 
@@ -700,23 +706,31 @@ extension TimelineView {
 
 extension TimelineView {
 
-    /// A click in the band: it selects a mark, and that is all it does. Nothing here moves the
-    /// cursor, lays a caret or traces a range — the band is a margin, not a surface one edits.
+    /// A click in the band: it picks marks (@see EditViewModel.handleMarkBandClick — plain = this
+    /// one alone, ⌘ = toggle, ⇧ = extend, nothing under the hand = let go), and a plain click on a
+    /// marker or a region also puts the CURSOR at its start. It lays no caret and traces no range —
+    /// the band is a margin, not a surface one edits. A DRAG never comes here: it moves the mark
+    /// and leaves the cursor where it was.
     ///
     /// Creation is the right click's (@see markerBandMenu): a click that merely LANDS somewhere has
     /// asked for nothing, and a band that laid a marker at every click would fill with marks nobody
-    /// meant. Double click renames, as everywhere else.
+    /// meant. Double click renames, as everywhere else — but only ONE mark: with several selected
+    /// there is no one name to type.
     func handleMarkerBandTap(at point: CGPoint) {
         let now = Date()
         let isDoubleTap = now.timeIntervalSince(lastTapInfo.time) < 0.35
             && hypot(point.x - lastTapInfo.location.x, point.y - lastTapInfo.location.y) < 20
         lastTapInfo = (now, point)
 
-        guard let hit = markerBandHit(at: point) else {
-            viewModel.selectedAnnotation = nil
-            return
+        let flags = NSEvent.modifierFlags
+        let shift = flags.contains(.shift), cmd = flags.contains(.command)
+        let hit = markerBandHit(at: point)
+        viewModel.handleMarkBandClick(hit: hit, shift: shift, cmd: cmd, seek: { t in
+            if !isPlaying { viewModel.engine?.seek(to: t) }
+            onMoveCursor(t)
+        })
+        if isDoubleTap, !shift, !cmd, let hit, viewModel.selectedAnnotations == [hit] {
+            viewModel.renamingID = hit.markerID
         }
-        viewModel.selectAnnotation(hit)
-        if isDoubleTap { viewModel.renamingID = hit.markerID }
     }
 }

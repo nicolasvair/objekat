@@ -524,10 +524,11 @@ extension TimelineView {
                 // That is the 'we are in the piano roll' signal on the keyboard's side.
                 else if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async { vm.deleteSelectedMidiNotes() }  // internal undo push
-                } else if vm.selectedAnnotation != nil {
-                    // A marker, a region or a comment: ⌫ takes the ANNOTATION and nothing else. It
-                    // can afford to come first because the selection is exclusive — selecting one
-                    // clears the objects, and selecting an object clears it (@see selectedIDs).
+                } else if !vm.selectedAnnotations.isEmpty {
+                    // Markers, regions, comments: ⌫ takes the ANNOTATIONS and nothing else — all of
+                    // them, in ONE undo. It can afford to come first because the selection is
+                    // exclusive — selecting one clears the objects, and selecting an object clears
+                    // them (@see selectedIDs).
                     DispatchQueue.main.async { vm.deleteSelectedAnnotation() }  // internal undo push
                 } else if let xf = vm.selectedCrossfade {
                     // A selected CROSSFADE: ⌫ takes the zone, not the two objects. The pair comes
@@ -859,6 +860,8 @@ extension TimelineView {
                         } else if let a = vm.selectedAnnotation {
                             // The same shortcut for a marker's name, a region's and a comment's
                             // text: one gesture to name a thing, whatever kind of thing it is.
+                            // `selectedAnnotation` is nil for SEVERAL marks: there is no one name
+                            // to type over all of them, so ⌘R then does nothing.
                             DispatchQueue.main.async { vm.renamingID = a.markerID }
                         }
                         return nil

@@ -21,7 +21,7 @@ func buildMarkerBandMenu(vm: EditViewModel,
     // rename / delete / colour it laid a SECOND mark under a hand that was pointing at the first,
     // and it is the one item there that never speaks about what was clicked.
     if let hit {
-        addAnnotationItems(menu, &proxies, vm: vm, sel: hit)
+        addAnnotationItems(menu, &proxies, vm: vm, sels: vm.annotationsForContextMenu(hit: hit))
         return menu
     }
 
@@ -56,6 +56,11 @@ func buildMarkerBandMenu(vm: EditViewModel,
 /// Rename, delete, recolour — the three items a marker, a region and a comment all have, built
 /// once for the three menus that show them (the band's, an object's, a comment's).
 ///
+/// `sels` is what the menu is ABOUT, settled by the caller (@see EditViewModel.annotationsForContextMenu):
+/// one mark, or several when the right click landed inside a multiple selection. Several marks get
+/// 'Delete N marks' and the colour — no Rename, since there is no one name to give them — each of
+/// the two done in ONE undo.
+///
 /// The COLOUR is the reason this exists as a function rather than three copies. It is a grid, not a
 /// list: sixteen hues read at a glance, in one AppKit view (@see ColorSwatchGridView), and above it
 /// the one item that gives the hue BACK — a mark of the band inherits its row's colour, a mark on
@@ -63,34 +68,52 @@ func buildMarkerBandMenu(vm: EditViewModel,
 /// a row recolour everything on it.
 @MainActor
 func addAnnotationItems(_ menu: NSMenu, _ proxies: inout [MenuActionProxy],
-                        vm: EditViewModel, sel: AnnotationSel) {
-    let isComment: Bool = { if case .comment = sel { return true }; return false }()
+                        vm: EditViewModel, sels: [AnnotationSel]) {
+    guard let sel = sels.first else { return }
+    let many = sels.count > 1
 
-    addItem(menu, &proxies, isComment ? L("menu.context.comment.edit")
-                                      : L("menu.context.marker.rename")) {
-        vm.selectAnnotation(sel)
-        vm.renamingID = sel.markerID
-    }
-    addItem(menu, &proxies, isComment ? L("menu.context.comment.delete")
-                                      : L("menu.context.marker.delete")) {
-        vm.selectAnnotation(sel)
-        vm.deleteSelectedAnnotation()
+    if many {
+        addItem(menu, &proxies, Ln("menu.context.annotation.deleteMany", sels.count, sels.count)) {
+            vm.removeAnnotations(sels)
+        }
+    } else {
+        let isComment: Bool = { if case .comment = sel { return true }; return false }()
+        // A region is named apart from a marker: 'Rename the region' says what one is pointing at.
+        let isRegion = vm.marker(for: sel)?.isRegion ?? false
+        let renameKey = isComment ? "menu.context.comment.edit"
+                      : isRegion  ? "menu.context.region.rename" : "menu.context.marker.rename"
+        let deleteKey = isComment ? "menu.context.comment.delete"
+                      : isRegion  ? "menu.context.region.delete" : "menu.context.marker.delete"
+        addItem(menu, &proxies, L(renameKey)) {
+            vm.selectAnnotation(sel)
+            vm.renamingID = sel.markerID
+        }
+        addItem(menu, &proxies, L(deleteKey)) {
+            vm.selectAnnotation(sel)
+            vm.deleteSelectedAnnotation()
+        }
     }
 
     menu.addItem(.separator())
-    let current = vm.annotationColor(sel)
-    let inheritTitle: String = { if case .laneMarker = sel { return L("menu.context.marker.laneColor") }
-                                 return L("menu.context.annotation.whiteColor") }()
-    let pReset = MenuActionProxy { Task { @MainActor in vm.setAnnotationColor(sel, colorIndex: nil) } }
+    // The tick shows the hue ALL of them share — none when they disagree.
+    let colors = Set(sels.map { vm.annotationColor($0) })
+    let current: Int? = colors.count == 1 ? colors.first! : nil
+    let inherits: Bool = colors == Set<Int?>([nil])
+    // 'The row's colour' only when every mark is one of the band's: a comment or a mark of an
+    // object inherits white, and the two readings do not share a title.
+    let allBand = sels.allSatisfy { if case .laneMarker = $0 { return true }; return false }
+    let inheritTitle = allBand ? L("menu.context.marker.laneColor")
+                               : L("menu.context.annotation.whiteColor")
+    let pReset = MenuActionProxy { Task { @MainActor in vm.setAnnotationsColor(sels, colorIndex: nil) } }
     proxies.append(pReset)
     let reset = NSMenuItem(title: inheritTitle, action: #selector(MenuActionProxy.run), keyEquivalent: "")
     reset.target = pReset
-    reset.state = current == nil ? .on : .off
+    reset.state = inherits ? .on : .off
     menu.addItem(reset)
 
     let swatch = NSMenuItem()
     swatch.view = ColorSwatchGridView(currentColorIndex: current) { picked in
-        Task { @MainActor in vm.setAnnotationColor(sel, colorIndex: picked) }
+        Task { @MainActor in vm.setAnnotationsColor(sels, colorIndex: picked) }
     }
     menu.addItem(swatch)
 }
@@ -102,7 +125,7 @@ func addAnnotationItems(_ menu: NSMenu, _ proxies: inout [MenuActionProxy],
 func buildAnnotationMenu(vm: EditViewModel, proxies: inout [MenuActionProxy],
                          sel: AnnotationSel) -> NSMenu {
     let menu = NSMenu()
-    addAnnotationItems(menu, &proxies, vm: vm, sel: sel)
+    addAnnotationItems(menu, &proxies, vm: vm, sels: vm.annotationsForContextMenu(hit: sel))
     return menu
 }
 

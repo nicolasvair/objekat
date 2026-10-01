@@ -459,13 +459,16 @@ struct TimelineView: View {
                 totalDuration: totalDuration,
                 scrollOffsetX: cullScrollX,
                 viewportWidth: cullViewportWidth,
-                selected: viewModel.selectedAnnotation,
+                selected: viewModel.selectedAnnotationSet,
                 renamingID: viewModel.renamingID,
                 onRename: { id, name in
                     viewModel.renamingID = nil
+                    // Resolved by the id the field carries, NOT through the selection: leaving the
+                    // field is often what deselects, and the commit on the way out must still find
+                    // its mark.
                     guard let name, !name.isEmpty,
-                          case .laneMarker(let l, let m)? = viewModel.selectedAnnotation,
-                          m == id else { return }
+                          case .laneMarker(let l, let m)? = viewModel.annotationSel(forMarkerID: id)
+                    else { return }
                     viewModel.renameMarker(laneID: l, markerID: m, to: name)
                 }
             )
@@ -647,7 +650,7 @@ struct TimelineView: View {
                     rulerHeight: rulerHeight,
                     laneStep: laneStep,
                     blockHeight: blockHeight,
-                    selected: viewModel.selectedAnnotation,
+                    selected: viewModel.selectedAnnotationSet,
                     renamingID: viewModel.renamingID,
                     scrollOffsetX: cullScrollX,
                     viewportWidth: cullViewportWidth,
@@ -657,8 +660,8 @@ struct TimelineView: View {
                     onRename: { id, name in
                         viewModel.renamingID = nil
                         guard let name, !name.isEmpty,
-                              case .objectMarker(let o, let m)? = viewModel.selectedAnnotation,
-                              m == id else { return }
+                              case .objectMarker(let o, let m)? = viewModel.annotationSel(forMarkerID: id)
+                        else { return }
                         viewModel.renameObjectMarker(objectID: o, markerID: m, to: name)
                     }
                 )
@@ -693,7 +696,7 @@ struct TimelineView: View {
                         rulerHeight: rulerHeight,
                         laneStep: laneStep,
                         blockHeight: blockHeight,
-                        selected: viewModel.selectedAnnotation,
+                        selected: viewModel.selectedAnnotationSet,
                         editingID: viewModel.renamingID,
                         previewOffsets: commentPreviewOffsets,
                         onCommit: { id, text in

@@ -24,7 +24,7 @@ struct CommentsOverlay: View {
     let rulerHeight: Double
     let laneStep: Double
     let blockHeight: Double
-    var selected: AnnotationSel? = nil
+    var selected: Set<AnnotationSel> = []
     /// The comment being edited, if any (compared against `EditViewModel.renamingID`).
     var editingID: UUID? = nil
     /// commentID → the travel, in canvas px, of the GROUP a comment was laid in while that group
@@ -56,8 +56,8 @@ struct CommentsOverlay: View {
                 .background(RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.16)))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(selected == .comment(c.id) ? Color.accentColor : tint.opacity(0.7),
-                                lineWidth: selected == .comment(c.id) ? 1.5 : 0.75)
+                        .stroke(selected.contains(.comment(c.id)) ? Color.accentColor : tint.opacity(0.7),
+                                lineWidth: selected.contains(.comment(c.id)) ? 1.5 : 0.75)
                 )
                 // A comment must not stand in front of the object it talks about: it only takes the
                 // mouse while it is being EDITED. Selecting it is the canvas's job, geometrically

@@ -51,7 +51,7 @@ struct ObjectMarkersOverlay: View {
     let rulerHeight: Double
     let laneStep: Double
     let blockHeight: Double
-    var selected: AnnotationSel? = nil
+    var selected: Set<AnnotationSel> = []
     var renamingID: UUID? = nil
     var scrollOffsetX: CGFloat = 0
     var viewportWidth: CGFloat = 0
@@ -114,7 +114,7 @@ struct ObjectMarkersOverlay: View {
                     let x = startPx + m.time * pixelsPerSecond
                     guard x >= windowStartPx - 0.5, x <= blockEndPx + 0.5 else { continue }
                     if x < visX0 || x > visX1 { continue }
-                    let sel = selected == .objectMarker(object: e.item.id, marker: m.id)
+                    let sel = selected.contains(.objectMarker(object: e.item.id, marker: m.id))
                     // White by default here rather than a row's hue — a mark laid ON matter has no
                     // row to take one from, and white is what reads against any waveform under it.
                     // A hue asked for outright is honoured (@see Marker.colorIndex).

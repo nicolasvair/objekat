@@ -244,7 +244,11 @@ enum TimeLadder {
 /// against something that has no sound. Exclusive with `selectedIDs` AND with `selectedCrossfade`
 /// — selecting one clears the others (@see selectAnnotation) — which is what lets ⌫ and ⌘R gain
 /// exactly ONE branch each instead of three.
-enum AnnotationSel: Equatable {
+///
+/// `Hashable` because the selection is a SET of them now (@see EditViewModel.selectedAnnotations):
+/// marks of the band, marks carried by objects and comments can be picked together, and ⌫ takes
+/// the lot in one undo.
+enum AnnotationSel: Hashable {
     /// A marker/region of the band: the row it lives on, then the marker.
     case laneMarker(lane: UUID, marker: UUID)
     /// A marker carried by an object: the object, then the marker.

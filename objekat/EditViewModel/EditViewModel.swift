@@ -58,7 +58,7 @@ final class EditViewModel {
     /// forgetting the rule would leave a marker selected under an object selection — and ⌫, which
     /// reads the annotation first, would then delete the marker while the hand was pointing at a clip.
     var selectedIDs: Set<UUID> = [] {
-        didSet { if !selectedIDs.isEmpty { selectedAnnotation = nil } }
+        didSet { if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] } }
     }
     /// The crossfade selected, if any: the pair whose shared zone the click landed in. Its own
     /// slot rather than a place in `selectedIDs`, because a crossfade is not an object — it is
@@ -80,19 +80,44 @@ final class EditViewModel {
     /// system. Stored here rather than in the extension for the usual reason: an extension cannot
     /// carry stored state. See EditViewModel+MissingFiles.
     var missingPaths: [String: MissingReason] = [:]
-    /// The selected marker / region / comment, if any. Its own slot rather than a place in
-    /// `selectedIDs`, exactly like `selectedCrossfade` and for the same reason. Exclusive with the
-    /// two others (@see selectAnnotation).
+    /// The marks selected — markers and regions of the band, markers carried by objects, comments —
+    /// in the order they were picked. Its own slot rather than a place in `selectedIDs`, exactly
+    /// like `selectedCrossfade` and for the same reason. Exclusive with the two others (@see
+    /// selectAnnotations).
     ///
-    /// The `didSet` ends the inline EDIT when the selection leaves, and it lives here for the same
-    /// reason the one above does: deselecting is written a dozen ways (a click in the void, ⌫, an
-    /// object selected, a row deleted, an undo), and a field left open over something nothing points
-    /// at any more would go on taking the keyboard from the timeline. Leaving is not cancelling:
-    /// what was typed is committed on the way out (@see MarkerRenameField).
-    var selectedAnnotation: AnnotationSel? = nil {
+    /// A LIST and not a set so that the order of picking survives (the first is what ⌘R and the
+    /// inline field would have aimed at), but it never holds the same mark twice.
+    ///
+    /// The `didSet` ends the inline EDIT when what it named leaves the selection, and it lives here
+    /// for the same reason the one above does: deselecting is written a dozen ways (a click in the
+    /// void, ⌫, an object selected, a row deleted, an undo), and a field left open over something
+    /// nothing points at any more would go on taking the keyboard from the timeline. Leaving is not
+    /// cancelling: what was typed is committed on the way out (@see MarkerRenameField).
+    var selectedAnnotations: [AnnotationSel] = [] {
         didSet {
-            guard let old = oldValue, old != selectedAnnotation else { return }
-            if renamingID == old.markerID { renamingID = nil }
+            guard !oldValue.isEmpty, oldValue != selectedAnnotations else { return }
+            if let r = renamingID,
+               oldValue.contains(where: { $0.markerID == r }),
+               !selectedAnnotations.contains(where: { $0.markerID == r }) {
+                renamingID = nil
+            }
+            // The ⇧ anchor is transient: it lives only as long as a selection does.
+            if selectedAnnotations.isEmpty { annotationAnchor = nil }
+        }
+    }
+    /// The mark a ⇧-click extends FROM (@see handleMarkBandClick). Set by a plain or ⌘ click, read
+    /// by ⇧, and dropped the moment the selection empties or the mark goes — so it can never aim at
+    /// something that no longer exists.
+    @ObservationIgnored var annotationAnchor: AnnotationSel? = nil
+    /// The ONE selected mark, or nil when there are none or several — the question a caller that
+    /// can only deal with a single mark (the inline rename, ⌘R) asks. Writing it REPLACES the
+    /// selection, which is what the dozen historical writers (`= nil` to deselect, `= sel` to pick
+    /// one) always meant. Code that must see a multiple selection reads `selectedAnnotations`.
+    var selectedAnnotation: AnnotationSel? {
+        get { selectedAnnotations.count == 1 ? selectedAnnotations[0] : nil }
+        set {
+            let new = newValue.map { [$0] } ?? []
+            if selectedAnnotations != new { selectedAnnotations = new }
         }
     }
     /// The MIDI notes selected in the open piano rolls (ids of `MidiNote`, unique across every

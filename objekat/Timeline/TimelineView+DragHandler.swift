@@ -288,6 +288,16 @@ struct MarkerBandDragState {
     /// Pushed at the first movement that changes anything, and once: a drag is ONE undo.
     var didPushUndo = false
 
+    /// The band's marks of a MULTIPLE selection, when the hand took hold of one of them: the whole
+    /// set then travels together — in TIME only (no change of row, no crop, whichever part was
+    /// grabbed), all by the same amount, in the one undo. Empty = a single mark, the gestures above.
+    struct GroupMember {
+        let laneID: UUID
+        let markerID: UUID
+        let originTime: Double
+    }
+    var group: [GroupMember] = []
+
     /// The floor a crop stops at, and it is not cosmetic: `duration == 0` is what MAKES a point
     /// marker, so a region cropped to nothing would silently become another kind of mark — one
     /// with different drawing, different hit-testing and no way back but ⌘Z. The comment's own
@@ -2086,14 +2096,27 @@ extension TimelineView {
                   let z = markerBandZone(at: value.startLocation),
                   let m = viewModel.markerLane(id: z.lane)?.markers.first(where: { $0.id == z.marker })
             else { return }
-            // Grabbing selects, as it does on a block: one sees what the hand has.
-            viewModel.selectAnnotation(.laneMarker(lane: z.lane, marker: z.marker))
+            // Grabbing selects, as it does on a block: one sees what the hand has. A mark that is
+            // already one of SEVERAL selected marks of the band keeps the selection instead, and
+            // takes the others along: that is how a group is moved.
+            let members: [MarkerBandDragState.GroupMember] = viewModel.selectedAnnotations.compactMap { sel in
+                guard case .laneMarker(let l, let mid) = sel,
+                      let mk = viewModel.markerLane(id: l)?.markers.first(where: { $0.id == mid })
+                else { return nil }
+                return .init(laneID: l, markerID: mid, originTime: mk.time)
+            }
+            let grabbedAGroup = members.count > 1 && members.contains { $0.markerID == z.marker }
+            if !grabbedAGroup {
+                viewModel.selectAnnotation(.laneMarker(lane: z.lane, marker: z.marker))
+            }
             // Whatever the last gesture left behind: the guide belongs to the gesture running, and
             // a stale line would show the moment `dragActive` turned true again.
             viewModel.snapGuide = nil
-            markerBandDrag = MarkerBandDragState(markerID: z.marker, originLaneID: z.lane,
-                                                 laneID: z.lane, originTime: m.time,
-                                                 originDuration: m.duration, part: z.part)
+            var fresh = MarkerBandDragState(markerID: z.marker, originLaneID: z.lane,
+                                            laneID: z.lane, originTime: m.time,
+                                            originDuration: m.duration, part: z.part)
+            if grabbedAGroup { fresh.group = members }
+            markerBandDrag = fresh
         }
         guard var st = markerBandDrag else { return }
         defer {
@@ -2105,7 +2128,11 @@ extension TimelineView {
         // said yet, and nothing moves: a click that trembles is still a click. A CROP has no
         // choice to make — an edge travels in time and nowhere else.
         if st.axis == nil {
-            if st.part != .move { st.axis = .time }
+            if !st.group.isEmpty {
+                // A group has only the time axis, but it still waits for the hand to mean it.
+                guard max(abs(value.translation.width), abs(value.translation.height)) >= 4 else { return }
+                st.axis = .time
+            } else if st.part != .move { st.axis = .time }
             else {
                 let dx = abs(value.translation.width), dy = abs(value.translation.height)
                 guard max(dx, dy) >= 4 else { return }
@@ -2118,6 +2145,24 @@ extension TimelineView {
         // the tolerance and therefore winning every time (@see EditViewModel.snapTargets).
         let mine: Set<UUID> = [st.markerID]
         let dt = value.translation.width / pixelsPerSecond
+
+        // A GROUP: every selected mark of the band moves by the SAME amount, the grabbed one
+        // leading — it is the one that snaps, and the others keep their distance from it. All of
+        // them are left out of the snap's targets (they are written on every frame, so each would
+        // be a magnet for the others), and the travel is walled at the earliest of them reaching
+        // zero: a mark pushed under 0 would be clamped alone and the set would change shape.
+        if !st.group.isEmpty {
+            let ids = Set(st.group.map(\.markerID))
+            let floor = st.originTime - (st.group.map(\.originTime).min() ?? st.originTime)
+            let t = max(viewModel.snapTime(max(floor, st.originTime + dt), excluding: ids), floor)
+            viewModel.pinSnapGuide(to: t)   // the wall at zero is a wall (@see pinSnapGuide)
+            if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
+            for g in st.group {
+                viewModel.moveMarker(laneID: g.laneID, markerID: g.markerID,
+                                     to: g.originTime + (t - st.originTime), pushesUndo: false)
+            }
+            return
+        }
 
         switch st.axis {
         case .time where st.part != .move:
