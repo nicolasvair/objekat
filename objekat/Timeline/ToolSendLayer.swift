@@ -28,11 +28,12 @@ struct ToolSendLayer: View {
     var visibleWidth: Double? = nil
 
     /// Where the columns lie: one definition, shared with the hit-testing (@see sendColumnsLayout).
-    private var layout: (origin: Double, width: Double) {
-        sendColumnsLayout(blockWidth: blockWidth, leadingInset: leadingInset, count: rows.count,
-                          visibleX: visibleX, visibleWidth: visibleWidth)
+    private var layout: (origin: Double, width: Double, columnWidth: Double) {
+        ToolOverlayGeometry.sendLayout(blockWidth: blockWidth, leadingInset: leadingInset,
+                                       count: rows.count,
+                                       visibleX: visibleX, visibleWidth: visibleWidth)
     }
-    private var colW: Double { sendColWidth(blockWidth: layout.width, count: rows.count) }
+    private var colW: Double { layout.columnWidth }
 
     var body: some View {
         Color.clear
@@ -56,8 +57,9 @@ struct ToolSendLayer: View {
     private func sendColView(_ row: SendRow) -> some View {
         let routed = row.enabled && row.level > sendMinDb
         let accent: Color = routed ? .red : .white.opacity(0.35)
-        let showText = colW >= 34 && blockHeight >= 48
-        let knobD = max(11, min(colW - 12, blockHeight - sendToggleZoneHeight - (showText ? 32 : 6), 26))
+        let showText = ToolOverlayGeometry.sendShowsText(columnWidth: colW, blockHeight: blockHeight)
+        let knobD = ToolOverlayGeometry.sendKnobDiameter(columnWidth: colW, blockHeight: blockHeight,
+                                                         showText: showText)
 
         ZStack {
             // The column's background: emphasised if focused.
@@ -124,8 +126,7 @@ struct ToolSendLayer: View {
             let r = min(size.width, size.height) / 2 - 2
             let startA = Angle.degrees(135)
             let sweep  = 270.0
-            let frac   = Double((level.clamped(to: sendMinDb...sendMaxDb) - sendMinDb)
-                                 / (sendMaxDb - sendMinDb))
+            let frac   = ToolOverlayGeometry.sendKnobFraction(level: level, minDb: sendMinDb, maxDb: sendMaxDb)
             let valA   = Angle.degrees(135 + sweep * frac)
 
             // The background arc
@@ -158,6 +159,6 @@ struct ToolSendLayer: View {
     }
 
     private func levelString(_ db: Float) -> String {
-        db <= sendMinDb ? "-∞" : String(format: "%.0f", db)
+        ToolOverlayGeometry.sendLevelLabel(db: db, minDb: sendMinDb)
     }
 }

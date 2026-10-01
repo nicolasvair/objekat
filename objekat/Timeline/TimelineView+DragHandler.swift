@@ -1857,7 +1857,8 @@ extension TimelineView {
             // The drag zone (the right 40%) bounded by the visible portion — aligned on the clamped rendering.
             let span = visibleSpan(blockX: bx, blockWidth: bw,
                                    scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
-            guard (p.x - span.x) >= span.width * 0.6 else { return }
+            guard ToolOverlayGeometry.volumeZone(localX: p.x - span.x, spanWidth: span.width) == .drag
+            else { return }
 
             // The same logic as the volume scroll: we act on the whole selection
             // (top-level clips AND children of groups), not only on the clip grabbed.
@@ -1934,7 +1935,7 @@ extension TimelineView {
             )
             recordToolTouch(.pan)
             // The track's width = the visible panel − the margin (padding.horizontal 10 × 2) — aligned on
-            // ToolPanLayer's clamped rendering.
+            // ToolPanLayer's clamped rendering (@see ToolOverlayGeometry.panDragTrackWidth).
             let bx = hitAbsStart * pixelsPerSecond
             let bw = max(item.duration * pixelsPerSecond, 2)
             let span = visibleSpan(blockX: bx, blockWidth: bw,
@@ -1942,7 +1943,7 @@ extension TimelineView {
             // The undo before the first change (see handleVolumeDrag).
             viewModel.pushUndo()
             panDrag = PanDragState(ids: ids, anchors: anchors, grabbedID: item.id,
-                                   trackWidth: max(span.width - 20, 1))
+                                   trackWidth: ToolOverlayGeometry.panDragTrackWidth(spanWidth: span.width))
         }
 
         guard let state = panDrag else { return }

@@ -9,16 +9,12 @@ struct ToolPanLayer: View {
     /// it stays reachable when the block overflows the viewport. nil = the whole block.
     var span: (x: Double, width: Double)? = nil
 
-    private var panString: String {
-        let p = object.pan
-        if abs(p) < 0.01 { return "C" }
-        return p < 0 ? "L \(Int(-p * 100))%" : "R \(Int(p * 100))%"
-    }
+    private var panString: String { ToolOverlayGeometry.panLabel(pan: object.pan) }
 
-    /// The knob's diameter: bounded by the block's visible width and by its height (less the room
-    /// for the label), so as to stay readable from a tiny clip to a full-screen one.
+    /// The knob's diameter (@see ToolOverlayGeometry.panKnobSize): bounded by the block's visible
+    /// width and by its height, so as to stay readable from a tiny clip to a full-screen one.
     private func knobSize(_ visibleWidth: Double, _ height: Double) -> Double {
-        max(14, min(34, min(visibleWidth - 8, height - 18)))
+        ToolOverlayGeometry.panKnobSize(visibleWidth: visibleWidth, height: height)
     }
 
     var body: some View {
@@ -31,7 +27,7 @@ struct ToolPanLayer: View {
                         let sw = span?.width ?? geo.size.width
                         ZStack {
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(.black.opacity(0.80))
+                                .fill(.black.opacity(ToolOverlayGeometry.panVeilOpacity))
                             VStack(spacing: 2) {
                                 // The knob: the same display language as the other rotary
                                 // controls (aux sends). Everything is VERTICAL like the other
