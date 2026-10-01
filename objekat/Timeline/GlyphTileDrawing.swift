@@ -21,6 +21,7 @@ nonisolated final class GlyphResolveCache: @unchecked Sendable {
     private struct Key: Hashable {
         let name: String
         let color: Color
+        let weight: Font.Weight
         let size: Int       // point size × 10
         let scale: Int      // display scale × 100
     }
@@ -32,18 +33,18 @@ nonisolated final class GlyphResolveCache: @unchecked Sendable {
 
     func removeAll() { lock.lock(); defer { lock.unlock() }; glyphs.removeAll(keepingCapacity: true) }
 
-    /// The SF symbol `name` at `size` pt, semibold, in `color`, as text (so it keeps the rich view's
-    /// rendering).
-    func glyph(_ name: String, size: CGFloat, color: Color,
+    /// The SF symbol `name` at `size` pt, in `weight` (semibold by default) and `color`, as text (so
+    /// it keeps the rich view's rendering). Also what the Canvas's small badges are drawn with.
+    func glyph(_ name: String, size: CGFloat, weight: Font.Weight = .semibold, color: Color,
                in ctx: GraphicsContext) -> GraphicsContext.ResolvedText {
-        let key = Key(name: name, color: color, size: Int((size * 10).rounded()),
+        let key = Key(name: name, color: color, weight: weight, size: Int((size * 10).rounded()),
                       scale: Int((ctx.environment.displayScale * 100).rounded()))
         lock.lock()
         if let hit = glyphs[key] { lock.unlock(); return hit }
         lock.unlock()
         // Resolved OUTSIDE the lock: it is the slow part and needs nothing the lock guards.
         let resolved = ctx.resolve(Text(Image(systemName: name))
-            .font(.system(size: size, weight: .semibold))
+            .font(.system(size: size, weight: weight))
             .foregroundColor(color))
         lock.lock(); defer { lock.unlock() }
         if glyphs.count >= Self.capacity { glyphs.removeAll(keepingCapacity: true) }

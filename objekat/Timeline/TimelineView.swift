@@ -762,6 +762,7 @@ struct TimelineView: View {
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
                                   rows: cullRows,
                                   secPerBeat: 60.0 / viewModel.tempo,
+                                  consolidated: partition.consolidated,
                                   toolOverlays: partition.toolOverlays,
                                   hidesClipMuteVeil: tools.tool == .volume)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
@@ -2752,6 +2753,17 @@ struct TimelineView: View {
         var reasons = [Int](repeating: 0, count: RichReason.count)
         /// What the active tool lays over the blocks the Canvas draws (clips AND groups), by id.
         var toolOverlays: [UUID: CanvasToolOverlay] = [:]
+        /// The instances of a consolidated object the Canvas draws (at rest: nothing recomputing,
+        /// baking or being edited), with the badges they carry. Resolved here, in the body, and not
+        /// in the Canvas's renderer closure.
+        var consolidated: [UUID: ConsolidateBadge] = [:]
+    }
+
+    /// The freshness badges of a consolidated instance at rest: a warning if the bake captured
+    /// content that has since changed, a transient green tick right after its re-bake.
+    struct ConsolidateBadge {
+        var stale: Bool
+        var resynced: Bool
     }
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
@@ -2777,6 +2789,12 @@ struct TimelineView: View {
             } else {
                 p.plain.append(entry)
                 if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
+                if entry.item.isConsolidateInstance {
+                    let id = entry.item.id
+                    p.consolidated[id] = ConsolidateBadge(
+                        stale: viewModel.isStale(id),
+                        resynced: entry.item.consolidateID.map { viewModel.recentlyResyncedConsolidateIDs.contains($0) } ?? false)
+                }
             }
         }
         return p
@@ -3032,7 +3050,15 @@ struct TimelineView: View {
         #endif
         if viewModel.renamingID == item.id { return .rename }
         if viewModel.isBaking(item.id) { return .bake }
-        if item.isConsolidateInstance { return .consolidate }   // a link/freshness badge → a rich view
+        // An instance of a consolidated object AT REST is drawn by the Canvas (its indigo ring and
+        // its badges). What animates stays rich: the automatic re-bake under way (its filling
+        // circle) and the opening for editing (its ✕ and spinner). A bake is tested above.
+        if item.isConsolidateInstance {
+            if viewModel.editingPlacementID == item.id { return .editing }
+            if let defID = item.consolidateID, viewModel.recomputingConsolidateIDs.contains(defID) {
+                return .consolidate
+            }
+        }
         // A custom colour (its name band and its border) is drawn by the Canvas: @see phase 1 of
         // `plainBlocksCanvas`, `CustomColorBatch`.
         // The active tool's overlay (@see `toolRichReason`).
@@ -3083,6 +3109,7 @@ struct TimelineView: View {
                                    selectedIDs: Set<UUID>,
                                    rows: (y0: Double, y1: Double),
                                    secPerBeat: Double,
+                                   consolidated: [UUID: ConsolidateBadge] = [:],
                                    toolOverlays: [UUID: CanvasToolOverlay] = [:],
                                    hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
@@ -3381,6 +3408,8 @@ struct TimelineView: View {
                         missingIDs.insert(entry.item.id)
                     }
                 }
+                // The consolidated instances' rings, by (unselected, unselected dim, selected, selected dim).
+                var ringPaths = (Path(), Path(), Path(), Path())
                 for entry in drawOrder {
                     let item = entry.item
                     let w = max(2, item.duration * pixelsPerSecond)
@@ -3393,7 +3422,9 @@ struct TimelineView: View {
                     // A MIDI clip shows them whether selected or not, as its rich view always did.
                     let loopGrips = (selectedIDs.contains(item.id) || item.isMIDI) && !item.isReversed
                         ? item.loopMarkerLocalRange : nil
-                    guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil else { continue }
+                    let consolidatedBadge = consolidated[item.id]
+                    guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil
+                            || consolidatedBadge != nil else { continue }
 
                     let rect = rectFor(entry)
                     let x = rect.minX, y = rect.minY
@@ -3448,6 +3479,32 @@ struct TimelineView: View {
                         c.fill(rr, with: .color(.black.opacity(0.38)))
                     }
 
+                    // A consolidated instance: the indigo ring (batched, stroked after the loop) and
+                    // the badges, over the mute veil and under the label, as the rich view stacks them.
+                    if let badge = consolidatedBadge {
+                        let ring = RoundedRectangle(cornerRadius: item.blockCornerRadius)
+                            .inset(by: 0.75).path(in: rect)
+                        switch (selectedIDs.contains(item.id), isDim(item)) {
+                        case (false, false): ringPaths.0.addPath(ring)
+                        case (false, true):  ringPaths.1.addPath(ring)
+                        case (true, false):  ringPaths.2.addPath(ring)
+                        case (true, true):   ringPaths.3.addPath(ring)
+                        }
+                        if w >= 14 {
+                            let corner = CGPoint(x: x + w - 3, y: y + 3)
+                            if badge.stale {
+                                c.draw(GlyphResolveCache.shared.glyph("exclamationmark.triangle.fill", size: 9,
+                                                                       weight: .bold, color: .orange, in: ctx),
+                                       at: corner, anchor: .topTrailing)
+                            }
+                            if badge.resynced {
+                                c.draw(GlyphResolveCache.shared.glyph("checkmark.circle.fill", size: 11,
+                                                                       weight: .bold, color: .green, in: ctx),
+                                       at: corner, anchor: .topTrailing)
+                            }
+                        }
+                    }
+
                     // The label cropped to the block (unreadable/skipped below 10px — the zoomed-out case).
                     if needsLabel {
                         var lc = c
@@ -3484,6 +3541,16 @@ struct TimelineView: View {
                                 anchor: .topLeading)
                     }
                 }
+
+                func strokeRings(_ path: Path, opacity: Double, selected: Bool) {
+                    guard !path.isEmpty else { return }
+                    var rc = ctx; rc.opacity = opacity
+                    rc.stroke(path, with: .color(Color.indigo.opacity(selected ? 0.95 : 0.6)), lineWidth: 1.5)
+                }
+                strokeRings(ringPaths.0, opacity: 1.0, selected: false)
+                strokeRings(ringPaths.1, opacity: 0.25, selected: false)
+                strokeRings(ringPaths.2, opacity: 1.0, selected: true)
+                strokeRings(ringPaths.3, opacity: 0.25, selected: true)
 
                 // The groups' fades, mute veil and name row, over their composites.
                 GroupBlocksCanvas.drawOverlays(into: ctx, groups: groups, geo: groupGeo,

@@ -49,7 +49,8 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     case midi
     /// An aux (always rich).
     case aux
-    /// An instance of a consolidated object (its link / freshness badge is a rich view).
+    /// An instance of a consolidated object whose definition is being re-baked automatically (its
+    /// filling circle is a rich view). At rest the Canvas draws it, ring and badges included.
     case consolidate
     /// The name is being edited.
     case rename
