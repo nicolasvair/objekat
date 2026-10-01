@@ -18,8 +18,9 @@ it, the part the monitor runs BEFORE it builds anything: `ContextMenuPlan` (also
     click clears it;
   * a click on NO object (an empty lane, `id` omitted, `lane` + `time` given): a time selection
     ANYWHERE — inside it or lying elsewhere, on its lanes or not — gives the range's menu (group,
-    aux, MIDI clip, comment), nothing is selected; with no time selection: no menu at all (the
-    event goes on to the views), whatever the object selection;
+    aux, MIDI clip, comment), nothing is selected; with no time selection but clips SELECTED (a
+    clip or a MIDI clip, not a consolidated instance): 'Group the selection' alone, nothing is
+    selected; with neither: no menu at all (the event goes on to the views);
   * a child of an open group (cursor on its ABSOLUTE start), and an infinite bus.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
@@ -185,18 +186,46 @@ with ObjekatClient(SOCK) as c:
           json.dumps(r))
     cmd("timesel.clear")
 
-    # the same click with an object selection but no range: no menu, nothing touched
+    # the same click with clips selected but no range: 'Group the selection' alone, nothing touched
     cmd("selection.set", ids=[a, b])
     cmd("transport.seek", seconds=1.25)
     r = empty(5, 20.0)
-    check("empty lane, no time selection: no menu at all",
-          r["layout"] == "nothing" and r["offers_comment"] is False
-          and r["offers_object_marker"] is False and r["selects_object"] is False, json.dumps(r))
+    check("empty lane, no time selection, clips selected: 'Group the selection' alone",
+          r["layout"] == "group_selection_menu" and r["offers_comment"] is False
+          and r["offers_object_marker"] is False and r["selects_object"] is False
+          and r["applied"] is False, json.dumps(r))
     check("… the object selection and the cursor are left alone",
           sel() == {a, b} and near(cursor(), 1.25), "%s %s" % (sel(), cursor()))
+    cmd("selection.set", ids=[a])
+    check("… one clip selected is enough (the menu says 'Group the clip')",
+          empty(0, 0.5)["layout"] == "group_selection_menu" and sel() == {a})
     cmd("selection.clear")
-    check("empty lane, nothing selected, no range: no menu either",
+    check("empty lane, nothing selected, no range: no menu",
           empty(0, 0.5)["layout"] == "nothing")
+
+    # only what is groupable counts: a group alone is not a clip, a MIDI clip is
+    cmd("project.new")
+    h1 = cmd("object.add", path=BIP, lane=0, start=2.0)["id"]
+    h2 = cmd("object.add", path=BIP, lane=1, start=4.0)["id"]
+    hg = cmd("group.create", ids=[h1, h2])["id"]
+    cmd("selection.set", ids=[hg])
+    r = empty(5, 20.0)
+    check("empty lane, no range, only a GROUP selected: no menu (not a clip)",
+          r["layout"] == "nothing" and sel() == {hg}, "%s %s" % (sel(), json.dumps(r)))
+    midi = cmd("midi.create_clip", start=10.0, end=12.0, lane=3)["id"]
+    cmd("selection.set", ids=[midi])
+    r = empty(6, 30.0)
+    check("empty lane, no range, a MIDI clip selected: 'Group the selection'",
+          r["layout"] == "group_selection_menu" and sel() == {midi}, "%s %s" % (sel(), json.dumps(r)))
+    cmd("selection.set", ids=[hg, midi])
+    check("empty lane, no range, a group and a MIDI clip selected: still on offer",
+          empty(6, 30.0)["layout"] == "group_selection_menu")
+    # a time selection wins over the clips: the range's menu, as before
+    cmd("timesel.set", start=8.0, end=9.0, lanes=[0])
+    check("empty lane, a range AND clips selected: the range's menu, not the group's",
+          empty(6, 30.0)["layout"] == "range_menu")
+    cmd("timesel.clear")
+    a, b, d = fresh()
 
     # a range with an object selected: the range wins on an empty lane, the selection stays
     cmd("selection.set", ids=[a])
