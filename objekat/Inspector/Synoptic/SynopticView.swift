@@ -384,10 +384,10 @@ struct SynopticView: View {
             // A bin's block: its header (colour · name · on/off · menu) and its footer (mute ·
             // volume · pan) are laid over the wire the frame is drawn round (@see draw).
             ForEach(d.placement.fxBlocks) { b in
-                FXBlockHeaderView(link: b.link, width: b.rect.width, actions: actions)
-                    .position(b.headerCenter)
+                FXBlockHeaderView(link: b.link, width: b.headerRect.width, actions: actions)
+                    .position(x: b.headerRect.midX, y: b.headerRect.midY)
                 FXBlockFooterView(link: b.link, actions: actions)
-                    .position(b.footerCenter)
+                    .position(x: b.mixRect.midX, y: b.mixRect.midY)
             }
 
             ForEach(d.placement.cards) { c in
@@ -712,7 +712,7 @@ struct SynopticView: View {
         for cable in d.placement.cables {
             var path = Path()
             path.move(to: cable.from)
-            if cable.style == .connector {
+            if cable.style == .connector || cable.style == .plain {
                 path.addLine(to: cable.to)
             } else {
                 // A vertical flow: the fork/merge curve bends vertically (control points on midY).
@@ -835,7 +835,7 @@ struct FXBlockHeaderView: View {
             .help(L("fxlink.help.menu"))
         }
         .padding(.horizontal, 8)
-        .frame(width: width, height: SynopticLayout.fxHeaderH)
+        .frame(width: width, height: SynopticLayout.fxHeaderCardH)
         .contextMenu { menuItems }
     }
 
@@ -896,7 +896,7 @@ struct FXBlockFooterView: View {
                          onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
                          onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
         }
-        .frame(height: SynopticLayout.fxFooterH)
+        .frame(height: SynopticLayout.fxMixH)
         .opacity(link.isEnabled ? 1 : 0.5)
     }
 }
