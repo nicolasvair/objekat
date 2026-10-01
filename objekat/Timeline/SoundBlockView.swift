@@ -556,62 +556,15 @@ struct MidiNotesPreview: View {
     /// the engine. `nil` = no loop. @see SoundObject.loopMarkerLocalRange, [[loop-item-plan]]
     var loopRange: (start: Double, end: Double)? = nil
 
-    /// The minimum span of semitones shown (it avoids giant bars when there are 1-2 pitches).
-    private static let minSpan = 8
-    /// A ceiling on drawn repeats: a very short pattern looped over a very long window at high
-    /// zoom must not generate an unreasonable number of iterations.
-    private static let maxLoopRepeats = 2000
-
+    /// The drawing itself is `MidiNotesDrawing`'s, which the timeline's batched Canvas calls too:
+    /// one definition for the rich view and for the Canvas, so the two cannot drift apart.
     var body: some View {
         Canvas { ctx, size in
-            guard secPerBeat > 0 else { return }
-            let period = loopRange.map { $0.end - $0.start }
-            let periodPx = (period.map { $0 > 0.001 } ?? false)
-                ? period! * pixelsPerSecond : nil
-            // The pattern's offset: the block's left edge plays the part of the IN point.
-            let loopShiftPx = (periodPx != nil ? (loopRange?.start ?? 0) : 0) * pixelsPerSecond
-
-            // It counts only what the clip PLAYS: a note (or a loop repeat) whose attack falls
-            // outside the edges is not pushed to the engine (see syncMidiNotes/setMidiLoop) and
-            // must neither show nor weigh on the vertical scale.
-            var visible: [(note: MidiNote, x: Double)] = []
-            if let periodPx, periodPx > 0.5 {
-                let maxK = min(Self.maxLoopRepeats, Int((size.width / periodPx).rounded(.up)) + 1)
-                for k in 0...maxK {
-                    let dx = Double(k) * periodPx
-                    for n in notes {
-                        let x = n.startBeat * secPerBeat * pixelsPerSecond + xOffset + dx - loopShiftPx
-                        if x >= 0, x < size.width { visible.append((n, x)) }
-                    }
-                }
-            } else {
-                for n in notes {
-                    let x = n.startBeat * secPerBeat * pixelsPerSecond + xOffset
-                    if x >= 0, x < size.width { visible.append((n, x)) }
-                }
-            }
-            guard !visible.isEmpty else { return }
-
-            // A self-adjusting pitch range plus a 1 semitone margin at the top and at the bottom.
-            let lo = visible.map(\.note.pitch).min()! - 1
-            let hi = visible.map(\.note.pitch).max()! + 1
-            let span = max(Self.minSpan, hi - lo)
-            let top  = hi + (span - (hi - lo)) / 2          // re-centres if the span was widened
-            // The vertical margin = 10% of the clip's height at the top AND at the bottom; the notes
-            // are drawn in the central band that is left.
-            let marginY = size.height * 0.10
-            let usableH = max(1, size.height - 2 * marginY)
-            let rowH = usableH / Double(span + 1)
-
-            for (n, x) in visible {
-                let w = max(1.5, n.lengthBeats * secPerBeat * pixelsPerSecond)
-                let y = marginY + Double(top - n.pitch) * rowH
-                let h = max(1.5, rowH - 1)
-                let v = Double(n.velocity) / 127.0
-                let rect = CGRect(x: x, y: y, width: w, height: h)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: min(2, h / 2)),
-                         with: .color(color.opacity((isMuted ? 0.30 : 0.55) + 0.40 * v)))
-            }
+            var batches: [MidiNotesDrawing.FillKey: Path] = [:]
+            MidiNotesDrawing.append(to: &batches, origin: .zero, notes: notes, secPerBeat: secPerBeat,
+                                    pixelsPerSecond: pixelsPerSecond, xOffset: xOffset, size: size,
+                                    loopRange: loopRange, color: color, muted: isMuted, dim: false)
+            MidiNotesDrawing.fill(batches, into: ctx)
         }
     }
 }

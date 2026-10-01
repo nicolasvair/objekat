@@ -761,6 +761,7 @@ struct TimelineView: View {
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
                                   rows: cullRows,
+                                  secPerBeat: 60.0 / viewModel.tempo,
                                   toolOverlays: partition.toolOverlays,
                                   hidesClipMuteVeil: tools.tool == .volume)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
@@ -3009,8 +3010,16 @@ struct TimelineView: View {
     private func clipRichReason(_ entry: LaneEntry, forceRichSelected: Bool = false,
                                 tools: ToolPartitionContext) -> RichReason? {
         let item = entry.item
-        // An aux / midi / group → a rich view
-        guard case .clip = item.kind else { return item.isMIDI ? .midi : .aux }
+        // An aux / group → a rich view. A MIDI clip is drawn by the Canvas (its notes:
+        // `MidiNotesDrawing`) unless its piano roll is open, or its loop's IN / OUT is being dragged
+        // (the live bounds are the rich view's).
+        switch item.kind {
+        case .clip: break
+        case .midiClip:
+            if item.showsPianoRollInline { return .midi }
+            if loopRangeDrag?.id == item.id { return .preview }
+        default: return .aux
+        }
         // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
         // few hundred selected clips were a few hundred rich views, and the timeline fell to
         // 2 fps). The Debug A/B switch puts the old behaviour back (@see `DebugRenderSwitches`).
@@ -3042,7 +3051,8 @@ struct TimelineView: View {
     /// `.onAppear` did for the rich view (the composite reads them).
     private func ensureWaveformsLoaded(_ entries: [LaneEntry], groups: [CanvasGroup] = []) {
         guard !entries.isEmpty || !groups.isEmpty else { return }
-        var paths = entries.map { $0.item.filePath }
+        // Only the clips have a file: a MIDI clip's path is empty, and loading "" would spawn a task per pass.
+        var paths = entries.compactMap { $0.item.isClip ? $0.item.filePath : nil }
         for g in groups {
             if case .group(let children, _) = g.item.kind {
                 for child in children {
@@ -3068,6 +3078,7 @@ struct TimelineView: View {
     private func plainBlocksCanvas(_ entries: [LaneEntry], groups: [CanvasGroup],
                                    selectedIDs: Set<UUID>,
                                    rows: (y0: Double, y1: Double),
+                                   secPerBeat: Double,
                                    toolOverlays: [UUID: CanvasToolOverlay] = [:],
                                    hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
@@ -3206,14 +3217,30 @@ struct TimelineView: View {
                 // A selected clip's loop marks are stroked as its rich view's waveform strokes
                 // them (the stem's colour at 0.6), not in the unselected clips' black.
                 var loopMarkersSel: [Color: Path] = [:]
+                // The MIDI clips' notes (@see `MidiNotesDrawing`), batched by (colour, velocity, dim).
+                var midiFills: [MidiNotesDrawing.FillKey: Path] = [:]
                 for entry in drawOrder {
                     let item = entry.item
                     let w = max(2, item.duration * pixelsPerSecond)
-                    guard w >= 3 else { continue }
                     let selected = selectedIDs.contains(item.id)
                     let rect = rectFor(entry)
                     let x = rect.minX, y = rect.minY
                     let stem = viewModel.stemColor(for: item.id)
+
+                    if item.isMIDI {
+                        // No waveform: the notes, in the stem's colour whatever the block's own
+                        // colour, bounded to the viewport's columns and rows.
+                        guard rect.maxY >= rows.y0, rect.minY <= rows.y1 else { continue }
+                        MidiNotesDrawing.append(
+                            to: &midiFills, origin: CGPoint(x: x, y: y), notes: item.midiNotes,
+                            secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
+                            size: CGSize(width: w, height: blockHeight),
+                            loopRange: item.loopMarkerLocalRange,
+                            visibleX: (Double(cullScrollX) - x - 1)...(Double(cullScrollX) + Double(cullViewportWidth) - x + 1),
+                            color: stem, muted: item.isMuted, dim: isDim(item))
+                        continue
+                    }
+                    guard w >= 3 else { continue }
 
                     if isDim(item) {
                         // Filtered: an individual opacity → drawn directly.
@@ -3285,6 +3312,7 @@ struct TimelineView: View {
                     }
                 }
                 for (color, path) in waveFills { ctx.fill(path, with: .color(color)) }
+                MidiNotesDrawing.fill(midiFills, into: ctx)
                 for (color, path) in laneSeparators where !path.isEmpty {
                     ctx.stroke(path, with: .color(color.opacity(WaveformDrawing.laneSeparatorOpacity)),
                                lineWidth: 1)
@@ -3342,7 +3370,8 @@ struct TimelineView: View {
                     let toolOverlay = toolOverlays[item.id]
                     // The loop's grips (a bar and a flag at each bound) belong to a SELECTED clip, as
                     // they do in its rich view: they are what one takes hold of to move IN / OUT.
-                    let loopGrips = selectedIDs.contains(item.id) && !item.isReversed
+                    // A MIDI clip shows them whether selected or not, as its rich view always did.
+                    let loopGrips = (selectedIDs.contains(item.id) || item.isMIDI) && !item.isReversed
                         ? item.loopMarkerLocalRange : nil
                     guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil else { continue }
 
