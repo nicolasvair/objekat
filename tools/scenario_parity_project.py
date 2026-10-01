@@ -44,6 +44,18 @@ tints and read as a nesting that is not there):
     the inner one on the red stem (two hues stacking) · a very NARROW open group (0.5 s) · an
     INFINITE open group (a full-width band, last because it adds a row of its own).
 
+Last, a section of GROUPS' BLOCKS (the third A/B: the block of a group, which the Canvas draws now —
+radius 20, tint, inset border, composite, fades, mute veil, glyph, name, meta, chevron). All CLOSED
+(the chevron then points right; the open ones above point down), one per root lane:
+
+    closed group (the reference) · closed group to SELECT (tint 0.55, border 0.9) · MUTED closed
+    group (veil, grey composite) · closed group on the RED stem · straight fades + 6 dB + pan L30
+    (the fade veils, the label pushed past the fade, the META) · bent fades · a child whose file is
+    MISSING (the group's name goes red, on the default band) · the same on the RED stem (the halo)
+    · four NARROW groups 0.20 / 0.45 / 0.70 / 1.00 s (20 / 45 / 70 / 100 px at 100 pps: the label
+    from 30 px, the chevron from 60, the meta from 80) · a LONG group (40 s: scroll it at 100 pps
+    and zoom to ~2000 pps, the block is millions of px wide).
+
 What it cannot make: the salmon / pink NAME BAND is an object's own colour, which keeps a clip on
 its rich view whatever its selection (`colorIndex != nil` is excluded from the Canvas) and has no
 API door — set one by hand (right click) if you want to see the red on salmon.
@@ -295,6 +307,41 @@ def main():
     cmd("object.set_infinite", {"id": inf, "on": True})      # while closed: it takes the row below
     next_row("INFINITE open group (full-width band; it took a row of its own just below)")
 
+    # ---- GROUPS' BLOCKS: closed groups, one per root lane (they stay closed)
+    def closed(parts, **kw):
+        return make_group(root, parts, remember=False, **kw)
+
+    root += 1   # the row the INFINITE group above took for itself
+    one = [(0, 0.0, 4.0), (0, 5.0, 3.0), (1, 2.0, 5.0)]
+    closed(one);                                             next_row("CLOSED group (reference, leave it; the chevron points right)")
+    closed(one);                                             next_row("CLOSED group to SELECT (tint 0.55, border 0.9)")
+    closed(one, muted=True);                                 next_row("MUTED closed group (black veil, grey composite)")
+    closed(one, stem=stems[6]);                              next_row("CLOSED group on the RED stem")
+    g = closed(one)
+    cmd("object.set_fade", {"id": g, "in": 1.5, "out": 2.0})
+    cmd("object.set_gain", {"ids": [g], "db": 6})
+    cmd("object.set_pan", {"ids": [g], "pan": -0.3})
+    next_row("CLOSED group, fades in 1.5 s / out 2 s, +6 dB, pan L30 (veils, label past the fade, meta)")
+    g = closed(one)
+    cmd("object.set_fade", {"id": g, "in": 2.0, "out": 2.5})
+    cmd("object.set_fade_curve", {"id": g, "in": "convex", "out": "sCurve", "in_bend": 0.8, "out_bend": 1.0})
+    next_row("CLOSED group, bent fades (convex in, S out)")
+    ids = [put(gone, root, 0.0, 4.0), put(mono, root, 5.0, 3.0)]
+    close_and_remember(cmd("group.create", {"ids": ids})["id"], keep_closed=True)
+    next_row("CLOSED group holding a MISSING file (name red + bold, white halo)")
+    ids = [put(gone, root, 0.0, 4.0), put(mono, root, 5.0, 3.0)]
+    close_and_remember(cmd("group.create", {"ids": ids})["id"], stem=stems[6], keep_closed=True)
+    next_row("the same on the RED stem (red on red: the halo)")
+    x = 0.0
+    for width_s in (0.20, 0.45, 0.70, 1.00):
+        c1 = put(mono, root, x, width_s)
+        gid = close_and_remember(cmd("group.create", {"ids": [c1]})["id"], keep_closed=True)
+        cmd("object.set_gain", {"ids": [gid], "db": -6})
+        x += width_s + 0.5
+    next_row("NARROW closed groups 0.20 / 0.45 / 0.70 / 1.00 s, -6 dB (100 pps: 20 / 45 / 70 / 100 px)")
+    closed([(0, 0.0, 8.0), (0, 10.0, 8.0), (0, 20.0, 8.0), (0, 30.0, 8.0), (1, 5.0, 30.0)])
+    next_row("LONG closed group (40 s): scroll at 100 pps, zoom to ~2000 pps")
+
     # Open them all, the outermost last (a group opens in place, order does not matter for the
     # model, but the nested ones must be open for their bands to exist at all).
     for gid in to_open:
@@ -354,6 +401,24 @@ WHAT TO LOOK AT, selected clips, Canvas vs rich:
    - the loop's grips (a bar and a flag at each bound) on the selected looped clip
    - the stem-muted row: waveform grey in the Canvas, stem-coloured under the veil in the rich view
    - the stem colours, fades (straight and bent), reverse, speed, stereo separator
+
+THE GROUPS' BLOCKS A/B (the closed-groups section, last rows; also look at the OPEN groups' blocks
+above, which are the same drawing): the same switch, `true` = every group on `GroupBlockView`.
+Select the "to SELECT" group and the open "SELECT as a whole" one, then flip it and compare:
+   - the radius (20), the tint (0.30 / 0.55) and the INSET 2 pt border (0.5 / 0.9, in the custom
+     colour when there is one) — the Canvas fill is built from the same shapes as the rich view
+   - the composite: same silhouette, clipped to the rounded corners (a child at the very start),
+     grey on a muted group, under the fade veils
+   - the label: glyph + name (the Canvas's 11 pt glyph against the rich 12 pt, kept on purpose),
+     the red + halo of the MISSING rows, the META from 80 px, the CHEVRON from 60 px (right when
+     closed, down when open; its height on the name row is an estimate — compare it)
+   - the muted veil (0.38) at the corners; a stem-muted group
+   - a group on a stem; the crossfade-free neighbours; light and dark
+   - what must stay RICH (counters: `perf.census` → `regimes.groups_rich`): an infinite group, a
+     group being renamed (double click its name), one being dragged / trimmed / resized / faded,
+     under the Volume / Pan / Aux tools, and a CONSOLIDATED object open for editing (its ✕). Not
+     makeable here: a name band in a custom colour (no API door: set one by hand, right click) and
+     a consolidated object (an asynchronous bake) — do both by hand.
 
 THE GROUPS' A/B (the open-groups section, bottom of the project; nothing to select unless said).
 Flip the same switch with each of these in view, light AND dark appearance (the base of the rise
