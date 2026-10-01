@@ -130,6 +130,66 @@ extension CommandRegistry {
                             "end": .number(hi + r.dt)])
         }
 
+        register("selection.context_click",
+                 summary: "Plays the DECISION of a right click on an object, minus the menu itself "
+                        + "(`ContextMenuPlan`, the same code the timeline's monitor runs). `zone`: "
+                        + "`time` (the upper half of the block) or `body` (the lower half, the "
+                        + "default); `time` is the instant of the point (default: the middle of the "
+                        + "object), and the point's lane is the object's own display lane. Answers "
+                        + "`layout` (`range_menu` when the point lies inside the time selection — "
+                        + "today's menu — `object_time_menu` | `object_body_menu` | `nothing`), "
+                        + "whether the click `selects_object`, whether the object marker "
+                        + "(`offers_object_marker`) and the comment (`offers_comment`) are offered, "
+                        + "and `applied`. With `apply` (the default) a click that selects does it "
+                        + "now, exactly as the monitor does before building the menu: the time "
+                        + "selection is cleared, the object becomes the selection and the cursor "
+                        + "goes to its start — unless it is ALREADY selected, in which case nothing "
+                        + "at all changes (the multiple selection is kept). The upper half and a "
+                        + "click inside the range never select. `apply: false` only asks.",
+                 params: [ParamSpec("id", "uuid", "The object under the point."),
+                          ParamSpec("zone", "string", required: false,
+                                    "time | body (default body)."),
+                          ParamSpec("time", "number", required: false,
+                                    "The point's instant in seconds (default: the object's middle)."),
+                          ParamSpec("apply", "bool", required: false,
+                                    "Perform the selection the click makes (default true).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let entry = vm.laneEntries.first(where: { $0.item.id == id }) else {
+                throw CommandError(code: .not_found, message: "unknown or hidden object: \(id.uuidString)")
+            }
+            let zone: ContextMenuPlan.BlockZone
+            switch try p.string("zone", or: "body") {
+            case "time": zone = .time
+            case "body": zone = .body
+            default:
+                throw CommandError(code: .bad_params, message: "'zone': time or body")
+            }
+            let time = max(0, try p.optionalDouble("time") ?? (entry.absStart + entry.item.duration / 2))
+            let plan = vm.contextClickPlan(objectID: id, displayLane: entry.displayLane,
+                                           time: time, zone: zone)
+            var applied = false
+            if try p.bool("apply", or: true), plan.selectsObject {
+                vm.selectForContextClick(entry, isPlaying: vm.isTransportPlaying,
+                                         onMoveCursor: { vm.cursorPosition = max(0, $0) })
+                applied = true
+            }
+            let layout: String
+            switch plan.layout {
+            case .rangeMenu: layout = "range_menu"
+            case .objectTimeMenu: layout = "object_time_menu"
+            case .objectBodyMenu: layout = "object_body_menu"
+            case .nothing: layout = "nothing"
+            }
+            return .object(["layout": .string(layout),
+                            "selects_object": .bool(plan.selectsObject),
+                            "offers_object_marker": .bool(plan.offersObjectMarker),
+                            "offers_comment": .bool(plan.offersComment),
+                            "applied": .bool(applied),
+                            "selection": CommandAdapters.selectionPayload(vm)])
+        }
+
         register("timesel.step_lane",
                  summary: "Slides the TIME SELECTION one displayed row up or down, keeping its span "
                         + "of time and its height — the traced passage travels, the matter does not: "
