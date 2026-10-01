@@ -739,7 +739,11 @@ struct TimelineView: View {
                 // clip differently, so a change of selection must re-evaluate this layer — and
                 // the Canvas's renderer closure is not a place to count on tracking it.
                 let selectedIDs = viewModel.selectedIDs
-                let partition = partitionVisibleBlocks(visibleEntries)
+                // What the active tool needs the partition to know (the aimed block, the Send tool's
+                // rows — computed ONCE here for every block shown —, the exact-scroll test): read
+                // once per pass, and only under a tool.
+                let tools = toolPartitionContext(visibleEntries, selectedIDs: selectedIDs)
+                let partition = partitionVisibleBlocks(visibleEntries, tools: tools)
                 let plainVisible = partition.plain
                 let richVisible = partition.rich
                 // The groups the Canvas draws, resolved HERE (their name, colour, mute, missing
@@ -757,7 +761,8 @@ struct TimelineView: View {
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
                 ForEach(richVisible) { entry in
-                    itemBlock(for: entry.item, displayLane: entry.displayLane)
+                    itemBlock(for: entry.item, displayLane: entry.displayLane,
+                              sendRows: tools.sendRows)
                         .allowsHitTesting(false)
                 }
 
@@ -1615,7 +1620,8 @@ struct TimelineView: View {
     // MARK: - Unified blocks
 
     @ViewBuilder
-    private func itemBlock(for item: SoundObject, displayLane dl: Int) -> some View {
+    private func itemBlock(for item: SoundObject, displayLane dl: Int,
+                           sendRows: [UUID: [SendRow]]? = nil) -> some View {
         if item.isInfiniteBus {
             // An infinite bus (an aux/group): no start/end any more → it takes up its WHOLE lane (it
             // processes the entire project). It is selected/handled like an ordinary clip.
@@ -1625,9 +1631,9 @@ struct TimelineView: View {
             case .clip, .aux, .midiClip:
                 // The aux is rendered as a clip block (with no waveform) for now;
                 // a dedicated look in 5b. The MIDI clip reuses the clip block (the note view = step C).
-                soundBlock(for: item, overrideDisplayLane: dl)
+                soundBlock(for: item, overrideDisplayLane: dl, sendRows: sendRows)
             case .group:
-                groupBlock(for: item, displayLane: dl)
+                groupBlock(for: item, displayLane: dl, sendRows: sendRows)
             }
         }
     }
@@ -2662,7 +2668,8 @@ struct TimelineView: View {
     }
 
     @ViewBuilder
-    private func soundBlock(for object: SoundObject, overrideDisplayLane: Int? = nil) -> some View {
+    private func soundBlock(for object: SoundObject, overrideDisplayLane: Int? = nil,
+                            sendRows memo: [UUID: [SendRow]]? = nil) -> some View {
         let dLane = overrideDisplayLane ?? displayLane(for: object.lane)
         SoundBlockView(
             object: object,
@@ -2695,7 +2702,7 @@ struct TimelineView: View {
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:         (viewModel.activeTool == .toolAux && !object.isAux)
-                                ? viewModel.sendRows(for: object.id) : [],
+                                ? sendRowsFor(object.id, memo: memo) : [],
             isRenaming:       viewModel.renamingID == object.id,
             isBaking:         viewModel.isBaking(object.id),
             // A `let` of the view-model: reading it here tracks nothing. @see RenderProgressStore
@@ -2748,7 +2755,7 @@ struct TimelineView: View {
         var reasons = [Int](repeating: 0, count: RichReason.count)
     }
 
-    private func partitionVisibleBlocks(_ entries: [LaneEntry]) -> BlockPartition {
+    private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
         var p = BlockPartition()
         #if DEBUG
         let forceRichSelected = DebugRenderSwitches.shared.forceRichBlocks
@@ -2757,14 +2764,14 @@ struct TimelineView: View {
         #endif
         for entry in entries {
             if entry.item.isGroup {
-                if let why = groupRichReason(entry.item, forceRich: forceRichSelected) {
+                if let why = groupRichReason(entry, forceRich: forceRichSelected, tools: tools) {
                     p.rich.append(entry)
                     p.richGroups += 1
                     p.reasons[why.rawValue] += 1
                 } else {
                     p.plainGroups.append(entry)
                 }
-            } else if let why = clipRichReason(entry.item, forceRichSelected: forceRichSelected) {
+            } else if let why = clipRichReason(entry, forceRichSelected: forceRichSelected, tools: tools) {
                 p.rich.append(entry)
                 p.reasons[why.rawValue] += 1
             } else {
@@ -2772,6 +2779,105 @@ struct TimelineView: View {
             }
         }
         return p
+    }
+
+    // MARK: What the tools ask of the partition
+
+    /// The tools whose overlays the batched Canvas draws (@see `ToolOverlayPartition`). A tool that
+    /// is not in this set keeps the regime it had before the Canvas drew anything over a block:
+    /// every block rich under Volume / Pan / Aux, the hovered one under Stem.
+    private static let canvasTools: Set<ToolOverlayPartition.Tool> = []
+
+    /// What the active tool contributes to the partition, read ONCE per pass (and only under a
+    /// tool: `toolHoveredID`, the drags and the send focus are not read otherwise, so a hover under
+    /// another tool never re-evaluates the layer).
+    private struct ToolPartitionContext {
+        var tool: ToolOverlayPartition.Tool = .none
+        /// The Debug A/B switch (@see `DebugRenderSwitches.forceRichTools`): the pre-Canvas regime.
+        var forceRich = false
+        var selected = Set<UUID>()
+        /// The blocks AIMED AT: hovered (Volume / Pan / Stem), grabbed by a drag, or holding the
+        /// Send tool's focus. The rich view carries the full, live overlay of these.
+        var hoveredID: UUID?
+        var grabbedID: UUID?
+        var focusedID: UUID?
+        /// The Send tool's columns for every block shown, computed once per pass (nil = not asked:
+        /// a rich block then reads them live, as the ghost's does).
+        var sendRows: [UUID: [SendRow]]?
+        /// The vertical window the lanes on screen cover (canvas coordinates): what lies outside
+        /// it is not seen, so the tool asks nothing of it.
+        var rows: (y0: Double, y1: Double) = (0, 0)
+        var live: LiveScroll?
+
+        func isAimed(_ id: UUID) -> Bool { id == hoveredID || id == grabbedID || id == focusedID }
+    }
+
+    private func toolPartitionContext(_ entries: [LaneEntry], selectedIDs: Set<UUID>) -> ToolPartitionContext {
+        var t = ToolPartitionContext()
+        switch viewModel.activeTool {
+        case .toolVolume:
+            t.tool = .volume
+            t.hoveredID = toolHoveredID
+            t.grabbedID = volumeDrag?.grabbedID
+        case .toolPan:
+            t.tool = .pan
+            t.hoveredID = toolHoveredID
+            t.grabbedID = panDrag?.grabbedID
+        case .toolStemAssign:
+            t.tool = .stem
+            t.hoveredID = toolHoveredID
+        case .toolAux:
+            t.tool = .aux
+            t.focusedID = viewModel.sendToolFocus?.objectID
+            t.grabbedID = sendDrag?.grabbedID
+        default:
+            return t
+        }
+        #if DEBUG
+        t.forceRich = DebugRenderSwitches.shared.forceRichTools
+        #endif
+        t.selected = selectedIDs
+        t.rows = cullRows
+        t.live = liveScroll
+        return t
+    }
+
+    /// Why the active tool keeps this block rich, nil if the Canvas can draw it (and the tool's
+    /// overlay over it). The rule itself is `ToolOverlayPartition.verdict`; this reads the model.
+    private func toolRichReason(_ entry: LaneEntry, isGroup: Bool, tools: ToolPartitionContext) -> RichReason? {
+        guard tools.tool != .none else { return nil }
+        let item = entry.item
+        let aimed = tools.isAimed(item.id)
+
+        if tools.tool == .stem {
+            guard aimed else { return nil }
+            // The pre-Canvas rule: a group hovered, but a clip only if selected as well.
+            if tools.forceRich || !Self.canvasTools.contains(.stem),
+               !isGroup, !tools.selected.contains(item.id) { return nil }
+            return .stemHover
+        }
+        if tools.forceRich || !Self.canvasTools.contains(tools.tool) { return .tool }
+        if aimed { return .toolHover }
+
+        // Outside the lanes on screen nothing is seen, whatever the tool would draw there.
+        let y = rulerHeight + Double(entry.displayLane) * laneStep
+        guard y + blockHeight >= tools.rows.y0, y <= tools.rows.y1 else { return nil }
+
+        let w = max(2, item.duration * pixelsPerSecond)
+        let x = item.startTime * pixelsPerSecond
+        let hasRows = !(tools.sendRows?[item.id]?.isEmpty ?? true)
+        let verdict = ToolOverlayPartition.verdict(
+            tool: tools.tool, blockWidth: w, isSelected: tools.selected.contains(item.id),
+            isAimed: false, hasSendRows: hasRows,
+            spanIsInvariant: tools.live?.spanIsInvariant(blockX: x, blockWidth: w) ?? true)
+        return verdict == .richSpan ? .toolSpan : nil
+    }
+
+    /// The Send tool's rows for a block a rich view draws: the pass's memo when there is one (it
+    /// holds every block shown), else asked of the view model (the drag ghost).
+    private func sendRowsFor(_ id: UUID, memo: [UUID: [SendRow]]?) -> [SendRow] {
+        if let memo { return memo[id] ?? [] }
+        return viewModel.sendRows(for: id)
     }
 
     /// nil = this group's block can be drawn in the shared Canvas (`GroupBlocksCanvas`): a plain
@@ -2782,8 +2888,9 @@ struct TimelineView: View {
     /// rule: the order is what decides what is read, hence what a hover re-evaluates).
     /// `forceRich` is the Debug A/B switch: every group back on its rich view (always false in
     /// Release).
-    private func groupRichReason(_ item: SoundObject, forceRich: Bool) -> RichReason? {
-        // `item` is a group: the partition only asks groups (it tests `isGroup` first).
+    private func groupRichReason(_ entry: LaneEntry, forceRich: Bool, tools: ToolPartitionContext) -> RichReason? {
+        // `entry.item` is a group: the partition only asks groups (it tests `isGroup` first).
+        let item = entry.item
         if item.isInfiniteBus { return .infinite }
         #if DEBUG
         if forceRich { return .forceRich }
@@ -2792,16 +2899,11 @@ struct TimelineView: View {
         if viewModel.isBaking(item.id) { return .bake }
         // `isEditing` / `isPreviewing` (the latter is a subset of the former).
         if viewModel.editingPlacementID == item.id { return .editing }
-        switch viewModel.activeTool {
-        case .toolVolume, .toolPan, .toolAux: return .tool   // interactive overlays
-        case .toolStemAssign:
-            // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`), and a
-            // group always had it: the hovered one stays rich. The tool is tested FIRST, so that
-            // `toolHoveredID` is read (and this layer re-evaluated on every hover) under that
-            // tool alone.
-            if toolHoveredID == item.id { return .stemHover }
-        default: break
-        }
+        // The active tool's overlay (@see `toolRichReason`): the block aimed at, or one a viewport
+        // edge cuts while the tool draws on it. The context was read ONCE for the pass, so that
+        // `toolHoveredID` is read (and this layer re-evaluated on every hover) under the tools
+        // that hover alone.
+        if let why = toolRichReason(entry, isGroup: true, tools: tools) { return why }
         if previewOffset(for: item) != nil { return .preview }
         if previewResizeDX(for: item) != 0 { return .preview }
         if previewTrimDX(for: item) != 0 { return .preview }
@@ -2847,7 +2949,9 @@ struct TimelineView: View {
     /// reason, in this order, it keeps a rich view (the order is the rule, @see `groupRichReason`).
     /// `forceRichSelected` is the Debug A/B switch (always false in Release, where the line that
     /// reads it does not exist).
-    private func clipRichReason(_ item: SoundObject, forceRichSelected: Bool = false) -> RichReason? {
+    private func clipRichReason(_ entry: LaneEntry, forceRichSelected: Bool = false,
+                                tools: ToolPartitionContext) -> RichReason? {
+        let item = entry.item
         // An aux / midi / group → a rich view
         guard case .clip = item.kind else { return item.isMIDI ? .midi : .aux }
         // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
@@ -2860,17 +2964,8 @@ struct TimelineView: View {
         if viewModel.isBaking(item.id) { return .bake }
         if item.isConsolidateInstance { return .consolidate }   // a link/freshness badge → a rich view
         if item.colorIndex != nil { return .color }   // a 10%/90% band → a rich view
-        switch viewModel.activeTool {
-        case .toolVolume, .toolPan, .toolAux: return .tool   // interactive overlays
-        case .toolStemAssign:
-            // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`). Only a
-            // SELECTED clip kept its rich view under that tool until now — an unselected one has
-            // always been in the Canvas, with no veil — so the exception keeps exactly that:
-            // the tool is tested FIRST, so that `toolHoveredID` is read (and this layer
-            // re-evaluated on every hover) under that tool alone.
-            if viewModel.isSelected(item.id) && toolHoveredID == item.id { return .stemHover }
-        default: break
-        }
+        // The active tool's overlay (@see `toolRichReason`).
+        if let why = toolRichReason(entry, isGroup: false, tools: tools) { return why }
         // A drag/preview under way on this clip → a live SwiftUI view.
         if previewOffset(for: item) != nil { return .preview }
         if previewResizeDX(for: item) != 0 { return .preview }
@@ -3231,7 +3326,8 @@ struct TimelineView: View {
         .allowsHitTesting(false)
     }
 
-    private func groupBlock(for group: SoundObject, displayLane dl: Int) -> some View {
+    private func groupBlock(for group: SoundObject, displayLane dl: Int,
+                            sendRows memo: [UUID: [SendRow]]? = nil) -> some View {
         GroupBlockView(
             group: group,
             displayName: viewModel.displayName(of: group),
@@ -3266,7 +3362,7 @@ struct TimelineView: View {
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:        (viewModel.activeTool == .toolAux)
-                                ? viewModel.sendRows(for: group.id) : [],
+                                ? sendRowsFor(group.id, memo: memo) : [],
             isRenaming:      viewModel.renamingID == group.id,
             isBaking:      viewModel.isBaking(group.id),
             renderProgress: viewModel.renderProgress,

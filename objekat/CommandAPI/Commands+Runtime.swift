@@ -358,6 +358,26 @@ extension CommandRegistry {
             DebugRenderSwitches.shared.forceRichBlocks = enabled
             return .object(["was": .bool(was), "enabled": .bool(enabled)])
         }
+
+        register("debug.force_rich_tools",
+                 summary: """
+                 DEBUG. The A/B switch of the tools' Canvas work (@see \
+                 `Shared/DebugRenderSwitches.swift`): `enabled: true` puts EVERY block back on its \
+                 rich SwiftUI view under the Volume / Pan / Aux tools (and the old Stem rule: a clip \
+                 rich only when selected AND hovered); `false` (production) keeps a block rich only \
+                 when it is aimed at or cut by a viewport edge, and draws the tool's overlay in the \
+                 batched Canvas for the others. VOLATILE — it writes nothing into the user's \
+                 settings; the persistent form is the preference `objekat.debug.forceRichTools`, \
+                 read at launch. Answers the previous and the current value. Not present in \
+                 Release builds.
+                 """,
+                 params: [ParamSpec("enabled", "bool", "true = rich views for every block under a tool.")],
+                 undo: .none) { p in
+            let enabled = try p.bool("enabled")
+            let was = DebugRenderSwitches.shared.forceRichTools
+            DebugRenderSwitches.shared.forceRichTools = enabled
+            return .object(["was": .bool(was), "enabled": .bool(enabled)])
+        }
         #endif
     }
 

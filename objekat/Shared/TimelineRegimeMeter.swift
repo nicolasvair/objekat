@@ -27,8 +27,17 @@ import Foundation
 /// One reason per rich block, so the histogram adds up to `clipsRich + groupsRich`. The cases are
 /// the rules' own conditions, named; adding a rule to the partition means adding a case here.
 nonisolated enum RichReason: Int, CaseIterable, Sendable {
-    /// The Volume / Pan / Aux tool is armed: every block carries its interactive overlay.
+    /// The Debug A/B switch `DebugRenderSwitches.forceRichTools` is on: the Volume / Pan / Aux tool
+    /// is armed and EVERY block carries its overlay as a rich view (the pre-Canvas regime). Never
+    /// in production (and never in Release).
     case tool
+    /// The Volume / Pan / Aux tool is armed and the block is AIMED AT: hovered, grabbed by a
+    /// drag, or (Aux) holding the send focus. One block at a time.
+    case toolHover
+    /// The Volume / Pan / Aux tool draws something on this block and the block is cut by a
+    /// viewport edge, so its controls follow the EXACT scroll the Canvas does not know
+    /// (`LiveScroll.spanIsInvariant` is false). Bounded by the lanes on screen.
+    case toolSpan
     /// The Stem tool is armed and the pointer is on this block (its hover veil is a rich layer).
     case stemHover
     /// A drag / trim / resize / fade preview is under way on this block.
@@ -63,6 +72,8 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     var key: String {
         switch self {
         case .tool: return "tool"
+        case .toolHover: return "tool_hover"
+        case .toolSpan: return "tool_span"
         case .stemHover: return "stem_hover"
         case .preview: return "preview"
         case .spill: return "spill"

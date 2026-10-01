@@ -19,7 +19,21 @@ import Observation
 //     compare a closed group, an open one, a selected one, a muted one, one with a custom colour
 //     band, one holding a missing file, a consolidated object open for editing.
 //
-// Two doors, and only these:
+// `forceRichTools` — the same idea for the Volume / Pan / Aux / Stem tools. OFF (the default) is
+// the production behaviour: a block stays a rich view under a tool only when it is aimed at, or
+// when the tool draws on it and it follows the exact scroll (@see `ToolOverlayPartition`); the
+// others are in the batched Canvas, the tool's overlay drawn there. ON puts the old regime back —
+// every block a rich view under Volume / Pan / Aux, and under Stem a clip rich only when selected AND
+// hovered (a group when hovered) — so the two can be compared on the same project:
+//   • Volume: a selected block, a narrow one, the hovered one; a muted CLIP (no veil under this tool)
+//     and a muted GROUP (the veil stays); a crossfade with both blocks selected (the veils add up);
+//   • Pan: the same, the mute veil over the panel;
+//   • Aux: the columns (names, levels, on/off button), a focused column, a locked (automated) knob,
+//     a block cut by the viewport's edge while scrolling;
+//   • Stem: the hovered block (clips: selected or not).
+//
+// Doors for `forceRichBlocks` (`forceRichTools` has the same two, with the key
+// `objekat.debug.forceRichTools` and the command `debug.force_rich_tools`):
 //   • the preference `objekat.debug.forceRichBlocks` (bool), read ONCE at launch — set it from a
 //     terminal and relaunch:
 //         defaults write org.labelpeche.objekat objekat.debug.forceRichBlocks -bool YES
@@ -37,11 +51,15 @@ final class DebugRenderSwitches {
     static let shared = DebugRenderSwitches()
 
     static let forceRichBlocksKey = "objekat.debug.forceRichBlocks"
+    static let forceRichToolsKey = "objekat.debug.forceRichTools"
 
     var forceRichBlocks: Bool
+    /// Every block back on its rich view under the Volume / Pan / Aux tools (and the old Stem rule).
+    var forceRichTools: Bool
 
     private init() {
         forceRichBlocks = UserDefaults.standard.bool(forKey: Self.forceRichBlocksKey)
+        forceRichTools = UserDefaults.standard.bool(forKey: Self.forceRichToolsKey)
     }
 }
 #endif
