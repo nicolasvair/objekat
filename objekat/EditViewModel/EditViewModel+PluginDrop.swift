@@ -372,8 +372,35 @@ extension EditViewModel {
             return transferFXBlock(blockID: payload.pluginID, from: payload.sourceObjectID, to: targetID,
                                    at: place, copy: true)
 
-        case .adoptIntoBin, .copyIntoBin, .extractFromBin:
-            return false   // carried out by the following steps of the rework
+        case .adoptIntoBin(let linkID):
+            guard case .series(_, let idx) = site else { return false }
+            // From another host, the plugins first MOVE to the target's chain (new identities, one undo
+            // point for the whole gesture), then join the bin there.
+            pushUndo()
+            var ids = payload.ids
+            if payload.sourceObjectID != targetID {
+                ids = transferPlugins(payload.ids, from: payload.sourceObjectID, to: targetID,
+                                      mode: .move, undo: false)
+                if selectedPluginHostID == payload.sourceObjectID { clearPluginSelection() }
+            }
+            let defs = fxAdoptPlugins(hostID: targetID, pluginIDs: ids, linkID: linkID, at: idx, undo: false)
+            // Within one host the instances kept their ids, so a selection still holds; from another host
+            // the selection follows the moved plugins (new ids) into the bin.
+            if !defs.isEmpty, payload.sourceObjectID != targetID {
+                setPluginSelection(Set(ids), host: targetID)
+            }
+            return !defs.isEmpty
+
+        case .copyIntoBin(let linkID):
+            guard case .series(_, let idx) = site, let source = chainPlugins(payload.sourceObjectID) else { return false }
+            let leaves = Self.flattenLeaves(source)
+            let found = payload.ids.compactMap { id in leaves.first { $0.id == id } }
+            return !fxAddPluginCopies(linkID: linkID, of: found, at: idx).isEmpty
+
+        case .extractFromBin:
+            guard case .series(let loc, let idx) = site else { return false }
+            // The plugins keep their ids (they are plain now), so a selection of them still holds.
+            return !fxExtractPlugins(hostID: targetID, pluginIDs: payload.ids, at: (loc, idx)).isEmpty
         }
     }
 }
