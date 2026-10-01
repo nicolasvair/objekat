@@ -28,4 +28,16 @@ enum LaneCulling {
     static func meets(top: Double, height: Double, y0: Double, y1: Double) -> Bool {
         top + height > y0 && top < y1
     }
+
+    /// The first index `i` of an array SORTED ascending by display lane (`laneAt(i)`) whose lane is
+    /// >= `lane`; `count` when there is none. `laneEntries` is such an array, which is what lets a
+    /// caret ask "what is on this row?" in O(log N + the row) instead of scanning every entry.
+    static func firstIndex(atOrAfterLane lane: Int, count: Int, laneAt: (Int) -> Int) -> Int {
+        var lo = 0, hi = count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if laneAt(mid) < lane { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
 }

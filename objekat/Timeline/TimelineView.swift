@@ -121,6 +121,9 @@ struct TimelineView: View {
     /// the time selection and the carets…) cull on `[cullScrollY, cullScrollY + cullViewportHeight]`
     /// instead of walking everything the timeline holds: what a frame costs follows what is SHOWN.
     @State private var cullScrollY: CGFloat = 0
+    /// What the caret's ink follows (@see caretsCanvas): read in the body, hence a change of
+    /// appearance re-evaluates it.
+    @Environment(\.colorScheme) private var colorScheme
     /// The height to cull: the real viewport plus the possible notch of lag. @see cullScrollY
     private var cullViewportHeight: CGFloat { viewportHeight + Self.cullStepPx }
 
@@ -714,23 +717,9 @@ struct TimelineView: View {
                     .zIndex(3)
 
                 // The caret at the insertion point: the lane clicked (with no selection), or the left edge
-                // of the time selection (on each of its lanes).
-                if let sel = viewModel.timeSelection {
-                    let ct = sel.timeRange.lowerBound
-                    ForEach(Array(sel.lanes), id: \.self) { lane in
-                        InsertionCaret(height: blockHeight,
-                                       overObject: blockCovers(displayLane: lane, at: ct))
-                            .offset(x: ct * pixelsPerSecond - InsertionCaret.halfWidth,
-                                    y: rulerHeight + Double(lane) * laneStep)
-                            .zIndex(3.1)
-                    }
-                } else if let cl = viewModel.caretLane {
-                    InsertionCaret(height: blockHeight,
-                                   overObject: blockCovers(displayLane: cl, at: currentSelectionCursor))
-                        .offset(x: currentSelectionCursor * pixelsPerSecond - InsertionCaret.halfWidth,
-                                y: rulerHeight + Double(cl) * laneStep)
-                        .zIndex(3.1)
-                }
+                // of the time selection (on each of its lanes). ONE Canvas, the visible rows only.
+                caretsCanvas()
+                    .zIndex(3.1)
 
                 // Blocks (the root plus the descendants of expanded groups).
                 // itemBlock branches on kind → a clip = SoundBlockView, a group = GroupBlockView
@@ -842,8 +831,8 @@ struct TimelineView: View {
                 // the same time — it is precisely the span they share — so neither block can draw
                 // it: whatever each of them puts in there, the upper one hides the lower. Above
                 // the blocks (1) and below the cut's lines (2.6), like the rest of what the canvas
-                // says about a gesture rather than about an object. @see CrossfadeVeilOverlay.
-                crossfadeLayer
+                // says about a gesture rather than about an object. @see CrossfadeVeilDrawing.
+                crossfadeCanvas()
                     .zIndex(2.55)
 
                 // The hovered cut line (top level AND children) — rendered at canvas level,
@@ -965,29 +954,18 @@ struct TimelineView: View {
                     .zIndex(2.1)
                 }
 
-                // TimeSelection overlay
-                if let sel = viewModel.timeSelection {
-                    let w = (sel.timeRange.upperBound - sel.timeRange.lowerBound) * pixelsPerSecond
-                    let x = sel.timeRange.lowerBound * pixelsPerSecond
-                    ForEach(Array(sel.lanes), id: \.self) { lane in
-                        Rectangle()
-                            .fill(TimeSelection.overlayColor)
-                            .frame(width: w, height: blockHeight)
-                            .offset(x: x, y: rulerHeight + Double(lane) * laneStep)
-                            .allowsHitTesting(false)
-                            .zIndex(1.5)
-                    }
-                }
+                // TimeSelection overlay: ONE Canvas, bounded to the viewport (a rectangle per lane of
+                // the selection, the visible rows and columns only).
+                timeSelectionCanvas()
+                    .zIndex(1.5)
 
                 // Plugin LINK overlay: a star from the clip whose editor is open towards the other
                 // clips of the group, plus highlighting. Visible ONLY with an editor open.
-                if let info = viewModel.linkOverlayInfo {
+                // The targets are resolved HERE, in ONE walk of the entries for every id involved
+                // (it was a scan of all the entries per member, twice).
+                if let info = viewModel.linkOverlayInfo, let plan = pluginLinkPlan(info) {
                     Canvas { ctx, _ in
-                        guard let srcTarget = linkTarget(for: info.sourceObjectID) else { return }
-                        let members = info.memberObjectIDs
-                            .filter { $0 != info.sourceObjectID }
-                            .compactMap { linkTarget(for: $0) }
-                        LinkOverlay.drawStar(in: ctx, source: srcTarget, members: members,
+                        LinkOverlay.drawStar(in: ctx, source: plan.source, members: plan.members,
                                              color: info.color)
                     }
                     .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
@@ -1002,37 +980,18 @@ struct TimelineView: View {
                 //  • one selected → a star from the source → the other instances (as before);
                 //  • several selected → ONE single chain joining every instance (instead of a star
                 //    from each to all the others, unreadable in a multiple selection).
-                if viewModel.hasSelectedLinkedObject {
+                //
+                // Planned HERE, in a single walk of the entries (@see consolidateLinkPlan), and only
+                // when the selection holds a consolidated object at all.
+                let consolidateLinks = consolidateLinkPlan()
+                if !consolidateLinks.isEmpty {
                     Canvas { ctx, _ in
-                        var byDef: [UUID: [UUID]] = [:]
-                        for id in viewModel.selectedIDs {
-                            guard let obj = viewModel.find(id: id),
-                                  let defID = obj.consolidateID else { continue }
-                            byDef[defID, default: []].append(id)
-                        }
-                        for (defID, selected) in byDef {
-                            if selected.count <= 1 {
-                                guard let src = selected.first, let srcTarget = linkTarget(for: src) else { continue }
-                                let members = viewModel.placementIDs(forConsolidate: defID, excluding: src)
-                                    .compactMap { linkTarget(for: $0) }
-                                guard !members.isEmpty else { continue }
-                                LinkOverlay.drawStar(in: ctx, source: srcTarget, members: members,
+                        for link in consolidateLinks {
+                            switch link {
+                            case .star(let source, let members):
+                                LinkOverlay.drawStar(in: ctx, source: source, members: members,
                                                      color: LinkColor.consolidate)
-                            } else {
-                                // Every visible instance of the definition, ordered along the timeline
-                                // (left→right, then top→bottom), joined in a chain.
-                                let selectedSet = Set(selected)
-                                let nodes = viewModel.placementIDs(forConsolidate: defID)
-                                    .compactMap { id -> (target: LinkTarget, active: Bool)? in
-                                        guard let t = linkTarget(for: id) else { return nil }
-                                        return (t, selectedSet.contains(id))
-                                    }
-                                    .sorted { l, r in
-                                        l.target.rect.minX != r.target.rect.minX
-                                            ? l.target.rect.minX < r.target.rect.minX
-                                            : l.target.rect.minY < r.target.rect.minY
-                                    }
-                                guard nodes.count > 1 else { continue }
+                            case .chain(let nodes):
                                 LinkOverlay.drawChain(in: ctx, nodes: nodes, color: LinkColor.consolidate)
                             }
                         }
@@ -1576,11 +1535,16 @@ struct TimelineView: View {
     /// straddles, and it had better keep the background's ink (@see InsertionCaret).
     func blockCovers(displayLane lane: Int, at t: Double) -> Bool {
         let margin = InsertionCaret.halfWidth / max(pixelsPerSecond, EditViewModel.minPixelsPerSecond)
-        return viewModel.laneEntries.contains { e in
-            e.displayLane == lane
-                && t >= e.absStart + margin
-                && t <= e.absStart + e.item.duration - margin
+        // `laneEntries` is sorted by display lane: a binary search lands on the row, and only the
+        // objects of THAT row are looked at (it was a scan of every entry, per caret).
+        let entries = viewModel.laneEntries
+        var i = LaneCulling.firstIndex(atOrAfterLane: lane, count: entries.count) { entries[$0].displayLane }
+        while i < entries.count, entries[i].displayLane == lane {
+            let e = entries[i]
+            if t >= e.absStart + margin && t <= e.absStart + e.item.duration - margin { return true }
+            i += 1
         }
+        return false
     }
 
     /// The width of a block's side handles: 25 % of its width, capped at 50 px and removed below
@@ -1733,10 +1697,14 @@ struct TimelineView: View {
     /// (`SoundObject.blockCornerRadius`): the halo then hugs the block instead of cutting its
     /// corners — visible above all on a GROUP, which is very rounded.
     private func linkTarget(for id: UUID) -> LinkTarget? {
-        guard let entry = viewModel.laneEntries.first(where: { $0.item.id == id }),
-              let rect = clipRect(for: id)
-        else { return nil }
-        return LinkTarget(rect, cornerRadius: entry.item.blockCornerRadius)
+        guard let entry = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        return linkTarget(for: entry)
+    }
+
+    /// The same, for an entry the caller already holds — what the link overlays use once they have
+    /// resolved their ids in a single walk, instead of one scan of the entries per id.
+    private func linkTarget(for entry: LaneEntry) -> LinkTarget {
+        LinkTarget(clipRect(for: entry), cornerRadius: entry.item.blockCornerRadius)
     }
 
     // A clip's/group's rect in canvas coordinates (top level AND a child of a group),
@@ -1809,6 +1777,11 @@ struct TimelineView: View {
 
     private func clipRect(for id: UUID) -> CGRect? {
         guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        return clipRect(for: e)
+    }
+
+    /// `clipRect(for:)` once the entry is in hand.
+    private func clipRect(for e: LaneEntry) -> CGRect {
         let dy = previewOffset(for: e.item)?.dy ?? 0
         let y = rulerHeight + Double(e.displayLane) * laneStep + dy
         // An infinite bus: its clickable 'surface' is its whole lane (0 → the content's width).
@@ -2150,14 +2123,14 @@ struct TimelineView: View {
     // MARK: - Background layers drawn by Canvas (E1)
 
     /// The columns every culled layer draws: the viewport's notch window, clamped to the content.
-    private var cullColumns: (x0: Double, x1: Double) {
+    var cullColumns: (x0: Double, x1: Double) {
         let bandW = totalDuration * pixelsPerSecond
         return (max(0, Double(cullScrollX) - 1),
                 min(bandW, Double(cullScrollX) + Double(cullViewportWidth) + 1))
     }
 
     /// The vertical window every culled layer draws, in canvas coordinates (@see cullScrollY).
-    private var cullRows: (y0: Double, y1: Double) {
+    var cullRows: (y0: Double, y1: Double) {
         (Double(cullScrollY) - 1, Double(cullScrollY) + Double(cullViewportHeight) + 1)
     }
 
@@ -2260,6 +2233,182 @@ struct TimelineView: View {
         }
         .frame(width: totalW, height: canvasHeight, alignment: .topLeading)
         .allowsHitTesting(false)
+    }
+
+    // MARK: - Layers drawn by Canvas (E2)
+
+    /// The display rows of a set of lanes (a time selection's) that the cull window shows,
+    /// ascending. It walks whichever is SMALLER — the set or the visible rows — so a selection of a
+    /// thousand lanes costs what the screen holds, not what the selection does.
+    private func visibleLanes(of lanes: Set<Int>) -> [Int] {
+        let win = cullRows
+        let rows = LaneCulling.rows(y0: win.y0, y1: win.y1, rulerHeight: rulerHeight,
+                                    laneStep: laneStep, count: Int.max)
+        if lanes.count <= rows.count { return lanes.filter { rows.contains($0) }.sorted() }
+        return rows.filter { lanes.contains($0) }
+    }
+
+    /// Every crossfade zone — and the ghost of the one a spilling fade is about to open — in ONE
+    /// Canvas, above the blocks (the caller sets the zIndex). The zones are resolved by
+    /// `crossfadeDrawings()` (@see CrossfadeVeilOverlay.swift), culled to the viewport.
+    @ViewBuilder private func crossfadeCanvas() -> some View {
+        let drawings = crossfadeDrawings()
+        if !drawings.isEmpty {
+            Canvas { ctx, _ in
+                for d in drawings { d.draw(in: ctx) }
+            }
+            .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The time selection's fill: one rectangle per lane of the selection, the visible rows and the
+    /// visible columns only. Same colour, same box (`blockHeight` tall, on its lane's top) as the
+    /// SwiftUI rectangles it replaces.
+    @ViewBuilder private func timeSelectionCanvas() -> some View {
+        if let sel = viewModel.timeSelection {
+            let cols = cullColumns
+            let x = sel.timeRange.lowerBound * pixelsPerSecond
+            let a = max(x, cols.x0)
+            let b = min(x + (sel.timeRange.upperBound - sel.timeRange.lowerBound) * pixelsPerSecond, cols.x1)
+            let ys = visibleLanes(of: sel.lanes).map { rulerHeight + Double($0) * laneStep }
+            if b > a, !ys.isEmpty {
+                let h = blockHeight
+                Canvas { ctx, _ in
+                    for y in ys {
+                        ctx.fill(Path(CGRect(x: a, y: y, width: b - a, height: h)),
+                                 with: .color(TimeSelection.overlayColor))
+                    }
+                }
+                .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Where the carets are and what ink each takes, for the rows and columns the viewport shows.
+    private func caretPlan() -> (x: Double, carets: [(y: Double, ink: Color)]) {
+        let t: Double
+        let lanes: [Int]
+        if let sel = viewModel.timeSelection {
+            t = sel.timeRange.lowerBound
+            lanes = visibleLanes(of: sel.lanes)
+        } else if let cl = viewModel.caretLane {
+            t = currentSelectionCursor
+            lanes = visibleLanes(of: [cl])
+        } else {
+            return (0, [])
+        }
+        let cols = cullColumns
+        let x = t * pixelsPerSecond - InsertionCaret.halfWidth
+        guard !lanes.isEmpty, x + InsertionCaret.width >= cols.x0, x <= cols.x1 else { return (x, []) }
+        let carets: [(y: Double, ink: Color)] = lanes.map { lane in
+            let over = blockCovers(displayLane: lane, at: t)
+            return (rulerHeight + Double(lane) * laneStep,
+                    over || colorScheme != .dark ? Color.black : Color.white)
+        }
+        return (x, carets)
+    }
+
+    /// The insertion caret(s): on each visible lane of the time selection at its left edge, or on
+    /// the lane clicked (with no selection) at the cursor. The ink follows what the line COVERS
+    /// (@see InsertionCaret): black over an object, otherwise the background's — resolved here, with
+    /// `blockCovers`, which alone knows how the display lanes are flattened.
+    @ViewBuilder private func caretsCanvas() -> some View {
+        let plan = caretPlan()
+        if !plan.carets.isEmpty {
+            let x = plan.x
+            let carets = plan.carets
+            let h = blockHeight
+            Canvas { ctx, _ in
+                for c in carets {
+                    ctx.fill(Path(CGRect(x: x, y: c.y, width: InsertionCaret.width, height: h)),
+                             with: .color(c.ink))
+                }
+            }
+            .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The entries of `laneEntries` for a set of ids, in ONE walk (stopping as soon as all are
+    /// found) — local to the link overlays, which used to scan every entry once per id.
+    private func laneEntries(withIDs ids: Set<UUID>) -> [UUID: LaneEntry] {
+        guard !ids.isEmpty else { return [:] }
+        var found: [UUID: LaneEntry] = [:]
+        found.reserveCapacity(ids.count)
+        for e in viewModel.laneEntries where ids.contains(e.item.id) {
+            found[e.item.id] = e
+            if found.count == ids.count { break }
+        }
+        return found
+    }
+
+    /// The star of the plugin whose editor is open: the source object's target and the other
+    /// members' that are shown. `nil` when the source itself is not shown (nothing to draw).
+    private func pluginLinkPlan(_ info: EditViewModel.LinkOverlayInfo) -> (source: LinkTarget, members: [LinkTarget])? {
+        var ids = Set(info.memberObjectIDs)
+        ids.insert(info.sourceObjectID)
+        let found = laneEntries(withIDs: ids)
+        guard let src = found[info.sourceObjectID] else { return nil }
+        let members = info.memberObjectIDs
+            .filter { $0 != info.sourceObjectID }
+            .compactMap { found[$0] }
+            .map { linkTarget(for: $0) }
+        return (linkTarget(for: src), members)
+    }
+
+    /// One consolidated definition's purple link, resolved.
+    private enum ConsolidateLink {
+        case star(source: LinkTarget, members: [LinkTarget])
+        case chain(nodes: [(target: LinkTarget, active: Bool)])
+    }
+
+    /// The links the selection arms: for each consolidated definition a selected object belongs to,
+    /// a star (one selected) or one chain (several). It reads the SHOWN placements — the same ones
+    /// the overlay always drew, a placement with no row having no target — in a single walk of the
+    /// entries for every definition at once, and does nothing at all (no walk) when the selection
+    /// holds no consolidated object. It replaces `hasSelectedLinkedObject` (a walk of the whole
+    /// tree per selected object) followed by `placementIDs` (another, per definition) and a scan of
+    /// the entries per placement: O(selected × objects) twice over.
+    private func consolidateLinkPlan() -> [ConsolidateLink] {
+        guard !viewModel.selectedIDs.isEmpty else { return [] }
+        var selectedByDef: [UUID: [UUID]] = [:]
+        for id in viewModel.selectedIDs {
+            guard let defID = viewModel.find(id: id)?.consolidateID else { continue }
+            selectedByDef[defID, default: []].append(id)
+        }
+        guard !selectedByDef.isEmpty else { return [] }
+        var placements: [UUID: [LaneEntry]] = [:]
+        for e in viewModel.laneEntries {
+            guard let defID = e.item.consolidateID, selectedByDef[defID] != nil else { continue }
+            placements[defID, default: []].append(e)
+        }
+        var plan: [ConsolidateLink] = []
+        for (defID, selected) in selectedByDef {
+            let all = placements[defID] ?? []
+            if selected.count <= 1 {
+                guard let src = selected.first, let srcEntry = all.first(where: { $0.item.id == src })
+                else { continue }
+                let members = all.filter { $0.item.id != src }.map { linkTarget(for: $0) }
+                guard !members.isEmpty else { continue }
+                plan.append(.star(source: linkTarget(for: srcEntry), members: members))
+            } else {
+                // Every visible instance of the definition, ordered along the timeline
+                // (left→right, then top→bottom), joined in a chain.
+                let selectedSet = Set(selected)
+                let nodes = all
+                    .map { (target: linkTarget(for: $0), active: selectedSet.contains($0.item.id)) }
+                    .sorted { l, r in
+                        l.target.rect.minX != r.target.rect.minX
+                            ? l.target.rect.minX < r.target.rect.minX
+                            : l.target.rect.minY < r.target.rect.minY
+                    }
+                guard nodes.count > 1 else { continue }
+                plan.append(.chain(nodes: nodes))
+            }
+        }
+        return plan
     }
 
     #if DEBUG

@@ -40,16 +40,8 @@ import Foundation
 extension EditViewModel {
 
     /// The common zone of two siblings on one lane: the crossfade itself. Derived, never stored.
-    struct CrossfadeZone {
-        let leftID:  UUID
-        let rightID: UUID
-        /// `nil` = the two live at the top level.
-        let containerID: UUID?
-        let lane:  Int
-        let start: Double
-        let end:   Double
-        var width: Double { end - start }
-    }
+    /// The type itself lives with the index that serves it (@see CrossfadeZoneIndex).
+    typealias CrossfadeZone = CrossfadeZoneRecord
 
     /// A join closer than this counts as one. Positions come out of snapped drags, so the slack is
     /// only there to absorb the floating point, never a gap one could hear.
@@ -148,19 +140,41 @@ extension EditViewModel {
     /// deliberately the same function, so that what the eye is offered and what the hand can take
     /// hold of can never come apart. `lane` here is a DISPLAY lane, not the model's.
     /// `onDisplayLane: nil` = every row on screen.
+    ///
+    /// SERVED FROM THE INDEX (@see CrossfadeZoneIndex): the zones are built once per rebuild of
+    /// `laneEntries` and not on every call — this is asked by the canvas on every pass and by the
+    /// hover, the hit test and the drag on every movement, and the old walk (a filter plus a sort
+    /// of the row, for every row) was O(rows × objects) each time.
     func visibleCrossfadeZones(onDisplayLane wanted: Int? = nil) -> [CrossfadeZone] {
-        var zones: [CrossfadeZone] = []
-        let lanes = wanted.map { [$0] } ?? Set(laneEntries.map(\.displayLane)).sorted()
-        for lane in lanes {
-            let row = laneEntries.filter { $0.displayLane == lane }
-                                 .sorted { $0.absStart < $1.absStart }
-            for (a, b) in zip(row, row.dropFirst()) where isCrossfadePair(a.item, b.item) {
-                zones.append(CrossfadeZone(leftID: a.item.id, rightID: b.item.id,
-                                           containerID: a.parentID, lane: lane,
-                                           start: b.absStart, end: a.absStart + a.item.duration))
-            }
+        let index = crossfadeZoneIndex()
+        guard let wanted else { return index.all }
+        return index.zones(onDisplayLane: wanted)
+    }
+
+    /// The crossfades of the display rows `lanes` that meet `[t0, t1]` (absolute seconds): what a
+    /// layer that draws only the viewport asks. Same list, same order, as `visibleCrossfadeZones()`
+    /// filtered — never anything else (`tools/test_crossfade_zone_cache.swift`).
+    func visibleCrossfadeZones(inLanes lanes: Range<Int>, from t0: Double, to t1: Double) -> [CrossfadeZone] {
+        crossfadeZoneIndex().zones(inLanes: lanes, from: t0, to: t1)
+    }
+
+    /// The index over the CURRENT `laneEntries`, built on first use after each rebuild of them.
+    /// `laneEntries` is read on EVERY call, cached or not: that read is what registers the
+    /// dependency for a view body asking for zones — without it a cache hit would leave the body
+    /// blind to a change of the objects.
+    private func crossfadeZoneIndex() -> CrossfadeZoneIndex {
+        let entries = laneEntries
+        if let cached = crossfadeZoneIndexCache { return cached }
+        let candidates = entries.map {
+            CrossfadeZoneIndex.Candidate(id: $0.item.id, displayLane: $0.displayLane,
+                                         absStart: $0.absStart, duration: $0.item.duration,
+                                         parentID: $0.parentID)
         }
-        return zones
+        let index = CrossfadeZoneIndex(candidates: candidates) { a, b in
+            isCrossfadePair(entries[a].item, entries[b].item)
+        }
+        crossfadeZoneIndexCache = index
+        return index
     }
 
     /// The widest zone a seam can hold — the `w` at which the four bounds on the zone's start meet

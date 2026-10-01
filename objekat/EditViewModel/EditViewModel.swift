@@ -53,6 +53,9 @@ final class EditViewModel {
     @ObservationIgnored var findsSinceMutation = 0
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
     @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
+    /// @see visibleCrossfadeZones — the zones of `laneEntries`, indexed. Emptied wherever
+    /// `laneEntries` is rebuilt (`rebuildLaneEntries`), since that is the list it is built from.
+    @ObservationIgnored var crossfadeZoneIndexCache: CrossfadeZoneIndex? = nil
     /// @see displayName(of:) — a group's composed name by group id, emptied on EVERY write to
     /// `items` (the name is a function of the group's subtree, which lives in `items`).
     @ObservationIgnored private var composedNameCache: [UUID: String] = [:]
@@ -949,6 +952,7 @@ final class EditViewModel {
         // what the layers that only concern them — the piano rolls' tints, the out-of-range masks —
         // iterate, instead of filtering every entry of the timeline on each pass.
         expandedLaneEntries = laneEntries.filter { $0.expandedSpan > 0 }
+        crossfadeZoneIndexCache = nil
         referencedAudioPathsCache = nil
     }
 

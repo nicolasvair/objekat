@@ -43,50 +43,54 @@ struct CrossfadeCurvePath: Shape {
     }
 }
 
-/// The overlay laid on one crossfade zone: a light ground so the shared span reads as one thing,
-/// and the two curves crossing over it.
-struct CrossfadeVeilOverlay: View {
+/// One crossfade, resolved and ready to be drawn: a light ground so the shared span reads as one
+/// thing, its two boundaries, and the two curves crossing over it. A VALUE, not a view — every
+/// zone of the timeline is drawn into ONE Canvas (@see TimelineView.crossfadeCanvas), which is why
+/// everything it needs (position, size, the two curves, the selection) is resolved by the body and
+/// handed over here, nothing read from the model while drawing.
+struct CrossfadeVeilDrawing {
+    /// The zone's box in canvas coordinates.
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
     let outCurve: FadeCurve
     let inCurve:  FadeCurve
-    let width:    Double
-    let height:   Double
     /// Dimmed when something else is going on, so the X never competes with a gesture's own preview.
     var emphasis: Double = 1
     /// The zone is SELECTED: it is cerned, because ⌫ is about to act on it and one must be able to
     /// see which of several crossfades it will take.
     var isSelected: Bool = false
 
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // The ground marks the SPAN, which no block can: each of them stops at its own edge,
-            // and the zone is precisely the part they have in common. Selected, that ground turns
-            // BLUE rather than merely paler: the zone is a thing one holds, and a thing one holds
-            // in OBJEKAT wears the accent colour — a white veil a shade denser said nothing at all
-            // over blocks that are already white.
-            Rectangle()
-                .fill(isSelected ? Color.accentColor.opacity(0.32)
-                                 : Color.white.opacity(0.05 * emphasis))
-            // The two boundaries of the zone: thin, so they read as the limits of a passage rather
-            // than as two more object edges. Selected, the outline closes right round it — the
-            // zone stops being a passage between two blocks and becomes the thing one is holding.
-            if isSelected {
-                Rectangle()
-                    .strokeBorder(Color.accentColor.opacity(0.95), lineWidth: 1.5)
-            } else {
-                Path { p in
-                    p.move(to: .zero);              p.addLine(to: CGPoint(x: 0, y: height))
-                    p.move(to: CGPoint(x: width, y: 0)); p.addLine(to: CGPoint(x: width, y: height))
-                }
-                .stroke(Color.white.opacity(0.28 * emphasis), lineWidth: 1)
-            }
-
-            CrossfadeCurvePath(curve: outCurve, side: .out)
-                .stroke(Color.white.opacity(0.85 * emphasis), lineWidth: 1.5)
-            CrossfadeCurvePath(curve: inCurve, side: .in)
-                .stroke(Color.white.opacity(0.85 * emphasis), lineWidth: 1.5)
+    func draw(in ctx: GraphicsContext) {
+        let rect = CGRect(x: x, y: y, width: width, height: height)
+        // The ground marks the SPAN, which no block can: each of them stops at its own edge,
+        // and the zone is precisely the part they have in common. Selected, that ground turns
+        // BLUE rather than merely paler: the zone is a thing one holds, and a thing one holds
+        // in OBJEKAT wears the accent colour — a white veil a shade denser said nothing at all
+        // over blocks that are already white.
+        ctx.fill(Path(rect), with: .color(isSelected ? Color.accentColor.opacity(0.32)
+                                                     : Color.white.opacity(0.05 * emphasis)))
+        // The two boundaries of the zone: thin, so they read as the limits of a passage rather
+        // than as two more object edges. Selected, the outline closes right round it — the
+        // zone stops being a passage between two blocks and becomes the thing one is holding.
+        if isSelected {
+            // `strokeBorder` strokes INSIDE the box: the path is inset by half the line.
+            let inner = width > 1.5 && height > 1.5 ? rect.insetBy(dx: 0.75, dy: 0.75) : rect
+            ctx.stroke(Path(inner), with: .color(Color.accentColor.opacity(0.95)), lineWidth: 1.5)
+        } else {
+            var p = Path()
+            p.move(to: CGPoint(x: x, y: y));         p.addLine(to: CGPoint(x: x, y: y + height))
+            p.move(to: CGPoint(x: x + width, y: y)); p.addLine(to: CGPoint(x: x + width, y: y + height))
+            ctx.stroke(p, with: .color(Color.white.opacity(0.28 * emphasis)), lineWidth: 1)
         }
-        .frame(width: width, height: height)
-        .allowsHitTesting(false)
+        let move = CGAffineTransform(translationX: x, y: y)
+        let local = CGRect(x: 0, y: 0, width: width, height: height)
+        let curveInk = GraphicsContext.Shading.color(Color.white.opacity(0.85 * emphasis))
+        ctx.stroke(CrossfadeCurvePath(curve: outCurve, side: .out).path(in: local).applying(move),
+                   with: curveInk, lineWidth: 1.5)
+        ctx.stroke(CrossfadeCurvePath(curve: inCurve, side: .in).path(in: local).applying(move),
+                   with: curveInk, lineWidth: 1.5)
     }
 }
 
@@ -95,35 +99,46 @@ struct CrossfadeVeilOverlay: View {
 extension TimelineView {
 
     /// Every crossfade on screen, drawn over the blocks — plus the one the hand is in the middle of
-    /// making, which does not exist in the model yet.
+    /// making, which does not exist in the model yet — resolved into drawings for ONE Canvas.
     ///
     /// It sits ABOVE the blocks on purpose and it is the only layer that may: a zone belongs to two
     /// objects at once, so no block can own it without one of them hiding the other's half.
-    @ViewBuilder
-    var crossfadeLayer: some View {
-        let zones = displayedCrossfadeZones()
-        ForEach(Array(zones.enumerated()), id: \.offset) { _, z in
+    ///
+    /// Only what the viewport shows is resolved: the zones come from the index through the
+    /// culled reading (the rows and the time the cull window covers), so what a pass costs follows
+    /// what is SHOWN and not how many crossfades the project holds. Each one is then kept only if
+    /// its box really meets the window — the index works on whole rows and spans of time.
+    func crossfadeDrawings() -> [CrossfadeVeilDrawing] {
+        let pps = max(pixelsPerSecond, EditViewModel.minPixelsPerSecond)
+        let cols = cullColumns
+        let win = cullRows
+        let rows = LaneCulling.rows(y0: win.y0, y1: win.y1, rulerHeight: rulerHeight,
+                                    laneStep: laneStep, count: Int.max)
+        let zones = displayedCrossfadeZones(lanes: rows, from: cols.x0 / pps, to: cols.x1 / pps)
+        let sel = viewModel.selectedCrossfade
+        var drawings: [CrossfadeVeilDrawing] = []
+        for z in zones {
+            let w = (z.end - z.start) * pixelsPerSecond
+            guard w >= 1 else { continue }
             let x = z.start * pixelsPerSecond
             let y = rulerHeight + Double(z.lane) * laneStep
-            let w = (z.end - z.start) * pixelsPerSecond
-            if w >= 1 {
-                let sel = viewModel.selectedCrossfade
-                CrossfadeVeilOverlay(
-                    outCurve: viewModel.find(id: z.leftID)?.fadeOutCurve ?? .linear,
-                    inCurve:  viewModel.find(id: z.rightID)?.fadeInCurve ?? .linear,
-                    width: w, height: blockHeight,
-                    isSelected: sel?.left == z.leftID && sel?.right == z.rightID)
-                .offset(x: x, y: y)
-            }
+            guard x + w >= cols.x0, x <= cols.x1,
+                  LaneCulling.meets(top: y, height: blockHeight, y0: win.y0, y1: win.y1) else { continue }
+            drawings.append(CrossfadeVeilDrawing(
+                x: x, y: y, width: w, height: blockHeight,
+                outCurve: viewModel.find(id: z.leftID)?.fadeOutCurve ?? .linear,
+                inCurve:  viewModel.find(id: z.rightID)?.fadeInCurve ?? .linear,
+                isSelected: sel?.left == z.leftID && sel?.right == z.rightID))
         }
         // The zone a fade being pulled onto its neighbour is ABOUT to open. Without it the gesture
         // is mute until release — one pulls a fade out past an edge and nothing on screen says a
         // crossfade is being made, nor how wide, nor that the seam has given all it has.
         if let ghost = spillingCrossfadePreview {
-            CrossfadeVeilOverlay(outCurve: ghost.outCurve, inCurve: ghost.inCurve,
-                                 width: ghost.width, height: blockHeight, emphasis: 0.6)
-                .offset(x: ghost.x, y: ghost.y)
+            drawings.append(CrossfadeVeilDrawing(
+                x: ghost.x, y: ghost.y, width: ghost.width, height: blockHeight,
+                outCurve: ghost.outCurve, inCurve: ghost.inCurve, emphasis: 0.6))
         }
+        return drawings
     }
 
     /// Every crossfade AS IT IS BEING SHOWN, the move under way already applied to it.
@@ -136,9 +151,13 @@ extension TimelineView {
     ///
     /// A pair the move BREAKS simply drops out of the list, which is what the release will do to
     /// it too: the X goes as the objects come apart, or as one starts swallowing the other.
-    func displayedCrossfadeZones() -> [(leftID: UUID, rightID: UUID,
-                                        start: Double, end: Double, lane: Int)] {
-        let model = viewModel.visibleCrossfadeZones().map {
+    ///
+    /// `lanes` / `t0` / `t1` bound the READING of the model's zones to a window (rows × absolute
+    /// seconds), for the layer that only draws the viewport; the zones a gesture re-projects are
+    /// few and are all returned (the caller keeps the ones its window meets).
+    func displayedCrossfadeZones(lanes: Range<Int>, from t0: Double, to t1: Double)
+        -> [(leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)] {
+        let model = viewModel.visibleCrossfadeZones(inLanes: lanes, from: t0, to: t1).map {
             (leftID: $0.leftID, rightID: $0.rightID, start: $0.start, end: $0.end, lane: $0.lane)
         }
         guard let ids = reshapingDragIDs else { return model }
