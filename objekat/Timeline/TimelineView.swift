@@ -797,13 +797,17 @@ struct TimelineView: View {
                 // ONE pass splits the visible entries between the two regimes: `isPlainCanvasClip`
                 // asks `spillPlan` and the preview helpers, so evaluating it once per entry per
                 // list (it was twice) was paid in proportion to what is SHOWN, twice over.
+                // The selection is read HERE, once, and handed to the Canvas: it paints a selected
+                // clip differently, so a change of selection must re-evaluate this layer — and
+                // the Canvas's renderer closure is not a place to count on tracking it.
+                let selectedIDs = viewModel.selectedIDs
                 let (plainVisible, richVisible, richGroupCount) = partitionVisibleBlocks(visibleEntries)
                 let _ = TimelineRegimeMeter.recordPass(
                     clipsCanvas: plainVisible.count, clipsRich: richVisible.count - richGroupCount,
                     groupsCanvas: 0, groupsRich: richGroupCount,
                     groupBandsCanvas: 0, groupBandsRich: inlineGroupEntries.count)
                 let _ = ensureWaveformsLoaded(plainVisible)
-                plainBlocksCanvas(plainVisible)
+                plainBlocksCanvas(plainVisible, selectedIDs: selectedIDs)
                 ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane)
                         .allowsHitTesting(false)
@@ -2340,16 +2344,25 @@ struct TimelineView: View {
     /// reads it does not exist).
     private func isPlainCanvasClip(_ item: SoundObject, forceRichSelected: Bool = false) -> Bool {
         guard case .clip = item.kind else { return false }   // an aux / midi / group → a rich view
+        // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
+        // few hundred selected clips were a few hundred rich views, and the timeline fell to
+        // 2 fps). The Debug A/B switch puts the old behaviour back (@see `DebugRenderSwitches`).
         #if DEBUG
         if forceRichSelected && viewModel.isSelected(item.id) { return false }
         #endif
-        if viewModel.isSelected(item.id) { return false }
         if viewModel.renamingID == item.id { return false }
         if viewModel.isBaking(item.id) { return false }
         if item.isConsolidateInstance { return false }   // a link/freshness badge → a rich view
         if item.colorIndex != nil { return false }   // a 10%/90% band → a rich view
         switch viewModel.activeTool {
         case .toolVolume, .toolPan, .toolAux: return false   // interactive overlays
+        case .toolStemAssign:
+            // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`). Only a
+            // SELECTED clip kept its rich view under that tool until now — an unselected one has
+            // always been in the Canvas, with no veil — so the exception keeps exactly that:
+            // the tool is tested FIRST, so that `toolHoveredID` is read (and this layer
+            // re-evaluated on every hover) under that tool alone.
+            if viewModel.isSelected(item.id) && toolHoveredID == item.id { return false }
         default: break
         }
         // A drag/preview under way on this clip → a live SwiftUI view.
@@ -2374,7 +2387,12 @@ struct TimelineView: View {
         }
     }
 
-    private func plainBlocksCanvas(_ entries: [LaneEntry]) -> some View {
+    /// `selectedIDs`: a selected clip is painted as `SoundBlockView` paints it — a stronger tint
+    /// (0.55 against 0.30), a bright border (0.9 against 0.3), a full-opacity waveform — and above
+    /// its neighbours (drawn after them, as its `zIndex(1)` used to put it). Everything about the
+    /// selection that is not a PAINT (hit-testing, hover, drags) is resolved on `laneEntries` by
+    /// the parent canvas and does not pass through here.
+    private func plainBlocksCanvas(_ entries: [LaneEntry], selectedIDs: Set<UUID>) -> some View {
         Canvas { ctx, _ in
                 TimelineRegimeMeter.recordCanvasDraw()
                 let filterText = viewModel.filterText
@@ -2405,26 +2423,50 @@ struct TimelineView: View {
                 // The cost when scrolling zoomed out = ~936 drawing calls (2 fills + 1 border × N),
                 // NOT the text (already skipped) or the waveform (a sliver). We accumulate one Path per
                 // stem colour (there are few stems) → 3 ops per colour instead of 3 × N.
+                // SELECTED clips are batched apart (their tint and border are stronger) and drawn
+                // AFTER every unselected one, so that in a crossfade's shared span the selected one
+                // sits above its neighbour's tint, as its rich view's `zIndex(1)` did. The
+                // waveforms below are all drawn after ALL the backgrounds, which is what keeps the
+                // neighbour's waveform visible through the selected clip's white base.
                 var rects: [Color: Path] = [:]
                 var rectsDim: [Color: Path] = [:]
+                var rectsSel: [Color: Path] = [:]
+                var rectsSelDim: [Color: Path] = [:]
+                var anySelected = false
                 for entry in entries {
                     var rr = Path()
                     rr.addRoundedRect(in: rectFor(entry), cornerSize: CGSize(width: 4, height: 4))
                     let stem = viewModel.stemColor(for: entry.item.id)
-                    if isDim(entry.item) { rectsDim[stem, default: Path()].addPath(rr) }
-                    else                 { rects[stem, default: Path()].addPath(rr) }
+                    let selected = selectedIDs.contains(entry.item.id)
+                    if selected { anySelected = true }
+                    switch (selected, isDim(entry.item)) {
+                    case (false, false): rects[stem, default: Path()].addPath(rr)
+                    case (false, true):  rectsDim[stem, default: Path()].addPath(rr)
+                    case (true, false):  rectsSel[stem, default: Path()].addPath(rr)
+                    case (true, true):   rectsSelDim[stem, default: Path()].addPath(rr)
+                    }
                 }
-                func fillBackgrounds(_ groups: [Color: Path], opacity: Double) {
+                // The values are `SoundBlockView`'s own: tint 0.30 / 0.55, border 0.3 / 0.9, 1.5 pt.
+                // The border stays CENTRED on the path (half of it outside the block, unlike the
+                // rich view's inset stroke) for both states, so selecting does not move it.
+                func fillBackgrounds(_ groups: [Color: Path], opacity: Double, selected: Bool) {
                     guard !groups.isEmpty else { return }
                     var c = ctx; c.opacity = opacity
                     for (color, path) in groups {
                         c.fill(path, with: .color(.white))
-                        c.fill(path, with: .color(color.opacity(0.30)))
-                        c.stroke(path, with: .color(color.opacity(0.3)), lineWidth: 1.5)
+                        c.fill(path, with: .color(color.opacity(selected ? 0.55 : 0.30)))
+                        c.stroke(path, with: .color(color.opacity(selected ? 0.9 : 0.3)), lineWidth: 1.5)
                     }
                 }
-                fillBackgrounds(rects, opacity: 1.0)
-                fillBackgrounds(rectsDim, opacity: 0.25)
+                fillBackgrounds(rects, opacity: 1.0, selected: false)
+                fillBackgrounds(rectsDim, opacity: 0.25, selected: false)
+                fillBackgrounds(rectsSel, opacity: 1.0, selected: true)
+                fillBackgrounds(rectsSelDim, opacity: 0.25, selected: true)
+                // The order the next two phases walk the blocks in: unselected first, selected last.
+                let drawOrder: [LaneEntry] = anySelected
+                    ? entries.filter { !selectedIDs.contains($0.item.id) }
+                        + entries.filter { selectedIDs.contains($0.item.id) }
+                    : entries
 
                 // ── Phase 2: WAVEFORMS BATCHED by fill colour ────────────────────────
                 // Instead of N fill/strokes (≈14 ms at 240 blocks), we accumulate one Path per colour
@@ -2436,10 +2478,14 @@ struct TimelineView: View {
                 // it in, @see WaveformDrawing.laneSeparatorOpacity), stroked once each.
                 var laneSeparators: [Color: Path] = [:]
                 var loopMarkers = Path()
-                for entry in entries {
+                // A selected clip's loop marks are stroked as its rich view's waveform strokes
+                // them (the stem's colour at 0.6), not in the unselected clips' black.
+                var loopMarkersSel: [Color: Path] = [:]
+                for entry in drawOrder {
                     let item = entry.item
                     let w = max(2, item.duration * pixelsPerSecond)
                     guard w >= 3 else { continue }
+                    let selected = selectedIDs.contains(item.id)
                     let rect = rectFor(entry)
                     let x = rect.minX, y = rect.minY
                     let stem = viewModel.stemColor(for: item.id)
@@ -2452,7 +2498,7 @@ struct TimelineView: View {
                             waveformCache: waveformCache, filePath: item.filePath,
                             sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
-                            stemColor: stem, isSelected: false,
+                            stemColor: stem, isSelected: selected,
                             clipDuration: item.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
@@ -2463,7 +2509,10 @@ struct TimelineView: View {
                         continue
                     }
 
-                    let fillColor: Color = isMutedItem(item) ? Color.gray.opacity(0.45) : stem.opacity(0.95)
+                    // The batch key IS the colour, opacity included — (stem, selected, muted) in
+                    // one value, the same one `WaveformDrawing.draw` fills with.
+                    let fillColor: Color = isMutedItem(item) ? Color.gray.opacity(0.45)
+                                                             : stem.opacity(selected ? 1.0 : 0.95)
                     let separatorColor: Color = isMutedItem(item) ? .gray : stem
                     let handled = WaveformDrawing.appendPeaksFill(
                         to: &waveFills[fillColor, default: Path()],
@@ -2486,7 +2535,7 @@ struct TimelineView: View {
                             waveformCache: waveformCache, filePath: item.filePath,
                             sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
-                            stemColor: stem, isSelected: false,
+                            stemColor: stem, isSelected: selected,
                             clipDuration: item.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
                             fadeIn: item.fadeIn, fadeOut: item.fadeOut,
@@ -2505,7 +2554,9 @@ struct TimelineView: View {
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
                             clipDuration: item.duration, isReversed: item.isReversed,
                             loopRange: loopLocal)
-                        loopMarkers.addPath(block, transform: CGAffineTransform(translationX: x, y: y))
+                        let placed = block.applying(CGAffineTransform(translationX: x, y: y))
+                        if selected { loopMarkersSel[separatorColor, default: Path()].addPath(placed) }
+                        else        { loopMarkers.addPath(placed) }
                     }
                 }
                 for (color, path) in waveFills { ctx.fill(path, with: .color(color)) }
@@ -2516,6 +2567,10 @@ struct TimelineView: View {
                 if !loopMarkers.isEmpty {
                     ctx.stroke(loopMarkers, with: .color(.black.opacity(0.35)),
                               style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                }
+                for (color, path) in loopMarkersSel {
+                    ctx.stroke(path, with: .color(color.opacity(0.6)),
+                               style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
                 }
 
                 // ── Phase 3: FADES / MUTE / LABEL per block (over the waveform) ──────
@@ -2535,8 +2590,15 @@ struct TimelineView: View {
                 // The cache key must therefore carry the icon as well as the name: two clips can
                 // share a name and not a kind (a sound and the consolidated object made from it), and a
                 // key on the string alone would hand the second one the first one's glyph.
-                func resolvedLabel(_ s: String, icon: String, missing: Bool) -> GraphicsContext.ResolvedText {
-                    let key = icon + "\u{0}" + s
+                // The META summary (volume / pan / speed, 9 pt, grey) and the MUTE badge (9 pt, red)
+                // ride in the SAME run as the glyph and the name, as they sit in `SoundBlockView`'s
+                // row: one resolve, one cache entry, one draw, and nothing to measure. They are part
+                // of the cache key. (The run puts them on the name's baseline where the rich row
+                // centres them on its taller glyph — a pixel's difference, and the price of not
+                // measuring text per block per frame.)
+                func resolvedLabel(_ s: String, icon: String, missing: Bool,
+                                   meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
+                    let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "")
                     func build() -> GraphicsContext.ResolvedText {
                         // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the
                         // three rich views read too: this Canvas is the SECOND regime a clip can
@@ -2547,7 +2609,18 @@ struct TimelineView: View {
                         let colour = missing ? MissingFileLabel.color : Color.black
                         let glyph = Text(Image(systemName: icon))
                             .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
-                        return ctx.resolve((glyph + Text(verbatim: " ") + Text(s))
+                        var run = glyph + Text(verbatim: " ") + Text(s)
+                        if !meta.isEmpty {
+                            run = run + Text(verbatim: " ").font(.system(size: 9))
+                                      + Text(verbatim: meta).font(.system(size: 9, weight: .regular))
+                                            .foregroundColor(.black.opacity(0.5))
+                        }
+                        if muteBadge {
+                            run = run + Text(verbatim: " ").font(.system(size: 9))
+                                      + Text(L("common.muteBadge")).font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.red)
+                        }
+                        return ctx.resolve(run
                             .font(.system(size: MissingFileLabel.size, weight: weight))
                             .foregroundColor(colour))
                     }
@@ -2571,13 +2644,17 @@ struct TimelineView: View {
                         missingIDs.insert(entry.item.id)
                     }
                 }
-                for entry in entries {
+                for entry in drawOrder {
                     let item = entry.item
                     let w = max(2, item.duration * pixelsPerSecond)
                     let needsLabel = w > 10
                     let needsFade  = item.fadeIn > 0 || item.fadeOut > 0
                     let needsMute  = isMutedItem(item)
-                    guard needsLabel || needsFade || needsMute else { continue }
+                    // The loop's grips (a bar and a flag at each bound) belong to a SELECTED clip, as
+                    // they do in its rich view: they are what one takes hold of to move IN / OUT.
+                    let loopGrips = selectedIDs.contains(item.id) && !item.isReversed
+                        ? item.loopMarkerLocalRange : nil
+                    guard needsLabel || needsFade || needsMute || loopGrips != nil else { continue }
 
                     let rect = rectFor(entry)
                     let x = rect.minX, y = rect.minY
@@ -2606,6 +2683,17 @@ struct TimelineView: View {
                         }
                     }
 
+                    if let loopGrips {
+                        var grips = Path()
+                        LoopRangeMarkersView.appendGrips(
+                            to: &grips, originX: x, originY: y,
+                            startPx: loopGrips.start * pixelsPerSecond, endPx: loopGrips.end * pixelsPerSecond,
+                            blockWidth: w, blockHeight: blockHeight)
+                        var gc = c
+                        gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
+                        gc.fill(grips, with: .color(viewModel.stemColor(for: item.id)))
+                    }
+
                     if needsMute {
                         var rr = Path()
                         rr.addRoundedRect(in: rect, cornerSize: CGSize(width: 4, height: 4))
@@ -2631,9 +2719,17 @@ struct TimelineView: View {
                         // the label can show with no fade at all.
                         let leading = TimelineLabelMetrics.leading(fadeInPx: item.fadeIn * pixelsPerSecond,
                                                                     blockWidth: w)
+                        // The meta is asked for only when the numbers say it is not empty: the guard
+                        // is `timelineMetaSummary`'s own conditions, so it allocates nothing for
+                        // the common clip (0 dB, centred, ×1), which is nearly all of them.
+                        let hasMeta = w >= 60
+                            && (item.volume <= -96 || abs(item.volume) >= 0.5
+                                || abs(item.pan) >= 0.01 || abs(item.speedRatio - 1.0) >= 0.01)
                         lc.draw(resolvedLabel(item.displayName,
                                               icon: ObjectKindIcon.name(for: item),
-                                              missing: missing),
+                                              missing: missing,
+                                              meta: hasMeta ? item.timelineMetaSummary : "",
+                                              muteBadge: w >= 30 && item.isMuted),
                                 // The same top inset as the rich views (@see TimelineLabelMetrics).
                                 at: CGPoint(x: x + leading,
                                             y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),

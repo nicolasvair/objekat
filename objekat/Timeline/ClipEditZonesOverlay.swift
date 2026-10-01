@@ -77,8 +77,33 @@ struct LoopRangeMarkersView: View {
     let blockHeight: Double
     var color: Color = .white
 
-    private let flagW: Double = 6
-    private let flagH: Double = 8
+    /// The flag's size, shared with the batched Canvas (`appendGrips`): one definition for the two
+    /// ways a selected clip's grips are drawn.
+    static let gripFlagW: Double = 6
+    static let gripFlagH: Double = 8
+    private var flagW: Double { Self.gripFlagW }
+    private var flagH: Double { Self.gripFlagH }
+
+    /// Appends both bounds' bars (1.5 pt, the block's full height) and flags to `path`, in CANVAS
+    /// coordinates (the block's top-left corner at `originX`/`originY`) — what `body` draws as
+    /// views, for the Canvas that draws a selected clip. Same rule as `marker(at:flagLeading:)`: a
+    /// bound OUTSIDE the block is not drawn, one on its edge is clamped onto it. The shadow is the
+    /// caller's (a filter on the layer it fills into).
+    static func appendGrips(to path: inout Path, originX: Double, originY: Double,
+                            startPx: Double, endPx: Double,
+                            blockWidth: Double, blockHeight: Double) {
+        func grip(at x: Double, flagLeading: Bool) {
+            guard x >= -0.5 && x <= blockWidth + 0.5 else { return }
+            let cx = originX + max(0, min(blockWidth, x))
+            path.addRect(CGRect(x: cx - 0.75, y: originY, width: 1.5, height: blockHeight))
+            path.move(to: CGPoint(x: cx, y: originY))
+            path.addLine(to: CGPoint(x: flagLeading ? cx + gripFlagW : cx - gripFlagW, y: originY))
+            path.addLine(to: CGPoint(x: cx, y: originY + gripFlagH))
+            path.closeSubpath()
+        }
+        grip(at: startPx, flagLeading: true)
+        grip(at: endPx, flagLeading: false)
+    }
 
     /// The width of the template carrying the bar AND its flag. Fixed, and that is the whole point:
     /// a `Path` is a FLEXIBLE shape, it takes the size it is offered. Under a `.position` the offer
