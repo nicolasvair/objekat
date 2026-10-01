@@ -381,12 +381,14 @@ struct SynopticView: View {
                 }
             }
 
-            // A bin's block: its header (colour · name · on/off · menu) and its footer (mute ·
-            // volume · pan) are laid over the wire the frame is drawn round (@see draw).
+            // A bin's block: its header card (on/off · name · link badge · ✕) straddling the top of the
+            // body, and its mix box (pan · volume · mute) nested at the body's foot. The wire stops at
+            // each and starts again on the other side, so neither is laid over it (@see draw).
             ForEach(d.placement.fxBlocks) { b in
-                FXBlockHeaderView(link: b.link, width: b.headerRect.width, actions: actions)
+                FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
+                                  actions: actions)
                     .position(x: b.headerRect.midX, y: b.headerRect.midY)
-                FXBlockFooterView(link: b.link, actions: actions)
+                FXBlockMixView(link: b.link, block: b, actions: actions)
                     .position(x: b.mixRect.midX, y: b.mixRect.midY)
             }
 
@@ -498,7 +500,8 @@ struct SynopticView: View {
         }
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
         .contentShape(Rectangle())
-        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards))
+        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards,
+                                                   blockers: d.placement.fxBlocks.flatMap { [$0.headerRect, $0.mixRect] }))
         .contextMenu { fxLinkMenu(ids: Array(selection)) }
     }
 
@@ -554,17 +557,20 @@ struct SynopticView: View {
     ///
     ///  • whether there is a marquee at all — a drag that STARTS on a card is that card's own
     ///    (reorder, move, copy), and a container gesture that stole it would make the chain
-    ///    unorderable. The test is the card frames, which this view has and AppKit has not;
+    ///    unorderable; so is one that starts on a bin's header card or mix box (the header's drag
+    ///    moves the block, the mix box's boxes are dragged for their value). The test is the frames,
+    ///    which this view has and AppKit has not (@see SynopticMarquee.startsMarquee);
     ///  • what the modifiers mean — ⇧ adds to what was already taken, ⌘ flips it, neither
     ///    replaces it. Read at the start, because a hand that lets go of ⇧ mid-drag is resting a
     ///    finger, not changing its mind;
     ///  • what was already selected (`marqueeBase`), so that widening AND narrowing the rectangle
     ///    both recompute from the same ground instead of piling up.
-    private func marqueeGesture(cards: [SynopticLayout.CardPlacement]) -> some Gesture {
+    private func marqueeGesture(cards: [SynopticLayout.CardPlacement], blockers: [CGRect]) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { g in
                 if marqueeOrigin == nil {
-                    guard !cards.contains(where: { $0.frame.contains(g.startLocation) }) else { return }
+                    guard SynopticMarquee.startsMarquee(at: g.startLocation, cards: marqueeCards(cards),
+                                                        blockers: blockers) else { return }
                     let flags = NSEvent.modifierFlags
                     marqueeAdds = flags.contains(.shift)
                     marqueeFlips = flags.contains(.command)
@@ -701,9 +707,10 @@ struct SynopticView: View {
             ctx.fill(path, with: .color(Color.gray.opacity(0.06 + Double(s.depth) * 0.05)))
         }
 
-        // A bin's block: its colour round its series (dashed once the host has left the bin).
+        // A bin's block: its colour round its series (dashed once the host has left the bin). The BODY
+        // alone: the header card that straddles its top edge is a view of its own, opaque, laid over it.
         for b in d.placement.fxBlocks {
-            let path = Path(roundedRect: b.rect, cornerRadius: 12)
+            let path = Path(roundedRect: b.bodyRect, cornerRadius: 12)
             ctx.fill(path, with: .color(b.link.color.opacity(b.link.isEnabled ? 0.16 : 0.06)))
             ctx.stroke(path, with: .color(b.link.color.opacity(b.link.isDetached ? 0.6 : 0.95)),
                        style: StrokeStyle(lineWidth: 1.5, dash: b.link.isDetached ? [4, 3] : []))
@@ -745,102 +752,137 @@ struct SynopticView: View {
     }
 }
 
-// MARK: - FX link block (header and footer)
+// MARK: - FX link block (header card and mix box)
 
-/// The strip above a bin's block: the colour dot (a click moves on to the next colour), the name
-/// (a double click renames it, a drag moves the whole block), the link badge (solid = follows the
-/// bin, hollow = detached; a click flips it), the common on/off and a menu with the rest.
+/// The card that straddles the top edge of a bin's block — a plugin card's sibling, built on
+/// `SynopticCardView`'s model: an opaque body with square-edged on/off at the left (the bin's common
+/// on/off), then the name (the drag handle: it moves the whole block; a double click renames it), the
+/// link badge (solid = follows the bin, hollow = detached; a click flips it), the ✕ and a thin level
+/// line under the name. The ✕ is a small menu rather than a delete, because a bin is shared: removing
+/// it from THIS object, leaving it while keeping the plugins, and dissolving it everywhere are three
+/// different gestures. The colour is the card's rim; there is no colour dot — "next colour" is in the
+/// right-click menu.
 struct FXBlockHeaderView: View {
     let link: SynopticFXLink
-    let width: CGFloat
+    let rect: CGRect
+    let pluginCount: Int
     let actions: SynopticActions
 
     @State private var renaming = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
+    private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button { actions.onFXCycleColor?(link.blockID) } label: {
-                Circle().fill(link.color).frame(width: 10, height: 10)
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("fxlink.help.color"))
-
-            if renaming {
-                TextField(noLabel, text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .focused($fieldFocused)
-                    .onSubmit { commitRename() }
-                    .onExitCommand { renaming = false }
-                    .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(link.name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { beginRename() }
-                    .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } })
-                    .help(help)
-            }
-
-            Button { actions.onFXToggleDetach?(link.blockID) } label: {
-                Image(systemName: "link")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(link.isDetached ? link.color.opacity(0.9) : .white)
-                    .padding(3)
-                    .background {
-                        if link.isDetached {
-                            Circle().strokeBorder(link.color.opacity(0.7), lineWidth: 1.5)
-                        } else {
-                            Circle().fill(link.color)
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
-
+        HStack(spacing: 0) {
+            // on/off — a REAL button, full height, square edges (the bin's colour = on)
             Button { actions.onFXToggleEnabled?(link.blockID) } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(link.isEnabled ? .white : .secondary)
-                    .frame(width: 18, height: 18)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18)))
-                    .contentShape(Rectangle())
+                ZStack {
+                    Rectangle().fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18))
+                    Image(systemName: "power")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(link.isEnabled ? .white : .secondary)
+                }
+                .frame(width: toggleW)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(L("fxlink.help.power"))
 
-            Menu { menuItems } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    if renaming {
+                        TextField(noLabel, text: $draft)
+                            .textFieldStyle(.plain)
+                            .font(Font(SynopticLayout.cardNameFont))
+                            .focused($fieldFocused)
+                            .onSubmit { commitRename() }
+                            .onExitCommand { renaming = false }
+                            .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(link.name)
+                            .font(Font(SynopticLayout.cardNameFont))
+                            .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { beginRename() }
+                            .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } }) {
+                                FXBlockDragPreview(link: link, pluginCount: pluginCount)
+                            }
+                            .help(help)
+                    }
+
+                    // 🔗 — solid: follows the bin; hollow: detached. A click flips it. The same badge
+                    // (size and look) as a plugin card's.
+                    Button { actions.onFXToggleDetach?(link.blockID) } label: {
+                        Image(systemName: "link")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(link.isDetached ? link.color.opacity(0.8) : .white)
+                            .padding(3)
+                            .background {
+                                if link.isDetached {
+                                    Circle().strokeBorder(link.color.opacity(0.55), lineWidth: 1.5)
+                                } else {
+                                    Circle().fill(link.color)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
+
+                    // ✕ — a small menu: remove from this object / leave and keep the plugins / dissolve.
+                    Menu {
+                        Button(L("fxlink.menu.remove")) { actions.onFXRemove?(link.blockID) }
+                        Button(L("fxlink.menu.release")) { actions.onFXRelease?(link.blockID) }
+                        Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 12, height: 14)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(L("fxlink.help.close"))
+                }
+
+                Spacer(minLength: 0)
+
+                // A thin level line under the name, like a card's — the track only for now: the bin has
+                // no level of its own to read yet.
+                Capsule()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(height: 2)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(L("fxlink.help.menu"))
+            .padding(.horizontal, 8)
+            .padding(.top, 5)
+            .padding(.bottom, 4)
         }
-        .padding(.horizontal, 8)
-        .frame(width: width, height: SynopticLayout.fxHeaderCardH)
+        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))   // OPAQUE: it straddles the body's edge
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(link.color.opacity(link.isDetached ? 0.6 : 1), lineWidth: 1.5)
+        )
+        // A bin that is OFF reads like a card of a disabled container: greyed and dimmed.
+        .saturation(link.isEnabled ? 1 : 0.25)
+        .opacity(link.isEnabled ? 1 : 0.6)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
         .contextMenu { menuItems }
     }
 
     @ViewBuilder private var menuItems: some View {
         Button(L("fxlink.menu.rename")) { beginRename() }
+        Button(L("fxlink.menu.next_color")) { actions.onFXCycleColor?(link.blockID) }
         Button(link.isDetached ? L("fxlink.menu.reattach") : L("fxlink.menu.detach")) {
             actions.onFXToggleDetach?(link.blockID)
         }
@@ -864,10 +906,40 @@ struct FXBlockHeaderView: View {
     }
 }
 
-/// The strip under a bin's block: its OUTPUT section — mute · volume · pan. While the block follows
-/// the bin these are the bin's (every member moves together); once detached they are the block's own.
-struct FXBlockFooterView: View {
+/// The image under the pointer while a bin's block is dragged by its header: its name, its colour and
+/// how many plugins it carries. Same constraint as `PluginDragPreview` — rendered outside the view
+/// hierarchy, so explicit colours throughout.
+struct FXBlockDragPreview: View {
     let link: SynopticFXLink
+    let pluginCount: Int
+
+    private var width: CGFloat { SynopticLayout.fxHeaderW(name: link.name) }
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(link.name)
+                .font(Font(SynopticLayout.cardNameFont))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+            Text(Ln("fxlink.drag.plugins", pluginCount, pluginCount))
+                .font(.system(size: 10))
+                .foregroundStyle(Color.secondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(width: width, height: SynopticLayout.fxHeaderCardH)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(link.color, lineWidth: 1.5))
+    }
+}
+
+/// The bin's OUTPUT SECTION, as a rounded box nested at the foot of its block — pan · volume · mute,
+/// left to right, in the order and the style of the 'clip' zone (@see ClipMixZoneView) but with no title:
+/// the box has nothing to name, the block already does. While the block follows the bin these are the
+/// bin's (every member moves together); once detached they are the block's own. The wire stops at the
+/// box's head and starts again at its foot, so the controls sit on a plain background.
+struct FXBlockMixView: View {
+    let link: SynopticFXLink
+    let block: SynopticLayout.FXBlockPlacement
     let actions: SynopticActions
 
     private func panLabel(_ p: Double) -> String {
@@ -875,29 +947,60 @@ struct FXBlockFooterView: View {
         return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
     }
 
+    /// A slot's centre in the box's own coordinates.
+    private func local(_ slot: CGRect) -> CGPoint {
+        CGPoint(x: slot.midX - block.mixRect.minX, y: slot.midY - block.mixRect.minY)
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
-                          muted: link.muted,
-                          onToggleMute: {
-                              actions.onFXBeginEdit?()
-                              actions.onFXToggleMute?(link.blockID)
-                          },
-                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
-                actions.onFXSetGain?(link.blockID, newDB)
-            }
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+
             DragValueBox(value: Double(link.pan),
                          format: { panLabel($0) },
-                         range: -1...1, pointsPerStep: 80, snap: false, width: 52,
+                         range: -1...1, pointsPerStep: 80, snap: false, width: block.panSlot.width,
                          keyStep: 0.1,
                          parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                          help: L("help.drag.pan"),
                          onBegin: { actions.onFXBeginEdit?() },
                          onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
                          onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
+                .position(local(block.panSlot))
+
+            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
+                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
+                actions.onFXSetGain?(link.blockID, newDB)
+            }
+            .position(local(block.volumeSlot))
+
+            muteButton
+                .position(local(block.muteSlot))
         }
-        .frame(height: SynopticLayout.fxMixH)
+        .frame(width: block.mixRect.width, height: block.mixRect.height)
         .opacity(link.isEnabled ? 1 : 0.5)
+    }
+
+    /// The same button as the 'clip' zone's (@see ClipMixZoneView.muteButton).
+    private var muteButton: some View {
+        Button {
+            actions.onFXBeginEdit?()
+            actions.onFXToggleMute?(link.blockID)
+        } label: {
+            Image(systemName: link.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(link.muted ? Color.red : Color.secondary)
+                .frame(width: block.muteSlot.width, height: block.muteSlot.height)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(link.muted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder((link.muted ? Color.red : Color.secondary).opacity(0.45)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("common.mute"))
     }
 }
 

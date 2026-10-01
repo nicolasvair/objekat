@@ -3704,6 +3704,52 @@
         }
       }
     },
+    "fxlink.drag.plugins.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugin"
+          }
+        }
+      }
+    },
+    "fxlink.drag.plugins.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugins"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugins"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d plugins"
+          }
+        }
+      }
+    },
     "fxlink.help.attached": {
       "extractionState": "manual",
       "localizations": {
@@ -3727,25 +3773,25 @@
         }
       }
     },
-    "fxlink.help.color": {
+    "fxlink.help.close": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Change the FX link's colour"
+            "value": "Remove the FX link from this object, leave it, or dissolve it"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cambiar el color del fx link"
+            "value": "Quitar el fx link de este objeto, salir de él o disolverlo"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changer la couleur du fx link"
+            "value": "Retirer le fx link de cet objet, le quitter ou le dissoudre"
           }
         }
       }
@@ -3819,29 +3865,6 @@
         }
       }
     },
-    "fxlink.help.menu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Detach, reattach, leave or delete the FX link"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desvincular, volver a vincular, salir o eliminar el fx link"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Détacher, rattacher, quitter ou supprimer le fx link"
-          }
-        }
-      }
-    },
     "fxlink.help.power": {
       "extractionState": "manual",
       "localizations": {
@@ -3894,19 +3917,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Delete the FX link (every object)"
+            "value": "Dissolve the FX link everywhere"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Eliminar el fx link (todos los objetos)"
+            "value": "Disolver el fx link en todas partes"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Supprimer le fx link (tous les objets)"
+            "value": "Dissoudre le fx link partout"
           }
         }
       }
@@ -3957,6 +3980,29 @@
         }
       }
     },
+    "fxlink.menu.next_color": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next colour"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color siguiente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couleur suivante"
+          }
+        }
+      }
+    },
     "fxlink.menu.reattach": {
       "extractionState": "manual",
       "localizations": {
@@ -3986,19 +4032,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Leave the FX link (keep the plugins)"
+            "value": "Leave the FX link, keep the plugins as plain ones"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Salir del fx link (conservar los plugins)"
+            "value": "Salir del fx link conservando los plugins sueltos"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quitter le fx link (garder les plugins)"
+            "value": "Quitter le fx link en gardant les plugins en simple"
           }
         }
       }
@@ -4009,19 +4055,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove from this object"
+            "value": "Remove the FX link and its plugins from this object"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quitar de este objeto"
+            "value": "Quitar el fx link y sus plugins de este objeto"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Retirer de cet objet"
+            "value": "Retirer le fx link et ses plugins de cet objet"
           }
         }
       }
