@@ -794,10 +794,17 @@ struct TimelineView: View {
                 // instead of N×layers → the cost of scrolling was the number of SwiftUI nodes, not
                 // the drawing). The rich blocks (selection, tools, renaming, a consolidated object, an aux,
                 // MIDI, groups, a drag) keep their SwiftUI view.
-                let plainVisible = visibleEntries.filter { isPlainCanvasClip($0.item) }
+                // ONE pass splits the visible entries between the two regimes: `isPlainCanvasClip`
+                // asks `spillPlan` and the preview helpers, so evaluating it once per entry per
+                // list (it was twice) was paid in proportion to what is SHOWN, twice over.
+                let (plainVisible, richVisible, richGroupCount) = partitionVisibleBlocks(visibleEntries)
+                let _ = TimelineRegimeMeter.recordPass(
+                    clipsCanvas: plainVisible.count, clipsRich: richVisible.count - richGroupCount,
+                    groupsCanvas: 0, groupsRich: richGroupCount,
+                    groupBandsCanvas: 0, groupBandsRich: inlineGroupEntries.count)
                 let _ = ensureWaveformsLoaded(plainVisible)
                 plainBlocksCanvas(plainVisible)
-                ForEach(visibleEntries.filter { !isPlainCanvasClip($0.item) }) { entry in
+                ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane)
                         .allowsHitTesting(false)
                 }
@@ -2305,9 +2312,37 @@ struct TimelineView: View {
     // SwiftUI `SoundBlockView` only for the blocks that need rich interaction/overlays (few at
     // a time).
 
+    /// Splits the visible entries into the clips the shared Canvas draws and the blocks that keep
+    /// a rich view, in ONE pass (and counts the rich groups on the way, for `TimelineRegimeMeter`).
+    /// The A/B switch of Debug builds (@see `DebugRenderSwitches`) is read here, once per pass.
+    private func partitionVisibleBlocks(_ entries: [LaneEntry])
+        -> (plain: [LaneEntry], rich: [LaneEntry], richGroups: Int) {
+        var plain: [LaneEntry] = [], rich: [LaneEntry] = []
+        var richGroups = 0
+        #if DEBUG
+        let forceRichSelected = DebugRenderSwitches.shared.forceRichBlocks
+        #else
+        let forceRichSelected = false
+        #endif
+        for entry in entries {
+            if isPlainCanvasClip(entry.item, forceRichSelected: forceRichSelected) {
+                plain.append(entry)
+            } else {
+                rich.append(entry)
+                if entry.item.isGroup { richGroups += 1 }
+            }
+        }
+        return (plain, rich, richGroups)
+    }
+
     /// True = this clip can be drawn in the shared Canvas (no SwiftUI need).
-    private func isPlainCanvasClip(_ item: SoundObject) -> Bool {
+    /// `forceRichSelected` is the Debug A/B switch (always false in Release, where the line that
+    /// reads it does not exist).
+    private func isPlainCanvasClip(_ item: SoundObject, forceRichSelected: Bool = false) -> Bool {
         guard case .clip = item.kind else { return false }   // an aux / midi / group → a rich view
+        #if DEBUG
+        if forceRichSelected && viewModel.isSelected(item.id) { return false }
+        #endif
         if viewModel.isSelected(item.id) { return false }
         if viewModel.renamingID == item.id { return false }
         if viewModel.isBaking(item.id) { return false }
@@ -2341,6 +2376,7 @@ struct TimelineView: View {
 
     private func plainBlocksCanvas(_ entries: [LaneEntry]) -> some View {
         Canvas { ctx, _ in
+                TimelineRegimeMeter.recordCanvasDraw()
                 let filterText = viewModel.filterText
                 let dimActive = !filterText.isEmpty
                 let soloDimActive = viewModel.hasAnySolo

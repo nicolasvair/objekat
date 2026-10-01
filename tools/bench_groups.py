@@ -172,11 +172,26 @@ def build(c, wav, name):
             c.send("selection.set", {"ids": [r["pieces"][0]["id"]]})
             c.send("selection.all")
     settle(c, 2000)
+    # The regime census is read from the WIDE view (pps 5: nearly every piece in the window), where
+    # it says what the step that follows will pay for. It describes the visible blocks only.
+    c.send("view.set", {"pps": 5, "block_height": FIXED_BLOCK, "scroll_x": 0, "scroll_y": 0})
+    settle(c, 800)
     census = c.send("perf.census")
     sel = c.send("selection.get")
     return {"objects_on_screen": census.get("objects_total"),
             "selected": sel.get("count"),
-            "max_depth": census.get("max_group_depth")}
+            "max_depth": census.get("max_group_depth"),
+            "regimes": census.get("regimes")}
+
+
+def regimes_text(regimes):
+    """One short line for the setup print: the visible blocks by regime (@see
+    `Shared/TimelineRegimeMeter.swift`). A build without `regimes` in its census prints 'n/a'."""
+    if not regimes:
+        return "regimes n/a"
+    return ("visible: %s clips canvas / %s rich, %s groups canvas / %s rich, group bands %s canvas / %s rich"
+            % (regimes["clips_canvas"], regimes["clips_rich"], regimes["groups_canvas"],
+               regimes["groups_rich"], regimes["group_bands_canvas"], regimes["group_bands_rich"]))
 
 
 def measure_step(c, name, cmd, params, start, repeat):
@@ -232,6 +247,7 @@ def run(sock, label, repeat, only, allow_debug, resize):
             print("   setup %.1fs: %s objects on screen, %s selected, depth %s, viewport %sx%s"
                   % (time.time() - t0, setup["objects_on_screen"], setup["selected"], setup["max_depth"],
                      viewport[0], viewport[1]))
+            print("   regimes at pps 5: %s" % regimes_text(setup.get("regimes")))
             if result.setdefault("viewport", viewport) != viewport:
                 print("!! the window changed size during the run (%s -> %s): the numbers before and "
                       "after are not comparable" % (result["viewport"], viewport), file=sys.stderr)

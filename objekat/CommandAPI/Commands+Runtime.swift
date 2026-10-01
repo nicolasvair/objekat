@@ -149,8 +149,18 @@ extension CommandRegistry {
         }
 
         register("perf.census",
-                 summary: "Project census: objects by type, tracks, plugins, sends, notes.") { _ in
+                 summary: """
+                 Project census: objects by type, tracks, plugins, sends, notes — plus `regimes`, \
+                 which regime the timeline's VISIBLE blocks were last drawn in (batched Canvas or \
+                 rich SwiftUI view, @see `Shared/TimelineRegimeMeter.swift`). Zero in headless mode: \
+                 nothing is drawn there.
+                 """,
+                 params: [ParamSpec("reset", "bool", required: false,
+                                    "Zero the cumulative regime counters (`passes`, `canvas_draws`) first "
+                                  + "(default false).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            if try p.bool("reset", or: false) { TimelineRegimeMeter.reset() }
+            let regimes = TimelineRegimeMeter.snapshot()
             var byKind: [String: Int] = ["clip": 0, "group": 0, "aux": 0, "midi": 0]
             var pluginCount = 0, rackCount = 0, sendCount = 0, noteCount = 0
             var instanceCount = 0, maxDepth = 0
@@ -180,6 +190,19 @@ extension CommandRegistry {
                 "sends": .int(sendCount),
                 "midi_notes": .int(noteCount),
                 "undo_depth": .int(vm.undoStack.count),
+                // How the timeline's visible blocks were last drawn. `clips_rich` counts every
+                // block that is not a group and kept a SwiftUI view (an aux and a MIDI clip
+                // always do); the `*_canvas` group counters read 0 until groups are batched.
+                "regimes": .object([
+                    "clips_canvas": .int(regimes.clipsCanvas),
+                    "clips_rich": .int(regimes.clipsRich),
+                    "groups_canvas": .int(regimes.groupsCanvas),
+                    "groups_rich": .int(regimes.groupsRich),
+                    "group_bands_canvas": .int(regimes.groupBandsCanvas),
+                    "group_bands_rich": .int(regimes.groupBandsRich),
+                    "passes": .int(regimes.passes),
+                    "canvas_draws": .int(regimes.canvasDraws),
+                ]),
                 // The audio graph's node count lives on the engine side and is not exposed to
                 // Swift; exposing it would mean changing OBJEngineCore, which is out of scope here.
                 "engine_nodes": .null,
@@ -305,6 +328,23 @@ extension CommandRegistry {
             window.setFrame(frame, display: true)
             return .object(["width": .number(window.frame.width),
                              "height": .number(window.frame.height)])
+        }
+
+        register("debug.force_rich_blocks",
+                 summary: """
+                 DEBUG. The A/B switch of the Canvas work (@see `Shared/DebugRenderSwitches.swift`): \
+                 `enabled: true` forces every SELECTED clip back onto its rich SwiftUI view, \
+                 `false` draws it in the batched Canvas (production). VOLATILE — it writes nothing \
+                 into the user's settings; the persistent form is the preference \
+                 `objekat.debug.forceRichBlocks`, read at launch. Answers the previous and the \
+                 current value. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("enabled", "bool", "true = rich views for selected clips.")],
+                 undo: .none) { p in
+            let enabled = try p.bool("enabled")
+            let was = DebugRenderSwitches.shared.forceRichBlocks
+            DebugRenderSwitches.shared.forceRichBlocks = enabled
+            return .object(["was": .bool(was), "enabled": .bool(enabled)])
         }
         #endif
     }
