@@ -367,7 +367,8 @@ way — 0 since E7: the Canvas draws the previews, the reason only exists with t
 whose IN / OUT bound is being dragged; only with the same fallback), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object), `force_rich` (the Debug A/B
 switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
 each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
-`piano_rolls`, `automation_bands`, `automation_bezels`) and their sum — an element is the root of
+`piano_rolls`, `automation_bands`, `automation_bezels`, `alt_ghosts` — the ⌥-copy's ghosts, 0 unless the
+E7 fallback `objekat.timeline.richPreviews` is on) and their sum — an element is the root of
 one SwiftUI subtree, so this is the number a layer is paid in. The layers that used to be there and
 are now ONE Canvas each, culled to the viewport, no longer report (`lane_rows` and `range_masks` and
 `piano_roll_tints` since E1).

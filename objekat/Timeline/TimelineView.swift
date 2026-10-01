@@ -943,29 +943,8 @@ struct TimelineView: View {
                     }
                 }
 
-                // Alt+drag ghosts
-                ForEach(altDragGhosts, id: \.object.id) { ghost in
-                    soundBlock(for: ghost.object)
-                        .offset(x: ghost.dx, y: ghost.dy)
-                        .opacity(0.6)
-                        .allowsHitTesting(false)
-                        .zIndex(2)
-
-                    ZStack {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 18, height: 18)
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .offset(
-                        x: ghost.object.startTime * pixelsPerSecond + ghost.dx + 6,
-                        y: rulerHeight + Double(ghost.object.lane) * laneStep + ghost.dy + 6
-                    )
-                    .allowsHitTesting(false)
-                    .zIndex(2.1)
-                }
+                // Alt+drag ghosts (@see `altGhostsLayer`).
+                altGhostsLayer(selectedIDs: selectedIDs)
 
                 // TimeSelection overlay: ONE Canvas, bounded to the viewport (a rectangle per lane of
                 // the selection, the visible rows and columns only).
@@ -3629,6 +3608,89 @@ struct TimelineView: View {
                 // The groups' fades, mute veil and name row, over their composites.
                 GroupBlocksCanvas.drawOverlays(into: ctx, groups: groups, geo: groupGeo,
                                                labels: &labelCache)
+        }
+        .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func altGhostsLayer(selectedIDs: Set<UUID>) -> some View {
+        // Alt+drag ghosts. By default ONE Canvas draws them all (the same
+        // `plainBlocksCanvas` the blocks use, each ghost previewed at its travel through
+        // `BlockPreviewGeometry`) and a second one the "+" badges; the fallback
+        // `RenderPreferences.richPreviews` puts back one rich view per ghost.
+        let ghosts = altDragGhosts
+        let richGhosts = RenderPreferences.shared.richPreviews
+        // The ForEach of rich ghosts is a layer like the others (0 elements when the Canvas draws them).
+        let _ = TimelineRegimeMeter.recordLayer("alt_ghosts", elements: richGhosts ? ghosts.count : 0)
+        if richGhosts {
+            ForEach(ghosts, id: \.object.id) { ghost in
+                soundBlock(for: ghost.object)
+                    .offset(x: ghost.dx, y: ghost.dy)
+                    .opacity(0.6)
+                    .allowsHitTesting(false)
+                    .zIndex(2)
+
+                ZStack {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 18, height: 18)
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .offset(
+                    x: ghost.object.startTime * pixelsPerSecond + ghost.dx + 6,
+                    y: rulerHeight + Double(ghost.object.lane) * laneStep + ghost.dy + 6
+                )
+                .allowsHitTesting(false)
+                .zIndex(2.1)
+            }
+        } else if !ghosts.isEmpty {
+            // Only the ghosts the viewport can see (the rich ghosts were not culled at all).
+            let ghostMargin = 80.0
+            let ghostX0 = Double(cullScrollX) - ghostMargin
+            let ghostX1 = Double(cullScrollX) + Double(cullViewportWidth) + ghostMargin
+            let shown = ghosts.filter {
+                let x = $0.object.startTime * pixelsPerSecond + $0.dx
+                return x + max(2, $0.object.duration * pixelsPerSecond) >= ghostX0 && x <= ghostX1
+            }
+            let ghostEntries = shown.map {
+                LaneEntry(displayLane: 0, item: $0.object, absStart: $0.object.startTime,
+                          depth: 0, parentID: nil, expandedSpan: 0)
+            }
+            let ghostPreviews = Dictionary(
+                shown.map { ($0.object.id, BlockPreviewGeometry(
+                    object: $0.object, pixelsPerSecond: pixelsPerSecond,
+                    previewOffset: ($0.dx, $0.dy))) },
+                uniquingKeysWith: { first, _ in first })
+            let _ = ensureWaveformsLoaded(ghostEntries)
+            plainBlocksCanvas(ghostEntries, groups: [], selectedIDs: selectedIDs,
+                              rows: cullRows,
+                              secPerBeat: 60.0 / viewModel.tempo,
+                              previews: ghostPreviews)
+                .opacity(0.6)
+                .zIndex(2)
+            altCopyBadgesCanvas(shown.map {
+                CGPoint(x: $0.object.startTime * pixelsPerSecond + $0.dx + 6,
+                        y: rulerHeight + Double($0.object.lane) * laneStep + $0.dy + 6)
+            })
+            .zIndex(2.1)
+        }
+    }
+
+    /// The green "+" a ⌥-drag lays at the top-left of each ghost (a copy is being made). ONE Canvas
+    /// for all of them, `origins` being the top-left of each badge in canvas coordinates: the same
+    /// 18 pt disc and 11 pt bold plus the rich ghost carried.
+    private func altCopyBadgesCanvas(_ origins: [CGPoint]) -> some View {
+        Canvas { ctx, _ in
+            let plus = GlyphResolveCache.shared.glyph("plus", size: 11, weight: .bold,
+                                                      color: .white, in: ctx)
+            for o in origins {
+                ctx.fill(Path(ellipseIn: CGRect(x: o.x, y: o.y, width: 18, height: 18)),
+                         with: .color(.green))
+                ctx.draw(plus, at: CGPoint(x: o.x + 9, y: o.y + 9), anchor: .center)
+            }
         }
         .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
         .allowsHitTesting(false)

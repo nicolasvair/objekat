@@ -379,6 +379,25 @@ extension CommandRegistry {
             return .object(["was": .bool(was), "enabled": .bool(enabled)])
         }
 
+        register("debug.set_opt_held",
+                 summary: """
+                 DEBUG. Sets the view model's `optKeyHeld`, the state the timeline reads to flip a \
+                 move under way between MOVING and ⌥-COPYING without a mouse movement. A synthetic \
+                 event cannot press the hardware ⌥ (the drag handlers read `NSEvent.modifierFlags`), \
+                 so this is the one door a script has onto the ⌥-copy's ghosts: start an \
+                 `input.drag` with `release: false`, call this with `held: true`, read \
+                 `perf.census`, then `held: false` and `input.release`. Answers the previous and \
+                 the current value. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("held", "bool", "true = ⌥ considered pressed.")],
+                 undo: .none) { p in
+            let held = try p.bool("held")
+            let vm = try CommandContext.shared.requireViewModel()
+            let was = vm.optKeyHeld
+            vm.optKeyHeld = held
+            return .object(["was": .bool(was), "held": .bool(held)])
+        }
+
         register("debug.force_rich_previews",
                  summary: """
                  DEBUG. The A/B switch of the previews' Canvas work (@see \
