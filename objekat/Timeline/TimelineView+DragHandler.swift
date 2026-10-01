@@ -1237,24 +1237,40 @@ extension TimelineView {
         let clipEndRaw = rawStart + grabbedDur
         let excl       = Set(state.anchors.keys)
 
-        let candStart  = viewModel.snapTime(rawStart,   excluding: excl)
-        let guideStart = viewModel.snapGuide
-        let candEnd    = viewModel.snapTime(clipEndRaw, excluding: excl)
-        let guideEnd   = viewModel.snapGuide
+        var dt: Double
+        if let anchor = state.timeSelectionAnchor {
+            // A carried time selection: it is the RANGE that snaps — its start above all, which is
+            // where the caret sits — and the grabbed object's edges only come second (@see
+            // SelectionMoveSnap). Without ⌥ the scraps the cut leaves at the two bounds are kept out
+            // of the targets; with ⌥ the originals stay in place and are targets. The guide, the
+            // wall at zero (the range's own start) and its pin all come out of the one answer.
+            let grabbedFrag = state.altFragmentObjects?.first { $0.id == state.grabbedID }
+            let selDur = (grabbedFrag ?? viewModel.find(id: state.grabbedID))?.duration ?? 0
+            let selExcl = state.isAltCopy ? []
+                : viewModel.selectionMoveExcluded(range: anchor.timeRange, lanes: anchor.lanes, moved: excl)
+            dt = viewModel.snapSelectionMove(range: anchor.timeRange, rawDt: rawDt,
+                                             objectStart: grabbedAnchor.start,
+                                             objectEnd: grabbedAnchor.start + selDur,
+                                             excluding: selExcl).dt
+        } else {
+            let candStart  = viewModel.snapTime(rawStart,   excluding: excl)
+            let guideStart = viewModel.snapGuide
+            let candEnd    = viewModel.snapTime(clipEndRaw, excluding: excl)
+            let guideEnd   = viewModel.snapGuide
 
-        let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
-        let snappedStart = useEnd ? candEnd - grabbedDur : candStart
-        viewModel.snapGuide = useEnd ? guideEnd : guideStart
+            let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
+            let snappedStart = useEnd ? candEnd - grabbedDur : candStart
+            viewModel.snapGuide = useEnd ? guideEnd : guideStart
 
-        var dt = snappedStart - grabbedAnchor.start
+            dt = snappedStart - grabbedAnchor.start
+            let minStart = state.anchors.values.map { $0.start }.min() ?? 0
+            dt = max(dt, -minStart)
+            // The move too comes up against t = 0 — the leftmost object of the selection stops there
+            // while the hand carries on. The guide is drawn on the grabbed object's edge, whichever of
+            // the two won the snap, so it is that edge it must be pinned to (@see pinSnapGuide).
+            viewModel.pinSnapGuide(to: grabbedAnchor.start + dt + (useEnd ? grabbedDur : 0))
+        }
         var dl = rawDl
-
-        let minStart = state.anchors.values.map { $0.start }.min() ?? 0
-        dt = max(dt, -minStart)
-        // The move too comes up against t = 0 — the leftmost object of the selection stops there
-        // while the hand carries on. The guide is drawn on the grabbed object's edge, whichever of
-        // the two won the snap, so it is that edge it must be pinned to (@see pinSnapGuide).
-        viewModel.pinSnapGuide(to: grabbedAnchor.start + dt + (useEnd ? grabbedDur : 0))
         // dl is a DISPLAY lane delta: clamped in display space (not in base lanes, otherwise it
         // would be impossible to climb above the children of an expanded group).
         if state.timeSelectionAnchor != nil {
