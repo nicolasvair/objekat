@@ -24,7 +24,9 @@ import Foundation
 //     keeps a multiple selection alive for 'Consolidate N linked' and the FX link.
 //   • No object under the hand (an empty lane): a time selection ANYWHERE gives the range's menu,
 //     inside it or not — nothing about the range has changed for a click that lands on no object.
-//     With no time selection at all: no menu, the event goes on to the views.
+//     With no time selection but OBJECTS selected (clips that are not consolidated instances): the
+//     'Group the selection' menu, as it always was, and nothing else — the click selects nothing.
+//     With neither: no menu, the event goes on to the views.
 
 enum ContextMenuPlan {
 
@@ -50,6 +52,9 @@ enum ContextMenuPlan {
         case objectTimeMenu
         /// The lower half of a block: the object's own menu.
         case objectBodyMenu
+        /// An empty lane, no time selection, clips selected: 'Group the clip / the selection (N)'
+        /// alone — the selection being what the menu is about, the click touches nothing.
+        case groupSelectionMenu
         /// Nothing under the hand worth a menu.
         case nothing
     }
@@ -68,16 +73,21 @@ enum ContextMenuPlan {
     /// `pointInTimeSelection`: the point lies inside the range (its lanes AND its time span).
     /// `hasTimeSelection`: a range exists, wherever it lies (implied by `pointInTimeSelection`).
     /// `zone`: nil when there is no object under the point.
+    /// `hasGroupableSelection`: the selection holds at least one clip or MIDI clip that is not a
+    /// consolidated instance (only read on an empty lane with no time selection).
     static func decide(pointInTimeSelection: Bool, hasTimeSelection: Bool, zone: BlockZone?,
-                       objectAlreadySelected: Bool) -> Decision {
+                       objectAlreadySelected: Bool, hasGroupableSelection: Bool = false) -> Decision {
         if pointInTimeSelection {
             return Decision(layout: .rangeMenu, selectsObject: false,
                             offersObjectMarker: zone != nil, offersComment: true)
         }
         switch zone {
         case .none:
-            // An empty lane: the range's menu if there is a range, wherever it lies.
-            return Decision(layout: hasTimeSelection ? .rangeMenu : .nothing, selectsObject: false,
+            // An empty lane: the range's menu if there is a range, wherever it lies; failing that,
+            // 'Group the selection' if clips are selected; failing that, nothing.
+            return Decision(layout: hasTimeSelection ? .rangeMenu
+                                  : (hasGroupableSelection ? .groupSelectionMenu : .nothing),
+                            selectsObject: false,
                             offersObjectMarker: false, offersComment: hasTimeSelection)
         case .time:
             return Decision(layout: .objectTimeMenu, selectsObject: false,

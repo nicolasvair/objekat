@@ -7,10 +7,11 @@
 //         ../objekat/Shared/ContextMenuPlan.swift test_context_menu_plan.swift \
 //         -o /tmp/ctxplan && /tmp/ctxplan
 //
-// Five questions: which half of a block the point is on, whether it lies inside the time selection,
+// Six questions: which half of a block the point is on, whether it lies inside the time selection,
 // whether a time selection exists at all (it decides an empty lane: a range ANYWHERE gives the
-// range's menu there, none gives no menu), which menu the combination builds (and which annotation
-// items it offers), and whether the click selects the object first.
+// range's menu there; none gives 'Group the selection' if clips are selected, else no menu),
+// whether the selection holds clips to group, which menu the combination builds (and which
+// annotation items it offers), and whether the click selects the object first.
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
 
@@ -131,24 +132,65 @@ enum ContextMenuPlanTest {
         check("no object, a point inside the range: the very same decision", i == d)
     }
 
+    // MARK: - An empty lane, no range, clips selected: 'Group the selection' alone
+
+    do {
+        let d = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: nil,
+                         objectAlreadySelected: false, hasGroupableSelection: true)
+        check("no object, no range, clips selected: the group-selection menu",
+              d.layout == .groupSelectionMenu)
+        check("… nothing selected, nothing else offered",
+              !d.selectsObject && !d.offersObjectMarker && !d.offersComment)
+        let n = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: nil,
+                         objectAlreadySelected: false, hasGroupableSelection: false)
+        check("no object, no range, nothing groupable: no menu", n.layout == .nothing)
+        let r = P.decide(pointInTimeSelection: false, hasTimeSelection: true, zone: nil,
+                         objectAlreadySelected: false, hasGroupableSelection: true)
+        check("no object, a range lying elsewhere AND clips selected: the range's menu wins",
+              r.layout == .rangeMenu && r.offersComment)
+        let i = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: nil,
+                         objectAlreadySelected: false, hasGroupableSelection: true)
+        check("no object, a point inside the range AND clips selected: the range's menu",
+              i.layout == .rangeMenu && i.offersComment)
+        // An object under the hand keeps its own reading whatever is selected.
+        for z in [Z.time, Z.body] {
+            for already in [true, false] {
+                let a = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: z,
+                                 objectAlreadySelected: already, hasGroupableSelection: true)
+                let b = P.decide(pointInTimeSelection: false, hasTimeSelection: false, zone: z,
+                                 objectAlreadySelected: already, hasGroupableSelection: false)
+                check("an object under the hand ignores the groupable selection (\(z), selected \(already))",
+                      a == b && a.layout != .groupSelectionMenu)
+            }
+        }
+    }
+
     // MARK: - A sweep: the invariants that hold for every combination
 
     for (inRange, hasRange) in [(true, true), (false, true), (false, false)] {
         for zone in [Z.time, Z.body, nil] {
             for already in [true, false] {
+              for groupable in [true, false] {
                 let d = P.decide(pointInTimeSelection: inRange, hasTimeSelection: hasRange,
-                                 zone: zone, objectAlreadySelected: already)
-                let tag = "range \(inRange)/\(hasRange), zone \(String(describing: zone)), selected \(already)"
+                                 zone: zone, objectAlreadySelected: already,
+                                 hasGroupableSelection: groupable)
+                let tag = "range \(inRange)/\(hasRange), zone \(String(describing: zone)), selected \(already), groupable \(groupable)"
                 check(tag + ": selecting implies the body, outside the range, unselected",
                       !d.selectsObject || (!inRange && zone == .body && !already))
                 check(tag + ": a comment only with a time selection", !d.offersComment || hasRange)
                 check(tag + ": an object marker only with an object", !d.offersObjectMarker || zone != nil)
                 check(tag + ": a nothing-menu offers nothing",
                       d.layout != .nothing || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
-                check(tag + ": no object, the menu follows the existence of a range",
+                check(tag + ": no object, the range decides first, then the groupable selection",
                       zone != nil || (d.layout == .rangeMenu) == hasRange)
+                check(tag + ": the group-selection menu only on an empty lane with no range and clips selected",
+                      (d.layout == .groupSelectionMenu) == (zone == nil && !hasRange && groupable))
+                check(tag + ": the group-selection menu offers nothing and selects nothing",
+                      d.layout != .groupSelectionMenu
+                        || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
                 check(tag + ": a range lying elsewhere never drives an object's menu",
                       zone == nil || inRange || (d.layout != .rangeMenu && !d.offersComment))
+              }
             }
         }
     }

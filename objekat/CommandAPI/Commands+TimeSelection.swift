@@ -140,7 +140,10 @@ extension CommandRegistry {
                         + "display row) and `time` are then required, and the caller states that no "
                         + "object lies under the point. Answers `layout` (`range_menu` when the point "
                         + "lies inside the time selection, or when it lands on an empty lane while a "
-                        + "time selection exists ANYWHERE — today's menu — `object_time_menu` | "
+                        + "time selection exists ANYWHERE — today's menu — `group_selection_menu` "
+                        + "when it lands on an empty lane with NO time selection while clips (not "
+                        + "consolidated instances) are selected: 'Group the selection' alone, "
+                        + "`object_time_menu` | "
                         + "`object_body_menu` | `nothing`, i.e. no menu and the event goes on to the "
                         + "views), whether the click `selects_object`, whether the object marker "
                         + "(`offers_object_marker`) and the comment (`offers_comment`) are offered, "
@@ -200,6 +203,7 @@ extension CommandRegistry {
             case .rangeMenu: layout = "range_menu"
             case .objectTimeMenu: layout = "object_time_menu"
             case .objectBodyMenu: layout = "object_body_menu"
+            case .groupSelectionMenu: layout = "group_selection_menu"
             case .nothing: layout = "nothing"
             }
             return .object(["layout": .string(layout),
