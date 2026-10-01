@@ -131,46 +131,66 @@ extension CommandRegistry {
         }
 
         register("selection.context_click",
-                 summary: "Plays the DECISION of a right click on an object, minus the menu itself "
-                        + "(`ContextMenuPlan`, the same code the timeline's monitor runs). `zone`: "
-                        + "`time` (the upper half of the block) or `body` (the lower half, the "
-                        + "default); `time` is the instant of the point (default: the middle of the "
-                        + "object), and the point's lane is the object's own display lane. Answers "
-                        + "`layout` (`range_menu` when the point lies inside the time selection — "
-                        + "today's menu — `object_time_menu` | `object_body_menu` | `nothing`), "
-                        + "whether the click `selects_object`, whether the object marker "
+                 summary: "Plays the DECISION of a right click, minus the menu itself "
+                        + "(`ContextMenuPlan`, the same code the timeline's monitor runs). With `id`: "
+                        + "a click on that object — `zone`: `time` (the upper half of the block) or "
+                        + "`body` (the lower half, the default); `time` is the instant of the point "
+                        + "(default: the middle of the object), and the point's lane is the object's "
+                        + "own display lane. Without `id`: a click on an EMPTY lane — `lane` (the "
+                        + "display row) and `time` are then required, and the caller states that no "
+                        + "object lies under the point. Answers `layout` (`range_menu` when the point "
+                        + "lies inside the time selection, or when it lands on an empty lane while a "
+                        + "time selection exists ANYWHERE — today's menu — `object_time_menu` | "
+                        + "`object_body_menu` | `nothing`, i.e. no menu and the event goes on to the "
+                        + "views), whether the click `selects_object`, whether the object marker "
                         + "(`offers_object_marker`) and the comment (`offers_comment`) are offered, "
                         + "and `applied`. With `apply` (the default) a click that selects does it "
                         + "now, exactly as the monitor does before building the menu: the time "
                         + "selection is cleared, the object becomes the selection and the cursor "
                         + "goes to its start — unless it is ALREADY selected, in which case nothing "
-                        + "at all changes (the multiple selection is kept). The upper half and a "
-                        + "click inside the range never select. `apply: false` only asks.",
-                 params: [ParamSpec("id", "uuid", "The object under the point."),
+                        + "at all changes (the multiple selection is kept). The upper half, a click "
+                        + "inside the range and a click on an empty lane never select. `apply: false` "
+                        + "only asks.",
+                 params: [ParamSpec("id", "uuid", required: false,
+                                    "The object under the point; omit it for an empty lane."),
                           ParamSpec("zone", "string", required: false,
-                                    "time | body (default body)."),
+                                    "time | body (default body); ignored without `id`."),
+                          ParamSpec("lane", "int", required: false,
+                                    "The point's display row; required without `id`, ignored with it."),
                           ParamSpec("time", "number", required: false,
-                                    "The point's instant in seconds (default: the object's middle)."),
+                                    "The point's instant in seconds (default with `id`: the object's "
+                                    + "middle; required without)."),
                           ParamSpec("apply", "bool", required: false,
                                     "Perform the selection the click makes (default true).")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            let id = try p.uuid("id")
-            guard let entry = vm.laneEntries.first(where: { $0.item.id == id }) else {
-                throw CommandError(code: .not_found, message: "unknown or hidden object: \(id.uuidString)")
+            let entry: LaneEntry?
+            let zone: ContextMenuPlan.BlockZone?
+            let lane: Int
+            let time: Double
+            if let id = try p.optionalUUID("id") {
+                guard let e = vm.laneEntries.first(where: { $0.item.id == id }) else {
+                    throw CommandError(code: .not_found, message: "unknown or hidden object: \(id.uuidString)")
+                }
+                entry = e
+                switch try p.string("zone", or: "body") {
+                case "time": zone = .time
+                case "body": zone = .body
+                default:
+                    throw CommandError(code: .bad_params, message: "'zone': time or body")
+                }
+                lane = e.displayLane
+                time = max(0, try p.optionalDouble("time") ?? (e.absStart + e.item.duration / 2))
+            } else {
+                entry = nil
+                zone = nil
+                lane = try p.int("lane")
+                time = max(0, try p.double("time"))
             }
-            let zone: ContextMenuPlan.BlockZone
-            switch try p.string("zone", or: "body") {
-            case "time": zone = .time
-            case "body": zone = .body
-            default:
-                throw CommandError(code: .bad_params, message: "'zone': time or body")
-            }
-            let time = max(0, try p.optionalDouble("time") ?? (entry.absStart + entry.item.duration / 2))
-            let plan = vm.contextClickPlan(objectID: id, displayLane: entry.displayLane,
+            let plan = vm.contextClickPlan(objectID: entry?.item.id, displayLane: lane,
                                            time: time, zone: zone)
             var applied = false
-            if try p.bool("apply", or: true), plan.selectsObject {
+            if try p.bool("apply", or: true), plan.selectsObject, let entry {
                 vm.selectForContextClick(entry, isPlaying: vm.isTransportPlaying,
                                          onMoveCursor: { vm.cursorPosition = max(0, $0) })
                 applied = true

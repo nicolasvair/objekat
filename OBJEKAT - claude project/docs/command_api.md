@@ -604,7 +604,7 @@ That is end-of-process noise, with no effect on the result.
 | `app.*` | version, current project, engine state, dialogue policy, journal |
 | `project.*` | new, open, save, save as, **save a copy with the audio files**, serialised state, the snap, the format notice |
 | `transport.*` | play, stop, seek, state (including the **displayed** position: `playhead` is the red line, `displayed` what the time readout shows — the playhead while playing or paused, the cursor while stopped) |
-| `selection.*` | all, clear, set, read, **context_click** (the decision of a right click on an object, minus the menu) |
+| `selection.*` | all, clear, set, read, **context_click** (the decision of a right click on an object or an empty lane, minus the menu) |
 | `object.*` | add, delete, move, duplicate, cut, gain, pan, mute, fades **and their shapes**, speed, direction, duration, trim, slip, rename, **infinite**, detail |
 | `group.*` | create, dissolve, open/close, bring in, take out |
 | `stem.*` | list, create, delete, rename, recolour, **reorder**, assign, gain, mute, routing to the Main, level |
@@ -1304,20 +1304,29 @@ mark was hit: the yellow guide), `edge` (`start` | `end` | `object_start` | `obj
 `tools/test_selection_move_snap.swift`, the model half by `tools/scenario_selection_snap.py`. What
 neither reaches is the gesture itself.
 
-### What a right click on an object decides
+### What a right click decides
 
-`selection.context_click` (`id`, optional `zone` `time` | `body`, `time`, `apply`) plays the part of the
-timeline's right-click monitor that comes BEFORE the menu is built: `ContextMenuPlan` (pure, asserted
-alone by `tools/test_context_menu_plan.swift`) and the selection a click on an object's BODY makes
-(`EditViewModel.selectForContextClick`, the left click's own: range cleared, object selected, cursor on
-its absolute start). `zone` is the half of the block (the upper half is TIME, the lower the OBJECT); the
-point's lane is the object's display lane and `time` its instant (default: the object's middle). It
-answers `layout` — `range_menu` (the point lies INSIDE the time selection: today's menu, nothing
-selected), `object_time_menu` (upper half: the object marker only), `object_body_menu` (lower half: the
-object's own menu) or `nothing` — plus `selects_object`, `offers_object_marker`, `offers_comment`,
-`applied` and the resulting `selection`. An object ALREADY selected is never re-selected (the multiple
-selection is kept, the range too). `apply: false` only asks. The menu itself is not reachable from here;
-`tools/scenario_context_click.py` asserts the rest (26 assertions).
+`selection.context_click` (`id`, optional `zone` `time` | `body`, `lane`, `time`, `apply`) plays the part
+of the timeline's right-click monitor that comes BEFORE the menu is built: `ContextMenuPlan` (pure,
+asserted alone by `tools/test_context_menu_plan.swift`) and the selection a click on an object's BODY
+makes (`EditViewModel.selectForContextClick`, the left click's own: range cleared, object selected,
+cursor on its absolute start).
+
+With `id`, the click is on that object: `zone` is the half of the block (the upper half is TIME, the
+lower the OBJECT); the point's lane is the object's display lane and `time` its instant (default: the
+object's middle). Without `id`, the click is on an EMPTY lane (no object under the point, which the
+caller states): `lane` (the display row) and `time` are then both required, and `zone` is ignored.
+
+It answers `layout` — `range_menu` (today's menu: group, aux clip, MIDI clip, comment. The point lies
+INSIDE the time selection, or it lands on NO object while a time selection exists ANYWHERE, inside the
+range or not, on its lanes or not — a click on an empty lane has never cared where the range lies),
+`object_time_menu` (upper half: the object marker only), `object_body_menu` (lower half: the object's
+own menu) or `nothing` (no menu, the event goes on to the views: an empty lane with no time selection at
+all) — plus `selects_object`, `offers_object_marker`, `offers_comment`, `applied` and the resulting
+`selection`. On an OBJECT, a range lying elsewhere does not drive the menu. An object ALREADY selected
+is never re-selected (the multiple selection is kept, the range too); a click on an empty lane never
+selects. `apply: false` only asks. The menu itself is not reachable from here;
+`tools/scenario_context_click.py` asserts the rest.
 
 ### Walking the insertion caret
 
@@ -1854,7 +1863,7 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
 | `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
-| `tools/scenario_context_click.py` | what a right click on an object decides, through `selection.context_click`: 26 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range keeps today's menu, a child, an infinite bus) |
+| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 45 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range keeps today's menu, an empty lane gives the range's menu wherever the range lies and no menu without one, a child, an infinite bus) |
 | `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |

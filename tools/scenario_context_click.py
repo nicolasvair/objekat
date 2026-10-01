@@ -16,6 +16,10 @@ it, the part the monitor runs BEFORE it builds anything: `ContextMenuPlan` (also
   * a point INSIDE the time selection: today's menu, nothing selected, the comment on offer;
   * a time selection lying elsewhere is cleared by a body click outside it, exactly as the left
     click clears it;
+  * a click on NO object (an empty lane, `id` omitted, `lane` + `time` given): a time selection
+    ANYWHERE — inside it or lying elsewhere, on its lanes or not — gives the range's menu (group,
+    aux, MIDI clip, comment), nothing is selected; with no time selection: no menu at all (the
+    event goes on to the views), whatever the object selection;
   * a child of an open group (cursor on its ABSOLUTE start), and an infinite bus.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
@@ -157,6 +161,58 @@ with ObjekatClient(SOCK) as c:
           r["layout"] == "object_time_menu", json.dumps(r))
     cmd("timesel.clear")
 
+    # ── an EMPTY lane: a range anywhere gives the range's menu, no range gives none ─────────
+    def empty(lane, time, **kw):
+        return cmd("selection.context_click", lane=lane, time=time, **kw)
+
+    a, b, d = fresh()
+    cmd("timesel.set", start=8.0, end=9.0, lanes=[0])
+    for label, ln, t in (("inside the range", 0, 8.5),
+                         ("on its lane, past its end", 0, 20.0),
+                         ("at its instants, on a lane it does not cover", 5, 8.5),
+                         ("away from it on every axis", 6, 30.0)):
+        r = empty(ln, t)
+        check("empty lane, %s: the range's menu" % label,
+              r["layout"] == "range_menu" and r["offers_comment"] is True, json.dumps(r))
+        check("… no object marker (no object), nothing selected, nothing applied (%s)" % label,
+              r["offers_object_marker"] is False and r["selects_object"] is False
+              and r["applied"] is False, json.dumps(r))
+    check("… and the range is still there, untouched",
+          "time_selection" in cmd("selection.get") and sel() == set(),
+          json.dumps(cmd("selection.get"))[:200])
+    r = empty(5, 20.0, zone="time")
+    check("empty lane: `zone` means nothing without an object", r["layout"] == "range_menu",
+          json.dumps(r))
+    cmd("timesel.clear")
+
+    # the same click with an object selection but no range: no menu, nothing touched
+    cmd("selection.set", ids=[a, b])
+    cmd("transport.seek", seconds=1.25)
+    r = empty(5, 20.0)
+    check("empty lane, no time selection: no menu at all",
+          r["layout"] == "nothing" and r["offers_comment"] is False
+          and r["offers_object_marker"] is False and r["selects_object"] is False, json.dumps(r))
+    check("… the object selection and the cursor are left alone",
+          sel() == {a, b} and near(cursor(), 1.25), "%s %s" % (sel(), cursor()))
+    cmd("selection.clear")
+    check("empty lane, nothing selected, no range: no menu either",
+          empty(0, 0.5)["layout"] == "nothing")
+
+    # a range with an object selected: the range wins on an empty lane, the selection stays
+    cmd("selection.set", ids=[a])
+    cmd("timesel.set", start=8.0, end=9.0, lanes=[0])
+    r = empty(5, 20.0)
+    check("empty lane, a range and an object selected: the range's menu, the selection stays",
+          r["layout"] == "range_menu" and sel() == {a}, "%s %s" % (sel(), json.dumps(r)))
+    cmd("timesel.clear")
+
+    # an object lying elsewhere on the range does not turn into the range's menu (new spec kept)
+    cmd("timesel.set", start=8.0, end=9.0, lanes=[0])
+    r = click(b, zone="time", time=4.1)
+    check("an OBJECT outside the range keeps its own reading (the range is not asked)",
+          r["layout"] == "object_time_menu" and r["offers_comment"] is False, json.dumps(r))
+    cmd("timesel.clear")
+
     # ── a child of an open group: the cursor goes to its ABSOLUTE start ─────────────────────
     cmd("project.new")
     g1 = cmd("object.add", path=BIP, lane=0, start=10.0)["id"]
@@ -188,6 +244,12 @@ with ObjekatClient(SOCK) as c:
         check("an unknown zone is refused", False)
     except ObjekatError:
         check("an unknown zone is refused", True)
+    for params in ({"lane": 2}, {"time": 1.0}, {}):
+        try:
+            cmd("selection.context_click", **params)
+            check("an empty-lane click needs both `lane` and `time` (%s)" % params, False)
+        except ObjekatError:
+            check("an empty-lane click needs both `lane` and `time` (%s)" % params, True)
     try:
         cmd("selection.context_click", id="00000000-0000-0000-0000-000000000000")
         check("an unknown object is refused", False)
