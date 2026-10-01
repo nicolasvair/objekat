@@ -1,0 +1,72 @@
+  ! no debug.resize_window in this build: the window keeps its size (see 'viewport')
+S0  600 plain, 12 lanes
+   setup 10.9s: 600 objects on screen, 0 selected, depth 0, viewport 1039x835
+   regimes at pps 5: visible: 600 clips canvas / 0 rich, 0 groups canvas / 0 rich, group bands 0 canvas / 0 rich; ForEach elements 16
+   hover: 12 visible clips to aim at, landed 5/5
+   scroll_right   fps  115.4   p95    8.33 ms   p99   23.70   late   7   busy    837.5 ms   moved  3261 px  pps_end 100.00  [115.4, 114.8, 115.7]
+   zoom_in        fps   72.0   p95   25.82 ms   p99   28.41   late  32   busy    824.4 ms   moved     0 px  pps_end 397.49  [74.7, 71.3, 72]
+   zoom_out_wide  fps   70.4   p95   23.55 ms   p99   25.80   late  37   busy    838.6 ms   moved     0 px  pps_end   5.03  [69.4, 70.4, 72.2]
+   scroll_wide    fps  116.3   p95    8.33 ms   p99   13.37   late   2   busy    442.7 ms   moved   680 px  pps_end   5.00  [116.7, 116.3, 116.1]
+   hover_sweep    fps   87.3   p95   19.80 ms   p99   20.66   late  59   busy   1551.3 ms   moved     0 px  pps_end   0.00  [86.4, 90.5, 87.3]
+S1  1 group, closed
+   setup 11.1s: 1 objects on screen, 0 selected, depth 0, viewport 1039x835
+   regimes at pps 5: visible: 0 clips canvas / 0 rich, 1 groups canvas / 0 rich, group bands 0 canvas / 0 rich; ForEach elements 5
+   scroll_right   fps  118.9   p95    8.33 ms   p99    8.33   late   2   busy    771.4 ms   moved  3261 px  pps_end 100.00  [118.9, 118.7, 119.4]
+   zoom_in        fps  120.3   p95    8.33 ms   p99    8.33   late   0   busy    548.1 ms   moved     0 px  pps_end 397.49  [120.3, 120.6, 117.7]
+   zoom_out_wide  fps  120.1   p95    8.33 ms   p99    8.33   late   0   busy    666.5 ms   moved     0 px  pps_end   5.03  [119.7, 120.1, 120.1]
+   scroll_wide    fps  120.1   p95    8.33 ms   p99    8.33   late   0   busy    391.2 ms   moved   680 px  pps_end   5.00  [118.9, 120.2, 120.1]
+S2  1 group, open
+   setup 10.8s: 601 objects on screen, 0 selected, depth 1, viewport 1039x835
+   regimes at pps 5: visible: 600 clips canvas / 0 rich, 1 groups canvas / 0 rich, group bands 1 canvas / 0 rich; ForEach elements 20
+   scroll_right   fps  115.8   p95    8.33 ms   p99   19.15   late  10   busy   1060.6 ms   moved  3261 px  pps_end 100.00  [116.6, 115.8, 115.6]
+   zoom_in        fps   86.5   p95   18.36 ms   p99   20.66   late  32   busy    815.3 ms   moved     0 px  pps_end 397.49  [86.5, 93.9, 83.6]
+   zoom_out_wide  fps   77.9   p95   22.75 ms   p99   24.17   late  33   busy    833.1 ms   moved     0 px  pps_end   5.03  [79.2, 76.1, 77.9]
+   scroll_wide    fps  116.9   p95    8.33 ms   p99   14.08   late   2   busy    528.1 ms   moved   680 px  pps_end   5.00  [117.4, 116.4, 116.9]
+S3  open + 600 children selected
+   setup 12.2s: 601 objects on screen, 600 selected, depth 1, viewport 1039x835
+   regimes at pps 5: visible: 600 clips canvas / 0 rich, 1 groups canvas / 0 rich, group bands 1 canvas / 0 rich; ForEach elements 20
+   hover: 10 visible clips to aim at, landed 5/5
+   scroll_right   fps  114.8   p95    8.33 ms   p99   22.16   late   7   busy   1360.5 ms   moved  3261 px  pps_end 100.00  [114.9, 114.7, 114.8]
+   zoom_in        fps   69.4   p95   24.09 ms   p99   28.35   late  34   busy    832.2 ms   moved     0 px  pps_end 397.49  [74.4, 69.3, 69.4]
+   zoom_out_wide  fps   60.5   p95   28.95 ms   p99   30.79   late  37   busy    848.0 ms   moved     0 px  pps_end   5.03  [60.5, 58.5, 60.6]
+   scroll_wide    fps  115.5   p95    8.33 ms   p99   11.96   late   1   busy    712.1 ms   moved   680 px  pps_end   5.00  [116.6, 115.5, 115.5]
+   hover_sweep    fps   71.8   p95   22.34 ms   p99   22.60   late  72   busy   1860.5 ms   moved     0 px  pps_end   0.00  [73.3, 71.2, 71.8]
+S4  12 sub-groups folded, outer open
+   setup 11.3s: 13 objects on screen, 0 selected, depth 1, viewport 1039x835
+   regimes at pps 5: visible: 0 clips canvas / 0 rich, 13 groups canvas / 0 rich, group bands 1 canvas / 0 rich; ForEach elements 20
+   scroll_right   fps  118.1   p95    8.33 ms   p99    8.33   late   2   busy   1071.3 ms   moved  3261 px  pps_end 100.00  [119.7, 118, 118.1]
+   zoom_in        fps  110.9   p95   16.71 ms   p99   19.51   late   8   busy    798.1 ms   moved     0 px  pps_end 397.49  [112.2, 109, 110.9]
+   zoom_out_wide  fps   99.5   p95   18.63 ms   p99   20.30   late  20   busy    767.9 ms   moved     0 px  pps_end   5.03  [99.5, 80.2, 99.9]
+   scroll_wide    fps  116.7   p95    8.33 ms   p99   16.85   late   2   busy    563.5 ms   moved   680 px  pps_end   5.00  [116.6, 117.3, 116.7]
+S5  nested, all open
+   setup 11.4s: 613 objects on screen, 0 selected, depth 2, viewport 1039x835
+   regimes at pps 5: visible: 600 clips canvas / 0 rich, 13 groups canvas / 0 rich, group bands 13 canvas / 0 rich; ForEach elements 68
+   scroll_right   fps  112.4   p95    8.33 ms   p99   27.71   late  13   busy   2107.7 ms   moved  3261 px  pps_end 100.00  [112.4, 112.8, 111.8]
+   zoom_in        fps   53.9   p95   27.68 ms   p99   34.87   late  34   busy    847.5 ms   moved     0 px  pps_end 397.49  [53.9, 53.7, 55.5]
+   zoom_out_wide  fps   48.4   p95   31.03 ms   p99   34.43   late  31   busy    878.7 ms   moved     0 px  pps_end   5.03  [47.6, 49, 48.4]
+   scroll_wide    fps  109.8   p95   13.59 ms   p99   21.35   late  10   busy   1129.3 ms   moved   680 px  pps_end   5.00  [109.8, 109.9, 109.4]
+S6  sub-group selected + select-all (12)
+   setup 7.6s: 13 objects on screen, 12 selected, depth 1, viewport 1039x835
+   regimes at pps 5: visible: 0 clips canvas / 0 rich, 13 groups canvas / 0 rich, group bands 1 canvas / 0 rich; ForEach elements 20
+   scroll_right   fps  119.7   p95    8.33 ms   p99    8.33   late   0   busy   1059.0 ms   moved  3261 px  pps_end 100.00  [119.7, 119.9, 119.7]
+   zoom_in        fps  109.0   p95   16.98 ms   p99   18.14   late   9   busy    770.0 ms   moved     0 px  pps_end 397.49  [109, 108.9, 111]
+   zoom_out_wide  fps   91.8   p95   19.09 ms   p99   25.75   late  25   busy    798.3 ms   moved     0 px  pps_end   5.03  [96.7, 88.1, 91.8]
+   scroll_wide    fps  118.6   p95    8.33 ms   p99    9.56   late   1   busy    509.2 ms   moved   680 px  pps_end   5.00  [119.4, 118.6, 118.6]
+S7  nested open + select-all in a sub-group (50)
+   setup 6.4s: 613 objects on screen, 50 selected, depth 2, viewport 1039x835
+   regimes at pps 5: visible: 600 clips canvas / 0 rich, 13 groups canvas / 0 rich, group bands 13 canvas / 0 rich; ForEach elements 68
+   scroll_right   fps  111.7   p95   12.18 ms   p99   29.05   late  15   busy   2210.0 ms   moved  3261 px  pps_end 100.00  [109.6, 111.7, 113]
+   zoom_in        fps   52.1   p95   30.45 ms   p99   35.73   late  33   busy    850.1 ms   moved     0 px  pps_end 397.49  [52.1, 52.7, 49.9]
+   zoom_out_wide  fps   46.2   p95   33.74 ms   p99   41.70   late  28   busy    867.2 ms   moved     0 px  pps_end   5.03  [46.9, 45.8, 46.2]
+   scroll_wide    fps  110.7   p95    8.33 ms   p99   22.06   late   7   busy   1182.6 ms   moved   680 px  pps_end   5.00  [113.3, 110.7, 110.3]
+S8  600 clips, every one coloured (rich: color)
+   setup 10.7s: 600 objects on screen, 0 selected, depth 0, viewport 1039x835
+   regimes at pps 5: visible: 0 clips canvas / 600 rich, 0 groups canvas / 0 rich, group bands 0 canvas / 0 rich; rich because color 600; ForEach elements 616
+   hover: 12 visible clips to aim at, landed 5/5
+   scroll_right   fps  106.1   p95    8.33 ms   p99   57.87   late   6   busy   1147.0 ms   moved  3261 px  pps_end 100.00  [106.3, 106.1, 105.4]
+   zoom_in        fps   45.5   p95   41.85 ms   p99   57.17   late  27   busy    846.6 ms   moved     0 px  pps_end 397.49  [45.1, 45.5, 48]
+   zoom_out_wide  fps    1.4   p95 6756.77 ms   p99 6756.77   late  15   busy   7660.5 ms   moved     0 px  pps_end   5.34  [1.4, 2.1, 1]
+   scroll_wide    fps   48.1   p95   24.11 ms   p99   44.61   late  31   busy   1837.2 ms   moved   670 px  pps_end   5.00  [47.4, 50.3, 48.1]
+   hover_sweep    fps   51.4   p95   27.24 ms   p99   27.69   late 110   busy   2409.9 ms   moved     0 px  pps_end   0.00  [51.4, 52.8, 51]
+S0@volume  600 plain, tool volume armed
+   setup 14.0s: 600 objects on screen, 0 selected, depth 0, viewport 1039x835

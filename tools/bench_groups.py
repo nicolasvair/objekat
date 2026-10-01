@@ -11,9 +11,11 @@ with whoever reads them (see `--ratios`).
     #    measured; Debug draws the timeline up to ×40 slower, so a Debug run is refused)
     objekat.app/Contents/MacOS/objekat --api --no-recent --socket=/tmp/cc501/rel.sock
 
-    # 2. measure, keep the result (about 6-8 minutes for the whole table)
+    # 2. measure, keep the result (about 6-8 minutes for S0..S7, some 15-20 more for S8 and the
+    #    tool scenarios)
     ./bench_groups.py /tmp/cc501/rel.sock --label base --out base.json
     ./bench_groups.py /tmp/cc501/rel.sock --only S0,S2,S3 --repeat 5 --label quick
+    ./bench_groups.py /tmp/cc501/rel.sock --only tools --label tools      # E6.0: every `@tool` scenario
 
     # 3. compare two runs, a whole table of runs, or read a run's ratios against the flat case
     ./bench_groups.py --compare base.json after.json
@@ -48,8 +50,37 @@ MEDIAN of each metric kept:
                      step where SwiftUI pays for what it holds
     scroll_wide      600 px in 1 s from pps 5
 
-NOT measured: DRAGGING a child. There is no mouse in the API (`input.*` is scroll, zoom and keys),
-so a drag cannot be scripted — that one has to be felt by hand.
+Tools and colour (E6.0) — the situations that put EVERY block on the rich SwiftUI path, which the
+batched Canvas does not cover. They need `tool.set`, `object.set_color` (and `view.state.hover` for
+the landing check); an older build is refused with a clear message:
+
+    S8        600 plain clips, every one given a custom colour (`object.set_color`): rich reason `color`
+    S0@T      S0 with the tool T armed (LOCKED, as ⇧+key arms it) — T is volume, pan, aux or stem
+    S3@T      S3 (600 children selected, group open) with the tool T armed
+    `--only tools` selects every `@T` scenario, `--only nav` the eight of the first table.
+    Under Volume / Pan / Aux the census must read clips_rich = V (the visible clips) and
+    rich_reasons.tool = V; under Stem only the HOVERED block goes rich (`stem_hover`, and for a
+    clip only when selected: S3), so the sweep below is what makes it move.
+
+Two more steps, run on S0, S3, S8 and every `@T` scenario (S0 / S3 with the selection tool are the
+references for the `@T` ones):
+
+    hover_sweep      `input.hover` laid on one visible clip after the other (--hover-moves, default
+                     120, one every --hover-interval-ms, default 16 — the pointer's own pace), from
+                     pps 100: every move changes the block aimed at, hence what a tool's hover
+                     re-evaluates. Contaminated when a real input event was seen, or when the
+                     pointer is not where the last move put it (a real mouse over the timeline).
+    tool_switch      (`@T` only) the selection tool, then T armed, then the selection tool again,
+                     each followed by `wait_idle`, under ONE frame recording: what the SWITCH costs
+                     (600 blocks leaving the Canvas and coming back). Read busy total / frame max.
+
+Each `@T` scenario also checks, before measuring, that five synthetic hovers LAND (`view.state.hover`
+names the block aimed at) and prints it as `hover landed n/5` (n/a under Aux, whose hover is a
+send knob). `perf.census` is read at pps 5 with the tool armed: the setup line carries the
+`rich_reasons` and the ForEach total.
+
+NOT measured: DRAGGING a block (`input.drag` does not exist — TODO, see docs/command_api.md): the
+`preview` / `spill` rich reasons cannot be put on screen by a script, so a drag has to be felt by hand.
 """
 
 import argparse, json, os, shutil, statistics, sys, tempfile, time
@@ -77,6 +108,13 @@ STEPS = [
      {"pps": 5, "block_height": FIXED_BLOCK, "scroll_x": 0, "scroll_y": 0}),
 ]
 STEP_NAMES = [s[0] for s in STEPS]
+# The steps that are not a gesture of `input.*` (@see hover_sweep, tool_switch).
+EXTRA_STEPS = ["hover_sweep", "tool_switch"]
+ALL_STEP_NAMES = STEP_NAMES + EXTRA_STEPS
+HOVER_START = {"pps": 100, "block_height": FIXED_BLOCK, "scroll_x": 0, "scroll_y": 0}
+HOVER_MOVES = 120
+HOVER_INTERVAL_MS = 16
+TOOLS = ["volume", "pan", "aux", "stem"]
 
 SCENARIOS = [
     ("S0", "600 plain, 12 lanes"),
@@ -87,7 +125,19 @@ SCENARIOS = [
     ("S5", "nested, all open"),
     ("S6", "sub-group selected + select-all (12)"),
     ("S7", "nested open + select-all in a sub-group (50)"),
-]
+    ("S8", "600 clips, every one coloured (rich: color)"),
+] + [("%s@%s" % (base, tool), "%s, tool %s armed" % (desc, tool))
+     for base, desc in (("S0", "600 plain"), ("S3", "open + 600 children selected"))
+     for tool in TOOLS]
+
+# Which scenarios run the hover sweep: the three references and every tool one.
+HOVER_SCENARIOS = {"S0", "S3", "S8"}
+
+
+def split_name(name):
+    """'S3@pan' -> ('S3', 'pan'); 'S3' -> ('S3', None)."""
+    base, _, tool = name.partition("@")
+    return base, (tool or None)
 
 
 # ----------------------------------------------------------------------------- the material
@@ -143,34 +193,47 @@ def explode(c, wav, group_lanes):
     return r
 
 
-def build(c, wav, name):
+def build(c, wav, name, has_tools=True):
     """Lays the scenario's project down and returns (description of what is on screen, extras)."""
+    base, tool = split_name(name)
     c.send("project.new")
+    if has_tools:
+        c.send("tool.set", {"tool": "selection"})   # a tool survives project.new
     settle(c, 500)
-    if name == "S0":
+    if base == "S0":
         r = explode(c, wav, False)
         c.send("group.disband", {"id": r["group"]})
         c.send("selection.clear")
-    elif name in ("S1", "S2", "S3"):
+    elif base == "S8":
         r = explode(c, wav, False)
-        c.send("group.expand", {"id": r["group"], "expanded": name != "S1"})
+        c.send("group.disband", {"id": r["group"]})
+        c.send("selection.clear")
+        ids = [o["id"] for o in c.send("object.list")["objects"] if o["kind"] == "clip"]
+        c.send("object.set_color", {"ids": ids, "color_index": 3})
+        c.send("selection.clear")
+    elif base in ("S1", "S2", "S3"):
+        r = explode(c, wav, False)
+        c.send("group.expand", {"id": r["group"], "expanded": base != "S1"})
         c.send("selection.clear")      # the explode leaves its group selected
-        if name == "S3":
+        if base == "S3":
             c.send("selection.set", {"ids": [r["pieces"][0]["id"]]})
             c.send("selection.all")
     else:
         r = explode(c, wav, True)
         c.send("group.expand", {"id": r["group"], "expanded": True})
-        open_subs = name in ("S5", "S7")
+        open_subs = base in ("S5", "S7")
         for g in r["lane_groups"]:
             c.send("group.expand", {"id": g, "expanded": open_subs})
         c.send("selection.clear")
-        if name == "S6":
+        if base == "S6":
             c.send("selection.set", {"ids": [r["lane_groups"][0]]})
             c.send("selection.all")
-        elif name == "S7":
+        elif base == "S7":
             c.send("selection.set", {"ids": [r["pieces"][0]["id"]]})
             c.send("selection.all")
+    if tool:
+        # Armed LOCKED, as ⇧ + the key arms it: it stays until the next `tool.set`.
+        c.send("tool.set", {"tool": tool, "stem": 1} if tool == "stem" else {"tool": tool})
     settle(c, 2000)
     # The regime census is read from the WIDE view (pps 5: nearly every piece in the window), where
     # it says what the step that follows will pay for. It describes the visible blocks only.
@@ -178,10 +241,16 @@ def build(c, wav, name):
     settle(c, 800)
     census = c.send("perf.census")
     sel = c.send("selection.get")
+    regimes = census.get("regimes") or {}
     return {"objects_on_screen": census.get("objects_total"),
             "selected": sel.get("count"),
             "max_depth": census.get("max_group_depth"),
-            "regimes": census.get("regimes")}
+            "tool": tool or "selection",
+            "regimes": regimes,
+            # The E0 census: why the rich blocks are rich, and the SwiftUI layers' element count.
+            "rich_reasons": {k: v for k, v in (regimes.get("rich_reasons") or {}).items() if v},
+            "foreach_total": regimes.get("foreach_total"),
+            "foreach_layers": regimes.get("foreach_layers")}
 
 
 def regimes_text(regimes):
@@ -189,22 +258,30 @@ def regimes_text(regimes):
     `Shared/TimelineRegimeMeter.swift`). A build without `regimes` in its census prints 'n/a'."""
     if not regimes:
         return "regimes n/a"
-    return ("visible: %s clips canvas / %s rich, %s groups canvas / %s rich, group bands %s canvas / %s rich"
+    text = ("visible: %s clips canvas / %s rich, %s groups canvas / %s rich, group bands %s canvas / %s rich"
             % (regimes["clips_canvas"], regimes["clips_rich"], regimes["groups_canvas"],
                regimes["groups_rich"], regimes["group_bands_canvas"], regimes["group_bands_rich"]))
+    reasons = {k: v for k, v in (regimes.get("rich_reasons") or {}).items() if v}
+    if reasons:
+        text += "; rich because " + ", ".join("%s %d" % kv for kv in sorted(reasons.items()))
+    if regimes.get("foreach_total") is not None:
+        text += "; ForEach elements %s" % regimes["foreach_total"]
+    return text
 
 
-def measure_step(c, name, cmd, params, start, repeat):
+def measure_step(c, name, runner, start, repeat):
     """`repeat` CLEAN runs from the same starting view, the median of each metric. A run that
     saw a real input event (a hand on the trackpad or the mouse) is thrown away and done again,
     up to 3 extra times per run wanted; if clean runs are still missing the contaminated ones
-    fill in, and the step says so."""
+    fill in, and the step says so. `runner()` does one run and answers what an `input.*`
+    gesture answers (`frames`, `contaminated`, `build`, and optionally `view_before` /
+    `view_after` / `settle_ms`) — @see gesture, hover_sweep, tool_switch."""
     runs, thrown = [], 0
     for _ in range(repeat * 4):
         if len([x for x in runs if not x["contaminated"]]) >= repeat:
             break
         c.send("view.set", start)
-        r = c.send(cmd, params)
+        r = runner()
         vb, va = r.get("view_before") or {}, r.get("view_after") or {}
         run_ = {"frames": r["frames"], "contaminated": r["contaminated"], "build": r.get("build"),
                 "dx": (va.get("scroll_x", 0) or 0) - (vb.get("scroll_x", 0) or 0),
@@ -224,7 +301,98 @@ def measure_step(c, name, cmd, params, start, repeat):
     return step
 
 
-def run(sock, label, repeat, only, allow_debug, resize):
+def gesture(c, cmd, params):
+    """The runner of the four navigation steps: one `input.*` gesture."""
+    return lambda: c.send(cmd, params)
+
+
+def hover_targets(c, limit=None):
+    """Where to lay the pointer: the centres of the visible clips, at HOVER_START's view (pps 100,
+    scroll 0), in viewport points, ordered by time then row — each one a block, so that every move
+    changes the block aimed at. Answers [(id, x, y)]."""
+    c.send("view.set", HOVER_START)
+    vs = c.send("view.state")
+    vsnap = vs.get("vsnap") or {}
+    ruler, step = vsnap.get("ruler_h", 50), vsnap.get("lane_step", FIXED_BLOCK + 4)
+    vw, vh = vs["viewport_w"], vs["viewport_h"]
+    pps = HOVER_START["pps"]
+    out = []
+    for o in c.send("object.list")["objects"]:
+        if o["kind"] != "clip":
+            continue
+        x = o["start"] * pps + o["duration"] * pps / 2
+        y = ruler + o["display_lane"] * step + FIXED_BLOCK / 2
+        if 6 < x < vw - 6 and y < vh - 6:
+            out.append((o["start"], o["display_lane"], o["id"], x, y))
+    out.sort()
+    return [(i, x, y) for _, _, i, x, y in out][:limit]
+
+
+def hover_landed(c, targets, tool):
+    """Before measuring: do five synthetic hovers LAND? Answers 'n/5', or None where the tool's
+    hover is not a block (Aux: a send knob) or the build has no `view.state.hover`."""
+    if tool == "aux":
+        return None
+    picks = targets[:5]
+    ok = 0
+    for i, x, y in picks:
+        c.send("input.hover", {"x": x, "y": y})
+        time.sleep(0.15)
+        h = c.send("view.state.hover")
+        if (h.get("hovered_id") or "").upper() == i.upper():
+            ok += 1
+    c.send("input.hover", {"leave": True})
+    return "%d/%d" % (ok, len(picks))
+
+
+def hover_runner(c, targets, moves, interval_ms):
+    """One hover sweep under ONE frame recording: `moves` `input.hover` calls, one block after the
+    other (cycling through the visible ones), paced at the pointer's own interval. Contaminated by a
+    real input event, or when the pointer is not where the last move left it."""
+    def run_once():
+        c.send("perf.frames.start")
+        last = None
+        t_next = time.time()
+        for k in range(moves):
+            _, x, y = targets[k % len(targets)]
+            c.send("input.hover", {"x": x, "y": y})
+            last = (x, y)
+            t_next += interval_ms / 1000.0
+            time.sleep(max(0.0, t_next - time.time()))
+        h = c.send("view.state.hover")
+        r = c.send("perf.frames.stop")
+        pos = (h.get("viewport") or {})
+        moved_away = (not pos) or abs(pos.get("x", -1) - last[0]) > 1.5 or abs(pos.get("y", -1) - last[1]) > 1.5
+        c.send("input.hover", {"leave": True})
+        return {"frames": r["frames"], "build": r.get("build"),
+                "contaminated": r.get("real_input_events", 0) > 0 or moved_away}
+    return run_once
+
+
+def tool_switch_runner(c, tool):
+    """One arm-then-release under ONE frame recording: selection (the rest state), the tool armed,
+    the selection tool again, each followed by a settled `wait_idle` — what the SWITCH costs, with
+    every visible block leaving the Canvas for its rich view and coming back."""
+    params = {"tool": tool, "stem": 1} if tool == "stem" else {"tool": tool}
+    def run_once():
+        c.send("tool.set", {"tool": "selection"})
+        settle(c, 600)
+        c.send("perf.frames.start")
+        c.send("tool.set", params)
+        settle(c, 600)
+        c.send("tool.set", {"tool": "selection"})
+        settle(c, 600)
+        r = c.send("perf.frames.stop")
+        # Put the tool back for whatever follows in this scenario.
+        c.send("tool.set", params)
+        settle(c, 600)
+        return {"frames": r["frames"], "build": r.get("build"),
+                "contaminated": r.get("real_input_events", 0) > 0}
+    return run_once
+
+
+def run(sock, label, repeat, only, allow_debug, resize, hover_moves=HOVER_MOVES,
+        hover_interval_ms=HOVER_INTERVAL_MS):
     tmp = tempfile.mkdtemp(prefix="bench_groups_")
     try:
         wav = make_noise_wav(tmp)
@@ -236,12 +404,26 @@ def run(sock, label, repeat, only, allow_debug, resize):
         if resize:
             result["window_by"] = set_window(c, *WINDOW)
             time.sleep(1.0)
-        for name, desc in SCENARIOS:
-            if only and name not in only:
-                continue
+        # E6.0 needs the harness commands (tool.set, object.set_color, view.state.hover): an older
+        # build is refused up front rather than half-way through.
+        def has(cmd):
+            try:
+                c.send("help", {"name": cmd})
+                return True
+            except ObjekatError:
+                return False
+        has_tools = has("tool.set") and has("object.set_color") and has("view.state.hover")
+        wanted = [(n, d) for n, d in SCENARIOS if not only or n in only]
+        if not has_tools and any(split_name(n)[1] or split_name(n)[0] == "S8" for n, _ in wanted):
+            print("!! this build has no tool.set / object.set_color / view.state.hover: "
+                  "S8 and the @tool scenarios need them (run --only S0,...,S7)", file=sys.stderr)
+            return None
+        result["has_tools"] = has_tools
+        for name, desc in wanted:
+            base, tool = split_name(name)
             print("%s  %s" % (name, desc))
             t0 = time.time()
-            setup = build(c, wav, name)
+            setup = build(c, wav, name, has_tools)
             vs = c.send("view.state")
             viewport = [vs.get("viewport_w"), vs.get("viewport_h")]
             print("   setup %.1fs: %s objects on screen, %s selected, depth %s, viewport %sx%s"
@@ -253,8 +435,23 @@ def run(sock, label, repeat, only, allow_debug, resize):
                       "after are not comparable" % (result["viewport"], viewport), file=sys.stderr)
                 result["viewport_changed"] = True
             scen = {"desc": desc, "setup": setup, "steps": {}}
-            for sname, cmd, params, start in STEPS:
-                step = measure_step(c, sname, cmd, params, start, repeat)
+            todo = [(sname, gesture(c, cmd, params), start) for sname, cmd, params, start in STEPS]
+            if has_tools and (base in HOVER_SCENARIOS):
+                targets = hover_targets(c)
+                if targets:
+                    landed = hover_landed(c, targets, tool) if has_tools else None
+                    setup["hover_landed"] = landed
+                    setup["hover_targets"] = len(targets)
+                    print("   hover: %d visible clips to aim at, landed %s"
+                          % (len(targets), landed if landed else "n/a"))
+                    todo.append(("hover_sweep", hover_runner(c, targets, hover_moves, hover_interval_ms),
+                                 HOVER_START))
+                else:
+                    print("   ! no visible clip to hover at pps 100: hover_sweep skipped", file=sys.stderr)
+            if tool:
+                todo.append(("tool_switch", tool_switch_runner(c, tool), HOVER_START))
+            for sname, runner, start in todo:
+                step = measure_step(c, sname, runner, start, repeat)
                 if step["build"] != "release" and not allow_debug:
                     print("!! build is %r, not release: refusing to go on (Debug is up to ×40 slower)"
                           % step["build"], file=sys.stderr)
@@ -268,7 +465,11 @@ def run(sock, label, repeat, only, allow_debug, resize):
                          ("   CONTAMINATED" if step["contaminated"] else "")
                          + ("   (%d run(s) redone)" % step["thrown_runs"] if step["thrown_runs"] else "")))
             result["scenarios"][name] = scen
+            if tool:
+                c.send("tool.set", {"tool": "selection"})
         c.send("project.new")
+        if has_tools:
+            c.send("tool.set", {"tool": "selection"})
         c.send("view.set", STEPS[0][3])
         return result
     finally:
@@ -296,7 +497,7 @@ def compare(a, b):
         if not sa or not sb:
             continue
         print("\n%s  %s" % (sname, sa["desc"]))
-        for step in STEP_NAMES:
+        for step in ALL_STEP_NAMES:
             ta, tb = sa["steps"].get(step), sb["steps"].get(step)
             if not ta or not tb:
                 continue
@@ -326,7 +527,7 @@ def table(paths):
         print("\n" + title)
         print(head)
         for sname, _ in SCENARIOS:
-            for step in STEP_NAMES:
+            for step in ALL_STEP_NAMES:
                 cells = []
                 for r in runs:
                     t = (r["scenarios"].get(sname) or {}).get("steps", {}).get(step)
@@ -347,7 +548,7 @@ def ratios(path):
         s = r["scenarios"].get(sname)
         if not s:
             continue
-        for step in STEP_NAMES:
+        for step in ALL_STEP_NAMES:
             t = s["steps"].get(step)
             b0 = base["steps"].get(step) if base else None
             b2 = s2["steps"].get(step) if s2 else None
@@ -366,7 +567,11 @@ def main():
     ap.add_argument("--label", default="run")
     ap.add_argument("--out")
     ap.add_argument("--repeat", type=int, default=3)
-    ap.add_argument("--only", help="comma-separated scenarios, e.g. S0,S2,S3")
+    ap.add_argument("--only", help="comma-separated scenarios, e.g. S0,S2,S3 or S0@volume; "
+                                   "`tools` = every @tool scenario, `nav` = S0..S7")
+    ap.add_argument("--hover-moves", type=int, default=HOVER_MOVES, help="input.hover calls per sweep (default 120)")
+    ap.add_argument("--hover-interval-ms", type=float, default=HOVER_INTERVAL_MS,
+                    help="pause between two hover moves (default 16)")
     ap.add_argument("--allow-debug", action="store_true", help="accept a Debug build (numbers are NOT comparable with Release)")
     ap.add_argument("--no-resize", action="store_true", help="leave the window as it is")
     ap.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"))
@@ -385,8 +590,21 @@ def main():
     if not args.socket:
         ap.print_usage()
         return 2
-    only = set(args.only.split(",")) if args.only else None
-    result = run(args.socket, args.label, max(1, args.repeat), only, args.allow_debug, not args.no_resize)
+    only = None
+    if args.only:
+        only = set()
+        for token in args.only.split(","):
+            if token == "tools":
+                only |= {n for n, _ in SCENARIOS if "@" in n}
+            elif token == "nav":
+                only |= {n for n, _ in SCENARIOS if n[1:].isdigit() and n != "S8"}
+            else:
+                only.add(token)
+        unknown = only - {n for n, _ in SCENARIOS}
+        if unknown:
+            ap.error("unknown scenario(s): %s" % ", ".join(sorted(unknown)))
+    result = run(args.socket, args.label, max(1, args.repeat), only, args.allow_debug, not args.no_resize,
+                 args.hover_moves, args.hover_interval_ms)
     if result is None:
         return 1
     if args.out:
