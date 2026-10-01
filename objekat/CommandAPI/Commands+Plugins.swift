@@ -192,16 +192,18 @@ extension CommandRegistry {
         }
 
         // The DROP itself, and not merely what it ends up calling. `plugin.move|copy|link` reach
-        // `transferPlugins` directly; a hand reaches it through `acceptPluginDrop`, which is the
-        // one door both places the hand can let go of share — a timeline object, and a bus's strip
-        // in the toolbar. What only this command can assert is what that door adds on top of the
-        // transfer: an instrument going to its SLOT rather than into the chain, and the selection
-        // following its cards into the target when it was the selection that was dragged.
+        // `transferPlugins` directly; a hand reaches it through `performPluginDrop`, which is the
+        // one door every place the hand can let go of shares — a timeline object, a bus's strip in the
+        // toolbar, a cable / a card / a bin's header of the signal view. What only these commands can
+        // assert is what that door adds on top of the transfer: an instrument going to its SLOT rather
+        // than into the chain, a bin's block moving as one piece, plugins joining or leaving a bin, and
+        // the selection following its cards when it was the selection that was dragged.
         register("plugin.drop",
-                 summary: "Drops a plugin (or the whole selection) onto a host, exactly as a drag "
-                        + "released over a timeline object or a bus's strip does.",
+                 summary: "Drops a plugin, the whole selection or an FX link's block onto a host, exactly as a "
+                        + "drag released over a timeline object or a bus's strip does.",
                  params: [ParamSpec("from", "uuid", "Source host."),
-                          ParamSpec("plugin", "uuid", required: false, "Dragged plugin."),
+                          ParamSpec("plugin", "uuid", required: false,
+                                    "Dragged plugin — or an FX link's block id (what the bin's header carries)."),
                           ParamSpec("plugins", "uuid[]", required: false,
                                     "Several plugins at once. Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Host the drag is released over."),
@@ -211,22 +213,69 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
             let to = try p.uuid("to")
-            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
-            let mode = try p.string("mode", or: "move")
-            let flags: NSEvent.ModifierFlags
-            switch mode {
-            case "move": flags = []
-            case "copy": flags = .option
-            case "link": flags = .command
-            default: throw CommandError(code: .bad_params,
-                                        message: "mode must be move, copy or link")
-            }
+            let ids = try CommandAdapters.dropTargets(p, on: from, in: vm)
+            let flags = try CommandAdapters.dropModifiers(try p.string("mode", or: "move"))
             let payload = PluginDragPayload(sourceObjectID: from, pluginID: ids[0], pluginIDs: ids)
+            let outcome = vm.pluginDropOutcome(payload, toHost: to, at: .hostEnd, flags: flags)
             let placed = vm.acceptPluginDrop(payload, on: to, modifiers: flags)
             return .object(["placed": .bool(placed),
+                            "outcome": .string(outcome.apiName),
+                            "refused": .bool(outcome.isRefusal),
+                            "reason": JSONValue.stringOrNull(outcome.refusalReason),
                             "to": .string(to.uuidString),
                             "selection": .array(vm.orderedSelectedPluginIDs().map { .string($0.uuidString) }),
                             "selection_host": vm.selectedPluginHostID.map { .string($0.uuidString) } ?? .null])
+        }
+
+        // The drop at a PLACE of the signal view — a cable, a card, a bin's header — with `dry_run`
+        // returning what the cursor and the band would say (the resolver's answer) without touching
+        // anything. The same door as the hand's (@see EditViewModel.performPluginDrop).
+        register("plugin.drop_at",
+                 summary: "Drops a plugin, the selection or an FX link's block at a precise place of a host's "
+                        + "chain: its root series, an FX link's block or a parallel branch. `dry_run` answers "
+                        + "what the drop would do (outcome, refusal reason) and changes nothing.",
+                 params: [ParamSpec("from", "uuid", "Source host."),
+                          ParamSpec("plugin", "uuid", required: false,
+                                    "Dragged plugin — or an FX link's block id."),
+                          ParamSpec("plugins", "uuid[]", required: false,
+                                    "Several plugins at once. Replaces 'plugin'."),
+                          ParamSpec("host", "uuid", "Host whose chain receives the drop."),
+                          ParamSpec("series", "string|object", required: false,
+                                    "Where: \"root\" (default), {\"block\": <FX link block id>} (into the bin; "
+                                  + "without 'at' it lands at its end, like a drop on the header) or "
+                                  + "{\"voice\": <parallel block id>, \"index\": <branch>}. "
+                                  + "Absent = the host as a whole (the end of its root series)."),
+                          ParamSpec("at", "int", required: false,
+                                    "Index in that series where the first card lands (default: the end)."),
+                          ParamSpec("mode", "string", required: false,
+                                    "move (default, no modifier) | copy (⌥) | link (⌘)."),
+                          ParamSpec("dry_run", "bool", required: false,
+                                    "Only resolve: return the outcome, change nothing (default false).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let from = try p.uuid("from")
+            let host = try p.uuid("host")
+            guard let chain = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let ids = try CommandAdapters.dropTargets(p, on: from, in: vm)
+            let flags = try CommandAdapters.dropModifiers(try p.string("mode", or: "move"))
+            let site = try CommandAdapters.dropSite(p, chain: chain)
+            let payload = PluginDragPayload(sourceObjectID: from, pluginID: ids[0], pluginIDs: ids)
+            let outcome = vm.pluginDropOutcome(payload, toHost: host, at: site, flags: flags)
+            var result: [String: JSONValue] = ["outcome": .string(outcome.apiName),
+                                               "refused": .bool(outcome.isRefusal)]
+            if let why = outcome.refusalReason { result["reason"] = .string(why) }
+            if try p.bool("dry_run", or: false) {
+                result["placed"] = .bool(false)
+                result["dry_run"] = .bool(true)
+                return .object(result)
+            }
+            let placed = vm.performPluginDrop(payload, on: host, at: site, modifiers: flags)
+            result["placed"] = .bool(placed)
+            result["selection"] = .array(vm.orderedSelectedPluginIDs().map { .string($0.uuidString) })
+            result["selection_host"] = vm.selectedPluginHostID.map { .string($0.uuidString) } ?? .null
+            return .object(result)
         }
 
         register("plugin.unlink",

@@ -639,7 +639,8 @@ commands drive.
 | `plugin.toggle_selected` | on/off over the lot, in one undo step. Mixed states go to OFF: one still on turns them all off |
 | `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
-| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip |
+| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip; `plugin` may also be an FX link's BLOCK id (what the bin's header carries); answers `outcome`, `refused`, `reason` |
+| `plugin.drop_at` | the same drop at a PLACE of a host's chain — `series` (`"root"`, `{"block": id}` = into a bin, `{"voice": id, "index": n}` = a parallel branch) and `at` — with `dry_run` returning the resolver's `outcome` and refusal `reason` without touching anything |
 
 Three things are worth knowing before driving them:
 
@@ -659,6 +660,20 @@ Three things are worth knowing before driving them:
   rather than at the timeline's objects. `plugin.select` with an empty list therefore means something
   precise — claim the keyboard for that chain, choose nothing — which is what lets `plugin.paste`
   land in a chain that has no card yet to click on. `has_keyboard` reports it.
+
+**What a drop does — one resolver, for the hand and the API alike** (`pluginDropOutcome`; the cursor, the
+band at the bottom of the timeline and the drop itself all read it, so what the hand is told is what
+happens). `outcome` is one of `move`, `copy`, `link` (a plain plugin: nothing / ⌥ / ⌘; within ONE chain ⌘ is
+a plain move), `join_bin` (an instance of an FX link dropped with ⌘ on another host: that host joins the
+WHOLE bin), `move_block` / `copy_block` (a block dragged by its header: the target joins the bin and the
+source loses its block, or — ⌥ / ⌘ — keeps it; every copy of a bin stays on the bin; a DETACHED block
+moves as it is, local output and all, with fresh instance ids), `adopt_into_bin` (a plain plugin let go
+INSIDE an attached bin joins its definition: its instance keeps its id, every other member gets one —
+from another host it is moved first), `copy_into_bin` (⌥: an independent copy is added to the definition),
+`extract_from_bin` (an instance let go OUTSIDE its bin leaves it for EVERY member and stays a plain
+plugin: same id, live state) or `refuse` (`reason` says why: ⌘ into a bin, an instance moved onto another
+host, a bin onto a host that already holds it or into another bin, a plugin that is linked or already in
+a block). A refused drop places nothing and pushes no undo point. Every other outcome is ONE `edit.undo`.
 
 `plugin.move`, `plugin.copy` and `plugin.link` take **`plugins`** (a list) in place of `plugin`: one
 card or a whole selection, the same three gestures either way. A link of several ties each card to
@@ -757,8 +772,10 @@ knowing before driving one:
 
 Persisted as the optional `fxLinks` registry of the session file (**format 17**; a file with no key
 opens as before; an older build has no notion of the block entry, so a project holding bins is not
-meant to be edited by one). `tools/scenario_fxlink.py` (headless, 91 assertions, the export + RMS proof that the
-ENGINE followed) is the reference for every rule above.
+meant to be edited by one). `tools/scenario_fxlink.py` (headless, the export + RMS proof that the
+ENGINE followed) is the reference for every rule above; `tools/scenario_fxlink_drag.py` (headless, 91
+assertions: block and plugin drags, refusals by dry run, one undo each, save / reopen, export at 24 bit)
+is the one for the drag gestures.
 
 ### Fade shapes
 
