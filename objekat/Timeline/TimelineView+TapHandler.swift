@@ -359,10 +359,8 @@ extension TimelineView {
                 } else if shift {
                     extendSelectionTo(child.id)
                 } else {
-                    viewModel.select(child.id, additive: false)
-                    let t = max(0, hitChildAbsStart)
-                    if !isPlaying { viewModel.engine?.seek(to: t) }
-                    onMoveCursor(t)
+                    viewModel.selectOnBodyClick(child.id, cursorAt: hitChildAbsStart,
+                                                isPlaying: isPlaying, onMoveCursor: onMoveCursor)
                 }
             }
             return
@@ -383,9 +381,8 @@ extension TimelineView {
                     } else if shift {
                         extendSelectionTo(group.id)
                     } else {
-                        viewModel.select(group.id, additive: false)
-                        if !isPlaying { viewModel.engine?.seek(to: group.startTime) }
-                        onMoveCursor(group.startTime)
+                        viewModel.selectOnBodyClick(group.id, cursorAt: group.startTime,
+                                                    isPlaying: isPlaying, onMoveCursor: onMoveCursor)
                     }
                 }
                 return
@@ -446,10 +443,8 @@ extension TimelineView {
             } else if shift {
                 extendSelectionTo(clip.id)
             } else {
-                viewModel.select(clip.id, additive: false)
-                let t = max(0, clip.startTime)
-                if !isPlaying { viewModel.engine?.seek(to: t) }
-                onMoveCursor(t)
+                viewModel.selectOnBodyClick(clip.id, cursorAt: clip.startTime,
+                                            isPlaying: isPlaying, onMoveCursor: onMoveCursor)
             }
         }
     }
