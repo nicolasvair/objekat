@@ -139,6 +139,9 @@ enum PluginDropOutcome: Equatable {
         }
     }
 
+    /// Why nothing happens — for the command API's dry run; nil when something does.
+    var refusalReason: String? { if case .refuse(let why) = self { return why } else { return nil } }
+
     /// A stable name for the command API (`plugin.drop_at`'s `outcome`).
     var apiName: String {
         switch self {

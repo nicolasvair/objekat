@@ -11,7 +11,7 @@ import SwiftUI
 extension EditViewModel {
 
     /// What the signal view draws round a bin's block: the frame's colour, the header's name and
-    /// on/off, the footer's output section (the bin's while attached, the block's own while detached).
+    /// on/off, the mix box's output section (the bin's while attached, the block's own while detached).
     func synopticFXInfo(_ block: ObjectPlugin) -> SynopticFXLink? {
         guard let fb = block.fxBlock else { return nil }
         let link = fxLink(fb.linkID)

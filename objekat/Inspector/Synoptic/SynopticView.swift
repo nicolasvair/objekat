@@ -109,7 +109,7 @@ struct SynopticActions {
     /// The start of a drag on the block's output section: push an undo point.
     var onFXBeginEdit: (() -> Void)? = nil
     var onFXRename: ((UUID, String) -> Void)? = nil
-    /// A click on the colour dot: the next colour of the palette.
+    /// "Next colour" of the header's right-click menu: the next colour of the palette.
     var onFXCycleColor: ((UUID) -> Void)? = nil
     /// Detach / reattach (the same button: the state says which).
     var onFXToggleDetach: ((UUID) -> Void)? = nil
