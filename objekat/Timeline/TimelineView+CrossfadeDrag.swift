@@ -57,14 +57,9 @@ import AppKit
 
 /// One drag on a crossfade zone.
 struct CrossfadeDragState {
-    enum Part {
-        /// The bottom triangle: slide the seam, width unchanged.
-        case move
-        /// The top triangle: widen/narrow symmetrically about the centre, and bend both curves.
-        case both
-        /// A side: that edge of the zone travels, the opposite one is pinned.
-        case sideStart, sideEnd
-    }
+    /// The parts a hand can take hold of — defined in `Shared/CrossfadeGrab.swift`, with the pure
+    /// decisions that read them.
+    typealias Part = CrossfadePart
 
     var leftID:  UUID
     var rightID: UUID
@@ -141,7 +136,9 @@ struct CrossfadeHit {
 extension TimelineView {
 
     /// The crossfade under a canvas point, and which part of it the hand is on. `nil` when the
-    /// point is not in a zone — the ordinary per-block carve-up then applies, untouched.
+    /// point is not in a zone — the ordinary per-block carve-up then applies, untouched — except
+    /// for one case that is the zone's all the same: a fade handle of an object engaged in a
+    /// crossfade, grabbed where it overhangs the zone (@see fadeHandleOverhang).
     ///
     /// The HALF decides first, exactly as it does on a block (@see ClipEditZone.resolve): the
     /// lower half is the object's — edges and body — and the upper half is where the fades live.
@@ -159,7 +156,9 @@ extension TimelineView {
         let laneTop = rulerHeight + Double(lane) * laneStep
         guard p.y <= laneTop + blockHeight else { return nil }
         let t = p.x / pixelsPerSecond
-        guard let zone = viewModel.crossfadeZone(atTime: t, displayLane: lane) else { return nil }
+        guard let zone = viewModel.crossfadeZone(atTime: t, displayLane: lane) else {
+            return fadeHandleOverhang(at: p, displayLane: lane, laneTop: laneTop)
+        }
 
         let x0 = zone.start * pixelsPerSecond
         let x1 = zone.end * pixelsPerSecond
@@ -201,6 +200,45 @@ extension TimelineView {
         else if yOut < yIn          { part = .sideStart }   // left of the crossing
         else                        { part = .sideEnd }
         return CrossfadeHit(zone: zone, part: part, viaEdgeBand: false)
+    }
+
+    /// A fade handle of an object ENGAGED in a crossfade, grabbed where it sticks out of the zone.
+    ///
+    /// The handle band is a quarter of the block's width up to 50 px (@see handleWidth), the zone
+    /// is often narrower, and the part of the band beyond the zone used to fall through to the
+    /// per-block fade — which changes one fade and leaves the other at the old overlap. The pair
+    /// then stopped being a crossfade (@see isCrossfadePair) and the two clips stayed superposed.
+    /// That band is the crossfade's own side: the one gesture it should start is the one the
+    /// side's triangle already starts inside the zone — the fade-in's is the zone's START, the
+    /// fade-out's its END (@see CrossfadeGrab.pair(forFade:of:partnerLeft:partnerRight:)).
+    ///
+    /// The zone is looked up among the SHOWN ones (`visibleCrossfadeZones`) and not through
+    /// `crossfadeZone(leftID:rightID:)`: the drag works in the canvas' absolute time, and the
+    /// second answers in the container's — they differ for the child of an open group.
+    ///
+    /// The block's own carve-up decides what is under the hand (`selectionZoneHover`, the one the
+    /// drag falls back on), so this and the plain fade can never disagree about where the handle
+    /// is. Only the two fade zones count — a trim or a resize handle is the object's, whatever sits
+    /// beside it — and an object with no crossfade on that side keeps the plain fade, untouched.
+    private func fadeHandleOverhang(at p: CGPoint, displayLane lane: Int, laneTop: Double) -> CrossfadeHit? {
+        // Fades live in the UPPER half of a block (@see ClipEditZone.resolve): ruling the lower half
+        // out first keeps this off the hover's path for most of the pointer's travel.
+        guard p.y - laneTop < blockHeight / 2,
+              let (hover, item) = selectionZoneHover(at: p) else { return nil }
+        let edge: CrossfadeGrab.FadeEdge
+        switch hover.zone {
+        case .fadeIn:  edge = .fadeIn
+        case .fadeOut: edge = .fadeOut
+        default:       return nil
+        }
+        let partners = viewModel.crossfadePartners(of: item.id)
+        guard let found = CrossfadeGrab.pair(forFade: edge, of: item.id,
+                                             partnerLeft: partners?.left,
+                                             partnerRight: partners?.right),
+              let zone = viewModel.visibleCrossfadeZones(onDisplayLane: lane).first(where: {
+                  $0.leftID == found.pair.left && $0.rightID == found.pair.right
+              }) else { return nil }
+        return CrossfadeHit(zone: zone, part: found.part, viaEdgeBand: false)
     }
 
     /// The cursor a point inside a zone deserves. `nil` = not in a zone.
@@ -268,6 +306,9 @@ extension TimelineView {
     /// A double click inside a zone resets it: the pair comes back onto the middle and each loses
     /// its fade, shape included. The same bargain as the double click on a fade — you pull to make
     /// one, you double-click to take it away — and the same thing ⌫ does to a selected zone.
+    /// A fade handle of the pair that overhangs the zone answers the same (@see crossfadeHit): it
+    /// closes the crossfade, both fades, and never erases ONE fade of a pair that would then no
+    /// longer be one.
     /// Returns true when it consumed the click.
     func handleCrossfadeDoubleTap(at p: CGPoint) -> Bool {
         guard let hit = crossfadeHit(at: p) else { return false }
