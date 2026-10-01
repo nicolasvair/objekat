@@ -21,10 +21,10 @@ script would:
     (scipy's lfilter for the K-weighting, resample_poly for the true peak, numpy for the gates) agrees
     with what the tap measured — the strongest proof there is that the tap saw what went to disk.
 
-THE ENGINE'S -3 dB. A stereo clip at the centre comes out of the engine 3.00 dB quieter (the pan law of
-the object's gain stage; measured on the rendered file: a -23 dBFS source peaks at -26.00 dBFS). It is
-the ENGINE'S level, not the measurement's — so the sources are written 3 dB hotter, and the numbers
-asserted below are the ones the RENDER carries.
+THE SOURCES ARE WRITTEN AT THE LEVEL ASSERTED. A centred clip comes out of the engine at its own level
+(pan law linear, master at 0 dB). It was not so until 2026-10-01: a fresh session's master volume sat at
+Tracktion's default -3 dB, and the sources here were written 3 dB hotter to cancel it — what had been
+taken for the pan law of the object's gain stage. `scenario_channel_mode.py` pins the absolute level.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
     ./scenario_loudness.py /tmp/o.sock /tmp/trial/project.objekat
@@ -47,9 +47,6 @@ PROJ = sys.argv[2]
 OUT = lambda n: os.path.join(os.path.dirname(PROJ), n)
 
 ok, ko = 0, 0
-
-# A centred stereo clip renders 3 dB down (see the docstring). Sources are written this much hotter.
-ENGINE_CENTRE_LOSS_DB = 3.0
 
 
 def step(label, fn):
@@ -177,10 +174,9 @@ os.makedirs(os.path.dirname(PROJ), exist_ok=True)
 SINE23 = OUT("sine_-23_48k.wav")
 SINE23_441 = OUT("sine_-23_44k.wav")
 STEP = OUT("sine_-20_-30_48k.wav")
-HOT = ENGINE_CENTRE_LOSS_DB
-write_sine(SINE23, [(20, -23 + HOT)], rate=48000)
-write_sine(SINE23_441, [(20, -23 + HOT)], rate=44100)
-write_sine(STEP, [(20, -20 + HOT), (20, -30 + HOT)], rate=48000)
+write_sine(SINE23, [(20, -23)], rate=48000)
+write_sine(SINE23_441, [(20, -23)], rate=44100)
+write_sine(STEP, [(20, -20), (20, -30)], rate=48000)
 
 with ObjekatClient(SOCK) as c:
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})

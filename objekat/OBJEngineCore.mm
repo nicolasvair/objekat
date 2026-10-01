@@ -1585,7 +1585,21 @@ static BOOL gOBJAudioDisabled = NO;
     _pluginParking.clear();
 
     auto editTree = te::createEmptyEdit(*_engine);
-    _edit = te::loadEditFromState(*_engine, editTree);
+    // Not `te::loadEditFromState`: it builds its Edit::Options with the engine's DEFAULT master
+    // volume, `defaultMasterVolumedB = -3 dB`, which lands on the master VolumeAndPanPlugin when
+    // the tree has none. The model's Main says 0 dB and nobody pushes it to the engine until a
+    // gesture (an undo, `setMasterGain`) does — so every export / playback of a fresh session
+    // came out 3 dB under the source, and 3 dB louder after the first undo. Same Options as
+    // `loadEditFromState` (@see tracktion_EditFileOperations.cpp), except that one value.
+    {
+        auto projectID = te::ProjectItemID::fromProperty(editTree, te::IDs::projectID);
+        if (!projectID.isValid())
+            projectID = te::ProjectItemID::createNewID(te::ProjectID{});
+        te::Edit::Options options { *_engine, editTree, projectID, te::Edit::forEditing, nullptr,
+                                    te::Edit::getDefaultNumUndoLevels(), {}, {} };
+        options.defaultMasterVolumedB = 0.0f;
+        _edit = te::Edit::createEdit(std::move(options));
+    }
     _poolTracks.clear();
     _childOwnerMap.clear();
     _containerClipMap.clear();
