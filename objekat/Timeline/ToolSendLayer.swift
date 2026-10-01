@@ -119,42 +119,12 @@ struct ToolSendLayer: View {
         }
     }
 
-    /// A rotary knob: a background arc plus a value arc (red), and a pointer. A 270° sweep.
+    /// A rotary knob: a background arc plus a value arc (red), and a pointer. A 270° sweep — drawn by
+    /// `drawSendKnob` (ToolOverlayDrawing.swift), which the Canvas blocks share. The automation lock
+    /// (faded knob + glyph) stays this layer's own, drawn above.
     private func knob(level: Float, enabled: Bool, focused: Bool) -> some View {
         Canvas { ctx, size in
-            let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let r = min(size.width, size.height) / 2 - 2
-            let startA = Angle.degrees(135)
-            let sweep  = 270.0
-            let frac   = ToolOverlayGeometry.sendKnobFraction(level: level, minDb: sendMinDb, maxDb: sendMaxDb)
-            let valA   = Angle.degrees(135 + sweep * frac)
-
-            // The background arc
-            var bg = Path()
-            bg.addArc(center: c, radius: r, startAngle: startA,
-                      endAngle: .degrees(135 + sweep), clockwise: false)
-            ctx.stroke(bg, with: .color(.white.opacity(0.22)),
-                       style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-
-            // The value arc
-            if frac > 0.001 {
-                var val = Path()
-                val.addArc(center: c, radius: r, startAngle: startA,
-                           endAngle: valA, clockwise: false)
-                let col: Color = enabled ? .red : .white.opacity(0.4)
-                if focused && enabled {
-                    ctx.stroke(val, with: .color(.red.opacity(0.35)),
-                               style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                }
-                ctx.stroke(val, with: .color(col),
-                           style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-            }
-
-            // The pointer
-            let px = c.x + cos(valA.radians) * r
-            let py = c.y + sin(valA.radians) * r
-            ctx.fill(Path(ellipseIn: CGRect(x: px - 2.2, y: py - 2.2, width: 4.4, height: 4.4)),
-                     with: .color(enabled ? .red : .white.opacity(0.6)))
+            drawSendKnob(ctx, level: level, enabled: enabled, focused: focused, size: size)
         }
     }
 

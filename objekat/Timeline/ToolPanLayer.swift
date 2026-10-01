@@ -54,54 +54,13 @@ struct ToolPanLayer: View {
 
 /// The knob: a travel arc (−135°…+135°), the arc covered from the centre (12 o'clock) to the
 /// value, an index and a centre mark. Purely graphical — the setting goes through the canvas's drag/scroll.
+/// The drawing itself is `drawPanKnob` (ToolOverlayDrawing.swift), which the Canvas blocks share.
 struct PanKnob: View {
     let pan: Float
 
-    /// Half the angular travel (in degrees) on either side of the centre.
-    private static let sweep: Double = 135
-
     var body: some View {
         Canvas { ctx, size in
-            let r = min(size.width, size.height) / 2
-            let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let ringR = r - 1.5
-            let value = Double(max(-1, min(1, pan)))
-
-            // The full travel (the track)
-            // The reference: 0° = 3 o'clock, −90° = 12 o'clock (y downwards); the travel runs from
-            // −90−135 to −90+135, an arc opening downwards, like a console knob.
-            var track = Path()
-            track.addArc(center: c, radius: ringR,
-                         startAngle: .degrees(-90 - Self.sweep),
-                         endAngle: .degrees(-90 + Self.sweep),
-                         clockwise: false)
-            ctx.stroke(track, with: .color(.white.opacity(0.22)),
-                       style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-
-            // The portion covered from the centre (12 o'clock) → the L/R offset reads at once
-            if abs(value) > 0.005 {
-                let end = -90 + value * Self.sweep
-                var arc = Path()
-                arc.addArc(center: c, radius: ringR,
-                           startAngle: .degrees(-90), endAngle: .degrees(end),
-                           clockwise: value < 0)
-                ctx.stroke(arc, with: .color(.white.opacity(0.85)),
-                           style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-            }
-
-            // The centre mark
-            var center = Path()
-            center.move(to: CGPoint(x: c.x, y: c.y - ringR - 0.5))
-            center.addLine(to: CGPoint(x: c.x, y: c.y - ringR + 3))
-            ctx.stroke(center, with: .color(.white.opacity(0.35)), lineWidth: 1)
-
-            // The index
-            let a = (-90 + value * Self.sweep) * .pi / 180
-            var needle = Path()
-            needle.move(to: CGPoint(x: c.x + cos(a) * (ringR - 6.5), y: c.y + sin(a) * (ringR - 6.5)))
-            needle.addLine(to: CGPoint(x: c.x + cos(a) * (ringR - 1.5), y: c.y + sin(a) * (ringR - 1.5)))
-            ctx.stroke(needle, with: .color(.white),
-                       style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            drawPanKnob(ctx, pan: pan, size: size)
         }
     }
 }
