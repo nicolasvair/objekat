@@ -416,6 +416,57 @@ extension EditViewModel {
         return true
     }
 
+    /// A block let go on ANOTHER host (an object or a bus), by the header's drag: the target gets a block
+    /// of the bin at `place` (the end of its chain by default) and, unless `copy`, the source loses its own.
+    ///
+    ///  • An ATTACHED block: the target JOINS the bin (`attachFXLink`: instances born from the state the
+    ///    bin plays now), then the source's block goes (`removeFXBlock`) — in that order, so the bin is
+    ///    never left without a member between the two. A copy is the join alone: every copy of a bin
+    ///    stays on it.
+    ///  • A DETACHED block travels AS IT IS — its own copy of the chain, its output section (`local`), its
+    ///    memory of the group — with fresh instance ids (two hosts never share an id: the engine's key).
+    ///    A copy of it makes the target JOIN the bin, attached, like any other copy.
+    ///
+    /// Refuses (false, nothing touched) what the resolver refuses: the same host, a target that already
+    /// holds the bin, a block aimed inside a block. One undo point, the parts run with `undo: false`.
+    @discardableResult
+    func transferFXBlock(blockID: UUID, from sourceID: UUID, to targetID: UUID,
+                         at place: (SeriesLocation, Int)? = nil, copy: Bool, undo: Bool = true) -> Bool {
+        guard engine != nil, sourceID != targetID,
+              let source = chainPlugins(sourceID), let block = Self.findBlock(blockID, in: source),
+              let fb = block.fxBlock, let target = chainPlugins(targetID) else { return false }
+        if case .block? = place?.0 { return false }                     // a bin does not hold a bin
+        if Self.fxBlocks(in: target).contains(where: { $0.fxBlock?.linkID == fb.linkID }) { return false }
+        guard fxLink(fb.linkID) != nil else { return false }
+
+        if undo { pushUndo() }
+
+        if fb.isDetached && !copy {
+            let instances = fb.plugins.map { inst in
+                ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
+                             identifier: inst.identifier, formatName: inst.formatName,
+                             isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
+                             linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
+                             colorIndex: inst.colorIndex)
+            }
+            var entry = FXLink.blockEntry(linkID: fb.linkID, name: block.name, instances: instances)
+            entry.fxBlock?.isDetached = true
+            entry.fxBlock?.local = fb.local
+            let (loc, idx) = place ?? (.root, target.count)
+            updateChainPlugins(targetID) {
+                $0 = Self.simplifyTree(Self.inserting(entry, into: loc, at: idx, plugins: $0))
+            }
+            compileRack(objectID: targetID)
+            removeFXBlock(hostID: sourceID, blockID: blockID, undo: false)
+            isDirty = true
+            return true
+        }
+
+        guard attachFXLink(fb.linkID, to: targetID, at: place, undo: false) != nil else { return false }
+        if !copy { removeFXBlock(hostID: sourceID, blockID: blockID, undo: false) }
+        return true
+    }
+
     // MARK: Editing the definition (every attached member follows)
 
     /// Adds a plugin to the bin's definition, at `index` (the end by default); every attached member

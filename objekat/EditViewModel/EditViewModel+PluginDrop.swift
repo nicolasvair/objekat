@@ -358,9 +358,21 @@ extension EditViewModel {
             if payload.sourceObjectID == targetID, case .series(let loc, let idx) = site {
                 return synopticReorder(objectID: targetID, pluginID: payload.pluginID, to: loc, at: idx)
             }
-            return false   // across hosts: carried out by step 4 of the rework
+            var place: (SeriesLocation, Int)? = nil
+            if case .series(let loc, let idx) = site { place = (loc, idx) }
+            let moved = transferFXBlock(blockID: payload.pluginID, from: payload.sourceObjectID, to: targetID,
+                                        at: place, copy: false)
+            // The block's instances have left the source chain: a selection of them points at nothing.
+            if moved, selectedPluginHostID == payload.sourceObjectID { clearPluginSelection() }
+            return moved
 
-        case .copyBlock, .adoptIntoBin, .copyIntoBin, .extractFromBin:
+        case .copyBlock:
+            var place: (SeriesLocation, Int)? = nil
+            if case .series(let loc, let idx) = site { place = (loc, idx) }
+            return transferFXBlock(blockID: payload.pluginID, from: payload.sourceObjectID, to: targetID,
+                                   at: place, copy: true)
+
+        case .adoptIntoBin, .copyIntoBin, .extractFromBin:
             return false   // carried out by the following steps of the rework
         }
     }
