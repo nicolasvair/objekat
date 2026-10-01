@@ -1194,8 +1194,8 @@ extension TimelineView {
             // WHAT THIS RIGHT CLICK MEANS (@see ContextMenuPlan — the decision is pure and asserted
             // alone). Inside the time selection: the range's menu, untouched. On NO object (an empty
             // lane, a piano roll's or an automation band's row): the same range's menu whenever a
-            // time selection exists, wherever it lies — and no menu at all, the event going on to
-            // the views, when there is none. Upper half of a block: time, so the annotation items
+            // time selection exists, wherever it lies; with none but clips selected, 'Group the
+            // selection' alone; with neither, no menu at all, the event going on to the views. Upper half of a block: time, so the annotation items
             // and NOTHING selected, the cursor left where it is. Lower half: the object — selected
             // first, as a left click would (unless it is already part of the selection, which then
             // stays whole).
@@ -1222,11 +1222,7 @@ extension TimelineView {
                     if (e.item.isClip || e.item.isMIDI), !e.item.isConsolidateInstance { return e.item }
                     return nil
                 }
-                let hasClip = vm.selectedIDs.contains { id in
-                    guard let item = vm.find(id: id), (item.isClip || item.isMIDI),
-                          !item.isConsolidateInstance else { return false }
-                    return true
-                }
+                let hasClip = vm.hasGroupableSelection
                 // The range only reaches the menu when the plan says so: the point INSIDE it, or
                 // no object under the hand. A range lying elsewhere has nothing to do with an
                 // object aimed at.

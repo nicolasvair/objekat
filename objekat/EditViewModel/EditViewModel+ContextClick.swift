@@ -23,6 +23,16 @@ extension EditViewModel {
         onMoveCursor(t)
     }
 
+    /// The selection holds a clip or a MIDI clip that is not a consolidated instance: what
+    /// 'Group the clip / the selection' is offered on (an empty lane with no range, a clip's menu).
+    var hasGroupableSelection: Bool {
+        selectedIDs.contains { id in
+            guard let item = find(id: id), (item.isClip || item.isMIDI),
+                  !item.isConsolidateInstance else { return false }
+            return true
+        }
+    }
+
     /// What a right click on the lanes decides (@see ContextMenuPlan). `displayLane` and `time` are
     /// the point's, the instant NOT snapped (the range's bounds are compared as the drag compares
     /// them); `objectID` / `zone` are nil when no block lies under it.
@@ -33,7 +43,8 @@ extension EditViewModel {
         } ?? false
         return ContextMenuPlan.decide(pointInTimeSelection: inRange, hasTimeSelection: timeSelection != nil,
                                       zone: zone,
-                                      objectAlreadySelected: objectID.map { selectedIDs.contains($0) } ?? false)
+                                      objectAlreadySelected: objectID.map { selectedIDs.contains($0) } ?? false,
+                                      hasGroupableSelection: hasGroupableSelection)
     }
 
     /// The selection a right click on an object's body makes BEFORE its menu is built: the object
