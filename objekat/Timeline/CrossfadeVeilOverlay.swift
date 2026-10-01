@@ -243,7 +243,9 @@ extension TimelineView {
     /// now read the plan `openCrossfade` will apply, so the drag shows the result and not a
     /// rehearsal of it.
     func spillPlan(for id: UUID) -> (plan: EditViewModel.CrossfadePlan, isLeft: Bool)? {
-        guard let fd = fadeDrag else { return nil }
+        // `seamSpill` answers nil for every id while the edge has not moved: asked once here, the
+        // blocks layer's pass (which asks every visible block) no longer walks `fd.ids` for each.
+        guard let fd = fadeDrag, fd.dEdge != 0 else { return nil }
         for held in fd.ids {
             guard let sp = seamSpill(fd, for: held),
                   held == id || sp.neighbour == id else { continue }

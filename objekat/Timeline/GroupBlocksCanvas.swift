@@ -5,8 +5,10 @@ import SwiftUI
 // A group's block used to ALWAYS be a rich SwiftUI view (`GroupBlockView`): with a dozen open
 // groups on screen the cost of a frame was SwiftUI's diff of those views and their layers, not
 // the drawing. The batched Canvas (`TimelineView.plainBlocksCanvas`) now draws every "simple"
-// group — one that is not renamed, baked, open for editing, under a tool overlay, previewing a
-// drag, or having its loop's bounds dragged — and this file is that drawing.
+// group — one that is not renamed, baked, open for editing or under a tool overlay — and this
+// file is that drawing. A group a gesture is previewing (move, trim, resize, fade, spill, loop
+// bound) is drawn here too, from `BlockPreviewGeometry` (`CanvasGroup.preview`); the fallback
+// `RenderPreferences.richPreviews` puts those back on `GroupBlockView`.
 //
 // It is `GroupBlockView`'s `body`, redrawn value for value (radius 20, tint 0.30 / 0.55, inset
 // 2 pt border at 0.5 / 0.9, the custom colour's name band on 20 % of the height, the composite of
@@ -48,6 +50,18 @@ struct CanvasGroup {
     /// The loop's IN / OUT bounds, in seconds LOCAL to the block (`previewLoopRange(for:)`): the
     /// composite repeats from the block's left edge and the two grips are drawn. nil = no loop.
     var loopRange: (start: Double, end: Double)? = nil
+    /// The geometry of the block while a gesture previews it (move, trim, resize, fade, spill):
+    /// where it stands, how long it is, its fades, the start its composite is aligned on. nil =
+    /// nothing under way on it, and the stored values are drawn. A reading of the gesture, never a
+    /// write (@see `BlockPreviewGeometry`).
+    var preview: BlockPreviewGeometry? = nil
+
+    /// The fades on screen, in seconds, and their curves: the gesture's while previewing, else the
+    /// stored ones (a group shows its fades as they are, no compression).
+    var fadeIn: Double { preview?.effectiveFadeIn ?? item.fadeIn }
+    var fadeOut: Double { preview?.effectiveFadeOut ?? item.fadeOut }
+    var fadeInCurve: FadeCurve { preview?.effectiveFadeInCurve ?? item.fadeInCurve }
+    var fadeOutCurve: FadeCurve { preview?.effectiveFadeOutCurve ?? item.fadeOutCurve }
 
     var customColor: Color? { item.customColor }
     var outlineColor: Color { item.customColor ?? stem }   // GroupBlockView.effectiveColor
@@ -109,7 +123,13 @@ enum GroupBlocksCanvas {
         let blockHeight: Double
 
         func rect(of g: CanvasGroup) -> CGRect {
-            CGRect(x: g.item.startTime * pixelsPerSecond,
+            if let p = g.preview {
+                return CGRect(x: p.xPos,
+                              y: p.yPos(rulerHeight: rulerHeight, displayLane: g.entry.displayLane,
+                                        laneStep: laneStep),
+                              width: p.blockWidth, height: blockHeight)
+            }
+            return CGRect(x: g.item.startTime * pixelsPerSecond,
                    y: rulerHeight + Double(g.entry.displayLane) * laneStep,
                    width: max(2, g.item.duration * pixelsPerSecond),
                    height: blockHeight)
@@ -214,13 +234,18 @@ enum GroupBlocksCanvas {
             gc.clip(to: outline(rect, radius: g.item.blockCornerRadius))
             gc.translateBy(x: rect.minX, y: rect.minY)
             let item = g.item
+            // A left trim under way moves the window, not the children: the composite is aligned on
+            // where the window's left edge now stands (`effectiveStartTime`, the stored start
+            // otherwise), over the length being drawn.
+            let startTime = g.preview?.effectiveStartTime ?? item.startTime
+            let duration = g.preview?.effectiveDuration ?? max(0.01, item.duration)
             let rootMod = GroupWaveformDrawing.rootModifier(
-                for: item, absStart: item.startTime, duration: max(0.01, item.duration),
-                fadeIn: item.fadeIn, fadeOut: item.fadeOut,
-                curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve)
+                for: item, absStart: startTime, duration: duration,
+                fadeIn: g.fadeIn, fadeOut: g.fadeOut,
+                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve)
             GroupWaveformDrawing.draw(
                 into: gc, size: rect.size, waveformCache: waveformCache, children: children,
-                groupStartTime: item.startTime, pixelsPerSecond: geo.pixelsPerSecond,
+                groupStartTime: startTime, pixelsPerSecond: geo.pixelsPerSecond,
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
@@ -250,8 +275,8 @@ enum GroupBlocksCanvas {
             let item = g.item
             let rect = geo.rect(of: g)
             let w = rect.width
-            let fadeInPx = item.fadeIn * geo.pixelsPerSecond
-            let fadeOutPx = item.fadeOut * geo.pixelsPerSecond
+            let fadeInPx = g.fadeIn * geo.pixelsPerSecond
+            let fadeOutPx = g.fadeOut * geo.pixelsPerSecond
             let needsLabel = w >= 30
             guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil
                     || g.loopRange != nil else { continue }
@@ -264,12 +289,12 @@ enum GroupBlocksCanvas {
                 let box = CGRect(x: 0, y: 0, width: w, height: rect.height)
                 let move = CGAffineTransform(translationX: x, y: y)
                 if fadeInPx > 0 {
-                    c.fill(FadeVeilShape.path(curve: item.fadeInCurve, widthPx: fadeInPx,
+                    c.fill(FadeVeilShape.path(curve: g.fadeInCurve, widthPx: fadeInPx,
                                               side: .in, in: box).applying(move),
                            with: .color(.black.opacity(0.30)))
                 }
                 if fadeOutPx > 0 {
-                    c.fill(FadeVeilShape.path(curve: item.fadeOutCurve, widthPx: fadeOutPx,
+                    c.fill(FadeVeilShape.path(curve: g.fadeOutCurve, widthPx: fadeOutPx,
                                               side: .out, in: box).applying(move),
                            with: .color(.black.opacity(0.30)))
                 }

@@ -1752,6 +1752,33 @@ extension TimelineView {
         return object.loopMarkerLocalRange
     }
 
+    /// True while a gesture is under way that PREVIEWS something on the blocks (a move that is not
+    /// a ⌥ copy — whose originals do not budge —, a resize, a trim, a fade, a loop bound): the one
+    /// test the partition makes before asking any block for its geometry. Nothing under way = no
+    /// block is asked, which is what keeps a scroll's frame free of it.
+    var hasPreviewGesture: Bool {
+        if let md = moveDrag, !md.isAltCopy { return true }
+        return resizeDrag != nil || trimDrag != nil || fadeDrag != nil || loopRangeDrag != nil
+    }
+
+    /// The geometry the batched Canvas draws `object` with while a gesture is previewing it — the
+    /// SAME `BlockPreviewGeometry` the rich views build from the SAME helpers above, so the two
+    /// regimes cannot disagree. `nil` when nothing is under way on this block (the Canvas then
+    /// draws its stored values). A reading of the gesture, never a write: no model change, no undo.
+    func blockPreviewGeometry(for object: SoundObject) -> BlockPreviewGeometry? {
+        let geo = BlockPreviewGeometry(
+            object: object, pixelsPerSecond: pixelsPerSecond,
+            previewOffset: previewOffset(for: object),
+            resizeDX: previewResizeDX(for: object), trimDX: previewTrimDX(for: object),
+            previewFadeIn: previewFadeIn(for: object), previewFadeOut: previewFadeOut(for: object),
+            previewFadeInCurve: previewFadeCurveIn(for: object),
+            previewFadeOutCurve: previewFadeCurveOut(for: object),
+            previewLoopRange: previewLoopRange(for: object))
+        // The loop bounds do not count in `isNeutral` (they move nothing): the block whose bound is
+        // being dragged is previewed all the same.
+        return (!geo.isNeutral || loopRangeDrag?.id == object.id) ? geo : nil
+    }
+
     // MARK: - Cut drag (a directed cut)
 
     /// The dead travel, in pixels, before a fade pulled outwards starts moving the sound's edge:

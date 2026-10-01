@@ -750,7 +750,8 @@ struct TimelineView: View {
                 // flag…) and not in its renderer closure: what their look depends on must be read
                 // where a change re-evaluates this layer.
                 let canvasGroups = canvasGroups(for: partition.plainGroups, selectedIDs: selectedIDs,
-                                                toolOverlays: partition.toolOverlays)
+                                                toolOverlays: partition.toolOverlays,
+                                                previews: partition.previews)
                 let _ = TimelineRegimeMeter.recordPass(
                     clipsCanvas: plainVisible.count,
                     clipsRich: richVisible.count - partition.richGroups,
@@ -764,6 +765,7 @@ struct TimelineView: View {
                                   secPerBeat: 60.0 / viewModel.tempo,
                                   consolidated: partition.consolidated,
                                   toolOverlays: partition.toolOverlays,
+                                  previews: partition.previews,
                                   hidesClipMuteVeil: tools.tool == .volume)
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
                 ForEach(richVisible) { entry in
@@ -2757,6 +2759,28 @@ struct TimelineView: View {
         /// baking or being edited), with the badges they carry. Resolved here, in the body, and not
         /// in the Canvas's renderer closure.
         var consolidated: [UUID: ConsolidateBadge] = [:]
+        /// The geometry of the blocks (clips AND groups) the Canvas draws while a gesture previews
+        /// them — move, trim, resize, fade, spill, loop bound — by id. Empty at rest, and with the
+        /// fallback `RenderPreferences.richPreviews` on (those blocks are then rich views). Resolved
+        /// here, in the body, like everything else the Canvas's renderer closure draws from.
+        var previews: [UUID: BlockPreviewGeometry] = [:]
+    }
+
+    /// What `plainBlocksCanvas` draws ONE clip with: its rectangle, its content's source offset
+    /// and length, its fades and its loop bounds — the stored values, or the gesture's
+    /// (`BlockPreviewGeometry`) for a block being previewed.
+    private struct CanvasBlockLook {
+        var rect: CGRect
+        var sourceOffset: Double
+        var duration: Double
+        var fadeIn: Double
+        var fadeOut: Double
+        var curveIn: FadeCurve
+        var curveOut: FadeCurve
+        var loopRange: (start: Double, end: Double)?
+        /// The left edge's travel in whole px (a MIDI clip's notes stay anchored in absolute terms).
+        var trimDX: Double
+        var w: Double { rect.width }
     }
 
     /// The freshness badges of a consolidated instance at rest: a warning if the bake captured
@@ -2773,22 +2797,30 @@ struct TimelineView: View {
         #else
         let forceRichSelected = false
         #endif
+        // The previews go to the Canvas unless the fallback puts them back on the rich views. The
+        // gesture test is made ONCE for the pass: at rest no block is asked for its geometry.
+        let richPreviews = RenderPreferences.shared.richPreviews
+        let previewing = !richPreviews && hasPreviewGesture
         for entry in entries {
             if entry.item.isGroup {
-                if let why = groupRichReason(entry, forceRich: forceRichSelected, tools: tools) {
+                if let why = groupRichReason(entry, forceRich: forceRichSelected, tools: tools,
+                                             richPreviews: richPreviews) {
                     p.rich.append(entry)
                     p.richGroups += 1
                     p.reasons[why.rawValue] += 1
                 } else {
                     p.plainGroups.append(entry)
                     if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
+                    if previewing, let g = blockPreviewGeometry(for: entry.item) { p.previews[entry.item.id] = g }
                 }
-            } else if let why = clipRichReason(entry, forceRichSelected: forceRichSelected, tools: tools) {
+            } else if let why = clipRichReason(entry, forceRichSelected: forceRichSelected, tools: tools,
+                                               richPreviews: richPreviews) {
                 p.rich.append(entry)
                 p.reasons[why.rawValue] += 1
             } else {
                 p.plain.append(entry)
                 if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
+                if previewing, let g = blockPreviewGeometry(for: entry.item) { p.previews[entry.item.id] = g }
                 if entry.item.isConsolidateInstance {
                     let id = entry.item.id
                     p.consolidated[id] = ConsolidateBadge(
@@ -2961,8 +2993,10 @@ struct TimelineView: View {
     /// composite repeats and the grips are views) — the FIRST one met, in this order (it IS the
     /// rule: the order is what decides what is read, hence what a hover re-evaluates).
     /// `forceRich` is the Debug A/B switch: every group back on its rich view (always false in
-    /// Release).
-    private func groupRichReason(_ entry: LaneEntry, forceRich: Bool, tools: ToolPartitionContext) -> RichReason? {
+    /// Release). `richPreviews` is the fallback (`RenderPreferences`): the gestures' previews back
+    /// on the rich views — by default the Canvas draws them (@see `BlockPreviewGeometry`).
+    private func groupRichReason(_ entry: LaneEntry, forceRich: Bool, tools: ToolPartitionContext,
+                                 richPreviews: Bool) -> RichReason? {
         // `entry.item` is a group: the partition only asks groups (it tests `isGroup` first).
         let item = entry.item
         if item.isInfiniteBus { return .infinite }
@@ -2978,21 +3012,25 @@ struct TimelineView: View {
         // `toolHoveredID` is read (and this layer re-evaluated on every hover) under the tools
         // that hover alone.
         if let why = toolRichReason(entry, isGroup: true, tools: tools) { return why }
-        if previewOffset(for: item) != nil { return .preview }
-        if previewResizeDX(for: item) != 0 { return .preview }
-        if previewTrimDX(for: item) != 0 { return .preview }
-        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
-        if spillPlan(for: item.id) != nil { return .spill }
-        // A looping group at rest is drawn by the Canvas (the composite repeats, the IN / OUT grips
-        // are drawn); only the DRAG of one of its bounds keeps the live rich view.
-        if loopRangeDrag?.id == item.id { return .loop }
+        // The previews are the Canvas's (`CanvasGroup.preview`) unless the fallback is on.
+        if richPreviews {
+            if previewOffset(for: item) != nil { return .preview }
+            if previewResizeDX(for: item) != 0 { return .preview }
+            if previewTrimDX(for: item) != 0 { return .preview }
+            if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
+            if spillPlan(for: item.id) != nil { return .spill }
+            // A looping group at rest is drawn by the Canvas (the composite repeats, the IN / OUT
+            // grips are drawn) — and so is the DRAG of one of its bounds, unless the fallback is on.
+            if loopRangeDrag?.id == item.id { return .loop }
+        }
         return nil
     }
 
     /// Resolves what the Canvas needs for each group it draws (@see `CanvasGroup`), with the
     /// SELECTED ones last: they are drawn above the others, as their `zIndex(1)` put them.
     private func canvasGroups(for entries: [LaneEntry], selectedIDs: Set<UUID>,
-                              toolOverlays: [UUID: CanvasToolOverlay] = [:]) -> [CanvasGroup] {
+                              toolOverlays: [UUID: CanvasToolOverlay] = [:],
+                              previews: [UUID: BlockPreviewGeometry] = [:]) -> [CanvasGroup] {
         guard !entries.isEmpty else { return [] }
         let filterText = viewModel.filterText
         // Read ONCE, ahead of the loop: with nothing missing (the common case) the recursive
@@ -3017,7 +3055,8 @@ struct TimelineView: View {
                 expanded: item.showsChildrenInline,
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
                 toolOverlay: toolOverlays[item.id],
-                loopRange: previewLoopRange(for: item))
+                loopRange: previewLoopRange(for: item),
+                preview: previews[item.id])
         }
         guard resolved.contains(where: { $0.selected }) else { return resolved }
         return resolved.filter { !$0.selected } + resolved.filter { $0.selected }
@@ -3026,19 +3065,20 @@ struct TimelineView: View {
     /// nil = this clip can be drawn in the shared Canvas (no SwiftUI need); otherwise the FIRST
     /// reason, in this order, it keeps a rich view (the order is the rule, @see `groupRichReason`).
     /// `forceRichSelected` is the Debug A/B switch (always false in Release, where the line that
-    /// reads it does not exist).
+    /// reads it does not exist). `richPreviews` is the fallback (`RenderPreferences`): the gestures'
+    /// previews back on the rich views — by default the Canvas draws them.
     private func clipRichReason(_ entry: LaneEntry, forceRichSelected: Bool = false,
-                                tools: ToolPartitionContext) -> RichReason? {
+                                tools: ToolPartitionContext, richPreviews: Bool) -> RichReason? {
         let item = entry.item
         // A MIDI clip is drawn by the Canvas (its notes: `MidiNotesDrawing`) unless its piano roll
-        // is open, or its loop's IN / OUT is being dragged (the live bounds are the rich view's).
+        // is open (or, with the fallback on, its loop's IN / OUT is being dragged).
         // An aux is drawn by the Canvas too (its glyph chequerboard: `GlyphTileDrawing`), except an
         // INFINITE one, which `InfiniteBusBandView` replaces (the same reason as an infinite group).
         switch item.kind {
         case .clip: break
         case .midiClip:
             if item.showsPianoRollInline { return .midi }
-            if loopRangeDrag?.id == item.id { return .preview }
+            if richPreviews, loopRangeDrag?.id == item.id { return .preview }
         case .aux:
             if item.isInfiniteBus { return .infinite }
         case .group:
@@ -3065,14 +3105,17 @@ struct TimelineView: View {
         // `plainBlocksCanvas`, `CustomColorBatch`.
         // The active tool's overlay (@see `toolRichReason`).
         if let why = toolRichReason(entry, isGroup: false, tools: tools) { return why }
-        // A drag/preview under way on this clip → a live SwiftUI view.
-        if previewOffset(for: item) != nil { return .preview }
-        if previewResizeDX(for: item) != 0 { return .preview }
-        if previewTrimDX(for: item) != 0 { return .preview }
-        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
-        // The NEIGHBOUR of a spilling fade moves too, and it is in none of the drag's id sets:
-        // without this it stayed in the batched Canvas, motionless, until the mouse came up.
-        if spillPlan(for: item.id) != nil { return .spill }
+        // A drag/preview under way on this clip: the Canvas draws it (`BlockPreviewGeometry`, in
+        // `plainBlocksCanvas`) — unless the fallback is on, which puts the live SwiftUI view back.
+        if richPreviews {
+            if previewOffset(for: item) != nil { return .preview }
+            if previewResizeDX(for: item) != 0 { return .preview }
+            if previewTrimDX(for: item) != 0 { return .preview }
+            if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
+            // The NEIGHBOUR of a spilling fade moves too, and it is in none of the drag's id sets:
+            // without this it stayed in the batched Canvas, motionless, until the mouse came up.
+            if spillPlan(for: item.id) != nil { return .spill }
+        }
         return nil
     }
 
@@ -3113,6 +3156,7 @@ struct TimelineView: View {
                                    secPerBeat: Double,
                                    consolidated: [UUID: ConsolidateBadge] = [:],
                                    toolOverlays: [UUID: CanvasToolOverlay] = [:],
+                                   previews: [UUID: BlockPreviewGeometry] = [:],
                                    hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
                 TimelineRegimeMeter.recordCanvasDraw()
@@ -3139,6 +3183,29 @@ struct TimelineView: View {
                     let y = rulerHeight + Double(entry.displayLane) * laneStep
                     return CGRect(x: x, y: y, width: w, height: blockHeight)
                 }
+                // What ONE clip is drawn with: its stored values, or — for a block a gesture is
+                // previewing — `BlockPreviewGeometry`'s (the SAME the rich view reads: where it
+                // stands, how long it is, the fades the crop leaves it, the source offset its
+                // waveform is read from). Never a write: the model is untouched until the release.
+                func look(_ entry: LaneEntry) -> CanvasBlockLook {
+                    let item = entry.item
+                    if !previews.isEmpty, let g = previews[item.id] {
+                        return CanvasBlockLook(
+                            rect: CGRect(x: g.xPos,
+                                         y: g.yPos(rulerHeight: rulerHeight, displayLane: entry.displayLane,
+                                                   laneStep: laneStep),
+                                         width: g.blockWidth, height: blockHeight),
+                            sourceOffset: g.effectiveSourceOffset, duration: g.effectiveDuration,
+                            fadeIn: g.effectiveFadeIn, fadeOut: g.effectiveFadeOut,
+                            curveIn: g.effectiveFadeInCurve, curveOut: g.effectiveFadeOutCurve,
+                            loopRange: g.previewLoopRange, trimDX: g.trimDX)
+                    }
+                    return CanvasBlockLook(
+                        rect: rectFor(entry), sourceOffset: item.sourceOffset, duration: item.duration,
+                        fadeIn: item.fadeIn, fadeOut: item.fadeOut,
+                        curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
+                        loopRange: item.loopMarkerLocalRange, trimDX: 0)
+                }
 
                 // ── Phase 1: BATCHED BACKGROUNDS ──────────────────────────────────────
                 // The cost when scrolling zoomed out = ~936 drawing calls (2 fills + 1 border × N),
@@ -3162,7 +3229,7 @@ struct TimelineView: View {
                 var anySelected = false
                 for entry in entries {
                     let item = entry.item
-                    let rect = rectFor(entry)
+                    let rect = look(entry).rect
                     let r = item.blockCornerRadius
                     let stem = viewModel.stemColor(for: item.id)
                     let selected = selectedIDs.contains(item.id)
@@ -3254,9 +3321,10 @@ struct TimelineView: View {
                 var midiFills: [MidiNotesDrawing.FillKey: Path] = [:]
                 for entry in drawOrder {
                     let item = entry.item
-                    let w = max(2, item.duration * pixelsPerSecond)
+                    let blockLook = look(entry)
+                    let w = blockLook.w
                     let selected = selectedIDs.contains(item.id)
-                    let rect = rectFor(entry)
+                    let rect = blockLook.rect
                     let x = rect.minX, y = rect.minY
                     let stem = viewModel.stemColor(for: item.id)
 
@@ -3267,8 +3335,11 @@ struct TimelineView: View {
                         MidiNotesDrawing.append(
                             to: &midiFills, origin: CGPoint(x: x, y: y), notes: item.midiNotes,
                             secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
+                            // A left trim reveals, it does not move the notes (as the rich view's
+                            // `xOffset: -previewTrimDX`).
+                            xOffset: -blockLook.trimDX,
                             size: CGSize(width: w, height: blockHeight),
-                            loopRange: item.loopMarkerLocalRange,
+                            loopRange: blockLook.loopRange,
                             visibleX: (Double(cullScrollX) - x - 1)...(Double(cullScrollX) + Double(cullViewportWidth) - x + 1),
                             color: stem, muted: item.isMuted, dim: isDim(item))
                         continue
@@ -3297,15 +3368,15 @@ struct TimelineView: View {
                         WaveformDrawing.draw(
                             into: wc, size: CGSize(width: w, height: blockHeight),
                             waveformCache: waveformCache, filePath: item.filePath,
-                            sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
+                            sourceOffset: blockLook.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: selected,
-                            clipDuration: item.duration, speedRatio: item.speedRatio,
+                            clipDuration: blockLook.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
-                            fadeIn: item.fadeIn, fadeOut: item.fadeOut,
-                            curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
+                            fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
+                            curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
-                            loopRange: item.loopMarkerLocalRange,
+                            loopRange: blockLook.loopRange,
                             channelMode: item.channelMode)
                         continue
                     }
@@ -3320,13 +3391,13 @@ struct TimelineView: View {
                         separators: &laneSeparators[separatorColor, default: Path()],
                         originX: x, originY: y, size: CGSize(width: w, height: blockHeight),
                         waveformCache: waveformCache, filePath: item.filePath,
-                        sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
+                        sourceOffset: blockLook.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                         scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
-                        clipDuration: item.duration, speedRatio: item.speedRatio,
+                        clipDuration: blockLook.duration, speedRatio: item.speedRatio,
                         isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
-                        fadeIn: item.fadeIn, fadeOut: item.fadeOut,
-                        curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
-                        waveformDisplayDB: waveformDisplayDB, loopRange: item.loopMarkerLocalRange,
+                        fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
+                        curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
+                        waveformDisplayDB: waveformDisplayDB, loopRange: blockLook.loopRange,
                         channelMode: item.channelMode)
                     if !handled {
                         // Samples mode (extreme zoom, few blocks) → drawn individually and in full.
@@ -3334,17 +3405,17 @@ struct TimelineView: View {
                         WaveformDrawing.draw(
                             into: wc, size: CGSize(width: w, height: blockHeight),
                             waveformCache: waveformCache, filePath: item.filePath,
-                            sourceOffset: item.sourceOffset, pixelsPerSecond: pixelsPerSecond,
+                            sourceOffset: blockLook.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: selected,
-                            clipDuration: item.duration, speedRatio: item.speedRatio,
+                            clipDuration: blockLook.duration, speedRatio: item.speedRatio,
                             isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
-                            fadeIn: item.fadeIn, fadeOut: item.fadeOut,
-                            curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
+                            fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
+                            curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
-                            loopRange: item.loopMarkerLocalRange,
+                            loopRange: blockLook.loopRange,
                             channelMode: item.channelMode)
-                    } else if let loopLocal = item.loopMarkerLocalRange {
+                    } else if let loopLocal = blockLook.loopRange {
                         // `appendPeaksFill` only lays the fill (batched by colour): the loop marks are
                         // drawn separately, in coordinates LOCAL to the block, translated here as the
                         // 'samples' drawing already does.
@@ -3353,7 +3424,7 @@ struct TimelineView: View {
                             to: &block, blockOriginX: x, size: CGSize(width: w, height: blockHeight),
                             pixelsPerSecond: pixelsPerSecond,
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
-                            clipDuration: item.duration, isReversed: item.isReversed,
+                            clipDuration: blockLook.duration, isReversed: item.isReversed,
                             loopRange: loopLocal)
                         let placed = block.applying(CGAffineTransform(translationX: x, y: y))
                         if selected { loopMarkersSel[separatorColor, default: Path()].addPath(placed) }
@@ -3414,21 +3485,22 @@ struct TimelineView: View {
                 var ringPaths = (Path(), Path(), Path(), Path())
                 for entry in drawOrder {
                     let item = entry.item
-                    let w = max(2, item.duration * pixelsPerSecond)
+                    let blockLook = look(entry)
+                    let w = blockLook.w
                     let needsLabel = w > 10
-                    let needsFade  = item.fadeIn > 0 || item.fadeOut > 0
+                    let needsFade  = blockLook.fadeIn > 0 || blockLook.fadeOut > 0
                     let needsMute  = isMutedItem(item) && !hidesClipMuteVeil
                     let toolOverlay = toolOverlays[item.id]
                     // The loop's grips (a bar and a flag at each bound) belong to a SELECTED clip, as
                     // they do in its rich view: they are what one takes hold of to move IN / OUT.
                     // A MIDI clip shows them whether selected or not, as its rich view always did.
                     let loopGrips = (selectedIDs.contains(item.id) || item.isMIDI) && !item.isReversed
-                        ? item.loopMarkerLocalRange : nil
+                        ? blockLook.loopRange : nil
                     let consolidatedBadge = consolidated[item.id]
                     guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil
                             || consolidatedBadge != nil else { continue }
 
-                    let rect = rectFor(entry)
+                    let rect = blockLook.rect
                     let x = rect.minX, y = rect.minY
                     var c = ctx
                     if isDim(item) { c.opacity = 0.25 }
@@ -3441,15 +3513,15 @@ struct TimelineView: View {
                         // a bent fade, 9 September 2026).
                         let box = CGRect(x: 0, y: 0, width: w, height: blockHeight)
                         let move = CGAffineTransform(translationX: x, y: y)
-                        let fiPx = item.fadeIn * pixelsPerSecond
-                        let foPx = item.fadeOut * pixelsPerSecond
+                        let fiPx = blockLook.fadeIn * pixelsPerSecond
+                        let foPx = blockLook.fadeOut * pixelsPerSecond
                         if fiPx > 0 {
-                            c.fill(FadeVeilShape.path(curve: item.fadeInCurve, widthPx: fiPx,
+                            c.fill(FadeVeilShape.path(curve: blockLook.curveIn, widthPx: fiPx,
                                                       side: .in, in: box).applying(move),
                                    with: .color(.black.opacity(0.30)))
                         }
                         if foPx > 0 {
-                            c.fill(FadeVeilShape.path(curve: item.fadeOutCurve, widthPx: foPx,
+                            c.fill(FadeVeilShape.path(curve: blockLook.curveOut, widthPx: foPx,
                                                       side: .out, in: box).applying(move),
                                    with: .color(.black.opacity(0.30)))
                         }
@@ -3524,7 +3596,7 @@ struct TimelineView: View {
                         // Same rule as the rich views: the name starts 5 px past the fade-in
                         // triangle, or 8 px with none, computed here (outside `needsFade`) since
                         // the label can show with no fade at all.
-                        let leading = TimelineLabelMetrics.leading(fadeInPx: item.fadeIn * pixelsPerSecond,
+                        let leading = TimelineLabelMetrics.leading(fadeInPx: blockLook.fadeIn * pixelsPerSecond,
                                                                     blockWidth: w)
                         // The meta is asked for only when the numbers say it is not empty: the guard
                         // is `timelineMetaSummary`'s own conditions, so it allocates nothing for

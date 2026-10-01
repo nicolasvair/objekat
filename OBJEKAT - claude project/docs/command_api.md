@@ -360,10 +360,11 @@ answer that put the block there — the FIRST rule met, in the order `TimelineVi
 `groupRichReason` test them, so a block that is both renamed and under the Volume tool counts as
 `rename`. Every key is present, at 0 when unused: `tool` (Volume / Pan / Aux armed), `stem_hover`
 (Stem tool armed and the pointer on the block), `preview` (a drag / trim / resize / fade under
-way), `spill` (the neighbour of a spilling fade), `midi` (a MIDI clip whose piano roll is open),
+way — 0 since E7: the Canvas draws the previews, the reason only exists with the fallback
+`objekat.timeline.richPreviews` on), `spill` (the neighbour of a spilling fade; same), `midi` (a MIDI clip whose piano roll is open),
 `aux` (never produced any more: an aux is drawn by the Canvas, an infinite one counts as `infinite`),
 `consolidate` (an instance whose definition is being re-baked), `rename`, `bake`, `loop` (a group
-whose IN / OUT bound is being dragged), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object), `force_rich` (the Debug A/B
+whose IN / OUT bound is being dragged; only with the same fallback), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object), `force_rich` (the Debug A/B
 switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
 each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
 `piano_rolls`, `automation_bands`, `automation_bezels`) and their sum — an element is the root of
@@ -526,6 +527,14 @@ reason `tool` — and keeps the Stem tool's old rule (a group hovered, a clip on
 `false` is the production behaviour, where only the block aimed at (`tool_hover`) and the blocks a
 viewport edge can cut (`tool_span`) stay rich. Volatile, answers `{was, enabled}`; the persistent form
 is the preference `objekat.debug.forceRichTools`. A Release build has neither.
+
+**`debug.force_rich_previews {enabled}`** (`#if DEBUG`) flips, volatilely, the fallback of E7
+(`Shared/RenderPreferences.swift`): `true` puts the gestures' previews (move, trim, resize, fade,
+spill, loop-bound drag) back on the rich views, census reasons `preview` / `spill` / `loop`; `false`
+(production) draws them in the batched Canvas from `BlockPreviewGeometry`. Unlike the two switches
+above, the persistent form is readable in a RELEASE build: the preference
+`objekat.timeline.richPreviews`, read at launch (`defaults write org.labelpeche.objekat
+objekat.timeline.richPreviews -bool YES`, or `-objekat.timeline.richPreviews YES` for one launch).
 
 ### The frame report
 

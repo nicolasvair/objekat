@@ -378,6 +378,25 @@ extension CommandRegistry {
             DebugRenderSwitches.shared.forceRichTools = enabled
             return .object(["was": .bool(was), "enabled": .bool(enabled)])
         }
+
+        register("debug.force_rich_previews",
+                 summary: """
+                 DEBUG. The A/B switch of the previews' Canvas work (@see \
+                 `Shared/RenderPreferences.swift`): `enabled: true` puts the gestures' previews \
+                 (move, trim, resize, fade, spill, loop-bound drag) back onto the rich SwiftUI \
+                 views — the regime from before the Canvas drew them; `false` (production) draws \
+                 them in the batched Canvas. VOLATILE — it writes nothing into the user's \
+                 settings; the persistent form, which Release builds read too, is the preference \
+                 `objekat.timeline.richPreviews`, read at launch. Answers the previous and the \
+                 current value. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("enabled", "bool", "true = rich views for the blocks a gesture is previewing.")],
+                 undo: .none) { p in
+            let enabled = try p.bool("enabled")
+            let was = RenderPreferences.shared.richPreviews
+            RenderPreferences.shared.richPreviews = enabled
+            return .object(["was": .bool(was), "enabled": .bool(enabled)])
+        }
         #endif
     }
 
