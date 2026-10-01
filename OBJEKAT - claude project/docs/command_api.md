@@ -364,11 +364,11 @@ way), `spill` (the neighbour of a spilling fade), `color` (a custom colour), `mi
 `consolidate` (an instance of a consolidated object), `rename`, `bake`, `loop` (a looping group),
 `infinite` (an infinite bus), `editing` (an open consolidated object), `force_rich` (the Debug A/B
 switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
-each `ForEach` layer of the timeline's body that is evaluated on every pass (`lane_rows`,
-`piano_roll_tints`, `rich_blocks`, `piano_rolls`, `automation_bands`, `range_masks`,
-`automation_bezels`) and their sum — an element is the root of one SwiftUI subtree, so this is the
-number a layer is paid in (`piano_roll_tints` counts the open piano rolls, each of which holds a
-small inner `ForEach` of its own).
+each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
+`piano_rolls`, `automation_bands`, `automation_bezels`) and their sum — an element is the root of
+one SwiftUI subtree, so this is the number a layer is paid in. The layers that used to be there and
+are now ONE Canvas each, culled to the viewport, no longer report (`lane_rows` and `range_masks` and
+`piano_roll_tints` since E1).
 
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current

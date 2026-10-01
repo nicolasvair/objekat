@@ -53,6 +53,9 @@ final class EditViewModel {
     @ObservationIgnored var findsSinceMutation = 0
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
     @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
+    /// @see visibleCrossfadeZones — the zones of `laneEntries`, indexed. Emptied wherever
+    /// `laneEntries` is rebuilt (`rebuildLaneEntries`), since that is the list it is built from.
+    @ObservationIgnored var crossfadeZoneIndexCache: CrossfadeZoneIndex? = nil
     /// @see displayName(of:) — a group's composed name by group id, emptied on EVERY write to
     /// `items` (the name is a function of the group's subtree, which lives in `items`).
     @ObservationIgnored private var composedNameCache: [UUID: String] = [:]
@@ -945,8 +948,18 @@ final class EditViewModel {
         // sort per open group) every time. The top-level entries are the ones that carry the
         // spans already computed by the build.
         totalExtraLanes = laneEntries.reduce(0) { $1.depth == 0 ? $0 + $1.expandedSpan : $0 }
+        // The open objects alone (an unfolded group, an open piano roll, an open automation band):
+        // what the layers that only concern them — the piano rolls' tints, the out-of-range masks —
+        // iterate, instead of filtering every entry of the timeline on each pass.
+        expandedLaneEntries = laneEntries.filter { $0.expandedSpan > 0 }
+        crossfadeZoneIndexCache = nil
         referencedAudioPathsCache = nil
     }
+
+    /// The entries of `laneEntries` that reserve rows under themselves (`expandedSpan > 0`), in the
+    /// same order. Rebuilt with `laneEntries` (the same funnel, so as stale as it is during a
+    /// coalesced mutation, and no more). Usually a handful, whatever the project holds.
+    private(set) var expandedLaneEntries: [LaneEntry] = []
 
     /// Σ `expandedSpan` over the TOP-LEVEL objects — what the timeline adds to its lane count for
     /// the rows open groups / piano rolls / automation bands take. Rebuilt with `laneEntries`
