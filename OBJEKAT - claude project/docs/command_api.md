@@ -354,6 +354,22 @@ layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census 
 `groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or looping — and ALL of them under the Debug A/B switch. Zero everywhere in
 `--headless` mode: nothing is drawn there. `tools/bench_groups.py` prints them on its `setup` line.
 
+`regimes.rich_reasons` says WHY the rich blocks are rich: a histogram with one entry per block
+(`clips_rich + groups_rich` in all), counted in the same loop as the partition, from the very
+answer that put the block there — the FIRST rule met, in the order `TimelineView.clipRichReason` /
+`groupRichReason` test them, so a block that is both coloured and under the Volume tool counts as
+`color`. Every key is present, at 0 when unused: `tool` (Volume / Pan / Aux armed), `stem_hover`
+(Stem tool armed and the pointer on the block), `preview` (a drag / trim / resize / fade under
+way), `spill` (the neighbour of a spilling fade), `color` (a custom colour), `midi`, `aux`,
+`consolidate` (an instance of a consolidated object), `rename`, `bake`, `loop` (a looping group),
+`infinite` (an infinite bus), `editing` (an open consolidated object), `force_rich` (the Debug A/B
+switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
+each `ForEach` layer of the timeline's body that is evaluated on every pass (`lane_rows`,
+`piano_roll_tints`, `rich_blocks`, `piano_rolls`, `automation_bands`, `range_masks`,
+`automation_bezels`) and their sum — an element is the root of one SwiftUI subtree, so this is the
+number a layer is paid in (`piano_roll_tints` counts the open piano rolls, each of which holds a
+small inner `ForEach` of its own).
+
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.

@@ -204,6 +204,15 @@ extension CommandRegistry {
                     "group_bands_rich": .int(regimes.groupBandsRich),
                     "passes": .int(regimes.passes),
                     "canvas_draws": .int(regimes.canvasDraws),
+                    // WHY the rich blocks are rich: one reason per block (the first rule that
+                    // sent it there), every key present even at 0, summing to
+                    // `clips_rich + groups_rich`.
+                    "rich_reasons": .object(Dictionary(uniqueKeysWithValues:
+                        RichReason.allCases.map { ($0.key, JSONValue.int(regimes.richReasons[$0.rawValue])) })),
+                    // The element count of each unconditional `ForEach` layer of the timeline's
+                    // body (last pass) and their sum: the SwiftUI subtrees that layer set pays for.
+                    "foreach_layers": .object(regimes.layerElements.mapValues { .int($0) }),
+                    "foreach_total": .int(regimes.layerElements.values.reduce(0, +)),
                 ]),
                 // The audio graph's node count lives on the engine side and is not exposed to
                 // Swift; exposing it would mean changing OBJEngineCore, which is out of scope here.

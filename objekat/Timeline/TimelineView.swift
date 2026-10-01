@@ -490,7 +490,12 @@ struct TimelineView: View {
         ScrollView([.horizontal, .vertical], showsIndicators: true) {
             ZStack(alignment: .topLeading) {
                 // Alternating background bands
-                ForEach(0..<visibleLanes, id: \.self) { lane in
+                // (The `ForEach` layers below report their element count to
+                // `TimelineRegimeMeter.recordLayer`, one write per layer per pass: the number every
+                // "how many SwiftUI nodes does this layer cost" question starts with.)
+                let laneRows = visibleLanes
+                let _ = TimelineRegimeMeter.recordLayer("lane_rows", elements: laneRows)
+                ForEach(0..<laneRows, id: \.self) { lane in
                     Rectangle()
                         .fill(lane % 2 == 0 ? Color.black.opacity(0.02) : Color.black.opacity(0.0))
                         .frame(width: totalDuration * pixelsPerSecond, height: laneStep)
@@ -535,7 +540,9 @@ struct TimelineView: View {
                 // A sub-lane background for MIDI clips whose piano roll is open: the same principle
                 // as the expanded groups' band (it clarifies the MIDI clip's inside), more discreetly
                 // — the piano roll covers the band anyway.
-                ForEach(viewModel.laneEntries.filter { $0.item.showsPianoRollInline }) { entry in
+                let pianoRollTints = viewModel.laneEntries.filter { $0.item.showsPianoRollInline }
+                let _ = TimelineRegimeMeter.recordLayer("piano_roll_tints", elements: pianoRollTints.count)
+                ForEach(pianoRollTints) { entry in
                     let gY    = rulerHeight + Double(entry.displayLane) * laneStep
                     let color = viewModel.stemColor(for: entry.item.id)
                     ForEach(0..<SoundObject.pianoRollLaneSpan, id: \.self) { ci in
@@ -746,7 +753,7 @@ struct TimelineView: View {
                 // instead of N×layers → the cost of scrolling was the number of SwiftUI nodes, not
                 // the drawing). The rich blocks (selection, tools, renaming, a consolidated object, an aux,
                 // MIDI, groups, a drag) keep their SwiftUI view.
-                // ONE pass splits the visible entries between the two regimes: `isPlainCanvasClip`
+                // ONE pass splits the visible entries between the two regimes: `clipRichReason`
                 // asks `spillPlan` and the preview helpers, so evaluating it once per entry per
                 // list (it was twice) was paid in proportion to what is SHOWN, twice over.
                 // The selection is read HERE, once, and handed to the Canvas: it paints a selected
@@ -765,9 +772,11 @@ struct TimelineView: View {
                     clipsRich: richVisible.count - partition.richGroups,
                     groupsCanvas: canvasGroups.count, groupsRich: partition.richGroups,
                     groupBandsCanvas: forceRichBands ? 0 : inlineBands.count,
-                    groupBandsRich: forceRichBands ? inlineBands.count : 0)
+                    groupBandsRich: forceRichBands ? inlineBands.count : 0,
+                    richReasons: partition.reasons)
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs)
+                let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
                 ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane)
                         .allowsHitTesting(false)
@@ -776,7 +785,9 @@ struct TimelineView: View {
                 // Piano rolls unfolded inline under the open MIDI clips. Interactive
                 // (allowsHitTesting), unlike the blocks. Positioned on the band of sub-lanes
                 // reserved by expandedSpan.
-                ForEach(visibleEntries.filter { $0.item.showsPianoRollInline }) { entry in
+                let pianoRolls = visibleEntries.filter { $0.item.showsPianoRollInline }
+                let _ = TimelineRegimeMeter.recordLayer("piano_rolls", elements: pianoRolls.count)
+                ForEach(pianoRolls) { entry in
                     // It covers the WHOLE band of sub-lanes (the clip-tinted background already fills
                     // 2·laneStep, the gap included): without the -laneGap, a 4px line in the clip's
                     // colour stuck out under the control band.
@@ -805,7 +816,9 @@ struct TimelineView: View {
                 // Pre-filtered on `automationBandRect`'s own first condition (an open band): a
                 // ForEach over every visible entry cost one node per object for a layer that is
                 // empty almost everywhere.
-                ForEach(visibleEntries.filter { $0.item.automationOpen }) { entry in
+                let openAutomationBands = visibleEntries.filter { $0.item.automationOpen }
+                let _ = TimelineRegimeMeter.recordLayer("automation_bands", elements: openAutomationBands.count)
+                ForEach(openAutomationBands) { entry in
                     if let r = automationBandRect(for: entry) {
                         AutomationBandView(
                             viewModel: viewModel,
@@ -912,7 +925,9 @@ struct TimelineView: View {
                 // roll). It greys the outside of the content out so as to focus on the inside. See SoundObject.expandedSpan.
                 // An infinite bus: no range any more → no out-of-range. Its inside is open over
                 // the whole timeline, so no grey mask.
-                ForEach(viewModel.laneEntries.filter { $0.expandedSpan > 0 && !$0.item.isInfiniteBus }) { entry in
+                let rangeMasks = viewModel.laneEntries.filter { $0.expandedSpan > 0 && !$0.item.isInfiniteBus }
+                let _ = TimelineRegimeMeter.recordLayer("range_masks", elements: rangeMasks.count)
+                ForEach(rangeMasks) { entry in
                     let span = entry.expandedSpan
                     let item   = entry.item
                     let subY   = rulerHeight + Double(entry.displayLane + 1) * laneStep
@@ -945,7 +960,9 @@ struct TimelineView: View {
                 // resolved geometrically by the tap handler.
                 // Pre-filtered on `automationBezel`'s own first conditions (a selector to show, a
                 // content to choose from): only groups and MIDI clips ever get here.
-                ForEach(visibleEntries.filter { $0.expandedSpan > 0 && viewModel.hasAutomationSelector($0.item) }) { entry in
+                let automationBezels = visibleEntries.filter { $0.expandedSpan > 0 && viewModel.hasAutomationSelector($0.item) }
+                let _ = TimelineRegimeMeter.recordLayer("automation_bezels", elements: automationBezels.count)
+                ForEach(automationBezels) { entry in
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry, bands: inlineBands)
@@ -2509,6 +2526,9 @@ struct TimelineView: View {
         var plainGroups: [LaneEntry] = []  // groups drawn by the Canvas
         var rich: [LaneEntry] = []         // everything that keeps a SwiftUI view
         var richGroups = 0                 // how many of `rich` are groups
+        /// Why each rich block is rich, per `RichReason` (for `perf.census`): summed in this
+        /// pass, from the very answer that decided the block's regime.
+        var reasons = [Int](repeating: 0, count: RichReason.count)
     }
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry]) -> BlockPartition {
@@ -2520,54 +2540,59 @@ struct TimelineView: View {
         #endif
         for entry in entries {
             if entry.item.isGroup {
-                if isPlainCanvasGroup(entry.item, forceRich: forceRichSelected) {
-                    p.plainGroups.append(entry)
-                } else {
+                if let why = groupRichReason(entry.item, forceRich: forceRichSelected) {
                     p.rich.append(entry)
                     p.richGroups += 1
+                    p.reasons[why.rawValue] += 1
+                } else {
+                    p.plainGroups.append(entry)
                 }
-            } else if isPlainCanvasClip(entry.item, forceRichSelected: forceRichSelected) {
-                p.plain.append(entry)
-            } else {
+            } else if let why = clipRichReason(entry.item, forceRichSelected: forceRichSelected) {
                 p.rich.append(entry)
+                p.reasons[why.rawValue] += 1
+            } else {
+                p.plain.append(entry)
             }
         }
         return p
     }
 
-    /// True = this group's block can be drawn in the shared Canvas (`GroupBlocksCanvas`): a plain
-    /// group, selected or not. Everything with a SwiftUI need keeps `GroupBlockView`: an infinite
+    /// nil = this group's block can be drawn in the shared Canvas (`GroupBlocksCanvas`): a plain
+    /// group, selected or not. Otherwise the reason it keeps `GroupBlockView`: an infinite
     /// bus (`InfiniteBusBandView`), a rename, a bake, an open consolidated object (its ✕ and
     /// spinner), a volume / pan / aux tool, a drag / trim / resize / fade preview, a loop (the
-    /// composite repeats and the grips are views). `forceRich` is the Debug A/B switch: every
-    /// group back on its rich view (always false in Release).
-    private func isPlainCanvasGroup(_ item: SoundObject, forceRich: Bool) -> Bool {
-        guard item.isGroup, !item.isInfiniteBus else { return false }
+    /// composite repeats and the grips are views) — the FIRST one met, in this order (it IS the
+    /// rule: the order is what decides what is read, hence what a hover re-evaluates).
+    /// `forceRich` is the Debug A/B switch: every group back on its rich view (always false in
+    /// Release).
+    private func groupRichReason(_ item: SoundObject, forceRich: Bool) -> RichReason? {
+        // `item` is a group: the partition only asks groups (it tests `isGroup` first).
+        if item.isInfiniteBus { return .infinite }
         #if DEBUG
-        if forceRich { return false }
+        if forceRich { return .forceRich }
         #endif
-        if viewModel.renamingID == item.id { return false }
-        if viewModel.isBaking(item.id) { return false }
+        if viewModel.renamingID == item.id { return .rename }
+        if viewModel.isBaking(item.id) { return .bake }
         // `isEditing` / `isPreviewing` (the latter is a subset of the former).
-        if viewModel.editingPlacementID == item.id { return false }
+        if viewModel.editingPlacementID == item.id { return .editing }
         switch viewModel.activeTool {
-        case .toolVolume, .toolPan, .toolAux: return false   // interactive overlays
+        case .toolVolume, .toolPan, .toolAux: return .tool   // interactive overlays
         case .toolStemAssign:
             // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`), and a
             // group always had it: the hovered one stays rich. The tool is tested FIRST, so that
             // `toolHoveredID` is read (and this layer re-evaluated on every hover) under that
             // tool alone.
-            if toolHoveredID == item.id { return false }
+            if toolHoveredID == item.id { return .stemHover }
         default: break
         }
-        if previewOffset(for: item) != nil { return false }
-        if previewResizeDX(for: item) != 0 { return false }
-        if previewTrimDX(for: item) != 0 { return false }
-        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return false }
-        if spillPlan(for: item.id) != nil { return false }
+        if previewOffset(for: item) != nil { return .preview }
+        if previewResizeDX(for: item) != 0 { return .preview }
+        if previewTrimDX(for: item) != 0 { return .preview }
+        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
+        if spillPlan(for: item.id) != nil { return .spill }
         // A looping group: the composite repeats and the IN/OUT grips are views.
-        if previewLoopRange(for: item) != nil { return false }
-        return true
+        if previewLoopRange(for: item) != nil { return .loop }
+        return nil
     }
 
     /// Resolves what the Canvas needs for each group it draws (@see `CanvasGroup`), with the
@@ -2601,41 +2626,43 @@ struct TimelineView: View {
         return resolved.filter { !$0.selected } + resolved.filter { $0.selected }
     }
 
-    /// True = this clip can be drawn in the shared Canvas (no SwiftUI need).
+    /// nil = this clip can be drawn in the shared Canvas (no SwiftUI need); otherwise the FIRST
+    /// reason, in this order, it keeps a rich view (the order is the rule, @see `groupRichReason`).
     /// `forceRichSelected` is the Debug A/B switch (always false in Release, where the line that
     /// reads it does not exist).
-    private func isPlainCanvasClip(_ item: SoundObject, forceRichSelected: Bool = false) -> Bool {
-        guard case .clip = item.kind else { return false }   // an aux / midi / group → a rich view
+    private func clipRichReason(_ item: SoundObject, forceRichSelected: Bool = false) -> RichReason? {
+        // An aux / midi / group → a rich view
+        guard case .clip = item.kind else { return item.isMIDI ? .midi : .aux }
         // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
         // few hundred selected clips were a few hundred rich views, and the timeline fell to
         // 2 fps). The Debug A/B switch puts the old behaviour back (@see `DebugRenderSwitches`).
         #if DEBUG
-        if forceRichSelected && viewModel.isSelected(item.id) { return false }
+        if forceRichSelected && viewModel.isSelected(item.id) { return .forceRich }
         #endif
-        if viewModel.renamingID == item.id { return false }
-        if viewModel.isBaking(item.id) { return false }
-        if item.isConsolidateInstance { return false }   // a link/freshness badge → a rich view
-        if item.colorIndex != nil { return false }   // a 10%/90% band → a rich view
+        if viewModel.renamingID == item.id { return .rename }
+        if viewModel.isBaking(item.id) { return .bake }
+        if item.isConsolidateInstance { return .consolidate }   // a link/freshness badge → a rich view
+        if item.colorIndex != nil { return .color }   // a 10%/90% band → a rich view
         switch viewModel.activeTool {
-        case .toolVolume, .toolPan, .toolAux: return false   // interactive overlays
+        case .toolVolume, .toolPan, .toolAux: return .tool   // interactive overlays
         case .toolStemAssign:
             // The hover veil of the Stem tool lives in the rich view (`ToolStemLayer`). Only a
             // SELECTED clip kept its rich view under that tool until now — an unselected one has
             // always been in the Canvas, with no veil — so the exception keeps exactly that:
             // the tool is tested FIRST, so that `toolHoveredID` is read (and this layer
             // re-evaluated on every hover) under that tool alone.
-            if viewModel.isSelected(item.id) && toolHoveredID == item.id { return false }
+            if viewModel.isSelected(item.id) && toolHoveredID == item.id { return .stemHover }
         default: break
         }
         // A drag/preview under way on this clip → a live SwiftUI view.
-        if previewOffset(for: item) != nil { return false }
-        if previewResizeDX(for: item) != 0 { return false }
-        if previewTrimDX(for: item) != 0 { return false }
-        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return false }
+        if previewOffset(for: item) != nil { return .preview }
+        if previewResizeDX(for: item) != 0 { return .preview }
+        if previewTrimDX(for: item) != 0 { return .preview }
+        if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
         // The NEIGHBOUR of a spilling fade moves too, and it is in none of the drag's id sets:
         // without this it stayed in the batched Canvas, motionless, until the mouse came up.
-        if spillPlan(for: item.id) != nil { return false }
-        return true
+        if spillPlan(for: item.id) != nil { return .spill }
+        return nil
     }
 
     /// It triggers the loading of the waveforms of the Canvas blocks (which no longer have a

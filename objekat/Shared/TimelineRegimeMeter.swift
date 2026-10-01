@@ -22,6 +22,64 @@ import Foundation
 // not counted in either regime. Nothing is accumulated across passes — a counter that summed
 // frames would grow with how long the script waited, which says nothing about the regime.
 
+/// WHY a block is drawn as a rich SwiftUI view instead of in the batched Canvas — the FIRST rule,
+/// in the order `TimelineView.clipRichReason` / `groupRichReason` test them, that sends it there.
+/// One reason per rich block, so the histogram adds up to `clipsRich + groupsRich`. The cases are
+/// the rules' own conditions, named; adding a rule to the partition means adding a case here.
+nonisolated enum RichReason: Int, CaseIterable, Sendable {
+    /// The Volume / Pan / Aux tool is armed: every block carries its interactive overlay.
+    case tool
+    /// The Stem tool is armed and the pointer is on this block (its hover veil is a rich layer).
+    case stemHover
+    /// A drag / trim / resize / fade preview is under way on this block.
+    case preview
+    /// The neighbour of a spilling fade (`spillPlan`): it moves with the drag without being in
+    /// any of its id sets.
+    case spill
+    /// A custom colour (`colorIndex`): the 10 % / 90 % band is a rich view.
+    case color
+    /// A MIDI clip (always rich).
+    case midi
+    /// An aux (always rich).
+    case aux
+    /// An instance of a consolidated object (its link / freshness badge is a rich view).
+    case consolidate
+    /// The name is being edited.
+    case rename
+    /// A bake is running on it.
+    case bake
+    /// A looping group (the composite repeats and the IN/OUT grips are views).
+    case loop
+    /// An infinite bus (`InfiniteBusBandView`).
+    case infinite
+    /// An open consolidated object being edited / previewed (its ✕ and its spinner).
+    case editing
+    /// Debug A/B switch (`DebugRenderSwitches.forceRichBlocks`) only; never in Release.
+    case forceRich
+
+    static let count = allCases.count
+
+    /// The key `perf.census.regimes.rich_reasons` carries.
+    var key: String {
+        switch self {
+        case .tool: return "tool"
+        case .stemHover: return "stem_hover"
+        case .preview: return "preview"
+        case .spill: return "spill"
+        case .color: return "color"
+        case .midi: return "midi"
+        case .aux: return "aux"
+        case .consolidate: return "consolidate"
+        case .rename: return "rename"
+        case .bake: return "bake"
+        case .loop: return "loop"
+        case .infinite: return "infinite"
+        case .editing: return "editing"
+        case .forceRich: return "force_rich"
+        }
+    }
+}
+
 /// A snapshot — see the file header for what a "pass" is.
 nonisolated struct TimelineRegimeStats: Sendable {
     /// Clips drawn as rows of the batched Canvas, last pass.
@@ -41,6 +99,15 @@ nonisolated struct TimelineRegimeStats: Sendable {
     /// The same bands, drawn as SwiftUI views (one per open group). 0 in production: only the
     /// Debug A/B switch (`DebugRenderSwitches.forceRichBlocks`) puts them back.
     var groupBandsRich = 0
+    /// Why each rich block is rich, last pass: the count per `RichReason` (indexed by `rawValue`).
+    /// Sums to `clipsRich + groupsRich`. Counted in the same loop as the partition, with the
+    /// partition's own rules — it describes the rule, it never decides anything.
+    var richReasons = [Int](repeating: 0, count: RichReason.count)
+    /// The element count of each unconditional `ForEach` layer of the timeline's body, last pass
+    /// (an element = the root of one SwiftUI subtree, so a layer's cost is paid in proportion to
+    /// it). Keyed by layer name; only layers that are evaluated on EVERY pass are recorded, so a
+    /// value is never older than the last pass.
+    var layerElements: [String: Int] = [:]
     /// How many times the blocks layer has been evaluated since the last `reset`.
     var passes = 0
     /// How many times the batched Canvas has drawn since the last `reset`.
@@ -70,8 +137,10 @@ enum TimelineRegimeMeter {
     /// One evaluation of the blocks layer: the regime counts it ended up with.
     nonisolated static func recordPass(clipsCanvas: Int, clipsRich: Int,
                                        groupsCanvas: Int, groupsRich: Int,
-                                       groupBandsCanvas: Int, groupBandsRich: Int) {
+                                       groupBandsCanvas: Int, groupBandsRich: Int,
+                                       richReasons: [Int]) {
         lock.lock(); defer { lock.unlock() }
+        stats.richReasons = richReasons
         stats.clipsCanvas = clipsCanvas
         stats.clipsRich = clipsRich
         stats.groupsCanvas = groupsCanvas
@@ -79,6 +148,13 @@ enum TimelineRegimeMeter {
         stats.groupBandsCanvas = groupBandsCanvas
         stats.groupBandsRich = groupBandsRich
         stats.passes += 1
+    }
+
+    /// The element count of one `ForEach` layer of the body, this pass (one write per layer per
+    /// pass, never per element).
+    nonisolated static func recordLayer(_ name: String, elements: Int) {
+        lock.lock(); defer { lock.unlock() }
+        stats.layerElements[name] = elements
     }
 
     /// One draw of the batched Canvas.
