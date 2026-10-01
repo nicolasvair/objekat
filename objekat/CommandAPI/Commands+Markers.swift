@@ -283,6 +283,129 @@ extension CommandRegistry {
             return .object(["removed": .string(marker.uuidString)])
         }
 
+        // MARK: Picking several marks
+
+        /// A selection entry as a script reads and writes it: `kind` + the ids that name it. The
+        /// same shape goes out of `marker.selection` and into `marker.select`, so what one reads
+        /// can be handed straight back.
+        func annotationPayload(_ sel: AnnotationSel) -> JSONValue {
+            switch sel {
+            case .laneMarker(let l, let m):
+                return .object(["kind": .string("lane_marker"), "lane": .string(l.uuidString),
+                                "marker": .string(m.uuidString)])
+            case .objectMarker(let o, let m):
+                return .object(["kind": .string("object_marker"), "object": .string(o.uuidString),
+                                "marker": .string(m.uuidString)])
+            case .comment(let c):
+                return .object(["kind": .string("comment"), "comment": .string(c.uuidString)])
+            }
+        }
+
+        func json(_ v: JSONValue) -> String {
+            (try? String(data: JSONEncoder().encode(v), encoding: .utf8)) ?? "?"
+        }
+
+        func annotationRef(_ v: JSONValue, _ vm: EditViewModel) throws -> AnnotationSel {
+            guard let o = v.objectValue else {
+                throw CommandError(code: .bad_params,
+                                   message: "items: each entry is an object ({lane, marker} | {object, marker} | {comment})")
+            }
+            func id(_ k: String) throws -> UUID {
+                guard let s = o[k]?.stringValue, let u = UUID(uuidString: s) else {
+                    throw CommandError(code: .bad_params, message: "items: '\(k)' must be a UUID")
+                }
+                return u
+            }
+            let sel: AnnotationSel
+            if o["comment"] != nil {
+                sel = .comment(try id("comment"))
+            } else if o["object"] != nil {
+                sel = .objectMarker(object: try id("object"), marker: try id("marker"))
+            } else {
+                sel = .laneMarker(lane: try id("lane"), marker: try id("marker"))
+            }
+            guard vm.annotationExists(sel) else {
+                throw CommandError(code: .not_found, message: "items: no such mark: \(json(annotationPayload(sel)))")
+            }
+            return sel
+        }
+
+        func selectionPayload(_ vm: EditViewModel) -> JSONValue {
+            .object(["count": .int(vm.selectedAnnotations.count),
+                     "items": .array(vm.selectedAnnotations.map(annotationPayload)),
+                     "anchor": vm.annotationAnchor.map(annotationPayload) ?? .null,
+                     "cursor": .number(vm.cursorPosition)])
+        }
+
+        register("marker.select",
+                 summary: "Picks marks the way the hand's clicks do (the same code: "
+                        + "`handleMarkBandClick`). `items` are markers/regions of the band "
+                        + "({lane, marker}), markers carried by an object ({object, marker}) and "
+                        + "comments ({comment}). `mode` replace (default): the first is a plain "
+                        + "click — the selection becomes it alone, and for a mark of the band the "
+                        + "CURSOR goes to its start — and the others are ⌘-clicks; an empty list "
+                        + "is a click on nothing, which lets go of everything. `toggle`: each "
+                        + "item is a ⌘-click (in or out). `extend`: each item is a ⇧-click (the "
+                        + "marks of the band between the anchor and it, in time and in rows, "
+                        + "replace the selection). Answers with the selection.",
+                 params: [ParamSpec("items", "array", required: false,
+                                    "The marks to click, in order. Absent or empty = a click on nothing."),
+                          ParamSpec("mode", "string", required: false,
+                                    "replace (default) | toggle | extend.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let session = try CommandContext.shared.requireSession()
+            let mode = try p.string("mode", or: "replace")
+            guard ["replace", "toggle", "extend"].contains(mode) else {
+                throw CommandError(code: .bad_params, message: "mode: replace | toggle | extend")
+            }
+            var refs: [AnnotationSel] = []
+            for v in (p.raw["items"] != nil ? try p.array("items") : []) {
+                let r = try annotationRef(v, vm)
+                if !refs.contains(r) { refs.append(r) }
+            }
+            // The cursor goes where the hand's would: moved for real when stopped, only noted
+            // while playing (the playhead is not ours to jump).
+            let seek: (Double) -> Void = { t in
+                if session.isPlaying { vm.cursorPosition = max(0, t) } else { session.seek(to: t) }
+            }
+            switch mode {
+            case "toggle":
+                for r in refs { vm.handleMarkBandClick(hit: r, shift: false, cmd: true, seek: seek) }
+            case "extend":
+                for r in refs { vm.handleMarkBandClick(hit: r, shift: true, cmd: false, seek: seek) }
+            default:
+                if refs.isEmpty {
+                    vm.handleMarkBandClick(hit: nil, shift: false, cmd: false, seek: seek)
+                }
+                for (i, r) in refs.enumerated() {
+                    vm.handleMarkBandClick(hit: r, shift: false, cmd: i > 0, seek: seek)
+                }
+            }
+            return selectionPayload(vm)
+        }
+
+        register("marker.selection",
+                 summary: "The marks selected — markers and regions of the band, markers carried by "
+                        + "objects, comments — in the order they were picked, the ⇧ anchor, and "
+                        + "the cursor. The selection is exclusive with the objects' "
+                        + "(`selection.get` answers empty while marks are selected).") { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            return selectionPayload(vm)
+        }
+
+        register("marker.remove_selected",
+                 summary: "Deletes every selected mark — ⌫'s own code. ONE undo step for the whole "
+                        + "lot, whatever their kinds.",
+                 undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard !vm.selectedAnnotations.isEmpty else {
+                throw CommandError(code: .invalid_state, message: "no mark selected")
+            }
+            let removed = vm.removeAnnotations(vm.selectedAnnotations)
+            return .object(["removed": .int(removed), "remaining": .int(vm.selectedAnnotations.count)])
+        }
+
         // MARK: Markers carried by an object
 
         register("object.add_marker",

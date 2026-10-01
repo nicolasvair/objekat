@@ -616,7 +616,7 @@ That is end-of-process noise, with no effect on the result.
 | `consolidate.*` | consolidated objects: creation, editing, deconsolidating (the old `definition.*` names still answer, as hidden aliases — see below) |
 | `export.*` | render the mix into a file (or one file per region), follow the progress and the waveform as it grows, cancel |
 | `crossfade.*` | open the seam between two neighbours into a crossfade, resize it, shut it, list them |
-| `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them |
+| `marker_lane.*` / `marker.*` | the rows of the marker band, and the markers and regions on them — including picking several (`marker.select`, `marker.selection`, `marker.remove_selected`) |
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
 | `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
@@ -1110,6 +1110,30 @@ either way. `snap` behaves exactly as `marker.move`'s, the mark left out of its 
 negative `rel` is legal and is NOT clamped here: that is a mark pushed behind an edge, kept and not
 drawn. The HAND's drag clamps to the object's window instead, because a mark that vanished under
 the hand moving it would have no way back but ⌘Z.
+
+**Several marks can be selected at once** — markers and regions of the band, markers carried by
+objects, comments — and the three commands below speak exactly what the hand's clicks do (they call
+`handleMarkBandClick` and `removeAnnotations`, the code of the click and of ⌫):
+
+- `marker.select {items, mode}` — `items` are `{lane, marker}` (band), `{object, marker}` (carried
+  by an object) or `{comment}`. `mode: replace` (default): the first item is a plain click — the
+  selection becomes it alone, and for a mark of the band the **cursor goes to its start** — and
+  the others are ⌘-clicks; an empty list is a click on nothing and lets go of everything.
+  `toggle`: each item is a ⌘-click (in or out, the cursor left alone). `extend`: each item is a
+  ⇧-click — the marks of the band between the **anchor** (the last plain or ⌘ clicked mark) and
+  the item, in time (a region counts when it overlaps the span) AND in rows, replace the
+  selection; the anchor holds still, so a second ⇧-click aimed back inside shortens it. With no
+  usable anchor it just adds the mark. An unknown mark is refused (`not_found`).
+- `marker.selection` — the marks selected, in the order they were picked (`kind` =
+  `lane_marker` / `object_marker` / `comment`, plus their ids — the shape `marker.select` takes
+  back), the `anchor` and the `cursor`.
+- `marker.remove_selected` — deletes them all: **one undo step**, whatever their kinds.
+
+The selection is **exclusive with the objects'** (`selection.get` answers empty while marks are
+selected, and selecting an object lets go of the marks) and is **pruned** when its targets go —
+an undo, a cut that moved a mark onto another half, a deleted row or group, a new project. The
+hand's drag of a group (in time only, one undo) and the right-click menu are not reachable from
+here.
 
 `tools/scenario_markers.py` asserts all of the above against a running instance.
 

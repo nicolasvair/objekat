@@ -468,5 +468,178 @@ with ObjekatClient(SOCK) as c:
     r = [m for m in row["markers"] if m["id"] == reg][0]
     check("a crop is one undo", abs(r["time"] - 11.2) < 1e-9, json.dumps(r))
 
+    # ── picking SEVERAL marks ──────────────────────────────────────────────
+    # The click's logic lives in the view-model (`handleMarkBandClick`), and `marker.select`
+    # drives exactly that: a plain click, ⌘-clicks (toggle), ⇧-clicks (extend). What no script can
+    # reach is the hand's own drag of a group and the menu — the rest is here.
+    cmd("project.new")
+    cmd("project.set_snap", enabled=False)
+    rowA = cmd("marker_lane.create", name="A")["lane"]
+    rowB = cmd("marker_lane.create", name="B")["lane"]
+    mA1 = cmd("marker.add", lane=rowA, at=1.0, name="a1")["marker"]
+    mA2 = cmd("marker.add", lane=rowA, at=3.0, name="a2")["marker"]
+    rA = cmd("marker.add", lane=rowA, at=5.0, duration=2.0, name="reg")["marker"]
+    mA3 = cmd("marker.add", lane=rowA, at=6.5, name="a3")["marker"]
+    mA4 = cmd("marker.add", lane=rowA, at=9.0, name="a4")["marker"]
+    mB1 = cmd("marker.add", lane=rowB, at=2.0, name="b1")["marker"]
+    mB2 = cmd("marker.add", lane=rowB, at=4.0, name="b2")["marker"]
+    mB3 = cmd("marker.add", lane=rowB, at=8.0, name="b3")["marker"]
+
+    def lm(row, mid):
+        return {"lane": row, "marker": mid}
+
+    def sel_ids():
+        return [i.get("marker") or i.get("comment") for i in cmd("marker.selection")["items"]]
+
+    def sel_set():
+        return set(sel_ids())
+
+    def cursor():
+        return cmd("transport.state")["cursor"]
+
+    def select(items, mode="replace"):
+        return cmd("marker.select", items=items, mode=mode)
+
+    # A plain click: the mark alone, and the CURSOR at its start.
+    cmd("transport.seek", seconds=7.7)
+    select([lm(rowA, mA1)])
+    check("a plain click selects the mark", sel_ids() == [mA1], str(sel_ids()))
+    check("and the cursor goes to its start", approx(cursor(), 1.0), str(cursor()))
+    select([lm(rowA, rA)])
+    check("on a REGION the cursor goes to its START", approx(cursor(), 5.0), str(cursor()))
+    check("and the selection is the region alone", sel_ids() == [rA], str(sel_ids()))
+
+    # ⌘: in and out, the others staying, the cursor left where it was.
+    select([lm(rowA, mA1)])
+    cmd("transport.seek", seconds=7.7)
+    select([lm(rowA, mA2)], mode="toggle")
+    check("⌘-click adds to the selection", sel_set() == {mA1, mA2}, str(sel_ids()))
+    check("and does not move the cursor", approx(cursor(), 7.7), str(cursor()))
+    select([lm(rowB, mB1)], mode="toggle")
+    check("across rows too", sel_set() == {mA1, mA2, mB1}, str(sel_ids()))
+    select([lm(rowA, mA2)], mode="toggle")
+    check("⌘-click on a selected mark takes it OUT", sel_set() == {mA1, mB1}, str(sel_ids()))
+
+    # A `replace` with several items = a click then ⌘-clicks.
+    select([lm(rowA, mA1), lm(rowA, mA2), lm(rowB, mB2)])
+    check("replace with three items selects exactly them",
+          sel_set() == {mA1, mA2, mB2}, str(sel_ids()))
+
+    # ⇧: the marks between the anchor and the click, in TIME and in ROWS — anchored, so a second
+    # ⇧-click aimed back inside SHORTENS it.
+    cmd("transport.seek", seconds=0)
+    select([lm(rowA, mA1)])
+    select([lm(rowA, mA3)], mode="extend")
+    check("⇧-click takes what lies between (a1 … a3), a region included",
+          sel_set() == {mA1, mA2, rA, mA3}, str(sel_ids()))
+    select([lm(rowA, mA2)], mode="extend")
+    check("a second ⇧-click back inside SHORTENS it (the anchor holds still)",
+          sel_set() == {mA1, mA2}, str(sel_ids()))
+    # A region counts by OVERLAP: ⇧ stopping INSIDE it still takes it whole.
+    mIn = cmd("marker.add", lane=rowA, at=6.0, name="in")["marker"]
+    select([lm(rowA, mA1)])
+    select([lm(rowA, mIn)], mode="extend")
+    check("a region the span only overlaps is taken",
+          rA in sel_set() and mIn in sel_set() and mA3 not in sel_set(), str(sel_ids()))
+    cmd("marker.remove", lane=rowA, marker=mIn)
+    # Rows: from row A to row B, the time span applies to both.
+    select([lm(rowA, mA1)])
+    select([lm(rowB, mB2)], mode="extend")
+    check("⇧ across rows takes the span of time in BOTH (a1 a2 b1 b2, not b3)",
+          sel_set() == {mA1, mA2, mB1, mB2}, str(sel_ids()))
+    # A click on nothing lets go; ⇧ with no anchor simply adds.
+    select([])
+    check("a click on nothing deselects", sel_ids() == [], str(sel_ids()))
+    sel = select([lm(rowB, mB3)], mode="extend")
+    check("⇧ with no anchor just adds the mark", sel_ids() == [mB3], str(sel_ids()))
+    # A stale anchor is validated, not trusted.
+    select([lm(rowA, mA1)])
+    cmd("marker.remove", lane=rowA, marker=mA1)
+    select([lm(rowA, mA4)], mode="extend")
+    check("an anchor that has gone is not extended from", sel_ids() == [mA4], str(sel_ids()))
+    mA1 = cmd("marker.add", lane=rowA, at=1.0, name="a1")["marker"]
+
+    # Exclusivity with the objects: one or the other, never both.
+    obj = cmd("object.add", path=FIXTURE, lane=3, start=2.0)
+    oid = obj.get("id") or obj.get("object") or obj["objects"][0]["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    select([lm(rowA, mA2), lm(rowB, mB2)])
+    check("marks selected", len(sel_ids()) == 2)
+    cmd("selection.set", ids=[oid])
+    check("selecting an object lets go of the marks", sel_ids() == [], str(sel_ids()))
+    select([lm(rowA, mA2)])
+    check("and selecting a mark lets go of the objects",
+          cmd("selection.get")["count"] == 0, json.dumps(cmd("selection.get")))
+
+    # ⌫ on several marks of every kind: ONE undo.
+    mk_obj = cmd("object.add_marker", object=oid, at=2.1, name="carried")["marker"]
+    note = cmd("comment.create", **{"from": 3.0, "to": 4.0, "lane": 5, "text": "note"})["comment"]
+    everything = [lm(rowA, mA2), lm(rowB, mB2), {"object": oid, "marker": mk_obj}, {"comment": note}]
+    select(everything)
+    check("marks of the band, of an object and a comment, together", len(sel_ids()) == 4,
+          str(sel_ids()))
+
+    def n_marks():
+        band = sum(l["count"] for l in cmd("marker_lane.list")["lanes"])
+        return band, len(cmd("object.list_markers", object=oid)["markers"]), \
+            len(cmd("comment.list")["comments"])
+
+    before = n_marks()
+    r = cmd("marker.remove_selected")
+    check("remove_selected takes all four", r["removed"] == 4 and r["remaining"] == 0, json.dumps(r))
+    after = n_marks()
+    check("band -2, object -1, comment -1",
+          after == (before[0] - 2, before[1] - 1, before[2] - 1), "%s -> %s" % (before, after))
+    cmd("edit.undo")
+    check("ONE undo gives all four back", n_marks() == before, str(n_marks()))
+    # ... and the same through ⌫'s own function, with two marks.
+    select([lm(rowA, mA2), lm(rowB, mB2)])
+    cmd("marker.remove_selected")
+    cmd("edit.undo")
+    check("two marks, one undo", n_marks() == before, str(n_marks()))
+
+    # The selection is pruned when its targets go: an undo that takes a mark away.
+    zed = cmd("marker.add", lane=rowA, at=8.5, name="zed")["marker"]
+    select([lm(rowA, mA2), lm(rowA, zed)])
+    cmd("edit.undo")          # undoes the creation of `zed`
+    check("an undo that removes a mark prunes it from the selection",
+          sel_ids() == [mA2], str(sel_ids()))
+    # ... a deleted row takes its marks' selection with it.
+    select([lm(rowB, mB1), lm(rowA, mA2)])
+    cmd("marker_lane.remove", lane=rowB)
+    check("a deleted row prunes its marks", sel_ids() == [mA2], str(sel_ids()))
+    cmd("edit.undo")
+    # A cut that moves a marker onto the other half (a NEW object) prunes it from the selection,
+    # the mark of the band beside it staying selected.
+    cmd("project.new")
+    row = cmd("marker_lane.create", name="cut")["lane"]
+    keep = cmd("marker.add", lane=row, at=0.5, name="keep")["marker"]
+    co = cmd("object.add", path=FIXTURE, lane=0, start=2.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+    early = cmd("object.add_marker", object=co, at=2.05, name="early")["marker"]
+    late = cmd("object.add_marker", object=co, at=2.30, name="late")["marker"]
+    select([lm(row, keep), {"object": co, "marker": early}, {"object": co, "marker": late}])
+    cmd("object.split_at", ids=[co], seconds=2.20)
+    check("a cut prunes the marks it moved to the other half, keeps the rest",
+          sel_set() == {keep, early}, str(sel_ids()))
+
+    # Loading a project starts with nothing selected.
+    select([lm(row, keep)])
+    cmd("project.new")
+    check("a new project selects no mark", sel_ids() == [], str(sel_ids()))
+
+    # A selection that cannot be resolved is refused, not half-applied.
+    try:
+        cmd("marker.select", items=[{"lane": "00000000-0000-0000-0000-000000000000",
+                                     "marker": "00000000-0000-0000-0000-000000000001"}])
+        check("an unknown mark is refused", False, "it went through")
+    except ObjekatError as e:
+        check("an unknown mark is refused", e.code == "not_found", e.code)
+    try:
+        cmd("marker.remove_selected")
+        check("remove_selected with nothing selected is refused", False, "it went through")
+    except ObjekatError as e:
+        check("remove_selected with nothing selected is refused", e.code == "invalid_state", e.code)
+
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)
