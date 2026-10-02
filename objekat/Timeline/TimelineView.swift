@@ -2590,6 +2590,8 @@ struct TimelineView: View {
         for e in viewModel.laneEntries {
             let by = rulerHeight + Double(e.displayLane) * laneStep
             guard point.y >= by, point.y <= by + ObjectMarkersOverlay.grabStripHeight else { continue }
+            // The part of a child under its group's out-of-range veil is not clickable.
+            guard e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond) else { continue }
             for m in e.item.markers {
                 // Only what is INSIDE the window: a marker pushed behind an edge is kept but not
                 // drawn, so it must not be clickable either (@see Array where Element == Marker).
@@ -2638,7 +2640,8 @@ struct TimelineView: View {
     // The clip/group under a canvas point (for a plugin drop). Resolved on laneEntries.
     func objectID(at point: CGPoint) -> UUID? {
         for e in viewModel.laneEntries {
-            if let r = clipRect(for: e.item.id), r.contains(point) {
+            if let r = clipRect(for: e.item.id), r.contains(point),
+               e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond) {
                 return e.item.id
             }
         }

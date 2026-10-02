@@ -269,6 +269,7 @@ extension TimelineView {
                 let by = rulerHeight + Double(e.displayLane) * laneStep
                 return point.x >= bx && point.x <= bx + bw
                     && point.y >= by && point.y <= by + blockHeight
+                    && e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond)   // not under the veil
             }) {
                 hitChild         = entry.item
                 hitChildAbsStart = entry.absStart
@@ -467,7 +468,8 @@ extension TimelineView {
             }
             let bx = e.absStart * pixelsPerSecond
             let bw = max(e.item.duration * pixelsPerSecond, 2)
-            if point.x >= bx && point.x <= bx + bw { return (e.item.id, inBody) }
+            if point.x >= bx && point.x <= bx + bw,
+               e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond) { return (e.item.id, inBody) }
         }
         return nil
     }
@@ -483,7 +485,8 @@ extension TimelineView {
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
             if point.x >= bx && point.x <= bx + bw
-                && point.y >= by && point.y <= by + blockHeight {
+                && point.y >= by && point.y <= by + blockHeight
+                && e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond) {
                 return e.item.id
             }
         }
@@ -562,6 +565,7 @@ extension TimelineView {
                 let by = rulerHeight + Double(e.displayLane) * laneStep
                 return point.x >= bx && point.x <= bx + bw
                     && point.y >= by && point.y <= by + blockHeight
+                    && e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond)   // not under the veil
             }) {
                 hitClip     = e.item
                 hitAbsStart = e.absStart
@@ -655,6 +659,7 @@ extension TimelineView {
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
             return point.x >= bx && point.x <= bx + bw && point.y >= by && point.y <= by + blockHeight
+                && e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond)
         }) else { return }
 
         if !viewModel.selectedIDs.contains(entry.item.id) {

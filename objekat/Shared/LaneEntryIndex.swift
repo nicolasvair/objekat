@@ -20,11 +20,26 @@ import Foundation
 /// rebuilt, so it can never be older than the list it answers for (@see EditViewModel+LaneEntryIndex).
 struct LaneEntryIndex {
 
-    /// What the hit-test reads of an entry: `absStart` / `item.duration` / `displayLane`.
+    /// What the hit-test reads of an entry: `absStart` / `item.duration` / `displayLane`, and the
+    /// window of the timeline OUTSIDE which the block lies under an out-of-range veil (a child
+    /// sticking out of its group's window — @see `LaneClip`). The window only ever REMOVES hits: the
+    /// candidates are still narrowed on the full extent, the exact predicate then refuses the masked
+    /// part.
     struct Box {
         let displayLane: Int
         let start: Double
         let duration: Double
+        let clipLo: Double
+        let clipHi: Double
+
+        init(displayLane: Int, start: Double, duration: Double,
+             clipLo: Double = -.infinity, clipHi: Double = .infinity) {
+            self.displayLane = displayLane
+            self.start = start
+            self.duration = duration
+            self.clipLo = clipLo
+            self.clipHi = clipHi
+        }
     }
 
     /// Number of entries the index was built for (a cheap sanity check for the owner).
@@ -59,6 +74,7 @@ struct LaneEntryIndex {
     ///
     ///     bx = absStart * pps ; bw = max(duration * pps, 2) ; by = rulerHeight + displayLane * laneStep
     ///     x >= bx && x <= bx + bw && y >= by && y <= by + blockHeight
+    ///     && LaneClip.unmasked(x, ...)       // not under the veil of an ancestor group
     func firstBlock(atX x: Double, y: Double, pixelsPerSecond pps: Double,
                     rulerHeight: Double, laneStep: Double, blockHeight: Double) -> Int? {
         func hit(_ b: Box) -> Bool {
@@ -66,6 +82,7 @@ struct LaneEntryIndex {
             let bw = max(b.duration * pps, 2)
             let by = rulerHeight + Double(b.displayLane) * laneStep
             return x >= bx && x <= bx + bw && y >= by && y <= by + blockHeight
+                && LaneClip.unmasked(x: x, clipLo: b.clipLo, clipHi: b.clipHi, pixelsPerSecond: pps)
         }
 
         // Anything the window arithmetic below could not stay exact on → the plain walk.
@@ -213,5 +230,35 @@ private struct LaneTree {
         guard start[mid] <= maxStart else { return }
         if end[mid] >= minEnd, pos[mid] < best, matches(pos[mid]) { best = pos[mid] }
         visit(mid + 1, hi, maxStart, minEnd, &best, matches)
+    }
+}
+
+
+/// The out-of-range veil, seen by the hit-test. A group's children keep their ABSOLUTE times and may
+/// stick out of the group's window [start, start + duration]; the timeline greys that part out
+/// (`rangeMasksCanvas`) and it must not answer the hand either — no hover, no cursor, no click, no
+/// drag, no handle. Each `LaneEntry` therefore carries the window its block is visible through: the
+/// intersection of the windows of ALL its ancestor groups (an infinite bus has no window, hence no
+/// veil). A top-level entry has the open window.
+///
+/// Pure (no `SoundObject`), compiled alone by `tools/test_lane_entry_index.swift`.
+nonisolated enum LaneClip {
+    typealias Window = (lo: Double, hi: Double)
+
+    /// No ancestor: nothing is masked.
+    static let open: Window = (-.infinity, .infinity)
+
+    /// The window of the CHILDREN of a group, given the window the group itself is seen through.
+    /// `infinite` (a bus) adds no veil.
+    static func narrowed(_ inherited: Window, groupStart: Double, groupDuration: Double,
+                         infinite: Bool) -> Window {
+        guard !infinite, groupStart.isFinite, groupDuration.isFinite else { return inherited }
+        return (max(inherited.lo, groupStart), min(inherited.hi, groupStart + max(groupDuration, 0)))
+    }
+
+    /// True if the point (canvas px) is NOT under the veil. Bounds included (the veil starts where
+    /// the window ends, the pixel on the edge itself still belongs to the block).
+    static func unmasked(x: Double, clipLo: Double, clipHi: Double, pixelsPerSecond pps: Double) -> Bool {
+        (clipLo == -.infinity || x >= clipLo * pps) && (clipHi == .infinity || x <= clipHi * pps)
     }
 }

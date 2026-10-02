@@ -179,6 +179,7 @@ extension TimelineView {
                     let bw = max(e.item.duration * pps, 2)
                     let by = rulerH + Double(e.displayLane) * ls
                     return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + bh
+                        && e.isUnmasked(atX: pos.x, pixelsPerSecond: pps)
                 }) else { return event }
                 let item = entry.item
                 let bx   = entry.absStart * pps
@@ -212,6 +213,7 @@ extension TimelineView {
                     let bw = max(e.item.duration * pps, 2)
                     let by = rulerH + Double(e.displayLane) * ls
                     return pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + bh
+                        && e.isUnmasked(atX: pos.x, pixelsPerSecond: pps)
                 }) else { return event }
                 let item = entry.item
 
@@ -1173,6 +1175,7 @@ extension TimelineView {
                     let bx = e.absStart * pps
                     let bw = max(e.item.duration * pps, 2)
                     return pos.x >= bx && pos.x <= bx + bw
+                        && e.isUnmasked(atX: pos.x, pixelsPerSecond: pps)
                 }
                 return (entry,
                         entry.map { _ in ContextMenuPlan.BlockZone.zone(localY: pos.y - topY, blockHeight: bh) },

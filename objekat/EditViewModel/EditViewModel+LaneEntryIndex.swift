@@ -20,7 +20,8 @@ extension EditViewModel {
         let index = LaneEntryIndex(
             boxes: entries.map { LaneEntryIndex.Box(displayLane: $0.displayLane,
                                                     start: $0.absStart,
-                                                    duration: $0.item.duration) },
+                                                    duration: $0.item.duration,
+                                                    clipLo: $0.clipLo, clipHi: $0.clipHi) },
             ids: entries.map(\.item.id))
         laneEntryIndexCache = index
         return index

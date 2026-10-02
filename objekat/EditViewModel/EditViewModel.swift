@@ -1012,7 +1012,8 @@ final class EditViewModel {
         _ items: [SoundObject],
         parentID: UUID?,
         depth: Int,
-        displayLaneOffset: Int
+        displayLaneOffset: Int,
+        clip: LaneClip.Window = LaneClip.open
     ) -> [LaneEntry] {
         // The prefix sum of expandedSpan by lane → extraAbove in O(N) instead of O(N²).
         // prefixBelowLane[L] = Σ expandedSpan of the items of a lane strictly < L (identical
@@ -1041,7 +1042,9 @@ final class EditViewModel {
                 absStart:    item.startTime,
                 depth:       depth,
                 parentID:    parentID,
-                expandedSpan: spans[i]
+                expandedSpan: spans[i],
+                clipLo:      clip.lo,
+                clipHi:      clip.hi
             ))
 
             // `showsChildrenInline` and not `isExpanded`: a group in automation mode keeps
@@ -1053,7 +1056,11 @@ final class EditViewModel {
                     children,
                     parentID:          item.id,
                     depth:             depth + 1,
-                    displayLaneOffset: dl + 1
+                    displayLaneOffset: dl + 1,
+                    // The children are seen through the group's window (the out-of-range veil).
+                    clip: LaneClip.narrowed(clip, groupStart: item.startTime,
+                                            groupDuration: item.duration,
+                                            infinite: item.isInfiniteBus)
                 )
             }
         }

@@ -317,4 +317,16 @@ struct LaneEntry: Identifiable {
     /// per pass; the entry carries the answer. For a group that `showsChildrenInline` it is also
     /// `childLaneCount` (the two differ only under an automation band, which hides the children).
     let expandedSpan: Int
+    /// The window of the timeline (absolute seconds) this block is visible through: the intersection
+    /// of the windows of its ancestor groups. Outside it the block lies under the out-of-range veil
+    /// and answers nothing (hover, click, drag). Open (±∞) for a top-level entry.
+    /// @see LaneClip (Shared/LaneEntryIndex.swift)
+    var clipLo: Double = -.infinity
+    var clipHi: Double = .infinity
+
+    /// True if the point (canvas px) is not under the veil — the condition every pointer hit-test
+    /// adds to its rectangle test.
+    func isUnmasked(atX x: Double, pixelsPerSecond pps: Double) -> Bool {
+        LaneClip.unmasked(x: x, clipLo: clipLo, clipHi: clipHi, pixelsPerSecond: pps)
+    }
 }

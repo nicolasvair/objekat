@@ -42,6 +42,7 @@ func bruteBlock(_ boxes: [Box], x: Double, y: Double, pps: Double,
         let bw = max(e.duration * pps, 2)
         let by = ruler + Double(e.displayLane) * step
         return x >= bx && x <= bx + bw && y >= by && y <= by + bh
+            && LaneClip.unmasked(x: x, clipLo: e.clipLo, clipHi: e.clipHi, pixelsPerSecond: pps)
     })
 }
 
@@ -59,7 +60,8 @@ enum Shape: CaseIterable {
     case sparse          // a few clips on a long timeline
     case dense           // lots of overlapping clips on few lanes
     case crossfades      // chains of clips overlapping their neighbour by a short zone
-    case nested          // a group's children one lane under it, depth 1…3
+    case nested          // a group's children one lane under it, depth 1…3 (seen through the group's window)
+    case clipped         // random windows, some missing the block altogether (the out-of-range veil)
     case infinite        // infinite buses: a huge stored window on a lane
     case degenerate      // zero-length, negative-length, identical, ±inf, NaN
 }
@@ -87,20 +89,30 @@ func makeBoxes(_ shape: Shape, _ rng: inout SplitMix) -> [Box] {
         }
     case .nested:
         var lane = 0
-        func group(depth: Int, at lane: Int, start: Double, dur: Double) {
-            out.append(Box(displayLane: lane, start: start, duration: dur))
+        // Children are seen through the window of their group(s), exactly as `buildLaneEntries` does.
+        func group(depth: Int, at lane: Int, start: Double, dur: Double, clip: LaneClip.Window) {
+            out.append(Box(displayLane: lane, start: start, duration: dur, clipLo: clip.lo, clipHi: clip.hi))
             guard depth < 3 else { return }
+            let inner = LaneClip.narrowed(clip, groupStart: start, groupDuration: dur, infinite: false)
             var t = start
             for _ in 0..<ri(1, 5) {
-                let d = min(r(0.2, max(0.2, dur / 2)), max(0.2, start + dur - t))
-                if ri(0, 2) == 0 { group(depth: depth + 1, at: lane + 1, start: t, dur: d) }
-                else { out.append(Box(displayLane: lane + 1, start: t, duration: d)) }
+                // Children may stick out of the window (that is the point of the veil).
+                let d = r(0.2, max(0.3, dur))
+                if ri(0, 2) == 0 { group(depth: depth + 1, at: lane + 1, start: t, dur: d, clip: inner) }
+                else { out.append(Box(displayLane: lane + 1, start: t, duration: d, clipLo: inner.lo, clipHi: inner.hi)) }
                 t += d * r(0.3, 1)
             }
         }
         for _ in 0..<ri(1, 6) {
-            group(depth: 0, at: lane, start: r(0, 60), dur: r(4, 50))
+            group(depth: 0, at: lane, start: r(0, 60), dur: r(4, 50), clip: LaneClip.open)
             lane += ri(1, 5)
+        }
+    case .clipped:
+        for _ in 0..<ri(20, 200) {
+            let st = r(0, 100), d = r(0.1, 40)
+            let lo = ri(0, 3) == 0 ? -Double.infinity : r(-10, 110)
+            let hi = ri(0, 3) == 0 ? Double.infinity : lo.isFinite ? lo + r(0, 60) : r(-10, 110)
+            out.append(Box(displayLane: ri(0, 4), start: st, duration: d, clipLo: lo, clipHi: hi))
         }
     case .infinite:
         for _ in 0..<ri(3, 25) { out.append(Box(displayLane: ri(0, 6), start: r(0, 100), duration: r(0.1, 40))) }
@@ -239,6 +251,30 @@ enum LaneEntryIndexTest {
     check("nested: the group's row answers the group", probe(nested, 100, 40) == 0)
     check("nested: the next row answers the child", probe(nested, 40, 80) == 1)
     check("nested: beside the child on its row, nothing", probe(nested, 200, 80) == nil)
+
+    // The out-of-range veil (case c02): G2 shows 1…5 s, its child B1 lasts 1…7 s. The part of B1 past
+    // 5 s answers nothing (the model's `first(where:)` plus the window), what is inside still does.
+    let w2 = LaneClip.narrowed(LaneClip.open, groupStart: 1, groupDuration: 4, infinite: false)
+    check("window of a group = [start, start + duration]", w2.lo == 1 && w2.hi == 5)
+    let w3 = LaneClip.narrowed(w2, groupStart: 2, groupDuration: 4, infinite: false)
+    check("nested windows intersect (G3 2…6 inside G2 1…5 -> 2…5)", w3.lo == 2 && w3.hi == 5)
+    check("an infinite bus adds no veil",
+          LaneClip.narrowed(w2, groupStart: 0, groupDuration: 86400, infinite: true) == w2
+          || (LaneClip.narrowed(w2, groupStart: 0, groupDuration: 86400, infinite: true).lo == 1
+              && LaneClip.narrowed(w2, groupStart: 0, groupDuration: 86400, infinite: true).hi == 5))
+    let veil = idx([Box(displayLane: 0, start: 1, duration: 4),                                   // G2
+                    Box(displayLane: 1, start: 1, duration: 6, clipLo: w2.lo, clipHi: w2.hi)])    // B1
+    check("masked: inside the window the child answers", probe(veil, 30, 28 + 40 + 10) == 1)
+    check("masked: the window's end itself still answers (inclusive)", probe(veil, 50, 28 + 40 + 10) == 1)
+    check("masked: past the window's end the child answers NOTHING", probe(veil, 60, 28 + 40 + 10) == nil)
+    check("masked: even at the child's far end", probe(veil, 69, 28 + 40 + 10) == nil)
+    check("masked: the group's own row is unaffected", probe(veil, 30, 28 + 10) == 0)
+    // What lies underneath answers instead: an unmasked block on the same row, further down the list.
+    let under = idx([Box(displayLane: 1, start: 1, duration: 6, clipLo: w2.lo, clipHi: w2.hi),
+                     Box(displayLane: 1, start: 5.5, duration: 3)])
+    check("masked: the entry underneath takes the hit", probe(under, 60, 28 + 40 + 10) == 1)
+    check("closed window (lo == hi) masks all but its edge point",
+          probe(idx([Box(displayLane: 0, start: 0, duration: 10, clipLo: 3, clipHi: 3)]), 50, 40) == nil)
 
     // An infinite bus: a 24 h stored window answers anywhere on its row.
     let bus = idx([Box(displayLane: 2, start: 0, duration: 86400)])

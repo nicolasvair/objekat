@@ -603,7 +603,10 @@ extension TimelineView {
                 }
                 let bx = e.absStart * pixelsPerSecond
                 let bw = max(e.item.duration * pixelsPerSecond, 2)
+                // The part of a child sticking out of its group's window lies under the veil: it
+                // answers nothing (@see LaneClip).
                 return p.x >= bx && p.x <= bx + bw
+                    && e.isUnmasked(atX: p.x, pixelsPerSecond: pixelsPerSecond)
             }
             let hitItem = hitEntry?.item
 
@@ -1816,6 +1819,7 @@ extension TimelineView {
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
             return point.x >= bx && point.x <= bx + bw && point.y >= by && point.y <= by + blockHeight
+                && e.isUnmasked(atX: point.x, pixelsPerSecond: pixelsPerSecond)
         }) else { return nil }
 
         let bx = entry.absStart * pixelsPerSecond
@@ -1920,6 +1924,7 @@ extension TimelineView {
                     let bw = max(e.item.duration * pixelsPerSecond, 2)
                     let by = rulerHeight + Double(e.displayLane) * laneStep
                     return p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight
+                        && e.isUnmasked(atX: p.x, pixelsPerSecond: pixelsPerSecond)
                 }) {
                     hitItem = e.item; hitAbsStart = e.absStart
                 }
@@ -1992,6 +1997,7 @@ extension TimelineView {
                     let bw = max(e.item.duration * pixelsPerSecond, 2)
                     let by = rulerHeight + Double(e.displayLane) * laneStep
                     return p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight
+                        && e.isUnmasked(atX: p.x, pixelsPerSecond: pixelsPerSecond)
                 }) {
                     hitItem = e.item; hitAbsStart = e.absStart
                 }
@@ -2057,7 +2063,8 @@ extension TimelineView {
             let bx = e.absStart * pixelsPerSecond
             let bw = max(e.item.duration * pixelsPerSecond, 2)
             let by = rulerHeight + Double(e.displayLane) * laneStep
-            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight else { continue }
+            guard p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + blockHeight,
+                  e.isUnmasked(atX: p.x, pixelsPerSecond: pixelsPerSecond) else { continue }
             if e.depth == 0 { top.append((e.item.id, bx, by, bw)) }
             else { nested.append((e.item.id, bx, by, bw)) }
         }
