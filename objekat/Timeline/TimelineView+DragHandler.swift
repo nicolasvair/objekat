@@ -11,6 +11,12 @@ struct MoveDragState {
     var altFragmentObjects: [SoundObject]? = nil
     var timeSelectionAnchor: TimeSelection? = nil
     var sourceGroupID: UUID? = nil
+    /// The DISPLAY row the grabbed block was drawn on when the hand took it: the release lands on
+    /// `grabbedDisplayLane + dl`, exactly where `previewOffset` drew the block (@see
+    /// MoveDropResolution). It cannot be rebuilt from the model lane — that forgets every open
+    /// sub-group, piano roll or automation band standing above the object in its own group.
+    /// Unused by the time-selection translate, whose anchors already hold display rows.
+    var grabbedDisplayLane: Int = 0
     /// The moved objects that sit INSIDE a group: the wall at t = 0 is not theirs (@see ZeroClamp —
     /// it belongs to the root objects, and to the root group above a child). Read ONCE when the
     /// gesture opens, from one walk of the tree: asking the model per frame, per anchor, would be
@@ -931,6 +937,7 @@ extension TimelineView {
                                          grabbedID: item.id, dt: 0, dl: 0,
                                          isAltCopy: alt,
                                          sourceGroupID: hitSourceGroupID,
+                                         grabbedDisplayLane: hitDL,
                                          freeIDs: Set(ids.filter { moveParents[$0] != nil }))
             }
         }
@@ -1322,154 +1329,25 @@ extension TimelineView {
         if phase == .ended {
             viewModel.snapGuide = nil
 
-            let grabbedFinalAbsDL: Int
-            if let sgID = state.sourceGroupID,
-               let sgDL = viewModel.laneEntries.first(where: { $0.item.id == sgID })?.displayLane {
-                grabbedFinalAbsDL = sgDL + 1 + grabbedAnchor.lane + dl
-            } else {
-                grabbedFinalAbsDL = displayLane(for: grabbedAnchor.lane) + dl
-            }
-            // dl is in display space; dActual converts to the real lanes
-            let dActual: Int = state.sourceGroupID == nil
-                ? (viewModel.laneEntries.first { $0.displayLane == max(0, grabbedFinalAbsDL) }?.item.lane ?? viewModel.baseLaneForDisplay(max(0, grabbedFinalAbsDL))) - grabbedAnchor.lane
-                : dl
-
-            // The target group = the INNERMOST expanded group whose child range holds the drop's
-            // display lane. It allows clips AND groups; it rules out any group that would be
-            // itself/a descendant of a moved object (the cycle guard).
-            let groupDropEntry: LaneEntry? = (!state.isAltCopy || state.sourceGroupID != nil)
-                && state.timeSelectionAnchor == nil
-                ? viewModel.laneEntries
-                    .filter { e in
-                        guard e.item.showsChildrenInline,
-                              !state.ids.contains(where: { viewModel.isSelfOrDescendant(e.item.id, of: $0) })
-                        else { return false }
-                        let cl = grabbedFinalAbsDL - e.displayLane - 1
-                        return cl >= 0 && cl < e.item.childLaneCount
-                    }
-                    .max(by: { $0.displayLane < $1.displayLane })   // the INNERMOST one
-                : nil
-            let groupDropTarget = groupDropEntry?.item
-
-            // A drop onto a moved group's own subtree (a zone the cycle guard rules out):
-            // cancel the movement rather than route it to a bogus lane.
-            // (Not for the translate: moveTranslatedItems has its own cycle guard.)
-            let droppedOnOwnSubtree = state.timeSelectionAnchor == nil
-                && groupDropTarget == nil && viewModel.laneEntries.contains { e in
-                guard e.item.showsChildrenInline,
-                      state.ids.contains(where: { viewModel.isSelfOrDescendant(e.item.id, of: $0) })
-                else { return false }
-                let cl = grabbedFinalAbsDL - e.displayLane - 1
-                return cl >= 0 && cl < e.item.childLaneCount
-            }
-            if droppedOnOwnSubtree {
-                viewModel.snapGuide = nil
-                moveDrag = nil
-                return
-            }
-
-            if let sgID = state.sourceGroupID {
-                viewModel.pushUndo()
-                let newRelLane = grabbedAnchor.lane + dl
-
-                if state.isAltCopy {
-                    if let target = groupDropTarget, target.id != sgID {
-                        let gDL = groupDropEntry!.displayLane
-                        viewModel.selectedIDs = viewModel.altReparentChildBetweenGroups(
-                            childIDs: state.ids, sourceGroupID: sgID, targetGroupID: target.id,
-                            anchors: state.anchors, grabbedID: state.grabbedID,
-                            grabbedChildLane: grabbedFinalAbsDL - gDL - 1, dt: dt)
-                    } else if let sg = viewModel.find(id: sgID),
-                              (newRelLane < 0 || newRelLane >= sg.childLaneCount) && groupDropTarget == nil {
-                        let baseLane = viewModel.laneEntries.first { $0.displayLane == max(0, grabbedFinalAbsDL) }?.item.lane ?? viewModel.baseLaneForDisplay(max(0, grabbedFinalAbsDL))
-                        viewModel.selectedIDs = viewModel.altEjectFromGroup(
-                            childIDs: state.ids, groupID: sgID,
-                            anchors: state.anchors, grabbedID: state.grabbedID,
-                            dt: dt, baseLane: baseLane)
-                    } else {
-                        viewModel.selectedIDs = viewModel.altCopyChildrenInGroup(
-                            childIDs: state.ids, groupID: sgID,
-                            anchors: state.anchors, grabbedID: state.grabbedID,
-                            dt: dt, dl: dl)
-                    }
-                } else {
-                    if let target = groupDropTarget, target.id != sgID {
-                        let gDL = groupDropEntry!.displayLane
-                        viewModel.reparentChildBetweenGroups(
-                            childIDs: state.ids, sourceGroupID: sgID, targetGroupID: target.id,
-                            anchors: state.anchors, grabbedID: state.grabbedID,
-                            grabbedChildLane: grabbedFinalAbsDL - gDL - 1, dt: dt)
-                    } else if let sg = viewModel.find(id: sgID),
-                              (newRelLane < 0 || newRelLane >= sg.childLaneCount) && groupDropTarget == nil {
-                        let baseLane = viewModel.laneEntries.first { $0.displayLane == max(0, grabbedFinalAbsDL) }?.item.lane ?? viewModel.baseLaneForDisplay(max(0, grabbedFinalAbsDL))
-                        viewModel.ejectFromGroup(
-                            childIDs: state.ids, groupID: sgID,
-                            anchors: state.anchors, grabbedID: state.grabbedID, dt: dt,
-                            baseLane: baseLane)
-                    } else {
-                        // The crossfades FOLLOW: the zone is the span the two have in common,
-                        // and moving one of them changes that span, nothing more. What is refitted
-                        // is then invisible to `resolveOverlaps` below; what is not, it settles.
-                        viewModel.withCrossfadeRefit(around: state.ids) {
-                            for (id, anchor) in state.anchors {
-                                // Children of ONE group: no wall at 0 (@see ZeroClamp).
-                                let newStart = anchor.start + dt
-                                viewModel.update(id: id) { item in
-                                    let d = newStart - item.startTime
-                                    item.startTime = newStart
-                                    if case .group(var children, let isExpanded) = item.kind, d != 0 {
-                                        EditViewModel.shiftStartTimes(&children, by: d)
-                                        item.kind = .group(children: children, isExpanded: isExpanded)
-                                    }
-                                }
-                                viewModel.updateLane(id: id, lane: max(0, anchor.lane + dl))
-                                if let obj = viewModel.find(id: id) { viewModel.syncPosition(obj) }
-                            }
-                        }
-                        for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
-                    }
-                }
-            } else if let group = groupDropTarget {
-                let gDL = groupDropEntry!.displayLane
-                viewModel.pushUndo()
-                viewModel.reparentToGroup(
-                    clipIDs: state.ids, groupID: group.id,
-                    anchors: state.anchors, grabbedID: state.grabbedID,
-                    grabbedChildLane: grabbedFinalAbsDL - gDL - 1, dt: dt)
-            } else if state.isAltCopy {
-                if state.timeSelectionAnchor == nil { viewModel.pushUndo() }
-                if let frags = state.altFragmentObjects {
+            if state.timeSelectionAnchor != nil {
+                // Translate: the final placement cut/paste style (display lanes, placeClip)
+                // — it changes lane, enters a group or leaves one freely.
+                if state.isAltCopy, let frags = state.altFragmentObjects {
                     // Translate-alt fragments: an absolute startTime, lane = the display lane
                     // → placement through placeClip (top-level OR the target expanded group).
                     viewModel.selectedIDs = viewModel.placeTranslatedFragments(frags, dt: dt, dl: dl)
-                } else {
-                    var copies: [SoundObject] = []
-                    for (id, anchor) in state.anchors {
-                        guard let obj = viewModel.find(id: id) else { continue }
-                        copies.append(viewModel.makeAltCopy(obj,
-                                                            startTime: anchor.start + dt,
-                                                            lane: max(0, anchor.lane + dActual)))
-                    }
-                    for obj in copies { viewModel.add(obj) }
-                    for obj in copies where { if case .clip = obj.kind { return true }; return false }() {
-                        viewModel.resolveOverlaps(for: obj.id)
-                    }
-                    viewModel.selectedIDs = Set(copies.map(\.id))
+                } else if !state.isAltCopy {
+                    viewModel.moveTranslatedItems(state.anchors, dt: dt, dl: dl)
                 }
-            } else if state.timeSelectionAnchor != nil {
-                // Translate: the final placement cut/paste style (display lanes, placeClip)
-                // — it changes lane, enters a group or leaves one freely.
-                viewModel.moveTranslatedItems(state.anchors, dt: dt, dl: dl)
             } else {
-                viewModel.pushUndo()
-                // The crossfades FOLLOW the objects that carry them (@see refitCrossfade).
-                viewModel.withCrossfadeRefit(around: state.ids) {
-                    for (id, anchor) in state.anchors {
-                        viewModel.updateStartTime(id: id, newStart: anchor.start + dt)
-                        viewModel.updateLane(id: id, lane: max(0, anchor.lane + dActual))
-                    }
-                }
-                for id in state.anchors.keys { viewModel.resolveOverlaps(for: id) }
+                // Clips and groups: WHERE they land (target group, lane of ITS frame, eject,
+                // cancel on the own subtree) is one pure rule, shared with the headless door
+                // `debug.move_drop` (@see EditViewModel.commitMoveDrop, MoveDropResolution).
+                viewModel.commitMoveDrop(ids: state.ids, anchors: state.anchors,
+                                         grabbedID: state.grabbedID,
+                                         grabbedDisplayLane: state.grabbedDisplayLane,
+                                         sourceGroupID: state.sourceGroupID,
+                                         isAltCopy: state.isAltCopy, dt: dt, dl: dl)
             }
             moveDrag = nil
         } else {

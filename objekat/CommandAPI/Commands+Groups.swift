@@ -132,5 +132,56 @@ extension CommandRegistry {
             return .object(["from_group": .string(group.id.uuidString),
                             "ejected": .int(ids.count)])
         }
+
+        #if DEBUG
+        register("debug.move_drop",
+                 summary: """
+                 DEBUG. The RELEASE of a move, with no mouse: the very function the drag handler \
+                 calls when the hand lets go (`EditViewModel.commitMoveDrop`), fed with the grabbed \
+                 object's CURRENT display row, a time travel `dt` (seconds, no snap) and a vertical \
+                 travel `dl` in DISPLAY rows — what `previewOffset` draws. `alt: true` = the ⌥ copy. \
+                 `ids` = the other moved objects (they must share the grabbed one's parent, as in \
+                 the gesture). Answers the decision taken: `cancel` (a drop onto the moved objects' \
+                 own subtree: nothing touched, no undo), `reparent` (+ `group`, `lane` of ITS frame), \
+                 `move_in_source` (+ `lane`), `eject` (+ `lane` of the root), `root` (+ `lane`), and \
+                 the `row` the release read. ONE undo point per call (none on `cancel`). Not present \
+                 in Release builds.
+                 """,
+                 params: [ParamSpec("id", "uuid", "The grabbed object."),
+                          ParamSpec("dl", "int", "Vertical travel, in DISPLAY rows."),
+                          ParamSpec("dt", "double", required: false, "Time travel in seconds (default 0)."),
+                          ParamSpec("ids", "array<uuid>", required: false,
+                                    "Other moved objects, same parent as `id`."),
+                          ParamSpec("alt", "bool", required: false, "⌥ copy instead of a move.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let grabbed = try p.uuid("id")
+            guard let entry = vm.laneEntries.first(where: { $0.item.id == grabbed }) else {
+                throw CommandError(code: .not_found,
+                                   message: "not on screen (folded ancestor?): \(grabbed.uuidString)")
+            }
+            let dl = try p.int("dl")
+            let dt = try p.double("dt", or: 0)
+            let sourceID = vm.parentGroup(for: grabbed)?.id
+            var ids: Set<UUID> = [grabbed]
+            if p.raw["ids"] != nil {
+                for other in try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm)
+                where vm.parentGroup(for: other)?.id == sourceID { ids.insert(other) }
+            }
+            let decision = vm.commitMoveDrop(
+                ids: ids, anchors: CommandAdapters.currentAnchors(ids, in: vm), grabbedID: grabbed,
+                grabbedDisplayLane: entry.displayLane, sourceGroupID: sourceID,
+                isAltCopy: try p.bool("alt", or: false), dt: dt, dl: dl)
+            var out: [String: JSONValue] = ["row": .int(entry.displayLane + dl)]
+            switch decision {
+            case .cancel:                       out["decision"] = .string("cancel")
+            case .moveInSource(let lane):       out["decision"] = .string("move_in_source"); out["lane"] = .int(lane)
+            case .reparent(let g, let lane):    out["decision"] = .string("reparent"); out["group"] = .string(g.uuidString); out["lane"] = .int(lane)
+            case .eject(let lane):              out["decision"] = .string("eject"); out["lane"] = .int(lane)
+            case .root(let lane):               out["decision"] = .string("root"); out["lane"] = .int(lane)
+            }
+            return .object(out)
+        }
+        #endif
     }
 }

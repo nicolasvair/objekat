@@ -1,26 +1,20 @@
 // Where a MOVE lands on release, for objects nested 2-3 groups deep — asserted with no screen.
 //
 // Point D of the 2026-10-02 Canvas feedback ("a clip dropped into group C, itself in B, itself in A,
-// overwrites as if it had been dropped on A"). This file copies, as PURE functions over a stand-in
-// tree, the three pieces of `TimelineView+DragHandler.swift` (phase == .ended of the move,
-// ~l.1325-1431) and of the model that decide it:
+// overwrites as if it had been dropped on A"). The decision is now ONE pure function,
+// `objekat/Shared/MoveDropResolution.swift`, which this file COMPILES ALONGSIDE (it is the real
+// code, not a copy):
 //
-//   - `buildLaneEntries` / `occupiedLanes` / `childLaneCount` / `expandedSpan` (EditViewModel.swift,
-//     SoundObject.swift) — the display rows;
-//   - `grabbedFinalAbsDL` — the row the release believes the hand is on;
-//   - `groupDropEntry` — the innermost open group holding that row, then the branch taken
-//     (reparent / eject / move inside the source group) and the MODEL lane written.
+//     swiftc -parse-as-library objekat/Shared/MoveDropResolution.swift \
+//            tools/test_nested_drop_target.swift -o /tmp/nesteddrop && /tmp/nesteddrop
 //
-// `current` is the code as it is at f24773db; `fixed` is the proposed correction (the row is the
-// grabbed ENTRY's display lane + dl, exactly what the preview draws; every display row is turned
-// back into a model lane of the frame that receives it). The preview is the reference: the hand
-// SEES the block at `entry.displayLane + dl` (`previewOffset`), so the release must land there.
+// What stays a copy here is the STAND-IN MODEL (`Node`, `buildLaneEntries`, `occupiedLanes` — the
+// display rows of `EditViewModel.buildLaneEntries` / `SoundObject.expandedSpan`) and `legacyRelease`,
+// the release as it was at f24773db (`TimelineView+DragHandler.swift` ~l.1325-1431), kept so that
+// the file still PINS THE DIAGNOSIS: each legacy case reproduces the fault, and each real case
+// lands where the preview drew the block (`previewOffset` = `entry.displayLane + dl`).
 //
-//     swiftc -parse-as-library test_nested_drop_target.swift -o /tmp/nesteddrop && /tmp/nesteddrop
-//
-// Exit 0 = every `fixed` case lands where the preview showed AND every `current` case reproduces
-// the diagnosed fault (so the file also pins the diagnosis; once the app is fixed, flip the
-// `current` expectations).
+// Exit 0 = every real case lands where the preview showed AND every legacy case reproduces the fault.
 
 import Foundation
 
@@ -32,6 +26,7 @@ func check(_ label: String, _ ok: Bool) {
 // MARK: - Stand-in model
 
 final class Node {
+    let id = UUID()
     let name: String
     var lane: Int
     var children: [Node]?          // nil = clip
@@ -126,8 +121,9 @@ func groupDrop(_ entries: [Entry], row: Int, moved: Node) -> Entry? {
     }.max { $0.displayLane < $1.displayLane }
 }
 
-/// A single object `grabbed`, dragged by `dl` DISPLAY rows (dt irrelevant here), no ⌥, no range.
-func release(roots: [Node], grabbed: Node, dl: Int, fixed: Bool) -> Outcome {
+/// The release AS IT WAS (f24773db): the row rebuilt from the grabbed object's MODEL lane, the lane
+/// handed to the reparent being a DISPLAY offset. Kept to pin the diagnosis.
+func legacyRelease(roots: [Node], grabbed: Node, dl: Int) -> Outcome {
     let entries = buildLaneEntries(roots, parent: nil, offset: 0)
     guard let me = entries.first(where: { $0.node === grabbed }) else { return .cancelled }
     let source = me.parent
@@ -135,9 +131,7 @@ func release(roots: [Node], grabbed: Node, dl: Int, fixed: Bool) -> Outcome {
 
     // ── grabbedFinalAbsDL ──
     let row: Int
-    if fixed {
-        row = me.displayLane + dl                                   // what previewOffset draws
-    } else if let sg = source, let sgDL = entries.first(where: { $0.node === sg })?.displayLane {
+    if let sg = source, let sgDL = entries.first(where: { $0.node === sg })?.displayLane {
         row = sgDL + 1 + anchorLane + dl                            // DragHandler l.1328
     } else {
         row = displayLane(forBase: anchorLane, roots: roots) + dl   // DragHandler l.1330
@@ -148,18 +142,10 @@ func release(roots: [Node], grabbed: Node, dl: Int, fixed: Bool) -> Outcome {
         e.node.showsChildrenInline && isSelfOrDescendant(e.node, of: grabbed)
             && (0..<e.node.childLaneCount).contains(row - e.displayLane - 1) }) { return .cancelled }
 
-    func childLane(in t: Entry) -> Int {
-        fixed ? baseLane(forDisplay: row, origin: t.displayLane + 1, siblings: t.node.children!)
-              : row - t.displayLane - 1                             // grabbedFinalAbsDL - gDL - 1
-    }
+    func childLane(in t: Entry) -> Int { row - t.displayLane - 1 }  // grabbedFinalAbsDL - gDL - 1
 
     if let sg = source {
         if let t = target, t.node !== sg { return .reparent(into: t.node.name, lane: childLane(in: t)) }
-        let sgEntry = entries.first { $0.node === sg }!
-        if fixed {
-            if let t = target, t.node === sg { return .moveInSource(lane: childLane(in: t)) }
-            return .eject(topLane: baseLane(forDisplay: max(0, row), origin: 0, siblings: roots))
-        }
         let newRelLane = anchorLane + dl                            // l.1373: model lane + DISPLAY delta
         if target == nil, newRelLane < 0 || newRelLane >= sg.childLaneCount {
             // l.1404: the lane of whatever entry sits on that row, else the root conversion
@@ -167,11 +153,38 @@ func release(roots: [Node], grabbed: Node, dl: Int, fixed: Bool) -> Outcome {
                 ?? baseLane(forDisplay: max(0, row), origin: 0, siblings: roots)
             return .eject(topLane: base)
         }
-        _ = sgEntry
         return .moveInSource(lane: max(0, anchorLane + dl))         // l.1425
     }
     if let t = target { return .reparent(into: t.node.name, lane: childLane(in: t)) }
     return .topMove(lane: baseLane(forDisplay: max(0, row), origin: 0, siblings: roots))
+}
+
+/// The release as it is NOW: the stand-in tree flattened into what `MoveDropResolution` takes,
+/// exactly as `EditViewModel.commitMoveDrop` flattens the real one.
+func release(roots: [Node], grabbed: Node, dl: Int, alt: Bool = false) -> Outcome {
+    let entries = buildLaneEntries(roots, parent: nil, offset: 0)
+    guard let me = entries.first(where: { $0.node === grabbed }) else { return .cancelled }
+    let source = me.parent
+    func lanes(_ ns: [Node]) -> [MoveDropResolution.Lane] {
+        ns.map { MoveDropResolution.Lane(lane: $0.lane, span: $0.expandedSpan) }
+    }
+    let groups = entries.filter { $0.node.showsChildrenInline }.map { e in
+        MoveDropResolution.OpenGroup(id: e.node.id, displayLane: e.displayLane,
+                                     childLaneCount: e.node.childLaneCount,
+                                     isMoved: isSelfOrDescendant(e.node, of: grabbed),
+                                     children: lanes(e.node.children!))
+    }
+    func name(_ id: UUID) -> String { entries.first { $0.node.id == id }!.node.name }
+    switch MoveDropResolution.resolve(
+        row: MoveDropResolution.finalRow(grabbedDisplayLane: me.displayLane, dl: dl),
+        sourceGroupID: source?.id, allowsGroupTarget: !alt || source != nil,
+        openGroups: groups, rootSiblings: lanes(roots)) {
+    case .cancel:                    return .cancelled
+    case .moveInSource(let l):       return .moveInSource(lane: l)
+    case .reparent(let g, let l):    return .reparent(into: name(g), lane: l)
+    case .eject(let l):              return .eject(topLane: l)
+    case .root(let l):               return .topMove(lane: l)
+    }
 }
 
 // MARK: - The scene (the one reported: A ⊃ B ⊃ C, all open)
@@ -228,10 +241,10 @@ enum NestedDropTargetTest {
         ("X (in A) → B's drop row", s.X, -1, .reparent(into: "B", lane: 2), .moveInSource(lane: 0)),
     ]
     for (label, g, dl, want, now) in cases {
-        let f = release(roots: s.roots, grabbed: g, dl: dl, fixed: true)
-        let c = release(roots: s.roots, grabbed: g, dl: dl, fixed: false)
-        check("FIXED   \(label): \(f) (preview: \(want))", f == want)
-        check("CURRENT \(label): \(c) (diagnosed: \(now))", c == now)
+        let f = release(roots: s.roots, grabbed: g, dl: dl)
+        let c = legacyRelease(roots: s.roots, grabbed: g, dl: dl)
+        check("REAL    \(label): \(f) (preview: \(want))", f == want)
+        check("LEGACY  \(label): \(c) (diagnosed: \(now))", c == now)
     }
 
     // A GROUP behaves the same as a clip when it sits below an open sibling: the fault is the
@@ -239,17 +252,47 @@ enum NestedDropTargetTest {
     let s2 = scene()
     let G = Node("G", lane: 2, children: [Node("g1", lane: 0)], expanded: false)
     s2.A.children!.append(G)                                     // row 8 (A's drop row moves to 9)
-    let fG = release(roots: s2.roots, grabbed: G, dl: -4, fixed: true)
-    let cG = release(roots: s2.roots, grabbed: G, dl: -4, fixed: false)
-    check("FIXED   G (closed group in A, below open B) → C's drop row: \(fG)", fG == .reparent(into: "C", lane: 1))
-    check("CURRENT G (closed group, same gesture): \(cG) — same fault as a clip", cG == .eject(topLane: 0))
+    let fG = release(roots: s2.roots, grabbed: G, dl: -4)
+    let cG = legacyRelease(roots: s2.roots, grabbed: G, dl: -4)
+    check("REAL    G (closed group in A, below open B) → C's drop row: \(fG)", fG == .reparent(into: "C", lane: 1))
+    check("LEGACY  G (closed group, same gesture): \(cG) — same fault as a clip", cG == .eject(topLane: 0))
     // …while a group ABOVE everything open (or at the root) is untouched, which is probably why
     // "a group dragged into C looks fine".
     let s3 = scene()
     let H = Node("H", lane: 2, children: [Node("h1", lane: 0)], expanded: false)
     let roots3 = s3.roots + [H]                                  // root lane 2, row 10
-    let cH = release(roots: roots3, grabbed: H, dl: -6, fixed: false)
-    check("CURRENT H (ROOT closed group) → C's drop row: \(cH) — fine", cH == .reparent(into: "C", lane: 1))
+    let cH = legacyRelease(roots: roots3, grabbed: H, dl: -6)
+    let fH = release(roots: roots3, grabbed: H, dl: -6)
+    check("LEGACY  H (ROOT closed group) → C's drop row: \(cH) — fine", cH == .reparent(into: "C", lane: 1))
+    check("REAL    H (ROOT closed group) → C's drop row: \(fH) — unchanged", fH == .reparent(into: "C", lane: 1))
+
+    // Letting go WITHOUT moving (dl = 0) must always give the object its own lane back, in its own
+    // frame, whatever lies above it — the identity the old reconstruction broke for deep children.
+    let s4 = scene()
+    for n in [s4.A, s4.B, s4.C, s4.X, s4.Y, s4.Z, s4.T] {
+        let o = release(roots: s4.roots, grabbed: n, dl: 0)
+        let isRoot = s4.roots.contains { $0 === n }
+        let ok: Bool
+        switch o {
+        case .topMove(let l) where isRoot:     ok = l == n.lane
+        case .moveInSource(let l):             ok = l == n.lane
+        default:                               ok = false
+        }
+        check("REAL    dl = 0 keeps \(n.name) on its lane \(n.lane): \(o)", ok)
+    }
+
+    // Dropped onto its OWN subtree: cancelled (a group cannot enter itself).
+    let s5 = scene()
+    let own = release(roots: s5.roots, grabbed: s5.A, dl: 3)       // root A three rows down = Z's row, inside A
+    check("REAL    root A dropped inside its own band (onto Z's row): \(own)", own == .cancelled)
+
+    // ⌥ copy from the ROOT never enters a group (it lands on the root only), from inside it may.
+    let s6 = scene()
+    let altRoot = release(roots: s6.roots, grabbed: s6.T, dl: -5, alt: true)   // C's drop row
+    check("REAL    ⌥ copy of a ROOT object over C's drop row stays at the root: \(altRoot)",
+          altRoot == .topMove(lane: 0) || { if case .topMove = altRoot { return true }; return false }())
+    let altChild = release(roots: s6.roots, grabbed: s6.X, dl: -3, alt: true)
+    check("REAL    ⌥ copy of a child of A enters C: \(altChild)", altChild == .reparent(into: "C", lane: 1))
 
     print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
     exit(fails == 0 ? 0 : 1)

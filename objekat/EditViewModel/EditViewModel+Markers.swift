@@ -361,7 +361,9 @@ extension EditViewModel {
     /// comment is created where the eye is and nowhere else.
     func commentAnchor(forDisplayLane displayLane: Int) -> (parent: UUID?, lane: Int) {
         if let e = containerGroupEntry(forDisplayLanes: [displayLane]) {
-            return (e.item.id, max(0, displayLane - (e.displayLane + 1)))
+            // A row of the group's frame, not a raw offset: open sub-groups, piano rolls and
+            // automation bands above it in the group push the rows down (@see MoveDropResolution).
+            return (e.item.id, baseLaneForDisplay(displayLane, inParent: e.item.id))
         }
         return (nil, baseLaneForDisplay(displayLane))
     }
