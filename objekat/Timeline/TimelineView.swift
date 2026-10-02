@@ -1234,10 +1234,6 @@ struct TimelineView: View {
             }
         }
         .onChange(of: selectionCursor) { currentSelectionCursor = $0 }
-        // A crossfade drag rewrites `items` on every frame: the sound list holds its rows for the
-        // gesture's duration and catches up on release (@see soundListRowsForDisplay). Driven from
-        // the drag state itself, so every way a drag ends — release, cancel — lets the list go.
-        .onChange(of: crossfadeDrag != nil) { _, live in viewModel.soundListHeld = live }
         // D2's catch-all: ANY door that writes `blockHeight` raw is re-clamped here.
         .onChange(of: viewModel.blockHeight) { enforceVerticalZoomBounds() }
         // A marker row shown or hidden moves the header, hence `availableLaneHeight` — D3's ratio
@@ -3966,7 +3962,11 @@ struct TimelineView: View {
     private var crossfadeDragHUD: some View {
         if let cd = crossfadeDrag {
             let curve = cd.curves().left
-            let width = viewModel.crossfadeZone(leftID: cd.leftID, rightID: cd.rightID)?.width ?? 0
+            // The zone as the gesture's copies hold it once they exist (the model holds it as the
+            // hand found it); a zone the copies have shut says 0, as the model's did.
+            let width = cd.shadow != nil
+                ? (cd.shadowWidth ?? 0)
+                : (viewModel.crossfadeZone(leftID: cd.leftID, rightID: cd.rightID)?.width ?? 0)
             HStack(spacing: 7) {
                 Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     .font(.system(size: 10, weight: .semibold))

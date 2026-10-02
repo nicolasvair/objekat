@@ -1570,6 +1570,7 @@ extension TimelineView {
     /// what keeps the overlay's Canvas from being redrawn for nothing.
     var objectMarkerPreviews: [UUID: ObjectMarkersOverlay.Preview] {
         guard moveDrag != nil || trimDrag != nil || resizeDrag != nil || fadeDrag != nil
+                || crossfadeDrag?.shadow != nil
         else { return [:] }
         var out: [UUID: ObjectMarkersOverlay.Preview] = [:]
         for e in viewModel.laneEntries where !e.item.markers.isEmpty {
@@ -1631,7 +1632,19 @@ extension TimelineView {
         }
     }
 
+    /// The object as a CROSSFADE drag is leaving it — its private copy, which the model does not
+    /// hold until the release (@see CrossfadeShadow). `nil` when no such gesture runs, or when this
+    /// object is not one of the ones it touches. Every preview helper below asks this first: the
+    /// copy's window, fades and shapes ARE what the block must draw, through the same
+    /// `BlockPreviewGeometry` a trim or a fade pull goes through.
+    func crossfadeShadowObject(_ id: UUID) -> SoundObject? {
+        crossfadeDrag?.shadow?.objects[id]
+    }
+
     func previewResizeDX(for object: SoundObject) -> Double {
+        if let s = crossfadeShadowObject(object.id) {
+            return ((s.startTime + s.duration) - (object.startTime + object.duration)) * pixelsPerSecond
+        }
         if let rd = resizeDrag, rd.ids.contains(object.id) { return rd.dDur * pixelsPerSecond }
         // A spill: the pair's geometry commands both edges (@see spillPlan). The left object ends
         // where the zone ends; the right one's right edge does not move at all.
@@ -1658,6 +1671,9 @@ extension TimelineView {
     /// release. Very visible when the edge comes up against t = 0, where it stops against the
     /// timeline's origin — the small jump then has nothing moving to be confused with.
     func previewTrimDX(for object: SoundObject) -> Double {
+        if let s = crossfadeShadowObject(object.id) {
+            return ((s.startTime - object.startTime) * pixelsPerSecond).rounded()
+        }
         if let td = trimDrag, td.ids.contains(object.id) {
             return (td.dStart * pixelsPerSecond).rounded()
         }
@@ -1674,6 +1690,7 @@ extension TimelineView {
     }
 
     func previewFadeIn(for object: SoundObject) -> Double? {
+        if let s = crossfadeShadowObject(object.id) { return s.fadeIn }
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : sp.plan.width }
         if let w = reshapedCrossfadeFade(for: object.id, side: .in) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
@@ -1681,6 +1698,7 @@ extension TimelineView {
     }
 
     func previewFadeOut(for object: SoundObject) -> Double? {
+        if let s = crossfadeShadowObject(object.id) { return s.fadeOut }
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? sp.plan.width : nil }
         if let w = reshapedCrossfadeFade(for: object.id, side: .out) { return w }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
@@ -1690,12 +1708,14 @@ extension TimelineView {
     /// The SHAPE under way, so the block draws what one is about to get — including the return to
     /// straight when the hand comes back inside the row.
     func previewFadeCurveIn(for object: SoundObject) -> FadeCurve? {
+        if let s = crossfadeShadowObject(object.id) { return s.fadeInCurve }
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : spillCurve(isLeft: false) }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .in else { return nil }
         return fd.curve(for: object.id)
     }
 
     func previewFadeCurveOut(for object: SoundObject) -> FadeCurve? {
+        if let s = crossfadeShadowObject(object.id) { return s.fadeOutCurve }
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? spillCurve(isLeft: true) : nil }
         guard let fd = fadeDrag, fd.ids.contains(object.id), fd.side == .out else { return nil }
         return fd.curve(for: object.id)
@@ -1715,6 +1735,9 @@ extension TimelineView {
     /// block is asked, which is what keeps a scroll's frame free of it.
     var hasPreviewGesture: Bool {
         if let md = moveDrag, !md.isAltCopy { return true }
+        // A crossfade drag previews its objects from the gesture's copies, once it has asked for
+        // something (before that nothing differs from the model).
+        if crossfadeDrag?.shadow != nil { return true }
         return resizeDrag != nil || trimDrag != nil || fadeDrag != nil || loopRangeDrag != nil
     }
 

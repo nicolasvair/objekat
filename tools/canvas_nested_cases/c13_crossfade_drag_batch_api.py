@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""c13 — a crossfade DRAG lays its frame down in ONE batch (point A of the 2026-10-02 feedback: "it lags
-WHILE I drag a crossfade").
+"""c13 — a crossfade DRAG writes NOTHING while the hand is down, and ONE model write on release (point A
+of the 2026-10-02 feedback: "it lags WHILE I drag a crossfade").
 
 `debug.crossfade_drag` (DEBUG build only) calls the very per-frame function the gesture calls
-(`EditViewModel.driveCrossfadeFrame`) with a list of travels, and answers what it cost in OPERATIONS
-(`items_writes`, `lane_entries_rebuilds`, both O(N) per rebuild) — a count, not a clock. `batched: false`
-is the way it was laid before the fix: one write at a time, one `rebuildLaneEntries` each.
+(`EditViewModel.driveCrossfadeFrame`) with a list of travels, then the release
+(`EditViewModel.commitCrossfadeDrag`), and answers what it cost in OPERATIONS (`items_writes`,
+`lane_entries_rebuilds`, both O(N) per rebuild) — a count, not a clock. `legacy: true` lays the frames on
+the MODEL one frame at a time the way the gesture did before the copies (`batched: false` = one write at a
+time), which is the reference the copies must reproduce.
 
 Part 1 — equivalence on random layouts: for N seeded scenes (several lanes, chains of crossfaded clips,
 random widths, random part / crop band / bend / ⌥ / travels including past the shut seam and past the
-other side), the model after the UNBATCHED drag and after the BATCHED one are byte for byte the same
-(`project.get_state` items, and `crossfade.list`), and one `edit.undo` gives the start back, each time.
+other side), the model after the LEGACY drag and after the COPIES' drag are byte for byte the same
+(`project.get_state` items, and `crossfade.list`); the copies' drag writes `items` 0 times before the
+release and exactly ONE point of undo in all (the legacy's one too), and one `edit.undo` gives the start
+back, each time.
 
-Part 2 — cost on a big scene (fillers on other lanes), with 1, 3 and every zone following: rebuilds per
-frame must be 1 whatever the number of zones, and the writes per frame, the rebuilds and the
-milliseconds are printed before (unbatched) / after (batched).
+Part 2 — cost on a big scene (fillers on other lanes), with 1, 3 and every zone following: the writes and
+the rebuilds per frame of the drag are printed legacy (batched) / copies; the copies' must be 0.
 
 Usage: c13_...py [socket]
 """
@@ -92,27 +95,35 @@ for seed in range(N_SCENES):
         if not zs: break
         prm = random_drag(rnd, zs)
         before = state()
-        ru = c.send("debug.crossfade_drag", dict(prm, batched=False))
+        ru = c.send("debug.crossfade_drag", dict(prm, legacy=True, batched=False))
         su, zu = state(), json.dumps(zones(), sort_keys=True)
         if ru["undo_pushes"]: c.send("edit.undo"); s.settle(c, 60)
         undone = state()
-        rb = c.send("debug.crossfade_drag", dict(prm, batched=True))
+        rb = c.send("debug.crossfade_drag", prm)
         sb, zb = state(), json.dumps(zones(), sort_keys=True)
         if rb["undo_pushes"]: c.send("edit.undo"); s.settle(c, 60)
         undone_b = state()
         label = "seed %d drag %d (%s, %d zone(s), %d frames%s)" % (
             seed, rep, prm["part"], len(prm["lefts"]), len(prm["dx"]),
             ", crop band" if prm["via_edge_band"] else "")
-        check(label + ": batched == unbatched, octet for octet (model)", su == sb,
+        check(label + ": copies == legacy, octet for octet (model)", su == sb,
               "differs" if su != sb else "")
         check(label + ": same crossfades afterwards", zu == zb)
         check(label + ": ONE undo each (%s / %s points) restores the start" % (ru["undo_pushes"], rb["undo_pushes"]),
               ru["undo_pushes"] == rb["undo_pushes"] and ru["undo_pushes"] in (0, 1)
               and undone == before and undone_b == before)
-        check(label + ": batched costs 1 rebuild per frame at most (%s)" % rb["rebuilds_per_frame"],
-              rb["rebuilds_per_frame"] <= 1.0 + 1e-9, rb)
-        # leave the scene changed for the next drag of the same scene (re-run batched, keep it)
-        c.send("debug.crossfade_drag", dict(prm, batched=True)); s.settle(c, 60)
+        check(label + ": the copies write NOTHING before the release (%s writes, %s rebuilds, %s undo)" % (
+              rb["drag_items_writes"], rb["drag_lane_entries_rebuilds"], rb["drag_undo_pushes"]),
+              rb["drag_items_writes"] == 0 and rb["drag_lane_entries_rebuilds"] == 0
+              and rb["drag_undo_pushes"] == 0, rb)
+        # the release is ONE batch: one rebuild of the lane entries and one undo point, whatever the number
+        # of objects it touches (each touched object is one element write INSIDE the batch)
+        check(label + ": the release is ONE batch (%s element writes, %s rebuild)" % (
+              rb["commit_items_writes"], rb["lane_entries_rebuilds"]),
+              rb["lane_entries_rebuilds"] == (1 if rb["did_change"] else 0)
+              and (rb["commit_items_writes"] > 0) == bool(rb["did_change"]), rb)
+        # leave the scene changed for the next drag of the same scene (re-run, keep it)
+        c.send("debug.crossfade_drag", prm); s.settle(c, 60)
 
 # ---------------------------------------------------------------- part 2: cost on a big scene
 def big_scene(fillers_lanes=30, per_lane=14):
@@ -132,21 +143,21 @@ n_objs = c.send("perf.census")["objects_total"]
 zs = sorted(zones(), key=lambda z: (z["lane"], z["start"]))
 print("big scene: %d objects, %d zones" % (n_objs, len(zs)))
 FR = [0.01 * i for i in range(1, 21)]          # 20 frames, 0 .. 0.2 s of travel
-print("%-8s %-10s %12s %14s %12s %12s" % ("zones", "laying", "writes/frame", "rebuilds/frame", "ms/frame", "undo points"))
+print("%-8s %-12s %12s %14s %12s %12s %12s" % ("zones", "laying", "writes/frame", "rebuilds/frame", "ms/frame", "commit ms", "undo points"))
 rows = {}
 for k in (1, 3, len(zs)):
     group = zs[:k]
-    for batched in (False, True):
+    for legacy in (True, False):
         r = c.send("debug.crossfade_drag", {"lefts": [z["left"] for z in group], "rights": [z["right"] for z in group],
-                                            "part": "move", "dx": FR, "batched": batched})
+                                            "part": "move", "dx": FR, "legacy": legacy, "batched": True})
         c.send("edit.undo"); s.settle(c, 60)
-        rows[(k, batched)] = r
-        print("%-8d %-10s %12.1f %14.2f %12.2f %12d" % (k, "batched" if batched else "one by one",
-              r["writes_per_frame"], r["rebuilds_per_frame"], r["ms_per_frame"], r["undo_pushes"]))
-    check("%d zone(s): batched is 1 rebuild per frame, whatever the zone count" % k,
-          abs(rows[(k, True)]["rebuilds_per_frame"] - 1.0) < 1e-9, rows[(k, True)])
-    check("%d zone(s): rebuilds per frame divided (%.1f -> %.1f)" % (k, rows[(k, False)]["rebuilds_per_frame"], rows[(k, True)]["rebuilds_per_frame"]),
-          rows[(k, True)]["rebuilds_per_frame"] < rows[(k, False)]["rebuilds_per_frame"])
+        rows[(k, legacy)] = r
+        print("%-8d %-12s %12.1f %14.2f %12.2f %12.2f %12d" % (k, "model(batch)" if legacy else "copies",
+              r["writes_per_frame"], r["rebuilds_per_frame"], r["ms_per_frame"], r["commit_ms"], r["undo_pushes"]))
+    check("%d zone(s): the copies write nothing during the drag" % k,
+          rows[(k, False)]["writes_per_frame"] == 0 and rows[(k, False)]["rebuilds_per_frame"] == 0, rows[(k, False)])
+    check("%d zone(s): writes per frame fell (%.1f -> %.1f)" % (k, rows[(k, True)]["writes_per_frame"], rows[(k, False)]["writes_per_frame"]),
+          rows[(k, False)]["writes_per_frame"] < rows[(k, True)]["writes_per_frame"])
 
 print("ALL PASS" if not fails else "FAILED: %s" % fails)
 sys.exit(1 if fails else 0)

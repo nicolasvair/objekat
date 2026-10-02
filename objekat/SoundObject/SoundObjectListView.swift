@@ -40,7 +40,7 @@ struct SoundObjectListView: View {
         // is missing. Relink the last missing file with the filter on and one would be left
         // staring at an empty list with no switch to turn off — so the filter answers to the
         // badge's own condition rather than to the flag alone.
-        let all = viewModel.soundListRowsForDisplay()
+        let all = viewModel.soundListRows
         guard showOnlyMissing, viewModel.missingFileCount > 0 else { return all }
         return all.filter { viewModel.subtreeHasMissingFile($0.object) }
     }

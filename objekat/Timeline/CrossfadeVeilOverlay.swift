@@ -128,6 +128,9 @@ extension TimelineView {
                                     laneStep: laneStep, count: Int.max)
         let zones = displayedCrossfadeZones(lanes: rows, from: cols.x0 / pps, to: cols.x1 / pps)
         let sel = viewModel.selectedCrossfade
+        // A crossfade drag draws the curves of ITS copies (the model holds the objects as they were
+        // when the hand came down).
+        let shadow = crossfadeDrag?.shadow
         var drawings: [CrossfadeVeilDrawing] = []
         for z in zones {
             let w = (z.end - z.start) * pixelsPerSecond
@@ -138,8 +141,8 @@ extension TimelineView {
                   LaneCulling.meets(top: y, height: blockHeight, y0: win.y0, y1: win.y1) else { continue }
             drawings.append(CrossfadeVeilDrawing(
                 x: x, y: y, width: w, height: blockHeight,
-                outCurve: viewModel.find(id: z.leftID)?.fadeOutCurve ?? .linear,
-                inCurve:  viewModel.find(id: z.rightID)?.fadeInCurve ?? .linear,
+                outCurve: (shadow?.objects[z.leftID] ?? viewModel.find(id: z.leftID))?.fadeOutCurve ?? .linear,
+                inCurve:  (shadow?.objects[z.rightID] ?? viewModel.find(id: z.rightID))?.fadeInCurve ?? .linear,
                 isSelected: sel?.left == z.leftID && sel?.right == z.rightID))
         }
         // The zone a fade being pulled onto its neighbour is ABOUT to open. Without it the gesture
@@ -172,6 +175,11 @@ extension TimelineView {
         let model = viewModel.visibleCrossfadeZones(inLanes: lanes, from: t0, to: t1).map {
             (leftID: $0.leftID, rightID: $0.rightID, start: $0.start, end: $0.end, lane: $0.lane)
         }
+        // A crossfade drag shows the zones as ITS copies leave them — the model has not been
+        // written, and holds the zone as the hand found it.
+        if let cd = crossfadeDrag, let shadow = cd.shadow {
+            return shadowedCrossfadeZones(model: model, shadow: shadow, tracks: cd.tracks)
+        }
         guard let ids = reshapingDragIDs else { return model }
         let pairs = viewModel.crossfadePairs(around: ids)
         guard !pairs.isEmpty else { return model }
@@ -185,6 +193,42 @@ extension TimelineView {
                                                     placement: dragPlacement) {
                 shown.append(z)
             }
+        }
+        return shown
+    }
+
+    /// The crossfade two objects form AS A CROSSFADE DRAG IS LEAVING THEM — its copies, and the
+    /// model's own objects for whichever of the two it does not touch — in canvas coordinates.
+    /// `nil` when they no longer form one (the zone shut under the hand): what the release will
+    /// write is exactly what `isCrossfadePair` says of these two.
+    func shadowedCrossfadeZone(_ a: UUID, _ b: UUID, shadow: CrossfadeShadow)
+        -> (leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)? {
+        guard let x = shadow.objects[a] ?? viewModel.find(id: a),
+              let y = shadow.objects[b] ?? viewModel.find(id: b),
+              viewModel.isCrossfadePair(x, y) else { return nil }
+        let (l, r) = x.startTime <= y.startTime ? (x, y) : (y, x)
+        // The copies speak in the container's time; the canvas in absolute time — one offset, read
+        // off the row the object is drawn on (the same conversion the spill's ghost makes).
+        guard let e = viewModel.laneEntry(forID: l.id) else { return nil }
+        let offset = e.absStart - e.item.startTime
+        return (l.id, r.id, r.startTime + offset, l.startTime + l.duration + offset, e.displayLane)
+    }
+
+    /// The zones on screen while a crossfade drag is running: the model's, except the ones that
+    /// touch an object of the gesture, which are read off the gesture's copies instead — the pairs
+    /// the model holds around those objects (the zone as the hand found it, and its neighbours) and
+    /// the pairs the gesture itself is driving.
+    private func shadowedCrossfadeZones(
+        model: [(leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)],
+        shadow: CrossfadeShadow, tracks: [CrossfadePairTrack])
+        -> [(leftID: UUID, rightID: UUID, start: Double, end: Double, lane: Int)] {
+        let ids = Set(shadow.order)
+        var shown = model.filter { !ids.contains($0.leftID) && !ids.contains($0.rightID) }
+        var candidates = viewModel.crossfadePairs(around: ids).map { ($0.left, $0.right) }
+        for t in tracks { candidates.append((t.leftID, t.rightID)) }
+        var seen = Set<Set<UUID>>()
+        for (l, r) in candidates where seen.insert([l, r]).inserted {
+            if let z = shadowedCrossfadeZone(l, r, shadow: shadow) { shown.append(z) }
         }
         return shown
     }
@@ -381,16 +425,18 @@ extension TimelineView {
         // The partners come from a cache built once per change of the model (@see
         // crossfadePartners): this runs for every block on every frame.
         let partners = viewModel.crossfadePartners(of: item.id)
-        if let n = partners?.left,
-           let z = viewModel.projectedCrossfade(leftID: n, rightID: item.id,
-                                                placement: dragPlacement) {
-            lead = (z.end - z.start) * pixelsPerSecond
+        // A crossfade drag holds its objects in copies: a zone one of them belongs to is read off
+        // those (@see shadowedCrossfadeZone), the others as before.
+        let shadow = crossfadeDrag?.shadow
+        func zoneWidthPx(_ l: UUID, _ r: UUID) -> Double? {
+            if let shadow, shadow.objects[l] != nil || shadow.objects[r] != nil {
+                return shadowedCrossfadeZone(l, r, shadow: shadow).map { ($0.end - $0.start) * pixelsPerSecond }
+            }
+            return viewModel.projectedCrossfade(leftID: l, rightID: r, placement: dragPlacement)
+                .map { ($0.end - $0.start) * pixelsPerSecond }
         }
-        if let n = partners?.right,
-           let z = viewModel.projectedCrossfade(leftID: item.id, rightID: n,
-                                                placement: dragPlacement) {
-            trail = (z.end - z.start) * pixelsPerSecond
-        }
+        if let n = partners?.left, let w = zoneWidthPx(n, item.id) { lead = w }
+        if let n = partners?.right, let w = zoneWidthPx(item.id, n) { trail = w }
         // A spill under way: the zone it is about to lay down wins over the one the model still
         // holds, on that side only — the other end may carry a crossfade of its own.
         if let sp = spillPlan(for: item.id) {

@@ -46,10 +46,15 @@ import AppKit
 // is being held. One continuous gesture from "a crossfade this wide" to "no crossfade, a fade this
 // long" — which is the same road the fade took to become a crossfade, walked backwards.
 //
-// The model is applied LIVE rather than previewed. A crossfade IS geometry — the two windows and
-// their fades — so moving it redraws the blocks by itself, with no preview layer to write and,
-// more to the point, no second definition of the zone that could disagree with the first. Undo is
-// pushed ONCE at the start of the gesture, so the whole drag is one step.
+// The model is NOT written while the hand is down. The frame is worked out on a private copy of the
+// objects the gesture touches (`CrossfadeShadow`, @see EditViewModel+CrossfadeFrame) — by the very
+// arithmetic the model would run — and the timeline draws that copy through the preview path every
+// other edge gesture uses (`BlockPreviewGeometry`: a trim, a resize, the two fades and their shapes
+// per object, and the zone's X from the copies' geometry). It used to be applied live, on the
+// ground that a crossfade IS geometry and moving it redraws the blocks by itself; the price was six
+// writes of `items` per frame, each rebuilding the lane entries and invalidating the whole Canvas —
+// the lag read on screen on 2 October 2026. On release: ONE undo point, pushed before the first
+// write, and ONE write of the model (@see EditViewModel.commitCrossfadeDrag).
 //
 // Every frame recomputes the target from the zone frozen at the gesture's start plus the TOTAL
 // translation, never from the zone as it now stands: the model clamps, and feeding a clamped
@@ -136,6 +141,15 @@ struct CrossfadeDragState {
     /// zone does not push an undo step for a gesture that changed nothing.
     var didChange = false
 
+    /// The objects as the frames have left them (taken from the model on the first frame that asks
+    /// for something). The model holds the objects as the hand found them until the release; the
+    /// timeline draws THESE, through the preview path (@see EditViewModel+CrossfadeFrame).
+    var shadow: CrossfadeShadow? = nil
+
+    /// What a snap reads, frozen when the hand comes down: the model does not move under the
+    /// gesture, so the marks it can land on cannot either.
+    var snap: EditViewModel.SnapFrame? = nil
+
     // The zone under the hand is what the HUD, the cursor and the first frame read.
     var grabbed: CrossfadePairTrack { tracks[grabbedIndex] }
     var leftID:  UUID { grabbed.leftID }
@@ -144,6 +158,10 @@ struct CrossfadeDragState {
     var anchorEnd:   Double { grabbed.anchorEnd }
     var spilloverFade: Double { grabbed.spilloverFade }
     var atCeiling: Bool { grabbed.atCeiling }
+
+    /// The zone under the hand, AS THE GESTURE HAS LEFT IT — what the HUD says the width of. nil
+    /// until a frame has asked for something (the model's zone is then still the right answer).
+    var shadowWidth: Double? { shadow?.zone(leftID, rightID)?.width }
 
     var bendDelta: Double { -overshootY / max(1, bendTravelPx) }
 
@@ -311,7 +329,9 @@ extension TimelineView {
     /// inward one — the SAME two questions a block's trim and resize handles ask, and deliberately
     /// the same answers. `trimming` = it is that object's LEFT edge.
     func objectEdgeCursor(_ id: UUID, trimming: Bool) -> NSCursor {
-        guard let o = viewModel.find(id: id) else { return NSCursor.resizeLeftRight }
+        // A crossfade drag holds its objects in copies: the arrows follow THEM.
+        guard let o = crossfadeDrag?.shadow?.objects[id] ?? viewModel.find(id: id)
+        else { return NSCursor.resizeLeftRight }
         let canShrink = o.duration > 0.01 + edgeEpsilon
         return trimming
             ? TimelineCursors.edge(open: true,
@@ -373,10 +393,14 @@ extension TimelineView {
         // is what gives ⌫ something to delete. The two objects leave the selection — a crossfade
         // is not them, it is what they share.
         if hit.part == .move { viewModel.selectCrossfade(left: z.leftID, right: z.rightID) }
-        crossfadeDrag = CrossfadeDragState(
+        var state = CrossfadeDragState(
             tracks: tracks, grabbedIndex: grabbedIndex, part: hit.part,
             viaEdgeBand: hit.viaEdgeBand,
             lane: Int((p.y - rulerHeight) / laneStep))
+        // The pairs are EXCLUDED from the snap targets (@see handleCrossfadeDrag), and the targets
+        // are read ONCE: nothing under the hand writes the model, so they cannot change.
+        state.snap = viewModel.snapFrame(excluding: Set(tracks.flatMap { [$0.leftID, $0.rightID] }))
+        crossfadeDrag = state
         return true
     }
 
@@ -430,14 +454,16 @@ extension TimelineView {
         // the travelling edge snap onto the very edge it is moving away from — the zone sticking
         // shut, or leaping to the neighbour's far end. All the zones that move, not only the one
         // under the hand.
-        let excl = Set(state.tracks.flatMap { [$0.leftID, $0.rightID] })
+        let snap = state.snap ?? viewModel.snapFrame(
+            excluding: Set(state.tracks.flatMap { [$0.leftID, $0.rightID] }))
+        state.snap = snap
         let g = state.grabbed
         let shift: Double
         switch state.part {
         case .move, .sideStart:
-            shift = viewModel.snapTime(g.anchorStart + dx, excluding: excl) - g.anchorStart
+            shift = viewModel.snapTime(g.anchorStart + dx, in: snap) - g.anchorStart
         case .sideEnd:
-            shift = viewModel.snapTime(g.anchorEnd + dx, excluding: excl) - g.anchorEnd
+            shift = viewModel.snapTime(g.anchorEnd + dx, in: snap) - g.anchorEnd
         case .both:
             // Symmetric about the centre the zone had when the hand came down, so widening and
             // narrowing are the same travel seen from either side of it.
@@ -451,9 +477,8 @@ extension TimelineView {
             shift = dx
         }
 
-        // One frame, every zone: worked out first, laid down in ONE batch of model writes (one
-        // rebuild of the lane entries per frame, whatever the number of zones) — the undo point is
-        // pushed on the first frame that asks for anything (@see EditViewModel.driveCrossfadeFrame).
+        // One frame, every zone: worked out first, then laid down on the gesture's copies of the
+        // objects — the model is not written (@see EditViewModel.driveCrossfadeFrame).
         viewModel.driveCrossfadeFrame(&state, shift: shift)
 
         // The arrows follow the drag, as they do on a block's own edge: once the button is down the
@@ -467,8 +492,8 @@ extension TimelineView {
 
         if phase == .ended {
             // A gesture that asked for nothing leaves no trace, not even an empty undo step.
-            if !state.didChange { crossfadeDrag = nil; return true }
-            viewModel.isDirty = true
+            // ONE undo point, ONE write of the model — and the engine told, once.
+            viewModel.commitCrossfadeDrag(state)
             crossfadeDrag = nil
         } else {
             crossfadeDrag = state

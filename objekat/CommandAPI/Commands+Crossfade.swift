@@ -186,12 +186,15 @@ extension CommandRegistry {
                  DEBUG. A crossfade DRAG with no mouse: the very per-frame function the gesture \
                  calls (`EditViewModel.driveCrossfadeFrame`), fed with the zone under the hand \
                  (`lefts[0]` / `rights[0]`), the zones that follow it (the other pairs, in the same \
-                 order), the `part` taken and one travel `dx` (seconds, UNSNAPPED) per frame. \
-                 `batched: false` lays each frame down one write at a time, the way it was before \
-                 the lag fix — kept so the two can be compared octet for octet. Answers what it \
-                 cost, READ OFF COUNTERS rather than a clock: `items_writes` and \
-                 `lane_entries_rebuilds` (O(N) each) per frame, plus the milliseconds. ONE undo \
-                 point for the whole drag (none if nothing moved). Not present in Release builds.
+                 order), the `part` taken and one travel `dx` (seconds, UNSNAPPED) per frame, then \
+                 the release (`commitCrossfadeDrag`). The frames are worked out on the gesture's \
+                 COPIES: `drag_items_writes` must be 0 — the model is written once, on release \
+                 (`commit_items_writes`), behind ONE undo point (none if nothing moved). \
+                 `legacy: true` lays each frame on the MODEL instead, the way it was laid before the \
+                 copies (`batched: false` one write at a time) — kept so the two can be compared \
+                 octet for octet. Answers what it cost, READ OFF COUNTERS rather than a clock: \
+                 `items_writes` and `lane_entries_rebuilds` (O(N) each), plus the milliseconds. \
+                 Not present in Release builds.
                  """,
                  params: [ParamSpec("lefts", "array<uuid>", "Left objects, one per zone (the first is the grabbed zone)."),
                           ParamSpec("rights", "array<uuid>", "Right objects, same order."),
@@ -202,7 +205,10 @@ extension CommandRegistry {
                           ParamSpec("overshoot_y", "number", required: false,
                                     "With `both`: the vertical travel outside the row, in px (the bend)."),
                           ParamSpec("s_curve", "bool", required: false, "With `both`: ⌥ held."),
-                          ParamSpec("batched", "bool", required: false, "Default true.")],
+                          ParamSpec("legacy", "bool", required: false,
+                                    "Lay the frames on the model, one frame at a time, as before the copies (default false)."),
+                          ParamSpec("batched", "bool", required: false,
+                                    "With `legacy`: the frame's writes in ONE batch (default true).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let lefts = try p.uuids("lefts"), rights = try p.uuids("rights")
@@ -244,25 +250,46 @@ extension CommandRegistry {
             state.overshootY = part == .both ? try p.double("overshoot_y", or: 0) : 0
             state.bendTravelPx = 40
             state.sCurve = part == .both ? try p.bool("s_curve", or: false) : false
+            let legacy = try p.bool("legacy", or: false)
             let batched = try p.bool("batched", or: true)
 
+            // The frames: on the gesture's COPIES by default (the model, the engine and the undo
+            // stack untouched while the hand is down), or — `legacy` — laid on the model one frame
+            // at a time the way the gesture was laid before the copies.
             let w0 = vm.itemsWriteCount, r0 = vm.laneEntriesRebuildCount, u0 = vm.undoPushCount
             let t0 = CFAbsoluteTimeGetCurrent()
-            for dx in dxs { vm.driveCrossfadeFrame(&state, shift: dx, batched: batched) }
+            for dx in dxs {
+                if legacy { vm.driveCrossfadeFrameLive(&state, shift: dx, batched: batched) }
+                else { vm.driveCrossfadeFrame(&state, shift: dx) }
+            }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            if state.didChange { vm.isDirty = true }
+            let dragWrites = vm.itemsWriteCount - w0, dragRebuilds = vm.laneEntriesRebuildCount - r0
+            let dragUndo = vm.undoPushCount - u0
+            // The release: ONE undo point and ONE write (nothing at all for the legacy path, which
+            // has been writing all along).
+            let tc = CFAbsoluteTimeGetCurrent()
+            if legacy { if state.didChange { vm.isDirty = true } }
+            else { vm.commitCrossfadeDrag(state) }
+            let commitMs = (CFAbsoluteTimeGetCurrent() - tc) * 1000
             let frames = max(1, dxs.count)
             let writes = vm.itemsWriteCount - w0, rebuilds = vm.laneEntriesRebuildCount - r0
             return .object(["frames": .int(dxs.count),
                             "zones": .int(tracks.count),
+                            "legacy": .bool(legacy),
                             "did_change": .bool(state.didChange),
                             "undo_pushes": .int(vm.undoPushCount - u0),
                             "items_writes": .int(writes),
                             "lane_entries_rebuilds": .int(rebuilds),
-                            "writes_per_frame": .number(Double(writes) / Double(frames)),
-                            "rebuilds_per_frame": .number(Double(rebuilds) / Double(frames)),
-                            "ms_total": .number(ms),
-                            "ms_per_frame": .number(ms / Double(frames))])
+                            // What the frames cost BEFORE the release: 0 writes is the whole point.
+                            "drag_items_writes": .int(dragWrites),
+                            "drag_lane_entries_rebuilds": .int(dragRebuilds),
+                            "drag_undo_pushes": .int(dragUndo),
+                            "commit_items_writes": .int(writes - dragWrites),
+                            "writes_per_frame": .number(Double(dragWrites) / Double(frames)),
+                            "rebuilds_per_frame": .number(Double(dragRebuilds) / Double(frames)),
+                            "ms_total": .number(ms + commitMs),
+                            "ms_per_frame": .number(ms / Double(frames)),
+                            "commit_ms": .number(commitMs)])
         }
         #endif
     }
