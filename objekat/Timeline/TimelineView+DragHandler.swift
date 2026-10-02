@@ -519,8 +519,22 @@ extension TimelineView {
         // The marker band, under the ruler: its own gesture and none of the canvas's, exactly as
         // for the click (@see handleCanvasTap). Before the tools, and deliberately: even the Cut
         // tool leaves the band alone, so a mark stays draggable whatever is armed.
+        //
+        // A press on an EMPTY stretch of the band is the ruler's gesture, with no difference: a
+        // time selection traced by the drag (snap, ⇧ to extend, the objects selected, the cursor at
+        // the release). `rulerSelectionDrag` is armed by the first frame, so the branch above takes
+        // the rest of the gesture. Marks and the pinned controls are untouched (@see
+        // MarkerBandGesture).
         if markerBandDrag != nil || markerBandContains(value.startLocation) {
-            handleMarkerBandDrag(value, phase: phase)
+            let route = MarkerBandGesture.route(
+                zoneHit: markerBandDrag == nil && markerBandZone(at: value.startLocation) != nil,
+                inHeader: markerLaneHeaderContains(value.startLocation),
+                inFlight: markerBandDrag != nil ? .mark : nil)
+            switch route {
+            case .ruler: handleRulerDrag(value, phase: phase)
+            case .mark:  handleMarkerBandDrag(value, phase: phase)
+            case .none:  break
+            }
             return
         }
 

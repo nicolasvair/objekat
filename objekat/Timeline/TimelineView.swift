@@ -2512,6 +2512,16 @@ struct TimelineView: View {
 
     func markerBandContains(_ point: CGPoint) -> Bool { markerBandRow(at: point) != nil }
 
+    /// True where a point of the band lands on a PINNED control — a row's name (dot, field), or the
+    /// button that governs the rows. They sit in the overlay layer and answer for themselves (the
+    /// double click that renames, the menu), so the band's empty-space gestures leave them alone
+    /// (@see MarkerBandGesture). Read relative to the viewport's left edge: they do not scroll.
+    func markerLaneHeaderContains(_ point: CGPoint) -> Bool {
+        guard markerBandContains(point) else { return false }
+        return MarkerBandGesture.inPinnedControls(xInViewport: Double(point.x - scrollOffsetX),
+                                                  viewportWidth: Double(viewportWidth))
+    }
+
     /// The row whose COLOUR DOT a point lands on, or nil. The headers are pinned to the viewport,
     /// so the point is read relative to its left edge — `point.x - scrollOffsetX` — and never to the
     /// content, which slides under them.

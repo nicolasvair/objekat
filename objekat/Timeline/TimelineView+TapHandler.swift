@@ -727,5 +727,12 @@ extension TimelineView {
         if isDoubleTap, !shift, !cmd, let hit, viewModel.selectedAnnotations == [hit] {
             viewModel.renamingID = hit.markerID
         }
+        // An empty stretch of the band lays the cursor, as the ruler does (@see MarkerBandGesture) —
+        // the marks have just been let go of above, which is what a click on nothing always did.
+        if MarkerBandGesture.clickMovesCursor(hitMark: hit != nil,
+                                              inHeader: markerLaneHeaderContains(point),
+                                              shift: shift, command: cmd) {
+            moveCursorFromRuler(atX: point.x)
+        }
     }
 }
