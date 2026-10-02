@@ -74,6 +74,13 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
     check(f.bodyRect.contains(f.mixRect), "\(tag): the mix box is inside the body")
     check(f.bodyRect.minX <= f.headerRect.minX + 0.001 && f.headerRect.maxX <= f.bodyRect.maxX + 0.001,
           "\(tag): the header card is no wider than the body")
+    // the top and the bottom rectangles are EXACTLY as wide as the body round them, edge for edge
+    check(abs(f.headerRect.minX - f.bodyRect.minX) < 0.001 && abs(f.headerRect.width - f.bodyRect.width) < 0.001,
+          "\(tag): the header card has the body's width and left edge")
+    check(abs(f.mixRect.minX - f.bodyRect.minX) < 0.001 && abs(f.mixRect.width - f.bodyRect.width) < 0.001,
+          "\(tag): the mix box has the body's width and left edge")
+    check(abs(f.headerRect.width - f.rect.width) < 0.001 && abs(f.mixRect.width - f.rect.width) < 0.001,
+          "\(tag): header card, mix box and the block's extent share one width")
     check(f.rect.contains(f.headerRect) && f.rect.contains(f.bodyRect), "\(tag): the extent holds both")
     check(abs(f.rect.minY - f.headerRect.minY) < 0.001 && abs(f.rect.maxY - f.bodyRect.maxY) < 0.001,
           "\(tag): the extent runs from the card's top to the body's bottom")

@@ -229,13 +229,16 @@ enum SynopticLayout {
             let innerSize = measure(inner)
             let total = measure(node)
             let cx = origin.x + total.width / 2
-            let headerW = fxHeaderW(name: fx.name)
-            let headerRect = CGRect(x: cx - headerW / 2, y: origin.y, width: headerW, height: fxHeaderCardH)
+            // The header card and the mix box take the BODY's width and left edge exactly: the three
+            // rectangles read as one block, the top and the bottom ones flush with the sides of the one
+            // round them. `fxHeaderW` / `fxMixW` stay what the body may never be narrower than
+            // (@see fxBlockWidth), so the name and the three slots always fit.
+            let headerRect = CGRect(x: origin.x, y: origin.y, width: total.width, height: fxHeaderCardH)
             let innerOrigin = CGPoint(x: origin.x + (total.width - innerSize.width) / 2,
                                       y: headerRect.maxY + fxHeaderGap)
             let ipl = place(inner, at: innerOrigin, depth: depth + 1)
-            let mixRect = CGRect(x: cx - fxMixW / 2, y: innerOrigin.y + innerSize.height + fxMixGap,
-                                 width: fxMixW, height: fxMixH)
+            let mixRect = CGRect(x: origin.x, y: innerOrigin.y + innerSize.height + fxMixGap,
+                                 width: total.width, height: fxMixH)
             // The body starts at the header card's middle line (`fxHeaderOverlap` of the card hangs inside).
             let bodyTop = headerRect.maxY - fxHeaderOverlap
             let bodyRect = CGRect(x: origin.x, y: bodyTop, width: total.width,
