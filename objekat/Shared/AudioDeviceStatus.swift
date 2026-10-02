@@ -1,5 +1,35 @@
 import Foundation
 
+/// What the engine decided about the card's own sample rate — the Swift mirror of
+/// `OBJRateDecisionKind` (`Shared/OBJSampleRatePolicy.h`), raw values included, since
+/// `OBJAudioDeviceSnapshot.rateDecision` carries the raw number.
+///
+/// OBJEKAT ADOPTS the rate the card already runs at and only moves it when it is unusable (out of
+/// [22.05 ; 192] kHz, or not in the list the card offers) — it never imposes the rate of the last
+/// session.
+enum SampleRateDecision: Int, Equatable {
+    /// The card's rate is taken as it is.
+    case adopt = 0
+    /// The card's rate was unusable and the card was switched to another one it offers.
+    case fallback = 1
+    /// Unusable, and nothing better on offer: kept.
+    case outOfRangeKept = 2
+    /// No output device open, so nothing was decided.
+    case unknown = 3
+
+    /// The API's own spelling (`audio.status.rate_decision`).
+    var apiName: String {
+        switch self {
+        case .adopt: return "adopt"
+        case .fallback: return "fallback"
+        case .outOfRangeKept: return "out_of_range"
+        case .unknown: return "unknown"
+        }
+    }
+
+    init(raw: Int) { self = SampleRateDecision(rawValue: raw) ?? .unknown }
+}
+
 /// A snapshot of the audio device actually open in the engine — the Swift-side mirror of
 /// `OBJAudioDeviceSnapshot`, kept as plain `Equatable` data so `AudioDeviceStatus.refresh()` can
 /// tell "nothing changed" from a real change and write only on the latter (@see the memory note
@@ -11,6 +41,10 @@ struct AudioDeviceSnapshot: Equatable {
     var bufferSize: Int
     var outputChannels: Int
     var running: Bool
+    /// What the sample-rate policy decided (@see `SampleRateDecision`) and the rate the card had
+    /// BEFORE it — the one that was refused, for `.fallback` and `.outOfRangeKept`.
+    var rateDecision: SampleRateDecision = .unknown
+    var deviceRateBeforeDecision: Double = 0
 
     static let none = AudioDeviceSnapshot(name: nil, type: nil, sampleRate: 0, bufferSize: 0,
                                           outputChannels: 0, running: false)
@@ -67,7 +101,9 @@ final class AudioDeviceStatus {
         let live = engine.audioDeviceSnapshot()
         let next = AudioDeviceSnapshot(name: live.deviceName, type: live.deviceType,
                                        sampleRate: live.sampleRate, bufferSize: live.bufferSize,
-                                       outputChannels: live.outputChannels, running: live.running)
+                                       outputChannels: live.outputChannels, running: live.running,
+                                       rateDecision: SampleRateDecision(raw: live.rateDecision),
+                                       deviceRateBeforeDecision: live.deviceRateBeforeDecision)
         guard next != snapshot else { return }
         snapshot = next
         generation &+= 1

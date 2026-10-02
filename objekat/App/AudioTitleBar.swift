@@ -68,6 +68,11 @@ struct AudioSettingsMenu: View {
                 Picker(L("audio.menu.sampleRate"), selection: sampleRateBinding) {
                     ForEach(rates, id: \.self) { Text(Self.formatRate($0)).tag($0) }
                 }
+                // What the engine did about the card's own rate, ONLY when it did something:
+                // the card ran at a rate we cannot use. A plain line, not an item one can pick.
+                if let note = Self.rateDecisionNote(AudioDeviceStatus.shared.snapshot) {
+                    Text(note)
+                }
             }
 
             let buffers = Self.usefulBufferSizes(
@@ -146,6 +151,20 @@ struct AudioSettingsMenu: View {
     }
 
     // MARK: Formatting
+
+    /// The sentence under the sample-rate picker when the policy changed (or could not change) the
+    /// card's rate — `nil` for `adopt` and `unknown`, which say nothing.
+    static func rateDecisionNote(_ s: AudioDeviceSnapshot) -> String? {
+        switch s.rateDecision {
+        case .fallback:
+            return L("audio.menu.sampleRate.fallback", formatRate(s.deviceRateBeforeDecision),
+                     formatRate(s.sampleRate))
+        case .outOfRangeKept:
+            return L("audio.menu.sampleRate.outOfRange", formatRate(s.deviceRateBeforeDecision))
+        case .adopt, .unknown:
+            return nil
+        }
+    }
 
     static func formatRate(_ hz: Double) -> String {
         let k = hz / 1000

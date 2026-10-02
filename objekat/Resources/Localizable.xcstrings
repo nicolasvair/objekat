@@ -116,6 +116,52 @@
         }
       }
     },
+    "audio.menu.sampleRate.fallback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device rate not supported (%1$@) — switched to %2$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frecuencia de la tarjeta no compatible (%1$@) — cambiada a %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fréquence de la carte non prise en charge (%1$@) — passée à %2$@"
+          }
+        }
+      }
+    },
+    "audio.menu.sampleRate.outOfRange": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device rate out of range (%@) — kept"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frecuencia de la tarjeta fuera de rango (%@) — conservada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fréquence de la carte hors plage (%@) — conservée"
+          }
+        }
+      }
+    },
     "audio.status.stopped": {
       "extractionState": "manual",
       "localizations": {

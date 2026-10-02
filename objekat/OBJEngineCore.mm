@@ -14,6 +14,7 @@
 #include "OBJAuxSendPlugin.h"
 #include "OBJAudioProbe.h"
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
+#include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -66,6 +67,30 @@ struct OBJRenderPluginFilter {
         }
         ~Scope() { active = false; allowedClips.clear(); }
     };
+};
+
+// Stockage des réglages moteur (Settings.xml) : celui de Tracktion, à UNE différence près — il ne
+// RELIT jamais la fréquence d'échantillonnage mémorisée de la carte son.
+//
+// Pourquoi : DeviceManager::loadSettings() passe `audioDeviceRate` à JUCE à l'ouverture, et JUCE
+// ouvre alors la carte À CETTE fréquence (chooseBestSampleRate → CoreAudio setNominalSampleRate).
+// Or la fréquence nominale d'une carte CoreAudio n'est pas locale à l'application : la changer la
+// change pour tout le système. OBJEKAT imposait donc à chaque lancement la fréquence de la
+// dernière session, même si la carte tournait entre-temps à une autre. Sans l'attribut, JUCE
+// garde la fréquence COURANTE de la carte (setup.sampleRate = 0 → chooseBestSampleRate renvoie
+// getCurrentSampleRate() si la carte la propose) — c'est l'adoption. Le fichier sur disque n'est
+// PAS modifié : seule la lecture est filtrée (getXmlValue renvoie une copie), et la sauvegarde
+// continue d'écrire la fréquence réellement ouverte.
+// @see Shared/OBJSampleRatePolicy.h, -applySampleRatePolicy.
+struct OBJPropertyStorage : public te::PropertyStorage {
+    using te::PropertyStorage::PropertyStorage;
+
+    std::unique_ptr<juce::XmlElement> getXmlProperty(te::SettingID setting) override {
+        auto xml = te::PropertyStorage::getXmlProperty(setting);
+        if (xml != nullptr && setting == te::SettingID::audio_device_setup)
+            xml->removeAttribute("audioDeviceRate");
+        return xml;
+    }
 };
 
 // Comportement moteur custom : relève les limites par défaut de Tracktion.
@@ -951,6 +976,9 @@ struct OBJRenderChain {
 
 @interface OBJEngineCore ()
 - (void)ensureMasterMeter;
+// Décide, sur la fréquence que la carte ouverte tourne DÉJÀ, de l'adopter ou — seulement si elle
+// est inutilisable — de la ramener à une fréquence proposée. @see la définition.
+- (void)applySampleRatePolicy;
 - (void)checkLatencyAndRebuild;
 // Met un plugin externe fraîchement créé en file d'attente de ré-affirmation d'état. Sans effet
 // pour un built-in, ou si l'arbre ne porte aucun état à restaurer.
@@ -1051,6 +1079,11 @@ struct OBJRenderChain {
 
 @implementation OBJEngineCore {
     std::unique_ptr<te::Engine> _engine;
+    // Décision de fréquence de la carte (@see -applySampleRatePolicy, OBJSampleRatePolicy.h).
+    // `_rateDecision` = OBJRateDecisionKind ; 0 (adopt) tant qu'aucune décision n'a été prise.
+    int    _rateDecision;
+    double _rateBeforeDecision;   // la fréquence de la carte AU MOMENT de la décision
+    double _rateDecided;          // celle qu'elle a eue APRÈS (sert à repérer une décision périmée)
     OBJAudioProbe* _audioProbe;   // DIAGNOSTIC, possédé par le DeviceManager (@see OBJAudioProbe.h)
     std::vector<std::pair<uint64_t, std::string>> _audioProbeMarks;
     // @see beginPlaybackEdit — fenêtres retenues pendant une coupe en lecture.
@@ -1291,7 +1324,10 @@ static BOOL gOBJAudioDisabled = NO;
         juce::Logger::setCurrentLogger(new OBJSilentLogger());
         // AVANT la construction du moteur : c'est elle qui charge Settings.xml (en O(n²)).
         purgeStaleTrackDeviceAliases();
-        _engine = std::make_unique<te::Engine>("objekat",
+        // Mêmes réglages que le constructeur à nom d'application (te::Engine("objekat", ub, eb) crée
+        // un PropertyStorage("objekat")), à ceci près que le stockage ne relit pas la fréquence de
+        // la carte. @see OBJPropertyStorage.
+        _engine = std::make_unique<te::Engine>(std::make_unique<OBJPropertyStorage>("objekat"),
                                                std::make_unique<te::UIBehaviour>(),
                                                std::make_unique<OBJEngineBehaviour>());
         // Gain de sortie clip post-FX (plage -96…+40 dB). Doit être enregistré
@@ -1318,6 +1354,9 @@ static BOOL gOBJAudioDisabled = NO;
         _deviceWatcher->owner = self;
         _engine->getDeviceManager().deviceManager.addChangeListener(_deviceWatcher.get());
         [self logDefaultWaveOutput];
+        // Après l'ouverture, AVANT createEdit : si la carte tourne à une fréquence inutilisable on
+        // la ramène ici, une fois, sans qu'aucun graphe de lecture n'existe encore à réallouer.
+        [self applySampleRatePolicy];
         if (getenv("OBJ_AUDIO_PROBE") != nullptr) {
             auto probe = std::make_unique<OBJAudioProbe>(_engine->getDeviceManager());
             _audioProbe = probe.get();
@@ -6903,6 +6942,49 @@ static void objDumpPluginList(te::PluginList& pl,
     return nil;
 }
 
+// MARK: Fréquence de la carte : adopter, ne pas imposer
+//
+// La carte tourne à SA fréquence, qui peut avoir été choisie dans Réglages Audio MIDI, par une
+// autre application, par la carte elle-même. On la prend telle quelle (`adopt`) et on ne touche à
+// la carte que si cette fréquence est inutilisable pour nous (`fallback`) : hors de [22,05 ; 192]
+// kHz, ou absente de la liste que la carte propose. Rien n'est jamais « rappelé » d'une session à
+// l'autre. Un changement DÉCIDÉ AILLEURS (le système, une autre application) est suivi, pas
+// combattu : le veilleur de device relit, personne ne remet l'ancienne valeur.
+// @see Shared/OBJSampleRatePolicy.h (la décision, pure) et OBJPropertyStorage (le démarrage).
+- (void)applySampleRatePolicy {
+    auto& jdm = _engine->getDeviceManager().deviceManager;
+    auto* dev = jdm.getCurrentAudioDevice();
+    // `--no-audio` : le device est CRÉÉ et jamais OUVERT — rien à décider, rien à changer. Et même
+    // si Settings.xml l'a fait ouvrir malgré tout (@see docs/command_api.md, « audio.* »), une
+    // instance sans audio ne touche JAMAIS à la fréquence d'une vraie carte.
+    if (gOBJAudioDisabled || dev == nullptr || !dev->isOpen()) return;
+
+    const double cur = dev->getCurrentSampleRate();
+    std::vector<double> available;
+    for (double r : dev->getAvailableSampleRates()) available.push_back(r);
+
+    const OBJRateDecision d = objDecideSampleRate(cur, available);
+    _rateDecision       = (int)d.kind;
+    _rateBeforeDecision = cur;
+    _rateDecided        = cur;
+    NSLog(@"[OBJ] Fréquence de la carte : %.0f Hz → décision %d (%.0f Hz)", cur, (int)d.kind, d.rate);
+    if (d.kind != OBJRateDecisionKind::fallback) return;
+
+    auto setup = jdm.getAudioDeviceSetup();
+    setup.sampleRate = d.rate;
+    auto err = jdm.setAudioDeviceSetup(setup, true);
+    if (!err.isEmpty()) {
+        NSLog(@"[OBJ] ERROR switching sample rate to %.0f: %s", d.rate, err.toRawUTF8());
+        // Un échec de réouverture ferme la carte : on tente de la rendre telle qu'elle tournait.
+        setup.sampleRate = cur;
+        jdm.setAudioDeviceSetup(setup, true);
+        _rateDecision = (int)OBJRateDecisionKind::outOfRangeKept;
+        if (auto* back = jdm.getCurrentAudioDevice()) _rateDecided = back->getCurrentSampleRate();
+        return;
+    }
+    if (auto* now = jdm.getCurrentAudioDevice()) _rateDecided = now->getCurrentSampleRate();
+}
+
 - (void)setOutputDevice:(NSString*)name {
     NSLog(@"[OBJ] setOutputDevice: %@", name);
     BOOL wasPlaying = [self isCurrentlyPlaying];
@@ -6910,12 +6992,21 @@ static void objDumpPluginList(te::PluginList& pl,
 
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto setup = dm.getAudioDeviceSetup();
-    setup.outputDeviceName = juce::String::fromUTF8([name UTF8String]);
+    const juce::String newName = juce::String::fromUTF8([name UTF8String]);
+    // Même carte : on ne touche à rien (le setup reste identique, JUCE ne rouvre pas) — c'est le
+    // cas du rappel du choix mémorisé à l'apparition de la fenêtre.
+    const bool sameDevice = dm.getCurrentAudioDevice() != nullptr && setup.outputDeviceName == newName;
+    setup.outputDeviceName = newName;
+    // Autre carte : on N'EMPORTE PAS la fréquence de l'ancienne (c'est elle qui, rejouée sur la
+    // nouvelle, changeait la fréquence nominale d'une carte pour tout le système). 0 = « celle
+    // dont la carte tourne déjà » (AudioDeviceManager::chooseBestSampleRate).
+    if (!sameDevice) setup.sampleRate = 0;
     auto err = dm.setAudioDeviceSetup(setup, true);
     if (!err.isEmpty()) {
         NSLog(@"[OBJ] ERROR setting device: %s", err.toRawUTF8());
         return;
     }
+    if (!sameDevice) [self applySampleRatePolicy];
     // Relance si on était en lecture (l'Edit est intact, pas besoin de reconstruire)
     if (wasPlaying) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -6954,6 +7045,11 @@ static void objDumpPluginList(te::PluginList& pl,
     if (!err.isEmpty()) {
         NSLog(@"[OBJ] ERROR setting sample rate: %s", err.toRawUTF8());
         return;
+    }
+    // Un choix explicite de l'utilisateur : ni imposé ni corrigé, donc `adopt`.
+    if (auto* dev = dm.getCurrentAudioDevice()) {
+        _rateDecision       = (int)OBJRateDecisionKind::adopt;
+        _rateBeforeDecision = _rateDecided = dev->getCurrentSampleRate();
     }
     if (wasPlaying) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -7007,6 +7103,7 @@ static void objDumpPluginList(te::PluginList& pl,
     OBJAudioDeviceSnapshot* s = [OBJAudioDeviceSnapshot new];
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* dev = dm.getCurrentAudioDevice();
+    s.rateDecision = (NSInteger)OBJRateDecisionKind::unknown;       // rien d'ouvert : rien de décidé
     if (dev == nullptr || !dev->isOpen()) return s;                 // --no-audio, ouverture ratée
     const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
     if (outs == 0) return s;                                        // device entrée seule
@@ -7017,6 +7114,19 @@ static void objDumpPluginList(te::PluginList& pl,
     s.bufferSize = dev->getCurrentBufferSizeSamples();
     s.outputChannels = outs;
     s.running = dev->isPlaying();
+    // La décision de fréquence — sauf si la carte ne tourne plus à ce qu'elle avait décidé (le
+    // système ou une autre application l'a changée depuis) : un message « passée à 48k » devant
+    // une carte à 96k serait faux, et ce changement-là est suivi, pas combattu.
+    NSInteger kind = _rateDecision;
+    double before = _rateBeforeDecision;
+    const bool moved = std::fabs(s.sampleRate - _rateDecided) > 1.0;
+    if (moved && (kind == (NSInteger)OBJRateDecisionKind::fallback ||
+                  kind == (NSInteger)OBJRateDecisionKind::outOfRangeKept)) {
+        kind = (NSInteger)OBJRateDecisionKind::adopt;
+        before = s.sampleRate;
+    }
+    s.rateDecision = kind;
+    s.deviceRateBeforeDecision = before > 0 ? before : s.sampleRate;
     return s;
 }
 
