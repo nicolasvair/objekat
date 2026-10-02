@@ -110,16 +110,20 @@ extension EditViewModel {
     /// a script that asks to continue wants to move on, and triggering a write it did not ask
     /// for would be the opposite of predictable driving. The explicit path already exists for
     /// anyone who wants the other meaning (`save`, then the operation).
-    func askDirtyDecision(titleKey: String) -> DirtyDecision {
-        askDirtyDecision(titleKey: titleKey, name: projectName)
+    func askDirtyDecision(titleKey: String, infoKey: String = "dialog.dirty.info") -> DirtyDecision {
+        askDirtyDecision(titleKey: titleKey, name: projectName, infoKey: infoKey)
     }
 
     /// The same guard, naming a project OTHER than the active one — the door `Workspace.confirmQuit`
     /// (tabs INC1) uses for an INACTIVE modified tab: `self` is the single view-model/engine, so its
     /// own `projectName` is the ACTIVE tab's, never the parked one being asked about.
-    func askDirtyDecision(titleKey: String, name: String) -> DirtyDecision {
+    /// `infoKey`: the sentence under the title, `%@` = the project's name. The default says what
+    /// every close/quit/continue has always said; re-opening an already open file (a REVERT to the
+    /// last save, @see ReopenSameFile) says what it costs besides — the undo history.
+    func askDirtyDecision(titleKey: String, name: String,
+                          infoKey: String = "dialog.dirty.info") -> DirtyDecision {
         let title = L(titleKey)
-        let info = L("dialog.dirty.info", name)
+        let info = L(infoKey, name)
         switch dialogPolicy {
         case .assumeYes:
             recordDialog(title, info, answer: "don't save")

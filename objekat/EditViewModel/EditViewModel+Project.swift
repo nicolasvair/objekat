@@ -539,9 +539,10 @@ extension EditViewModel {
 
     /// Internal (not private) since tabs INC1: the Workspace's `replaceActive(with:)` (Cmd+O) goes
     /// through the SAME guard as New/Open, one definition either way.
-    func confirmDiscardIfDirty(titleKey: String = "dialog.dirty.title.continue") -> Bool {
+    func confirmDiscardIfDirty(titleKey: String = "dialog.dirty.title.continue",
+                               infoKey: String = "dialog.dirty.info") -> Bool {
         guard isDirty else { return true }
-        switch askDirtyDecision(titleKey: titleKey) {
+        switch askDirtyDecision(titleKey: titleKey, infoKey: infoKey) {
         case .save:
             // A known file → a synchronous write, and we carry on. Otherwise the panel has to be
             // gone through, and it is asynchronous: we give up the current operation (false) rather

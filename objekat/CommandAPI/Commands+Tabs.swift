@@ -134,12 +134,19 @@ extension CommandRegistry {
         }
 
         register("tab.open",
-                 summary: "Opens a project file in a NEW tab. A file already open in another tab "
-                        + "switches to it instead of opening a second copy ('already_open': true). "
+                 summary: "Opens a project file in a NEW tab. A file already open in a tab (the "
+                        + "active one or another) is never opened twice: that tab is brought "
+                        + "forward and RELOADED from disk, i.e. back to the state of the last save "
+                        + "('already_open': true, 'reloaded': true; the undo history starts over). "
+                        + "If that tab has unsaved changes the reload is refused (invalid_state) "
+                        + "unless 'discard' is true — nothing is switched or lost by a refusal. "
                         + "Plugin ids carried by more than one entry are left as they are unless "
                         + "`repair_plugin_ids` is true — no alert either way, even with an interface "
                         + "(@see project.open, project.load_status).",
                  params: [ParamSpec("path", "string", "Path to the project file."),
+                          ParamSpec("discard", "bool", required: false,
+                                    "Reloading a tab that already holds the file throws away its "
+                                  + "unsaved changes (default false: refused if it has any)."),
                           ParamSpec("repair_plugin_ids", "bool", required: false,
                                     "true = give a fresh id to every duplicated plugin id at load "
                                     + "(the project then opens modified). Default false.")],
@@ -151,12 +158,15 @@ extension CommandRegistry {
             }
             let url = URL(fileURLWithPath: path)
             let repair = try p.bool("repair_plugin_ids", or: false)
+            let discard = try p.bool("discard", or: false)
             switch await workspace.open(url: url, inNewTab: true,
-                                        pluginIDRepair: repair ? .repair : .keep) {
+                                        pluginIDRepair: repair ? .repair : .keep,
+                                        requester: .script(discard: discard)) {
             case .success(let outcome):
                 let idx = workspace.tabs.firstIndex { $0.id == outcome.tabID }!
                 var obj = self.tabJSON(workspace, workspace.tabs[idx], index: idx).objectValue!
                 obj["already_open"] = .bool(outcome.alreadyOpen)
+                obj["reloaded"] = .bool(outcome.reloaded)
                 return .object(obj)
             case .failure(let error):
                 throw error.commandError

@@ -151,9 +151,18 @@ extension EditViewModel {
         // opening's own restore does — @see `pendingViewRestore`.
         pendingViewRestore = parked.viewport
 
-        // Selections and transient UI states that belong to the OBJECTS just replaced: holding
-        // onto a plugin selection, a crossfade pair or a rename field from the tab just left would
-        // point at IDs that (may) no longer resolve to anything in the new document.
+        clearObjectBoundTransientState()
+
+        isDirty = parked.isDirty
+    }
+
+    /// Selections and transient UI states that belong to the OBJECTS just replaced: holding onto a
+    /// plugin selection, a crossfade pair or a rename field from the document just left would
+    /// point at IDs that (may) no longer resolve to anything in the new one. A tab switch needs
+    /// this, and so does re-opening a file already open (`Workspace.reopen`): the ids there are
+    /// the SAME, but the objects behind them are the last save's, which may not have that plugin,
+    /// that crossfade, that object at all.
+    func clearObjectBoundTransientState() {
         selectedPluginIDs = []
         selectedPluginHostID = nil
         selectedCrossfade = nil
@@ -161,7 +170,5 @@ extension EditViewModel {
         pluginParamValues = [:]
         liveAutomationValues = [:]
         KeyboardClaim.shared.revoke()
-
-        isDirty = parked.isDirty
     }
 }

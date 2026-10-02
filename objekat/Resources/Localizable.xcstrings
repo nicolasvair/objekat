@@ -1588,6 +1588,29 @@
         }
       }
     },
+    "dialog.dirty.info.reload": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project “%@” has unsaved changes. Reopening it reloads the last version saved on disk, and the undo history starts over."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proyecto «%@» tiene cambios sin guardar. Volver a abrirlo recarga la última versión guardada en el disco, y el historial de deshacer empieza de cero."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le projet « %@ » contient des modifications non sauvegardées. Le rouvrir recharge la dernière version enregistrée sur le disque, et l'historique d'annulation repart de zéro."
+          }
+        }
+      }
+    },
     "dialog.dirty.save": {
       "extractionState": "manual",
       "localizations": {
@@ -1699,6 +1722,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sauvegarder avant de quitter ?"
+          }
+        }
+      }
+    },
+    "dialog.dirty.title.reload": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revert to the last saved version?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Volver a la última versión guardada?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revenir à la dernière version enregistrée ?"
           }
         }
       }
@@ -8484,6 +8530,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "Action refusée"
+          }
+        }
+      }
+    },
+    "project.reload.refused.busy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reload the project right now: an operation is in progress."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede recargar el proyecto ahora: hay una operación en curso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de recharger le projet pour l'instant : une opération est en cours."
+          }
+        }
+      }
+    },
+    "project.reload.refused.consolidateEdit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reload the project while editing a consolidated object."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede recargar el proyecto: se está editando un objeto consolidado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de recharger le projet : un objet consolidé est en cours d'édition."
+          }
+        }
+      }
+    },
+    "project.reload.refused.export": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reload the project during a direct export. An export rendered in the background allows it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede recargar el proyecto durante una exportación directa. Una exportación en segundo plano lo permite."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de recharger le projet pendant un export direct. Un export en arrière-plan le permet."
+          }
+        }
+      }
+    },
+    "project.reload.refused.loading": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reload the project while a project is loading."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede recargar el proyecto: hay un proyecto cargándose."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de recharger le projet : un projet est en cours de chargement."
+          }
+        }
+      }
+    },
+    "project.reload.refused.render": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reload the project while a consolidated object is rendering."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede recargar el proyecto: se está renderizando un objeto consolidado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de recharger le projet : le rendu d'un objet consolidé est en cours."
+          }
+        }
+      }
+    },
+    "project.reload.refused.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reload refused"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recarga rechazada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechargement refusé"
           }
         }
       }

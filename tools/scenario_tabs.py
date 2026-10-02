@@ -181,18 +181,88 @@ with ObjekatClient(SOCK, timeout=180) as c:
     cmd("project.save_as", path=B_JSON)
     tab_b_id = t2["id"]
 
-    # ── tab.open on a file already open in THIS (active) tab: a no-op ───────
+    # ── tab.open on a file already open in THIS (active) tab: RELOADED from disk ──
+    # Re-opening one's own project is how one goes back to the last save after a mistake
+    # (@see ReopenSameFile). A clean tab reloads straight away.
     reopened_self = cmd("tab.open", path=B_JSON)
     check("tab.open on the active tab's own file: already_open", reopened_self["already_open"] is True)
+    check("tab.open on the active tab's own file (clean): reloaded", reopened_self.get("reloaded") is True)
     check("tab.open on the active tab's own file: no new tab", cmd("tab.list")["count"] == 2)
     check("tab.open on the active tab's own file: stays there", reopened_self["id"] == tab_b_id)
 
-    # ── tab.open on a file open in ANOTHER tab: switches, no duplicate ──────
+    # The state comes back to the SAVE — the model AND the engine (a plugin's live value).
+    beq = cmd("plugin.add", host=ob, identifier="4bandEq")["plugin"]["id"]
+    bps = settled_params(beq, want=1)
+    check("B's built-in answers", len(bps) >= 1, str(len(bps)))
+    b_lo, b_hi = (bps[0]["min"], bps[0]["max"]) if bps else (0.0, 1.0)
+    saved_val = b_lo + (b_hi - b_lo) * 0.25
+    if bps:
+        cmd("plugin.set_param", plugin=beq, index=0, value=saved_val)
+    cmd("project.save")
+    state_saved_b = cmd("project.get_state")
+    cmd("object.move", id=ob, lane=3, start=9)
+    if bps:
+        cmd("plugin.set_param", plugin=beq, index=0, value=b_lo + (b_hi - b_lo) * 0.9)
+    check("B is dirty after the 'mistake'", tab_with_path(B_JSON)["dirty"] is True)
+
+    try:
+        cmd("tab.open", path=B_JSON)
+        check("reopening a DIRTY tab without discard: refused", False, "it went through")
+    except ObjekatError as e:
+        check("reopening a DIRTY tab without discard: refused", e.code == "invalid_state", e.code)
+    still = cmd("object.get", id=ob)
+    check("the refusal threw nothing away (object still moved, still dirty)",
+          still["lane"] == 3 and approx(still["start"], 9)
+          and tab_with_path(B_JSON)["dirty"] is True)
+
+    reverted = cmd("tab.open", path=B_JSON, discard=True)
+    check("reopening with discard: reloaded, same tab, no new tab",
+          reverted.get("reloaded") is True and reverted["id"] == tab_b_id
+          and cmd("tab.list")["count"] == 2)
+    back = cmd("object.get", id=ob)
+    check("the object is back where it was SAVED", back["lane"] == 1 and approx(back["start"], 5), back)
+    if bps:
+        live = settled_params(beq, want=1)
+        check("the plugin's LIVE value is the saved one (the engine followed)",
+              live and approx(live[0]["value"], saved_val, eps=1e-3),
+              "expected %s, got %s" % (saved_val, live[0]["value"] if live else None))
+    check("the whole document is the saved one (engine EditItemIDs excepted)",
+          normalized_state(cmd("project.get_state")) == normalized_state(state_saved_b))
+    check("after the reload: clean", tab_with_path(B_JSON)["dirty"] is False)
+    try:
+        cmd("edit.undo")
+        check("after the reload: the undo history starts over", False, "an undo went through")
+    except ObjekatError as e:
+        check("after the reload: the undo history starts over", e.code == "invalid_state", e.code)
+
+    # ── tab.open on a file open in ANOTHER tab: switches to it AND reloads it ──
     switched = cmd("tab.open", path=A_JSON)
     check("tab.open on another tab's file: already_open", switched["already_open"] is True)
+    check("tab.open on another tab's file: reloaded", switched.get("reloaded") is True)
     check("tab.open on another tab's file: switches to it", switched["active"] is True)
     check("tab.open on another tab's file: tab_count unchanged", cmd("tab.list")["count"] == 2)
     tab_a_id = switched["id"]
+
+    # A DIRTY tab in the background: a script's refusal is decided BEFORE switching to it.
+    cmd("tab.select", id=tab_b_id)
+    cmd("object.move", id=ob, lane=2, start=7)
+    cmd("tab.select", id=tab_a_id)
+    check("B is dirty in the background", tab_with_path(B_JSON)["dirty"] is True
+          and tab_with_path(A_JSON)["active"] is True)
+    try:
+        cmd("tab.open", path=B_JSON)
+        check("reopening a dirty BACKGROUND tab without discard: refused", False, "it went through")
+    except ObjekatError as e:
+        check("reopening a dirty BACKGROUND tab without discard: refused", e.code == "invalid_state", e.code)
+    check("... and nothing moved: A still active, B still dirty",
+          tab_with_path(A_JSON)["active"] is True and tab_with_path(B_JSON)["dirty"] is True)
+    switched_b = cmd("tab.open", path=B_JSON, discard=True)
+    back = cmd("object.get", id=ob)
+    check("with discard: B in front, reloaded, back to its save, clean",
+          switched_b.get("reloaded") is True and tab_with_path(B_JSON)["active"] is True
+          and back["lane"] == 1 and approx(back["start"], 5)
+          and tab_with_path(B_JSON)["dirty"] is False, back)
+    cmd("tab.select", id=tab_a_id)
 
     # ── a file opened, closed, then reopened is NOT already_open ────────────
     t3 = cmd("tab.new")
@@ -343,6 +413,7 @@ with ObjekatClient(SOCK, timeout=180) as c:
     cmd("tab.select", id=tab_a_id)
     opened_b = cmd("project.open", path=B_JSON)
     check("project.open on B's path from A: already_open", opened_b.get("already_open") is True)
+    check("project.open on B's path from A: reloaded", opened_b.get("reloaded") is True)
     check("project.open on B's path from A: switches", tab_with_path(B_JSON)["active"] is True)
     check("project.open on B's path from A: no duplicate tab", cmd("tab.list")["count"] == 2)
 
@@ -472,6 +543,8 @@ with ObjekatClient(SOCK, timeout=180) as c:
     refused("project.new during a DIRECT render", lambda: cmd("project.new"))
     refused("project.open during a DIRECT render", lambda: cmd("project.open", path=A_JSON))
     refused("tab.open during a DIRECT render", lambda: cmd("tab.open", path=C_JSON))
+    refused("reopening the rendered tab's OWN file during a DIRECT render",
+            lambda: cmd("tab.open", path=E_JSON, discard=True))
     check("the project is untouched by the refusals",
           len(cmd("object.list")["objects"]) == e_objects
           and cmd("export.status").get("running") is True)
