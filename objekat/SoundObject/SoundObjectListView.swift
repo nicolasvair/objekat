@@ -40,8 +40,9 @@ struct SoundObjectListView: View {
         // is missing. Relink the last missing file with the filter on and one would be left
         // staring at an empty list with no switch to turn off — so the filter answers to the
         // badge's own condition rather than to the flag alone.
-        guard showOnlyMissing, viewModel.missingFileCount > 0 else { return viewModel.soundListRows }
-        return viewModel.soundListRows.filter { viewModel.subtreeHasMissingFile($0.object) }
+        let all = viewModel.soundListRowsForDisplay()
+        guard showOnlyMissing, viewModel.missingFileCount > 0 else { return all }
+        return all.filter { viewModel.subtreeHasMissingFile($0.object) }
     }
 
     /// The ONE row the panel should bring into view, or nil to leave the scroll alone.
@@ -51,7 +52,11 @@ struct SoundObjectListView: View {
     /// is not currently listed — a child of a folded group is not a row, and `scrollTo` on an id
     /// that is not there does nothing anyway; saying so here keeps the reason in writing rather
     /// than leaving it to a silent no-op.
-    private var rowToReveal: UUID? {
+    private var rowToReveal: UUID? { rowToReveal(in: rows) }
+
+    /// The same, over rows already computed — the body computes `rows` ONCE and hands them here,
+    /// rather than walking the tree a second time for the reveal key.
+    private func rowToReveal(in rows: [SoundListRow]) -> UUID? {
         guard viewModel.selectedIDs.count == 1, let id = viewModel.selectedIDs.first else { return nil }
         return rows.contains(where: { $0.id == id }) ? id : nil
     }
@@ -65,8 +70,8 @@ struct SoundObjectListView: View {
         let token: Int
     }
 
-    private var revealKey: RevealKey? {
-        guard let id = rowToReveal else { return nil }
+    private func revealKey(in rows: [SoundListRow]) -> RevealKey? {
+        guard let id = rowToReveal(in: rows) else { return nil }
         return RevealKey(id: id, token: viewModel.listRevealToken)
     }
 
@@ -81,6 +86,9 @@ struct SoundObjectListView: View {
     }
 
     var body: some View {
+        // ONE walk of the tree per pass: `rows` was evaluated for the `ForEach` and again for the
+        // reveal key.
+        let rows = self.rows
         VStack(spacing: 0) {
             if viewModel.missingFileCount > 0 {
                 missingBadge
@@ -147,7 +155,7 @@ struct SoundObjectListView: View {
             // show, and picking one would be picking for the user. And it never steals the view
             // while one is typing in the search field, where the rows under the hand are the
             // result of the search and not of any selection.
-            .onChange(of: revealKey) { old, new in
+            .onChange(of: revealKey(in: rows)) { old, new in
                 guard let new else { return }
                 // A click in THIS list on the row that was already the one to show: it is under
                 // the pointer, there is nothing to bring into view.
@@ -201,7 +209,7 @@ struct SoundObjectListView: View {
             isMissing: viewModel.isMissing(row.object),
             isExpanded: row.object.isExpanded,
             isOpenConsolidate: viewModel.isInConsolidateEditStack(row.id),
-            stemColor: viewModel.stemColor(for: row.id),
+            stemColor: viewModel.stemColor(of: row.object),
             filterText: viewModel.filterText,
             onToggleExpand: { viewModel.toggleGroupExpansion(id: row.id) }
         )

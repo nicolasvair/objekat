@@ -54,6 +54,13 @@ final class EditViewModel {
     /// rebuilt (O(N) each). Two counters a gesture's cost can be read off WITHOUT a screen: a drag
     /// frame that lays N writes down one at a time costs N rebuilds, and one wrapped in
     /// `batchItemsMutation` costs one (`debug.crossfade_drag`, `perf.census`).
+    /// True while a gesture rewrites `items` on every frame (a crossfade drag): the sound list
+    /// then shows the rows it had when the gesture began, and catches up once on release
+    /// (@see `soundListRowsForDisplay`). Observed — flipping it back is what refreshes the list.
+    var soundListHeld: Bool = false {
+        didSet { if !soundListHeld { heldSoundListRows = nil } }
+    }
+    @ObservationIgnored var heldSoundListRows: [SoundListRow]? = nil
     @ObservationIgnored var itemsWriteCount = 0
     @ObservationIgnored var laneEntriesRebuildCount = 0
     @ObservationIgnored var undoPushCount = 0
@@ -1243,16 +1250,29 @@ final class EditViewModel {
         return r.time
     }
 
-    var isDirty: Bool = false {
-        didSet {
-            updateWindowTitle()
+    /// Written ONLY when it changes. Every model write ends with `isDirty = true`, and a gesture
+    /// that writes the model live (a crossfade drag: six writes per frame) used to pay, per write,
+    /// an Observation notification to every view reading the flag AND a window-title pass
+    /// (`window.title`, the proxy URL, the device label's title-bar walk) — measured at 2.3 % of
+    /// the main thread under the drag (Release, `xctrace`, 2 October 2026) for a title that had not
+    /// changed. The stored flag is observed; this door filters the no-op writes out.
+    var isDirty: Bool {
+        get { dirtyFlag }
+        set {
+            if newValue != dirtyFlag {
+                dirtyFlag = newValue
+                updateWindowTitle()
+            }
             // The central way through: almost every audio mutation ends with `isDirty =
             // true`. While a consolidated object is open, this arms the re-mirroring of the other
-            // instances. LIVE knob movements (outside the model) are caught as well through
-            // the engine's parameter listening. See EditViewModel+Consolidate.
+            // instances — on EVERY write, changed or not. LIVE knob movements (outside the model)
+            // are caught as well through the engine's parameter listening. See
+            // EditViewModel+Consolidate.
             if editingConsolidateID != nil { scheduleLiveMirror() }
         }
     }
+    /// The storage behind `isDirty` (observed). Never written directly — go through `isDirty`.
+    private var dirtyFlag: Bool = false
     var projectName: String = L("project.untitled") {
         didSet { updateWindowTitle() }
     }
