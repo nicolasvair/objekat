@@ -464,6 +464,9 @@ def perf_scene(c, pieces, out_dir):
     r = c.send("object.explode", {"id": clip["id"], "cuts": cuts, "lanes": [i % lanes for i in range(n)],
                                    "group_lanes": True})
     subs = r["lane_groups"]                  # 12 sub-groups (depth 1), the outer one is depth 0
+    # the sub-groups are only addressable by group.create while the outer group is OPEN
+    # (otherwise "invalid_state: no group created")
+    c.send("group.expand", {"id": r["group"], "expanded": True})
     # depth 2 and 3: pair the sub-groups, then group the pairs in threes
     pairs = [c.send("group.create", {"ids": subs[i:i + 2]})["id"] for i in range(0, len(subs), 2)]
     tops = [c.send("group.create", {"ids": pairs[i:i + 3]})["id"] for i in range(0, len(pairs), 3)]

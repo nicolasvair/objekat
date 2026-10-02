@@ -1,0 +1,113 @@
+{
+ "label": "canvas",
+ "when": "2026-10-02 07:55:06",
+ "project": "/tmp/cc501/perf/perf_nested_480.objekat",
+ "objects": 501,
+ "steps": {
+  "scroll_right": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 6.37,
+   "busy total": 1816.946
+  },
+  "scroll_down": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 3.819,
+   "busy total": 583.257
+  },
+  "scroll_left": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 6.448,
+   "busy total": 1745.59
+  },
+  "scroll_up": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 3.499,
+   "busy total": 577.14
+  },
+  "zoom_h_in": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 70.732,
+   "busy total": 842.89
+  },
+  "zoom_h_out": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 67.283,
+   "busy total": 852.221
+  },
+  "zoom_v_in": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 30.088,
+   "busy total": 619.611
+  },
+  "zoom_v_out": {
+   "contaminated": false,
+   "fps": 0,
+   "frame p50": null,
+   "frame p95": null,
+   "frame p99": null,
+   "frame max": null,
+   "late frames": 0,
+   "dropped": 0,
+   "hitch ms/s": 0,
+   "busy p95": 39.033,
+   "busy total": 627.46
+  }
+ },
+ "build": "release"
+}
