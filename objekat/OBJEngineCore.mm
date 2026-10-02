@@ -93,6 +93,31 @@ struct OBJPropertyStorage : public te::PropertyStorage {
     }
 };
 
+// Format WAV des rendus : celui de JUCE, à une différence près — le champ « Originator » du chunk
+// bext vaut « created by objekat ».
+//
+// Pourquoi ici : Tracktion écrit `"tracktion"` dans ce champ, SANS condition, au moment du rendu
+// (AudioFileUtils::addBWAVStartToMetadata, appelé par NodeRenderContext qui ÉCRASE r.metadata —
+// pré-remplir les métadonnées du Renderer::Parameters ne sert donc à rien). Le seul point de passage
+// qui voit la valeur finale et qui nous appartient est le format d'écriture : on le dérive, on
+// remplace la valeur à la création du writer, et on laisse tout le reste (début BWF, date, taux,
+// profondeur) à JUCE. Pas de patch moteur. « created by objekat » = 18 caractères pour 32 octets.
+// Utilisé aux DEUX seuls sites de rendu : renderTrackToFileAsync (bake, consolidé, aperçu live) et
+// exportMixToFileAsync (export WAV, panneau, régions). Le MP3 n'est pas concerné.
+struct OBJWavAudioFormat final : public juce::WavAudioFormat {
+    using juce::WavAudioFormat::createWriterFor;
+
+    std::unique_ptr<juce::AudioFormatWriter> createWriterFor(std::unique_ptr<juce::OutputStream>& stream,
+                                                             const juce::AudioFormatWriterOptions& options) override {
+        auto meta = options.getMetadataValues();
+        const juce::String key(juce::WavAudioFormat::bwavOriginator);
+        auto it = meta.find(key);
+        if (it != meta.end())
+            it->second = "created by objekat";
+        return juce::WavAudioFormat::createWriterFor(stream, options.withMetadataValues(meta));
+    }
+};
+
 // Comportement moteur custom : relève les limites par défaut de Tracktion.
 // La valeur par défaut maxPluginsOnClip vaut 5 ; comme chaque clip embarque déjà
 // un ObjGainPlugin post-FX, l'utilisateur ne pouvait ajouter que 4 plugins avant
@@ -1078,6 +1103,9 @@ struct OBJRenderChain {
 @end
 
 @implementation OBJEngineCore {
+    // AVANT _engine : détruit APRÈS lui, donc après tout rendu encore en vol (le Renderer en tient
+    // un pointeur brut).
+    std::unique_ptr<OBJWavAudioFormat> _wavFormat;
     std::unique_ptr<te::Engine> _engine;
     // Décision de fréquence de la carte (@see -applySampleRatePolicy, OBJSampleRatePolicy.h).
     // `_rateDecision` = OBJRateDecisionKind ; 0 (adopt) tant qu'aucune décision n'a été prise.
@@ -1332,6 +1360,7 @@ static BOOL gOBJAudioDisabled = NO;
                                                std::make_unique<OBJEngineBehaviour>());
         // Gain de sortie clip post-FX (plage -96…+40 dB). Doit être enregistré
         // avant toute création/restauration de clip.
+        _wavFormat = std::make_unique<OBJWavAudioFormat>();
         _engine->getPluginManager().createBuiltInType<te::ObjGainPlugin>();
         // Enveloppe fenêtre+fade de bus de groupe (folder). Enregistrer avant toute
         // création/restauration de folder de groupe.
@@ -3266,7 +3295,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     r.tracksToDo         = tracksToDo;
     r.allowedClips       = allowedClips;   // vide = toute la piste
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
-    r.audioFormat        = _engine->getAudioFileFormatManager().getWavFormat();
+    r.audioFormat        = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
     r.bitDepth           = 32;  // WAV 32-bit float (headroom, lisible partout)
     r.sampleRateForAudio = dm.getSampleRate();
     r.blockSizeForAudio  = dm.getBlockSize();
@@ -3580,7 +3609,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // tracksToDo et allowedClips laissés VIDES : le renderer prend alors tout (@see
     // render_utils::createRenderTask, `allowedTracks = tracksToDo.isZero() ? nullptr : …`).
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
-    r.audioFormat        = _engine->getAudioFileFormatManager().getWavFormat();
+    r.audioFormat        = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
     r.bitDepth           = (int)bitDepth;
     r.sampleRateForAudio = sampleRate > 0 ? sampleRate : dm.getSampleRate();
     r.blockSizeForAudio  = dm.getBlockSize();
