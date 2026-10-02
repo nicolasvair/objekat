@@ -4,25 +4,37 @@ extension EditViewModel {
 
     // MARK: - Fades
 
+    /// What the three `updateFade…` setters do to ONE object's value, with no lookup, no engine and
+    /// no write to `items` — the part a crossfade drag replays on its own copies of the objects
+    /// (@see CrossfadeShadow), so that the copy and the model can never be two arithmetics.
+    func applyFadeIn(to obj: inout SoundObject, fadeIn: Double) {
+        let D  = obj.duration
+        let fi = max(0, min(fadeIn, D))
+        let fo = max(0, min(obj.fadeOut, D - fi))
+        obj.fadeIn  = fi
+        obj.fadeOut = fo
+    }
+
+    func applyFadeOut(to obj: inout SoundObject, fadeOut: Double) {
+        let D  = obj.duration
+        let fo = max(0, min(fadeOut, D))
+        let fi = max(0, min(obj.fadeIn, D - fo))
+        obj.fadeIn  = fi
+        obj.fadeOut = fo
+    }
+
+    func applyFadeCurve(to obj: inout SoundObject, fadeIn: FadeCurve?, fadeOut: FadeCurve?) {
+        if let fadeIn  { obj.fadeInCurve  = fadeIn }
+        if let fadeOut { obj.fadeOutCurve = fadeOut }
+    }
+
     func updateFadeIn(id: UUID, fadeIn: Double) {
-        update(id: id) { obj in
-            let D  = obj.duration
-            let fi = max(0, min(fadeIn, D))
-            let fo = max(0, min(obj.fadeOut, D - fi))
-            obj.fadeIn  = fi
-            obj.fadeOut = fo
-        }
+        update(id: id) { obj in applyFadeIn(to: &obj, fadeIn: fadeIn) }
         syncFade(id: id)
     }
 
     func updateFadeOut(id: UUID, fadeOut: Double) {
-        update(id: id) { obj in
-            let D  = obj.duration
-            let fo = max(0, min(fadeOut, D))
-            let fi = max(0, min(obj.fadeIn, D - fo))
-            obj.fadeIn  = fi
-            obj.fadeOut = fo
-        }
+        update(id: id) { obj in applyFadeOut(to: &obj, fadeOut: fadeOut) }
         syncFade(id: id)
     }
 
@@ -30,10 +42,7 @@ extension EditViewModel {
     /// object with no fade changes nothing audible, and shows up the moment one is pulled.
     func updateFadeCurve(id: UUID, fadeIn: FadeCurve? = nil, fadeOut: FadeCurve? = nil) {
         guard fadeIn != nil || fadeOut != nil else { return }
-        update(id: id) { obj in
-            if let fadeIn  { obj.fadeInCurve  = fadeIn }
-            if let fadeOut { obj.fadeOutCurve = fadeOut }
-        }
+        update(id: id) { obj in applyFadeCurve(to: &obj, fadeIn: fadeIn, fadeOut: fadeOut) }
         if let obj = find(id: id) { pushFadeCurveTree(obj) }
         isDirty = true
     }

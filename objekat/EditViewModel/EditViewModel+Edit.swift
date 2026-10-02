@@ -124,35 +124,40 @@ extension EditViewModel {
         update(id: id) { $0.lane = max(0, lane) }
     }
 
-    func updateDuration(id: UUID, duration: Double) {
-        update(id: id) { obj in
-            let D = max(0.01, duration)
-            var fi = obj.fadeIn
-            // A CROP DOES NOT CHANGE THE SIZE OF A FADE. This is the hand on the edge handle, and
-            // there the fade is a property of the EDGE, not of the matter behind it: the window
-            // moves and the fade-out keeps its LENGTH against the new end, exactly as the fade-in
-            // keeps its own against the start. Shortening it here (`fadeOutAnchoredAtStart`) made
-            // the two edges disagree under the same gesture, which is what was read on screen.
-            // Removing matter is the OTHER gesture (@see carveTimeRange, `cut(keeping:)`), and
-            // there the anchored helpers still hold. The two clamps below stay the last word: an
-            // object shorter than its fades is a physical limit, not a rule of its own.
-            var fo = obj.fadeOut
-            if D < fi { fi = D; fo = 0 }
-            else if D < fi + fo { fo = D - fi }
-            // The RIGHT edge moves: played forwards the source range does not move, but in reverse
-            // it is that edge which commands it (@see WaveformShaping.retrimmedSourceOffset).
-            if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind, rev {
-                obj.kind = .clip(filePath: fp,
-                                 sourceOffset: WaveformShaping.retrimmedSourceOffset(
-                                    so, oldStart: obj.startTime, oldDuration: obj.duration,
-                                    newStart: obj.startTime, newDuration: D,
-                                    speedRatio: sr, isReversed: rev),
-                                 fileDuration: fd, speedRatio: sr, isReversed: rev)
-            }
-            obj.duration = D
-            obj.fadeIn   = fi
-            obj.fadeOut  = fo
+    /// What `updateDuration` does to ONE object's value — and nothing else: no lookup, no engine, no
+    /// write to `items`. It is the part a crossfade drag replays on its own copies of the objects
+    /// (@see CrossfadeShadow), so that the copy and the model can never be two arithmetics.
+    func applyDuration(to obj: inout SoundObject, duration: Double) {
+        let D = max(0.01, duration)
+        var fi = obj.fadeIn
+        // A CROP DOES NOT CHANGE THE SIZE OF A FADE. This is the hand on the edge handle, and
+        // there the fade is a property of the EDGE, not of the matter behind it: the window
+        // moves and the fade-out keeps its LENGTH against the new end, exactly as the fade-in
+        // keeps its own against the start. Shortening it here (`fadeOutAnchoredAtStart`) made
+        // the two edges disagree under the same gesture, which is what was read on screen.
+        // Removing matter is the OTHER gesture (@see carveTimeRange, `cut(keeping:)`), and
+        // there the anchored helpers still hold. The two clamps below stay the last word: an
+        // object shorter than its fades is a physical limit, not a rule of its own.
+        var fo = obj.fadeOut
+        if D < fi { fi = D; fo = 0 }
+        else if D < fi + fo { fo = D - fi }
+        // The RIGHT edge moves: played forwards the source range does not move, but in reverse
+        // it is that edge which commands it (@see WaveformShaping.retrimmedSourceOffset).
+        if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind, rev {
+            obj.kind = .clip(filePath: fp,
+                             sourceOffset: WaveformShaping.retrimmedSourceOffset(
+                                so, oldStart: obj.startTime, oldDuration: obj.duration,
+                                newStart: obj.startTime, newDuration: D,
+                                speedRatio: sr, isReversed: rev),
+                             fileDuration: fd, speedRatio: sr, isReversed: rev)
         }
+        obj.duration = D
+        obj.fadeIn   = fi
+        obj.fadeOut  = fo
+    }
+
+    func updateDuration(id: UUID, duration: Double) {
+        update(id: id) { obj in applyDuration(to: &obj, duration: duration) }
         if let obj = find(id: id) {
             syncPosition(obj)
             if obj.isClip || obj.isMIDI {   // the same ObjWindowFade chain on the engine side
@@ -162,61 +167,64 @@ extension EditViewModel {
         isDirty = true
     }
 
-    func updateTrim(id: UUID, newStart: Double, newDuration: Double) {
-        update(id: id) { obj in
-            let delta = newStart - obj.startTime
-            let oldStart = obj.startTime
-            let oldDuration = obj.duration
-            let D = max(0.01, newDuration)
-            // The mirror of `updateDuration`: a trim does not change the size of a fade. The
-            // fade-in keeps its LENGTH and follows the start edge it is anchored to. Shortening it
-            // here (`fadeInAnchoredAtEnd`) belonged to the other gesture — matter REMOVED off the
-            // head (@see carveTimeRange) — and it came back through this door, which drives the
-            // mouse trim, the API's `object.trim` and the crossfade's edge travel alike.
-            var fi = obj.fadeIn
-            var fo = obj.fadeOut
-            if D < fo { fo = D; fi = 0 }
-            else if D < fi + fo { fi = D - fo }
-            obj.startTime = newStart
-            obj.duration  = D
-            obj.fadeIn    = fi
-            obj.fadeOut   = fo
-            // The edge moves, the CONTENT does not — so the ORIGIN of the automation points'
-            // frame of reference moves under them. The same rebasing as the MIDI notes just below, and
-            // the same non-destructiveness: a point left behind the new edge keeps a NEGATIVE time
-            // and comes back if the edge is reopened (@see AutomationLane.shifted). Without this, a
-            // curve followed the edge instead of staying in front of the matter it modulates.
-            obj.automation = obj.automation.shiftedInTime(by: -delta)
-            obj.markers    = obj.markers.shiftedInTime(by: -delta)
-            if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind {
-                // The left edge moves by `delta` on the timeline → the source advances by delta×speed.
-                // In reverse it is the right edge that commands the source range: trimming the entry
-                // does not touch the offset (@see WaveformShaping.retrimmedSourceOffset).
-                obj.kind = .clip(filePath: fp,
-                                 sourceOffset: WaveformShaping.retrimmedSourceOffset(
-                                    so, oldStart: oldStart, oldDuration: oldDuration,
-                                    newStart: newStart, newDuration: D,
-                                    speedRatio: sr, isReversed: rev),
-                                 fileDuration: fd, speedRatio: sr, isReversed: rev)
-            }
-            if case .midiClip(let notes, let lengthBeats) = obj.kind {
-                // The same gesture as for an audio clip, in beats: the edge moves, the CONTENT does
-                // not. The notes keep their absolute place, so their position relative to the start
-                // of the clip recedes by `delta`. Without this they followed the edge — the trim
-                // shifted the clip instead of revealing / hiding its inside.
-                //
-                // Notes left behind the new edge are KEPT (a negative startBeat), exactly like the
-                // matter outside the bounds of an audio clip: the clip masks them, pulling the edge
-                // back to the left gives them again. A non-destructive trim.
-                let dBeats = beatsFromSeconds(delta)
-                obj.kind = .midiClip(notes: notes.map { n in
-                                        var m = n
-                                        m.startBeat -= dBeats
-                                        return m
-                                     },
-                                     lengthBeats: max(0.01, lengthBeats - dBeats))
-            }
+    /// What `updateTrim` does to ONE object's value (@see `applyDuration`).
+    func applyTrim(to obj: inout SoundObject, newStart: Double, newDuration: Double) {
+        let delta = newStart - obj.startTime
+        let oldStart = obj.startTime
+        let oldDuration = obj.duration
+        let D = max(0.01, newDuration)
+        // The mirror of `updateDuration`: a trim does not change the size of a fade. The
+        // fade-in keeps its LENGTH and follows the start edge it is anchored to. Shortening it
+        // here (`fadeInAnchoredAtEnd`) belonged to the other gesture — matter REMOVED off the
+        // head (@see carveTimeRange) — and it came back through this door, which drives the
+        // mouse trim, the API's `object.trim` and the crossfade's edge travel alike.
+        var fi = obj.fadeIn
+        var fo = obj.fadeOut
+        if D < fo { fo = D; fi = 0 }
+        else if D < fi + fo { fi = D - fo }
+        obj.startTime = newStart
+        obj.duration  = D
+        obj.fadeIn    = fi
+        obj.fadeOut   = fo
+        // The edge moves, the CONTENT does not — so the ORIGIN of the automation points'
+        // frame of reference moves under them. The same rebasing as the MIDI notes just below, and
+        // the same non-destructiveness: a point left behind the new edge keeps a NEGATIVE time
+        // and comes back if the edge is reopened (@see AutomationLane.shifted). Without this, a
+        // curve followed the edge instead of staying in front of the matter it modulates.
+        obj.automation = obj.automation.shiftedInTime(by: -delta)
+        obj.markers    = obj.markers.shiftedInTime(by: -delta)
+        if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind {
+            // The left edge moves by `delta` on the timeline → the source advances by delta×speed.
+            // In reverse it is the right edge that commands the source range: trimming the entry
+            // does not touch the offset (@see WaveformShaping.retrimmedSourceOffset).
+            obj.kind = .clip(filePath: fp,
+                             sourceOffset: WaveformShaping.retrimmedSourceOffset(
+                                so, oldStart: oldStart, oldDuration: oldDuration,
+                                newStart: newStart, newDuration: D,
+                                speedRatio: sr, isReversed: rev),
+                             fileDuration: fd, speedRatio: sr, isReversed: rev)
         }
+        if case .midiClip(let notes, let lengthBeats) = obj.kind {
+            // The same gesture as for an audio clip, in beats: the edge moves, the CONTENT does
+            // not. The notes keep their absolute place, so their position relative to the start
+            // of the clip recedes by `delta`. Without this they followed the edge — the trim
+            // shifted the clip instead of revealing / hiding its inside.
+            //
+            // Notes left behind the new edge are KEPT (a negative startBeat), exactly like the
+            // matter outside the bounds of an audio clip: the clip masks them, pulling the edge
+            // back to the left gives them again. A non-destructive trim.
+            let dBeats = beatsFromSeconds(delta)
+            obj.kind = .midiClip(notes: notes.map { n in
+                                    var m = n
+                                    m.startBeat -= dBeats
+                                    return m
+                                 },
+                                 lengthBeats: max(0.01, lengthBeats - dBeats))
+        }
+    }
+
+    func updateTrim(id: UUID, newStart: Double, newDuration: Double) {
+        update(id: id) { obj in applyTrim(to: &obj, newStart: newStart, newDuration: newDuration) }
         if let obj = find(id: id) {
             syncPosition(obj)
             if obj.isClip || obj.isMIDI {   // the same ObjWindowFade chain on the engine side
