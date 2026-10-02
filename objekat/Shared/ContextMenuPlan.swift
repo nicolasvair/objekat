@@ -13,8 +13,14 @@ import Foundation
 // way `CrossfadeGrab` / `CutSelection` are: the monitor that builds the menu is AppKit and cannot
 // be driven headless, but WHAT IT DECIDES can.
 //
-//   • INSIDE the time selection: the menu the range has always had, untouched, and the click
-//     selects nothing — the range is what was aimed at.
+//   • INSIDE the time selection, ON an object (either half of its block): the two annotation
+//     items and nothing else — 'Create an object marker' (in the object, at the instant aimed at)
+//     and 'Create a comment' (over the range). The hand is pointing at a passage OF an object, and
+//     those are the two things one lays there; the range's other entries (group, aux, MIDI clip)
+//     and the object's own (consolidate, colour, scripts, relink, FX link) stay reachable from an
+//     empty lane and from the object's lower half outside the range. The click selects nothing.
+//   • INSIDE the time selection, on NO object: the menu the range has always had, untouched, and
+//     the click selects nothing — the range is what was aimed at.
 //   • Upper half of a block, outside any range: time. A marker laid inside the object at that
 //     instant — and no comment (a comment is about a range, and there is none under the hand).
 //     Nothing is selected and the cursor does not move: the left click on that half lays the caret,
@@ -45,9 +51,12 @@ enum ContextMenuPlan {
 
     /// Which menu gets built.
     enum Layout: Equatable {
-        /// The range's menu (group, aux, MIDI clip, comment…): the point is inside the time
-        /// selection, or on an empty lane while a time selection exists.
+        /// The range's menu (group, aux, MIDI clip, comment…): the point is on an empty lane while
+        /// a time selection exists (inside it or not).
         case rangeMenu
+        /// The point is inside the time selection AND on an object: the object marker and the
+        /// comment, and nothing else.
+        case rangeAnnotationsMenu
         /// The upper half of a block: the annotation items only.
         case objectTimeMenu
         /// The lower half of a block: the object's own menu.
@@ -78,7 +87,8 @@ enum ContextMenuPlan {
     static func decide(pointInTimeSelection: Bool, hasTimeSelection: Bool, zone: BlockZone?,
                        objectAlreadySelected: Bool, hasGroupableSelection: Bool = false) -> Decision {
         if pointInTimeSelection {
-            return Decision(layout: .rangeMenu, selectsObject: false,
+            return Decision(layout: zone != nil ? .rangeAnnotationsMenu : .rangeMenu,
+                            selectsObject: false,
                             offersObjectMarker: zone != nil, offersComment: true)
         }
         switch zone {

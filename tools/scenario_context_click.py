@@ -13,7 +13,9 @@ it, the part the monitor runs BEFORE it builds anything: `ContextMenuPlan` (also
     'Consolidate N linked' and the FX link remain on offer);
   * an object OUTSIDE the selection replaces it;
   * the upper half (time): no selection, no cursor move, the marker on offer, no comment;
-  * a point INSIDE the time selection: today's menu, nothing selected, the comment on offer;
+  * a point INSIDE the time selection, ON an object (either half): the object marker and the
+    comment ALONE (`range_annotations_menu`), and nothing touched — no object selected, the range
+    kept whole, the cursor where it was;
   * a time selection lying elsewhere is cleared by a body click outside it, exactly as the left
     click clears it;
   * a click on NO object (an empty lane, `id` omitted, `lane` + `time` given): a time selection
@@ -141,17 +143,39 @@ with ObjekatClient(SOCK) as c:
           "%s %s" % (sel(), json.dumps(r)))
     check("… and the cursor stays where it was", near(cursor(), 3.3), str(cursor()))
 
-    # ── a point INSIDE the time selection: today's menu, nothing selected ───────────────────
+    # ── a point INSIDE the time selection, on an object: the two annotation items alone ─────
     a, b, d = fresh()
     cmd("timesel.set", start=1.5, end=2.3, lanes=[0])
+    cmd("transport.seek", seconds=0.7)
+    before = cmd("selection.get")
     for zone in ("time", "body"):
         r = click(a, zone=zone, time=2.1)
-        check("inside the range (%s half): the range's menu" % zone,
-              r["layout"] == "range_menu" and r["offers_comment"] is True
+        check("inside the range (%s half): the object marker and the comment alone" % zone,
+              r["layout"] == "range_annotations_menu" and r["offers_comment"] is True
               and r["offers_object_marker"] is True, json.dumps(r))
         check("… and nothing is selected (%s half)" % zone,
               r["selects_object"] is False and r["applied"] is False and sel() == set(),
               "%s %s" % (sel(), json.dumps(r)))
+        after = cmd("selection.get")
+        check("… the range, the caret and the selection are untouched (%s half)" % zone,
+              after.get("time_selection") == before.get("time_selection")
+              and after.get("caret") == before.get("caret")
+              and after.get("ids") == before.get("ids"),
+              "%s -> %s" % (json.dumps(before), json.dumps(after)))
+        check("… and the cursor stays where it was (%s half)" % zone, near(cursor(), 0.7), str(cursor()))
+    # the same, on an object that was ALREADY selected: still nothing changes
+    cmd("selection.set", ids=[a])
+    cmd("timesel.set", start=1.5, end=2.3, lanes=[0])
+    before = cmd("selection.get")
+    r = click(a, zone="body", time=2.1)
+    after = cmd("selection.get")
+    check("inside the range on a selected object: the two items, the state untouched",
+          r["layout"] == "range_annotations_menu" and r["applied"] is False
+          and after.get("ids") == before.get("ids")
+          and after.get("time_selection") == before.get("time_selection"),
+          "%s -> %s %s" % (json.dumps(before), json.dumps(after), json.dumps(r)))
+    cmd("selection.clear")
+    cmd("timesel.set", start=1.5, end=2.3, lanes=[0])
     # the same object, a point past the range's end: outside, so the object's own reading
     r = click(a, zone="time", time=2.35)
     check("a point just past the range's end is OUTSIDE it (time half: marker only)",
