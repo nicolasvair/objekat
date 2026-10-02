@@ -273,8 +273,10 @@ extension EditViewModel {
         let minChildLane = inside.map(\.lane).min() ?? baseLaneForDisplay(sel.lanes.min() ?? 0)
         // Captures the plugin state BEFORE the engine removal further down (otherwise syncAddGroup
         // recreates them at their default values). See copiedPlugins / withCapturedPluginStates.
+        // Their lanes inside the group: the RANK among the lanes taken in (no holes left, @see LaneCompaction).
+        let laneRank = LaneCompaction.ranks(of: inside.map(\.lane))
         let children: [SoundObject] = Self.propagatingStemID(groupStem, in: inside.map { clip in
-            var c = withCapturedPluginStates(clip); c.lane -= minChildLane; return c
+            var c = withCapturedPluginStates(clip); c.lane = laneRank[clip.lane] ?? 0; return c
         })
 
         let insideIDs = Set(inside.map(\.id))
@@ -359,14 +361,15 @@ extension EditViewModel {
         let groupStart   = members.map(\.startTime).min()!
         let groupEnd     = members.map { $0.startTime + $0.duration }.max()!
         let groupLane    = members.min(by: { $0.startTime < $1.startTime })?.lane ?? 0
-        let minChildLane = members.map(\.lane).min() ?? 0
 
         // Children: their lane relative to the new group, their startTime kept (absolute), their bus aligned on
         // the group's (a child has no bus of its own). The groups included keep their
         // own children/isExpanded. Captures the plugin state BEFORE removeFromEngine (otherwise
         // syncAddGroup recreates them at their default values).
+        // Lanes: the RANK among the lanes taken in, so that 1, 3, 6 become 0, 1, 2 (@see LaneCompaction).
+        let laneRank = LaneCompaction.ranks(of: members.map(\.lane))
         let children: [SoundObject] = Self.propagatingStemID(groupStem, in: members.map { m in
-            var c = withCapturedPluginStates(m); c.lane -= minChildLane; return c
+            var c = withCapturedPluginStates(m); c.lane = laneRank[m.lane] ?? 0; return c
         })
 
         // Engine removal (removeFromEngine handles a clip AND a group = descendants + folder),
@@ -447,8 +450,10 @@ extension EditViewModel {
 
         // The sub-group's children: their lane relative to the sub-group, their startTime kept (absolute).
         // Captures the plugin state BEFORE removeFromEngine (a re-sync through addChild otherwise defaults).
+        // Their lanes: the RANK among the lanes taken in, no holes (@see LaneCompaction).
+        let laneRank = LaneCompaction.ranks(of: selected.map(\.lane))
         let subChildren: [SoundObject] = selected.map { child in
-            var c = withCapturedPluginStates(child); c.lane -= minLane; c.stemID = nil; return c
+            var c = withCapturedPluginStates(child); c.lane = laneRank[child.lane] ?? 0; c.stemID = nil; return c
         }
 
         // Removing the selected children from the parent (the engine first — they are still nested —
