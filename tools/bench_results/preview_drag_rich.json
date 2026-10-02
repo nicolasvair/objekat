@@ -1,0 +1,80 @@
+{
+ "label": "rich",
+ "when": "2026-10-02 01:52:13",
+ "repeat": 3,
+ "travel_px": 400,
+ "duration_ms": 1500,
+ "scenarios": {
+  "S3 move @pps 5": {
+   "runs": 3,
+   "thrown_runs": 0,
+   "fps": 0.5,
+   "frame p50": 2191.146,
+   "frame p95": 3887.393,
+   "frame p99": 4167.673,
+   "frame max": 4167.673,
+   "late frames": 64,
+   "dropped": 20226,
+   "hitch ms/s": 995.88,
+   "busy p95": 0.021,
+   "busy total": 169071.029,
+   "fps_runs": [
+    0.4,
+    0.5,
+    0.5
+   ],
+   "census": {
+    "clips_canvas": 0,
+    "clips_rich": 600,
+    "groups_canvas": 1,
+    "groups_rich": 0,
+    "rich_reasons": {
+     "preview": 600
+    },
+    "foreach_total": 601
+   },
+   "moved_by": [
+    0,
+    80
+   ]
+  },
+  "S3 move @pps 20": {
+   "runs": 3,
+   "thrown_runs": 0,
+   "fps": 1.9,
+   "frame p50": 462.104,
+   "frame p95": 997.237,
+   "frame p99": 1010.562,
+   "frame max": 1010.562,
+   "late frames": 63,
+   "dropped": 5080,
+   "hitch ms/s": 984.32,
+   "busy p95": 0.015,
+   "busy total": 42892.506,
+   "fps_runs": [
+    1.9,
+    1.9,
+    1.9
+   ],
+   "census": {
+    "clips_canvas": 0,
+    "clips_rich": 175,
+    "groups_canvas": 1,
+    "groups_rich": 0,
+    "rich_reasons": {
+     "preview": 175
+    },
+    "foreach_total": 176
+   },
+   "moved_by": [
+    0,
+    20
+   ]
+  }
+ },
+ "viewport": [
+  1151,
+  879
+ ],
+ "build": "release"
+}
