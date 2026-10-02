@@ -53,14 +53,8 @@ final class EditViewModel {
     /// How many times `items` has been written, and how many times the lane entries have been
     /// rebuilt (O(N) each). Two counters a gesture's cost can be read off WITHOUT a screen: a drag
     /// frame that lays N writes down one at a time costs N rebuilds, and one wrapped in
-    /// `batchItemsMutation` costs one (`debug.crossfade_drag`, `perf.census`).
-    /// True while a gesture rewrites `items` on every frame (a crossfade drag): the sound list
-    /// then shows the rows it had when the gesture began, and catches up once on release
-    /// (@see `soundListRowsForDisplay`). Observed — flipping it back is what refreshes the list.
-    var soundListHeld: Bool = false {
-        didSet { if !soundListHeld { heldSoundListRows = nil } }
-    }
-    @ObservationIgnored var heldSoundListRows: [SoundListRow]? = nil
+    /// `batchItemsMutation` costs one (`debug.crossfade_drag`, `perf.census`) — and a gesture that
+    /// only previews, as every edge drag now does, costs none.
     @ObservationIgnored var itemsWriteCount = 0
     @ObservationIgnored var laneEntriesRebuildCount = 0
     @ObservationIgnored var undoPushCount = 0
@@ -1206,21 +1200,54 @@ final class EditViewModel {
     /// than from the grid. A grid line that happens to FALL on a mark counts as landing on it —
     /// the eye sees an alignment there, and a guide that stayed grey over it would be lying.
     func snappedTime(_ t: Double, excluding: Set<UUID> = []) -> (time: Double, onTarget: Bool) {
-        guard effectiveSnapEnabled else { return (t, false) }
-        let g = effectiveSnapGrid
+        Self.snappedTime(t, in: snapFrame(excluding: excluding))
+    }
+
+    /// Everything a snap reads, taken ONCE: whether it is on, the grid, the tolerance, and the marks
+    /// it can land on. A gesture that snaps on every frame while it leaves the model alone (a
+    /// crossfade drag) freezes it at the start — `snapTargets` walks every object, and the answer
+    /// cannot change under a hand that writes nothing.
+    struct SnapFrame {
+        let enabled: Bool
+        let grid: Double
+        let threshold: Double
+        let eps: Double
+        let targets: [Double]
+    }
+
+    func snapFrame(excluding: Set<UUID> = []) -> SnapFrame {
+        guard effectiveSnapEnabled else {
+            return SnapFrame(enabled: false, grid: 0, threshold: 0, eps: 0, targets: [])
+        }
+        return SnapFrame(enabled: true, grid: effectiveSnapGrid,
+                         threshold: 8.0 / pixelsPerSecond,
+                         // The grid won — but it may have won ON a mark. Half a pixel of tolerance:
+                         // the two are computed by different routes and an exact equality would
+                         // almost never hold.
+                         eps: 0.5 / max(Self.minPixelsPerSecond, pixelsPerSecond),
+                         targets: snapTargets(excluding: excluding))
+    }
+
+    static func snappedTime(_ t: Double, in f: SnapFrame) -> (time: Double, onTarget: Bool) {
+        guard f.enabled else { return (t, false) }
+        let g = f.grid
         let gridSnap = g > 0 ? (t / g).rounded() * g : t
-        let threshold = 8.0 / pixelsPerSecond
-        let targets = snapTargets(excluding: excluding)
         var best: Double? = nil
-        for target in targets {
-            guard abs(target - t) <= threshold else { continue }
+        for target in f.targets {
+            guard abs(target - t) <= f.threshold else { continue }
             if best == nil || abs(target - t) < abs(best! - t) { best = target }
         }
         if let b = best, abs(b - t) < abs(gridSnap - t) { return (b, true) }
-        // The grid won — but it may have won ON a mark. Half a pixel of tolerance: the two are
-        // computed by different routes and an exact equality would almost never hold.
-        let eps = 0.5 / max(Self.minPixelsPerSecond, pixelsPerSecond)
-        return (gridSnap, targets.contains { abs($0 - gridSnap) <= eps })
+        return (gridSnap, f.targets.contains { abs($0 - gridSnap) <= f.eps })
+    }
+
+    /// `snapTime` on a frame taken earlier, writing the guide ONLY when it changes: the guide is an
+    /// observed property, and a write of the same value still notifies every view reading it.
+    func snapTime(_ t: Double, in f: SnapFrame) -> Double {
+        let r = Self.snappedTime(t, in: f)
+        let guide = SnapGuide(time: r.time, onTarget: r.onTarget)
+        if snapGuide != guide { snapGuide = guide }
+        return r.time
     }
 
     func snappedTimePure(_ t: Double, excluding: Set<UUID> = []) -> Double {

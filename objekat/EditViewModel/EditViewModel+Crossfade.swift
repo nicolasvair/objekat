@@ -486,9 +486,22 @@ extension EditViewModel {
 
     func seamHem(leftID: UUID, rightID: UUID,
                  approach: SeamApproach = .none) -> Result<SeamHem, SeamRefusal> {
-        guard var left = find(id: leftID), var right = find(id: rightID),
-              left.lane == right.lane,
-              parentGroup(for: leftID)?.id == parentGroup(for: rightID)?.id
+        guard let left = find(id: leftID), let right = find(id: rightID) else {
+            return .failure(.notSiblings)
+        }
+        return seamHem(left: left, right: right,
+                       leftParent: parentGroup(for: leftID)?.id,
+                       rightParent: parentGroup(for: rightID)?.id, approach: approach)
+    }
+
+    /// The same, on the two objects THEMSELVES and the containers they sit in — nothing is looked
+    /// up in the model. That is what lets a crossfade drag run the very same arithmetic on its own
+    /// copies of the objects (@see CrossfadeShadow), frame after frame, without writing `items`.
+    func seamHem(left leftIn: SoundObject, right rightIn: SoundObject,
+                 leftParent: UUID?, rightParent: UUID?,
+                 approach: SeamApproach = .none) -> Result<SeamHem, SeamRefusal> {
+        var left = leftIn, right = rightIn
+        guard left.lane == right.lane, leftParent == rightParent
         else { return .failure(.notSiblings) }
 
         // Put them the right way round: the caller may name them either way.
@@ -539,7 +552,7 @@ extension EditViewModel {
             leftID: left.id, rightID: right.id,
             leftStart: left.startTime, leftEnd: leftEnd,
             rightStart: rightStart, rightEnd: rightEnd,
-            lane: left.lane, containerID: parentGroup(for: left.id)?.id,
+            lane: left.lane, containerID: leftParent,
             startFloor: max(rightStart - headR.left,        // the right object's file
                             left.startTime + keepLeft),     // what the left object keeps for itself
             startCeilingBase: min(leftEnd + headL.right,    // the left object's file
@@ -556,11 +569,20 @@ extension EditViewModel {
                           pin: ZonePin? = nil,
                           anchor: ZonePin? = nil,
                           approach: SeamApproach = .none) -> Result<CrossfadePlan, SeamRefusal> {
-        let hem: SeamHem
         switch seamHem(leftID: leftID, rightID: rightID, approach: approach) {
         case .failure(let reason): return .failure(reason)
-        case .success(let h):      hem = h
+        case .success(let hem):
+            return plannedCrossfade(hem: hem, width: width, idealStart: idealStart,
+                                    pin: pin, anchor: anchor)
         }
+    }
+
+    /// The plan for a hem already read — from the model (above) or from a gesture's own copies of
+    /// the objects (@see CrossfadeShadow).
+    func plannedCrossfade(hem: SeamHem, width: Double,
+                          idealStart: Double? = nil,
+                          pin: ZonePin? = nil,
+                          anchor: ZonePin? = nil) -> Result<CrossfadePlan, SeamRefusal> {
 
         guard hem.maxWidth > Self.seamEpsilon || width <= Self.seamEpsilon else {
             return .failure(hem.byMaterial <= Self.seamEpsilon ? .noMaterial : .tooWide)

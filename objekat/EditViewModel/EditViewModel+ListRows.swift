@@ -65,27 +65,9 @@ extension EditViewModel {
         return out
     }
 
-    /// The rows the panel SHOWS: `soundListRows`, except while `soundListHeld` — a gesture that
-    /// rewrites `items` on every frame (a crossfade drag) — where the rows taken at the gesture's
-    /// first frame are served as they are, WITHOUT reading `items`, so the panel stops depending on
-    /// it for the gesture's duration.
-    ///
-    /// Why: a list body reads `items`, so every frame of such a drag re-sorted the whole tree,
-    /// re-diffed the `ForEach` and re-laid the panel out — ~15 % of the main thread under a
-    /// single-edge crossfade drag (Release, `xctrace`, 160 objects, 2 October 2026), for a panel
-    /// that shows names and a hierarchy the gesture does not touch. It catches up once, on
-    /// release, when the flag goes back down.
-    func soundListRowsForDisplay() -> [SoundListRow] {
-        guard soundListHeld else { return soundListRows }
-        if let held = heldSoundListRows { return held }
-        let rows = soundListRows
-        heldSoundListRows = rows
-        return rows
-    }
-
     /// A stem colour read off the object itself (its `stemID`) rather than through `find`, which
-    /// reads `items` — so a row drawing it does not depend on the whole model (@see
-    /// `soundListRowsForDisplay`). Same answer as `stemColor(for:)` for the object as given.
+    /// reads `items` — so a row drawing it does not depend on the whole model. Same answer as
+    /// `stemColor(for:)` for the object as given.
     func stemColor(of object: SoundObject) -> Color {
         let sid = object.stemID ?? mainStemID
         return stems.first(where: { $0.id == sid })?.color ?? stems.first?.color ?? .cyan
