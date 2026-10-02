@@ -1,0 +1,605 @@
+{
+ "D1_deep_child_out_one_level": {
+  "expect": "C1 leaves G3 (parent changes or lane changes), one undo",
+  "drag": {
+   "from": [
+    200.0,
+    300.0
+   ],
+   "dx": 60,
+   "dy": 88,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 21512,
+   "diff_frac": 0.005316,
+   "bbox_px": [
+    318,
+    714,
+    721,
+    797
+   ]
+  },
+  "changed": {
+   "C1": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 3.2,
+     "duration": 4,
+     "lane": 2
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D2_child_into_closed_group": {
+  "expect": "B1 dropped on the CLOSED G9 lane (not inside it: closed)",
+  "error": "ObjekatError('bad_params: point (200.0, 879.3333333333334) outside the visible timeline (1151\u00d7879)')"
+ },
+ "D3_move_open_group_with_subgroups": {
+  "expect": "G2 and ALL descendants shift by the same dt",
+  "drag": {
+   "from": [
+    150.0,
+    164.0
+   ],
+   "dx": 80,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 4006,
+   "diff_frac": 0.00099,
+   "bbox_px": [
+    260,
+    286,
+    659,
+    335
+   ]
+  },
+  "changed": {
+   "B1": {
+    "before": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 1,
+     "duration": 6,
+     "lane": 0
+    },
+    "after": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 2.6,
+     "duration": 6,
+     "lane": 0
+    }
+   },
+   "C1": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 3.6,
+     "duration": 4,
+     "lane": 0
+    }
+   },
+   "D1": {
+    "before": {
+     "parent": "2105C99E-7E7D-4D44-89F8-2A496BDB0559",
+     "depth": 4,
+     "start": 2.5,
+     "duration": 2,
+     "lane": 0
+    },
+    "after": {
+     "parent": "2105C99E-7E7D-4D44-89F8-2A496BDB0559",
+     "depth": 4,
+     "start": 4.1,
+     "duration": 2,
+     "lane": 0
+    }
+   },
+   "D2": {
+    "before": {
+     "parent": "2105C99E-7E7D-4D44-89F8-2A496BDB0559",
+     "depth": 4,
+     "start": 2.5,
+     "duration": 2,
+     "lane": 1
+    },
+    "after": {
+     "parent": "2105C99E-7E7D-4D44-89F8-2A496BDB0559",
+     "depth": 4,
+     "start": 4.1,
+     "duration": 2,
+     "lane": 1
+    }
+   },
+   "X1": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 3,
+     "duration": 2,
+     "lane": 3
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 4.6,
+     "duration": 2,
+     "lane": 3
+    }
+   },
+   "B2": {
+    "before": {
+     "parent": "611CFC32-E50D-41C9-A1D3-43968CCC76BF",
+     "depth": 3,
+     "start": 1,
+     "duration": 2,
+     "lane": 0
+    },
+    "after": {
+     "parent": "611CFC32-E50D-41C9-A1D3-43968CCC76BF",
+     "depth": 3,
+     "start": 2.6,
+     "duration": 2,
+     "lane": 0
+    }
+   },
+   "G4": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2.5,
+     "duration": 2,
+     "lane": 1
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 4.1,
+     "duration": 2,
+     "lane": 1
+    }
+   },
+   "G3": {
+    "before": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 2,
+     "duration": 4,
+     "lane": 1
+    },
+    "after": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 3.6,
+     "duration": 4,
+     "lane": 1
+    }
+   },
+   "L1": {
+    "before": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 1,
+     "duration": 4,
+     "lane": 5
+    },
+    "after": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 2.6,
+     "duration": 4,
+     "lane": 5
+    }
+   },
+   "G2": {
+    "before": {
+     "parent": "00D35878-527C-480B-A814-1824BF87C2A7",
+     "depth": 1,
+     "start": 1,
+     "duration": 4,
+     "lane": 1
+    },
+    "after": {
+     "parent": "00D35878-527C-480B-A814-1824BF87C2A7",
+     "depth": 1,
+     "start": 2.6,
+     "duration": 4,
+     "lane": 1
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D4_deep_child_trim_left": {
+  "expect": "C1 start +0.5 s, end fixed, source offset +0.5",
+  "drag": {
+   "from": [
+    101,
+    300.0
+   ],
+   "dx": 25,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 12725,
+   "diff_frac": 0.003144,
+   "bbox_px": [
+    248,
+    538,
+    601,
+    621
+   ]
+  },
+  "changed": {
+   "C1": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2.5,
+     "duration": 3.5,
+     "lane": 0
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D5_deep_child_resize_right": {
+  "expect": "C1 end -0.6 s",
+  "drag": {
+   "from": [
+    299,
+    300.0
+   ],
+   "dx": -30,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 8053,
+   "diff_frac": 0.00199,
+   "bbox_px": [
+    198,
+    538,
+    541,
+    621
+   ]
+  },
+  "changed": {
+   "C1": {
+    "before": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "565A81F8-B464-4C09-815B-72F6212014E4",
+     "depth": 3,
+     "start": 2,
+     "duration": 3.4000000000000004,
+     "lane": 0
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D6_group_trim_left_nested": {
+  "expect": "G3 window start +0.6 s, children unchanged",
+  "drag": {
+   "from": [
+    101,
+    256.0
+   ],
+   "dx": 30,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 9472,
+   "diff_frac": 0.002341,
+   "bbox_px": [
+    260,
+    452,
+    599,
+    531
+   ]
+  },
+  "changed": {
+   "G3": {
+    "before": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 2,
+     "duration": 4,
+     "lane": 1
+    },
+    "after": {
+     "parent": "1372FEBF-E6A5-46DD-870B-937B6FE41B07",
+     "depth": 2,
+     "start": 2.6,
+     "duration": 3.4,
+     "lane": 1
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D7_crossfaded_child_move": {
+  "expect": "A2 +0.8 s; the A1/A2 crossfade follows or closes",
+  "drag": {
+   "from": [
+    275.0,
+    124.0
+   ],
+   "dx": 40,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 15381,
+   "diff_frac": 0.003801,
+   "bbox_px": [
+    2,
+    186,
+    831,
+    269
+   ]
+  },
+  "changed": {
+   "A2": {
+    "before": {
+     "parent": "00D35878-527C-480B-A814-1824BF87C2A7",
+     "depth": 1,
+     "start": 3.5,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "00D35878-527C-480B-A814-1824BF87C2A7",
+     "depth": 1,
+     "start": 4.3,
+     "duration": 4,
+     "lane": 0
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D8_negative_child_move": {
+  "expect": "N1 from -2 s to -1 s, still in G5",
+  "drag": {
+   "from": [
+    41.2,
+    474.5
+   ],
+   "dx": 50,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 20556,
+   "diff_frac": 0.005079,
+   "bbox_px": [
+    0,
+    887,
+    401,
+    970
+   ]
+  },
+  "changed": {
+   "N1": {
+    "before": {
+     "parent": "26CEC902-4F56-4C2B-B40A-1EC9D384AFC8",
+     "depth": 1,
+     "start": -2,
+     "duration": 4,
+     "lane": 0
+    },
+    "after": {
+     "parent": "26CEC902-4F56-4C2B-B40A-1EC9D384AFC8",
+     "depth": 1,
+     "start": 0,
+     "duration": 4,
+     "lane": 0
+    }
+   }
+  },
+  "undo_one_step_restores": true
+ },
+ "D9_fade_in_deep": {
+  "expect": "C1 fade in grows, nothing else moves",
+  "drag": {
+   "from": [
+    102,
+    273.2
+   ],
+   "dx": 20,
+   "dy": 0,
+   "contaminated": false
+  },
+  "census_held": {
+   "aux": 0,
+   "bake": 0,
+   "consolidate": 0,
+   "editing": 0,
+   "force_rich": 0,
+   "infinite": 1,
+   "loop": 0,
+   "midi": 0,
+   "preview": 0,
+   "rename": 0,
+   "spill": 0,
+   "stem_hover": 0,
+   "tool": 0,
+   "tool_hover": 0,
+   "tool_span": 0
+  },
+  "model_untouched_while_held": true,
+  "held_diff": {
+   "diff_px": 13117,
+   "diff_frac": 0.003241,
+   "bbox_px": [
+    198,
+    538,
+    601,
+    621
+   ]
+  },
+  "changed": {},
+  "undo_one_step_restores": true
+ }
+}

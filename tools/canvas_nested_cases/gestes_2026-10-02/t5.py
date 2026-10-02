@@ -1,0 +1,17 @@
+exec(open('/tmp/cc501/nested/x/h.py').read())
+# A1: alt copy of C1 (deep child), then G3
+for who,dl in (('C1',2),('G3',0)):
+    s.open_scene(c,sc); c.send("view.reveal",{"ids":[I[who]]}); s.settle(c,400); g=s.geometry(c)
+    b=s.items_state(c); n0=count(); tb=s.tree_index(json.loads(b))
+    x,y=s.find_zone(c,I[who],"move")
+    c.send("input.drag",{"x":x,"y":y,"dx":60,"dy":dl*g['step'],"duration_ms":500,"release":False}); s.settle(c,300)
+    c.send("debug.set_opt_held",{"held":True}); s.settle(c,400)
+    print(who,"foreach",c.send("perf.census")['regimes']['foreach_layers'],"model untouched",s.items_state(c)==b)
+    s.snapshot(c,OUT+"A1_%s_held.png"%who)
+    c.send("input.release"); s.settle(c,600)
+    c.send("debug.set_opt_held",{"held":False})
+    ta=s.tree_index(c.send('project.get_state')['items'])
+    new=[k for k in ta if k not in tb]; print(" new ids",[(ta[k]) for k in new][:4]," count",n0,count())
+    print(" orig same",tb[I[who]]==ta[I[who]])
+    s.snapshot(c,OUT+"A1_%s_after.png"%who)
+    c.send("edit.undo"); s.settle(c,500); print(" undo ok",s.items_state(c)==b)

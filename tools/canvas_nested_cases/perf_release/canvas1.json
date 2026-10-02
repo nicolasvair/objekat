@@ -1,0 +1,113 @@
+{
+ "label": "canvas1",
+ "when": "2026-10-02 08:39:03",
+ "project": "/tmp/cc501/perf/perf_nested_480.objekat",
+ "objects": 501,
+ "steps": {
+  "scroll_right": {
+   "contaminated": false,
+   "fps": 95,
+   "frame p50": 8.333,
+   "frame p95": 22.47,
+   "frame p99": 27.727,
+   "frame max": 32.276,
+   "late frames": 48,
+   "dropped": 70,
+   "hitch ms/s": 213.86,
+   "busy p95": 9.796,
+   "busy total": 2423.926
+  },
+  "scroll_down": {
+   "contaminated": false,
+   "fps": 116.8,
+   "frame p50": 8.333,
+   "frame p95": 8.333,
+   "frame p99": 11.444,
+   "frame max": 22.164,
+   "late frames": 1,
+   "dropped": 2,
+   "hitch ms/s": 10.05,
+   "busy p95": 4.574,
+   "busy total": 832.823
+  },
+  "scroll_left": {
+   "contaminated": false,
+   "fps": 93.7,
+   "frame p50": 8.333,
+   "frame p95": 23.169,
+   "frame p99": 27.543,
+   "frame max": 32.969,
+   "late frames": 44,
+   "dropped": 66,
+   "hitch ms/s": 213.17,
+   "busy p95": 10.452,
+   "busy total": 2245.143
+  },
+  "scroll_up": {
+   "contaminated": false,
+   "fps": 114.3,
+   "frame p50": 8.333,
+   "frame p95": 8.333,
+   "frame p99": 23.654,
+   "frame max": 24.734,
+   "late frames": 4,
+   "dropped": 7,
+   "hitch ms/s": 40.9,
+   "busy p95": 3.789,
+   "busy total": 790.411
+  },
+  "zoom_h_in": {
+   "contaminated": false,
+   "fps": 58,
+   "frame p50": 14.452,
+   "frame p95": 31.589,
+   "frame p99": 42.125,
+   "frame max": 42.125,
+   "late frames": 34,
+   "dropped": 63,
+   "hitch ms/s": 520.58,
+   "busy p95": 24.863,
+   "busy total": 843.289
+  },
+  "zoom_h_out": {
+   "contaminated": false,
+   "fps": 56.6,
+   "frame p50": 18.494,
+   "frame p95": 33.619,
+   "frame p99": 40.599,
+   "frame max": 40.599,
+   "late frames": 35,
+   "dropped": 65,
+   "hitch ms/s": 520.97,
+   "busy p95": 25.307,
+   "busy total": 846.119
+  },
+  "zoom_v_in": {
+   "contaminated": false,
+   "fps": 68.4,
+   "frame p50": 8.333,
+   "frame p95": 27.663,
+   "frame p99": 45.536,
+   "frame max": 45.536,
+   "late frames": 25,
+   "dropped": 52,
+   "hitch ms/s": 425.72,
+   "busy p95": 24.991,
+   "busy total": 660.769
+  },
+  "zoom_v_out": {
+   "contaminated": false,
+   "fps": 68.8,
+   "frame p50": 8.333,
+   "frame p95": 26.005,
+   "frame p99": 45.22,
+   "frame max": 45.22,
+   "late frames": 25,
+   "dropped": 52,
+   "hitch ms/s": 427.65,
+   "busy p95": 23.947,
+   "busy total": 653.755
+  }
+ },
+ "build": "release"
+}
