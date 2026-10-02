@@ -729,6 +729,12 @@ extension EditViewModel {
                     engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: obj.id.uuidString)
                 }
             }
+            // A pose OVERWRITES, wherever it lands (the same rule as `reparentToGroup`, as the move
+            // within a level and as `altEjectFromGroup`): an object brought up to the root over a
+            // neighbour of the same lane used to sit ON it, both intact and superposed — the only
+            // door of the drop that never settled its overlaps. Done inside the refit so that the
+            // crossfades the ejected objects were in are still recognised as such and left alone.
+            for obj in ejected { resolveOverlaps(for: obj.id) }
             // The membership has changed: a send between siblings can become routable or stop
             // being so. resyncAllSends reconciles both ways.
             resyncAllSends()

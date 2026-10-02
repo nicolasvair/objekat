@@ -2,7 +2,10 @@
 """c10 — REAL DRAG of B1 (child of G2, 1..7 s) onto the lane of CLOSED root group G9 (4..6.5 s): B1 is ejected to root
 lane 15 and OVERLAPS G9 on the same lane, nothing resolved (both keep 1..7 / 4..6.5). `ejectFromGroup`
 (EditViewModel+Groups.swift:688) never calls resolveOverlaps; the handler's eject branch (DragHandler ~1382) neither.
-Pre-existing (code of 2026-06/09), not Canvas. Setup: G5,G8,G3 collapsed, block_height 16 so both are visible."""
+Pre-existing (code of 2026-06/09), not Canvas. Setup: G5,G8,G3 collapsed, block_height 16 so both are visible.
+FIXED (2026-10-02, `ejectFromGroup` now resolves overlaps like reparent / same-level move): a pose overwrites, B1 (1..7 s)
+covers G9 (4..6.5 s) entirely, so G9 goes with its children and B1 is ALONE on lane 15 (printed list = [B1]).
+Headless twin through the API door: c10b_eject_overlap_api.py (asserts, and checks the one-step undo)."""
 import sys, json
 sys.path.insert(0, __file__.rsplit('/canvas_nested_cases', 1)[0])
 import scenario_canvas_nested as s
