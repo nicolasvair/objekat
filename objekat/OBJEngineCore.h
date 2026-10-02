@@ -721,6 +721,14 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 @property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
 @property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
 @property (nonatomic) BOOL      running;                        // dev->isPlaying()
+// Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
+// 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la
+// carte a été ramenée à `sampleRate`), 2 = outOfRangeKept (inutilisable mais rien de mieux à
+// proposer, gardée), 3 = unknown (pas de carte ouverte). Une décision que la carte a quittée
+// depuis (changement externe) est rendue comme `adopt`.
+@property (nonatomic) NSInteger rateDecision;
+// La fréquence que la carte avait AVANT la décision (celle qui a été refusée, pour 1 et 2).
+@property (nonatomic) double    deviceRateBeforeDecision;
 @end
 
 #endif /* OBJEngineCore_h */

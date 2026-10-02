@@ -76,7 +76,10 @@ extension CommandRegistry {
 
         register("audio.set_device",
                  summary: "Switches the output device. Touches the real hardware and rewrites " +
-                          "~/Library/objekat/Settings.xml.",
+                          "~/Library/objekat/Settings.xml. The new card keeps the sample rate it " +
+                          "already runs at (`rate_decision: adopt`); only a rate unusable for " +
+                          "OBJEKAT (outside 22.05-192 kHz, or not offered by the card) is " +
+                          "changed (`fallback`, `device_rate_before` says what it was).",
                  params: [ParamSpec("name", "string", "One of `audio.devices.outputs`.")],
                  undo: .none) { p in
             let engine = try CommandContext.shared.requireEngine()
@@ -108,6 +111,8 @@ extension CommandRegistry {
             "buffer_size": .int(s.bufferSize),
             "output_channels": .int(s.outputChannels),
             "running": .bool(s.running),
+            "rate_decision": .string(s.rateDecision.apiName),
+            "device_rate_before": .number(s.deviceRateBeforeDecision),
             "text": .string(status.text),
             "generation": .int(status.generation),
             // The grey LABEL's own displayed string (@see `TitleBarDeviceLabel`, 4b) — never
@@ -124,6 +129,8 @@ extension CommandRegistry {
                 "buffer_size": .int(live.bufferSize),
                 "output_channels": .int(live.outputChannels),
                 "running": .bool(live.running),
+                "rate_decision": .string(SampleRateDecision(raw: live.rateDecision).apiName),
+                "device_rate_before": .number(live.deviceRateBeforeDecision),
             ])
         } else {
             obj["live"] = .null

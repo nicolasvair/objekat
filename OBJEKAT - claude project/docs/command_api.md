@@ -1571,6 +1571,24 @@ not write the user's persisted choice) and wait (up to 3 s, `settled: false` pas
 OBJEKAT, and every one of the three rewrites `~/Library/objekat/Settings.xml` — a script that
 changes them is responsible for setting them back before it quits.
 
+**The card's own sample rate is ADOPTED, not imposed.** OBJEKAT no longer replays the rate of the
+last session (`Settings.xml`'s `audioDeviceRate` is ignored when it is READ — the file itself is not
+rewritten by that), and switching to another card no longer carries the previous card's rate over:
+the card keeps the rate it already runs at, which a CoreAudio rate change would otherwise impose on
+the WHOLE system. `audio.status` (cached level, and `live`) says what was decided:
+`rate_decision` is `adopt` (the card's rate is taken as it is — the normal case, and what an explicit
+`audio.set_sample_rate` leaves), `fallback` (the rate was unusable — outside 22.05–192 kHz, or not
+in the list the card offers — and the card was switched to another it offers: 48 k, else 44.1 k, else
+the offered rate nearest to 48 k; `device_rate_before` is the one that was refused), `out_of_range`
+(unusable and nothing better on offer: kept, `device_rate_before` equal to `sample_rate`) or
+`unknown` (no output device open). A decision the card has since left — the system or another
+application changed the rate — is reported as `adopt`: that change is followed, not fought.
+`device_rate_before` is the rate the card had when the decision was taken (`adopt`: the same as
+`sample_rate`). `audio.set_device`'s answer carries both fields. The decision itself is the pure
+`objDecideSampleRate` (`objekat/Shared/OBJSampleRatePolicy.h`, `tools/test_sample_rate_policy.cpp`);
+the export keeps its own, distinct rate (`export.run`'s `sample_rate`). Under `--no-audio` nothing is
+ever switched.
+
 A known, pre-existing limitation, found alongside this family and NOT fixed by it (out of scope —
 it sits in Tracktion's own device restore, not in anything above): once
 `~/Library/objekat/Settings.xml` holds a saved device with no explicit channel-count attributes
