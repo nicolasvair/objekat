@@ -1234,6 +1234,10 @@ struct TimelineView: View {
             }
         }
         .onChange(of: selectionCursor) { currentSelectionCursor = $0 }
+        // A crossfade drag rewrites `items` on every frame: the sound list holds its rows for the
+        // gesture's duration and catches up on release (@see soundListRowsForDisplay). Driven from
+        // the drag state itself, so every way a drag ends — release, cancel — lets the list go.
+        .onChange(of: crossfadeDrag != nil) { _, live in viewModel.soundListHeld = live }
         // D2's catch-all: ANY door that writes `blockHeight` raw is re-clamped here.
         .onChange(of: viewModel.blockHeight) { enforceVerticalZoomBounds() }
         // A marker row shown or hidden moves the header, hence `availableLaneHeight` — D3's ratio
