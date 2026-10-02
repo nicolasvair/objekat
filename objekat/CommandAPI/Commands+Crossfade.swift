@@ -179,5 +179,91 @@ extension CommandRegistry {
             return .object(["count": .int(zones.count),
                             "crossfades": .array(zones.map(zonePayload))])
         }
+
+        #if DEBUG
+        register("debug.crossfade_drag",
+                 summary: """
+                 DEBUG. A crossfade DRAG with no mouse: the very per-frame function the gesture \
+                 calls (`EditViewModel.driveCrossfadeFrame`), fed with the zone under the hand \
+                 (`lefts[0]` / `rights[0]`), the zones that follow it (the other pairs, in the same \
+                 order), the `part` taken and one travel `dx` (seconds, UNSNAPPED) per frame. \
+                 `batched: false` lays each frame down one write at a time, the way it was before \
+                 the lag fix — kept so the two can be compared octet for octet. Answers what it \
+                 cost, READ OFF COUNTERS rather than a clock: `items_writes` and \
+                 `lane_entries_rebuilds` (O(N) each) per frame, plus the milliseconds. ONE undo \
+                 point for the whole drag (none if nothing moved). Not present in Release builds.
+                 """,
+                 params: [ParamSpec("lefts", "array<uuid>", "Left objects, one per zone (the first is the grabbed zone)."),
+                          ParamSpec("rights", "array<uuid>", "Right objects, same order."),
+                          ParamSpec("part", "string", "both | move | sideStart | sideEnd."),
+                          ParamSpec("dx", "array<number>", "The travel of each frame, in seconds."),
+                          ParamSpec("via_edge_band", "bool", required: false,
+                                    "Taken through the lower half's crop band (default false)."),
+                          ParamSpec("overshoot_y", "number", required: false,
+                                    "With `both`: the vertical travel outside the row, in px (the bend)."),
+                          ParamSpec("s_curve", "bool", required: false, "With `both`: ⌥ held."),
+                          ParamSpec("batched", "bool", required: false, "Default true.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let lefts = try p.uuids("lefts"), rights = try p.uuids("rights")
+            guard !lefts.isEmpty, lefts.count == rights.count else {
+                throw CommandError(code: .bad_params, message: "'lefts' and 'rights' must have the same, non-zero length")
+            }
+            let part: CrossfadeDragState.Part
+            switch try p.string("part") {
+            case "both": part = .both
+            case "move": part = .move
+            case "sideStart": part = .sideStart
+            case "sideEnd": part = .sideEnd
+            default: throw CommandError(code: .bad_params, message: "'part' is both | move | sideStart | sideEnd")
+            }
+            guard case .array(let raw)? = p.raw["dx"] else {
+                throw CommandError(code: .bad_params, message: "'dx' must be an array of numbers")
+            }
+            let dxs: [Double] = raw.compactMap { if case .number(let d) = $0 { return d } else { return nil } }
+            let viaEdgeBand = try p.bool("via_edge_band", or: false)
+            var tracks: [CrossfadePairTrack] = []
+            var lane = 0
+            for (l, r) in zip(lefts, rights) {
+                guard let z = vm.crossfadeZone(leftID: l, rightID: r) else {
+                    throw CommandError(code: .invalid_state, message: "not a crossfade: \(l.uuidString) / \(r.uuidString)")
+                }
+                var t = CrossfadePairTrack(
+                    leftID: z.leftID, rightID: z.rightID, anchorStart: z.start, anchorEnd: z.end,
+                    leftCurveAnchor: vm.find(id: z.leftID)?.fadeOutCurve ?? .linear,
+                    rightCurveAnchor: vm.find(id: z.rightID)?.fadeInCurve ?? .linear)
+                if viaEdgeBand,
+                   let held = vm.find(id: part == .sideStart ? z.rightID : z.leftID) {
+                    t.heldAnchor = (held.startTime, held.duration)
+                }
+                if tracks.isEmpty { lane = z.lane }
+                tracks.append(t)
+            }
+            var state = CrossfadeDragState(tracks: tracks, grabbedIndex: 0, part: part,
+                                           viaEdgeBand: viaEdgeBand, lane: lane)
+            state.overshootY = part == .both ? try p.double("overshoot_y", or: 0) : 0
+            state.bendTravelPx = 40
+            state.sCurve = part == .both ? try p.bool("s_curve", or: false) : false
+            let batched = try p.bool("batched", or: true)
+
+            let w0 = vm.itemsWriteCount, r0 = vm.laneEntriesRebuildCount, u0 = vm.undoPushCount
+            let t0 = CFAbsoluteTimeGetCurrent()
+            for dx in dxs { vm.driveCrossfadeFrame(&state, shift: dx, batched: batched) }
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            if state.didChange { vm.isDirty = true }
+            let frames = max(1, dxs.count)
+            let writes = vm.itemsWriteCount - w0, rebuilds = vm.laneEntriesRebuildCount - r0
+            return .object(["frames": .int(dxs.count),
+                            "zones": .int(tracks.count),
+                            "did_change": .bool(state.didChange),
+                            "undo_pushes": .int(vm.undoPushCount - u0),
+                            "items_writes": .int(writes),
+                            "lane_entries_rebuilds": .int(rebuilds),
+                            "writes_per_frame": .number(Double(writes) / Double(frames)),
+                            "rebuilds_per_frame": .number(Double(rebuilds) / Double(frames)),
+                            "ms_total": .number(ms),
+                            "ms_per_frame": .number(ms / Double(frames))])
+        }
+        #endif
     }
 }

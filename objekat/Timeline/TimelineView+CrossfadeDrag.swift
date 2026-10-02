@@ -261,7 +261,12 @@ extension TimelineView {
     private func fadeHandleOverhang(at p: CGPoint, displayLane lane: Int, laneTop: Double) -> CrossfadeHit? {
         // Fades live in the UPPER half of a block (@see ClipEditZone.resolve): ruling the lower half
         // out first keeps this off the hover's path for most of the pointer's travel.
+        // And a row with no shown crossfade at all cannot hold one of these handles — the zone is
+        // looked up on that very row below, so the answer would be `nil` anyway. That keeps the
+        // block carve-up (`selectionZoneHover`, which walks the row's objects) off every mouse
+        // move over a row that has none.
         guard p.y - laneTop < blockHeight / 2,
+              !viewModel.visibleCrossfadeZones(onDisplayLane: lane).isEmpty,
               let (hover, item) = selectionZoneHover(at: p) else { return nil }
         let edge: CrossfadeGrab.FadeEdge
         switch hover.zone {
@@ -391,122 +396,6 @@ extension TimelineView {
         return true
     }
 
-    /// What one frame asks of one zone. Worked out for EVERY zone of the gesture before any of them
-    /// is applied, because whether the hand has asked for something at all — and so whether the
-    /// undo point is due — is a question about all of them.
-    private struct CrossfadeFrame {
-        let rawWidth: Double
-        let width: Double
-        let idealStart: Double
-        let pin: EditViewModel.ZonePin?
-        /// Past the shut seam from the fade triangle: a plain fade on the held side.
-        let spill: Double
-        /// Past the shut seam from the crop band: the crop goes on.
-        let overCrop: Double
-        let moved: Bool
-    }
-
-    private func crossfadeFrame(for t: CrossfadePairTrack, part: CrossfadeDragState.Part,
-                                viaEdgeBand: Bool, shift: Double) -> CrossfadeFrame {
-        // `rawWidth` may go NEGATIVE — that is the gesture asking for more than the zone has to
-        // give, and what is past zero becomes a plain fade.
-        let target = CrossfadeGrab.target(part: part, anchorStart: t.anchorStart,
-                                          anchorEnd: t.anchorEnd, shift: shift)
-        let width = max(0, target.rawWidth)
-        // The OPPOSITE edge is PINNED, and the seam is TOLD so. Given only a width it gives what it
-        // can and takes the rest out of whichever side still has it — right when one is opening a
-        // seam, and quite wrong under a hand holding an edge: pushed past what the held side had
-        // left, the zone went on growing BACKWARDS while the hand pulled forwards. Named, the pin
-        // lowers the ceiling instead, and the gesture stops (@see ZonePin).
-        let pin: EditViewModel.ZonePin?
-        switch part {
-        case .sideStart: pin = .end(t.anchorEnd)
-        case .sideEnd:   pin = .start(t.anchorStart)
-        case .move, .both: pin = nil
-        }
-        // Past the shut seam, the travel that is left is a PLAIN fade on the object whose edge the
-        // hand holds. The two objects stay stuck together: a gesture that was making a crossfade
-        // never opens a gap.
-        //
-        // Only from the FADE triangle. Taken by the crop band underneath, the same edge is being
-        // CROPPED, and a crop grows no fade anywhere else in OBJEKAT — it goes on cropping, and it
-        // opens the gap a crop opens (see `overCrop` below).
-        let spill = (part == .move || viaEdgeBand) ? 0 : max(0, -target.rawWidth)
-        let overCrop = viaEdgeBand ? max(0, -target.rawWidth) : 0
-        let moved = abs(width - t.anchorWidth) > 1e-9 || spill > 0 || overCrop > 0
-                 || abs(target.idealStart - t.anchorStart) > 1e-9
-        return CrossfadeFrame(rawWidth: target.rawWidth, width: width, idealStart: target.idealStart,
-                              pin: pin, spill: spill, overCrop: overCrop, moved: moved)
-    }
-
-    /// Lays one frame down on one zone. Every zone gets the SAME travel (@see CrossfadeGrab.target)
-    /// and the same bend, and keeps its own width, place and curves.
-    private func applyCrossfadeFrame(_ f: CrossfadeFrame, to t: inout CrossfadePairTrack,
-                                     state: CrossfadeDragState) {
-        // Coming back INTO the zone after a frame that cropped past the joint: the gap that
-        // frame opened has to be closed again first, or the seam has nothing to open.
-        if t.didOverCrop, f.overCrop == 0, let ha = t.heldAnchor {
-            let held = state.part == .sideStart ? t.rightID : t.leftID
-            viewModel.updateTrim(id: held, newStart: ha.start, newDuration: ha.duration)
-            t.didOverCrop = false
-        }
-        let result = viewModel.openCrossfade(leftID: t.leftID, rightID: t.rightID,
-                                             width: f.width, idealStart: f.idealStart, pin: f.pin)
-        // The width the HAND asked for, not the one the pinned edge allowed: the HUD's job is
-        // to say that the gesture stopped and why, and a pre-clamped figure would agree with
-        // itself for ever.
-        t.requestedWidth = max(0, f.rawWidth)
-        // A zone shut to nothing stops being a crossfade, so the ids would no longer resolve
-        // to one: the gesture keeps its own two ids and can reopen the seam on the way back.
-        if case .success(let zone) = result {
-            t.obtainedWidth = zone?.width ?? 0
-            if let zone {
-                t.leftID = zone.leftID
-                t.rightID = zone.rightID
-            }
-        }
-        let curves = state.curves(for: t)
-        viewModel.updateFadeCurve(id: t.leftID,  fadeOut: curves.left)
-        viewModel.updateFadeCurve(id: t.rightID, fadeIn:  curves.right)
-
-        // The plain fade past the joint, on the held side only. Bounded by that object's own
-        // length, which is the only stop a fade has ever had.
-        //
-        // ONLY once there IS something past the joint, and that guard is the whole of it: run
-        // unconditionally, this wrote a fade of 0 over the one `openCrossfade` had just set
-        // three lines above, and a crossfade IS the two fades being equal to the overlap
-        // (@see isCrossfadePair) — so one side at 0 dissolved the pair on the first frame and
-        // the two side gestures looked as though they turned the crossfade off. Nothing else
-        // is needed on the way back either: `openCrossfade` sets both fades every frame, so
-        // returning inside the zone restores them by itself.
-        t.spilloverFade = f.spill
-        if f.spill > 0 {
-            if state.part == .sideStart, let o = viewModel.find(id: t.rightID) {
-                viewModel.updateFadeIn(id: o.id, fadeIn: min(f.spill, o.duration))
-            } else if state.part == .sideEnd, let o = viewModel.find(id: t.leftID) {
-                viewModel.updateFadeOut(id: o.id, fadeOut: min(f.spill, o.duration))
-            }
-        }
-
-        // Past the shut seam, from the CROP band: the crop simply carries on, and a crop that
-        // carries on opens a gap. Stopping the edge dead at the joint was the band claiming a
-        // limit no crop has ever had — the zone had ended, and what was left under the hand was
-        // an ordinary edge that had every right to keep travelling. Bounded only by the object
-        // keeping a length, which is a trim's own floor.
-        if f.overCrop > 0 {
-            t.didOverCrop = true
-            let floor = 0.01
-            if state.part == .sideStart, let o = viewModel.find(id: t.rightID) {
-                let end = o.startTime + o.duration
-                let newStart = min(t.anchorEnd + f.overCrop, end - floor)
-                viewModel.updateTrim(id: o.id, newStart: newStart, newDuration: end - newStart)
-            } else if state.part == .sideEnd, let o = viewModel.find(id: t.leftID) {
-                let newEnd = max(t.anchorStart - f.overCrop, o.startTime + floor)
-                viewModel.updateDuration(id: o.id, duration: newEnd - o.startTime)
-            }
-        }
-    }
-
     /// One frame of the gesture. Returns false when no crossfade drag is running.
     @discardableResult
     func handleCrossfadeDrag(_ value: CanvasDrag, phase: DragPhase) -> Bool {
@@ -562,23 +451,10 @@ extension TimelineView {
             shift = dx
         }
 
-        let frames = state.tracks.map {
-            crossfadeFrame(for: $0, part: state.part, viaEdgeBand: state.viaEdgeBand, shift: shift)
-        }
-        if (frames.contains { $0.moved } || state.overshootY != 0), !state.didChange {
-            // The first frame that actually asks for something: one undo step for the whole drag,
-            // every zone of it.
-            viewModel.pushUndo()
-            state.didChange = true
-        }
-
-        if state.didChange {
-            for i in state.tracks.indices {
-                var t = state.tracks[i]
-                applyCrossfadeFrame(frames[i], to: &t, state: state)
-                state.tracks[i] = t
-            }
-        }
+        // One frame, every zone: worked out first, laid down in ONE batch of model writes (one
+        // rebuild of the lane entries per frame, whatever the number of zones) — the undo point is
+        // pushed on the first frame that asks for anything (@see EditViewModel.driveCrossfadeFrame).
+        viewModel.driveCrossfadeFrame(&state, shift: shift)
 
         // The arrows follow the drag, as they do on a block's own edge: once the button is down the
         // hover produces no more events, so it is here that an arrow goes out when the file — or

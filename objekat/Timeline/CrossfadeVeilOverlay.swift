@@ -17,29 +17,43 @@ import SwiftUI
 // "is it only the display?" always answerable with no.
 
 /// The two facing curves of one crossfade, in the zone's own coordinates.
+///
+/// The shape of a curve is worked out ONCE, in the unit square, and cached by curve (@see
+/// CrossfadeCurveSampling): a frame of a crossfade drag only changes the zone's position and width,
+/// so what it asks of the curve is one affine transform, no `pow` at all in the steady state.
 struct CrossfadeCurvePath: Shape {
     let curve: FadeCurve
     /// `.out` = the outgoing object, which comes DOWN across the zone; `.in` = the incoming one.
     let side: FadeSide
 
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let w = rect.width, h = rect.height
-        guard w > 0, h > 0 else { return p }
-        // One sample per pixel, capped: the same budget as the block veils, and these are rebuilt
-        // per frame while a crossfade is being dragged.
-        let n = max(2, min(Int(w.rounded()), 512))
-        for i in 0...n {
-            // `alpha` is the fade's PROGRESS, 0 = silence and 1 = full level, for both edges
-            // (@see FadeCurve) — so the OUTGOING one is read right to left and one single family
-            // of formulas serves both. It is also why the two curves of an equal-gain crossfade
-            // are exact mirrors and meet in the middle.
-            let a = Double(i) / Double(n)
-            let x = side == .in ? a * w : w - a * w
-            let y = h * (1 - curve.gain(a))
-            if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+    private static let cache = CrossfadeCurveCache<Path>()
+
+    /// The curve in the unit square (x across, y from the top), shared between frames and zones.
+    static func unitPath(curve: FadeCurve, side: FadeSide, width: Double) -> Path {
+        let n = CrossfadeCurveSampling.sampleCount(forWidth: width)
+        // (a pattern, not `==`: `FadeSide`'s Equatable is main-actor isolated and this is nonisolated)
+        let incoming: Bool
+        switch side { case .in: incoming = true; case .out: incoming = false }
+        return cache.value(for: .init(curve: curve, incoming: incoming, segments: n)) {
+            var p = Path()
+            for (i, pt) in CrossfadeCurveSampling.unitPoints(curve: curve, incoming: incoming,
+                                                            segments: n).enumerated() {
+                let q = CGPoint(x: pt.x, y: pt.y)
+                if i == 0 { p.move(to: q) } else { p.addLine(to: q) }
+            }
+            return p
         }
-        return p
+    }
+
+    /// The curve drawn into a box at (`x`, `y`), `w` × `h`: the cached unit path, stretched.
+    static func path(curve: FadeCurve, side: FadeSide, x: Double, y: Double, w: Double, h: Double) -> Path {
+        guard w > 0, h > 0 else { return Path() }
+        return unitPath(curve: curve, side: side, width: w)
+            .applying(CGAffineTransform(a: w, b: 0, c: 0, d: h, tx: x, ty: y))
+    }
+
+    func path(in rect: CGRect) -> Path {
+        Self.path(curve: curve, side: side, x: rect.minX, y: rect.minY, w: rect.width, h: rect.height)
     }
 }
 
@@ -84,12 +98,10 @@ struct CrossfadeVeilDrawing {
             p.move(to: CGPoint(x: x + width, y: y)); p.addLine(to: CGPoint(x: x + width, y: y + height))
             ctx.stroke(p, with: .color(Color.white.opacity(0.28 * emphasis)), lineWidth: 1)
         }
-        let move = CGAffineTransform(translationX: x, y: y)
-        let local = CGRect(x: 0, y: 0, width: width, height: height)
         let curveInk = GraphicsContext.Shading.color(Color.white.opacity(0.85 * emphasis))
-        ctx.stroke(CrossfadeCurvePath(curve: outCurve, side: .out).path(in: local).applying(move),
+        ctx.stroke(CrossfadeCurvePath.path(curve: outCurve, side: .out, x: x, y: y, w: width, h: height),
                    with: curveInk, lineWidth: 1.5)
-        ctx.stroke(CrossfadeCurvePath(curve: inCurve, side: .in).path(in: local).applying(move),
+        ctx.stroke(CrossfadeCurvePath.path(curve: inCurve, side: .in, x: x, y: y, w: width, h: height),
                    with: curveInk, lineWidth: 1.5)
     }
 }

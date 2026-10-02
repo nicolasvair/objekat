@@ -40,6 +40,7 @@ enum UIPerf {
 final class EditViewModel {
     var items: [SoundObject] = [] {
         didSet {
+            itemsWriteCount &+= 1
             // Lazy and unconditional (batch or not): rebuilt by the next reader, never stale.
             crossfadePartnersCache = nil
             itemsExtentCache = nil
@@ -49,6 +50,13 @@ final class EditViewModel {
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
         }
     }
+    /// How many times `items` has been written, and how many times the lane entries have been
+    /// rebuilt (O(N) each). Two counters a gesture's cost can be read off WITHOUT a screen: a drag
+    /// frame that lays N writes down one at a time costs N rebuilds, and one wrapped in
+    /// `batchItemsMutation` costs one (`debug.crossfade_drag`, `perf.census`).
+    @ObservationIgnored var itemsWriteCount = 0
+    @ObservationIgnored var laneEntriesRebuildCount = 0
+    @ObservationIgnored var undoPushCount = 0
     /// @see find(id:) — `nil` = not built since the last change to `items`.
     @ObservationIgnored var findIndex: [UUID: SoundObject]? = nil
     @ObservationIgnored var findsSinceMutation = 0
@@ -948,6 +956,7 @@ final class EditViewModel {
     @ObservationIgnored var laneEntryIndexCache: LaneEntryIndex? = nil
 
     func rebuildLaneEntries() {
+        laneEntriesRebuildCount &+= 1
         laneEntryIndexCache = nil
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
         // The total of the rows the open objects reserve: the timeline's `canvasHeight` reads it

@@ -27,6 +27,7 @@ extension EditViewModel {
 
     func pushUndo() {
         clearPendingFXSources()   // a new gesture: the previous one's promises are void
+        undoPushCount &+= 1
         undoStack.append(currentSnapshot())
         redoStack = []
         if undoStack.count > 50 {

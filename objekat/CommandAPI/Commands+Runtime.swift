@@ -190,6 +190,10 @@ extension CommandRegistry {
                 "sends": .int(sendCount),
                 "midi_notes": .int(noteCount),
                 "undo_depth": .int(vm.undoStack.count),
+                // Cumulative since launch: writes of `items` and O(N) rebuilds of the lane entries
+                // (a gesture's cost, readable with no screen: take the difference around it).
+                "items_writes": .int(vm.itemsWriteCount),
+                "lane_entries_rebuilds": .int(vm.laneEntriesRebuildCount),
                 // How the timeline's visible blocks were last drawn. `clips_rich` counts every
                 // block that is not a group and kept a SwiftUI view (an aux and a MIDI clip
                 // always do); `groups_canvas` counts the groups the Canvas draws (the others, and

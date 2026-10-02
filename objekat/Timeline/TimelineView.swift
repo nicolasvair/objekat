@@ -2662,6 +2662,9 @@ struct TimelineView: View {
     private func soundBlock(for object: SoundObject, overrideDisplayLane: Int? = nil,
                             sendRows memo: [UUID: [SendRow]]? = nil) -> some View {
         let dLane = overrideDisplayLane ?? displayLane(for: object.lane)
+        // ONCE per block: it walks the partner cache and the drag's projection, and both ends used to
+        // ask for it separately.
+        let shared = crossfadeSharedPx(for: object)
         SoundBlockView(
             object: object,
             pixelsPerSecond: pixelsPerSecond,
@@ -2687,8 +2690,8 @@ struct TimelineView: View {
             previewFadeOut:   previewFadeOut(for: object),
             previewFadeInCurve:  previewFadeCurveIn(for: object),
             previewFadeOutCurve: previewFadeCurveOut(for: object),
-            sharedLeadingPx:  crossfadeSharedPx(for: object).leading,
-            sharedTrailingPx: crossfadeSharedPx(for: object).trailing,
+            sharedLeadingPx:  shared.leading,
+            sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: object),
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
@@ -3718,7 +3721,8 @@ struct TimelineView: View {
 
     private func groupBlock(for group: SoundObject, displayLane dl: Int,
                             sendRows memo: [UUID: [SendRow]]? = nil) -> some View {
-        GroupBlockView(
+        let shared = crossfadeSharedPx(for: group)   // once per block, not once per end
+        return GroupBlockView(
             group: group,
             displayName: viewModel.displayName(of: group),
             pixelsPerSecond: pixelsPerSecond,
@@ -3746,8 +3750,8 @@ struct TimelineView: View {
             previewFadeOut:  previewFadeOut(for: group),
             previewFadeInCurve:  previewFadeCurveIn(for: group),
             previewFadeOutCurve: previewFadeCurveOut(for: group),
-            sharedLeadingPx:  crossfadeSharedPx(for: group).leading,
-            sharedTrailingPx: crossfadeSharedPx(for: group).trailing,
+            sharedLeadingPx:  shared.leading,
+            sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: group),
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
