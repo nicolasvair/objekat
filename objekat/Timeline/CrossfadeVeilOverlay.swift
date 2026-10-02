@@ -192,7 +192,7 @@ extension TimelineView {
     /// objects under the hand. The container is the one it is still in — neither a move nor a crop
     /// changes a parent.
     func dragPlacement(_ id: UUID) -> EditViewModel.Placement? {
-        guard let e = viewModel.laneEntries.first(where: { $0.item.id == id }) else { return nil }
+        guard let e = viewModel.laneEntry(forID: id) else { return nil }
         var p: EditViewModel.Placement = (e.absStart, e.item.duration, e.displayLane, e.parentID)
         if let md = moveDrag, !md.isAltCopy, md.ids.contains(id) {
             p.start += md.dt
@@ -221,13 +221,15 @@ extension TimelineView {
     func reshapedCrossfadeFade(for id: UUID, side: FadeSide) -> Double? {
         guard let ids = reshapingDragIDs else { return nil }
         let onRight = side == .out
-        guard let n = viewModel.seamNeighbour(of: id, onRight: onRight),
+        // The partner IS the neighbour that forms a zone (@see EditViewModel.crossfadePartners):
+        // read in O(1) where `seamNeighbour` + `crossfadeZone` walked every sibling, per block and
+        // per frame — two thirds of a 600-object drag.
+        guard let partners = viewModel.crossfadePartners(of: id),
+              let n = onRight ? partners.right : partners.left,
               // The gesture has to hold one of the two, otherwise this pair is none of its
               // business — and every crossfade on screen would leave the batched canvas for the
               // duration of any drag at all.
-              ids.contains(id) || ids.contains(n),
-              viewModel.crossfadeZone(leftID: onRight ? id : n,
-                                      rightID: onRight ? n : id) != nil else { return nil }
+              ids.contains(id) || ids.contains(n) else { return nil }
         guard let z = viewModel.projectedCrossfade(leftID: onRight ? id : n,
                                                    rightID: onRight ? n : id,
                                                    placement: dragPlacement) else { return 0 }

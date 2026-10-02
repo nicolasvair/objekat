@@ -197,48 +197,33 @@ extension EditViewModel {
     }
 
     /// The objects an object forms a crossfade WITH, on each side — what the timeline asks of
-    /// every block on every frame (@see TimelineView.crossfadeSharedPx).
+    /// every block on every frame (@see TimelineView.crossfadeSharedPx), and what a gesture that
+    /// moves or crops objects asks of each of them on every frame (@see crossfadePairs,
+    /// TimelineView.reshapedCrossfadeFade).
     ///
     /// Asking `seamNeighbour` per block cost a `find`, a `parentGroup` and a pass over every
     /// sibling, i.e. O(N) per block and O(N²) per frame: at ~1 250 objects that was more than half
     /// of a project load's main thread, the loading veil letting the timeline redraw at every
-    /// breath. Built here once per change of `items` — each sibling list bucketed by lane and
-    /// sorted by start, a pair only ever overlapping — then read in O(1).
+    /// breath — and, 600 objects selected and the hand down, two thirds of every frame of a drag
+    /// (E8). Built here once per change of `items` — each sibling list bucketed by lane and
+    /// sorted by start, a pair only ever overlapping (@see CrossfadePartnerFinder) — then read in
+    /// O(1).
     /// Same answer as `seamNeighbour(of:onRight:)` whenever that neighbour forms a zone, which is
-    /// the only case the timeline reads it for.
+    /// the only case anybody reads it for — the first one in the model's order, ties included
+    /// (`tools/test_crossfade_pairs.swift`).
     func crossfadePartners(of id: UUID) -> CrossfadePartners? {
         if crossfadePartnersCache == nil { crossfadePartnersCache = buildCrossfadePartners() }
         return crossfadePartnersCache?[id]
     }
 
     private func buildCrossfadePartners() -> [UUID: CrossfadePartners] {
-        var out: [UUID: CrossfadePartners] = [:]
-        func walk(_ siblings: [SoundObject]) {
-            var byLane: [Int: [SoundObject]] = [:]
-            for o in siblings {
-                byLane[o.lane, default: []].append(o)
-                if case .group(let children, _) = o.kind { walk(children) }
-            }
-            for (_, row) in byLane where row.count > 1 {
-                let sorted = row.sorted { $0.startTime < $1.startTime }
-                for i in sorted.indices {
-                    let a = sorted[i]
-                    let aEnd = a.startTime + a.duration
-                    var j = i + 1
-                    // Only an object starting inside `a` can overlap it.
-                    while j < sorted.count, sorted[j].startTime < aEnd {
-                        let b = sorted[j]
-                        if isCrossfadePair(a, b) {
-                            if out[a.id]?.right == nil { out[a.id, default: .init()].right = b.id }
-                            if out[b.id]?.left == nil { out[b.id, default: .init()].left = a.id }
-                        }
-                        j += 1
-                    }
-                }
-            }
-        }
-        walk(items)
-        return out
+        let map = CrossfadePartnerFinder.partnerMap(
+            roots: items,
+            id: { $0.id },
+            children: { if case .group(let kids, _) = $0.kind { return kids } else { return [] } },
+            box: { CrossfadePartnerFinder.Box(lane: $0.lane, start: $0.startTime, duration: $0.duration) },
+            isPair: { isCrossfadePair($0, $1) })
+        return map.mapValues { CrossfadePartners(left: $0.left, right: $0.right) }
     }
 
     /// The sibling this object BUTTS against on one side — the one a fade pulled out past that
@@ -786,6 +771,10 @@ extension EditViewModel {
     /// The crossfades these objects are part of, read WHILE THEY STILL EXIST — a move destroys the
     /// evidence, since a displaced pair no longer satisfies `isCrossfadePair`. So a gesture that is
     /// about to move something notes its pairs first and refits them afterwards.
+    ///
+    /// Read off the partners (@see crossfadePartners) — O(objects asked), where the walk it used
+    /// to make (`seamNeighbour` + `crossfadeZone` per object and side) was O(N) each and ran on
+    /// EVERY frame of a drag: 600 selected objects spent two thirds of the frame there.
     func crossfadePairs(around ids: Set<UUID>) -> [CrossfadePair] {
         var pairs: [CrossfadePair] = []
         var seen = Set<CrossfadePair>()
@@ -794,10 +783,9 @@ extension EditViewModel {
             if seen.insert(pair).inserted { pairs.append(pair) }
         }
         for id in ids {
-            if let n = seamNeighbour(of: id, onRight: true),
-               crossfadeZone(leftID: id, rightID: n) != nil { note(id, n) }
-            if let n = seamNeighbour(of: id, onRight: false),
-               crossfadeZone(leftID: n, rightID: id) != nil { note(n, id) }
+            guard let partners = crossfadePartners(of: id) else { continue }
+            if let n = partners.right { note(id, n) }
+            if let n = partners.left { note(n, id) }
         }
         return pairs
     }
