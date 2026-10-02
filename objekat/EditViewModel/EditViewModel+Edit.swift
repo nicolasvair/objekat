@@ -97,8 +97,17 @@ extension EditViewModel {
         }
     }
 
+    /// True if nothing is above the object: it is a ROOT object, the only kind the wall at t = 0
+    /// applies to (@see ZeroClamp). Asked only when a start would go negative — it walks the tree.
+    func isRootObject(_ id: UUID) -> Bool { parentGroup(for: id) == nil }
+
     func updateStartTime(id: UUID, newStart: Double) {
-        let snapped = max(0, snapTime(newStart))
+        // The wall at zero belongs to the ROOT object: a descendant of a group may start before 0
+        // (the group's window is a frame, its children keep an absolute start) — it is the root group
+        // above that cannot (@see ZeroClamp, [[project-negative-start-convention]]). The engine bridge
+        // already translates the head cut into a source offset (OBJEngineCore, `_headCutMap`).
+        let raw = snapTime(newStart)
+        let snapped = raw >= 0 ? raw : ZeroClamp.clamp(raw, isRoot: isRootObject(id))
         guard let obj = find(id: id) else { return }
         let delta = snapped - obj.startTime
         update(id: id) { item in

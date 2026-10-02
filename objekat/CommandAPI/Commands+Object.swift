@@ -431,7 +431,9 @@ extension CommandRegistry {
 
         register("object.trim",
                  summary: "Trims a clip: a new start AND a new length in one gesture "
-                        + "(non-destructive, the source content does not move).",
+                        + "(non-destructive, the source content does not move). A root object's start "
+                        + "is clamped at 0; a child of a group may start before 0 (the group is what "
+                        + "is clamped).",
                  params: [ParamSpec("id", "uuid", "Target object."),
                           ParamSpec("start", "number", "New start, in seconds."),
                           ParamSpec("duration", "number", "New length, in seconds.")],
@@ -441,7 +443,11 @@ extension CommandRegistry {
             guard vm.find(id: id) != nil else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
-            let start = max(0, try p.double("start"))
+            // The wall at zero is the ROOT object's (@see ZeroClamp): the child of a group may start
+            // before 0, it is the group that cannot.
+            let requestedStart = try p.double("start")
+            let start = requestedStart >= 0
+                ? requestedStart : ZeroClamp.clamp(requestedStart, isRoot: vm.isRootObject(id))
             let duration = try p.double("duration")
             guard duration > 0 else {
                 throw CommandError(code: .bad_params, message: "length is zero or negative")

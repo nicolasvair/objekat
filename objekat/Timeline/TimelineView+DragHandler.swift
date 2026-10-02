@@ -11,6 +11,11 @@ struct MoveDragState {
     var altFragmentObjects: [SoundObject]? = nil
     var timeSelectionAnchor: TimeSelection? = nil
     var sourceGroupID: UUID? = nil
+    /// The moved objects that sit INSIDE a group: the wall at t = 0 is not theirs (@see ZeroClamp —
+    /// it belongs to the root objects, and to the root group above a child). Read ONCE when the
+    /// gesture opens, from one walk of the tree: asking the model per frame, per anchor, would be
+    /// O(N²) on a large selection. Empty = every anchor is at the root, i.e. the old behaviour.
+    var freeIDs: Set<UUID> = []
 }
 
 struct ResizeDragState {
@@ -31,6 +36,8 @@ struct TrimDragState {
     var anchors: [UUID: (start: Double, duration: Double, room: Double)]
     var grabbedID: UUID
     var dStart: Double = 0
+    /// The trimmed objects inside a group: no wall at t = 0 for them (@see MoveDragState.freeIDs).
+    var freeIDs: Set<UUID> = []
 }
 
 struct TimeSelectionDragState {
@@ -864,7 +871,9 @@ extension TimelineView {
                                   room: obj.contentRoomBefore))
                     }
                 )
-                trimDrag = TrimDragState(ids: ids, anchors: anchors, grabbedID: item.id)
+                let trimParents = viewModel.parentIDMap()
+                trimDrag = TrimDragState(ids: ids, anchors: anchors, grabbedID: item.id,
+                                         freeIDs: Set(ids.filter { trimParents[$0] != nil }))
 
             case .resizeRight:
                 if !viewModel.selectedIDs.contains(item.id) {
@@ -914,10 +923,12 @@ extension TimelineView {
                     ids.compactMap { viewModel.find(id: $0) }
                         .map { ($0.id, (start: $0.startTime, lane: $0.lane)) }
                 )
+                let moveParents = viewModel.parentIDMap()
                 moveDrag = MoveDragState(ids: ids, anchors: anchors,
                                          grabbedID: item.id, dt: 0, dl: 0,
                                          isAltCopy: alt,
-                                         sourceGroupID: hitSourceGroupID)
+                                         sourceGroupID: hitSourceGroupID,
+                                         freeIDs: Set(ids.filter { moveParents[$0] != nil }))
             }
         }
 
@@ -1190,8 +1201,13 @@ extension TimelineView {
                                                   excluding: Set(state.anchors.keys))
             var dStart = snappedStart - grabbed.start
 
-            // The left limit: timeline 0, and the end of the source content available before the edge.
-            let minDStart: Double = state.anchors.values.map { max(-$0.start, -$0.room) }.max() ?? -.infinity
+            // The left limit: timeline 0 (root objects), and the end of the source content available before the edge.
+            // The wall at 0 is the ROOT object's: a child of a group may be trimmed to a negative start,
+            // only the source content bounds it (@see ZeroClamp).
+            let minDStart: Double = state.anchors.map {
+                ZeroClamp.trimLimit(start: $0.value.start, room: $0.value.room,
+                                    isRoot: !state.freeIDs.contains($0.key))
+            }.max() ?? -.infinity
             let maxDStart = state.anchors.values.map { $0.duration - 0.01 }.min() ?? .infinity
             dStart = max(minDStart, min(maxDStart, dStart))
             state.dStart = dStart
@@ -1263,8 +1279,12 @@ extension TimelineView {
             viewModel.snapGuide = useEnd ? guideEnd : guideStart
 
             dt = snappedStart - grabbedAnchor.start
-            let minStart = state.anchors.values.map { $0.start }.min() ?? 0
-            dt = max(dt, -minStart)
+            // The wall at t = 0 is the ROOT objects' (@see ZeroClamp): the leftmost of them stops
+            // there while the hand carries on, a root GROUP carrying its children with it — and the
+            // children of a group, moved on their own, have no wall (they may go before 0).
+            dt = max(dt, ZeroClamp.leftTravelLimit(starts: state.anchors.map {
+                (start: $0.value.start, isRoot: !state.freeIDs.contains($0.key))
+            }))
             // The move too comes up against t = 0 — the leftmost object of the selection stops there
             // while the hand carries on. The guide is drawn on the grabbed object's edge, whichever of
             // the two won the snap, so it is that edge it must be pinned to (@see pinSnapGuide).
@@ -1389,7 +1409,8 @@ extension TimelineView {
                         // is then invisible to `resolveOverlaps` below; what is not, it settles.
                         viewModel.withCrossfadeRefit(around: state.ids) {
                             for (id, anchor) in state.anchors {
-                                let newStart = max(0, anchor.start + dt)
+                                // Children of ONE group: no wall at 0 (@see ZeroClamp).
+                                let newStart = anchor.start + dt
                                 viewModel.update(id: id) { item in
                                     let d = newStart - item.startTime
                                     item.startTime = newStart

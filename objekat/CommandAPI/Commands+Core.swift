@@ -604,7 +604,8 @@ extension CommandRegistry {
                         + "neither start nor end, so only its lane moves, and it moves by the "
                         + "band's own rule: an empty row takes it, a row holding one other "
                         + "infinite bus SWAPS with it, and any other occupied row refuses it "
-                        + "(invalid_state) — the same answer the drag gives.",
+                        + "(invalid_state) — the same answer the drag gives. A ROOT object cannot start "
+                        + "before 0 (clamped); a CHILD of a group can — the wall at 0 is the group's.",
                  params: [ParamSpec("id", "uuid", "Object to move."),
                           ParamSpec("lane", "int", required: false, "New lane."),
                           ParamSpec("start", "number", required: false, "New start, in seconds."),

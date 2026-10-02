@@ -702,6 +702,7 @@ extension EditViewModel {
                 guard let child = children.first(where: { $0.id == childID }),
                       let anchor = anchors[childID] else { continue }
                 var top = withCapturedPluginStates(child)   // freezes the state before the engine round trip
+                // It becomes a ROOT object: the wall at 0 applies on arrival (@see ZeroClamp).
                 let newStart = max(0, anchor.start + dt)
                 let dStart   = newStart - child.startTime
                 top.startTime = newStart
@@ -761,7 +762,8 @@ extension EditViewModel {
                       let anchor = anchors[childID] else { continue }
                 if isSelfOrDescendant(targetGroupID, of: childID) { continue }   // anti-cycle
                 var c = withCapturedPluginStates(child)   // freezes the state before the engine round trip
-                let newStart = max(0, anchor.start + dt)
+                // A child going from one group to another: no wall at 0 (@see ZeroClamp).
+                let newStart = anchor.start + dt
                 let dStart   = newStart - child.startTime
                 c.startTime = newStart
                 c.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
@@ -836,7 +838,7 @@ extension EditViewModel {
         for childID in childIDs {
             guard let child = srcChildren.first(where: { $0.id == childID }),
                   let anchor = anchors[childID] else { continue }
-            let copyStart = max(0, anchor.start + dt)
+            let copyStart = anchor.start + dt   // a child into a group: no wall at 0 (@see ZeroClamp)
             copies.append(makeAltCopy(child,
                 startTime: copyStart,
                 lane: max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))))
@@ -862,8 +864,9 @@ extension EditViewModel {
         for childID in childIDs {
             guard let child = children.first(where: { $0.id == childID }),
                   let anchor = anchors[childID] else { continue }
+            // A copy INSIDE its group: no wall at 0 (@see ZeroClamp).
             copies.append(makeAltCopy(child,
-                startTime: max(0, anchor.start + dt),
+                startTime: anchor.start + dt,
                 lane: max(0, anchor.lane + dl)))
         }
         for copy in copies { addChild(copy, toGroupID: groupID) }
