@@ -144,15 +144,23 @@ extension CommandRegistry {
                  the gesture). Answers the decision taken: `cancel` (a drop onto the moved objects' \
                  own subtree: nothing touched, no undo), `reparent` (+ `group`, `lane` of ITS frame), \
                  `move_in_source` (+ `lane`), `eject` (+ `lane` of the root), `root` (+ `lane`), and \
-                 the `row` the release read. ONE undo point per call (none on `cancel`). Not present \
-                 in Release builds.
+                 the `row` the release read. ONE undo point per call (none on `cancel`). \
+                 `insert_row` = release in the GAP before that display row (the insertion between two \
+                 lanes: the lanes below go down, the lanes the selection empties close up, nothing is \
+                 overwritten); `dl` is then ignored. The answer carries `insert`: \
+                 `{group|null, lane, lane_before, count, boundary}`, or null when the insertion does \
+                 not apply (nobody below, inside a piano roll, the moved group's own band…) and the \
+                 normal drop was done instead. Not present in Release builds.
                  """,
                  params: [ParamSpec("id", "uuid", "The grabbed object."),
-                          ParamSpec("dl", "int", "Vertical travel, in DISPLAY rows."),
+                          ParamSpec("dl", "int", required: false, "Vertical travel, in DISPLAY rows (not needed with `insert_row`)."),
                           ParamSpec("dt", "double", required: false, "Time travel in seconds (default 0)."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Other moved objects, same parent as `id`."),
-                          ParamSpec("alt", "bool", required: false, "⌥ copy instead of a move.")],
+                          ParamSpec("alt", "bool", required: false, "⌥ copy instead of a move."),
+                          ParamSpec("insert_row", "int", required: false,
+                                    "Insert BEFORE this display row (the gap between two lanes) "
+                                  + "instead of dropping on a lane; `dl` is then ignored.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let grabbed = try p.uuid("id")
@@ -160,7 +168,7 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found,
                                    message: "not on screen (folded ancestor?): \(grabbed.uuidString)")
             }
-            let dl = try p.int("dl")
+            let dl = try p.int("dl", or: 0)
             let dt = try p.double("dt", or: 0)
             let sourceID = vm.parentGroup(for: grabbed)?.id
             var ids: Set<UUID> = [grabbed]
@@ -168,11 +176,29 @@ extension CommandRegistry {
                 for other in try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm)
                 where vm.parentGroup(for: other)?.id == sourceID { ids.insert(other) }
             }
+            let isAlt = try p.bool("alt", or: false)
+            let anchors = CommandAdapters.currentAnchors(ids, in: vm)
+            var insertRow: Int? = nil
+            if p.raw["insert_row"] != nil, p.raw["insert_row"] != .null { insertRow = try p.int("insert_row") }
+            // The plan is asked BEFORE the commit, for the answer: it is what the commit re-derives.
+            let plan = insertRow.flatMap {
+                vm.laneInsertionPlan(row: $0, ids: ids, anchors: anchors,
+                                     sourceGroupID: sourceID, isAltCopy: isAlt)
+            }
             let decision = vm.commitMoveDrop(
-                ids: ids, anchors: CommandAdapters.currentAnchors(ids, in: vm), grabbedID: grabbed,
+                ids: ids, anchors: anchors, grabbedID: grabbed,
                 grabbedDisplayLane: entry.displayLane, sourceGroupID: sourceID,
-                isAltCopy: try p.bool("alt", or: false), dt: dt, dl: dl)
-            var out: [String: JSONValue] = ["row": .int(entry.displayLane + dl)]
+                isAltCopy: isAlt, dt: dt, dl: dl, insertionRow: insertRow)
+            var out: [String: JSONValue] = ["row": .int(plan != nil ? (insertRow ?? 0) : entry.displayLane + dl)]
+            if insertRow != nil {
+                if let pl = plan {
+                    out["insert"] = .object(["group": pl.parentID.map { .string($0.uuidString) } ?? .null,
+                                             "lane": .int(pl.lane), "lane_before": .int(pl.laneBefore),
+                                             "count": .int(pl.count), "boundary": .int(pl.boundaryRow)])
+                } else {
+                    out["insert"] = .null
+                }
+            }
             switch decision {
             case .cancel:                       out["decision"] = .string("cancel")
             case .moveInSource(let lane):       out["decision"] = .string("move_in_source"); out["lane"] = .int(lane)
