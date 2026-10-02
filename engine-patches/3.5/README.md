@@ -290,6 +290,22 @@ Checked as still biting: `develop` still had the linear `std::find`.
   clip — O(N) per plugin, O(N²) per rebuild, since every object's chain lives on its clip's
   plugin list. `Clip::isClipState (parent)` gives the same answer in O(1). PERREO WUB 2: 75 % of
   the rebuild's time, i.e. most of the interface freeze on a cut during playback.
+- `0034` — **the sinc resampler follows its position at the clip's speed.**
+  `HighQualityResamplerReader` (the libsamplerate reader, any `ResamplingQuality` but `lagrange`)
+  keeps `readPosition` and compares it, in `setPosition()`, with the position its caller hands it
+  (`TimeRangeReader` → `tr.getStart()`, the clip's SOURCE time, i.e. edit time × the clip's speed,
+  in dest-rate samples) — with a tolerance of one sample, beyond which it repositions the source
+  and calls `src_reset()`. But it advanced `readPosition` by `numFramesToDo` per block, where the
+  caller's position moves by `numFramesToDo × speed`. At speed 1 the two agree and the defect is
+  invisible; at any other speed they drift apart by more than a sample on EVERY block, so the
+  reader reset its state on every block (its chunk, 256 frames — measured: the timing jumps of a
+  sine rendered at speed 1.07 sit one chunk apart): one transient (a click) per chunk, i.e. a
+  varispeed that clicks a few hundred times a second. The fix is the factor, `readPosition += numFramesToDo * speedRatio` — what the
+  two `TimeStretchReader`s already did (`playbackSpeedRatio`). It lay dormant because Tracktion's
+  default is Lagrange, which does not go through this reader; OBJEKAT stopped using Lagrange (it
+  re-aims its source on a rounded position at every block, a crackle as soon as file and output rates
+  differ) and asks for `sincMedium`, which is what exposed it. One file, one line; the timestretch
+  path is unaffected (the resampler's `speedRatio` stays 1 under a stretcher).
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit
@@ -331,7 +347,7 @@ does not go through the script. Patch `0031` settles it in the branch itself: ju
 HTTPS, same repository, same commit.
 
 Verification: `git -C tracktion_engine log --oneline 494e91d2ff5..HEAD | wc -l`
-must give as many as there are archives in the active series — today **30**. That number moves
+must give as many as there are archives in the active series — today **32**. That number moves
 with every patch added and with every one set aside; `ls engine-patches/3.5/0*.patch | wc -l`
 says it without getting it wrong.
 

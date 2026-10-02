@@ -35,9 +35,9 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **31** patches in `engine-patches/3.5/`, numbered `0001`→`0033` with two
+An engine series of **32** patches in `engine-patches/3.5/`, numbered `0001`→`0034` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0034`. It is the ONLY series left: the four archives of
+(see its README). The next one will be `0035`. It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
 that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
@@ -2059,6 +2059,44 @@ What has landed since mid-August, in order:
   dimmed rows, the summary line, the warning triangles, the 210 pt scroll area in a 460 pt sheet, the
   three-segment selector, the per-row outcome icons, the batch line in the panel and the strip, the
   grey-out while a batch runs — in three languages.
+
+- **No more Lagrange: clips resample with sinc, and engine patch `0034` makes sinc usable at any speed**
+  (2 October 2026, ON THE BRANCH of the `agent-a67a141ea5337b0c9` worktree, NOT merged, fork NOT
+  republished). Tracktion's default `ResamplingQuality` is `lagrange`, whose reader re-aims its source on
+  a ROUNDED position at every block: one sample of jump from time to time, a crackle as soon as the file
+  and the output rates differ (44.1 ↔ 48, 96 → 44.1, and every non-integer ratio). MEASURED on 24-bit
+  exports of sines and band-limited noise: exact only at the same rate and speed 1 (SINAD ~137 dB) or an
+  integer ratio of 2; any other pair gives SINAD 27–34 dB at 1 kHz, 7–14 dB at 10 kHz, a lag of up to
+  ±4 samples. The Lagrange reader itself is NOT fixed (decision: stop using it). The app now asks for
+  `sincMedium` (`OBJEngineBehaviour::getClipDefaults`, plus an explicit `setResamplingQuality` in
+  `configureFreshClip`, since `ClipOwner::insertClip` applies the defaults to AudioTrack owners only),
+  and for `sincBest` on the CLONE of a render (`objUpgradeResamplingForRender`, in `renderTrackToFileAsync`
+  and in the on-copy branch of `exportMixToFileAsync`) — never on the live Edit. **Consequence worth
+  knowing: an export launched with `background: false` renders the LIVE Edit, hence in `sincMedium`; only
+  `background: true` (a copy) and the bakes get `sincBest`.** Sinc after: SINAD 117–139 dB (sincMedium),
+  ~136 dB (sincBest), 19 kHz kept at 44.1 → 48, lag 0.00, no jump, for the 9 rate pairs.
+  **The latent defect that sinc exposed — engine patch `0034`**: `HighQualityResamplerReader` (the
+  libsamplerate reader) advanced its `readPosition` by `numFramesToDo`, while `setPosition()` compares it
+  with the caller's position, in clip SOURCE time (× the clip's speed). At speed ≠ 1 the gap exceeded the
+  1-sample tolerance on EVERY chunk (256 frames) and the reader `src_reset()`: a click per chunk, a
+  varispeed (the patch `0002` feature) unusable in sinc (SINAD 4–39 dB measured at 1.07 and 0.5). One
+  line, `readPosition += numFramesToDo * speedRatio` — what the TimeStretchReaders already did. Measured
+  after: SINAD 122–138 dB at speeds 1.07 and 0.5, no jump. **The fork is NOT republished** — the gitlink
+  of this worktree names a commit (`b945d566f0a`) that exists only in this machine's submodule until
+  `tools/publish-engine-forks.sh` is run; do not merge the branch before it.
+  Measuring it: `tools/scenario_resample_quality.py` (the matrix source × output ∈ {44.1, 48, 96} kHz ×
+  speed {1, 1.07, 0.5}, 24-bit export re-read, `--quick`, `--bench`, `--background`, `--expect sinc`) with
+  `tools/analyze_resample.py` (SINAD by sine fit, a Hilbert-phase detector of TIMING jumps — a residual-
+  MAD click detector does not see phase steps, found the hard way — pitch in cents, noise lag and SNR
+  against an offline ideal; `--compare a.json b.json`). The Lagrange 'before' was taken with a TEMPORARY
+  `getenv` switch, never committed. Cost, RELEASE, 20 clips × 50 s on top of each other, `--bench`: CPU
+  5.4 s (lagrange) → 10.2 s (sincMedium, same rate) → 17 s (96 → 44.1) → 25–29 s (sincBest on the clone,
+  52 s for 96 → 44.1): roughly ×2 live, ×5 for a render on a copy. **A guard 'same rate and speed 1 →
+  keep Lagrange' was evaluated and NOT done**: it is simple in `buildAudioReaderGraph` but is an engine
+  change of its own (a `0035`), and it buys CPU only — sinc at the same rate is already ~120–137 dB, so
+  nothing audible; worth doing only if the live cost of sinc is felt on a big project.
+  **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
+  a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
 ### What is owed
 
