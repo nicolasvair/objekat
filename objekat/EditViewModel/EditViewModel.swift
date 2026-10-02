@@ -42,6 +42,7 @@ final class EditViewModel {
         didSet {
             // Lazy and unconditional (batch or not): rebuilt by the next reader, never stale.
             crossfadePartnersCache = nil
+            itemsExtentCache = nil
             composedNameCache.removeAll(keepingCapacity: true)
             findIndex = nil
             findsSinceMutation = 0
@@ -53,6 +54,8 @@ final class EditViewModel {
     @ObservationIgnored var findsSinceMutation = 0
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
     @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
+    /// @see contentEnd / maxOccupiedLane — `nil` = to rebuild on the next read.
+    @ObservationIgnored var itemsExtentCache: (end: Double, maxLane: Int)? = nil
     /// @see visibleCrossfadeZones — the zones of `laneEntries`, indexed. Emptied wherever
     /// `laneEntries` is rebuilt (`rebuildLaneEntries`), since that is the list it is built from.
     @ObservationIgnored var crossfadeZoneIndexCache: CrossfadeZoneIndex? = nil

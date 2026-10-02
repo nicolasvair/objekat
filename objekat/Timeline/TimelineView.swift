@@ -205,9 +205,9 @@ struct TimelineView: View {
     private let minLanes: Int = 2
 
     /// Where the project's matter really ends: the right edge of its last object.
-    private var contentEnd: Double {
-        viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0
-    }
+    /// Cached by the view model with `items` (@see EditViewModel+ItemsExtent): this is read some
+    /// twenty times per pass, and a walk of every top-level object each time cost a fifth of a zoom.
+    private var contentEnd: Double { viewModel.contentEnd }
 
     /// The length the content really takes (plus some room to manoeuvre). Deliberately free of the
     /// zoom: it is what `stickyTotalDuration` is measured against, and a length that changed with
@@ -387,9 +387,8 @@ struct TimelineView: View {
     @State var hoverStore = TimelineHoverStore()
     var laneStep: Double { blockHeight + laneGap }
 
-    private var maxOccupiedLane: Int {
-        viewModel.items.map(\.lane).max() ?? 0
-    }
+    /// Cached with `items` as well (@see contentEnd).
+    private var maxOccupiedLane: Int { viewModel.maxOccupiedLane }
 
     /// Cached by the view model with `laneEntries` (@see `EditViewModel.totalExtraLanes`): read
     /// once per `canvasHeight`, i.e. some fifteen times per pass.
@@ -3139,6 +3138,14 @@ struct TimelineView: View {
                                    hidesClipMuteVeil: Bool = false) -> some View {
         Canvas { ctx, _ in
                 TimelineRegimeMeter.recordCanvasDraw()
+                // The geometry, read ONCE per pass. `rulerHeight`, `blockHeight` and `laneStep` are
+                // computed from observable properties of the view model, and `rectFor` / `look`
+                // below read them per block and per phase: 600 blocks paid ~20 % of this closure
+                // in `ObservationRegistrar.access` alone (`sample`, Release, a zoom, E8). Locals
+                // of the same names, so every use below reads the value and not the property.
+                let rulerHeight = self.rulerHeight
+                let blockHeight = self.blockHeight
+                let laneStep = self.laneStep
                 let filterText = viewModel.filterText
                 let dimActive = !filterText.isEmpty
                 let soloDimActive = viewModel.hasAnySolo
