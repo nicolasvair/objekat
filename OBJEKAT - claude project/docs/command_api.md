@@ -287,8 +287,11 @@ caret, time selection, loop, viewport).
 {"cmd": "tab.select", "params": {"id": "…"}}    → same, by id
 
 {"cmd": "tab.open", "params": {"path": "/…/Other.objekat"}}           // + "repair_plugin_ids": true, see "Loading a project"
-→ {…, "already_open": false}        // opened in a NEW tab
-→ {…, "already_open": true}         // was already open elsewhere: switched to it instead
+→ {…, "already_open": false, "reloaded": false}   // opened in a NEW tab
+→ {…, "already_open": true,  "reloaded": true}    // a tab already held it: brought forward and
+                                                  // RELOADED from disk (back to the last save)
+{"cmd": "tab.open", "params": {"path": "/…/Other.objekat", "discard": true}}
+                                                  // same, even if that tab has unsaved changes
 
 {"cmd": "tab.move", "params": {"index": 3, "to": 1}}   → the moved tab's object, "index": 1
 {"cmd": "tab.move", "params": {"id": "…", "to": 2}}    // same, by id
@@ -308,6 +311,15 @@ touching anything, so a refusal never half-parks a tab) also answers `invalid_st
 reason in English (`"tab switch refused: an export is running"`, …) — the same four conditions
 `Quiescence.inFlight()` already reports for `wait_idle`.
 
+Opening a file a tab ALREADY holds (the active one or another) never opens a second copy: that
+tab is brought forward and its document is RELOADED from disk — the state of the last save, which
+is how one goes back after a mistake (the app's Open…, Recent projects and a Finder double-click
+do the same, asking Save / Don't Save / Cancel first when the tab is modified). For `tab.open`, a
+modified tab is refused (`invalid_state`, "tab has unsaved changes — pass discard: true") unless
+`"discard": true`, and the refusal is decided BEFORE any switch: nothing moves. The reload is not
+cancellable, the undo/redo history starts over (as at any opening), and it is refused for the same
+four reasons as a switch. A clean tab reloads with no condition.
+
 `tab.move` is the tab bar's drag-to-reorder without the hand: the tab named by `id`/`index` ends
 up at the 1-based position `to` (`1…count`, anything else is `bad_params`), the others closing up
 around it. It changes the ORDER and nothing else — the active tab stays the active one, no
@@ -319,9 +331,10 @@ the short span of a tab switch itself, when the workspace is between parking one
 restoring another.
 
 Two commands outside this family are tabs-AWARE without becoming part of it, for backward
-compatibility: `project.open` on a path already open in ANOTHER tab switches to that tab instead
-of loading a second copy (`{"already_open": true, "tab": "…"}`, everything else unchanged —
-reopening the ACTIVE tab's own file still reloads it in place, exactly as before tabs existed);
+compatibility: `project.open` on a path already open in a tab brings that tab forward and reloads
+it in place from disk, WITHOUT confirmation as ever for this command (`{"already_open": true,
+"reloaded": true, "tab": "…"}` added to its usual answer — reopening the ACTIVE tab's own file
+reloaded it in place before tabs existed, and another tab's file now does the same);
 `project.save_as` onto a path another tab already has open answers `invalid_state` rather than
 write over it (writing there would silently orphan whatever that other tab still holds in memory
 the next time IT saves).
@@ -1954,7 +1967,10 @@ Finder open the session in OBJEKAT rather than in a text editor. One definition 
 - The name shown for a project strips ONE of the two extensions, in any case: `Mix.objekat` and
   `Mix.json` are both "Mix", and a `p.objekat.json` stays "p.objekat".
 - **Opening from the Finder** (double-click, a file dropped on the Dock icon, `open -a`) follows
-  `tab.open`'s rules: the same file is never opened twice (its tab is brought forward), and it opens
+  `tab.open`'s rules: the same file is never opened twice (its tab is brought forward and
+  reloaded from disk, after the Save / Don't Save / Cancel question if it is modified — the same
+  file arriving again within 1.5 s of being opened from outside is taken for an echo and
+  dropped), and it opens
   in a NEW tab — except over an untouched "Untitled" tab (no file, not modified, empty), which is
   reused, the ordinary case of a cold launch by a double-click. A refusal (a load, an export under
   way…) or an unreadable file is reported by an alert, the hand being in the Finder. There is no

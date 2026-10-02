@@ -142,7 +142,10 @@ extension CommandRegistry {
                         + "`async: true` to get an immediate answer instead and follow the load "
                         + "with project.load_status / wait_idle — the only two commands (besides "
                         + "app.info and app.dialogs) that still answer while it runs; every other "
-                        + "command answers invalid_state ('project loading').",
+                        + "command answers invalid_state ('project loading'). A file already "
+                        + "open in a tab is never opened twice: that tab is brought forward and "
+                        + "reloaded from disk without confirmation ('already_open': true, "
+                        + "'reloaded': true).",
                  params: [ParamSpec("path", "string", "Path to the project file."),
                           ParamSpec("async", "bool", required: false,
                                     "true = return immediately (default false: wait for completion)."),
@@ -163,21 +166,26 @@ extension CommandRegistry {
                                    message: "a direct export is running (or preparing): "
                                           + "the project cannot be replaced until it ends")
             }
-            // Tabs (INC1): this file may already be open in ANOTHER tab — switch to it rather than
-            // load a second copy into the active one. The historical, tabs-unaware contract is kept
-            // for everything else (reopening the ACTIVE tab's own file still reloads it in place).
+            // Tabs: this file may already be open in a tab. Never a second copy: the tab holding it
+            // is brought forward, then RELOADED in place from disk below — reopening the active
+            // tab's own file always did that, and since a reopen means "back to the last save"
+            // (@see ReopenSameFile) another tab's file now does it too. No confirmation, as ever
+            // for this command (`tab.open` is the door that asks for `discard`).
+            var alreadyOpen: [String: JSONValue] = [:]
             if let workspace = CommandContext.shared.workspace,
                let existing = workspace.tabs.first(where: { tab in
                    guard let existingURL = workspace.url(for: tab),
                          let a = FolderIdentity.identifier(existingURL),
                          let b = FolderIdentity.identifier(url) else { return false }
                    return a.isEqual(b)
-               }), existing.id != workspace.activeTabID {
-                if case .failure(let e) = await workspace.select(existing.id) {
-                    throw e.commandError
+               }) {
+                if existing.id != workspace.activeTabID {
+                    if case .failure(let e) = await workspace.select(existing.id) {
+                        throw e.commandError
+                    }
                 }
-                return .object(["path": .string(path), "already_open": .bool(true),
-                                "tab": .string(existing.id.uuidString)])
+                alreadyOpen = ["already_open": .bool(true), "reloaded": .bool(true),
+                               "tab": .string(existing.id.uuidString)]
             }
             if try p.bool("async", or: false) {
                 // Set synchronously, BEFORE the task is even scheduled: `Task {}` only ENQUEUES,
@@ -188,7 +196,8 @@ extension CommandRegistry {
                                                 projectName: EditViewModel.projectDisplayName(for: url),
                                                 startedAt: Date())
                 Task { @MainActor in await vm.loadProjectAsync(from: url, pluginIDRepair: pluginIDRepair) }
-                return .object(["path": .string(path), "status": .string("loading")])
+                return .object(["path": .string(path), "status": .string("loading")]
+                                   .merging(alreadyOpen) { a, _ in a })
             }
             // The run loop is confirmed alive here (this handler only runs once the command server
             // is serving, hence `app.run()` has been entered) — the breathing path is used even in
@@ -199,7 +208,8 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state, message: "could not read the project: \(path)")
             }
             return .object(["path": .string(path), "name": .string(vm.projectName),
-                            "object_count": .int(vm.laneEntries.count)])
+                            "object_count": .int(vm.laneEntries.count)]
+                               .merging(alreadyOpen) { a, _ in a })
         }
 
         register("project.load_status",

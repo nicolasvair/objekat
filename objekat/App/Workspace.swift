@@ -45,6 +45,10 @@ final class Workspace {
     struct OpenOutcome {
         let tabID: UUID
         let alreadyOpen: Bool
+        /// true = a tab already held the file and it was RELOADED from disk (@see `reopen`). Always
+        /// equal to `alreadyOpen` today; kept apart because they answer two questions — "was a
+        /// tab created?" and "was the document in memory replaced?".
+        var reloaded: Bool = false
     }
 
     /// Tabs INC2 (cross-project paste) — what `copySelected()` leaves behind is hoisted HERE, with
@@ -310,8 +314,9 @@ final class Workspace {
 
     // MARK: - Opening a file
 
-    /// Opens `url` — a duplicate of a tab already showing the SAME file (by file-system identity)
-    /// switches to it rather than opening a second copy, `alreadyOpen` in the result saying so.
+    /// Opens `url`. A file a tab ALREADY holds (by file-system identity) is never opened twice:
+    /// that tab is brought forward and RELOADED from disk (@see `reopen`), `alreadyOpen` and
+    /// `reloaded` in the result saying so.
     /// Decodes BEFORE touching anything else: a malformed file must never disturb the tab already
     /// open (@see `EditViewModel.decodeProjectDocument(at:)`).
     /// - Parameter inNewTab: true opens a FRESH tab (a double-click in the Finder, `tab.open`);
@@ -320,14 +325,15 @@ final class Workspace {
     /// - Parameter pluginIDRepair: what to do about plugin ids duplicated across hosts, settled
     ///   BEFORE anything is parked or torn down (@see `EditViewModel.resolvePluginIDRepair`): `.ask`
     ///   for a hand (the default), `.repair` / `.keep` for a script.
+    /// - Parameter requester: who answers the unsaved-changes question if the file is already
+    ///   open and modified — a hand (the dialogue) or a script (`discard`, @see ReopenSameFile).
     @discardableResult
     func open(url: URL, inNewTab: Bool,
-              pluginIDRepair: PluginIDRepairChoice = .ask) async -> Result<OpenOutcome, TabError> {
+              pluginIDRepair: PluginIDRepairChoice = .ask,
+              requester: ReopenSameFile.Requester = .hand) async -> Result<OpenOutcome, TabError> {
         if let existing = existingTab(for: url) {
-            if existing.id != activeTabID {
-                if case .failure(let e) = await select(existing.id) { return .failure(e) }
-            }
-            return .success(OpenOutcome(tabID: existing.id, alreadyOpen: true))
+            return await reopen(existing, from: url, requester: requester,
+                                pluginIDRepair: pluginIDRepair)
         }
 
         let vm = session.viewModel
@@ -387,17 +393,19 @@ final class Workspace {
         }
     }
 
-    /// The door "Ouvrir…" (Cmd+O) uses, once the panel has already handed back a URL: unlike
-    /// `open(url:inNewTab:)`, opening the file the ACTIVE tab already has stays a plain reload (the
-    /// historical behaviour of "Open" on your own file), and the load it runs stays CANCELLABLE —
-    /// this is the one door in the whole family that still shows the overlay's Annuler button,
-    /// because it is the one a user chose to run from a panel rather than a tab switch nobody asked
-    /// to be interruptible.
+    /// The door "Ouvrir…" (Cmd+O) uses, once the panel has already handed back a URL. A file a tab
+    /// already holds — this one or another — is RELOADED in that tab, exactly as every other door
+    /// does it (@see `reopen`). Any other file replaces the active document through a load that
+    /// stays CANCELLABLE — the one door in the whole family that still shows the overlay's Annuler
+    /// button, because it is the one a user chose to run from a panel rather than a tab switch
+    /// nobody asked to be interruptible.
     @discardableResult
     func replaceActive(with url: URL) async -> Result<Void, TabError> {
-        if let existing = existingTab(for: url), existing.id != activeTabID {
-            if case .failure(let e) = await select(existing.id) { return .failure(e) }
-            return .success(())
+        if let existing = existingTab(for: url) {
+            switch await reopen(existing, from: url, requester: .hand) {
+            case .success:            return .success(())
+            case .failure(let error): return .failure(error)
+            }
         }
         let vm = session.viewModel
         if vm.exportPinsActiveDocument {
@@ -407,6 +415,98 @@ final class Workspace {
         guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
         let ok = await vm.loadProjectAsync(from: url)
         return ok ? .success(()) : .failure(.loadFailed)
+    }
+
+    // MARK: - Re-opening a file a tab already holds
+
+    /// Opening a file a tab ALREADY holds RELOADS it from disk, into that tab — it is how one goes
+    /// back to the state of the last save after a mistake. One door for every road in (the menu's
+    /// Open…, a recent project, the Finder / the Dock, `tab.open`), so they all behave alike.
+    ///
+    /// The decision is `ReopenSameFile.decide` (pure, asserted alone): refused while a load, a
+    /// direct export, a render or a consolidated edit is under way (the reasons a switch is
+    /// refused — a reload tears the document down exactly as a switch does); a CLEAN tab reloads
+    /// with no question (nothing a hand made can be lost, the screen already shows what is on
+    /// disk); a MODIFIED one asks the close/quit question first (Save / Don't Save / Cancel, under
+    /// a title of its own) — or, for a script, needs `discard`.
+    ///
+    /// The tab holding the file is brought forward FIRST if it is not the active one, and the
+    /// question is asked once it is on screen: what one is about to throw away is then what one is
+    /// looking at. Cancel leaves the hand on that tab, which is what opening it used to do. A
+    /// script's refusals are decided BEFORE the switch, so a refused `tab.open` moves nothing.
+    ///
+    /// The reload itself is an ordinary opening — `applyProjectDocumentAsync`, so the bulk-load
+    /// inhibitor, the plugin consigne (an AU whose state did not move is taken back, not
+    /// re-instantiated) and the viewport saved in the file all behave as at any opening — with
+    /// three choices of its own:
+    /// - NOT cancellable: a reload cancelled half-way would leave the tab on an EMPTY project
+    ///   (@see `runProjectLoadAsync`), and a tab's document should never vanish under a revert;
+    /// - the undo/redo history STARTS OVER, as at any opening: the stacks hold snapshots of the
+    ///   state being thrown away, and an undo that brought it back would be a second, hidden way
+    ///   of not reverting;
+    /// - "Save" in the question writes the tab, then reloads what was just written — the same
+    ///   state, with the history reset. It is offered because the question is the one a close asks
+    ///   (the user asked for the same options), not because it is the useful answer here.
+    @discardableResult
+    func reopen(_ existing: WorkspaceTab, from url: URL,
+                requester: ReopenSameFile.Requester,
+                pluginIDRepair: PluginIDRepairChoice = .ask) async -> Result<OpenOutcome, TabError> {
+        let vm = session.viewModel
+        let blocker = vm.tabSwitchBlocker ?? (isSwitching ? "tabs.switch.refused.loading" : nil)
+        switch ReopenSameFile.decide(blocker: blocker, isDirty: isDirty(for: existing),
+                                     requester: requester) {
+        case .refuse(let reasonKey):
+            guard requester == .hand else { return .failure(.blocked(reasonKey: reasonKey)) }
+            // A hand gets its refusal SAID, in a reload's own words (the callers that reach here
+            // by hand — a menu, the Finder — have nothing else to show it with); `.cancelled`
+            // then keeps them from saying it a second time.
+            vm.notify(L("project.reload.refused.title"),
+                      L(ReopenSameFile.reloadRefusalKey(forBlocker: reasonKey)))
+            return .failure(.cancelled)
+        case .refuseDirty:
+            return .failure(.dirty)
+        case .reload, .askThenReload:
+            break
+        }
+
+        if existing.id != activeTabID {
+            if case .failure(let e) = await select(existing.id) { return .failure(e) }
+        }
+        // Asked on the tab now in front: its own name, its own LIVE dirty flag. A no-op on a clean
+        // tab; under an automatic dialogue policy it answers by itself (@see askDirtyDecision).
+        if requester == .hand {
+            guard vm.confirmDiscardIfDirty(titleKey: "dialog.dirty.title.reload",
+                                           infoKey: "dialog.dirty.info.reload")
+            else { return .failure(.cancelled) }
+        }
+
+        // Decoded only now — after a "Save", the file IS what was just written — and before
+        // anything is torn down: a file gone bad on disk leaves the tab exactly as it was.
+        let doc: ProjectDocument
+        do {
+            doc = try vm.decodeProjectDocument(at: url)
+        } catch {
+            return .failure(.decodeFailed(String(describing: error)))
+        }
+        let displayName = EditViewModel.projectDisplayName(for: url)
+        // Settled before the teardown, as at any opening: the file may carry duplicated plugin ids.
+        let repair = vm.resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
+
+        isSwitching = true
+        session.stop()
+        vm.closeAllPluginEditors()
+        let ok = await vm.applyProjectDocumentAsync(doc, displayName: displayName, cancellable: false,
+                                                    repairPluginIDs: repair)
+        isSwitching = false
+        vm.lastProjectLoad?.path = url.path
+        guard ok else { return .failure(.loadFailed) }
+        vm.projectURL = url
+        vm.projectName = displayName
+        vm.clearObjectBoundTransientState()
+        vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
+        vm.recordRecentProject(url)
+        NSLog("[TABS] reloaded from disk: %@", url.lastPathComponent)
+        return .success(OpenOutcome(tabID: activeTabID, alreadyOpen: true, reloaded: true))
     }
 
     // MARK: - Opening from outside the app
@@ -419,15 +519,24 @@ final class Workspace {
     /// the tab bar at every file for nothing.
     @ObservationIgnored private var outsideOpenQueue: [URL] = []
     @ObservationIgnored private var isDrainingOutsideOpens = false
+    /// The file being opened from outside right now (nil between two), and when the last one
+    /// ended — @see `openFromOutside` for why a second arrival of the same file is dropped.
+    @ObservationIgnored private var outsideOpenInFlight: URL?
+    @ObservationIgnored private var lastOutsideOpen: (url: URL, endedAt: Date)?
 
     /// The door `AppDelegate.application(_:open:)` and the window's `onOpenURL` both go through —
     /// both, because which of the two SwiftUI actually calls for a document handed over by the
     /// Finder is not something this code can settle by reading (@see the AppDelegate). A file
-    /// already queued is not queued twice, and one that arrives by both roads anyway finds its own
-    /// tab already open the second time, which `open(url:inNewTab:)` answers by merely selecting
-    /// it: harmless either way.
+    /// already queued is not queued twice. And since re-opening a file a tab already holds now
+    /// RELOADS it (@see `reopen`), one that arrives by both roads must not be opened a second
+    /// time either: the same file arriving while it is being opened, or within a moment of it,
+    /// is the same double-click, not a request to revert — a heavy project would otherwise load
+    /// twice for one gesture.
     func openFromOutside(_ urls: [URL]) {
         for url in urls.map(\.standardizedFileURL) where !outsideOpenQueue.contains(url) {
+            if url == outsideOpenInFlight { continue }
+            if let last = lastOutsideOpen, last.url == url,
+               Date().timeIntervalSince(last.endedAt) < Self.outsideOpenEchoWindow { continue }
             outsideOpenQueue.append(url)
         }
         guard !isDrainingOutsideOpens, !outsideOpenQueue.isEmpty else { return }
@@ -436,14 +545,22 @@ final class Workspace {
             guard let self else { return }
             while !self.outsideOpenQueue.isEmpty {
                 let url = self.outsideOpenQueue.removeFirst()
+                self.outsideOpenInFlight = url
                 await self.openOneFromOutside(url)
+                self.outsideOpenInFlight = nil
+                self.lastOutsideOpen = (url, Date())
             }
             self.isDrainingOutsideOpens = false
         }
     }
 
+    /// How long after an opening from outside the same file arriving again is taken for an echo of
+    /// it (the second road) rather than for a new double-click. Short on purpose: a hand that
+    /// double-clicks the file again to revert does so seconds later, not within this.
+    private static let outsideOpenEchoWindow: TimeInterval = 1.5
+
     /// One session from outside. The rules are `open(url:inNewTab:)`'s — the same file is never
-    /// opened twice (a tab already showing it is brought forward instead), and a new tab is what a
+    /// opened twice (a tab already holding it is brought forward and reloaded), and a new tab is what a
     /// double-click means — with ONE exception: an untouched "Untitled" tab (no file, not
     /// modified, empty) is REUSED rather than left behind. That is the ordinary case of a cold
     /// launch by a double-click (the app starts on a blank project, then the file arrives), and a
@@ -461,8 +578,11 @@ final class Workspace {
             return
         }
         // The in-place path of `open(url:inNewTab: false)` has no guard of its own (the menus that
-        // reach it are greyed out while busy); this door is not a menu, so it asks here.
-        if let reason = vm.tabSwitchBlocker {
+        // reach it are greyed out while busy); this door is not a menu, so it asks here. Not for a
+        // file a tab already holds: that is a RELOAD, which says its own refusal in its own words
+        // (@see `reopen`) — or, for another tab's file, the switch's refusal comes back below.
+        let alreadyHeld = existingTab(for: url) != nil
+        if !alreadyHeld, let reason = vm.tabSwitchBlocker {
             vm.notify(L("tabs.switch.refused.title"), L(reason))
             return
         }
@@ -473,8 +593,9 @@ final class Workspace {
         case .failure(.loadFailed):
             // In place (`untouched`), false means ONE thing: a load the hand cancelled from the
             // overlay (that path stays cancellable) — a decision, not a failure. In a NEW tab the
-            // load is not cancellable, so false there is a real failure, and it is said.
-            if !untouched {
+            // load is not cancellable, so false there is a real failure, and it is said — and so
+            // is a RELOAD's, which is not cancellable either.
+            if !untouched || alreadyHeld {
                 vm.notify(L("project.openFailed.title"), L("project.openFailed.info", url.lastPathComponent))
             }
         case .failure(.blocked(let reasonKey)):
