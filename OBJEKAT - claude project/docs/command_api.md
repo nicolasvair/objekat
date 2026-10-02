@@ -1437,9 +1437,11 @@ lower the OBJECT); the point's lane is the object's display lane and `time` its 
 object's middle). Without `id`, the click is on an EMPTY lane (no object under the point, which the
 caller states): `lane` (the display row) and `time` are then both required, and `zone` is ignored.
 
-It answers `layout` — `range_menu` (today's menu: group, aux clip, MIDI clip, comment. The point lies
-INSIDE the time selection, or it lands on NO object while a time selection exists ANYWHERE, inside the
-range or not, on its lanes or not — a click on an empty lane has never cared where the range lies),
+It answers `layout` — `range_annotations_menu` (the point lies INSIDE the time selection AND on an
+object, either half of its block: 'Create an object marker' and 'Create a comment', nothing else, and
+nothing is selected, cleared or moved), `range_menu` (today's menu: group, aux clip, MIDI clip, comment.
+The point lands on NO object while a time selection exists ANYWHERE, inside the range or not, on its
+lanes or not — a click on an empty lane has never cared where the range lies),
 `group_selection_menu` ('Group the clip / the selection (N)' alone: an empty lane, NO time selection,
 and at least one clip or MIDI clip that is not a consolidated instance selected — the click selects
 nothing, the selection is what the menu is about), `object_time_menu` (upper half: the object marker
@@ -1985,7 +1987,7 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
 | `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
-| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range keeps today's menu, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
+| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range on an object offers the object marker and the comment alone and touches nothing, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
 | `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
