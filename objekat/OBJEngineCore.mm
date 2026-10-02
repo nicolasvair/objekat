@@ -68,6 +68,37 @@ struct OBJRenderPluginFilter {
     };
 };
 
+// Qualité de rééchantillonnage des clips audio.
+//
+// Le défaut de Tracktion est `lagrange`, dont le lecteur recale la source sur une position
+// ARRONDIE à chaque bloc : un saut d'un échantillon de temps en temps, donc un grésillement dès
+// que fichier et sortie n'ont pas le même taux (44,1 ↔ 48, 96 → 44,1). On n'utilise donc plus
+// Lagrange : sinc (libsamplerate), `sincMedium` à l'écoute — SNR ~121 dB, bande passante 90 % de
+// Nyquist — et `sincBest` pour tout ce qui s'écrit dans un fichier (export, bake), où le coût CPU
+// ne se paie qu'une fois. Ce lecteur suit sa position à la vitesse du clip depuis le patch
+// moteur 0034 : sans lui, le varispeed (vitesse ≠ 1) cliquait à chaque bloc.
+static te::ResamplingQuality objDefaultResamplingQuality() {
+    return te::ResamplingQuality::sincMedium;
+}
+
+// Passe tous les clips audio d'un CLONE DE RENDU en `sincBest`, groupes compris. Ne jamais
+// l'appeler sur l'Edit vivant : le graphe d'écoute s'en trouverait reconstruit et plus lourd.
+static void objUpgradeResamplingForRender(te::ClipOwner& owner) {
+    for (auto* c : owner.getClips()) {
+        if (!c) continue;
+        if (auto* wc = dynamic_cast<te::WaveAudioClip*>(c))
+            wc->setResamplingQuality(te::ResamplingQuality::sincBest);
+        if (auto* sub = dynamic_cast<te::ClipOwner*>(c))
+            objUpgradeResamplingForRender(*sub);
+    }
+}
+
+static void objUpgradeResamplingForRender(te::Edit& clone) {
+    for (auto* t : te::getAllTracks(clone))
+        if (auto* owner = dynamic_cast<te::ClipOwner*>(t))
+            objUpgradeResamplingForRender(*owner);
+}
+
 // Comportement moteur custom : relève les limites par défaut de Tracktion.
 // La valeur par défaut maxPluginsOnClip vaut 5 ; comme chaque clip embarque déjà
 // un ObjGainPlugin post-FX, l'utilisateur ne pouvait ajouter que 4 plugins avant
@@ -99,6 +130,16 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // pour un arbitrage qui n'a jamais rien à arbitrer. C'est aussi la source de
     // l'assertion « duplicate nodeID » qui pollue la console en Debug.
     bool areClipSlotsEnabled() override { return false; }
+
+    // Défauts d'un clip neuf : le proxy reste celui du moteur (`useProxyFile = true`), seule la
+    // qualité de rééchantillonnage change. @see objDefaultResamplingQuality. N'atteint que les
+    // clips posés sur une AudioTrack (`ClipOwner::insertClip`) : les autres passent par
+    // `configureFreshClip`, qui l'affirme explicitement.
+    ClipDefaults getClipDefaults() override {
+        ClipDefaults d;
+        d.resamplingQuality = objDefaultResamplingQuality();
+        return d;
+    }
 
     // Appairage des canaux physiques : OBJEKAT est une application STÉRÉO — tout part au main,
     // il n'y a aucune UI de routage multicanal. On décrit donc nous-mêmes les devices wave :
@@ -1994,6 +2035,9 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
                                double speed, bool reversed) {
     clip->setAutoTempo(false);
     clip->setTimeStretchMode(te::TimeStretcher::disabled);
+    // Explicite et non hérité de `getClipDefaults` : un clip posé dans un container (groupe), ou
+    // un projet rouvert, ne passe pas par le chemin des défauts de `ClipOwner`.
+    clip->setResamplingQuality(objDefaultResamplingQuality());
     if (reversed) clip->setIsReversed(true);
     updateProxyUse(*clip);
     if (speed != 1.0) clip->setSpeedRatio(speed);
@@ -3166,6 +3210,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     }
     const double tClone = juce::Time::getMillisecondCounterHiRes();
     if (!clone) { if (completion) completion(NO); return; }
+    objUpgradeResamplingForRender(*clone);   // sincBest : un wave baké s'écrit une fois pour toutes
 
     // Le clone recrée ses plugins depuis la ValueTree → même refus de restauration que le graphe
     // live, mais sans délai d'attente possible : on force l'état AVANT de lancer le rendu, sinon
@@ -3512,6 +3557,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         clone = te::loadEditFromState(*_engine, stateCopy, te::Edit::EditRole::forRendering);
         const double tClone = juce::Time::getMillisecondCounterHiRes();
         if (!clone) { if (completion) completion(NO, @"Copie du projet impossible."); return; }
+        objUpgradeResamplingForRender(*clone);   // sincBest sur la copie ; le rendu DIRECT garde sincMedium
 
         [self forcePluginStatesForRenderClone:*clone];
         const double tForce = juce::Time::getMillisecondCounterHiRes();

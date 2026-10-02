@@ -1,0 +1,51 @@
+From b945d566f0a2ca7d868caa4d1281d312c576923c Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 18:20:33 +0200
+Subject: [PATCH] =?UTF-8?q?fix(clips)=20:=20le=20lecteur=20sinc=20suit=20s?=
+ =?UTF-8?q?a=20position=20=C3=A0=20la=20vitesse=20de=20lecture?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+HighQualityResamplerReader::readChunk avançait `readPosition` de
+numFramesToDo, alors que setPosition() la compare à `tr.getStart()` : le
+temps SOURCE du clip (EditToClipTimeReader l'a multiplié par la vitesse),
+exprimé en échantillons au taux de sortie. Produire numFramesToDo frames à
+la vitesse v consomme numFramesToDo * v de ce temps — comme le font déjà
+les TimeStretchReader (`readPosition += numFramesToDo * playbackSpeedRatio`).
+
+Dès v != 1, l'écart entre la position attendue et celle suivie dépassait
+la tolérance de 1 échantillon à chaque bloc : src_reset() à CHAQUE bloc,
+donc une transitoire (clic) par bloc. À v == 1 le bug était invisible, ce
+qui l'a laissé dormir : seule la qualité sinc passe par ce lecteur, et le
+défaut de Tracktion est Lagrange. Chemin timestretch : speedRatio y reste
+à 1, inchangé.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../playback/graph/tracktion_WaveNode.cpp                | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
+index a9aad20208c..5f0f0a74aef 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_WaveNode.cpp
+@@ -566,7 +566,14 @@ public:
+         }
+ 
+         choc::buffer::copy (destBuffer, interleavedOutputScratchBuffer.getStart (numFramesToDo));
+-        readPosition += numFramesToDo;
++
++        // `readPosition` is in the same frame as the argument of `setPosition()`: the clip's SOURCE
++        // time expressed in dest-rate samples (TimeRangeReader hands us `tr.getStart()` after
++        // EditToClipTimeReader scaled it by the clip speed). Producing numFramesToDo output frames
++        // consumes numFramesToDo * speedRatio of those, exactly as the TimeStretchReaders do. Without
++        // the factor, any speed != 1 made the next block's position differ by more than the
++        // `<= 1` tolerance of `setPosition()`, hence an `src_reset()` (a click) on EVERY block.
++        readPosition += static_cast<double> (numFramesToDo) * speedRatio;
+ 
+         return true;
+     }
+-- 
+2.50.1 (Apple Git-155)
+
