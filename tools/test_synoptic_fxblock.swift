@@ -72,6 +72,11 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
     check(abs(f.bodyRect.minY - (f.headerRect.maxY - SynopticLayout.fxHeaderOverlap)) < 0.001,
           "\(tag): the overlap is the one constant")
     check(f.bodyRect.contains(f.mixRect), "\(tag): the mix box is inside the body")
+    // THE FLUSH RULE: the mix box's bottom edge IS the body's bottom edge (the block's bottom), whatever
+    // the series above holds; the header card's top stays the block's top.
+    check(abs(f.mixRect.maxY - f.bodyRect.maxY) < 0.001, "\(tag): the mix box's bottom is flush with the body's bottom")
+    check(abs(f.mixRect.maxY - f.rect.maxY) < 0.001, "\(tag): the mix box's bottom is the block's bottom")
+    check(abs(f.headerRect.minY - f.rect.minY) < 0.001, "\(tag): the header card's top is the block's top")
     check(f.bodyRect.minX <= f.headerRect.minX + 0.001 && f.headerRect.maxX <= f.bodyRect.maxX + 0.001,
           "\(tag): the header card is no wider than the body")
     // the top and the bottom rectangles are EXACTLY as wide as the body round them, edge for edge
@@ -109,12 +114,11 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
     check(pl.cables.contains { $0.style == .connector && abs($0.to.x - cx) < 0.001
                                && abs($0.to.y - f.mixRect.minY) < 0.001 },
           "\(tag): the wire STOPS at the mix box's head, with an arrow")
-    check(pl.cables.contains { $0.style == .plain && abs($0.from.y - f.mixRect.maxY) < 0.001
-                               && abs($0.to.y - f.bodyRect.maxY) < 0.001 },
-          "\(tag): the wire starts AGAIN at the mix box's foot, with no arrowhead")
-    check(!pl.cables.contains { $0.style == .connector && abs($0.from.x - cx) < 0.001
-                                && abs($0.from.y - f.mixRect.maxY) < 0.001 },
-          "\(tag): no arrowhead on the wire that leaves the mix box")
+    // The wire starts AGAIN at the mix box's foot, which is the block's exit: the block lays no wire of
+    // its own below the box (no zero-length stub), the next element's wire leaves from there.
+    check(!pl.cables.contains { abs($0.from.x - cx) < 0.001 && abs($0.from.y - f.mixRect.maxY) < 0.001
+                                && abs($0.to.y - f.mixRect.maxY) < 0.001 },
+          "\(tag): no zero-length wire under the mix box")
 }
 
 @main struct T {
@@ -129,8 +133,8 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
         var bare = bin; bare.fxLink = nil
         let inner = SynopticLayout.measure(bare)
         let expectedH = SynopticLayout.fxHeaderCardH + SynopticLayout.fxHeaderGap + inner.height
-                      + SynopticLayout.fxMixGap + SynopticLayout.fxMixH + SynopticLayout.fxPad
-        check(abs(size.height - expectedH) < 0.001, "block height = card + gap + series + gap + mix + pad")
+                      + SynopticLayout.fxMixGap + SynopticLayout.fxMixH
+        check(abs(size.height - expectedH) < 0.001, "block height = card + gap + series + gap + mix (no padding under the box)")
         check(size.width >= SynopticLayout.fxMinW, "block at least fxMinW wide")
         check(size.width >= inner.width + 2 * SynopticLayout.fxPad - 0.001, "block wider than its series by the padding")
         check(size.width >= SynopticLayout.fxMixW + 2 * SynopticLayout.fxPad - 0.001, "block holds the mix box and its margins")
@@ -162,6 +166,25 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
         let blockPl = SynopticLayout.place(bin, at: CGPoint(x: 40, y: 100))
         check(abs(blockPl.entry.y - blockPl.fxBlocks[0].headerRect.minY) < 0.001, "entry = the header card's top")
         check(abs(blockPl.exit.y - blockPl.fxBlocks[0].bodyRect.maxY) < 0.001, "exit = the body's bottom")
+        check(abs(blockPl.exit.y - blockPl.fxBlocks[0].mixRect.maxY) < 0.001, "exit = the mix box's bottom")
+
+        // MARK: the flush rule, whatever the content height
+        for n in [0, 1, 2, 5, 12] {
+            let nb = block((0..<n).map { card("C\($0)") }, name: "H\(n)")
+            let npl = SynopticLayout.place(nb, at: CGPoint(x: 7, y: 13))
+            let nf = npl.fxBlocks[0]
+            check(abs(nf.mixRect.maxY - nf.bodyRect.maxY) < 0.001 && abs(nf.mixRect.maxY - nf.rect.maxY) < 0.001
+                  && abs(nf.mixRect.maxY - (13 + SynopticLayout.measure(nb).height)) < 0.001,
+                  "flush with \(n) plugins")
+        }
+        // Beside a TALLER sibling branch, the block keeps its own height: top block at the top, bottom
+        // block at the bottom of ITS frame (nothing is stretched, nothing floats).
+        let tall = SynopticNode(id: UUID(), kind: .series((0..<6).map { card("T\($0)") }))
+        let short = SynopticNode(id: UUID(), kind: .series([block([card("S")], name: "Short")]))
+        let sib = SynopticLayout.place(SynopticNode(id: UUID(), kind: .series([
+            SynopticNode(id: UUID(), kind: .parallel([tall, short]))])), at: .zero)
+        check(abs(sib.fxBlocks[0].mixRect.maxY - sib.fxBlocks[0].bodyRect.maxY) < 0.001,
+              "flush in a branch shorter than its sibling")
 
         // MARK: widths
         let longName = block([a], name: String(repeating: "Very long bin name ", count: 4))
@@ -196,7 +219,10 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
         // MARK: in a parallel branch
         let par = SynopticNode(id: UUID(), kind: .parallel([
             SynopticNode(id: UUID(), kind: .series([block([card("P1"), card("P2")], name: "Branch bin")])),
-            SynopticNode(id: UUID(), kind: .series([card("Other")])),
+            // The sibling is TALLER than the block's branch: a shorter, narrower one would send its merge curve
+            // (towards the merge dot, which lies inside the wider block's columns) behind the block's foot --
+            // a pre-existing property of the parallel layout, not what this fixture is about.
+            SynopticNode(id: UUID(), kind: .series((0..<6).map { card("Other\($0)") })),
         ]))
         let ppl = SynopticLayout.place(SynopticNode(id: UUID(), kind: .series([par])), at: .zero)
         check(ppl.fxBlocks.count == 1, "a block in a parallel branch is laid")

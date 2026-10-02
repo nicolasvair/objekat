@@ -724,7 +724,7 @@ struct SynopticView: View {
         // A bin's block: its colour round its series (dashed once the host has left the bin). The BODY
         // alone: the header card that straddles its top edge is a view of its own, opaque, laid over it.
         for b in d.placement.fxBlocks {
-            let path = Path(roundedRect: b.bodyRect, cornerRadius: 12)
+            let path = Path(roundedRect: b.bodyRect, cornerRadius: SynopticLayout.fxBodyCorner)
             ctx.fill(path, with: .color(b.link.color.opacity(b.link.isEnabled ? 0.16 : 0.06)))
             ctx.stroke(path, with: .color(b.link.color.opacity(b.link.isDetached ? 0.6 : 0.95)),
                        style: StrokeStyle(lineWidth: 1.5, dash: b.link.isDetached ? [4, 3] : []))
@@ -991,9 +991,16 @@ struct FXBlockMixView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 8)
+            // Flush with the body's bottom edge: the bottom corners are the body's own radius.
+            UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
+                                   bottomLeadingRadius: SynopticLayout.fxBodyCorner,
+                                   bottomTrailingRadius: SynopticLayout.fxBodyCorner,
+                                   topTrailingRadius: SynopticLayout.fxMixTopCorner)
                 .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 8)
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
+                                                bottomLeadingRadius: SynopticLayout.fxBodyCorner,
+                                                bottomTrailingRadius: SynopticLayout.fxBodyCorner,
+                                                topTrailingRadius: SynopticLayout.fxMixTopCorner)
                     .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
 
             DragValueBox(value: Double(link.pan),
