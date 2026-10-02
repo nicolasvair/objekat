@@ -4785,6 +4785,144 @@
         }
       }
     },
+    "hud.move.insert.between": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert between lanes %1$lld and %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar entre los lanes %1$lld y %2$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer entre les lanes %1$lld et %2$lld"
+          }
+        }
+      }
+    },
+    "hud.move.insert.group.between": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert in “%1$@”, between its lanes %2$lld and %3$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar en «%1$@», entre sus lanes %2$lld y %3$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer dans « %1$@ », entre ses lanes %2$lld et %3$lld"
+          }
+        }
+      }
+    },
+    "hud.move.insert.group.top": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert at the top of “%@”"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar al principio de «%@»"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer en tête de « %@ »"
+          }
+        }
+      }
+    },
+    "hud.move.insert.shift.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the lanes below move down one step"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "los lanes siguientes bajan un puesto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "les lanes suivantes descendent d'un cran"
+          }
+        }
+      }
+    },
+    "hud.move.insert.shift.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the lanes below move down %lld steps"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "los lanes siguientes bajan %lld puestos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "les lanes suivantes descendent de %lld crans"
+          }
+        }
+      }
+    },
+    "hud.move.insert.top": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert above the first lane"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar antes del primer lane"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer avant la première lane"
+          }
+        }
+      }
+    },
     "hud.move.move": {
       "extractionState": "manual",
       "localizations": {

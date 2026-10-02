@@ -22,6 +22,13 @@ struct MoveDragState {
     /// gesture opens, from one walk of the tree: asking the model per frame, per anchor, would be
     /// O(N²) on a large selection. Empty = every anchor is at the root, i.e. the old behaviour.
     var freeIDs: Set<UUID> = []
+    /// The INSERTION between two lanes the block is straddling right now, or nil when it is
+    /// being dropped ON a lane (@see LaneInsertion). Recomputed only when `insertionProbe` — the
+    /// gap and the ⌥ it was asked for — changes: an O(N) read of the model per CHANGE of gap, not
+    /// per frame. The release asks again from the real model (`commitMoveDrop`), so this one only
+    /// feeds the preview, the line and the HUD.
+    var insertion: LaneInsertion.Plan? = nil
+    var insertionProbe: (row: Int, alt: Bool)? = nil
 }
 
 struct ResizeDragState {
@@ -1332,6 +1339,27 @@ extension TimelineView {
         state.dt = dt
         state.dl = dl
 
+        // A block straddling two rows is no longer being dropped on a lane but between two: the
+        // gap is read off the CONTINUOUS row under the block's centre (not the rounded `dl`).
+        // Out of scope for a carried time selection (fragments, slip) — unchanged there.
+        if state.timeSelectionAnchor == nil {
+            let gap = LaneInsertion.boundaryRow(
+                grabbedDisplayLane: state.grabbedDisplayLane,
+                rawRows: Double(value.translation.height) / laneStep,
+                halfBand: LaneInsertion.halfBand(laneStep: laneStep))
+            if let gap {
+                if state.insertionProbe?.row != gap || state.insertionProbe?.alt != state.isAltCopy {
+                    state.insertion = viewModel.laneInsertionPlan(
+                        row: gap, ids: state.ids, anchors: state.anchors,
+                        sourceGroupID: state.sourceGroupID, isAltCopy: state.isAltCopy)
+                    state.insertionProbe = (gap, state.isAltCopy)
+                }
+            } else {
+                state.insertion = nil
+                state.insertionProbe = nil
+            }
+        }
+
         if let anchor = state.timeSelectionAnchor {
             viewModel.caretLane = nil
             viewModel.timeSelection = TimeSelection(
@@ -1361,7 +1389,8 @@ extension TimelineView {
                                          grabbedID: state.grabbedID,
                                          grabbedDisplayLane: state.grabbedDisplayLane,
                                          sourceGroupID: state.sourceGroupID,
-                                         isAltCopy: state.isAltCopy, dt: dt, dl: dl)
+                                         isAltCopy: state.isAltCopy, dt: dt, dl: dl,
+                                         insertionRow: state.insertion?.boundaryRow)
             }
             moveDrag = nil
         } else {
@@ -1515,7 +1544,19 @@ extension TimelineView {
     func previewOffset(for object: SoundObject) -> (dx: Double, dy: Double)? {
         guard let md = moveDrag, md.ids.contains(object.id) else { return nil }
         if md.isAltCopy { return nil }
-        return (md.dt * pixelsPerSecond, Double(md.dl) * laneStep)
+        return (md.dt * pixelsPerSecond, moveDragDY(md))
+    }
+
+    /// The vertical travel of the blocks of a move, in pixels. ON a lane: the rows the hand went
+    /// through (`dl`). In a GAP (@see LaneInsertion): the grabbed block is centred on the insertion
+    /// line — which is where the objects will land — and the others keep their gap to it.
+    func moveDragDY(_ md: MoveDragState) -> Double {
+        if let ins = md.insertion {
+            let laneGap = laneStep - blockHeight
+            return Double(ins.boundaryRow - md.grabbedDisplayLane) * laneStep
+                - laneGap / 2 - blockHeight / 2
+        }
+        return Double(md.dl) * laneStep
     }
 
     /// The preview of the gesture under way, for the layer that draws the marks the objects carry
@@ -1560,7 +1601,7 @@ extension TimelineView {
     var altDragGhosts: [(object: SoundObject, dx: Double, dy: Double)] {
         guard let md = moveDrag, md.isAltCopy else { return [] }
         let dx = md.dt * pixelsPerSecond
-        let dragDy = Double(md.dl) * laneStep
+        let dragDy = moveDragDY(md)
 
         if let frags = md.altFragmentObjects {
             // frag.lane is a DISPLAY lane: lane 0 plus a Y carried by dy (as below),
