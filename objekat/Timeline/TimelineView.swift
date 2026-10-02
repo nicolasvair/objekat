@@ -698,6 +698,16 @@ struct TimelineView: View {
                         .zIndex(3)
                 }
 
+                // The INSERTION line: a block let go while it straddles two rows goes BETWEEN them
+                // (@see LaneInsertion), and the line is where. On the timeline itself it is full
+                // width; inside a group, only over the group's own span — which is what says WHICH
+                // group the objects will enter.
+                if let ins = moveDrag?.insertion {
+                    insertionLine(for: ins)
+                        .allowsHitTesting(false)
+                        .zIndex(3.05)
+                }
+
                 // While paused (⇧space), the playhead stays where playback stopped — that is where it
                 // will start again — but in a muted red to say 'stopped'.
                 if isPlaying || isPaused {
@@ -1212,6 +1222,16 @@ struct TimelineView: View {
             cutDrag?.ripple = held
             guard moveDrag?.timeSelectionAnchor == nil else { return }
             moveDrag?.isAltCopy = held
+            // The insertion between two lanes depends on ⌥ (a copy pushes its originals too, and an
+            // ⌥ copy from the root never enters a group): the plan shown follows the key without
+            // waiting for the next pixel. The release asks again anyway.
+            if var md = moveDrag, let probe = md.insertionProbe, probe.alt != held {
+                md.insertion = viewModel.laneInsertionPlan(
+                    row: probe.row, ids: md.ids, anchors: md.anchors,
+                    sourceGroupID: md.sourceGroupID, isAltCopy: held)
+                md.insertionProbe = (probe.row, held)
+                moveDrag = md
+            }
         }
         .onChange(of: selectionCursor) { currentSelectionCursor = $0 }
         // D2's catch-all: ANY door that writes `blockHeight` raw is re-clamped here.
@@ -3780,6 +3800,52 @@ struct TimelineView: View {
         .opacity(blockOpacity(for: group))
     }
 
+    // MARK: - The insertion between two lanes (line and HUD)
+
+    /// The line in the gap before display row `ins.boundaryRow`: 3 px of accent in the middle of the
+    /// 4 px between the two rows.
+    private func insertionLine(for ins: LaneInsertion.Plan) -> some View {
+        let y = rulerHeight + Double(ins.boundaryRow) * laneStep - laneGap / 2 - 1.5
+        var x0 = 0.0
+        var w = max(contentWidth, Double(viewportWidth))
+        if let gid = ins.parentID, let e = viewModel.laneEntries.first(where: { $0.item.id == gid }),
+           !e.item.isInfiniteBus {
+            x0 = e.absStart * pixelsPerSecond
+            w = e.item.duration * pixelsPerSecond
+        }
+        return Capsule()
+            .fill(Color.accentColor)
+            .frame(width: w, height: 3)
+            .offset(x: x0, y: y)
+    }
+
+    /// The second line of the move HUD while a block is straddling two rows: WHERE it will be
+    /// inserted and what that does to the lanes below. Lanes are numbered from 1, the way one counts
+    /// them: the lane above the gap is `b`, the one below `b + 1`.
+    @ViewBuilder
+    private func insertionHUDLine(_ ins: LaneInsertion.Plan) -> some View {
+        let b = ins.laneBefore
+        let place: String = {
+            if let gid = ins.parentID, let g = viewModel.find(id: gid) {
+                let name = viewModel.displayName(of: g)
+                return b == 0 ? L("hud.move.insert.group.top", name)
+                              : L("hud.move.insert.group.between", name, b, b + 1)
+            }
+            return b == 0 ? L("hud.move.insert.top") : L("hud.move.insert.between", b, b + 1)
+        }()
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.down.to.line")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+            Text(place)
+                .font(.system(size: 11, weight: .bold))
+            Text(verbatim: "·").foregroundStyle(.secondary)
+            Text(Ln("hud.move.insert.shift", ins.count, ins.count))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - Modifiers of the move under way
 
     /// A reminder of the two modifiers that change an object move WHILE one is making it, with
@@ -3797,15 +3863,18 @@ struct TimelineView: View {
         if let md = moveDrag {
             let altFrozen = md.timeSelectionAnchor != nil
             let altOn     = md.isAltCopy
-            HStack(spacing: 7) {
-                Image(systemName: altOn ? "plus.square.on.square" : "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(altOn ? L("hud.move.copy") : L("hud.move.move"))
-                    .font(.system(size: 11, weight: .bold))
-                modifierChip("⌥", L("hud.move.chip.copy"), on: altOn, locked: altFrozen)
-                modifierChip("⌘", viewModel.snapEnabled ? L("hud.move.chip.ignoreSnap") : L("hud.move.chip.forceSnap"),
-                             on: viewModel.cmdKeyHeld, locked: false)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Image(systemName: altOn ? "plus.square.on.square" : "arrow.up.and.down.and.arrow.left.and.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(altOn ? L("hud.move.copy") : L("hud.move.move"))
+                        .font(.system(size: 11, weight: .bold))
+                    modifierChip("⌥", L("hud.move.chip.copy"), on: altOn, locked: altFrozen)
+                    modifierChip("⌘", viewModel.snapEnabled ? L("hud.move.chip.ignoreSnap") : L("hud.move.chip.forceSnap"),
+                                 on: viewModel.cmdKeyHeld, locked: false)
+                }
+                if let ins = md.insertion { insertionHUDLine(ins) }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))

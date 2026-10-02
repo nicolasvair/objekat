@@ -66,7 +66,7 @@ enum MoveDropResolution {
     /// A display row turned back into a MODEL lane of one frame: `origin` is the row the frame's
     /// lane 0 is drawn on (the group's row + 1, or 0 for the root), `siblings` the frame's items.
     /// The inverse of `origin + lane + Σ span of the siblings on lanes below`.
-    static func baseLane(forDisplay target: Int, origin: Int, siblings: [Lane]) -> Int {
+    nonisolated static func baseLane(forDisplay target: Int, origin: Int, siblings: [Lane]) -> Int {
         var b = 0
         while b < 512 {
             var extra = 0
