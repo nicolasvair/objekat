@@ -1332,6 +1332,12 @@ final class EditViewModel {
     /// rebuilds itself automatically.
     var recentProjects: [URL] = EditViewModel.loadRecentProjects()
 
+    /// The folder of the last project opened or saved in this process, whatever the door (menu,
+    /// recent projects, Finder, tab, reload, Save As). It is what an UNTITLED project's Save As
+    /// panel starts beside (@see SaveAsStartFolder). Kept even under `--no-recent`: it is memory
+    /// of the session, written nowhere.
+    @ObservationIgnored var lastProjectFolder: URL? = nil
+
     var undoStack: [EditSnapshot] = []
     var redoStack: [EditSnapshot] = []
 

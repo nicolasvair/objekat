@@ -1,0 +1,37 @@
+{
+  "name": "External edit",
+  "description": "Renders an object into a new audio file, opens it in the audio editor of your choice, and brings the retouched file back into the session.",
+  "version": "1.0",
+  "executable": "retouche_externe.py",
+  "requires": [
+    "app.info",
+    "object.get",
+    "object.list",
+    "object.add",
+    "object.rename",
+    "object.set_mute",
+    "solo.get",
+    "solo.set",
+    "solo.clear",
+    "export.run",
+    "job.wait",
+    "script.panel.open",
+    "script.panel.wait",
+    "script.panel.update",
+    "script.panel.close"
+  ],
+  "context": "object",
+  "menu": [
+    {
+      "title": "Edit in external audio editor…",
+      "arguments": []
+    },
+    {
+      "title": "Choose external editor",
+      "arguments": [
+        "--choose-editor"
+      ],
+      "context": "app"
+    }
+  ]
+}

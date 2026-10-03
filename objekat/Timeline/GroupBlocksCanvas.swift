@@ -255,10 +255,67 @@ enum GroupBlocksCanvas {
 
     // MARK: Phase 3 — fades, mute veil, label
 
+    /// A group's NAME ROW (glyph, name, meta), cropped before the chevron. Its left edge is the
+    /// natural one unless a `StickyLabelPass` partitions the names (@see `StickyLabel`): the
+    /// ordinary pass skips the names the sticky layer owns, the sticky pass draws only those,
+    /// anchored on the exact viewport edge.
+    private static func drawLabel(into c: GraphicsContext, g: CanvasGroup, rect: CGRect, fadeInPx: Double,
+                                  labels: inout CanvasLabelCache, sticky: StickyLabelPass?) {
+        let item = g.item
+        let w = rect.width
+        let x = rect.minX, y = rect.minY
+        let showChevron = w >= 60
+        // The name row stops before the chevron (6 pt of padding, the glyph, a gap) so the two
+        // never overprint; the rich view truncates the name with an ellipsis there, this one
+        // crops it.
+        let labelRight = showChevron ? w - 22 : w
+        let leading = TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: w)
+        var labelX = x + leading
+        if let sticky {
+            guard let placed = sticky.placement(naturalX: labelX, blockX: x, blockWidth: w,
+                                                rightLimit: x + labelRight)
+            else { return }
+            labelX = placed
+        }
+        var lc = c
+        lc.clip(to: Path(CGRect(x: x, y: y, width: max(0, labelRight), height: rect.height)))
+        if g.missing {
+            // The white glow the rich views lay with `.shadow`: red alone does not survive a
+            // red or salmon band (@see MissingFileLabel.haloColor). A filter forces this one
+            // block offscreen — armed for the missing ones only.
+            lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
+                                 radius: MissingFileLabel.haloRadius, x: 0, y: 0))
+        }
+        // The meta is asked for only when the numbers say it is not empty (a group's speed
+        // means nothing): nearly every group has 0 dB and a centred pan.
+        let hasMeta = w >= 80
+            && (item.volume <= -96 || abs(item.volume) >= 0.5 || abs(item.pan) >= 0.01)
+        lc.draw(labels.resolve(c, g.name, icon: g.icon, missing: g.missing,
+                               meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false),
+                at: CGPoint(x: labelX,
+                            y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
+                anchor: .topLeading)
+    }
+
+    /// The STICKY pass for the groups: only the name rows that follow the exact scroll, nothing
+    /// else (the fades, the veils and the chevron belong to the ordinary pass).
+    static func drawStickyLabels(into ctx: GraphicsContext, groups: [CanvasGroup],
+                                 rows: (y0: Double, y1: Double), geo: Geometry,
+                                 labels: inout CanvasLabelCache, sticky: StickyLabelPass) {
+        for g in groups {
+            let rect = geo.rect(of: g)
+            guard rect.width >= 30, rect.maxY >= rows.y0, rect.minY <= rows.y1 else { continue }
+            var c = ctx
+            if g.dim { c.opacity = 0.25 }
+            drawLabel(into: c, g: g, rect: rect, fadeInPx: g.fadeIn * geo.pixelsPerSecond,
+                      labels: &labels, sticky: sticky)
+        }
+    }
+
     /// What `GroupBlockView` stacks over the composite: the fade veils, the mute veil, then the
     /// name row (glyph, name, meta, chevron).
     static func drawOverlays(into ctx: GraphicsContext, groups: [CanvasGroup], geo: Geometry,
-                             labels: inout CanvasLabelCache) {
+                             labels: inout CanvasLabelCache, sticky: StickyLabelPass? = nil) {
         var chevronDown: GraphicsContext.ResolvedText?
         var chevronRight: GraphicsContext.ResolvedText?
         func chevron(_ down: Bool) -> GraphicsContext.ResolvedText {
@@ -327,29 +384,7 @@ enum GroupBlocksCanvas {
 
             guard needsLabel else { continue }
             let showChevron = w >= 60
-            // The name row stops before the chevron (6 pt of padding, the glyph, a gap) so the two
-            // never overprint; the rich view truncates the name with an ellipsis there, this one
-            // crops it.
-            let labelRight = showChevron ? w - 22 : w
-            var lc = c
-            lc.clip(to: Path(CGRect(x: x, y: y, width: max(0, labelRight), height: rect.height)))
-            if g.missing {
-                // The white glow the rich views lay with `.shadow`: red alone does not survive a
-                // red or salmon band (@see MissingFileLabel.haloColor). A filter forces this one
-                // block offscreen — armed for the missing ones only.
-                lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
-                                     radius: MissingFileLabel.haloRadius, x: 0, y: 0))
-            }
-            let leading = TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: w)
-            // The meta is asked for only when the numbers say it is not empty (a group's speed
-            // means nothing): nearly every group has 0 dB and a centred pan.
-            let hasMeta = w >= 80
-                && (item.volume <= -96 || abs(item.volume) >= 0.5 || abs(item.pan) >= 0.01)
-            lc.draw(labels.resolve(ctx, g.name, icon: g.icon, missing: g.missing,
-                                   meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false),
-                    at: CGPoint(x: x + leading,
-                                y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
-                    anchor: .topLeading)
+            drawLabel(into: c, g: g, rect: rect, fadeInPx: fadeInPx, labels: &labels, sticky: sticky)
 
             if showChevron {
                 // 6 pt from the right edge, centred on the name row (3 pt of top inset + half a

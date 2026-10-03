@@ -248,6 +248,10 @@ struct GroupBlockView: View {
             }
 
             if blockWidth >= 30 {
+                // The name is anchored to the start of the block's VISIBLE part (@see StickyLabel),
+                // read from the exact scroll — and only by the blocks a viewport edge can cut.
+                LiveVisibleSpan(live: liveScroll, blockX: xPos, blockWidth: blockWidth,
+                                scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth) { span in
                 VStack {
                     HStack(spacing: 0) {
                         // The glyph that was always here, now saying WHICH kind rather than
@@ -300,7 +304,9 @@ struct GroupBlockView: View {
                                 .padding(.trailing, 6)
                         }
                     }
-                    .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
+                    .padding(.leading, StickyLabel.leading(
+                        natural: TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth),
+                        visibleX: span.x, blockWidth: blockWidth))
                     .padding(.top, TimelineLabelMetrics.topInset)
                     Spacer()
                 }
@@ -319,6 +325,7 @@ struct GroupBlockView: View {
                 //
                 .onChange(of: isRenaming) { _, now in
                     if now { beginRename(group.label) } else { renameFocused = false }
+                }
                 }
             }
 

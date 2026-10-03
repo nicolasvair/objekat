@@ -22,6 +22,10 @@ extension EditViewModel {
     /// Inserts the URL at the head (de-duplicated by path), truncates to 10, persists.
     /// No effect under `--no-recent` (@see `recordsRecentProjects`).
     func recordRecentProject(_ url: URL) {
+        // Every door that opens or saves a project passes through here, so this is the one place
+        // that knows "the project one is looking at lives in this folder" — before the
+        // `--no-recent` guard: it is the session's memory, not the persisted list.
+        lastProjectFolder = url.standardizedFileURL.deletingLastPathComponent()
         guard Self.recordsRecentProjects else { return }
         let path = url.standardizedFileURL.path
         var list = recentProjects.filter { $0.standardizedFileURL.path != path }
@@ -143,7 +147,8 @@ extension EditViewModel {
     /// (several versions can live side by side, sharing samples/ and waveforms/).
     /// Otherwise → a project folder named after what was typed is created and written into.
     func saveAs() {
-        let panel = Self.makeSaveAsPanel(projectURL: projectURL, projectName: projectName)
+        let panel = Self.makeSaveAsPanel(projectURL: projectURL, projectName: projectName,
+                                         startingAt: saveAsStartFolder(for: projectURL))
         panel.begin { [weak self] response in
             guard let self, response == .OK, let chosen = panel.url else { return }
             // The panel is sent away FIRST: as long as it is on screen the document window is not
@@ -176,13 +181,25 @@ extension EditViewModel {
     /// so the one other door that has to ask for a path, the save a CLOSING tab owes when it never
     /// had a file (`Workspace.settleUnsavedChanges`, which may be saving a tab that is not the
     /// active one, hence not `self`'s own name), shows the very same panel rather than a copy of it.
-    static func makeSaveAsPanel(projectURL: URL?, projectName: String) -> NSSavePanel {
+    static func makeSaveAsPanel(projectURL: URL?, projectName: String,
+                                startingAt: URL? = nil) -> NSSavePanel {
         let panel = NSSavePanel()
         panel.title = L("project.saveAs.title")
+        // Nil leaves AppKit's own default; the rule is `SaveAsStartFolder`'s.
+        if let startingAt { panel.directoryURL = startingAt }
         panel.nameFieldStringValue = projectURL.map { projectDisplayName(for: $0) }
             ?? (projectName == L("project.untitled") ? L("project.defaultName") : projectName)
         panel.canCreateDirectories = true
         return panel
+    }
+
+    /// The folder the Save As panel opens on for a project whose file is `projectURL` (nil for an
+    /// untitled one — which may be a PARKED tab's, hence the parameter and not `self.projectURL`).
+    /// The head of "Recent projects" stands in for the session's memory on a fresh launch.
+    func saveAsStartFolder(for projectURL: URL?) -> URL? {
+        SaveAsStartFolder.resolve(projectURL: projectURL,
+                                  lastProjectFolder: lastProjectFolder
+                                    ?? recentProjects.first?.deletingLastPathComponent())
     }
 
     /// Where "Save as" writes for what the panel handed back — the naming rule, alone, so the

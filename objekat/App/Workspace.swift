@@ -650,7 +650,8 @@ final class Workspace {
             target = knownURL
         } else {
             guard vm.hasInterface else { return false }
-            let panel = EditViewModel.makeSaveAsPanel(projectURL: nil, projectName: name)
+            let panel = EditViewModel.makeSaveAsPanel(projectURL: nil, projectName: name,
+                                                      startingAt: vm.saveAsStartFolder(for: nil))
             guard panel.runModal() == .OK, let chosen = panel.url else { return false }
             target = EditViewModel.saveAsFileURL(for: chosen)
             if isURLOpen(target, inTabOtherThan: id) {
