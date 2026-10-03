@@ -26,15 +26,54 @@ extension EditViewModel {
     }
 
     func pushUndo() {
-        clearPendingFXSources()   // a new gesture: the previous one's promises are void
+        // A new gesture: the previous one's promises are void — except inside a `singleUndoStep`,
+        // where the whole run IS one gesture and the sources an early step registered (an
+        // automatic FX link waiting to adopt its original) must survive the next step's own push.
+        if undoTransactionDepth == 0 { clearPendingFXSources() }
         undoPushCount &+= 1
         undoStack.append(currentSnapshot())
         redoStack = []
-        if undoStack.count > 50 {
+        // The cap waits for the end of a `singleUndoStep`: trimming the bottom of the stack while
+        // the run measures its depth from the top would put that depth off by one.
+        if undoStack.count > 50, undoTransactionDepth == 0 {
             undoStack.removeFirst()
             shiftSessionUndoDepths()   // an open consolidated session's depth follows (@see closeSessionUndo)
         }
         isDirty = true
+    }
+
+    /// Runs `body` as ONE undo step, whatever number of undoable primitives it chains (a cut, then
+    /// a group, then a colour…): the point taken is the state BEFORE anything, and the points the
+    /// primitives push in between are dropped on the way out — the same transaction the command
+    /// API's `batch` makes (@see `CommandRegistry.runBatch`), for a caller that has no command
+    /// bus. Returns what `body` returns.
+    ///
+    /// Three traps, each answered here:
+    ///   • the primitives' own `pushUndo` would clear the pending FX-link sources between two
+    ///     steps — it does not while a transaction runs (@see `pushUndo`);
+    ///   • the stack's 50-entry cap would drop the bottom entry while the depth is measured from
+    ///     the top, and the cut of the run's dropped entries would then miss — the cap is deferred
+    ///     to the end (the first push, the run's own, has already enforced it);
+    ///   • a primitive that finds it had nothing to do pops ITS push (`cut`: `undoStack.popLast()`
+    ///     when no piece came out) — safe, since it pops the entry it pushed itself, never the
+    ///     run's: the depth is measured AFTER the run's push.
+    /// Nested runs are fine: only the outermost truncates.
+    @discardableResult
+    func singleUndoStep<T>(_ body: () -> T) -> T {
+        pushUndo()
+        let depthWithOwnEntry = undoStack.count
+        undoTransactionDepth += 1
+        let result = body()
+        undoTransactionDepth -= 1
+        if undoTransactionDepth == 0 {
+            // Overwrites the intermediate points the primitives pushed: only the run's own, taken
+            // before anything, must remain.
+            if undoStack.count > depthWithOwnEntry {
+                undoStack.removeSubrange(depthWithOwnEntry...)
+            }
+            redoStack = []
+        }
+        return result
     }
 
     /// The snapshot captures `stateXML` LIVE from the engine (items + stems): the

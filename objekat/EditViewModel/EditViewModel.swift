@@ -62,6 +62,8 @@ final class EditViewModel {
     @ObservationIgnored var itemsWriteCount = 0
     @ObservationIgnored var laneEntriesRebuildCount = 0
     @ObservationIgnored var undoPushCount = 0
+    /// > 0 while a `singleUndoStep` runs (@see EditViewModel+UndoRedo).
+    @ObservationIgnored var undoTransactionDepth = 0
     /// @see find(id:) — `nil` = not built since the last change to `items`.
     @ObservationIgnored var findIndex: [UUID: SoundObject]? = nil
     @ObservationIgnored var findsSinceMutation = 0
