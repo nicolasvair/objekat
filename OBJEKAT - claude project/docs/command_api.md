@@ -1489,7 +1489,8 @@ Undo in zone scope: `disband_group`, `deconsolidate`, `set_color` and `create_fx
 `isolate; action` inside ONE undo step (`singleUndoStep`): one ⌘Z gives the objects back whole.
 `consolidate_group`, `consolidate_clip`, `consolidate_each` and `run_script` have an undo point of
 their own that comes AFTER (a render in the background, a script), so the isolation is a step of its
-own and the action another: TWO ⌘Z — an accepted cost. `group_selection`, `create_aux` and
+own and the action another: TWO ⌘Z for a group (isolation, bake) and for a script — an accepted cost.
+`consolidate_clip` takes THREE (isolation, wrapping the piece in a group, bake). `group_selection`, `create_aux` and
 `create_midi_clip` are the range's own entries and keep their own cut and single undo.
 
 `selection.context_action` (`action`, optional `id`, `args`, `apply_to_zone`, `dry_run`) performs an

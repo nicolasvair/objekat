@@ -12,7 +12,8 @@ import Foundation
 //     `isolate; action` inside ONE `singleUndoStep`: one ⌘Z gives the objects back whole;
 //   • the ones that go on in the background or that the machine runs afterwards (consolidating,
 //     scripts) cannot be wrapped — their own undo point comes later — so the isolation is a step
-//     of its own, then the action: TWO ⌘Z. An accepted cost (decided with the request);
+//     of its own, then the action: TWO ⌘Z (THREE for 'consolidate a clip': isolation, wrapping the
+//     piece in a group, bake). An accepted cost (decided with the request);
 //   • 'wrap in a group', 'aux clip', 'MIDI clip' are the range's own entries and already take the
 //     range (`createGroupFromTimeSelection`…) with their own cut and their own single undo.
 
@@ -73,8 +74,10 @@ extension EditViewModel {
             }
         case .createFXLink:
             singleUndoStep {
+                let known = Set(fxLinks.map(\.id))
                 let pieces = isolateTimeSelection(sel)
-                _ = createFXLinkFromObjects(pieces)
+                // A cut gives its pieces an automatic bin each: they must leave it to join the common one.
+                _ = createFXLinkFromCutPieces(pieces, knownLinks: known)
             }
         case .consolidateGroup:
             let pieces = isolateTimeSelectionAsOneStep(sel)

@@ -240,6 +240,30 @@ extension EditViewModel {
         return linkID
     }
 
+    /// The bin of the pieces a ZONE just isolated (the zone menu's "create an FX link"). A cut has
+    /// ALREADY given every piece a block of an automatic bin (one per cut object, tying its pieces
+    /// together), so the plain plugins `createFXLinkFromObjects` looks for are gone and it would find
+    /// nothing to link. The pieces therefore LEAVE the bins that the cut made (`knownLinks` = the
+    /// registry as it was BEFORE the isolation: a bin that already existed is the user's, it stays) and
+    /// get the common bin from their own, now plain, plugins. A bin the cut made that is left with one
+    /// member or none has no reason to exist and is dissolved — the piece that stays keeps its plugins.
+    /// Undo is the caller's (`singleUndoStep`).
+    @discardableResult
+    func createFXLinkFromCutPieces(_ ids: [UUID], knownLinks: Set<UUID>, name: String? = nil) -> UUID? {
+        adoptPendingFXSources()      // the originals of the cut's bins join them first: one state to reason on
+        var touched = Set<UUID>()
+        for id in ids {
+            guard let chain = chainPlugins(id) else { continue }
+            for b in Self.fxBlocks(in: chain) {
+                guard let fb = b.fxBlock, !knownLinks.contains(fb.linkID) else { continue }
+                touched.insert(fb.linkID)
+                releaseFXBlock(hostID: id, blockID: b.id, undo: false)
+            }
+        }
+        for link in touched where fxLinkMembers(link).count <= 1 { deleteFXLink(link, undo: false) }
+        return createFXLinkFromObjects(ids, name: name, undo: false)
+    }
+
     // MARK: Attaching, detaching
 
     /// Gives `hostID` a block of bin `linkID` (at the end of its chain unless a place is given). A

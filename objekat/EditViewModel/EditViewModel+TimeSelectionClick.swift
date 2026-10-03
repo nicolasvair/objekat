@@ -54,8 +54,11 @@ extension EditViewModel {
         // Before the growth below and not after it, because the two answer different questions: a
         // union GROWS a range from whichever end is nearer, while this one is ANCHORED — the origin
         // does not move, so a second ⇧-click aimed back inside the range SHORTENS it, which a union
-        // can never do. An anchor of the other kind is refused rather than crossed: that is the
-        // no-mixing rule, and here it reads as "⇧ does not reach out of the surface one is on".
+        // can never do. An anchor of the other kind (a band's, ⇧-clicked on an object row, or the
+        // reverse) is not taken by this branch and nothing is refused: the growth branch below
+        // answers, REPLACING the range by one on the clicked row's kind alone — the lanes of the
+        // other kind drop out of it (`confine`), the time stretches to cover the old range and the
+        // point. That is the no-mixing rule: ⇧ never makes a range of both surfaces.
         if shift, allowsRange, let origin = extendOrigin, laneKind(origin.lane) == kind {
             let tLo = min(origin.time, time), tHi = max(origin.time, time)
             // A ⇧-click back onto the anchor itself: there is no passage between a point and
