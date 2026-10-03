@@ -386,6 +386,28 @@ one SwiftUI subtree, so this is the number a layer is paid in. The layers that u
 are now ONE Canvas each, culled to the viewport, no longer report (`lane_rows` and `range_masks` and
 `piano_roll_tints` since E1).
 
+`perf.census` also carries `parallelism` (multi-core plan, step 0): what the engine could run in parallel,
+read from the live Edit. A pool track processes its clips one after the other, and so does a root group
+(a `ContainerClip`) its children, so the work that is SERIAL is the bound of any multi-core gain:
+`pool_tracks` / `pool_tracks_used`, `top_level_clips`, `root_containers`, `max_container_depth` (1 = a root
+group with no sub-group), `external_plugins_in_pool` (AU / VST instances on clips and groups),
+`external_plugins_busiest_track` and `external_plugins_largest_root` (the share ONE track / ONE root group
+carries), `largest_root_share` (that root over the total), `external_plugins_stems` / `_master`, and `top_roots`
+(the ten heaviest root groups: `group_id`, `external_plugins`, `depth`, `containers`, `leaf_clips`).
+
+`perf.audio_probe {action: "stats"}` summarises what the audio probe recorded since the last `reset` (app launched
+with `OBJ_AUDIO_PROBE=1`; add `OBJ_AUDIO_PROBE_MUTE=1` to measure without sound): `probe.cpu_mean` / `cpu_p99` / `cpu_max`
+(the `getCpuUsage` figure Tracktion compares to its 0.98 limit), `late_callbacks` (a gap between two callbacks above
+1.5 blocks), `max_gap_ms`, `muted_blocks` (cpu above 0.98: the next block is cut), `block_size`, `sample_rate`. It also
+answers, with or without the probe (`probe_installed`), the parallelism set-up: `threads` (`requested` = compute
+threads, audio thread included, `worker_threads` = what the engine pool really gets, `performance_cores`,
+`logical_cpus`, `pool_strategy`) and `workgroup` (`wanted`, `device_offers`, `active`, `max_parallel_threads`,
+`rebind_pending`). Environment variables, read at launch so that two builds need not differ: `OBJ_AUDIO_WORKGROUP=0`
+(no Apple audio workgroup; default on), `OBJ_AUDIO_THREADS=N` (default: the performance cores,
+`hw.perflevel0.physicalcpu`), `OBJ_THREAD_POOL_STRATEGY=<conditionVariable|realTime|hybrid|semaphore|lightweightSemaphore|lightweightSemHybrid|0-5>`.
+`tools/cpu_threads.py` gives the matching per-thread view of the process (see its header for the `sample` /
+`xctrace` recipes).
+
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.

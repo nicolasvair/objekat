@@ -652,6 +652,13 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (BOOL)audioProbeReset;
 - (void)audioProbeMark:(NSString*)label;
 - (BOOL)audioProbeDumpToPath:(NSString*)path;
+// Résumé de la sonde (moyenne/p99/max de getCpuUsage, rappels en retard, blocs coupés) PLUS la
+// configuration de parallélisme du moteur : clés `threads`/`workgroup` (toujours présentes, même
+// sans sonde), clé `probe` absente sans OBJ_AUDIO_PROBE (`probe_installed` = NO). Plan multi-cœur, étape 0.
+- (NSDictionary * _Nonnull)audioProbeStats;
+// Recensement du parallélisme exploitable (pistes du pool, plugins externes par piste et par
+// container racine, profondeur max des containers). Plan multi-cœur, étape 0.
+- (NSDictionary * _Nonnull)parallelismCensus;
 - (void)endBulkLoad;
 
 // Onglets : les plugins d'un projet démonté ENTRE begin et end partent en consigne au nom de

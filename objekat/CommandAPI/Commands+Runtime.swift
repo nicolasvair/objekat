@@ -130,10 +130,17 @@ extension CommandRegistry {
         }
 
         register("perf.audio_probe",
-                 summary: "DIAGNOSTIC (app launched with OBJ_AUDIO_PROBE=1): 'reset' clears the "
-                        + "per-block record of the final mix, 'mark' timestamps a label, 'dump' "
-                        + "writes it all as CSV to 'path'.",
-                 params: [ParamSpec("action", "string", "reset | mark | dump"),
+                 summary: """
+                 DIAGNOSTIC (app launched with OBJ_AUDIO_PROBE=1): 'reset' clears the per-block \
+                 record of the final mix, 'mark' timestamps a label, 'dump' writes it all as CSV \
+                 to 'path', 'stats' summarises what was recorded since the last reset — CPU load \
+                 mean/p99/max (the figure Tracktion compares to its 0.98 muting limit), late \
+                 callbacks (gap > 1.5x the block duration), muted blocks (cpu > 0.98) — plus the \
+                 engine's parallelism set-up (`threads`: requested / worker threads / performance \
+                 cores / pool strategy, `workgroup`: wanted / offered by the device / active). \
+                 'stats' answers the set-up part even without the probe (`probe_installed: false`).
+                 """,
+                 params: [ParamSpec("action", "string", "reset | mark | dump | stats"),
                           ParamSpec("label", "string", required: false, "For 'mark'."),
                           ParamSpec("path", "string", required: false, "For 'dump'.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -144,7 +151,8 @@ extension CommandRegistry {
             case "reset": return .object(["ok": .bool(engine.audioProbeReset())])
             case "mark":  engine.audioProbeMark(try p.string("label")); return .object(["ok": .bool(true)])
             case "dump":  return .object(["ok": .bool(engine.audioProbeDump(toPath: try p.string("path")))])
-            default: throw CommandError(code: .bad_params, message: "reset | mark | dump")
+            case "stats": return JSONValue.fromFoundation(engine.audioProbeStats())
+            default: throw CommandError(code: .bad_params, message: "reset | mark | dump | stats")
             }
         }
 
@@ -218,6 +226,11 @@ extension CommandRegistry {
                     "foreach_layers": .object(regimes.layerElements.mapValues { .int($0) }),
                     "foreach_total": .int(regimes.layerElements.values.reduce(0, +)),
                 ]),
+                // The engine-side parallelism census (plan multi-coeur, step 0): pool tracks, external
+                // plugins per track / per root container, container depth. Serial work is what bounds
+                // the multi-core gain, so `external_plugins_busiest_track` and
+                // `external_plugins_largest_root` are the figures to read.
+                "parallelism": JSONValue.fromFoundation(vm.engine?.parallelismCensus()),
                 // The audio graph's node count lives on the engine side and is not exposed to
                 // Swift; exposing it would mean changing OBJEngineCore, which is out of scope here.
                 "engine_nodes": .null,
@@ -565,5 +578,31 @@ private extension Double {
     func rounded(toPlaces places: Int) -> Double {
         let factor = pow(10.0, Double(places))
         return (self * factor).rounded() / factor
+    }
+}
+
+// MARK: - Foundation bridge
+
+extension JSONValue {
+
+    /// A tree of `NSDictionary` / `NSArray` / `NSNumber` / `NSString` as the Objective-C++ engine
+    /// hands it over (diagnostic payloads: `perf.audio_probe` stats, the parallelism census),
+    /// converted without a round trip through `JSONSerialization`. Booleans are told from numbers
+    /// by their CoreFoundation type, since both are `NSNumber`. Anything else becomes `null`.
+    static func fromFoundation(_ any: Any?) -> JSONValue {
+        guard let any else { return .null }
+        switch any {
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() { return .bool(n.boolValue) }
+            return .number(n.doubleValue)
+        case let s as String:
+            return .string(s)
+        case let a as [Any]:
+            return .array(a.map { fromFoundation($0) })
+        case let d as [String: Any]:
+            return .object(d.mapValues { fromFoundation($0) })
+        default:
+            return .null
+        }
     }
 }

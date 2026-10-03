@@ -24,6 +24,7 @@
 #include <functional>
 #include <limits>
 #include <dlfcn.h>
+#include <sys/sysctl.h>
 
 namespace te = tracktion;
 
@@ -149,6 +150,90 @@ static void objUpgradeResamplingForRender(te::Edit& clone) {
             objUpgradeResamplingForRender(*owner);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RÉGLAGES MULTI-CŒUR (plan multi-cœur, étape 1). Tous commutables PAR VARIABLE D'ENVIRONNEMENT
+// pour comparer A/B dans le même build ; sans variable, le comportement est celui décrit ici.
+//
+//   OBJ_AUDIO_WORKGROUP=0     désactive le workgroup audio Apple (défaut : ACTIVÉ). Les threads de
+//                             travail du moteur rejoignent alors le workgroup du device : le
+//                             planificateur les place ensemble sur les cœurs performance, avec la
+//                             même échéance temps réel que le thread audio.
+//   OBJ_AUDIO_THREADS=N       nombre de threads de calcul audio, thread audio compris (le moteur
+//                             lance N-1 workers). Défaut : cœurs PERFORMANCE
+//                             (`hw.perflevel0.physicalcpu`), repli `SystemStats::getNumCpus()`.
+//                             Le défaut du moteur (tous les cœurs logiques) fait déborder du travail
+//                             temps réel sur les cœurs efficacité, deux fois plus lents.
+//   OBJ_THREAD_POOL_STRATEGY  stratégie d'attente du pool (conditionVariable | realTime | hybrid |
+//                             semaphore | lightweightSemaphore | lightweightSemHybrid, ou 0…5).
+//                             Défaut : celle du moteur (lightweightSemHybrid).
+//
+// Lus UNE fois (premier appel), jamais pendant que l'audio tourne.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cœurs PERFORMANCE physiques (Apple silicon), 0 si la machine n'en déclare pas (Intel).
+static int objPerformanceCoreCount() {
+    int n = 0;
+    size_t size = sizeof(n);
+    if (sysctlbyname("hw.perflevel0.physicalcpu", &n, &size, nullptr, 0) != 0 || n < 1) return 0;
+    return n;
+}
+
+/// `OBJ_AUDIO_WORKGROUP=0` éteint le workgroup ; toute autre valeur, ou rien, l'allume.
+static bool objWorkgroupWanted() {
+    static const bool wanted = [] {
+        const char* v = getenv("OBJ_AUDIO_WORKGROUP");
+        return !(v != nullptr && (std::string(v) == "0" || std::string(v) == "off" || std::string(v) == "false"));
+    }();
+    return wanted;
+}
+
+/// OBJ_AUDIO_THREADS a-t-elle réellement fixé le nombre de threads (valeur valide) ?
+static bool gOBJAudioThreadsFromEnv = false;
+
+/// Nombre de threads de calcul audio demandé au moteur (thread audio compris).
+static int objAudioThreadCount() {
+    static const int count = [] {
+        if (const char* v = getenv("OBJ_AUDIO_THREADS")) {
+            const int n = atoi(v);
+            if (n >= 1) { gOBJAudioThreadsFromEnv = true; return n; }
+            if (v[0] != '\0') NSLog(@"[OBJ] OBJ_AUDIO_THREADS=%s ignoré (entier >= 1 attendu)", v);
+        }
+        const int perf = objPerformanceCoreCount();
+        return juce::jmax(1, perf > 0 ? perf : juce::SystemStats::getNumCpus());
+    }();
+    return count;
+}
+
+/// Stratégie de pool demandée par l'environnement, -1 = ne rien changer.
+static int objThreadPoolStrategyFromEnv() {
+    const char* v = getenv("OBJ_THREAD_POOL_STRATEGY");
+    if (v == nullptr || v[0] == '\0') return -1;
+    static const char* const names[] = { "conditionVariable", "realTime", "hybrid",
+                                         "semaphore", "lightweightSemaphore", "lightweightSemHybrid" };
+    for (int i = 0; i < 6; ++i)
+        if (strcasecmp(v, names[i]) == 0) return i;
+    char* end = nullptr;
+    const long n = strtol(v, &end, 10);
+    if (end != v && *end == '\0' && n >= 0 && n <= 5) return (int) n;
+    NSLog(@"[OBJ] OBJ_THREAD_POOL_STRATEGY=%s ignoré (nom ou 0…5 attendu)", v);
+    return -1;
+}
+
+/// Ce qui, dans le device ouvert, change le workgroup que les workers doivent rejoindre : la carte,
+/// sa fréquence, son buffer. Vide = rien d'ouvert.
+static juce::String objAudioBindingSignature(juce::AudioDeviceManager& jdm) {
+    auto* dev = jdm.getCurrentAudioDevice();
+    if (dev == nullptr || !dev->isOpen()) return {};
+    return dev->getTypeName() + "|" + dev->getName() + "|" + juce::String(dev->getCurrentSampleRate())
+         + "|" + juce::String(dev->getCurrentBufferSizeSamples());
+}
+
+static const char* objThreadPoolStrategyName(int s) {
+    static const char* const names[] = { "conditionVariable", "realTime", "hybrid",
+                                         "semaphore", "lightweightSemaphore", "lightweightSemHybrid" };
+    return (s >= 0 && s < 6) ? names[s] : "?";
+}
+
 // Comportement moteur custom : relève les limites par défaut de Tracktion.
 // La valeur par défaut maxPluginsOnClip vaut 5 ; comme chaque clip embarque déjà
 // un ObjGainPlugin post-FX, l'utilisateur ne pouvait ajouter que 4 plugins avant
@@ -180,6 +265,10 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // pour un arbitrage qui n'a jamais rien à arbitrer. C'est aussi la source de
     // l'assertion « duplicate nodeID » qui pollue la console en Debug.
     bool areClipSlotsEnabled() override { return false; }
+
+    // Threads de calcul audio : les cœurs PERFORMANCE, pas tous les cœurs logiques — le moteur
+    // retire lui-même le thread audio (workers = n-1). @see objAudioThreadCount (OBJ_AUDIO_THREADS).
+    int getNumberOfCPUsToUseForAudio() override { return objAudioThreadCount(); }
 
     // Défauts d'un clip neuf : le proxy reste celui du moteur (`useProxyFile = true`), seule la
     // qualité de rééchantillonnage change. @see objDefaultResamplingQuality. N'atteint que les
@@ -867,10 +956,19 @@ struct OBJLatencyWatcher : public juce::Timer {
 // te::DeviceManager (device ouvert/fermé/redémarré, taux ou buffer changés, liste de devices
 // changée — @see plan_titlebar_audio_device.md §1). changeListenerCallback tourne déjà sur le
 // message thread (= le thread principal sur macOS) : pas de dispatch_async ici.
+// Défini plus bas (MARK « Workgroup audio ») ; déclaré ici pour le veilleur ci-dessous.
+@interface OBJEngineCore ()
+- (void)rebindAudioWorkgroupIfDeviceChanged;
+@end
+
 struct OBJDeviceChangeWatcher : public juce::ChangeListener {
     __unsafe_unretained OBJEngineCore* owner = nil;   // même convention que les autres veilleurs
     void changeListenerCallback(juce::ChangeBroadcaster*) override {
         jassert(juce::MessageManager::existsAndIsCurrentThread());
+        // AVANT de prévenir l'interface : un workgroup périmé (autre carte, autre buffer) doit être
+        // remplacé tant que le transport est à l'arrêt, sans quoi les workers resteraient attachés
+        // à l'ancien. @see -rebindAudioWorkgroupIfDeviceChanged.
+        [owner rebindAudioWorkgroupIfDeviceChanged];
         if (owner.onAudioDeviceChanged) owner.onAudioDeviceChanged();
     }
 };
@@ -1154,6 +1252,12 @@ struct OBJRenderChain {
     double _rateBeforeDecision;   // la fréquence de la carte AU MOMENT de la décision
     double _rateDecided;          // celle qu'elle a eue APRÈS (sert à repérer une décision périmée)
     OBJAudioProbe* _audioProbe;   // DIAGNOSTIC, possédé par le DeviceManager (@see OBJAudioProbe.h)
+    // Workgroup audio : ce que le device offrait la dernière fois qu'on a regardé (@see
+    // -rebindAudioWorkgroupIfDeviceChanged). `_wgRebindPending` = un changement a été vu pendant
+    // que le transport jouait ; le contexte de lecture est recréé à l'arrêt suivant.
+    juce::AudioWorkgroup _wgSeen;
+    juce::String         _wgSignature;
+    BOOL                 _wgRebindPending;
     std::vector<std::pair<uint64_t, std::string>> _audioProbeMarks;
     // @see beginPlaybackEdit — fenêtres retenues pendant une coupe en lecture.
     int _playbackEditDepth;
@@ -1391,6 +1495,16 @@ static BOOL gOBJAudioDisabled = NO;
         juce::initialiseJuce_GUI();
         // Coupe le bruit console de Tracktion (scan MIDI/Wave devices, etc.).
         juce::Logger::setCurrentLogger(new OBJSilentLogger());
+        // Réglages multi-cœur (plan multi-cœur, étape 1). Drapeaux GLOBAUX du moteur : le workgroup
+        // est lu à la construction de chaque contexte de lecture (NodePlaybackContext), il faut donc
+        // le poser avant tout Edit, donc avant tout contexte. @see « RÉGLAGES MULTI-CŒUR ».
+        te::EditPlaybackContext::enableAudioWorkgroup(objWorkgroupWanted());
+        if (const int strategy = objThreadPoolStrategyFromEnv(); strategy >= 0)
+            te::EditPlaybackContext::setThreadPoolStrategy(strategy);
+        NSLog(@"[OBJ] Multi-cœur : workgroup=%d, threads de calcul=%d (cœurs performance=%d, cœurs logiques=%d), pool=%s",
+              (int) objWorkgroupWanted(), objAudioThreadCount(), objPerformanceCoreCount(),
+              juce::SystemStats::getNumCpus(),
+              objThreadPoolStrategyName(te::EditPlaybackContext::getThreadPoolStrategy()));
         // AVANT la construction du moteur : c'est elle qui charge Settings.xml (en O(n²)).
         purgeStaleTrackDeviceAliases();
         // Mêmes réglages que le constructeur à nom d'application (te::Engine("objekat", ub, eb) crée
@@ -1427,6 +1541,13 @@ static BOOL gOBJAudioDisabled = NO;
         // Après l'ouverture, AVANT createEdit : si la carte tourne à une fréquence inutilisable on
         // la ramène ici, une fois, sans qu'aucun graphe de lecture n'existe encore à réallouer.
         [self applySampleRatePolicy];
+        // Référence du workgroup : le premier contexte de lecture (createEdit, juste dessous) captera
+        // celui-ci. Tout changement ultérieur sera vu par le veilleur du device.
+        if (!gOBJAudioDisabled) {
+            auto& jdm = _engine->getDeviceManager().deviceManager;
+            _wgSeen = jdm.getDeviceAudioWorkgroup();
+            _wgSignature = objAudioBindingSignature(jdm);
+        }
         if (getenv("OBJ_AUDIO_PROBE") != nullptr) {
             auto probe = std::make_unique<OBJAudioProbe>(_engine->getDeviceManager());
             _audioProbe = probe.get();
@@ -1602,6 +1723,190 @@ static BOOL gOBJAudioDisabled = NO;
             if (auto* p = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
                 p->setWindow(w[0], w[1], w[2], w[3]);
     _heldWindows.clear();
+}
+
+// MARK: Workgroup audio
+
+// Le workgroup du device est capté UNE FOIS, à la construction du contexte de lecture
+// (NodePlaybackContext → TracktionNodePlayer), puis les threads de travail le REJOIGNENT à leur
+// création. Un changement de carte, de fréquence ou de buffer rouvre le device — donc un autre
+// workgroup — alors que le contexte, lui, survit (DeviceManager::prepareToStart ne fait que
+// restartPlayback) : les workers resteraient attachés à l'ancien. On libère donc le contexte du
+// transport et on le réalloue ; le suivant capte le workgroup courant. Les plugins vivent sur
+// l'Edit et ne sont pas ré-instanciés (le graphe est seulement reconstruit).
+//
+// Appelé par le veilleur du device (tout changement de réglage audio), au début de -play et à la fin
+// de -stop. Pendant la lecture, l'enregistrement ou un chargement en bloc on ne touche à rien : on
+// note `_wgRebindPending` et on y revient à l'arrêt.
+- (void)rebindAudioWorkgroupIfDeviceChanged {
+    if (gOBJAudioDisabled || !_engine || !objWorkgroupWanted()) return;
+    auto& jdm = _engine->getDeviceManager().deviceManager;
+    const juce::String signature = objAudioBindingSignature(jdm);
+    const juce::AudioWorkgroup workgroup = jdm.getDeviceAudioWorkgroup();
+    const bool changed = signature != _wgSignature || workgroup != _wgSeen;
+    if (!changed && !_wgRebindPending) return;
+    _wgSignature = signature;
+    _wgSeen = workgroup;
+
+    if (!_edit) return;
+    auto& tc = _edit->getTransport();
+    if (!tc.isPlayContextActive()) { _wgRebindPending = NO; return; }   // le prochain captera le bon
+    if (signature.isEmpty()) return;                                    // carte fermée : au prochain événement
+    if (tc.isPlaying() || tc.isRecording() || _bulkLoadInhibitor) { _wgRebindPending = YES; return; }
+
+    _wgRebindPending = NO;
+    NSLog(@"[OBJ] Workgroup audio : device modifié (%s) → contexte de lecture recréé",
+          signature.toRawUTF8());
+    tc.freePlaybackContext();
+    tc.ensureContextAllocated();
+}
+
+// MARK: Sonde multi-cœur (plan multi-cœur, étape 0)
+
+- (NSDictionary*)audioProbeStats {
+    NSMutableDictionary* out = [NSMutableDictionary dictionary];
+    auto& dm = _engine->getDeviceManager();
+    const juce::AudioWorkgroup wg = dm.deviceManager.getDeviceAudioWorkgroup();
+    const bool wgOffered = (bool) wg;
+    const size_t wgMax = wgOffered ? wg.getMaxParallelThreadCount() : 0;
+
+    // Même formule que le moteur (EditPlaybackContext::updateNumCPUs + getMaxNumThreadsToUse) :
+    // workers = min(threads demandés - 1, plafond du workgroup - 1 | cœurs logiques - 1).
+    const int requested = objAudioThreadCount();
+    const long cap = (wgOffered && objWorkgroupWanted() && wgMax >= 1) ? (long) wgMax - 1
+                                                                       : (long) juce::SystemStats::getNumCpus() - 1;
+    const long workers = std::max(0L, std::min((long) requested - 1, cap));
+
+    out[@"threads"] = @{
+        @"requested": @(requested),                       // thread audio compris
+        @"requested_source": gOBJAudioThreadsFromEnv ? @"env" : (objPerformanceCoreCount() > 0 ? @"perf_cores" : @"logical_cpus"),
+        @"worker_threads": @(workers),                    // threads de travail du pool (sans le thread audio)
+        @"performance_cores": @(objPerformanceCoreCount()),
+        @"logical_cpus": @(juce::SystemStats::getNumCpus()),
+        @"pool_strategy": [NSString stringWithUTF8String:objThreadPoolStrategyName(te::EditPlaybackContext::getThreadPoolStrategy())],
+    };
+    out[@"workgroup"] = @{
+        @"wanted": @((bool) objWorkgroupWanted()),        // OBJ_AUDIO_WORKGROUP != 0
+        @"device_offers": @(wgOffered),                   // le device ouvert fournit un workgroup
+        @"active": @((bool) (objWorkgroupWanted() && wgOffered)),
+        @"max_parallel_threads": @((long) wgMax),
+        @"rebind_pending": @((bool) _wgRebindPending),
+    };
+    if (_audioProbe == nullptr) { out[@"probe_installed"] = @NO; return out; }
+
+    out[@"probe_installed"] = @YES;
+    const OBJAudioProbeStats st = _audioProbe->computeStats();
+    out[@"probe"] = @{
+        @"blocks": @((unsigned long long) st.blocks),
+        @"seconds": @(st.seconds),
+        @"block_size": @(st.blockSize),
+        @"sample_rate": @(st.sampleRate),
+        @"cpu_mean": @(st.cpuMean),
+        @"cpu_p99": @(st.cpuP99),
+        @"cpu_max": @(st.cpuMax),
+        @"late_callbacks": @((unsigned long long) st.lateCallbacks),   // écart > 1,5× la durée du bloc
+        @"max_gap_ms": @(st.maxGapMs),
+        @"muted_blocks": @((unsigned long long) st.mutedBlocks),       // cpu > 0,98
+    };
+    return out;
+}
+
+// Recensement du parallélisme EXPLOITABLE. Sur ce modèle une piste du pool est un
+// CombiningNode qui traite ses clips en série, et un container (groupe) est un nœud interne qui
+// traite ses enfants en série lui aussi : ce qui compte, c'est donc combien de travail (plugins
+// externes surtout) se trouve DANS UNE SEULE piste / UN SEUL container racine.
+struct OBJContainerCensus {
+    int externalPlugins = 0;   // dans le container et tout son sous-arbre
+    int leafClips = 0;
+    int containers = 1;        // lui compris
+    int depth = 1;             // 1 = pas de sous-container
+};
+
+static int objExternalPluginsIn(te::PluginList* list) {
+    int n = 0;
+    if (list != nullptr)
+        for (auto* p : *list)
+            if (dynamic_cast<te::ExternalPlugin*>(p) != nullptr) ++n;
+    return n;
+}
+
+static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCensus& out) {
+    out.depth = std::max(out.depth, depth);
+    out.externalPlugins += objExternalPluginsIn(cc.getPluginList());
+    for (auto* child : cc.getClips()) {
+        if (!child) continue;
+        if (auto* sub = dynamic_cast<te::ContainerClip*>(child)) {
+            ++out.containers;
+            objCensusContainer(*sub, depth + 1, out);
+        } else {
+            ++out.leafClips;
+            out.externalPlugins += objExternalPluginsIn(child->getPluginList());
+        }
+    }
+}
+
+- (NSDictionary*)parallelismCensus {
+    NSMutableDictionary* out = [NSMutableDictionary dictionary];
+    if (!_edit) return out;
+
+    std::unordered_map<te::ContainerClip*, std::string> groupIDs;
+    for (auto& [gid, cc] : _containerClipMap) groupIDs[cc] = gid;
+
+    int tracksUsed = 0, externalTotal = 0, maxTrackExternal = 0, maxDepth = 0, rootCount = 0, topClips = 0;
+    struct Root { std::string id; int external; int depth; int leaves; int containers; };
+    std::vector<Root> roots;
+
+    for (auto& pt : _poolTracks) {
+        if (!pt.track) continue;
+        int trackExternal = 0, trackItems = 0;
+        for (auto* clip : pt.track->getClips()) {
+            if (!clip) continue;
+            ++trackItems;
+            if (auto* cc = dynamic_cast<te::ContainerClip*>(clip)) {
+                OBJContainerCensus c;
+                objCensusContainer(*cc, 1, c);
+                trackExternal += c.externalPlugins;
+                maxDepth = std::max(maxDepth, c.depth);
+                ++rootCount;
+                auto it = groupIDs.find(cc);
+                roots.push_back({ it != groupIDs.end() ? it->second : std::string(), c.externalPlugins,
+                                  c.depth, c.leafClips, c.containers });
+            } else {
+                ++topClips;
+                trackExternal += objExternalPluginsIn(clip->getPluginList());
+            }
+        }
+        if (trackItems > 0) ++tracksUsed;
+        externalTotal += trackExternal;
+        maxTrackExternal = std::max(maxTrackExternal, trackExternal);
+    }
+
+    int stemExternal = 0;
+    for (auto& kv : _stemBusMap)
+        if (kv.second) stemExternal += objExternalPluginsIn(&kv.second->pluginList);
+    const int masterExternal = objExternalPluginsIn(&_edit->getMasterPluginList());
+
+    std::sort(roots.begin(), roots.end(), [](const Root& a, const Root& b) { return a.external > b.external; });
+    int maxRootExternal = roots.empty() ? 0 : roots.front().external;
+    NSMutableArray* top = [NSMutableArray array];
+    for (size_t i = 0; i < roots.size() && i < 10; ++i)
+        [top addObject:@{ @"group_id": [NSString stringWithUTF8String:roots[i].id.c_str()],
+                          @"external_plugins": @(roots[i].external), @"depth": @(roots[i].depth),
+                          @"containers": @(roots[i].containers), @"leaf_clips": @(roots[i].leaves) }];
+
+    out[@"pool_tracks"] = @((int) _poolTracks.size());
+    out[@"pool_tracks_used"] = @(tracksUsed);
+    out[@"top_level_clips"] = @(topClips);
+    out[@"root_containers"] = @(rootCount);
+    out[@"max_container_depth"] = @(maxDepth);
+    out[@"external_plugins_in_pool"] = @(externalTotal);                   // pistes + containers
+    out[@"external_plugins_busiest_track"] = @(maxTrackExternal);          // le travail d'une SEULE piste (série)
+    out[@"external_plugins_largest_root"] = @(maxRootExternal);            // celui d'un SEUL container racine
+    out[@"external_plugins_stems"] = @(stemExternal);
+    out[@"external_plugins_master"] = @(masterExternal);
+    out[@"largest_root_share"] = @(externalTotal > 0 ? (double) maxRootExternal / externalTotal : 0.0);
+    out[@"top_roots"] = top;
+    return out;
 }
 
 - (BOOL)audioProbeReset {
@@ -4510,11 +4815,15 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
 // MARK: - Transport
 
 - (void)play {
+    // Une carte/un buffer changé depuis la dernière lecture : recréer le contexte AVANT de jouer
+    // (sinon les workers restent attachés à l'ancien workgroup). Coût nul si rien n'a changé.
+    [self rebindAudioWorkgroupIfDeviceChanged];
     if (_edit) _edit->getTransport().play(false);
 }
 
 - (void)stop {
     if (_edit) _edit->getTransport().stop(false, false);
+    if (_wgRebindPending) [self rebindAudioWorkgroupIfDeviceChanged];
 }
 
 - (void)seekTo:(double)seconds {
