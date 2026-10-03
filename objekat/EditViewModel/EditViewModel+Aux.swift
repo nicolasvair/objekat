@@ -25,7 +25,16 @@ extension EditViewModel {
     // MARK: - Auxes & overlap
 
     /// Every AUX object in the project (top-level AND children of groups), absolute positions.
-    var allAuxes: [SoundObject] { allClips.filter(\.isAux) }
+    /// CACHED until `items` next changes (@see `allAuxesCache`): the inspector's multiple selection
+    /// and the Send tool read it for every sender.
+    var allAuxes: [SoundObject] {
+        // Read through the observable property, cache or not (@see find(id:)).
+        _ = items
+        if let allAuxesCache { return allAuxesCache }
+        let auxes = allClips.filter(\.isAux)
+        allAuxesCache = auxes
+        return auxes
+    }
 
     // MARK: - The scope of a send
     //
@@ -78,16 +87,60 @@ extension EditViewModel {
     /// only for them). @see canRouteSend
     func overlappingAuxes(for objectID: UUID) -> [SoundObject] {
         guard let obj = find(id: objectID) else { return [] }
-        let oStart = obj.startTime
-        let oEnd   = obj.startTime + obj.duration
-        return allAuxes
-            .filter { aux in
-                guard canRouteSend(from: objectID, to: aux.id) else { return false }
+        return sendScope(forSenders: [obj])[objectID] ?? []
+    }
+
+    /// `overlappingAuxes(for:)` for MANY senders at once: per sender, the auxes whose window
+    /// overlaps it in time AND that are within its scope (@see `canRouteSend`), ordered by START
+    /// (ties by position in `allAuxes`, which is the project's own order). A sender with nothing to
+    /// send to has no entry, and neither has an aux (a send has no meaning FROM an aux).
+    ///
+    /// The cost is the point, the same as `sendToolAuxes(forObjects:)` and for the same reasons:
+    /// asked sender by sender it was O(K·A·N) — every pair paid a `find` and two `parentGroup`
+    /// walks of the whole tree — which froze the inspector for 38 s on a 178-object selection of a
+    /// 4 000-object project. Here the auxes are collected and sorted ONCE, the parents come from
+    /// the cached `parentIDMap()`, and a pair costs a couple of comparisons.
+    func sendScope(forSenders senders: [SoundObject]) -> [UUID: [SoundObject]] {
+        let auxes = allAuxes
+        guard !auxes.isEmpty else { return [:] }
+        // By start, stably: the position in `allAuxes` settles a tie, which a bare `sorted` would
+        // leave to chance.
+        let ordered = auxes.enumerated().sorted { l, r in
+            if l.element.startTime != r.element.startTime { return l.element.startTime < r.element.startTime }
+            return l.offset < r.offset
+        }.map(\.element)
+        return reachableAuxes(forSenders: senders, ordered: ordered)
+    }
+
+    /// The scope test shared by `sendScope` and `sendToolAuxes(forObjects:)`: for each sender, the
+    /// auxes of `ordered` it can reach (time overlap AND scope), IN THAT ORDER. @see `canRouteSend`,
+    /// of which this is the batch form — the equivalence is asserted by `debug.selection_send_scope`.
+    private func reachableAuxes(forSenders senders: [SoundObject], ordered: [SoundObject]) -> [UUID: [SoundObject]] {
+        let senders = senders.filter { !$0.isAux }
+        guard !senders.isEmpty, !ordered.isEmpty else { return [:] }
+        let parents = parentIDMap()
+        let mainID = mainStemID
+        var result: [UUID: [SoundObject]] = [:]
+        for s in senders {
+            let sParent = parents[s.id]
+            let sStem = s.stemID ?? mainID
+            let oStart = s.startTime
+            let oEnd = s.startTime + s.duration
+            let reachable = ordered.filter { aux in
+                guard aux.id != s.id, parents[aux.id] == sParent else { return false }
+                // The scope (@see canRouteSend): inside a group the container makes the boundary; at
+                // the top level, the same stem or an aux of the Main.
+                if sParent == nil {
+                    let auxStem = aux.stemID ?? mainID
+                    guard auxStem == mainID || auxStem == sStem else { return false }
+                }
                 // An infinite aux: a bus always active → it overlaps any sender.
                 if aux.isInfiniteBus { return true }
                 return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
             }
-            .sorted { $0.startTime < $1.startTime }
+            if !reachable.isEmpty { result[s.id] = reachable }
+        }
+        return result
     }
 
     /// The auxes overlapping the object, ordered by vertical position (display lane) top → bottom.
@@ -127,29 +180,7 @@ extension EditViewModel {
             return l.offset < r.offset
         }.map(\.element)
 
-        let parents = parentIDMap()
-        let mainID = mainStemID
-        var result: [UUID: [SoundObject]] = [:]
-        for s in senders {
-            let sParent = parents[s.id]
-            let sStem = s.stemID ?? mainID
-            let oStart = s.startTime
-            let oEnd = s.startTime + s.duration
-            let reachable = ordered.filter { aux in
-                guard aux.id != s.id, parents[aux.id] == sParent else { return false }
-                // The scope (@see canRouteSend): inside a group the container makes the boundary; at
-                // the top level, the same stem or an aux of the Main.
-                if sParent == nil {
-                    let auxStem = aux.stemID ?? mainID
-                    guard auxStem == mainID || auxStem == sStem else { return false }
-                }
-                // An infinite aux: a bus always active → it overlaps any sender.
-                if aux.isInfiniteBus { return true }
-                return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
-            }
-            if !reachable.isEmpty { result[s.id] = reachable }
-        }
-        return result
+        return reachableAuxes(forSenders: senders, ordered: ordered)
     }
 
     /// The send-knob rows for the Send tool's overlay on `objectID`.
@@ -202,27 +233,15 @@ extension EditViewModel {
 
     /// The auxes overlapping AT LEAST one selected (non-aux) object, de-duplicated and ordered
     /// by display lane, top→bottom. These are the rows of the inspector's "Sends" column
-    /// in a multiple selection.
+    /// in a multiple selection. Read off the cached `multiSelectionSnapshot` — ONE batch for the
+    /// whole selection (@see `sendScope(forSenders:)`), where it used to be one scope per sender.
     func selectionSendAuxes() -> [SoundObject] {
-        let senders = selectedIDs.compactMap { find(id: $0) }.filter { !$0.isAux }
-        var seen = Set<UUID>()
-        var result: [SoundObject] = []
-        for s in senders {
-            for aux in overlappingAuxes(for: s.id) where seen.insert(aux.id).inserted {
-                result.append(aux)
-            }
-        }
-        func laneOf(_ id: UUID) -> Int {
-            laneEntries.first { $0.item.id == id }?.displayLane ?? (find(id: id)?.lane ?? 0)
-        }
-        return result.sorted { laneOf($0.id) < laneOf($1.id) }
+        multiSelectionSnapshot.sendAuxes
     }
 
     /// The selected (non-aux) objects that overlap `auxID` → the targets of a send towards that aux.
     func selectedSenders(toAux auxID: UUID) -> [UUID] {
-        selectedIDs.compactMap { find(id: $0) }
-            .filter { !$0.isAux && overlappingAuxes(for: $0.id).contains { $0.id == auxID } }
-            .map(\.id)
+        multiSelectionSnapshot.sendersByAux[auxID]?.map(\.id) ?? []
     }
 
     /// The same list, minus those whose send towards that aux carries a CURVE.

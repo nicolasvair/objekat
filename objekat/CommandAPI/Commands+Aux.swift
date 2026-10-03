@@ -149,5 +149,33 @@ extension CommandRegistry {
                             "enabled": .bool(vm.isSendEnabled(from: id, to: auxID)),
                             "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
         }
+
+        #if DEBUG
+        register("debug.selection_send_scope",
+                 summary: """
+                 DEBUG. The ORACLE of the multiple selection's caches: for the LIVE selection, \
+                 puts the cached path (`parentIDMap`, `allAuxes`, `sendScope(forSenders:)`, \
+                 `multiSelectionSnapshot`: what the inspector reads) next to the reference it \
+                 replaced (a plain tree walk, no cache — `_reference…`), and answers every \
+                 disagreement in `mismatches` (empty = agreement, `ok: true`). Call it after any \
+                 mutation that has to invalidate a cache; it changes nothing. `parent_sample` \
+                 bounds how many objects have their `parentGroup(for:)` compared with the walk \
+                 (default 400; the selected ones are always compared). `new_ms` / `reference_ms` \
+                 are the two costs. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("parent_sample", "int", required: false,
+                                    "How many objects to compare parent lookups on (default 400).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let r = vm._selectionSendScopeAudit(parentSample: max(1, try p.int("parent_sample", or: 400)))
+            var out: [String: JSONValue] = ["ok": .bool(r.mismatches.isEmpty),
+                                            "mismatches": .array(r.mismatches.prefix(20).map { .string($0) }),
+                                            "mismatch_count": .int(r.mismatches.count),
+                                            "new_ms": .number(r.newMs),
+                                            "reference_ms": .number(r.referenceMs)]
+            for (k, v) in r.info { out[k] = .int(v) }
+            return .object(out)
+        }
+        #endif
     }
 }

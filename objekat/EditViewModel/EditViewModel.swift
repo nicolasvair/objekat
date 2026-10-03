@@ -47,6 +47,10 @@ final class EditViewModel {
             composedNameCache.removeAll(keepingCapacity: true)
             findIndex = nil
             findsSinceMutation = 0
+            parentIDCache = nil
+            parentLookupsSinceMutation = 0
+            allAuxesCache = nil
+            multiSelectionCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
         }
     }
@@ -61,6 +65,16 @@ final class EditViewModel {
     /// @see find(id:) — `nil` = not built since the last change to `items`.
     @ObservationIgnored var findIndex: [UUID: SoundObject]? = nil
     @ObservationIgnored var findsSinceMutation = 0
+    /// @see parentIDMap() / parentGroup(for:) — child id → parent group id, built by the next
+    /// reader after a change to `items` and dropped by the same `didSet` as `findIndex`.
+    @ObservationIgnored var parentIDCache: [UUID: UUID]? = nil
+    @ObservationIgnored var parentLookupsSinceMutation = 0
+    /// @see allAuxes — the flat list of auxes (absolute lanes), dropped with `items`.
+    @ObservationIgnored var allAuxesCache: [SoundObject]? = nil
+    /// @see multiSelectionSnapshot — everything the inspector reads about a MULTIPLE selection,
+    /// computed once per (items, selectedIDs) instead of once per SwiftUI pass. Dropped by `items`,
+    /// `selectedIDs` and `rebuildLaneEntries` (the lane order of the sends comes from there).
+    @ObservationIgnored var multiSelectionCache: MultiSelectionSnapshot? = nil
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
     @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
     /// @see contentEnd / maxOccupiedLane — `nil` = to rebuild on the next read.
@@ -77,7 +91,10 @@ final class EditViewModel {
     /// forgetting the rule would leave a marker selected under an object selection — and ⌫, which
     /// reads the annotation first, would then delete the marker while the hand was pointing at a clip.
     var selectedIDs: Set<UUID> = [] {
-        didSet { if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] } }
+        didSet {
+            multiSelectionCache = nil
+            if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] }
+        }
     }
     /// The crossfade selected, if any: the pair whose shared zone the click landed in. Its own
     /// slot rather than a place in `selectedIDs`, because a crossfade is not an object — it is
@@ -959,6 +976,7 @@ final class EditViewModel {
     func rebuildLaneEntries() {
         laneEntriesRebuildCount &+= 1
         laneEntryIndexCache = nil
+        multiSelectionCache = nil
         laneEntries = Self.buildLaneEntries(items, parentID: nil, depth: 0, displayLaneOffset: 0)
         // The total of the rows the open objects reserve: the timeline's `canvasHeight` reads it
         // some fifteen times per pass, and it used to be an `expandedSpan` sum (an `occupiedLanes`

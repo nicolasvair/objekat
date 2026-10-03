@@ -115,8 +115,8 @@ struct ObjectInspectorView: View {
     /// some of what is selected. Mixed values light no pill and say so in the tooltip; a click on
     /// any pill then sets them all — ONE undo point for the gesture.
     @ViewBuilder
-    private func channelModeRow(ids: [UUID]) -> some View {
-        let clips = ids.compactMap { viewModel.find(id: $0) }
+    private func channelModeRow(clips: [SoundObject]) -> some View {
+        let ids = clips.map(\.id)
         if !clips.isEmpty, clips.allSatisfy({ viewModel.canChooseChannelMode($0) }) {
             let modes = Set(clips.map(\.channelMode))
             let current: ChannelMode? = modes.count == 1 ? modes.first : nil
@@ -174,7 +174,7 @@ struct ObjectInspectorView: View {
                     multiAudioFileZone
                 }
                 multiClipZone
-                if !viewModel.selectionSendAuxes().isEmpty { multiSendsZone }
+                if !snap.sendAuxes.isEmpty { multiSendsZone }
                 multiStemsZone
             }
             .padding(12)
@@ -196,49 +196,52 @@ struct ObjectInspectorView: View {
 
     // MARK: Items
 
+    /// How many blocks the selection draws. A selection of hundreds used to lay out hundreds of
+    /// blocks (each with its tooltip) on every pass; past this the rest is ONE '+N' block, whose
+    /// tooltip names them. The values in the zones below still speak for the WHOLE selection.
+    private static let maxChips = 40
+
     /// The items flow and wrap, a block each; what they are worth is in the tooltip.
     private var selectionItems: some View {
-        ItemFlowLayout(spacing: 4) {
-            ForEach(selectedObjects) { obj in
-                itemBlock(obj)
-                    .help(itemValueSummary(obj) + (itemSendSummary(obj).map { "\n" + $0 } ?? ""))
+        let snap = self.snap
+        let shown = Array(snap.objects.prefix(Self.maxChips))
+        let hidden = Array(snap.objects.dropFirst(Self.maxChips))
+        return ItemFlowLayout(spacing: 4) {
+            ForEach(shown) { obj in
+                SelectionChip(
+                    id: obj.id,
+                    name: viewModel.displayName(of: obj),
+                    iconName: ObjectKindIcon.name(for: obj,
+                                                  isOpenConsolidate: viewModel.isInConsolidateEditStack(obj.id)),
+                    color: obj.customColor ?? viewModel.stemColor(for: obj.id),
+                    round: obj.blockCornerRadius >= 20,
+                    missing: viewModel.isMissing(obj),
+                    muted: obj.isMuted,
+                    tooltip: itemValueSummary(obj) + (itemSendSummary(obj, snap).map { "\n" + $0 } ?? ""),
+                    onSelect: { id in
+                        viewModel.select(id, additive: NSEvent.modifierFlags.contains(.command))
+                    })
+                .equatable()
+            }
+            if !hidden.isEmpty {
+                overflowChip(hidden)
             }
         }
     }
 
-    /// One item, drawn as its timeline block is: a white base under the stem (or custom) colour at
-    /// the SELECTED opacity, the block's border, its corners (square-ish for a sound or a MIDI
-    /// clip, round for a group or an aux — `blockCornerRadius`, scaled to a 22 px block), then the
-    /// kind glyph and the name, black, red for a missing file.
-    /// Click = this one alone; ⌘-click = out of (or into) the selection — the timeline's own rule.
-    private func itemBlock(_ obj: SoundObject) -> some View {
-        let color = obj.customColor ?? viewModel.stemColor(for: obj.id)
-        let round = obj.blockCornerRadius >= 20
-        let shape = RoundedRectangle(cornerRadius: round ? 9 : 3)
-        let missing = viewModel.isMissing(obj)
-        return HStack(spacing: 4) {
-            Image(systemName: ObjectKindIcon.name(for: obj,
-                                                  isOpenConsolidate: viewModel.isInConsolidateEditStack(obj.id)))
-                .font(.system(size: 10, weight: .bold))
-                .blockIconStyle(missingFile: missing)
-            Text(obj.displayName)
-                .font(.system(size: 11, weight: .medium))
-                .blockNameStyle(missingFile: missing)
-                .lineLimit(1).truncationMode(.middle)
-            // Always laid out, shown only when muted: a mute must not reflow the whole bunch.
-            Image(systemName: "speaker.slash.fill")
-                .font(.system(size: 8)).foregroundStyle(Color.black.opacity(0.5))
-                .opacity(obj.isMuted ? 1 : 0)
-        }
-        .padding(.horizontal, round ? 8 : 5)
-        .frame(height: 22)
-        .background(shape.fill(color.opacity(0.55)))
-        .background(shape.fill(Color.white))
-        .overlay(shape.strokeBorder(color.opacity(0.9), lineWidth: 1.5))
-        .contentShape(shape)
-        .onTapGesture {
-            viewModel.select(obj.id, additive: NSEvent.modifierFlags.contains(.command))
-        }
+    /// The '+N' block: the selected objects past `maxChips`, named in its tooltip (the first few —
+    /// a tooltip is not a list one scrolls).
+    private func overflowChip(_ hidden: [SoundObject]) -> some View {
+        let names = hidden.prefix(30).map { viewModel.displayName(of: $0) }
+        let more = hidden.count > names.count ? "\n…" : ""
+        return Text(verbatim: "+\(hidden.count)")
+            .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 9).fill(Color.secondary.opacity(0.15)))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1))
+            .help(L("inspector.selection.more.help", hidden.count) + "\n" + names.joined(separator: "\n") + more)
     }
 
     // MARK: Zones (the signal view's, @see AudioFileZoneView / ClipMixZoneView / SendsZoneView / StemsZoneView)
@@ -313,7 +316,7 @@ struct ObjectInspectorView: View {
                           : (uniformReversed! ? L("synoptic.reverse.on") : L("synoptic.reverse.off")))
                 }
                 // Inside the box, under its header: only when EVERY sound is stereo.
-                channelModeRow(ids: sounds.map(\.id))
+                channelModeRow(clips: sounds)
                 HStack(spacing: 6) {
                     DragValueBox(
                         value: relSemis,
@@ -360,7 +363,7 @@ struct ObjectInspectorView: View {
     /// on every sound, a dash otherwise; mixed targets read '≠' until moved.
     @ViewBuilder
     private func multiBPMFields(_ sounds: [SoundObject]) -> some View {
-        TextField(text: $multiBaseBPMText) { Text(verbatim: uniformBaseBPM == nil && sounds.contains { $0.baseBPM != nil } ? "≠" : "—") }
+        TextField(text: $multiBaseBPMText) { Text(verbatim: uniformBaseBPM == nil && snap.anyBaseBPM ? "≠" : "—") }
             .frame(width: max(22, CGFloat(max(2, multiBaseBPMText.count)) * 6.2 + 6))
             .multilineTextAlignment(.center)
             .font(.system(size: 10, design: .monospaced))
@@ -371,10 +374,9 @@ struct ObjectInspectorView: View {
             .onSubmit { commitMultiBaseBPM(sounds) }
             .help(L("synoptic.wavBPM"))
         Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(.tertiary)
-        let bases = sounds.compactMap { o in o.baseBPM.flatMap { $0 > 0 ? $0 : nil } }
-        if bases.count == sounds.count, let first = sounds.first, let firstBase = first.baseBPM {
+        if snap.everySoundHasBase, let firstTarget = snap.firstTargetBPM {
             DragValueBox(
-                value: firstBase * first.speedRatio,
+                value: firstTarget,
                 format: { uniformTargetBPM == nil && !multiTargetTouched ? "≠" : TempoText.display(TempoText.rounded($0)) },
                 range: 20...400, pointsPerStep: 2, width: 38,
                 keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
@@ -463,8 +465,8 @@ struct ObjectInspectorView: View {
 
     /// The mute of the whole selection: lit when every item is muted, half-lit when some are.
     private var multiMuteButton: some View {
-        let muted = selectedObjects.filter(\.isMuted).count
-        let all = !selectedObjects.isEmpty && muted == selectedObjects.count
+        let muted = snap.mutedCount
+        let all = !snap.objects.isEmpty && muted == snap.objects.count
         return Button { viewModel.edit { viewModel.toggleMuteSelected() } } label: {
             Image(systemName: all ? "speaker.slash.fill" : "speaker.wave.2.fill")
                 .font(.system(size: 9, weight: .bold))
@@ -529,7 +531,7 @@ struct ObjectInspectorView: View {
         zone(dashed: true) {
             VStack(alignment: .leading, spacing: 4) {
                 zoneTitle(L("synoptic.zone.aux"))
-                ForEach(viewModel.selectionSendAuxes()) { aux in
+                ForEach(snap.sendAuxes) { aux in
                     multiSendRow(aux)
                 }
             }
@@ -539,9 +541,9 @@ struct ObjectInspectorView: View {
     private func multiSendRow(_ aux: SoundObject) -> some View {
         let rel = sendRelative[aux.id] ?? false
         let auxLabel = aux.label ?? L("aux.defaultLabel", Int(aux.startTime.rounded()))
-        let ids = viewModel.selectedSenders(toAux: aux.id)
-        let enabledCount = ids.filter { viewModel.isSendEnabled(from: $0, to: aux.id) }.count
-        let allOn = !ids.isEmpty && enabledCount == ids.count
+        let senders = snap.sendersByAux[aux.id] ?? []
+        let enabledCount = senders.filter { MultiSelectionSnapshot.isSendEnabled(of: $0, toAux: aux.id) }.count
+        let allOn = !senders.isEmpty && enabledCount == senders.count
         return HStack(spacing: 6) {
             Image(systemName: "arrow.turn.down.right")
                 .font(.system(size: 10, weight: .semibold))
@@ -614,7 +616,7 @@ struct ObjectInspectorView: View {
     // selection shows 'Multiple values' on a neutral background. Each item is prefixed with its
     // keyboard shortcut number (1 = Main, 2 = the 2nd stem…).
     private var multiStemsZone: some View {
-        let current = uniformStemID                                   // nil = mixed values
+        let current = snap.uniformStemID                              // nil = mixed values
         let isMain  = current != nil && current == viewModel.mainStemID
         let stemObj = current.flatMap { id in viewModel.stems.first { $0.id == id } }
         let tint: Color = current == nil ? Color.secondary : (stemObj?.color ?? .secondary)
@@ -673,8 +675,10 @@ struct ObjectInspectorView: View {
     }
 
     /// An object's active send levels, e.g. '→ Reverb −10 · Delay −8'. nil if there are none.
-    private func itemSendSummary(_ o: SoundObject) -> String? {
-        let parts: [String] = viewModel.overlappingAuxes(for: o.id).compactMap { aux in
+    /// The auxes in its scope come from the snapshot (@see `MultiSelectionSnapshot.auxesBySender`),
+    /// not from a scope computed per block.
+    private func itemSendSummary(_ o: SoundObject, _ snap: MultiSelectionSnapshot) -> String? {
+        let parts: [String] = (snap.auxesBySender[o.id] ?? []).compactMap { aux in
             guard let e = o.sends.first(where: { $0.auxID == aux.id }), e.enabled else { return nil }
             let lvl = e.levelDb <= sendMinDb ? "−∞" : "\(Int(e.levelDb.rounded()))"
             return "\(aux.label ?? "Aux") \(lvl)"
@@ -684,20 +688,18 @@ struct ObjectInspectorView: View {
 
     // MARK: - Multiple-selection helpers
 
-    private var selectedObjects: [SoundObject] {
-        viewModel.selectedIDs
-            .compactMap { viewModel.find(id: $0) }
-            .sorted { $0.startTime < $1.startTime }
-    }
+    /// The selection as the inspector reads it, ONCE per (items, selectedIDs): cached on the
+    /// view-model, so every read below is a lookup (@see `EditViewModel.multiSelectionSnapshot`).
+    private var snap: MultiSelectionSnapshot { viewModel.multiSelectionSnapshot }
+
+    private var selectedObjects: [SoundObject] { snap.objects }
 
     /// The SOUNDS of the selection — the audio clips, the only objects with a file to play faster,
     /// to reverse or to give a tempo. A group, an aux or a MIDI clip is left out of the speed.
-    private var selectedSounds: [SoundObject] {
-        selectedObjects.filter(\.isClip)
-    }
+    private var selectedSounds: [SoundObject] { snap.sounds }
 
     private var selectedClipIDs: [UUID] {
-        selectedSounds.map(\.id)
+        snap.sounds.map(\.id)
     }
 
     /// Applies a pitch delta (in semitones) to each clip of the selection,
@@ -719,51 +721,23 @@ struct ObjectInspectorView: View {
 
     // MARK: - Shared values (uniform → absolute mode, otherwise → relative mode at 0)
 
-    private var uniformVolume: Float? {
-        let vals = selectedObjects.map(\.volume)
-        guard let f = vals.first, vals.allSatisfy({ $0 == f }) else { return nil }
-        return f
-    }
+    private var uniformVolume: Float? { snap.uniformVolume }
 
-    private var uniformPan: Float? {
-        let vals = selectedObjects.map(\.pan)
-        guard let f = vals.first, vals.allSatisfy({ $0 == f }) else { return nil }
-        return f
-    }
+    private var uniformPan: Float? { snap.uniformPan }
 
     /// The stem shared by the whole selection (nil if mixed) — used to tick the current strip.
-    /// `stemID == nil` on an object ⇒ Main, so we normalise before comparing.
-    private var uniformStemID: UUID? {
-        let ids = selectedObjects.map { $0.stemID ?? viewModel.mainStemID }
-        guard let f = ids.first, ids.allSatisfy({ $0 == f }) else { return nil }
-        return f
-    }
+    /// `stemID == nil` on an object ⇒ Main, normalised before comparing (in the snapshot).
+    private var uniformStemID: UUID? { snap.uniformStemID }
 
-    private var uniformSemis: Double? {
-        let vals = selectedSounds.map(\.speedRatio)
-        guard let f = vals.first, vals.allSatisfy({ abs($0 - f) < 1e-6 }) else { return nil }
-        return 12 * log2(f)
-    }
+    private var uniformSemis: Double? { snap.uniformSemis }
 
     /// true / false when every sound agrees, nil when they differ (the pill then half-lit).
-    private var uniformReversed: Bool? {
-        let vals = selectedSounds.map(\.isReversed)
-        guard let f = vals.first, vals.allSatisfy({ $0 == f }) else { return nil }
-        return f
-    }
+    private var uniformReversed: Bool? { snap.uniformReversed }
 
-    private var uniformBaseBPM: Double? {
-        let vals = selectedSounds.map(\.baseBPM)
-        guard let f = vals.first, let v = f, vals.allSatisfy({ $0 == f }) else { return nil }
-        return v
-    }
+    private var uniformBaseBPM: Double? { snap.uniformBaseBPM }
 
     /// The tempo every sound plays at (base × speed), nil if they differ or one has no base.
-    private var uniformTargetBPM: Double? {
-        let vals = selectedSounds.map { o in o.baseBPM.map { TempoText.rounded($0 * o.speedRatio) } }
-        guard let f = vals.first, let v = f, vals.allSatisfy({ $0 == f }) else { return nil }
-        return v
-    }
+    private var uniformTargetBPM: Double? { snap.uniformTargetBPM }
 
     /// After the target BPM has moved every speed: the speed boxes read the new state.
     private func refreshSpeedBaseline() {
@@ -771,13 +745,10 @@ struct ObjectInspectorView: View {
         else { relSemis = 0; speedRelative = true }
     }
 
-    private var volumeSignature: [UUID: Float] {
-        Dictionary(uniqueKeysWithValues: selectedObjects.map { ($0.id, $0.volume) })
-    }
+    // Already computed with the snapshot: the `onChange`s compare two dictionaries, they build none.
+    private var volumeSignature: [UUID: Float] { snap.volumeSignature }
 
-    private var panSignature: [UUID: Float] {
-        Dictionary(uniqueKeysWithValues: selectedObjects.map { ($0.id, $0.pan) })
-    }
+    private var panSignature: [UUID: Float] { snap.panSignature }
 
     /// The volumes moved and the box did not do it (v + ↑/↓, the wheel, an undo…): a shared value
     /// is shown as it is; differing values keep the box relative and add what the FIRST item
@@ -817,9 +788,10 @@ struct ObjectInspectorView: View {
         multiTargetTouched = false
 
         relSend.removeAll(); sendRelative.removeAll()
-        for aux in viewModel.selectionSendAuxes() {
-            let levels = viewModel.selectedSenders(toAux: aux.id)
-                .map { viewModel.sendLevel(from: $0, to: aux.id) }
+        let snap = self.snap
+        for aux in snap.sendAuxes {
+            let levels = (snap.sendersByAux[aux.id] ?? [])
+                .map { MultiSelectionSnapshot.sendLevel(of: $0, toAux: aux.id) }
             if let f = levels.first, levels.allSatisfy({ $0 == f }) {
                 relSend[aux.id] = Double(f); sendRelative[aux.id] = false
             } else {
@@ -841,30 +813,100 @@ struct ObjectInspectorView: View {
     }
 }
 
+/// One block of the multiple selection, drawn as its timeline block is: a white base under the stem
+/// (or custom) colour at the SELECTED opacity, the block's border, its corners (square-ish for a
+/// sound or a MIDI clip, round for a group or an aux — `blockCornerRadius`, scaled to a 22 px
+/// block), then the kind glyph and the name, black, red for a missing file.
+/// Click = this one alone; ⌘-click = out of (or into) the selection — the timeline's own rule.
+///
+/// Its inputs are plain values and it is `Equatable` (the closure is the one thing left out of the
+/// comparison — it captures the view-model, which never changes): under `.equatable()` a pass that
+/// changes nothing about THIS block does not evaluate its body, which is what keeps a selection of
+/// forty blocks from re-laying forty blocks whenever one value moves.
+private struct SelectionChip: View, Equatable {
+    let id: UUID
+    let name: String
+    let iconName: String
+    let color: Color
+    let round: Bool
+    let missing: Bool
+    let muted: Bool
+    let tooltip: String
+    let onSelect: (UUID) -> Void
+
+    static func == (l: SelectionChip, r: SelectionChip) -> Bool {
+        l.id == r.id && l.name == r.name && l.iconName == r.iconName && l.color == r.color
+            && l.round == r.round && l.missing == r.missing && l.muted == r.muted
+            && l.tooltip == r.tooltip
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: round ? 9 : 3)
+        HStack(spacing: 4) {
+            Image(systemName: iconName)
+                .font(.system(size: 10, weight: .bold))
+                .blockIconStyle(missingFile: missing)
+            Text(name)
+                .font(.system(size: 11, weight: .medium))
+                .blockNameStyle(missingFile: missing)
+                .lineLimit(1).truncationMode(.middle)
+            // Always laid out, shown only when muted: a mute must not reflow the whole bunch.
+            Image(systemName: "speaker.slash.fill")
+                .font(.system(size: 8)).foregroundStyle(Color.black.opacity(0.5))
+                .opacity(muted ? 1 : 0)
+        }
+        .padding(.horizontal, round ? 8 : 5)
+        .frame(height: 22)
+        .background(shape.fill(color.opacity(0.55)))
+        .background(shape.fill(Color.white))
+        .overlay(shape.strokeBorder(color.opacity(0.9), lineWidth: 1.5))
+        .contentShape(shape)
+        .onTapGesture { onSelect(id) }
+        .help(tooltip)
+    }
+}
+
 /// The blocks of a large selection, flowing left to right and wrapping — a row per block would
 /// push the zones out of the dock past a dozen items.
+///
+/// The blocks' own sizes are measured ONCE per set of subviews (`makeCache` / `updateCache`):
+/// `sizeThatFits` and `placeSubviews` each used to measure every block again, and SwiftUI asks for
+/// several of the first for one of the second.
 private struct ItemFlowLayout: Layout {
     var spacing: CGFloat
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+    struct Cache { var sizes: [CGSize]? = nil }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) { cache.sizes = nil }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews, cache: &cache)
         return CGSize(width: proposal.width ?? rows.width, height: rows.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let rows = arrange(width: bounds.width, subviews: subviews)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let rows = arrange(width: bounds.width, subviews: subviews, cache: &cache)
         for (i, p) in rows.origins.enumerated() {
             subviews[i].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y),
                               proposal: ProposedViewSize(rows.sizes[i]))
         }
     }
 
-    private func arrange(width: CGFloat, subviews: Subviews)
+    private func arrange(width: CGFloat, subviews: Subviews, cache: inout Cache)
         -> (origins: [CGPoint], sizes: [CGSize], width: CGFloat, height: CGFloat) {
+        let natural: [CGSize]
+        if let known = cache.sizes, known.count == subviews.count {
+            natural = known
+        } else {
+            natural = subviews.map { $0.sizeThatFits(.unspecified) }
+            cache.sizes = natural
+        }
         var origins: [CGPoint] = [], sizes: [CGSize] = []
+        origins.reserveCapacity(natural.count); sizes.reserveCapacity(natural.count)
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxX: CGFloat = 0
-        for sv in subviews {
-            var sz = sv.sizeThatFits(.unspecified)
+        for var sz in natural {
             sz.width = min(sz.width, width)
             if x > 0, x + sz.width > width { x = 0; y += rowH + spacing; rowH = 0 }
             origins.append(CGPoint(x: x, y: y)); sizes.append(sz)

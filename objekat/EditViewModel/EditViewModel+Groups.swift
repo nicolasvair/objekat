@@ -125,7 +125,23 @@ extension EditViewModel {
     /// The IMMEDIATE parent group of an object, at any depth of
     /// nesting (nil if the object is top-level). The parent's startTime
     /// returned is absolute (the model's convention).
+    ///
+    /// A walk of the tree, O(N) — until the same `items` has been asked a few times in a row; from
+    /// then on `parentIDMap()` answers in O(1) until the next change (the threshold is `find`'s: a
+    /// loop of `update` + `parentGroup` would otherwise rebuild the map per iteration for a single
+    /// read). The inspector's multiple selection asks for 2 parents per (sender, aux) pair.
     func parentGroup(for childID: UUID) -> SoundObject? {
+        if parentIDCache == nil {
+            parentLookupsSinceMutation += 1
+            if parentLookupsSinceMutation <= 8 { return referenceParentGroup(for: childID) }
+        }
+        guard let parentID = parentIDMap()[childID] else { return nil }
+        return find(id: parentID)
+    }
+
+    /// The tree walk — what `parentGroup(for:)` was before the map, kept as what the threshold
+    /// falls back on and as the DEBUG oracle (@see `debug.selection_send_scope`).
+    func referenceParentGroup(for childID: UUID) -> SoundObject? {
         func search(in arr: [SoundObject]) -> SoundObject? {
             for item in arr {
                 guard case .group(let children, _) = item.kind else { continue }

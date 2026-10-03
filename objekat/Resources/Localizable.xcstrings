@@ -6096,6 +6096,29 @@
         }
       }
     },
+    "inspector.selection.more.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d more objects, not shown here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d objetos más, no mostrados aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d autres objets, non affichés ici"
+          }
+        }
+      }
+    },
     "inspector.stem.mixedValues": {
       "extractionState": "manual",
       "localizations": {

@@ -368,9 +368,14 @@ extension EditViewModel {
     }
 
     /// child id → id of its IMMEDIATE parent group, for every object under a group (a top-level
-    /// object has no entry). One walk, O(N). Internal: the Send tool's batch reads it too
-    /// (@see `sendToolAuxes(forObjects:)`).
+    /// object has no entry). One walk, O(N), then CACHED until `items` next changes (dropped by its
+    /// `didSet`, with `findIndex`): the inspector, the Send tool and `parentGroup(for:)` all ask for
+    /// it, several times per pass. Internal: the Send tool's batch reads it too (@see
+    /// `sendToolAuxes(forObjects:)`).
     func parentIDMap() -> [UUID: UUID] {
+        // Read through the observable property, cache or not (@see find(id:)).
+        let roots = items
+        if let parentIDCache { return parentIDCache }
         var map: [UUID: UUID] = [:]
         func walk(_ arr: [SoundObject]) {
             for o in arr {
@@ -379,7 +384,8 @@ extension EditViewModel {
                 walk(children)
             }
         }
-        walk(items)
+        walk(roots)
+        parentIDCache = map
         return map
     }
 
