@@ -219,15 +219,15 @@ extension EditViewModel {
         }
     }
 
-    /// Returns the current TimeSelection, or the bounding box of the selected items.
+    /// Returns the current TimeSelection, or the frame the selected objects fill.
+    ///
+    /// The fallback goes through `selectedObjectsFrame()`, which reads `laneEntries` (ABSOLUTE
+    /// times, DISPLAY rows), and not the top-level `items`: the children of an open group have a
+    /// container-relative `startTime` and a base lane that means nothing on the timeline, so
+    /// reading them off `items` ignored them altogether (a ⇧-click after selecting a child would
+    /// forget the child). One definition, whatever the depth of the object.
     func baseTimeSelection() -> TimeSelection? {
-        if let existing = timeSelection { return existing }
-        let selected = items.filter { selectedIDs.contains($0.id) }
-        guard let tMin = selected.map(\.startTime).min(),
-              let tMax = selected.map({ $0.startTime + $0.duration }).max(),
-              let lMin = selected.map(\.lane).min(),
-              let lMax = selected.map(\.lane).max() else { return nil }
-        return TimeSelection(timeRange: tMin...tMax, lanes: Set(lMin...lMax))
+        timeSelection ?? selectedObjectsFrame()
     }
 
     /// The origin a ⇧-click extends the time selection FROM, or nil when there is none to trust.
@@ -235,8 +235,8 @@ extension EditViewModel {
     /// SELF-VALIDATING rather than book-kept, and that is the whole reason it is a function: the
     /// anchor is good while nothing else has taken the selection over — either nothing at all is
     /// selected (the caret alone, which is the case ⇧ was missing entirely), or the range traced
-    /// still hangs off this very point. A range made by a rubber band, or the bounding box read
-    /// off an object selection, therefore answers nil and the old extension takes it (@see
+    /// still hangs off this very point. A range made by a rubber band, or the frame read off an
+    /// object selection (`selectedObjectsFrame`, at any depth), therefore answers nil and the old extension takes it (@see
     /// `TimelineView.handleCanvasTap`) — so no drag, no command and no undo has to remember to
     /// clear anything, which is exactly how a second anchor would go stale.
     func timeSelectionExtendOrigin() -> (lane: Int, time: Double)? {
