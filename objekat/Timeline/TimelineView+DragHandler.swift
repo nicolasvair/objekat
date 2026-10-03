@@ -1917,9 +1917,12 @@ extension TimelineView {
 
         guard let state = volumeDrag else { return }
         let dDB = Float(-value.translation.height / 10.0)
-        for (id, anchorDB) in state.anchors {
-            let newDB = (anchorDB + dDB).clamped(to: -96 ... min(40, anchorDB + 12))
-            viewModel.updateVolume(id: id, volume: newDB)
+        // One batch per frame: K `updateVolume` = K writes of `items` = K lane-entry rebuilds otherwise.
+        viewModel.batchItemsMutation {
+            for (id, anchorDB) in state.anchors {
+                let newDB = (anchorDB + dDB).clamped(to: -96 ... min(40, anchorDB + 12))
+                viewModel.updateVolume(id: id, volume: newDB)
+            }
         }
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy { viewModel.find(id: $0.key)?.volume == $0.value }

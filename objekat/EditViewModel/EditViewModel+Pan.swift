@@ -69,19 +69,28 @@ extension EditViewModel {
     func applyPanDelta(_ delta: Float, from anchors: [UUID: Float]) {
         guard !anchors.isEmpty else { return }
         // Two passes (see adjustVolumeDB): apply the delta everywhere BEFORE propagating, otherwise a
-        // linked instance still to come in the loop would see its delta doubled.
-        for (id, anchor) in anchors {
-            let raw = (anchor + delta).clamped(to: -1...1)
-            update(id: id) { $0.pan = Self.detentedPan(raw) }
-            recordAutomationTouch(id, .pan)
-            pushMix(id)
+        // linked instance still to come in the loop would see its delta doubled. The whole thing in
+        // ONE batch: every `update` writes `items`, and each write alone rebuilt the lane entries
+        // (O(N)) — K objects cost K rebuilds per step. Nothing in here reads `laneEntries`.
+        batchItemsMutation {
+            // ONE traversal and ONE write of `items` for the whole selection (`updateMany`): the
+            // batch above removed the K lane-entry rebuilds, but K `update(id:)` still walked the
+            // tree and copied the enclosing groups' children K times each.
+            updateMany(Set(anchors.keys)) { o in
+                guard let anchor = anchors[o.id] else { return }
+                o.pan = Self.detentedPan((anchor + delta).clamped(to: -1...1))
+                o.recordAutomationTouch(.pan)
+            }
+            for id in anchors.keys { pushMix(id) }
+            for id in anchors.keys { propagateLinkedAttr(.pan, from: id) }
+            isDirty = true
         }
-        for id in anchors.keys { propagateLinkedAttr(.pan, from: id) }
-        isDirty = true
     }
 
     func resetPanSelected() {
-        for id in selectedIDs { updatePan(id: id, pan: 0.0) }
-        isDirty = true
+        batchItemsMutation {
+            for id in selectedIDs { updatePan(id: id, pan: 0.0) }
+            isDirty = true
+        }
     }
 }

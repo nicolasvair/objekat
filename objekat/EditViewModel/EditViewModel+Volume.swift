@@ -16,18 +16,25 @@ extension EditViewModel {
         guard !selectedIDs.isEmpty else { return }
         // Two passes: the delta is applied to the whole selection FIRST, and only THEN propagated.
         // Otherwise propagating along the loop would bump a linked instance still to come → doubled delta.
-        for id in selectedIDs {
-            update(id: id) { $0.volume = ($0.volume + dB).rounded().clamped(to: -96...40) }
-            recordAutomationTouch(id, .volume)
-            pushMix(id)
+        // One batch: a single rebuild of the lane entries instead of one per `items` write.
+        batchItemsMutation {
+            // ONE traversal and ONE write of `items` (`updateMany`), then the engine, then the links.
+            let ids = selectedIDs
+            updateMany(ids) { o in
+                o.volume = (o.volume + dB).rounded().clamped(to: -96...40)
+                o.recordAutomationTouch(.volume)
+            }
+            for id in ids { pushMix(id) }
+            for id in ids { propagateLinkedAttr(.volume, from: id) }
+            isDirty = true
         }
-        for id in selectedIDs { propagateLinkedAttr(.volume, from: id) }
-        isDirty = true
     }
 
     func resetVolumeSelected() {
-        for id in selectedIDs { updateVolume(id: id, volume: 0.0) }
-        isDirty = true
+        batchItemsMutation {
+            for id in selectedIDs { updateVolume(id: id, volume: 0.0) }
+            isDirty = true
+        }
     }
 
     /// Toggles the mute of ONE precise object (used by the synoptic's "clip" rectangle,
@@ -45,11 +52,13 @@ extension EditViewModel {
         let targetMuted = selectedIDs.contains { id in
             !(find(id: id)?.isMuted ?? false)
         }
-        for id in selectedIDs {
-            update(id: id) { $0.isMuted = targetMuted }
-            pushMix(id)
-            propagateLinkedAttr(.mute, from: id)
+        batchItemsMutation {
+            for id in selectedIDs {
+                update(id: id) { $0.isMuted = targetMuted }
+                pushMix(id)
+                propagateLinkedAttr(.mute, from: id)
+            }
+            isDirty = true
         }
-        isDirty = true
     }
 }

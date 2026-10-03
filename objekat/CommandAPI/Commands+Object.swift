@@ -297,7 +297,7 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let pan = Float(try p.double("pan")).clamped(to: -1...1)
             let ids = try CommandAdapters.targetIDs(p, in: vm)
-            for id in ids { vm.updatePan(id: id, pan: pan) }
+            vm.batchItemsMutation { for id in ids { vm.updatePan(id: id, pan: pan) } }
             return .object(["count": .int(ids.count), "pan": .number(Double(pan))])
         }
 
@@ -330,11 +330,13 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let ids = try CommandAdapters.targetIDs(p, in: vm)
             let wanted = try p.optionalBool("muted")
-            for id in ids {
-                guard let object = vm.find(id: id) else { continue }
-                // `toggleMute` is the only path that also mutes on the engine side: we flip
-                // only what is not already in the requested state.
-                if object.isMuted != (wanted ?? !object.isMuted) { vm.toggleMute(id: id) }
+            vm.batchItemsMutation {
+                for id in ids {
+                    guard let object = vm.find(id: id) else { continue }
+                    // `toggleMute` is the only path that also mutes on the engine side: we flip
+                    // only what is not already in the requested state.
+                    if object.isMuted != (wanted ?? !object.isMuted) { vm.toggleMute(id: id) }
+                }
             }
             var states: [String: JSONValue] = [:]
             for id in ids { states[id.uuidString] = .bool(vm.find(id: id)?.isMuted ?? false) }

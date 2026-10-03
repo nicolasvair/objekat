@@ -449,7 +449,11 @@ struct ObjectInspectorView: View {
             help: L("help.drag.volume"),
             // Touching the control: the fader becomes the 'future automation' row of EVERY object
             // in the batch, without any value having to move.
-            onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .volume) } },
+            onTouch: {
+                viewModel.batchItemsMutation {
+                    for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .volume) }
+                }
+            },
             onBegin: { viewModel.pushUndo() },
             onChange: { new in
                 viewModel.adjustVolumeDB(Float(new - relVolume))
@@ -501,7 +505,11 @@ struct ObjectInspectorView: View {
             range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
             parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
             help: L("help.drag.pan"),
-            onTouch: { for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) } },
+            onTouch: {
+                viewModel.batchItemsMutation {
+                    for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, .pan) }
+                }
+            },
             onBegin: {
                 viewModel.pushUndo()
                 panAnchors = viewModel.panSnapshot()

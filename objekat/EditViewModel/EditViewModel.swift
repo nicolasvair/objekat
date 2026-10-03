@@ -1015,7 +1015,7 @@ final class EditViewModel {
     }
 
     /// Grouped mutations of `items`: a single rebuild of laneEntries at the end instead
-    /// of one per write. ⚠️ DO NOT read `laneEntries` inside (the cache is frozen until
+    /// of one per write (drags AND multi-object mix settings: pan, volume, mute). ⚠️ DO NOT read `laneEntries` inside (the cache is frozen until
     /// it returns). Re-entrant (depth).
     func batchItemsMutation(_ body: () -> Void) {
         beginCoalescedItemsMutation()
@@ -1655,6 +1655,32 @@ final class EditViewModel {
                 }
             }
             return false
+        }
+        return apply(in: &items)
+    }
+
+    /// `update(id:)` for a SET of objects: ONE traversal of the tree and ONE write of `items`
+    /// (hence ONE `didSet`), where K calls of `update(id:)` walk the tree K times and, for a child
+    /// of a nested group, copy each enclosing `children` array K times (O(K·N)). Returns how many
+    /// objects were transformed; an id that no longer exists is skipped. `transform` runs on a
+    /// group AND on its descendants when both are in `ids`. Nothing here reads `laneEntries`, and
+    /// nothing else is written: the caller pushes to the engine and propagates AFTER, in one pass.
+    @discardableResult
+    func updateMany(_ ids: Set<UUID>, transform: (inout SoundObject) -> Void) -> Int {
+        guard !ids.isEmpty else { return 0 }
+        func apply(in arr: inout [SoundObject]) -> Int {
+            var count = 0
+            for i in arr.indices {
+                if ids.contains(arr[i].id) { transform(&arr[i]); count += 1 }
+                if case .group(var children, let isExpanded) = arr[i].kind {
+                    let inner = apply(in: &children)
+                    if inner > 0 {
+                        arr[i].kind = .group(children: children, isExpanded: isExpanded)
+                        count += inner
+                    }
+                }
+            }
+            return count
         }
         return apply(in: &items)
     }

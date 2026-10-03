@@ -700,8 +700,10 @@ extension CommandRegistry {
                 // instances.
                 vm.adjustVolumeDB(db)
             } else {
-                for id in ids { vm.updateVolume(id: id, volume: db) }
-                vm.isDirty = true
+                vm.batchItemsMutation {
+                    for id in ids { vm.updateVolume(id: id, volume: db) }
+                    vm.isDirty = true
+                }
             }
             // Built in a loop (and not with `Dictionary(uniqueKeysWithValues:)`): a list of ids
             // holding a duplicate would crash the unique-keys initialiser.

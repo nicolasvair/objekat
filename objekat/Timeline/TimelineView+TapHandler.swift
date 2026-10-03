@@ -671,7 +671,9 @@ extension TimelineView {
     /// Remembers a parameter being touched over the WHOLE selection: the volume / pan tools act on
     /// all of it, so the row offered has to open on each of its objects.
     func recordToolTouch(_ ref: ParamRef) {
-        for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, ref) }
+        viewModel.batchItemsMutation {
+            for id in viewModel.selectedIDs { viewModel.recordAutomationTouch(id, ref) }
+        }
     }
 
     // MARK: - Send tap (on/off plus focus)
