@@ -138,9 +138,12 @@ extension CommandRegistry {
                         + "(default: the middle of the object), and the point's lane is the object's "
                         + "own display lane. Without `id`: a click on an EMPTY lane — `lane` (the "
                         + "display row) and `time` are then required, and the caller states that no "
-                        + "object lies under the point. Answers `layout` (`range_object_menu` "
-                        + "when the point lies inside the time selection ON an object — the object's "
-                        + "own menu applied to the ZONE, no marker and no comment — `range_menu` when it lands on an "
+                        + "object lies under the point. Answers `layout` (`range_annotations_menu` "
+                        + "when the point lies inside the time selection on the UPPER half of an "
+                        + "object's block — the object marker and the comment alone, as ever — "
+                        + "`range_object_menu` when it lies inside the time selection on the LOWER "
+                        + "half — the object's own menu applied to the ZONE, no marker and no "
+                        + "comment — `range_menu` when it lands on an "
                         + "empty lane while a time selection exists ANYWHERE, inside it or not — "
                         + "today's menu — `group_selection_menu` "
                         + "when it lands on an empty lane with NO time selection while clips (not "
@@ -205,6 +208,7 @@ extension CommandRegistry {
             let layout: String
             switch plan.layout {
             case .rangeMenu: layout = "range_menu"
+            case .rangeAnnotationsMenu: layout = "range_annotations_menu"
             case .rangeObjectMenu: layout = "range_object_menu"
             case .objectTimeMenu: layout = "object_time_menu"
             case .objectBodyMenu: layout = "object_body_menu"
@@ -601,7 +605,7 @@ extension CommandRegistry {
             return vm.timeSelection.map { .zone($0) }
         case .objectBodyMenu, .groupSelectionMenu:
             return .objects(vm.selectedIDs)
-        case .objectTimeMenu, .nothing:
+        case .objectTimeMenu, .rangeAnnotationsMenu, .nothing:
             return nil
         }
     }

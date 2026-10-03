@@ -1450,9 +1450,11 @@ lower the OBJECT); the point's lane is the object's display lane and `time` its 
 object's middle). Without `id`, the click is on an EMPTY lane (no object under the point, which the
 caller states): `lane` (the display row) and `time` are then both required, and `zone` is ignored.
 
-It answers `layout` — `range_object_menu` (the point lies INSIDE the time selection AND on an
-object, either half of its block: the OBJECT's own menu applied to the ZONE — see below — with neither
-marker nor comment, and nothing is selected, cleared or moved), `range_menu` (today's menu: group, aux clip, MIDI clip, comment.
+It answers `layout` — `range_annotations_menu` (the point lies INSIDE the time selection AND on the
+UPPER half of an object's block: the object marker and the comment alone, as it has always been; nothing
+is selected, cleared or moved; no entries), `range_object_menu` (INSIDE the time selection AND on the
+LOWER half: the OBJECT's own menu applied to the ZONE — see below — with neither marker nor comment, and
+nothing is selected, cleared or moved), `range_menu` (today's menu: group, aux clip, MIDI clip, comment.
 The point lands on NO object while a time selection exists ANYWHERE, inside the range or not, on its
 lanes or not — a click on an empty lane has never cared where the range lies),
 `group_selection_menu` ('Group the clip / the selection (N)' alone: an empty lane, NO time selection,
@@ -1461,7 +1463,7 @@ nothing, the selection is what the menu is about), `object_time_menu` (upper hal
 only), `object_body_menu` (lower half: the object's own menu) or `nothing` (no menu, the event goes on
 to the views: an empty lane with no time selection and nothing groupable selected) — plus `selects_object`, `offers_object_marker`, `offers_comment`, `applied`, the `scope` the entries
 apply to (`zone` for `range_object_menu` and `range_menu`, `objects` for the body menu, `none`
-otherwise), the `entries` the menu lists and the resulting `selection`. On an OBJECT, a range lying elsewhere does not drive the menu. An object ALREADY selected
+otherwise — `range_annotations_menu` included), the `entries` the menu lists and the resulting `selection`. On an OBJECT, a range lying elsewhere does not drive the menu. An object ALREADY selected
 is never re-selected (the multiple selection is kept, the range too); a click on an empty lane never
 selects. `apply: false` only asks. The menu itself is not reachable from here, but its content is:
 `entries` is read off `EditViewModel.objectMenuEntries(clicked:scope:)`, the very list the AppKit menu
@@ -1477,7 +1479,8 @@ The object's menu has ONE definition and two scopes (`ObjectActionScope`):
 
 - **objects** — the right click on an object's lower half: the entries act on the selection, the
   object clicked having been selected first (unless it already was);
-- **zone** — the right click INSIDE the time selection, on an object: the same entries, applied to
+- **zone** — the right click INSIDE the time selection, on the LOWER half (body) of an object's block
+  (the upper half keeps the annotation items, marker + comment): the same entries, applied to
   the part of the objects inside the range and to nothing else (`consolidate_linked` and 'relink',
   which are about whole objects, are not offered). The objects the range crosses, on the display rows
   it covers (an infinite bus excepted; a child leaves with its ancestor when that one is crossed too),
@@ -2075,7 +2078,7 @@ A few points of vocabulary that save mistakes:
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
 | `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
-| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range on an object builds the object's menu on the zone (no marker, no comment) and touches nothing, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
+| `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range builds, on the upper half, the annotations alone (marker + comment) and, on the lower half, the object's menu on the zone (no marker, no comment), and touches nothing, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
 | `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |

@@ -13,12 +13,16 @@ import Foundation
 // way `CrossfadeGrab` / `CutSelection` are: the monitor that builds the menu is AppKit and cannot
 // be driven headless, but WHAT IT DECIDES can.
 //
-//   • INSIDE the time selection, ON an object (either half of its block): the OBJECT's own menu,
-//     applied to the ZONE — every entry the lower half offers (group, consolidate, deconsolidate,
-//     colour, scripts, FX link…) acts on the part of the objects inside the range and on nothing
-//     else (@see ObjectActionScope.zone). No marker and no comment: the object's menu has none
-//     (they live in its upper half and over an empty lane's range). The click selects nothing —
-//     the range is what the hand is pointing at; the objects are isolated by the action itself.
+//   • INSIDE the time selection, ON the UPPER half (time) of an object's block: the two annotation
+//     items and nothing else — 'Create an object marker' (in the object, at the instant aimed at)
+//     and 'Create a comment' (over the range). That zone is left exactly as it has always been.
+//     The click selects nothing.
+//   • INSIDE the time selection, ON the LOWER half (body) of an object's block: the OBJECT's own
+//     menu, applied to the ZONE — every entry the lower half offers (group, consolidate,
+//     deconsolidate, colour, scripts, FX link…) acts on the part of the objects inside the range
+//     and on nothing else (@see ObjectActionScope.zone). No marker and no comment: the object's
+//     menu has none. The click selects nothing — the range is what the hand is pointing at; the
+//     objects are isolated by the action itself.
 //   • INSIDE the time selection, on NO object: the menu the range has always had, untouched, and
 //     the click selects nothing — the range is what was aimed at.
 //   • Upper half of a block, outside any range: time. A marker laid inside the object at that
@@ -54,8 +58,12 @@ enum ContextMenuPlan {
         /// The range's menu (group, aux, MIDI clip, comment…): the point is on an empty lane while
         /// a time selection exists (inside it or not).
         case rangeMenu
-        /// The point is inside the time selection AND on an object: the object's own menu, applied
-        /// to the zone (the part of the objects inside the range).
+        /// The point is inside the time selection AND on the upper half (time) of an object's
+        /// block: the object marker and the comment, and nothing else.
+        case rangeAnnotationsMenu
+        /// The point is inside the time selection AND on the lower half (body) of an object's
+        /// block: the object's own menu, applied to the zone (the part of the objects inside the
+        /// range).
         case rangeObjectMenu
         /// The upper half of a block: the annotation items only.
         case objectTimeMenu
@@ -87,11 +95,20 @@ enum ContextMenuPlan {
     static func decide(pointInTimeSelection: Bool, hasTimeSelection: Bool, zone: BlockZone?,
                        objectAlreadySelected: Bool, hasGroupableSelection: Bool = false) -> Decision {
         if pointInTimeSelection {
-            // On an object: the object's menu on the zone, which has neither the marker nor the
-            // comment. On no object: the range's menu, which keeps its comment.
-            return Decision(layout: zone != nil ? .rangeObjectMenu : .rangeMenu,
-                            selectsObject: false,
-                            offersObjectMarker: false, offersComment: zone == nil)
+            // Upper half (time): the annotation items, as ever. Lower half (body): the object's
+            // menu on the zone, which has neither the marker nor the comment. On no object: the
+            // range's menu, which keeps its comment.
+            switch zone {
+            case .time:
+                return Decision(layout: .rangeAnnotationsMenu, selectsObject: false,
+                                offersObjectMarker: true, offersComment: true)
+            case .body:
+                return Decision(layout: .rangeObjectMenu, selectsObject: false,
+                                offersObjectMarker: false, offersComment: false)
+            case .none:
+                return Decision(layout: .rangeMenu, selectsObject: false,
+                                offersObjectMarker: false, offersComment: true)
+            }
         }
         switch zone {
         case .none:

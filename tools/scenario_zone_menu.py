@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """The object menu applied to a ZONE — `selection.context_action` with `apply_to_zone`.
 
-The right click INSIDE a time selection, on an object, builds the OBJECT's own menu in `zone` scope
-(`EditViewModel.performZoneMenuAction`): the objects the range crosses are CUT at its two bounds and
+The right click INSIDE a time selection, on the LOWER half (body) of an object's block, builds the OBJECT's own menu in `zone` scope
+(`EditViewModel.performZoneMenuAction`; the UPPER half keeps the annotations, marker + comment): the objects the range crosses are CUT at its two bounds and
 the action applies to the pieces inside, and to nothing else. There is no branch for the depth, so
 every case below runs twice — the objects at the top level, and as children of an open group:
 

@@ -1176,12 +1176,14 @@ extension TimelineView {
             }
 
             // WHAT THIS RIGHT CLICK MEANS (@see ContextMenuPlan — the decision is pure and asserted
-            // alone). Inside the time selection ON an object: the object marker and the comment
-            // alone, nothing selected. On NO object (an empty
-            // lane, a piano roll's or an automation band's row): the same range's menu whenever a
-            // time selection exists, wherever it lies; with none but clips selected, 'Group the
-            // selection' alone; with neither, no menu at all, the event going on to the views. Upper half of a block: time, so the annotation items
-            // and NOTHING selected, the cursor left where it is. Lower half: the object — selected
+            // alone). Inside the time selection ON an object: the upper half (time) gives the
+            // object marker and the comment alone, as it always has; the lower half (body) gives
+            // the object's menu applied to the ZONE; nothing is selected either way. On NO object
+            // (an empty lane, a piano roll's or an automation band's row): the same range's menu
+            // whenever a time selection exists, wherever it lies; with none but clips selected,
+            // 'Group the selection' alone; with neither, no menu at all, the event going on to the
+            // views. Upper half of a block outside any range: time, so the annotation items and
+            // NOTHING selected, the cursor left where it is. Lower half: the object — selected
             // first, as a left click would (unless it is already part of the selection, which then
             // stays whole).
             let plan: ContextMenuPlan.Decision = MainActor.assumeIsolated {
@@ -1198,10 +1200,13 @@ extension TimelineView {
                 }
             }
 
-            // The upper half of a block, outside any range: TIME — a marker laid inside the object
-            // at the instant aimed at, and no comment (a comment is about a range and none lies
-            // under the hand). Nothing is selected (@see ContextMenuPlan: `selectsObject` is false).
-            if plan.layout == .objectTimeMenu {
+            // The annotation items ALONE, in two cases. The upper half of a block, outside any
+            // range: TIME — a marker laid inside the object at the instant aimed at, and no
+            // comment, since a comment is about a range and none lies under the hand. And the upper
+            // half of a block INSIDE the time selection: the object marker and the comment over the
+            // range, nothing else. Neither case touches the selection (@see ContextMenuPlan:
+            // `selectsObject` is false for both).
+            if plan.layout == .objectTimeMenu || plan.layout == .rangeAnnotationsMenu {
                 let timeMenu = NSMenu(title: "")
                 timeMenu.autoenablesItems = false
                 proxies = []
@@ -1210,6 +1215,10 @@ extension TimelineView {
                         let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
                         addObjectMarkerItem(menu: timeMenu, proxies: &proxies, vm: vm,
                                             objectID: target.id, atAbsoluteTime: t)
+                    }
+                    if plan.offersComment, let sel = vm.timeSelection {
+                        if !timeMenu.items.isEmpty { timeMenu.addItem(.separator()) }
+                        addCommentItem(menu: timeMenu, proxies: &proxies, vm: vm, selection: sel)
                     }
                 }
                 guard !timeMenu.items.isEmpty else { return event }

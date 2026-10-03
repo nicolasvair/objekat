@@ -13,9 +13,11 @@ it, the part the monitor runs BEFORE it builds anything: `ContextMenuPlan` (also
     'Consolidate N linked' and the FX link remain on offer);
   * an object OUTSIDE the selection replaces it;
   * the upper half (time): no selection, no cursor move, the marker on offer, no comment;
-  * a point INSIDE the time selection, ON an object (either half): the object's own menu applied
-    to the ZONE (`range_object_menu`, scope `zone`, no marker, no comment), and nothing touched —
-    no object selected, the range kept whole, the cursor where it was;
+  * a point INSIDE the time selection, ON the upper half (time) of an object: the annotation items
+    alone, as ever (`range_annotations_menu`, marker + comment); ON its lower half (body): the
+    object's own menu applied to the ZONE (`range_object_menu`, scope `zone`, no marker, no
+    comment). Either way nothing is touched — no object selected, the range kept whole, the cursor
+    where it was;
   * a time selection lying elsewhere is cleared by a body click outside it, exactly as the left
     click clears it;
   * a click on NO object (an empty lane, `id` omitted, `lane` + `time` given): a time selection
@@ -150,9 +152,15 @@ with ObjekatClient(SOCK) as c:
     before = cmd("selection.get")
     for zone in ("time", "body"):
         r = click(a, zone=zone, time=2.1)
-        check("inside the range (%s half): the object's menu on the zone, no marker, no comment" % zone,
-              r["layout"] == "range_object_menu" and r["offers_comment"] is False
-              and r["offers_object_marker"] is False and r.get("scope") == "zone", json.dumps(r))
+        if zone == "time":
+            check("inside the range (time half): the annotations alone, marker and comment, no scope",
+                  r["layout"] == "range_annotations_menu" and r["offers_comment"] is True
+                  and r["offers_object_marker"] is True and r.get("scope") == "none"
+                  and r.get("entries") == [], json.dumps(r))
+        else:
+            check("inside the range (body half): the object's menu on the zone, no marker, no comment",
+                  r["layout"] == "range_object_menu" and r["offers_comment"] is False
+                  and r["offers_object_marker"] is False and r.get("scope") == "zone", json.dumps(r))
         check("… and nothing is selected (%s half)" % zone,
               r["selects_object"] is False and r["applied"] is False and sel() == set(),
               "%s %s" % (sel(), json.dumps(r)))

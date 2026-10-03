@@ -7,8 +7,10 @@
 //         ../objekat/Shared/ContextMenuPlan.swift test_context_menu_plan.swift \
 //         -o /tmp/ctxplan && /tmp/ctxplan
 //
-// A point INSIDE the range ON an object gets the OBJECT's own menu applied to the zone
-// (`rangeObjectMenu`: no marker, no comment, nothing selected); on no object, the range's own menu.
+// A point INSIDE the range gets, on the UPPER half (time) of an object's block, the annotation
+// items alone (`rangeAnnotationsMenu`: marker + comment, as ever); on the LOWER half (body), the
+// OBJECT's own menu applied to the zone (`rangeObjectMenu`: no marker, no comment); on no object,
+// the range's own menu. None of them selects anything.
 //
 // Six questions: which half of a block the point is on, whether it lies inside the time selection,
 // whether a time selection exists at all (it decides an empty lane: a range ANYWHERE gives the
@@ -56,7 +58,7 @@ enum ContextMenuPlanTest {
           !P.contains(lane: 2, time: 8.001, lanes: [1, 2, 3], range: 3...8)
             && !P.contains(lane: 2, time: 2.999, lanes: [1, 2, 3], range: 3...8))
 
-    // MARK: - In the range: on an object, the object's menu on the zone; on no object, today's menu
+    // MARK: - In the range: time half = annotations, body half = the object's menu on the zone, no object = today's menu
 
     for zone in [Z.time, Z.body, nil] {
         for already in [true, false] {
@@ -64,35 +66,41 @@ enum ContextMenuPlanTest {
             let d = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: zone,
                              objectAlreadySelected: already, hasGroupableSelection: groupable)
             let tag = "in range, zone \(String(describing: zone)), selected \(already), groupable \(groupable)"
-            if zone != nil {
+            switch zone {
+            case .time:
+                check(tag + ": the annotation items alone", d.layout == .rangeAnnotationsMenu)
+                check(tag + ": marker and comment both offered", d.offersObjectMarker && d.offersComment)
+            case .body:
                 check(tag + ": the object's menu applied to the zone", d.layout == .rangeObjectMenu)
-            } else {
+                check(tag + ": no marker, no comment", !d.offersObjectMarker && !d.offersComment)
+            case .none:
                 check(tag + ": the range's menu", d.layout == .rangeMenu)
+                check(tag + ": the comment, no marker", d.offersComment && !d.offersObjectMarker)
             }
             check(tag + ": nothing is selected", !d.selectsObject)
-            check(tag + ": the comment only off an object (the object's menu has none)",
-                  d.offersComment == (zone == nil))
-            check(tag + ": never an object marker (the range's menu has none either)",
-                  !d.offersObjectMarker)
           }
         }
     }
 
-    // The user's case, spelt out: a right click INSIDE the range, ON the object, builds the object's
-    // menu on the zone — and NEITHER marker NOR comment (they live in the upper half of a block and
-    // over an empty lane's range) — and leaves the selection state alone: the object is not
-    // selected (nor, when it already was, re-selected), so the range, the caret and the cursor stay.
-    for zone in [Z.time, Z.body] {
-        for already in [true, false] {
-            let d = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: zone,
-                             objectAlreadySelected: already, hasGroupableSelection: true)
-            check("in range on the object (\(zone), selected \(already)): the object's menu, zone scope",
-                  d.layout == .rangeObjectMenu, "\(d)")
-            check("in range on the object (\(zone), selected \(already)): no marker, no comment",
-                  !d.offersObjectMarker && !d.offersComment, "\(d)")
-            check("in range on the object (\(zone), selected \(already)): the selection state is untouched",
-                  !d.selectsObject, "\(d)")
-        }
+    // The user's case, spelt out: a right click INSIDE the range, ON the object's lower half,
+    // builds the object's menu on the zone — and NEITHER marker NOR comment — while the upper half
+    // is exactly what it was (marker + comment). Neither touches the selection state: the object is
+    // not selected (nor, when it already was, re-selected), so the range, the caret and the cursor
+    // stay.
+    for already in [true, false] {
+        let t = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: .time,
+                         objectAlreadySelected: already, hasGroupableSelection: true)
+        check("in range, upper half (selected \(already)): the annotations, as before",
+              t.layout == .rangeAnnotationsMenu && t.offersObjectMarker && t.offersComment
+                && !t.selectsObject, "\(t)")
+        let d = P.decide(pointInTimeSelection: true, hasTimeSelection: true, zone: .body,
+                         objectAlreadySelected: already, hasGroupableSelection: true)
+        check("in range, lower half (selected \(already)): the object's menu, zone scope",
+              d.layout == .rangeObjectMenu, "\(d)")
+        check("in range, lower half (selected \(already)): no marker, no comment",
+              !d.offersObjectMarker && !d.offersComment, "\(d)")
+        check("in range, lower half (selected \(already)): the selection state is untouched",
+              !d.selectsObject, "\(d)")
     }
 
     // MARK: - Upper half, no range: time
@@ -206,6 +214,11 @@ enum ContextMenuPlanTest {
                       !d.selectsObject || (!inRange && zone == .body && !already))
                 check(tag + ": a comment only with a time selection", !d.offersComment || hasRange)
                 check(tag + ": an object marker only with an object", !d.offersObjectMarker || zone != nil)
+                check(tag + ": the annotations-in-range menu exactly inside the range on the upper half",
+                      (d.layout == .rangeAnnotationsMenu) == (inRange && zone == .time))
+                check(tag + ": the annotations-in-range menu offers both and selects nothing",
+                      d.layout != .rangeAnnotationsMenu
+                        || (d.offersObjectMarker && d.offersComment && !d.selectsObject))
                 check(tag + ": a nothing-menu offers nothing",
                       d.layout != .nothing || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
                 check(tag + ": no object, the range decides first, then the groupable selection",
@@ -215,8 +228,8 @@ enum ContextMenuPlanTest {
                 check(tag + ": the group-selection menu offers nothing and selects nothing",
                       d.layout != .groupSelectionMenu
                         || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
-                check(tag + ": the object's zone menu exactly inside the range on an object",
-                      (d.layout == .rangeObjectMenu) == (inRange && zone != nil))
+                check(tag + ": the object's zone menu exactly inside the range on the lower half",
+                      (d.layout == .rangeObjectMenu) == (inRange && zone == .body))
                 check(tag + ": the object's zone menu offers no annotation and selects nothing",
                       d.layout != .rangeObjectMenu
                         || (!d.offersObjectMarker && !d.offersComment && !d.selectsObject))
