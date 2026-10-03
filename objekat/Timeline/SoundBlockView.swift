@@ -390,6 +390,10 @@ struct SoundBlockView: View {
             // of the frame (SwiftUI does not clip by default, and the Text plus its padding imposes
             // an intrinsic width that would make the rendering bleed on tiny blocks).
             if blockWidth >= 30 {
+                // The name is anchored to the start of the block's VISIBLE part (@see StickyLabel),
+                // read from the exact scroll — and only by the blocks a viewport edge can cut.
+                LiveVisibleSpan(live: liveScroll, blockX: xPos, blockWidth: blockWidth,
+                                scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth) { span in
                 VStack {
                     HStack(spacing: 3) {
                         // The glyph that used to be drawn for a CONSOLIDATED OBJECT only, and now says
@@ -440,7 +444,9 @@ struct SoundBlockView: View {
                                 .lineLimit(1)
                         }
                     }
-                    .padding(.leading, TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth))
+                    .padding(.leading, StickyLabel.leading(
+                        natural: TimelineLabelMetrics.leading(fadeInPx: fadeInPx, blockWidth: blockWidth),
+                        visibleX: span.x, blockWidth: blockWidth))
                     .padding(.trailing, 6)
                     .padding(.top, TimelineLabelMetrics.topInset)
                     Spacer()
@@ -462,6 +468,7 @@ struct SoundBlockView: View {
                 // exists when the focus arrives.
                 .onChange(of: isRenaming) { _, now in
                     if now { beginRename(object.label) } else { renameFocused = false }
+                }
                 }
             }
 

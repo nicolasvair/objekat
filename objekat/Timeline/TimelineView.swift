@@ -769,13 +769,30 @@ struct TimelineView: View {
                     groupBandsRich: forceRichBands ? inlineBands.count : 0,
                     richReasons: partition.reasons)
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
+                // The blocks, in two draws of ONE function (@see StickyLabel): the notch-driven
+                // Canvas (everything, but the names that depend on the exact scroll) and, above
+                // it, the sticky pass that draws ONLY those names, anchored on the exact viewport
+                // edge. A scroll redraws the second one and not the first.
                 plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
                                   rows: cullRows,
                                   secPerBeat: 60.0 / viewModel.tempo,
                                   consolidated: partition.consolidated,
                                   toolOverlays: partition.toolOverlays,
                                   previews: partition.previews,
-                                  hidesClipMuteVeil: tools.tool == .volume)
+                                  hidesClipMuteVeil: tools.tool == .volume,
+                                  sticky: StickyLabelPass(exactScrollX: nil, cullScrollX: cullScrollX,
+                                                          step: Self.cullStepPx))
+                StickyScrollReader(anchor: scrollAnchor) { exactX in
+                    plainBlocksCanvas(plainVisible, groups: canvasGroups, selectedIDs: selectedIDs,
+                                      rows: cullRows,
+                                      secPerBeat: 60.0 / viewModel.tempo,
+                                      consolidated: partition.consolidated,
+                                      toolOverlays: partition.toolOverlays,
+                                      previews: partition.previews,
+                                      hidesClipMuteVeil: tools.tool == .volume,
+                                      sticky: StickyLabelPass(exactScrollX: exactX, cullScrollX: cullScrollX,
+                                                              step: Self.cullStepPx))
+                }
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
                 ForEach(richVisible) { entry in
                     itemBlock(for: entry.item, displayLane: entry.displayLane,
@@ -3171,9 +3188,12 @@ struct TimelineView: View {
                                    consolidated: [UUID: ConsolidateBadge] = [:],
                                    toolOverlays: [UUID: CanvasToolOverlay] = [:],
                                    previews: [UUID: BlockPreviewGeometry] = [:],
-                                   hidesClipMuteVeil: Bool = false) -> some View {
+                                   hidesClipMuteVeil: Bool = false,
+                                   sticky: StickyLabelPass? = nil) -> some View {
         Canvas { ctx, _ in
-                TimelineRegimeMeter.recordCanvasDraw()
+                // The sticky pass is a second draw of the SAME layer's names, not a frame of the
+                // blocks: it must not count as one.
+                if !(sticky?.isStickyPass ?? false) { TimelineRegimeMeter.recordCanvasDraw() }
                 // The geometry, read ONCE per pass. `rulerHeight`, `blockHeight` and `laneStep` are
                 // computed from observable properties of the view model, and `rectFor` / `look`
                 // below read them per block and per phase: 600 blocks paid ~20 % of this closure
@@ -3227,6 +3247,105 @@ struct TimelineView: View {
                         fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                         curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
                         loopRange: item.loopMarkerLocalRange, trimDX: 0)
+                }
+
+                // ── The names (declared ahead of phase 1: the STICKY pass below needs them) ──
+                // @see StickyLabel. A block's name is anchored to the start of its VISIBLE part, so
+                // a long object scrolled past its start keeps a name on screen. The notch-driven
+                // pass draws every name that does not depend on the exact scroll; the ones that
+                // might (those starting within the culling notch, `StickyLabel.isLive`) are left to
+                // the sticky pass — this same function run again by `StickyScrollReader`, which
+                // reads the exact scroll and draws nothing else. The two partition the names by
+                // the same predicate, so none is drawn twice or lost.
+                var labelCache = CanvasLabelCache()
+                func resolvedLabel(_ s: String, icon: String, missing: Bool,
+                                   meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
+                    labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta, muteBadge: muteBadge)
+                }
+                // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
+                // dictionary lookup — that is exactly why it may be read from a drawing pass at
+                // all (@see EditViewModel+MissingFiles) — but the loop below is the one that runs
+                // per block per frame, and it has no business asking the view model anything.
+                // The emptiness test is the common case and it is worth its line: with nothing
+                // missing the whole pass collapses to one question per frame instead of one per
+                // block (the same early-out `missingFileCount` makes).
+                var missingIDs = Set<UUID>()
+                if !viewModel.missingPaths.isEmpty {
+                    for entry in entries where viewModel.isMissing(entry.item) {
+                        missingIDs.insert(entry.item.id)
+                    }
+                }
+                // ONE block's name: the glyph, the name, the META summary and the MUTE badge in one
+                // run, cropped to the block. Its place is the natural one (5 px past the fade-in
+                // triangle, or 8 px with none) unless a sticky pass partitions the names.
+                func drawClipLabel(_ entry: LaneEntry, _ blockLook: CanvasBlockLook) {
+                    let item = entry.item
+                    let w = blockLook.w
+                    guard w > 10 else { return }   // unreadable/skipped below 10px — the zoomed-out case
+                    let rect = blockLook.rect
+                    // Same rule as the rich views: the name starts 5 px past the fade-in
+                    // triangle, or 8 px with none, computed here since the label can show with
+                    // no fade at all.
+                    let leading = TimelineLabelMetrics.leading(fadeInPx: blockLook.fadeIn * pixelsPerSecond,
+                                                                blockWidth: w)
+                    var labelX = rect.minX + leading
+                    if let sticky {
+                        guard let placed = sticky.placement(naturalX: labelX, blockX: rect.minX,
+                                                            blockWidth: w, rightLimit: rect.maxX)
+                        else { return }
+                        labelX = placed
+                    }
+                    var lc = ctx
+                    if isDim(item) { lc.opacity = 0.25 }
+                    lc.clip(to: Path(rect))
+                    let missing = missingIDs.contains(item.id)
+                    if missing {
+                        // The white glow the rich views lay with `.shadow`: the red alone does
+                        // not survive a band tinted red or salmon, and the band's base is white
+                        // whatever the tint (@see MissingFileLabel.haloColor). A filter forces
+                        // this one block offscreen, which is why it is armed for the missing
+                        // ones only — a project where that costs is a project already broken.
+                        lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
+                                             radius: MissingFileLabel.haloRadius, x: 0, y: 0))
+                    }
+                    // The meta is asked for only when the numbers say it is not empty: the guard
+                    // is `timelineMetaSummary`'s own conditions, so it allocates nothing for
+                    // the common clip (0 dB, centred, ×1), which is nearly all of them.
+                    let hasMeta = w >= 60
+                        && (item.volume <= -96 || abs(item.volume) >= 0.5
+                            || abs(item.pan) >= 0.01 || abs(item.speedRatio - 1.0) >= 0.01)
+                    lc.draw(resolvedLabel(item.displayName,
+                                          icon: ObjectKindIcon.name(for: item),
+                                          missing: missing,
+                                          meta: hasMeta ? item.timelineMetaSummary : "",
+                                          muteBadge: w >= 30 && item.isMuted),
+                            // The same top inset as the rich views (@see TimelineLabelMetrics).
+                            at: CGPoint(x: labelX,
+                                        y: rect.minY + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
+                            anchor: .topLeading)
+                }
+                // The STICKY pass: only the names that follow the exact scroll, nothing else.
+                if let sticky, sticky.isStickyPass {
+                    let selectedNow = selectedIDs
+                    // The rows on screen only: this pass runs at every frame of a scroll.
+                    func onRows(_ l: CanvasBlockLook) -> Bool {
+                        l.rect.maxY >= rows.y0 && l.rect.minY <= rows.y1
+                    }
+                    // Unselected first, selected last, as the ordinary pass walks the blocks.
+                    for entry in entries where !selectedNow.contains(entry.item.id) {
+                        let l = look(entry)
+                        if onRows(l) { drawClipLabel(entry, l) }
+                    }
+                    for entry in entries where selectedNow.contains(entry.item.id) {
+                        let l = look(entry)
+                        if onRows(l) { drawClipLabel(entry, l) }
+                    }
+                    GroupBlocksCanvas.drawStickyLabels(into: ctx, groups: groups, rows: rows,
+                                                       geo: GroupBlocksCanvas.Geometry(
+                                                           pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                                                           laneStep: laneStep, blockHeight: blockHeight),
+                                                       labels: &labelCache, sticky: sticky)
+                    return
                 }
 
                 // ── Phase 1: BATCHED BACKGROUNDS ──────────────────────────────────────
@@ -3485,24 +3604,6 @@ struct TimelineView: View {
                 // kind), the META summary and the MUTE badge (9 pt, in the same run, on the name's
                 // baseline where the rich row centres them: a pixel's difference, and the price of
                 // not measuring text per block per frame).
-                var labelCache = CanvasLabelCache()
-                func resolvedLabel(_ s: String, icon: String, missing: Bool,
-                                   meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
-                    labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta, muteBadge: muteBadge)
-                }
-                // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
-                // dictionary lookup — that is exactly why it may be read from a drawing pass at
-                // all (@see EditViewModel+MissingFiles) — but the loop below is the one that runs
-                // per block per frame, and it has no business asking the view model anything.
-                // The emptiness test is the common case and it is worth its line: with nothing
-                // missing the whole pass collapses to one question per frame instead of one per
-                // block (the same early-out `missingFileCount` makes).
-                var missingIDs = Set<UUID>()
-                if !viewModel.missingPaths.isEmpty {
-                    for entry in entries where viewModel.isMissing(entry.item) {
-                        missingIDs.insert(entry.item.id)
-                    }
-                }
                 // The consolidated instances' rings, by (unselected, unselected dim, selected, selected dim).
                 var ringPaths = (Path(), Path(), Path(), Path())
                 for entry in drawOrder {
@@ -3601,41 +3702,8 @@ struct TimelineView: View {
                         }
                     }
 
-                    // The label cropped to the block (unreadable/skipped below 10px — the zoomed-out case).
-                    if needsLabel {
-                        var lc = c
-                        lc.clip(to: Path(rect))
-                        let missing = missingIDs.contains(item.id)
-                        if missing {
-                            // The white glow the rich views lay with `.shadow`: the red alone does
-                            // not survive a band tinted red or salmon, and the band's base is white
-                            // whatever the tint (@see MissingFileLabel.haloColor). A filter forces
-                            // this one block offscreen, which is why it is armed for the missing
-                            // ones only — a project where that costs is a project already broken.
-                            lc.addFilter(.shadow(color: MissingFileLabel.haloColor,
-                                                 radius: MissingFileLabel.haloRadius, x: 0, y: 0))
-                        }
-                        // Same rule as the rich views: the name starts 5 px past the fade-in
-                        // triangle, or 8 px with none, computed here (outside `needsFade`) since
-                        // the label can show with no fade at all.
-                        let leading = TimelineLabelMetrics.leading(fadeInPx: blockLook.fadeIn * pixelsPerSecond,
-                                                                    blockWidth: w)
-                        // The meta is asked for only when the numbers say it is not empty: the guard
-                        // is `timelineMetaSummary`'s own conditions, so it allocates nothing for
-                        // the common clip (0 dB, centred, ×1), which is nearly all of them.
-                        let hasMeta = w >= 60
-                            && (item.volume <= -96 || abs(item.volume) >= 0.5
-                                || abs(item.pan) >= 0.01 || abs(item.speedRatio - 1.0) >= 0.01)
-                        lc.draw(resolvedLabel(item.displayName,
-                                              icon: ObjectKindIcon.name(for: item),
-                                              missing: missing,
-                                              meta: hasMeta ? item.timelineMetaSummary : "",
-                                              muteBadge: w >= 30 && item.isMuted),
-                                // The same top inset as the rich views (@see TimelineLabelMetrics).
-                                at: CGPoint(x: x + leading,
-                                            y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
-                                anchor: .topLeading)
-                    }
+                    // The label cropped to the block (@see `drawClipLabel`, declared with the sticky pass).
+                    if needsLabel { drawClipLabel(entry, blockLook) }
                 }
 
                 func strokeRings(_ path: Path, opacity: Double, selected: Bool) {
@@ -3650,7 +3718,7 @@ struct TimelineView: View {
 
                 // The groups' fades, mute veil and name row, over their composites.
                 GroupBlocksCanvas.drawOverlays(into: ctx, groups: groups, geo: groupGeo,
-                                               labels: &labelCache)
+                                               labels: &labelCache, sticky: sticky)
         }
         .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
         .allowsHitTesting(false)
