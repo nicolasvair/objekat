@@ -551,7 +551,13 @@ extension CommandRegistry {
                           ParamSpec("lane", "int", required: false, "Target display lane (default 0)."),
                           ParamSpec("start", "number", required: false, "Start, in seconds (default 0)."),
                           ParamSpec("duration", "number", required: false,
-                                    "Length to lay down; default = the file's length.")],
+                                    "Length to lay down; default = the file's length."),
+                          ParamSpec("group", "uuid", required: false,
+                                    "Lay the clip INSIDE this group (any depth, folded or not) "
+                                  + "instead of at the root. 'lane' then names the SUB-lane in the "
+                                  + "group (the child's own `lane`, not a display row; default = a "
+                                  + "new sub-lane after the last one) and 'start' is absolute, "
+                                  + "unclamped — a child may start before 0.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
@@ -565,8 +571,18 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "length is zero or negative")
             }
             let requestedStart = try p.double("start", or: 0)
-            let requestedLane = try p.int("lane", or: 0)
-            let start = max(0, requestedStart)
+            // INSIDE a group: the target is named by the group, not guessed from a display row
+            // (a folded group has no rows of its own, and `placeClip` would put the clip at the
+            // root). Same entry as a child dropped into a group: `addChild`.
+            let groupID = try p.optionalUUID("group")
+            var requestedLane = try p.int("lane", or: 0)
+            if let groupID {
+                guard let group = vm.find(id: groupID), case .group(let children, _) = group.kind else {
+                    throw CommandError(code: .not_found, message: "unknown group: \(groupID.uuidString)")
+                }
+                if p.raw["lane"] == nil { requestedLane = (children.map(\.lane).max() ?? -1) + 1 }
+            }
+            let start = groupID == nil ? max(0, requestedStart) : requestedStart
             let lane = max(0, requestedLane)
             var object = SoundObject(
                 id: UUID(),
@@ -584,12 +600,19 @@ extension CommandRegistry {
             object.fileSize = EditViewModel.fileSize(atPath: path)
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
             // target lane falls INSIDE an expanded group, and `resolveOverlaps` settles overlaps.
-            let placed = vm.placeClip(object, snapshot: vm.laneEntries)
+            let placed: SoundObject
+            if let groupID {
+                vm.addChild(object, toGroupID: groupID)
+                placed = object
+            } else {
+                placed = vm.placeClip(object, snapshot: vm.laneEntries)
+            }
             vm.resolveOverlaps(for: placed.id)
             return .object(["id": .string(placed.id.uuidString),
                             "lane": .int(placed.lane),
                             "start": .number(placed.startTime),
-                            "duration": .number(placed.duration)])
+                            "duration": .number(placed.duration),
+                            "parent": .stringOrNull(vm.parentGroup(for: placed.id)?.id.uuidString)])
         }
 
         register("object.remove",
