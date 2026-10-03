@@ -48,7 +48,7 @@ enum SynopticMarquee {
 
     /// ⇧+click GROWS the selection to the box that holds what was already taken plus the card
     /// aimed at, and everything that box touches comes with it. Word for word the clips' rule
-    /// (@see TimelineView.extendSelectionTo, which spans lane × time the same way) rather than a
+    /// (@see EditViewModel.extendSelectionTo, which spans lane × time the same way) rather than a
     /// range along the chain: the signal view is a canvas, branches run side by side on it, and a
     /// hand that draws a diagonal across two branches means the two.
     ///

@@ -1066,7 +1066,6 @@ extension TimelineView {
     func registerRightClickMonitor() {
         let vm     = viewModel
         let hs     = hoverState
-        let lg     = 4.0
         // The closure the left click calls, captured by value like the key monitor's: `self` is
         // the struct as it was at registration, and only the view-model is live inside a monitor
         // (so `isTransportPlaying`, never the stale `isPlaying` prop).
@@ -1153,35 +1152,17 @@ extension TimelineView {
                 return nil
             }
 
-            // What lies under the point, found ONCE on the flat display list (laneEntries) → it
-            // covers top-level AND nested visible objects (the actions possible inside an open
-            // group). The zone is the left click's own 50 % line: the upper half of a block is
-            // TIME, the lower half is the OBJECT.
+            // What lies under the point, found ONCE and by the SAME probe as the left click
+            // (`lanePointProbe`: the flat display list, any depth, an infinite bus over its whole
+            // lane, the out-of-range veil) → it covers top-level AND nested visible objects (the
+            // actions possible inside an open group). The zone is the left click's own 50 % line:
+            // the upper half of a block is TIME, the lower half is the OBJECT.
             typealias Probe = (entry: LaneEntry?, zone: ContextMenuPlan.BlockZone?, lane: Int,
                                time: Double, clickedIsEditFrame: Bool, isEditingConsolidate: Bool)
             let probe: Probe = MainActor.assumeIsolated {
-                let pps  = vm.pixelsPerSecond
-                let bh   = vm.blockHeight
-                let step = bh + lg
-                var topY = 0.0
-                let entry = vm.laneEntries.first { e in
-                    let by = rulerH + Double(e.displayLane) * step
-                    guard pos.y >= by && pos.y <= by + bh else { return false }
-                    topY = by
-                    // An infinite bus: its surface is its whole lane (0 → the content's width).
-                    if e.item.isInfiniteBus {
-                        return pos.x >= 0 && pos.x <= self.contentWidth
-                    }
-                    let bx = e.absStart * pps
-                    let bw = max(e.item.duration * pps, 2)
-                    return pos.x >= bx && pos.x <= bx + bw
-                        && e.isUnmasked(atX: pos.x, pixelsPerSecond: pps)
-                }
-                return (entry,
-                        entry.map { _ in ContextMenuPlan.BlockZone.zone(localY: pos.y - topY, blockHeight: bh) },
-                        entry?.displayLane ?? max(0, Int((pos.y - rulerH) / step)),
-                        max(0, pos.x / pps),
-                        entry.map { vm.isInConsolidateEditStack($0.item.id) } ?? false,
+                let h = self.lanePointProbe(at: pos, rulerHeight: rulerH)
+                return (h.entry, h.zone, h.lane, h.time,
+                        h.entry.map { vm.isInConsolidateEditStack($0.item.id) } ?? false,
                         vm.isEditingConsolidate)
             }
 

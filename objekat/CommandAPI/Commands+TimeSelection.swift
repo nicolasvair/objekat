@@ -217,6 +217,75 @@ extension CommandRegistry {
                             "selection": CommandAdapters.selectionPayload(vm)])
         }
 
+        register("selection.click",
+                 summary: "Plays the LEFT CLICK of the select tool on the lanes — the very code the "
+                        + "timeline runs (`EditViewModel.handleLaneClick`), for a top-level object "
+                        + "and for a child of an open group alike (there is ONE rule, whatever the "
+                        + "depth). With `id`: a click on that object — `zone`: `time` (the upper "
+                        + "half of the block) or `body` (the lower half, the default); `time` is the "
+                        + "instant of the point (default: the middle of the object) and the point's "
+                        + "lane is the object's own display lane. Without `id`: a click on an EMPTY "
+                        + "lane — `lane` (the display row) and `time` are then required. `shift`, "
+                        + "`cmd` (⌘) and `option` (⌥, with `double`) are the modifiers held. "
+                        + "`double` is a double click (open/close a consolidated object, a piano "
+                        + "roll, an automation band, unfold a group). On time (the upper half, or an "
+                        + "empty lane) a plain click lays the caret and ⇧ / ⌘ trace or grow a time "
+                        + "selection; on the BODY ⇧ extends the object selection over the "
+                        + "rectangle lanes × time and ⌘ toggles the object (the cursor following "
+                        + "the earliest selected start). `time` is taken LITERALLY unless `snap` is "
+                        + "true (then the project's snap applies, as under the hand). Answers the "
+                        + "selection.",
+                 params: [ParamSpec("id", "uuid", required: false,
+                                    "The object under the point; omit it for an empty lane."),
+                          ParamSpec("zone", "string", required: false,
+                                    "time | body (default body); ignored without `id`."),
+                          ParamSpec("lane", "int", required: false,
+                                    "The point's display row; required without `id`, ignored with it."),
+                          ParamSpec("time", "number", required: false,
+                                    "The point's instant in seconds (default with `id`: the object's "
+                                  + "middle; required without)."),
+                          ParamSpec("shift", "bool", required: false, "⇧ held (default false)."),
+                          ParamSpec("cmd", "bool", required: false, "⌘ held (default false)."),
+                          ParamSpec("option", "bool", required: false,
+                                    "⌥ held (default false); only read with `double`."),
+                          ParamSpec("double", "bool", required: false,
+                                    "A double click (default false)."),
+                          ParamSpec("snap", "bool", required: false,
+                                    "Snap the instant to the grid as the hand would (default false).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let hit: LaneClickHit
+            if let id = try p.optionalUUID("id") {
+                guard let e = vm.laneEntries.first(where: { $0.item.id == id }) else {
+                    throw CommandError(code: .not_found, message: "unknown or hidden object: \(id.uuidString)")
+                }
+                let zone: ContextMenuPlan.BlockZone
+                switch try p.string("zone", or: "body") {
+                case "time": zone = .time
+                case "body": zone = .body
+                default:
+                    throw CommandError(code: .bad_params, message: "'zone': time or body")
+                }
+                hit = LaneClickHit(entry: e, zone: zone, lane: e.displayLane,
+                                   time: max(0, try p.optionalDouble("time")
+                                                 ?? (e.absStart + e.item.duration / 2)))
+            } else {
+                hit = LaneClickHit(entry: nil, zone: nil, lane: max(0, try p.int("lane")),
+                                   time: max(0, try p.double("time")))
+            }
+            let shift = try p.bool("shift", or: false)
+            let cmd = try p.bool("cmd", or: false)
+            let option = try p.bool("option", or: false)
+            let double = try p.bool("double", or: false)
+            let snap = try p.bool("snap", or: false)
+            CommandAdapters.withSnapping(snap, vm) {
+                vm.handleLaneClick(hit, shift: shift, cmd: cmd, option: option,
+                                   isDoubleTap: double, isPlaying: vm.isTransportPlaying,
+                                   onMoveCursor: { vm.cursorPosition = max(0, $0) })
+            }
+            return CommandAdapters.selectionPayload(vm)
+        }
+
         register("timesel.step_lane",
                  summary: "Slides the TIME SELECTION one displayed row up or down, keeping its span "
                         + "of time and its height — the traced passage travels, the matter does not: "
