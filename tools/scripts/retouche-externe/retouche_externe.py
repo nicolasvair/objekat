@@ -15,8 +15,13 @@ What it does NOT do, on purpose:
     (inside the same group if the original is a group's child), so one ⌘Z, a click on the speaker, or deleting one of the two is enough to go back;
   • it writes no preference of the app, only its own `config.json`.
 
-What to know: the render goes through the MASTER (`export.run` with the object alone in solo), so
-the bus effects and the master chain are in the file. That is the only full-render door the API has.
+What to know: the render is "just the object" (`object.render_isolated`): it carries everything that
+belongs to the object — its own plugins, gain and pan, fades, window and speed (its content, for a
+group) — and NOTHING around it: no parent group's chain, no master, no aux or sends. The retouched
+file laid back at the same start is therefore iso with the object as it sounded alone (same level,
+same position), and the new clip has no plugin, gain or fade of its own to apply them a second time.
+The object is put in direct solo for the render (so a mute or another solo cannot silence it), then
+the previous solo is restored.
 """
 
 import json
@@ -166,15 +171,16 @@ def unique_path(folder, stem, suffix):
 
 
 def render_object(app, obj, out_path):
-    """Renders `obj` alone (a direct solo, restored afterwards) over its own span into out_path."""
+    """Renders `obj` ALONE (the object and what belongs to it, nothing of its surroundings — a direct
+    solo only guarantees it is audible, restored afterwards) over its own span into out_path."""
     before = app.send("solo.get")
     previous = before.get("confirmed") or []
     app.send("solo.clear")
     app.send("solo.set", {"ids": [obj["id"]]})
     try:
-        job = app.send("export.run", {
-            "path": out_path, "format": "wav",
-            "sample_rate": SAMPLE_RATE, "bit_depth": BIT_DEPTH, "dithering": False,
+        job = app.send("object.render_isolated", {
+            "id": obj["id"], "path": out_path,
+            "sample_rate": SAMPLE_RATE, "bit_depth": BIT_DEPTH,
             "start": obj["start"], "end": obj["start"] + obj["duration"],
         })
         while True:

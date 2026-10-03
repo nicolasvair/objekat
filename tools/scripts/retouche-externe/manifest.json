@@ -13,7 +13,7 @@
     "solo.get",
     "solo.set",
     "solo.clear",
-    "export.run",
+    "object.render_isolated",
     "job.wait",
     "script.panel.open",
     "script.panel.wait",

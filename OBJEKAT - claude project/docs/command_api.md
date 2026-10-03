@@ -1697,6 +1697,15 @@ its assertions rather than failing on a machine where it is present.
 loop. Its defaults are **not** the window's — MP3 44.1 kHz over the whole project, where
 it offers WAV 48/24. The window serves to deliver, the API to check quickly.
 
+**`object.render_isolated {id, path, start?, end?, sample_rate?, bit_depth?}`** renders ONE object — just the
+object — into a wav (asynchronous: a `job_id`, then `job.wait`). The file carries everything that belongs to the object (its
+own plugins, gain and pan, fades, window, speed; its content for a group or MIDI object) and nothing around it:
+not its parent groups' chains, not the stem or the master, no aux or sends. Laid back at the same `start` as a
+bare clip, it is iso with the object as it sounded alone. Unlike a consolidation bake, the object's own fader and
+fades stay active in the render. The range is written to the sample (no tail margin; default: the object's own
+span), 48000 Hz / 24-bit by default, no dither. The audibility is the live graph's: put the object in direct solo
+first if it may be muted. `invalid_state` for an aux or an infinite bus.
+
 The API **neither reads nor writes** any preference. The window, for its part, picks up the settings of the last
 manual export: if a command inherited them, a script's result would depend on what was
 ticked the day before. And symmetrically, a script rendering a check MP3 has no business changing what

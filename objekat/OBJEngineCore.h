@@ -203,6 +203,23 @@
                           end:(double)endSecs
                    completion:(void(^)(BOOL ok))completion;
 
+// Rendu « JUSTE L'OBJET » (retouche externe) : l'objet avec tout ce qui lui appartient — ses FX,
+// son gain et son pan, ses fondus et sa fenêtre, sa vitesse — mais SANS la chaîne de ses groupes
+// parents, SANS stem ni master, SANS aux ni envois. Contrairement au bake, la queue de chaîne de
+// l'objet (fader + fenêtre/fondus) n'est PAS bypassée : c'est ce qui fait que le fichier, relu à
+// la place de l'objet, sonne comme lui seul (même niveau, même position). La plage est écrite
+// à l'échantillon près (pas de marge de queue), à `sampleRate` / `bitDepth` (24 : entier), sans
+// dither. Même mécanique de fond que le bake (copie d'Edit) ; `completion` sur le main thread.
+// L'audibilité de l'objet (mute, solo d'autres objets) est celle du graphe VIVANT : à l'appelant
+// de poser un solo direct sur l'objet avant l'appel s'il doit sonner malgré elle.
+- (void)renderObjectAloneToFileAsync:(NSString* _Nonnull)objectID
+                            filePath:(NSString* _Nonnull)filePath
+                               start:(double)startSecs
+                                 end:(double)endSecs
+                          sampleRate:(double)sampleRate
+                            bitDepth:(NSInteger)bitDepth
+                          completion:(void(^ _Nonnull)(BOOL ok))completion;
+
 // Avancement (0…1) du bake EN COURS de cet objet — l'identifiant passé à renderGroupToFileAsync: /
 // renderClipToFileAsync:. -1 si le moteur ne connaît aucun rendu de cet objet (pas encore lancé,
 // déjà terminé). À poller depuis le thread principal pour un indicateur déterminé : c'est le

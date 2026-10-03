@@ -1130,6 +1130,16 @@ struct OBJPoolTrack {
 };
 
 // Résultat de `renderChainForKey:` — deux listes qu'il ne faut surtout pas confondre.
+// Réglages du fichier écrit par un rendu de piste. Défauts = ceux des bakes (consolidé, aperçu) :
+// wave 32 bits flottant à la fréquence de la carte, avec la marge de fin que demandent les queues
+// d'effets. `strictRange` (le rendu « juste l'objet ») écrit la plage demandée à l'échantillon
+// près, à la fréquence et à la profondeur demandées. @see renderObjectAloneToFileAsync:
+struct OBJRenderFileSpec {
+    double sampleRate  = 0.0;     // 0 = fréquence de la carte
+    int    bitDepth    = 32;
+    bool   strictRange = false;   // pas de endAllowance
+};
+
 struct OBJRenderChain {
     // Liste blanche passée au renderer : la cible, TOUT son contenu, et ses containers ancêtres.
     std::vector<te::EditItemID> allowed;
@@ -1235,7 +1245,18 @@ struct OBJRenderChain {
                        prepare:(std::function<void(te::Track*)>)prepare
                           desc:(NSString*)desc
                      objectKey:(const std::string&)objectKey
+                      fileSpec:(OBJRenderFileSpec)fileSpec
                     completion:(void(^)(BOOL ok))completion;
+// Rendu d'un objet (clip, groupe, MIDI). `keepOwnTail` laisse VIVRE la queue de chaîne de l'objet
+// (fader + fenêtre/fondus) au lieu de la bypasser : c'est le rendu « juste l'objet ».
+- (void)renderObjectToFileAsync:(NSString*)objectID
+                       filePath:(NSString*)filePath
+                          start:(double)startSecs
+                            end:(double)endSecs
+                           desc:(NSString*)desc
+                    keepOwnTail:(BOOL)keepOwnTail
+                       fileSpec:(OBJRenderFileSpec)fileSpec
+                     completion:(void(^)(BOOL ok))completion;
 // Chaîne des clips à laisser vivre pour qu'un objet sonne : lui-même, son contenu, puis chacun
 // de ses containers ancêtres jusqu'à la piste.
 - (OBJRenderChain)renderChainForKey:(const std::string&)key;
@@ -3547,6 +3568,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                        prepare:(std::function<void(te::Track*)>)prepare
                           desc:(NSString*)desc
                      objectKey:(const std::string&)objectKey
+                      fileSpec:(OBJRenderFileSpec)fileSpec
                     completion:(void(^)(BOOL ok))completion {
     if (!_edit) { if (completion) completion(NO); return; }
 
@@ -3646,16 +3668,20 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     r.allowedClips       = allowedClips;   // vide = toute la piste
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
     r.audioFormat        = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
-    r.bitDepth           = 32;  // WAV 32-bit float (headroom, lisible partout)
-    r.sampleRateForAudio = dm.getSampleRate();
+    r.bitDepth           = fileSpec.bitDepth;   // défaut : WAV 32-bit float (headroom, lisible partout)
+    r.sampleRateForAudio = fileSpec.sampleRate > 0.0 ? fileSpec.sampleRate : dm.getSampleRate();
     r.blockSizeForAudio  = dm.getBlockSize();
     r.time               = te::TimeRange(te::TimePosition::fromSeconds(startSecs),
                                          te::TimePosition::fromSeconds(endSecs));
-    r.endAllowance       = te::RenderOptions::findEndAllowance(*clone, &trackIDs,
+    // Plage stricte : la fenêtre demandée est celle qu'on écrit (le rendu « juste l'objet » dont
+    // le fichier revient à la même place). Sinon, la marge de queue des effets, comme un freeze.
+    if (!fileSpec.strictRange)
+        r.endAllowance   = te::RenderOptions::findEndAllowance(*clone, &trackIDs,
                                                                allowedClips.isEmpty() ? nullptr : &allowedClips);
     r.usePlugins         = true;
     r.useMasterPlugins   = false;
     r.canRenderInMono    = false;
+    r.ditheringEnabled   = false;
 
     NSString* jobKey = [[NSUUID UUID] UUIDString];
     std::string jobID([jobKey UTF8String]);
@@ -3732,6 +3758,8 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                           start:(double)startSecs
                             end:(double)endSecs
                            desc:(NSString*)desc
+                    keepOwnTail:(BOOL)keepOwnTail
+                       fileSpec:(OBJRenderFileSpec)fileSpec
                      completion:(void(^)(BOOL ok))completion {
     std::string key([objectID UTF8String]);
     te::Clip* item = nullptr;
@@ -3750,7 +3778,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     [self renderTrackToFileAsync:track->itemID
                         filePath:filePath start:startSecs end:endSecs
                   allowedClipIDs:chain.allowed
-                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs](te::Track* t) {
+                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail](te::Track* t) {
                              auto* ct = dynamic_cast<te::ClipTrack*>(t);
                              if (!ct) return;
                              auto bypassTail = [](te::PluginList* pl) {
@@ -3786,7 +3814,10 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                              // que ses clips directs.
                              if (keepID.isValid())
                                  if (auto* c = te::findClipForID(t->edit, keepID)) {
-                                     bypassTail(c->getPluginList());
+                                     // `keepOwnTail` : rendu « juste l'objet » — fader (gain, pan)
+                                     // et fenêtre/fondus sont CUITS dans le fichier, le clip qui le
+                                     // remplace n'a rien à réappliquer.
+                                     if (!keepOwnTail) bypassTail(c->getPluginList());
                                      openContainer(c);
                                  }
 
@@ -3808,6 +3839,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                          }
                             desc:desc
                        objectKey:key
+                        fileSpec:fileSpec
                       completion:completion];
 }
 
@@ -3817,7 +3849,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                            end:(double)endSecs
                     completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:groupID filePath:filePath start:startSecs end:endSecs
-                             desc:groupID completion:completion];
+                             desc:groupID keepOwnTail:NO fileSpec:OBJRenderFileSpec{} completion:completion];
 }
 
 - (void)renderClipToFileAsync:(NSString*)clipID
@@ -3826,7 +3858,28 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                           end:(double)endSecs
                    completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:clipID filePath:filePath start:startSecs end:endSecs
-                             desc:clipID completion:completion];
+                             desc:clipID keepOwnTail:NO fileSpec:OBJRenderFileSpec{} completion:completion];
+}
+
+// « Juste l'objet » : tout ce qui lui appartient (ses FX, son gain et son pan, ses fondus, sa
+// fenêtre, sa vitesse, son contenu s'il est groupe ou MIDI) et RIEN de ce qui l'entoure — ni la
+// chaîne de ses groupes parents (rendus transparents, @see renderObjectToFileAsync:), ni la
+// chaîne du stem ni celle du master (la piste est détachée à la racine, `useMasterPlugins` faux),
+// ni aux ni envois (leurs clips ne sont pas dans la liste blanche). À la différence d'un bake,
+// la queue de chaîne de l'objet reste ACTIVE : le fichier qui le remplace n'a pas à la porter.
+- (void)renderObjectAloneToFileAsync:(NSString*)objectID
+                            filePath:(NSString*)filePath
+                               start:(double)startSecs
+                                 end:(double)endSecs
+                          sampleRate:(double)sampleRate
+                            bitDepth:(NSInteger)bitDepth
+                          completion:(void(^)(BOOL ok))completion {
+    OBJRenderFileSpec spec;
+    spec.sampleRate  = sampleRate;
+    spec.bitDepth    = (int)bitDepth;
+    spec.strictRange = true;
+    [self renderObjectToFileAsync:objectID filePath:filePath start:startSecs end:endSecs
+                             desc:objectID keepOwnTail:YES fileSpec:spec completion:completion];
 }
 
 // Avancement d'un bake (0…1), lu dans le handle du job exactement comme `exportProgress` — le

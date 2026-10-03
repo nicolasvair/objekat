@@ -464,6 +464,71 @@ extension CommandRegistry {
                             "selected": .array(ticked.map { .string($0.id.uuidString) })])
         }
 
+        register("object.render_isolated",
+                 summary: "Renders ONE object, just the object, to a wav file (asynchronous). Returns a "
+                        + "job_id. The file holds everything that belongs to the object — its own plugins, "
+                        + "gain and pan, fades, window, speed, and its content for a group or MIDI object — "
+                        + "and nothing around it: no parent group's chain, no stem, no master, no aux or "
+                        + "sends. Laid back at the same start, the file is iso with the object as it "
+                        + "sounded alone. Unlike `export.run`, it does not render the mix.",
+                 params: [ParamSpec("id", "uuid", "Object to render (clip, group or MIDI; not an aux "
+                                    + "nor an infinite bus)."),
+                          ParamSpec("path", "string", "Destination wav (written as is, overwritten)."),
+                          ParamSpec("start", "number", required: false,
+                                    "Start in seconds (default: the object's start)."),
+                          ParamSpec("end", "number", required: false,
+                                    "End in seconds (default: start + duration). The range is written "
+                                    + "to the sample, with no tail margin."),
+                          ParamSpec("sample_rate", "number", required: false, "Default 48000."),
+                          ParamSpec("bit_depth", "int", required: false,
+                                    "16 or 24 (default; written as an integer wav).")],
+                 // A render reads the project, never writes it.
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            guard !object.isAux, !object.isInfiniteBus else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a bus (aux or infinite group) has no span to render")
+            }
+            let path = try p.string("path")
+            guard !path.isEmpty else {
+                throw CommandError(code: .bad_params, message: "'path' must not be empty")
+            }
+            let start = try p.optionalDouble("start") ?? object.startTime
+            let end = try p.optionalDouble("end") ?? (object.startTime + object.duration)
+            guard end > start else {
+                throw CommandError(code: .bad_params, message: "'end' must be after 'start'")
+            }
+            let sampleRate = try p.double("sample_rate", or: 48000)
+            guard sampleRate >= 8000, sampleRate <= 192000 else {
+                throw CommandError(code: .bad_params, message: "'sample_rate' out of range")
+            }
+            let depth = try p.int("bit_depth", or: 24)
+            guard depth == 16 || depth == 24 else {
+                throw CommandError(code: .bad_params, message: "expected bit depth: 16 or 24")
+            }
+            let jobID = JobRegistry.shared.begin(command: "object.render_isolated")
+            engine.renderObjectAlone(toFileAsync: id.uuidString, filePath: path,
+                                     start: start, end: end,
+                                     sampleRate: sampleRate, bitDepth: depth) { ok in
+                Task { @MainActor in
+                    if ok {
+                        JobRegistry.shared.finish(jobID, result: .object([
+                            "path": .string(path), "start": .number(start), "end": .number(end),
+                            "sample_rate": .number(sampleRate), "bit_depth": .int(depth)]))
+                    } else {
+                        JobRegistry.shared.fail(jobID, error: CommandError(
+                            code: .engine_error, message: "the isolated render failed (see the log)"))
+                    }
+                }
+            }
+            return .object(["job_id": .string(jobID)])
+        }
+
         register("export.cancel",
                  summary: "Cancels the running export (the engine stops at the next block). A regions "
                         + "export stops cleanly: the region under way is interrupted, the following "
