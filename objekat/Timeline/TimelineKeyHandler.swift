@@ -1198,43 +1198,18 @@ extension TimelineView {
                 }
             }
 
-            typealias HitResult = (group: SoundObject?, clip: SoundObject?, consolidateInstance: SoundObject?, selectedIDs: Set<UUID>, hasClip: Bool, timeSelection: TimeSelection?, colorable: SoundObject?)
-            let hit: HitResult = MainActor.assumeIsolated {
-                let entry       = probe.entry
-                let grp         = entry.flatMap { $0.item.isGroup ? $0.item : nil }
-                let instanceHit = entry.flatMap { $0.item.isConsolidateInstance ? $0.item : nil }
-                let clipHit     = entry.flatMap { e -> SoundObject? in
-                    if (e.item.isClip || e.item.isMIDI), !e.item.isConsolidateInstance { return e.item }
-                    return nil
-                }
-                let hasClip = vm.hasGroupableSelection
-                // The range only reaches the menu when the plan says so: no object under the hand
-                // (the point inside the range ON an object is the annotations-only branch above).
-                // A range lying elsewhere has nothing to do with an object aimed at.
-                return (grp, clipHit, instanceHit, vm.selectedIDs, hasClip,
-                        plan.layout == .rangeMenu ? vm.timeSelection : nil, entry?.item)
-            }
-
-            // The annotation items ALONE, in two cases. The upper half of a block, outside any
-            // range: TIME — a marker laid inside the object at the instant aimed at, and no comment,
-            // since a comment is about a range and none lies under the hand. And a point INSIDE the
-            // time selection that lands ON an object (either half): the object marker and the
-            // comment over the range, nothing else — neither the range's other entries nor a word of
-            // the object's own menu (group, consolidate, colour, scripts…). Neither case touches the
-            // selection (@see ContextMenuPlan: `selectsObject` is false for both).
-            if plan.layout == .objectTimeMenu || plan.layout == .rangeAnnotationsMenu {
+            // The upper half of a block, outside any range: TIME — a marker laid inside the object
+            // at the instant aimed at, and no comment (a comment is about a range and none lies
+            // under the hand). Nothing is selected (@see ContextMenuPlan: `selectsObject` is false).
+            if plan.layout == .objectTimeMenu {
                 let timeMenu = NSMenu(title: "")
                 timeMenu.autoenablesItems = false
                 proxies = []
                 MainActor.assumeIsolated {
-                    if plan.offersObjectMarker, let target = hit.colorable {
+                    if plan.offersObjectMarker, let target = probe.entry?.item {
                         let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
                         addObjectMarkerItem(menu: timeMenu, proxies: &proxies, vm: vm,
                                             objectID: target.id, atAbsoluteTime: t)
-                    }
-                    if plan.offersComment, let sel = vm.timeSelection {
-                        if !timeMenu.items.isEmpty { timeMenu.addItem(.separator()) }
-                        addCommentItem(menu: timeMenu, proxies: &proxies, vm: vm, selection: sel)
                     }
                 }
                 guard !timeMenu.items.isEmpty else { return event }
@@ -1245,227 +1220,107 @@ extension TimelineView {
                 return nil
             }
 
+            // The OBJECT's menu. ONE list of entries (@see EditViewModel.objectMenuEntries, which
+            // the command API reads too) for the two scopes it can have: the selection (a click on
+            // an object's body, or on an empty lane with clips selected) or the ZONE (a click inside
+            // the time selection, on an object or on an empty lane).
+            let clickedEntry = probe.entry
+            let scope: ObjectActionScope? = MainActor.assumeIsolated {
+                switch plan.layout {
+                case .rangeMenu, .rangeObjectMenu: return vm.timeSelection.map { .zone($0) }
+                default:                           return .objects(vm.selectedIDs)
+                }
+            }
+            guard let scope else { return event }
+            let clickedID = clickedEntry?.item.id
+            let entries: [ObjectMenuEntry] = MainActor.assumeIsolated {
+                vm.objectMenuEntries(clicked: clickedEntry, scope: scope)
+            }
+
             let menu = NSMenu(title: "")
             menu.autoenablesItems = false   // we drive isEnabled by hand (during a bake, say)
             proxies = []
 
-            if let group = hit.group {
-                let gid = group.id
-                let baking = MainActor.assumeIsolated { vm.isBaking(gid) }
-                let p = MenuActionProxy { Task { @MainActor in vm.disbandGroup(id: gid) } }
-                proxies.append(p)
-                let item = NSMenuItem(title: L("menu.context.disbandGroup"),
-                                      action: #selector(MenuActionProxy.run),
-                                      keyEquivalent: "")
-                item.target = p
-                item.isEnabled = !baking   // the subtree is locked during the bake
-                menu.addItem(item)
-
-                if baking {
-                    let bakeItem = NSMenuItem(title: L("menu.context.baking"), action: nil, keyEquivalent: "")
-                    bakeItem.isEnabled = false
-                    menu.addItem(bakeItem)
-                } else {
-                    // 'Consolidate': it captures the submix into a definition reusable elsewhere in the
-                    // project (see EditViewModel+Consolidate). In a multiple selection, the option only appears
-                    // if it is an identical copy-paste (→ 'Consolidate as N linked instances'), otherwise it is
-                    // hidden (see hasClip).
-                    if hit.selectedIDs.count >= 2 {
-                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
-                            let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
-                            proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
-                                                action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                            it.target = pr
-                            menu.addItem(it)
-                        }
-                        MainActor.assumeIsolated { addConsolidateEachItem(menu: menu, proxies: &proxies, vm: vm) }
-                    } else {
-                        let ps = MenuActionProxy { Task { @MainActor in vm.consolidate(groupID: gid) } }
-                        proxies.append(ps)
-                        let objectItem = NSMenuItem(title: L("menu.context.consolidate"),
-                                                    action: #selector(MenuActionProxy.run),
-                                                    keyEquivalent: "")
-                        objectItem.target = ps
-                        objectItem.toolTip = L("menu.context.consolidate.help")
-                        menu.addItem(objectItem)
+            func menuItem(_ e: ObjectMenuEntry, picked: ObjectMenuAction? = nil) -> NSMenuItem {
+                let item = NSMenuItem(title: e.title, action: nil, keyEquivalent: "")
+                item.isEnabled = e.isEnabled
+                item.toolTip = e.toolTip
+                if e.action == .baking { return item }
+                let action = picked ?? e.action
+                let p = MenuActionProxy {
+                    Task { @MainActor in
+                        await vm.performObjectMenuAction(action, clickedID: clickedID, scope: scope)
                     }
                 }
-            } else if let instance = hit.consolidateInstance {
-                let sid = instance.id
-                let baking = MainActor.assumeIsolated { vm.isBaking(sid) }
-                // OPENING a consolidated object goes through the DOUBLE CLICK (open / close); the right click
-                // only keeps 'Deconsolidate' (which materialises the instance as an independent
-                // editable clip/group). It stays possible while a parent is open.
-                let editable = !baking
-                let pd = MenuActionProxy { Task { @MainActor in vm.deconsolidate(placementID: sid) } }
-                proxies.append(pd)
-                let dItem = NSMenuItem(title: L("menu.context.deconsolidate"),
-                                      action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                dItem.target = pd
-                dItem.isEnabled = editable
-                dItem.toolTip = L("menu.context.deconsolidate.help")
-                menu.addItem(dItem)
-
-                // No more manual 'Refresh' action: stale definitions are re-baked AUTOMATICALLY in the
-                // background (a transitive cascade, see
-                // EditViewModel+Consolidate.cascadeRebakeStaleFixpoint). A recompute indicator shows on
-                // the instances concerned for the length of the re-bake.
-            } else if let sel = hit.timeSelection {
-                let p = MenuActionProxy { Task { @MainActor in vm.createGroupFromTimeSelection(sel) } }
                 proxies.append(p)
-                let item = NSMenuItem(title: L("menu.context.wrapInGroup"),
-                                      action: #selector(MenuActionProxy.run),
-                                      keyEquivalent: "")
+                item.action = #selector(MenuActionProxy.run)
                 item.target = p
-                menu.addItem(item)
+                return item
+            }
 
-                let pa = MenuActionProxy { Task { @MainActor in vm.createAuxFromTimeSelection(sel) } }
-                proxies.append(pa)
-                let auxItem = NSMenuItem(title: L("menu.context.createAuxClip"),
-                                        action: #selector(MenuActionProxy.run),
-                                        keyEquivalent: "")
-                auxItem.target = pa
-                menu.addItem(auxItem)
-
-                let pm = MenuActionProxy { Task { @MainActor in vm.createMidiClipFromTimeSelection(sel) } }
-                proxies.append(pm)
-                let midiItem = NSMenuItem(title: L("menu.context.createMidiClip"),
-                                          action: #selector(MenuActionProxy.run),
-                                          keyEquivalent: "")
-                midiItem.target = pm
-                menu.addItem(midiItem)
-            } else if hit.hasClip {
-                let ids   = hit.selectedIDs
-                let count = ids.count
-                let label = count == 1 ? L("menu.context.groupClip") : L("menu.context.groupSelection", count)
-                let p = MenuActionProxy { Task { @MainActor in vm.createGroupFromSelection(ids) } }
-                proxies.append(p)
-                let item = NSMenuItem(title: label,
-                                      action: #selector(MenuActionProxy.run),
-                                      keyEquivalent: "")
-                item.target = p
-                menu.addItem(item)
-
-                // 'Create consolidated object' on a lone clip: a consolidated object is ALWAYS a group (a design
-                // decision) → we first wrap the clip in a one-item group
-                // (see consolidateWrappingClip).
-                if let clip = hit.clip {
-                    let cid = clip.id
-                    let baking = MainActor.assumeIsolated { vm.isBaking(cid) }
-                    if baking {
-                        let bi = NSMenuItem(title: L("menu.context.baking"), action: nil, keyEquivalent: "")
-                        bi.isEnabled = false
-                        menu.addItem(bi)
-                    } else if count >= 2 {
-                        // A multiple selection: 'Consolidate as N linked instances' only appears if it is a
-                        // strictly identical copy-paste (the same wav, the same settings) — one definition,
-                        // N linked instances. 'Create N consolidated objects', for its part, holds for any
-                        // selection: one INDEPENDENT object per element.
-                        if let n = MainActor.assumeIsolated({ vm.uniformClipSelectionForConsolidate() }) {
-                            let pr = MenuActionProxy { Task { @MainActor in vm.consolidateSelectionAsLinkedInstances() } }
-                            proxies.append(pr)
-                            let it = NSMenuItem(title: L("menu.context.consolidateLinked", n),
-                                                action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                            it.target = pr
-                            menu.addItem(it)
-                        }
-                        MainActor.assumeIsolated { addConsolidateEachItem(menu: menu, proxies: &proxies, vm: vm) }
-                    } else {
-                        // A lone clip → the classic creation (wrapping in a one-item group).
-                        let ps = MenuActionProxy { Task { @MainActor in vm.consolidateWrappingClip(clipID: cid) } }
-                        proxies.append(ps)
-                        let si = NSMenuItem(title: L("menu.context.consolidate"),
-                                            action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                        si.target = ps
-                        si.toolTip = L("menu.context.consolidate.help")
-                        menu.addItem(si)
-                    }
+            // The primary entries (dissolve, group, consolidate…), in the model's order.
+            for e in entries {
+                switch e.action {
+                case .runScript, .setColor, .createFXLink: continue
+                default: menu.addItem(menuItem(e))
                 }
             }
 
-            // The annotations — the range's menu ONLY (@see ContextMenuPlan: the object's own menu
-            // offers neither, they live in its upper half and over a range). A marker goes INSIDE
-            // the object aimed at, at the instant aimed at — it is the object's own mark, and it
-            // travels with it. A comment goes over the RANGE traced, because a comment is about a
-            // passage and a passage is what a range says.
             MainActor.assumeIsolated {
-                if plan.offersObjectMarker, let target = hit.colorable {
-                    let t = vm.snapTime(max(0, pos.x / vm.pixelsPerSecond))
-                    addObjectMarkerItem(menu: menu, proxies: &proxies, vm: vm,
-                                        objectID: target.id, atAbsoluteTime: t)
-                }
-                if plan.offersComment, let sel = hit.timeSelection {
+                // The range's menu keeps its comment, laid over the range traced — a comment is
+                // about a passage, and a passage is what a range says. The object's menu has no
+                // annotation: they live in a block's upper half.
+                if plan.offersComment, case .zone(let sel) = scope {
                     if !menu.items.isEmpty { menu.addItem(.separator()) }
                     addCommentItem(menu: menu, proxies: &proxies, vm: vm, selection: sel)
                 }
 
                 // The relink block: repair a link that is broken, or sweep a folder for everything
                 // the project has lost. The same items the sound list's rows carry, built from ONE
-                // plan (@see RelinkDialogs.MenuPlan) — an entry offered in one window and withheld
-                // in the other would be two features. It adds nothing when there is nothing to
-                // offer, its own separator included. The one exception is deliberate and is
-                // documented at `addRelinkItems`: "Replace File…" belongs to the list alone, being
-                // a deliberate act on named objects rather than an answer to an accident.
-                if let target = hit.colorable {
+                // plan (@see RelinkDialogs.MenuPlan). Withheld in `.zone` scope: a path is
+                // repaired for the object, not for a passage of it.
+                if case .objects = scope, let target = clickedEntry?.item {
                     addRelinkItems(menu: menu, proxies: &proxies, vm: vm, object: target)
-                }
-
-                // Third-party scripts declared for an OBJECT context (@see ScriptPlugins.swift):
-                // they have no business in the bar's Scripts menu (nothing to hand it there), so
-                // this is their only door. The target is the effective selection when the object
-                // clicked is part of it, the object clicked alone otherwise — the same convention
-                // "touching = grabbing" every other batch gesture here already follows.
-                if let target = hit.colorable {
-                    addScriptsMenu(menu: menu, proxies: &proxies, vm: vm,
-                                  targetID: target.id, selectedIDs: hit.selectedIDs)
                 }
             }
 
-            // A custom colour (a clip / MIDI clip / group / aux): a 16-colour palette, independent of
-            // the stem. It paints the whole selection if the object under the cursor is part of it,
-            // otherwise that object alone — the same convention as 'Group the selection' above.
-            // Straight at the menu's first level (no 'Colour' submenu): one right click is enough
-            // to see the palette, with no intermediate step.
-            if let colorObj = hit.colorable {
+            // Third-party scripts declared for an OBJECT context (@see ScriptPlugins.swift): their
+            // only door. The target is the scope's objects (the pieces of the zone, or the
+            // selection when the object clicked is part of it, the object alone otherwise).
+            let scripts = entries.filter { if case .runScript = $0.action { return true } else { return false } }
+            if !scripts.isEmpty {
                 if !menu.items.isEmpty { menu.addItem(.separator()) }
-                let targets: Set<UUID> = (hit.selectedIDs.contains(colorObj.id) && hit.selectedIDs.count > 1)
-                    ? hit.selectedIDs : [colorObj.id]
-                let currentIndex = colorObj.colorIndex
+                let scriptsItem = NSMenuItem(title: L("menu.context.scripts"), action: nil, keyEquivalent: "")
+                let submenu = NSMenu(title: L("menu.context.scripts"))
+                for e in scripts { submenu.addItem(menuItem(e)) }
+                scriptsItem.submenu = submenu
+                menu.addItem(scriptsItem)
+            }
 
-                let pReset = MenuActionProxy { Task { @MainActor in vm.setObjectColor(ids: targets, colorIndex: nil) } }
-                proxies.append(pReset)
-                let resetItem = NSMenuItem(title: L("menu.context.stemColor"),
-                                           action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                resetItem.target = pReset
-                resetItem.state = currentIndex == nil ? .on : .off
+            // A custom colour: a 16-colour palette, independent of the stem, straight at the
+            // menu's first level (no 'Colour' submenu): one right click is enough to see the
+            // palette. It paints the scope — the whole selection if the object is part of it,
+            // otherwise that object alone; the pieces inside the range in `.zone` scope.
+            if let colorEntry = entries.first(where: { $0.action == .setColor(nil) }) {
+                if !menu.items.isEmpty { menu.addItem(.separator()) }
+                let resetItem = menuItem(colorEntry)
+                resetItem.state = colorEntry.isChecked ? .on : .off
                 menu.addItem(resetItem)
                 // No separator between 'Stem colour' and the palette: the entry is part of the
-                // colour choice (the object's own colour, or none = the stem's), and keeping the
-                // two together says so.
-
+                // colour choice (the object's own colour, or none = the stem's).
                 let swatchItem = NSMenuItem()
-                swatchItem.view = ColorSwatchGridView(currentColorIndex: currentIndex) { picked in
-                    Task { @MainActor in vm.setObjectColor(ids: targets, colorIndex: picked) }
+                swatchItem.view = ColorSwatchGridView(currentColorIndex: colorEntry.currentColorIndex) { picked in
+                    Task { @MainActor in
+                        await vm.performObjectMenuAction(.setColor(picked), clickedID: clickedID, scope: scope)
+                    }
                 }
                 menu.addItem(swatchItem)
             }
 
-            // 'Create an FX link' — the very last entry, on a MULTIPLE selection the clicked object
-            // belongs to: the objects come to share ONE bin of plugins (@see createFXLinkFromObjects).
-            // Offered only when one of them has plain plugins to make the bin of.
-            if hit.selectedIDs.count >= 2, let clicked = hit.colorable, hit.selectedIDs.contains(clicked.id) {
-                let ids = Array(hit.selectedIDs)
-                let offered = MainActor.assumeIsolated { vm.canCreateFXLinkFromObjects(ids) }
-                if offered {
-                    if !menu.items.isEmpty { menu.addItem(.separator()) }
-                    let pf = MenuActionProxy { Task { @MainActor in vm.createFXLinkFromObjects(ids) } }
-                    proxies.append(pf)
-                    let fxItem = NSMenuItem(title: L("fxlink.menu.create"),
-                                            action: #selector(MenuActionProxy.run), keyEquivalent: "")
-                    fxItem.target = pf
-                    menu.addItem(fxItem)
-                }
+            // 'Create an FX link' — the very last entry, on a multiple scope.
+            if let fx = entries.first(where: { $0.action == .createFXLink }) {
+                if !menu.items.isEmpty { menu.addItem(.separator()) }
+                menu.addItem(menuItem(fx))
             }
 
             guard !menu.items.isEmpty else { return event }
@@ -1488,63 +1343,6 @@ final class SoloChordState {
     /// is arming the solo chords (s+Return, s+N, s+⌫) — space is no longer one of them, solo no
     /// longer pilots the transport.
     var keyCode: UInt16? = nil
-}
-
-// MARK: - 'Create N consolidated objects' (a multiple selection)
-
-/// Adds the 'Create N consolidated objects' item to the menu: one INDEPENDENT consolidated object per selected
-/// element (clips, MIDI, groups mixed). Nothing to add if the selection does not lend itself to
-/// it (fewer than two eligible elements, a project never saved).
-@MainActor
-private func addConsolidateEachItem(menu: NSMenu, proxies: inout [MenuActionProxy], vm: EditViewModel) {
-    let targets = vm.consolidateTargets()
-    guard targets.count >= 2, vm.consolidateFolder != nil else { return }
-    guard !targets.contains(where: { vm.isBaking($0) }) else { return }
-    let p = MenuActionProxy { Task { @MainActor in await vm.consolidateEachInSelection() } }
-    proxies.append(p)
-    let item = NSMenuItem(title: L("menu.context.consolidateEach", targets.count),
-                          action: #selector(MenuActionProxy.run), keyEquivalent: "")
-    item.target = p
-    menu.addItem(item)
-}
-
-/// The 'Scripts' submenu of an object's context menu — every entry an installed script declares
-/// with `context: "object"` (manifest-wide or entry-wide, @see ScriptPluginManifest). Nothing is
-/// added when no script declares one, so the menu stays exactly as it was before scripts existed
-/// for whoever has none installed. A greyed entry keeps the tooltip the bar's own menu already
-/// gives (`unavailableReason`, else the manifest's description) — the same reason, wherever it is
-/// read from.
-@MainActor
-private func addScriptsMenu(menu: NSMenu, proxies: inout [MenuActionProxy], vm: EditViewModel,
-                            targetID: UUID, selectedIDs: Set<UUID>) {
-    let objectIDs: [UUID] = selectedIDs.contains(targetID) ? Array(selectedIDs) : [targetID]
-    let plugins = ScriptPluginRegistry.shared.plugins.filter { !$0.objectEntries.isEmpty }
-    guard !plugins.isEmpty else { return }
-
-    if !menu.items.isEmpty { menu.addItem(.separator()) }
-    let scriptsItem = NSMenuItem(title: L("menu.context.scripts"), action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: L("menu.context.scripts"))
-    for plugin in plugins {
-        let entries = plugin.objectEntries
-        for entry in entries {
-            let title = entries.count > 1 ? "\(plugin.displayName) — \(entry.title)" : plugin.displayName
-            let item = NSMenuItem(title: title, action: #selector(MenuActionProxy.run), keyEquivalent: "")
-            let p = MenuActionProxy {
-                Task { @MainActor in
-                    if let error = ScriptPluginRegistry.shared.run(plugin, entry: entry, objectIDs: objectIDs) {
-                        vm.notify(L("script.run.failed", entry.title), error)
-                    }
-                }
-            }
-            proxies.append(p)
-            item.target = p
-            item.isEnabled = plugin.isAvailable
-            item.toolTip = plugin.unavailableReason ?? plugin.manifest.description
-            submenu.addItem(item)
-        }
-    }
-    scriptsItem.submenu = submenu
-    menu.addItem(scriptsItem)
 }
 
 // MARK: - Action proxy for NSMenuItem

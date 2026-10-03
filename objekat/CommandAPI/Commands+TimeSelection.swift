@@ -203,7 +203,7 @@ extension CommandRegistry {
             let layout: String
             switch plan.layout {
             case .rangeMenu: layout = "range_menu"
-            case .rangeAnnotationsMenu: layout = "range_annotations_menu"
+            case .rangeObjectMenu: layout = "range_object_menu"
             case .objectTimeMenu: layout = "object_time_menu"
             case .objectBodyMenu: layout = "object_body_menu"
             case .groupSelectionMenu: layout = "group_selection_menu"
