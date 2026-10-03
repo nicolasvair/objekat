@@ -13,9 +13,9 @@ it, the part the monitor runs BEFORE it builds anything: `ContextMenuPlan` (also
     'Consolidate N linked' and the FX link remain on offer);
   * an object OUTSIDE the selection replaces it;
   * the upper half (time): no selection, no cursor move, the marker on offer, no comment;
-  * a point INSIDE the time selection, ON an object (either half): the object marker and the
-    comment ALONE (`range_annotations_menu`), and nothing touched — no object selected, the range
-    kept whole, the cursor where it was;
+  * a point INSIDE the time selection, ON an object (either half): the object's own menu applied
+    to the ZONE (`range_object_menu`, scope `zone`, no marker, no comment), and nothing touched —
+    no object selected, the range kept whole, the cursor where it was;
   * a time selection lying elsewhere is cleared by a body click outside it, exactly as the left
     click clears it;
   * a click on NO object (an empty lane, `id` omitted, `lane` + `time` given): a time selection
@@ -143,16 +143,16 @@ with ObjekatClient(SOCK) as c:
           "%s %s" % (sel(), json.dumps(r)))
     check("… and the cursor stays where it was", near(cursor(), 3.3), str(cursor()))
 
-    # ── a point INSIDE the time selection, on an object: the two annotation items alone ─────
+    # ── a point INSIDE the time selection, on an object: the object's menu, zone scope ─────
     a, b, d = fresh()
     cmd("timesel.set", start=1.5, end=2.3, lanes=[0])
     cmd("transport.seek", seconds=0.7)
     before = cmd("selection.get")
     for zone in ("time", "body"):
         r = click(a, zone=zone, time=2.1)
-        check("inside the range (%s half): the object marker and the comment alone" % zone,
-              r["layout"] == "range_annotations_menu" and r["offers_comment"] is True
-              and r["offers_object_marker"] is True, json.dumps(r))
+        check("inside the range (%s half): the object's menu on the zone, no marker, no comment" % zone,
+              r["layout"] == "range_object_menu" and r["offers_comment"] is False
+              and r["offers_object_marker"] is False and r.get("scope") == "zone", json.dumps(r))
         check("… and nothing is selected (%s half)" % zone,
               r["selects_object"] is False and r["applied"] is False and sel() == set(),
               "%s %s" % (sel(), json.dumps(r)))
@@ -169,8 +169,8 @@ with ObjekatClient(SOCK) as c:
     before = cmd("selection.get")
     r = click(a, zone="body", time=2.1)
     after = cmd("selection.get")
-    check("inside the range on a selected object: the two items, the state untouched",
-          r["layout"] == "range_annotations_menu" and r["applied"] is False
+    check("inside the range on a selected object: the zone menu, the state untouched",
+          r["layout"] == "range_object_menu" and r["applied"] is False
           and after.get("ids") == before.get("ids")
           and after.get("time_selection") == before.get("time_selection"),
           "%s -> %s %s" % (json.dumps(before), json.dumps(after), json.dumps(r)))
