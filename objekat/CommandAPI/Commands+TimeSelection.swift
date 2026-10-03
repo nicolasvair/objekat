@@ -209,12 +209,133 @@ extension CommandRegistry {
             case .groupSelectionMenu: layout = "group_selection_menu"
             case .nothing: layout = "nothing"
             }
+            // What the menu would OFFER, read off the same list the AppKit menu is built from
+            // (`objectMenuEntries`), in the scope the layout implies: the ZONE for the range's
+            // menus, the selection for the others. The layouts that offer no object entry (the
+            // upper half of a block, `nothing`) answer an empty list.
+            let scope = CommandRegistry.contextMenuScope(for: plan.layout, vm: vm)
+            let entries = scope.map { vm.objectMenuEntries(clicked: entry, scope: $0) } ?? []
             return .object(["layout": .string(layout),
                             "selects_object": .bool(plan.selectsObject),
                             "offers_object_marker": .bool(plan.offersObjectMarker),
                             "offers_comment": .bool(plan.offersComment),
                             "applied": .bool(applied),
+                            "scope": .string(scope.map { $0.isZone ? "zone" : "objects" } ?? "none"),
+                            "entries": .array(entries.map { CommandRegistry.entryJSON($0) }),
                             "selection": CommandAdapters.selectionPayload(vm)])
+        }
+
+        register("selection.context_action",
+                 summary: "Performs an entry of the OBJECT menu, by its machine name "
+                        + "(`selection.context_click` lists them in `entries`: `disband_group`, "
+                        + "`consolidate_group`, `consolidate_clip`, `consolidate_linked`, "
+                        + "`consolidate_each`, `deconsolidate`, `group_selection`, `create_aux`, "
+                        + "`create_midi_clip`, `set_color`, `create_fx_link`, `run_script`). `id` is "
+                        + "the object the click lands on (omit it for an empty lane). The scope is "
+                        + "the SELECTION by default — the object clicked is selected first when it "
+                        + "is not part of it, exactly as the right click does — or, with "
+                        + "`apply_to_zone`, the TIME SELECTION: the objects are isolated on its "
+                        + "bounds and the action applies to the pieces inside the range and "
+                        + "nothing else (then the selection is those pieces). In zone scope "
+                        + "dissolve / deconsolidate / colour / FX link are ONE undo step; "
+                        + "consolidating and scripts isolate with an undo step of their own, then "
+                        + "act (two steps). `args`: `color_index` (int, or null = the stem's) for "
+                        + "`set_color`; `plugin` (the script's name) and `entry` (its index, "
+                        + "default 0) for `run_script`. `dry_run` checks that the entry is "
+                        + "offered and says what it WOULD apply to (`target_ids`: the objects the "
+                        + "range crosses, `needs_isolation`) without touching anything. "
+                        + "`consolidate_each` answers at once (`async: true`): the renders go on "
+                        + "in the background (`consolidate.state`).",
+                 params: [ParamSpec("action", "string", "The entry's machine name."),
+                          ParamSpec("id", "uuid", required: false,
+                                    "The object under the click; omit it for an empty lane."),
+                          ParamSpec("args", "object", required: false,
+                                    "`color_index`, or `plugin` / `entry` (see above)."),
+                          ParamSpec("apply_to_zone", "bool", required: false,
+                                    "Apply to the time selection instead of the selection."),
+                          ParamSpec("dry_run", "bool", required: false,
+                                    "Only check and describe (default false).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            var entry: LaneEntry? = nil
+            if let id = try p.optionalUUID("id") {
+                guard let e = vm.laneEntries.first(where: { $0.item.id == id }) else {
+                    throw CommandError(code: .not_found, message: "unknown or hidden object: \(id.uuidString)")
+                }
+                entry = e
+            }
+            let dry = try p.bool("dry_run", or: false)
+            let scope: ObjectActionScope
+            if try p.bool("apply_to_zone", or: false) {
+                guard let sel = vm.timeSelection else {
+                    throw CommandError(code: .invalid_state, message: "no time selection")
+                }
+                scope = .zone(sel)
+            } else if let entry, !vm.selectedIDs.contains(entry.item.id) {
+                if !dry {
+                    vm.selectForContextClick(entry, isPlaying: vm.isTransportPlaying,
+                                             onMoveCursor: { vm.cursorPosition = max(0, $0) })
+                }
+                scope = .objects(dry ? [entry.item.id] : vm.selectedIDs)
+            } else {
+                scope = .objects(vm.selectedIDs)
+            }
+
+            let name = try p.string("action")
+            let args = p.raw["args"]?.objectValue ?? [:]
+            let entries = vm.objectMenuEntries(clicked: entry, scope: scope)
+            @MainActor func matches(_ e: ObjectMenuEntry) -> Bool {
+                guard e.action.apiName == name else { return false }
+                if case .runScript(let pluginID, let index) = e.action {
+                    let plugin = ScriptPluginRegistry.shared.plugins.first { $0.id == pluginID }
+                    if let want = args["plugin"]?.stringValue, plugin?.displayName != want { return false }
+                    return index == (args["entry"]?.intValue ?? 0)
+                }
+                return true
+            }
+            guard let chosen = entries.first(where: matches) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "action not offered here: \(name)",
+                                   details: .object(["offered": .array(entries.map { CommandRegistry.entryJSON($0) })]))
+            }
+            guard chosen.isEnabled else {
+                throw CommandError(code: .invalid_state, message: "action is greyed out: \(name)")
+            }
+            var action = chosen.action
+            if case .setColor = action {
+                let raw = args["color_index"]
+                if raw == nil || raw == .null { action = .setColor(nil) }
+                else if let i = raw?.intValue, i >= 0, i < ObjectColorPalette.palette.count {
+                    action = .setColor(i)
+                } else {
+                    throw CommandError(code: .bad_params, message: "'args.color_index': an index of the palette, or null")
+                }
+            }
+
+            var payload: [String: JSONValue] = [
+                "action": .string(name),
+                "scope": .string(scope.isZone ? "zone" : "objects"),
+            ]
+            if case .zone(let sel) = scope {
+                payload["target_ids"] = .array(vm.timeSelectionTargets(sel).map { .string($0.item.id.uuidString) })
+                payload["needs_isolation"] = .bool(vm.timeSelectionNeedsIsolation(sel))
+            } else if case .objects(let ids) = scope {
+                payload["target_ids"] = .array(ids.map { .string($0.uuidString) })
+            }
+            if dry {
+                payload["dry_run"] = .bool(true)
+                return .object(payload)
+            }
+            if action == .consolidateEach {
+                Task { @MainActor in
+                    await vm.performObjectMenuAction(action, clickedID: entry?.item.id, scope: scope)
+                }
+                payload["async"] = .bool(true)
+            } else {
+                await vm.performObjectMenuAction(action, clickedID: entry?.item.id, scope: scope)
+            }
+            payload["selection"] = CommandAdapters.selectionPayload(vm)
+            return .object(payload)
         }
 
         register("selection.click",
@@ -460,5 +581,50 @@ extension CommandRegistry {
             return .object(["ids": .array(vm.selectedIDs.map { .string($0.uuidString) }),
                             "count": .int(vm.selectedIDs.count)])
         }
+    }
+}
+
+// MARK: - The object menu, as the API reads it
+
+extension CommandRegistry {
+
+    /// The scope a layout's object entries apply to: the ZONE for the range's menus, the selection
+    /// for the others — and none where no object entry is offered at all (the upper half of a
+    /// block, no menu). The same rule as the AppKit menu's.
+    @MainActor
+    static func contextMenuScope(for layout: ContextMenuPlan.Layout,
+                                 vm: EditViewModel) -> ObjectActionScope? {
+        switch layout {
+        case .rangeMenu, .rangeObjectMenu:
+            return vm.timeSelection.map { .zone($0) }
+        case .objectBodyMenu, .groupSelectionMenu:
+            return .objects(vm.selectedIDs)
+        case .objectTimeMenu, .nothing:
+            return nil
+        }
+    }
+
+    /// One entry of the object menu, for a script: its machine name, the interface's own words
+    /// (in the interface language), and whether it can be chosen now.
+    @MainActor
+    static func entryJSON(_ e: ObjectMenuEntry) -> JSONValue {
+        var o: [String: JSONValue] = [
+            "action": .string(e.action.apiName),
+            "title": .string(e.title),
+            "enabled": .bool(e.isEnabled),
+        ]
+        switch e.action {
+        case .setColor:
+            o["checked"] = .bool(e.isChecked)
+            o["color_index"] = e.currentColorIndex.map { .int($0) } ?? .null
+        case .runScript(let pluginID, let index):
+            if let plugin = ScriptPluginRegistry.shared.plugins.first(where: { $0.id == pluginID }) {
+                o["plugin"] = .string(plugin.displayName)
+            }
+            o["entry"] = .int(index)
+        default:
+            break
+        }
+        return .object(o)
     }
 }
