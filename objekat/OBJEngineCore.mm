@@ -12,6 +12,8 @@
 #include "OBJChannelModePlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
+#include "OBJBridgeTapPlugin.h"
+#include "OBJKeyProbePlugin.h"
 #include "OBJAudioProbe.h"
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
@@ -1127,6 +1129,9 @@ static OBJExternalPluginCount objCountExternalPlugins(te::Edit& edit) {
 struct OBJTrackSlot {
     std::string stemKey;
     int lane = 0;
+    // The audio bridge's rank (docs/plan_sidechain.md §5.5): a unit that reads a key written by
+    // another runs in a pool track of a HIGHER rank. 0 = every session without a route.
+    int rank = 0;
 };
 
 // Une piste du pool, avec le compartiment qu'elle sert. Un vecteur (et non deux tables) :
@@ -1137,6 +1142,7 @@ struct OBJPoolTrack {
     std::string stemKey;
     int lane = 0;
     te::AudioTrack* track = nullptr;
+    int rank = 0;
 };
 
 // Résultat de `renderChainForKey:` — deux listes qu'il ne faut surtout pas confondre.
@@ -1207,6 +1213,8 @@ struct OBJRenderChain {
 - (OBJTrackSlot)trackSlotForKey:(const std::string&)key lane:(int)lane;
 - (te::AudioTrack*)trackForSlot:(const OBJTrackSlot&)slot;
 - (OBJTrackSlot)slotOfTrack:(te::Track*)track;
+// Rank of the pool track an object lives on (0 when it has none yet, or for a child of a group).
+- (int)currentRankForKey:(const std::string&)key;
 - (std::string)stemKeyForKey:(const std::string&)key;
 - (te::ClipOwner*)clipOwnerForKey:(const std::string&)key lane:(int)lane;
 - (void)pruneEmptyPoolTracks;
@@ -1358,6 +1366,18 @@ struct OBJRenderChain {
     std::unordered_set<std::string>                           _auxKeys;
     // "émetteurID|auxID" → ObjAuxSendPlugin posé en fin de chaîne de l'émetteur.
     std::unordered_map<std::string, te::Plugin::Ptr>          _auxSendMap;
+    // The audio bridge (docs/plan_sidechain.md §5.8). Source key (object or stem) → its engine-only
+    // tap plugin, at the end of that chain. Never a model plugin: the model does not know it.
+    std::unordered_map<std::string, te::Plugin::Ptr>          _bridgeTapMap;
+    // Plugin keys that carry a sidechain source / object keys whose rank was set: what the NEXT
+    // sync must clear if it does not touch them again. The `_bridgeTouched*` sets are what the
+    // current transaction (beginBridgeSync … commitBridgeSync) touched.
+    std::unordered_set<std::string>                           _bridgeKeyedPlugins, _bridgeRankedKeys;
+    std::unordered_set<std::string>                           _bridgeTouchedTaps, _bridgeTouchedKeyed, _bridgeTouchedRanked;
+    // Plugin keys whose wires could not be laid yet (an AU still loading): done by the latency tick.
+    std::unordered_set<std::string>                           _bridgePendingWires;
+    // The transaction changed something the graph reads: ONE restartPlayback at its end.
+    bool                                                      _bridgeDirty;
     std::unordered_map<std::string, te::WaveAudioClip::Ptr>   _clipMap;
     // clipID → MidiClip. Un objet MIDI est un ContainerClip (dans _containerClipMap, sous la
     // MÊME clé) dont ce clip est l'unique enfant : c'est le container qui porte la chaîne,
@@ -1573,6 +1593,11 @@ static BOOL gOBJAudioDisabled = NO;
         _engine->getPluginManager().createBuiltInType<te::ObjChannelModePlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjParallelBlockPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjAuxSendPlugin>();
+        // The audio bridge (patch 0037): the engine-only tap, and two MEASURING tools reachable only
+        // through DEBUG commands. None is added to tracktionBuiltInPluginList(): nothing new in the UI.
+        _engine->getPluginManager().createBuiltInType<te::ObjBridgeTapPlugin>();
+        _engine->getPluginManager().createBuiltInType<te::ObjKeyProbePlugin>();
+        _engine->getPluginManager().createBuiltInType<te::LatencyPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
         // que de sauter l'appel — Tracktion s'attend à un device manager initialisé, et le
         // court-circuiter le ferait trébucher plus loin. Zéro canal suffit à ne pas réquisitionner
@@ -1726,6 +1751,7 @@ static BOOL gOBJAudioDisabled = NO;
 // ensureContextAllocated(true) = réallocation complète (ce qu'un reload de projet fait déjà).
 - (void)checkLatencyAndRebuild {
     if (!_edit) return;
+    [self layPendingBridgeWires];
     double sig = 0.0;
     for (auto& kv : _pluginMap)     if (kv.second) sig += kv.second->getLatencySeconds();
     for (auto& kv : _instrumentMap) if (kv.second) sig += kv.second->getLatencySeconds();
@@ -2073,6 +2099,14 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _clipMap.clear();
     _midiClipMap.clear();
     _instrumentMap.clear();
+    _bridgeTapMap.clear();
+    _bridgeKeyedPlugins.clear();
+    _bridgeRankedKeys.clear();
+    _bridgeTouchedTaps.clear();
+    _bridgeTouchedKeyed.clear();
+    _bridgeTouchedRanked.clear();
+    _bridgePendingWires.clear();
+    _bridgeDirty = false;
     _objectChainMap.clear();
     _pluginOwnerHost.clear();
     _stemBusMap.clear();
@@ -2119,7 +2153,21 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
 // garde l'objet dans son stem, et un objet qui n'a pas encore de piste naît au Main, où
 // assignObjects:toStemID: viendra le chercher.
 - (OBJTrackSlot)trackSlotForKey:(const std::string&)key lane:(int)lane {
-    return { [self stemKeyForKey:key], lane };
+    return { [self stemKeyForKey:key], lane, [self currentRankForKey:key] };
+}
+
+static te::Track* objOwningTrack(te::Clip& clip);   // defined below
+
+// The rank is DEDUCED from where the clip lives, like the stem (the doctrine above): the pool track
+// is the only truth, so a lane change or a stem change keeps the object at its rank.
+- (int)currentRankForKey:(const std::string&)key {
+    if (_childOwnerMap.count(key)) return 0;      // a child lives in a container, not on a pool track
+    te::Clip* clip = nullptr;
+    if (auto it = _clipMap.find(key); it != _clipMap.end())                        clip = it->second.get();
+    else if (auto it = _containerClipMap.find(key); it != _containerClipMap.end()) clip = it->second;
+    else if (auto it = _midiClipMap.find(key); it != _midiClipMap.end())           clip = it->second.get();
+    if (!clip) return 0;
+    return [self slotOfTrack:objOwningTrack(*clip)].rank;
 }
 
 // Piste d'un compartiment, créée à la demande. C'est le SEUL endroit qui crée des AudioTracks
@@ -2129,7 +2177,7 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     if (!_edit) return nullptr;
 
     for (auto& p : _poolTracks)
-        if (p.lane == slot.lane && p.stemKey == slot.stemKey)
+        if (p.lane == slot.lane && p.stemKey == slot.stemKey && p.rank == slot.rank)
             return p.track;
 
     // Un compartiment de stem naît DANS le folder du stem : c'est là, et nulle part ailleurs,
@@ -2144,7 +2192,10 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     if (!track) return nullptr;
     // Nom de diagnostic uniquement : rien ne le lit, aucune UI ne le montre.
     track->setName(juce::String("Slot ") + juce::String(slot.lane));
-    _poolTracks.push_back({ folder ? slot.stemKey : std::string(), slot.lane, track.get() });
+    // The rank is read by the graph builder (createClipsNode): a pool track of rank >= 1 waits for
+    // every unit of a lower rank. Absent = 0, so a rank-0 track is written exactly as before.
+    if (slot.rank > 0) track->state.setProperty(te::objbridge_ids::rank, slot.rank, nullptr);
+    _poolTracks.push_back({ folder ? slot.stemKey : std::string(), slot.lane, track.get(), slot.rank });
     // Une piste neuve s'initialise sur le device par défaut, et elle vient de s'insérer EN TÊTE
     // du folder : sans ce rappel, elle devient la sortie du bus (@see applyStemRouting) et
     // rebranche au Main un stem qu'on avait détaché.
@@ -2156,8 +2207,8 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
 - (OBJTrackSlot)slotOfTrack:(te::Track*)track {
     for (auto& p : _poolTracks)
         if (p.track == track)
-            return { p.stemKey, p.lane };
-    return { {}, -1 };
+            return { p.stemKey, p.lane, p.rank };
+    return { {}, -1, 0 };
 }
 
 // Stem d'un objet, DÉDUIT du folder qui porte sa piste. Chaîne vide = Main (aucun folder).
@@ -4433,6 +4484,304 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
 }
 
 
+// MARK: - The audio bridge (sidechain) — docs/plan_sidechain.md §5.8
+//
+// The model (EditViewModel+Bridge, from `BridgeScope.plan`) decides WHAT is routed; this section
+// only lays it down, in ONE transaction per sync: beginBridgeSync, then the ensure/set calls for
+// every active route, then commitBridgeSync, which clears what the sync did not touch and asks for
+// ONE rebuild. Everything here runs on the main thread, and none of it is recorded anywhere the
+// model does not know about: a tap is an engine-only plugin (the model never sees it), and the
+// sidechain source / rank / wires on a model plugin are stripped from the state the model keeps
+// (@see objStripBridgeState), so the model stays the sole authority and the undo snapshot never
+// sees them.
+
+static NSString* objNS(const juce::String& s);   // defined with the other debug helpers, below
+
+// The clip (audio, container or MIDI) an object key names, or nullptr.
+- (te::Clip*)bridgeClipForKey:(const std::string&)key {
+    if (auto it = _containerClipMap.find(key); it != _containerClipMap.end()) return it->second;
+    if (auto it = _clipMap.find(key); it != _clipMap.end())                    return it->second.get();
+    if (auto it = _midiClipMap.find(key); it != _midiClipMap.end())            return it->second.get();
+    return nullptr;
+}
+
+- (void)beginBridgeSync {
+    _bridgeTouchedTaps.clear();
+    _bridgeTouchedKeyed.clear();
+    _bridgeTouchedRanked.clear();
+}
+
+- (void)setBridgeRank:(NSInteger)rank forID:(NSString*)uuid {
+    if (!_edit || !uuid) return;
+    std::string key([uuid UTF8String]);
+    if (rank > 0) { _bridgeRankedKeys.insert(key); _bridgeTouchedRanked.insert(key); }
+    else          { _bridgeRankedKeys.erase(key); }
+
+    te::Clip* clip = [self bridgeClipForKey:key];
+    if (!clip) return;
+
+    // A child of a group, and an aux: the rank is a property of its own clip, read by
+    // createNodeForContainerClip (children) — nothing moves.
+    if (_childOwnerMap.count(key) || _auxKeys.count(key)) {
+        const int current = (int) clip->state.getProperty(te::objbridge_ids::rank, 0);
+        if (current == (int) rank) return;
+        if (rank > 0) clip->state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
+        else          clip->state.removeProperty(te::objbridge_ids::rank, nullptr);
+        _bridgeDirty = true;
+        return;
+    }
+
+    // Any other top-level object: it runs on the pool track of its (stem, lane, rank), so the rank
+    // moves it to that track — the same gesture as a lane change.
+    const OBJTrackSlot current = [self slotOfTrack:objOwningTrack(*clip)];
+    if (current.lane < 0 || current.rank == (int) rank) return;
+    auto* dest = [self trackForSlot:OBJTrackSlot{ current.stemKey, current.lane, (int) rank }];
+    if (!dest || clip->getParent() == static_cast<te::ClipOwner*>(dest)) return;
+    if (!moveClipToOwner(*clip, *dest)) {
+        NSLog(@"[BRIDGE] setBridgeRank: move refused (%s)", key.c_str());
+        return;
+    }
+    [self pruneEmptyPoolTracks];
+    _bridgeDirty = true;
+}
+
+- (void)ensureBridgeTapForSource:(NSString*)sourceKey rank:(NSInteger)rank {
+    if (!_edit || !sourceKey) return;
+    std::string key([sourceKey UTF8String]);
+    // The Main is never a source (D4); its list is the master chain.
+    if (!_masterStemKey.empty() && key == _masterStemKey) return;
+    te::PluginList* pl = [self userPluginListForKey:key];
+    if (!pl) return;
+
+    _bridgeTouchedTaps.insert(key);
+
+    if (auto it = _bridgeTapMap.find(key); it != _bridgeTapMap.end()) {
+        // Still in the list? A recompile of the chain can have remade it (the same check addSend makes).
+        bool stillInList = false;
+        for (auto* p : *pl) if (p == it->second.get()) { stillInList = true; break; }
+        if (stillInList) {
+            if ((int) it->second->state.getProperty(te::objbridge_ids::rank, -1) != (int) rank) {
+                it->second->state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
+                _bridgeDirty = true;
+            }
+            return;
+        }
+        _bridgeTapMap.erase(it);
+    }
+
+    // Adopt a tap already present in the chain but absent from the registry, never double it.
+    for (auto* p : *pl) {
+        if (dynamic_cast<te::BridgeTapSource*>(p) != nullptr) {
+            _bridgeTapMap[key] = te::Plugin::Ptr(p);
+            if ((int) p->state.getProperty(te::objbridge_ids::rank, -1) != (int) rank)
+                p->state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
+            _bridgeDirty = true;
+            return;
+        }
+    }
+
+    // At the END of the chain: after the fader AND the window (post-fader, post-window — D1), for a
+    // stem after the bus gain and the meter.
+    te::Plugin::Ptr tap = pl->insertPlugin(te::ObjBridgeTapPlugin::create(), pl->size());
+    if (!tap) { NSLog(@"[BRIDGE] ensureBridgeTap: insertion refused (%s)", key.c_str()); return; }
+    tap->state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
+    tap->state.setProperty(te::objbridge_ids::source, juce::String(key), nullptr);
+    _bridgeTapMap[key] = tap;
+    _bridgeDirty = true;
+}
+
+// Removes a plugin's key: its source, its wires, the compressor's trigger flag, its rank.
+// Returns YES if there was anything to remove.
+- (BOOL)clearSidechainOnPlugin:(te::Plugin&)plugin {
+    bool changed = false;
+    if (plugin.state.hasProperty(te::IDs::sidechainSourceID)) {
+        plugin.state.removeProperty(te::IDs::sidechainSourceID, nullptr);
+        changed = true;
+    }
+    auto wires = plugin.state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
+    if (wires.isValid()) { plugin.state.removeChild(wires, nullptr); changed = true; }
+    if (auto* comp = dynamic_cast<te::CompressorPlugin*>(&plugin))
+        if (comp->useSidechainTrigger.get()) { comp->useSidechainTrigger = false; changed = true; }
+    if (plugin.state.hasProperty(te::objbridge_ids::rank)) {
+        plugin.state.removeProperty(te::objbridge_ids::rank, nullptr);
+        changed = true;
+    }
+    return changed;
+}
+
+// An external plugin still instantiating asynchronously does not know its buses yet.
+static bool objPluginIsLoaded(te::Plugin& plugin) {
+    if (auto* ext = dynamic_cast<te::ExternalPlugin*>(&plugin)) return !ext->isInitialisingAsync();
+    return true;
+}
+
+- (void)setSidechainForPlugin:(NSString*)pluginKey source:(NSString* _Nullable)sourceKey rank:(NSInteger)rank {
+    if (!_edit || !pluginKey) return;
+    std::string pk([pluginKey UTF8String]);
+    auto pit = _pluginMap.find(pk);
+    if (pit == _pluginMap.end() || !pit->second) return;
+    te::Plugin& plugin = *pit->second;
+
+    te::EditItemID target;
+    if (sourceKey) {
+        if (auto tit = _bridgeTapMap.find(std::string([sourceKey UTF8String])); tit != _bridgeTapMap.end() && tit->second)
+            target = tit->second->itemID;
+    }
+
+    if (!target.isValid()) {
+        if ([self clearSidechainOnPlugin:plugin]) _bridgeDirty = true;
+        _bridgeKeyedPlugins.erase(pk);
+        _bridgePendingWires.erase(pk);
+        return;
+    }
+
+    _bridgeKeyedPlugins.insert(pk);
+    _bridgeTouchedKeyed.insert(pk);
+
+    const bool sourceChanged = plugin.getSidechainSourceID() != target;
+    if (sourceChanged) {
+        plugin.setSidechainSourceID(target);
+        // The wires belong to a source: lay them again, never inherit the previous ones.
+        auto wires = plugin.state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
+        if (wires.isValid()) plugin.state.removeChild(wires, nullptr);
+        _bridgeDirty = true;
+    }
+
+    if (sourceChanged || plugin.getNumWires() == 0) {
+        if (objPluginIsLoaded(plugin)) {
+            plugin.guessSidechainRouting();
+            _bridgePendingWires.erase(pk);
+            _bridgeDirty = true;
+        } else {
+            _bridgePendingWires.insert(pk);    // @see layPendingBridgeWires
+        }
+    }
+
+    if (auto* comp = dynamic_cast<te::CompressorPlugin*>(&plugin))
+        if (!comp->useSidechainTrigger.get()) { comp->useSidechainTrigger = true; _bridgeDirty = true; }
+
+    if ((int) plugin.state.getProperty(te::objbridge_ids::rank, 0) != (int) rank) {
+        if (rank > 0) plugin.state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
+        else          plugin.state.removeProperty(te::objbridge_ids::rank, nullptr);
+        _bridgeDirty = true;
+    }
+}
+
+// Wires that had to wait for an AU to finish loading: lay them as soon as it has, and rebuild once.
+// Called by the latency tick (checkLatencyAndRebuild).
+- (void)layPendingBridgeWires {
+    if (_bridgePendingWires.empty() || !_edit) return;
+    bool any = false;
+    for (auto it = _bridgePendingWires.begin(); it != _bridgePendingWires.end(); ) {
+        auto pit = _pluginMap.find(*it);
+        if (pit == _pluginMap.end() || !pit->second) { it = _bridgePendingWires.erase(it); continue; }
+        if (!objPluginIsLoaded(*pit->second)) { ++it; continue; }
+        if (pit->second->getNumWires() == 0) pit->second->guessSidechainRouting();
+        any = true;
+        it = _bridgePendingWires.erase(it);
+    }
+    if (any) _edit->restartPlayback();
+}
+
+- (void)commitBridgeSync {
+    if (!_edit) return;
+
+    // Keyed plugins the sync did not touch lost their route: clear them.
+    for (auto it = _bridgeKeyedPlugins.begin(); it != _bridgeKeyedPlugins.end(); ) {
+        if (_bridgeTouchedKeyed.count(*it)) { ++it; continue; }
+        if (auto pit = _pluginMap.find(*it); pit != _pluginMap.end() && pit->second)
+            if ([self clearSidechainOnPlugin:*pit->second]) _bridgeDirty = true;
+        _bridgePendingWires.erase(*it);
+        it = _bridgeKeyedPlugins.erase(it);
+    }
+
+    // Ranked objects the sync did not touch go back to rank 0 (setBridgeRank erases from the set).
+    const std::vector<std::string> ranked(_bridgeRankedKeys.begin(), _bridgeRankedKeys.end());
+    for (auto& key : ranked)
+        if (!_bridgeTouchedRanked.count(key))
+            [self setBridgeRank:0 forID:[NSString stringWithUTF8String:key.c_str()]];
+
+    // Taps nobody reads any more are removed (their keyed plugins were cleared first).
+    for (auto it = _bridgeTapMap.begin(); it != _bridgeTapMap.end(); ) {
+        if (_bridgeTouchedTaps.count(it->first)) { ++it; continue; }
+        if (it->second) it->second->removeFromParent();
+        it = _bridgeTapMap.erase(it);
+        _bridgeDirty = true;
+    }
+
+    // ONE rebuild for the whole sync. `_latencyResyncPending`: the rebuild compensates the latency
+    // that follows, the watcher must not ask for a second one.
+    if (_bridgeDirty) {
+        _bridgeDirty = false;
+        _latencyResyncPending = true;
+        _edit->restartPlayback();
+    }
+}
+
+- (BOOL)pluginCanSidechain:(NSString*)pluginKey {
+    if (!pluginKey) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end() || !it->second) return NO;
+    return it->second->canSidechain() ? YES : NO;
+}
+
+- (BOOL)debugSetPluginProperty:(NSString*)property value:(double)v forPlugin:(NSString*)pluginKey {
+    if (!property || !pluginKey) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end() || !it->second) return NO;
+    it->second->state.setProperty(juce::Identifier(juce::String::fromUTF8([property UTF8String])), v, nullptr);
+    return YES;
+}
+
+// The newest published build of the bridge, as plain data (field names of plan §4.8). Plugins are
+// reported by their MODEL key (the `_pluginMap` key), found through the engine id.
+- (NSDictionary<NSString*, id>* _Nullable)bridgeReport {
+    if (!_edit) return nil;
+    auto build = te::BridgeBuild::latestFor(*_edit);
+    if (!build) return nil;
+    const te::BridgeReport r = build->getReport();
+
+    std::unordered_map<uint64_t, std::string> keyByItemID;
+    for (auto& [k, p] : _pluginMap) if (p) keyByItemID[p->itemID.getRawID()] = k;
+    auto pluginKeyFor = [&](te::EditItemID id) -> id {
+        if (auto it = keyByItemID.find(id.getRawID()); it != keyByItemID.end())
+            return [NSString stringWithUTF8String:it->second.c_str()];
+        return [NSNull null];
+    };
+
+    NSMutableArray* taps = [NSMutableArray array];
+    for (auto& t : r.taps) {
+        NSMutableArray* runs = [NSMutableArray array];
+        for (auto& run : t.runs) [runs addObject:@[ @(run.first), @(run.second) ]];
+        const juce::String tapID = t.tap.toString();
+        const juce::String source = t.source;
+        [taps addObject:@{ @"tap": objNS(tapID), @"source": objNS(source), @"rank": @(t.rank),
+                           @"age": @(t.age), @"cached_age": @(t.cachedAge),
+                           @"ring_capacity": @(t.ringCapacity), @"ring_generation": @(t.ringGeneration),
+                           @"latest_end": @(t.latestEnd), @"runs": runs }];
+    }
+
+    NSMutableArray* readers = [NSMutableArray array];
+    for (auto& rd : r.readers) {
+        const juce::String tapID = rd.tap.toString();
+        const juce::String inst = rd.destInstance, consumer = rd.consumer, status = rd.status;
+        [readers addObject:@{ @"plugin": pluginKeyFor(rd.plugin), @"dest_instance": objNS(inst),
+                              @"tap": objNS(tapID), @"consumer": objNS(consumer), @"rank": @(rd.rank),
+                              @"l_ref": @(rd.lRef), @"declared": @(rd.declared),
+                              @"source_age": @(rd.sourceAge), @"delay": @(rd.delay),
+                              @"status": objNS(status),
+                              @"alignment_error_samples": @(rd.alignmentErrorSamples),
+                              @"blocks_read": @(rd.blocksRead), @"blocks_uncovered": @(rd.blocksUncovered),
+                              @"blocks_torn": @(rd.blocksTorn) }];
+    }
+
+    return @{ @"build": @{ @"id": @(r.build.id), @"passes": @(r.build.passes),
+                           @"converged": @(r.build.converged), @"sample_rate": @(r.build.sampleRate),
+                           @"block_size": @(r.build.blockSize), @"gate_edges": @(r.build.gateEdges),
+                           @"gate_refused": @(r.build.gateRefused) },
+              @"taps": taps, @"readers": readers };
+}
+
 // MARK: - Bus de stem (FolderTrack submix par stem)
 //
 // Un stem = UN FolderTrack submix. Ses membres ne sont pas des objets mais des PISTES : les
@@ -4518,7 +4867,7 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
     const OBJTrackSlot current = [self slotOfTrack:objOwningTrack(*clip)];
     if (current.lane < 0) return;                 // pas sur une piste du pool : rien à faire
 
-    auto* dest = [self trackForSlot:OBJTrackSlot{ stemKey, current.lane }];
+    auto* dest = [self trackForSlot:OBJTrackSlot{ stemKey, current.lane, current.rank }];
     if (!dest || clip->getParent() == static_cast<te::ClipOwner*>(dest)) return;
 
     if (!moveClipToOwner(*clip, *dest)) {
@@ -5355,6 +5704,20 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     }
 }
 
+// The audio bridge's marks on a plugin — its sidechain source, the wires laid for it, its rank, and
+// the compressor's trigger flag — are the ENGINE's, written by -setSidechainForPlugin:. The model is
+// the sole authority on routes (ObjectPlugin.sidechain), so none of it may travel in the state the
+// model keeps: it would make the undo snapshot compare differently across a route change and rebuild
+// the object (and reload its AU). Strips a COPY, like objStripAutomationCurves.
+static void objStripBridgeState(juce::ValueTree& tree) {
+    tree.removeProperty(te::IDs::sidechainSourceID, nullptr);
+    tree.removeProperty(te::objbridge_ids::rank, nullptr);
+    if (auto wires = tree.getChildWithName(te::IDs::SIDECHAINCONNECTIONS); wires.isValid())
+        tree.removeChild(wires, nullptr);
+    if (tree[te::IDs::type].toString() == te::CompressorPlugin::xmlTypeName)
+        tree.removeProperty(te::IDs::sidechainTrigger, nullptr);
+}
+
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
     auto it = _pluginMap.find(pk);
@@ -5385,6 +5748,7 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     // voit pas (donc ne pourrait ni montrer ni effacer).
     juce::ValueTree tree = it->second->state.createCopy();
     objStripAutomationCurves(tree);
+    objStripBridgeState(tree);
     juce::String xml = tree.toXmlString();  // local nommé → toRawUTF8 sûr
     if (xml.isEmpty()) return nil;
     return [NSString stringWithUTF8String:xml.toRawUTF8()];
@@ -7511,7 +7875,12 @@ static void objDumpPluginList(te::PluginList& pl,
     juce::ValueTree live = it->second->state;
     if (!live.isValid()) return NO;
     static const juce::Identifier kID("id"), kType("type");
-    auto isIdentity = [](const juce::Identifier& n) { return n == kID || n == kType; };
+    // The audio bridge's marks are the engine's, never the model's (@see objStripBridgeState): a
+    // state restore must neither carry them in nor remove them.
+    auto isIdentity = [](const juce::Identifier& n) {
+        return n == kID || n == kType
+            || n == te::IDs::sidechainSourceID || n == te::objbridge_ids::rank || n == te::IDs::sidechainTrigger;
+    };
 
     // REMPLACEMENT, pas recouvrement. Un `CachedValue` à valeur par défaut n'écrit rien tant que
     // personne ne l'a réglé : un paramètre encore à sa valeur d'usine est donc ABSENT de l'arbre,
