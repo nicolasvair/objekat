@@ -241,6 +241,18 @@ int main()
         check ("a zero-length read covers nothing", h.res.framesCovered == 0 && ! h.res.torn);
     }
 
+    // ---- runs snapshot (for the report)
+    {
+        Ring r (2, 1024);
+        std::array<std::array<int64_t, 2>, 4> snap {};
+        check ("runs snapshot: none before any write", r.getRunsSnapshot (snap) == 0);
+        put (r, 100, 50);
+        put (r, 150, 50);
+        put (r, 400, 50);
+        const int n = r.getRunsSnapshot (snap);
+        check ("runs snapshot: newest first", n == 2 && snap[0][0] == 400 && snap[0][1] == 450 && snap[1][0] == 100 && snap[1][1] == 200);
+    }
+
     // ---- declaredLatency
     check ("declaredLatency: key younger", declaredLatency (1500, 1000) == 1500);
     check ("declaredLatency: key older", declaredLatency (0, 1000) == 1000);
