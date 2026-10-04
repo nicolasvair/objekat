@@ -78,26 +78,36 @@ extension EditViewModel {
         return (live?.isEmpty == false) ? live : p.stateXML
     }
 
-    /// The live state of a definition plugin, read off one of the attached members' instances.
-    /// The FIRST member that answers stands for all of them: that holds because the engine keeps
-    /// linked instances in agreement at rest, chunk included
-    /// (`OBJEngineCore.syncLinkedStateFrom:force:`) — the parameter mirror alone would leave a
-    /// setting the host cannot see (a Pro-Q 4 band's "Spectral" switch) on one member only.
-    /// `flushLinkedStateSync` first, so a change made a moment ago has reached them all.
+    /// The state of a definition plugin as the bin sounds: the live state of the member that carried
+    /// the bin's LAST REAL EDIT (`OBJEngineCore.linkGroupAuthority:` — a hand on it, which the
+    /// mirror and the resting-state sync then laid on the others), or, if nothing has been edited
+    /// since the bin was armed, the state the definition already holds. Never "the first member
+    /// that answers": members can disagree (one reset to its factory settings by a late
+    /// notification, two members saved apart by an older build), and the first one in chain order
+    /// is no reason to believe it. A definition with no state at all (a legacy file) falls back on
+    /// the first member that has one. `flushLinkedStateSync` first, so a change made a moment ago
+    /// has reached the others and named its member.
     private func fxDefinitionLiveState(_ d: ObjectPlugin,
                                        members: [(hostID: UUID, block: ObjectPlugin)]) -> String? {
         engine?.flushLinkedStateSync()
-        for m in members {
-            for inst in m.block.fxBlock?.plugins ?? [] where inst.linkGroupID == d.id {
-                if let s = fxLiveState(of: inst), !s.isEmpty { return s }
-            }
+        let instances = members.flatMap { m in
+            (m.block.fxBlock?.plugins ?? []).filter { $0.linkGroupID == d.id }
+        }
+        if let auth = engine?.linkGroupAuthority(d.id.uuidString),
+           let inst = instances.first(where: { $0.id.uuidString == auth }),
+           let s = fxLiveState(of: inst), !s.isEmpty {
+            return s
+        }
+        if let s = d.stateXML, !s.isEmpty { return s }
+        for inst in instances {
+            if let s = fxLiveState(of: inst), !s.isEmpty { return s }
         }
         return d.stateXML
     }
 
-    /// Writes the freshest state of every definition plugin into the registry, from the members'
-    /// live instances. Called before the last member of a bin leaves it, so a later attach is born
-    /// from what the bin sounded like and not from the state it was created with.
+    /// Writes the state of every definition plugin as the bin sounds into the registry
+    /// (@see `fxDefinitionLiveState`). Called before a member leaves the bin, so a later attach is
+    /// born from what the bin sounded like and not from the state it was created with.
     func refreshFXDefinitionStates(_ linkID: UUID) {
         guard let i = fxLinkIndex(linkID) else { return }
         let members = fxLinkAttachedMembers(linkID)
@@ -106,6 +116,19 @@ extension EditViewModel {
             if let s = fxDefinitionLiveState(fxLinks[i].plugins[k], members: members), !s.isEmpty {
                 fxLinks[i].plugins[k].stateXML = s
             }
+        }
+    }
+
+    /// The bin takes the settings of ONE host's instances, whatever any other member holds — when
+    /// that host is all there is of the bin (@see `reattachFXBlock`).
+    private func adoptFXDefinitionStates(_ linkID: UUID, fromHost hostID: UUID, blockID: UUID) {
+        guard let i = fxLinkIndex(linkID), let chain = chainPlugins(hostID),
+              let block = Self.findBlock(blockID, in: chain) else { return }
+        for inst in block.fxBlock?.plugins ?? [] {
+            guard let g = inst.linkGroupID,
+                  let k = fxLinks[i].plugins.firstIndex(where: { $0.id == g }),
+                  let s = fxLiveState(of: inst), !s.isEmpty else { continue }
+            fxLinks[i].plugins[k].stateXML = s
         }
     }
 
@@ -356,7 +379,7 @@ extension EditViewModel {
         if others.isEmpty {
             // Nobody else follows the bin: this host is all there is of it, so the definition takes
             // ITS settings rather than the host being reset to a state nothing holds any more.
-            refreshFXDefinitionStates(fb.linkID)
+            adoptFXDefinitionStates(fb.linkID, fromHost: hostID, blockID: blockID)
         } else {
             for inst in reused {
                 if let g = link.plugins.first(where: { $0.id == inst.effectiveLinkGroupID })?.id {

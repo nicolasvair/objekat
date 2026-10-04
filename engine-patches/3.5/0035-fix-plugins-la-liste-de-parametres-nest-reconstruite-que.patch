@@ -1,0 +1,94 @@
+From b2e3a691d3364fa95185bb07fada27fdbea95428 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 02:54:16 +0200
+Subject: [PATCH] =?UTF-8?q?fix(plugins)=20:=20la=20liste=20de=20param?=
+ =?UTF-8?q?=C3=A8tres=20n'est=20reconstruite=20que=20si=20le=20plugin=20di?=
+ =?UTF-8?q?t=20qu'elle=20a=20chang=C3=A9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ExternalPlugin::ProcessorChangedManager::updateFromPlugin appelait
+refreshParameterList() à CHAQUE audioProcessorChanged, quel qu'en soit le
+motif. Pour un AudioUnit, AudioUnitPluginInstance::refreshParameterList()
+recrée tous les AUInstanceParameter avec leur cache à la valeur PAR DÉFAUT,
+sans relire l'unité ; refreshParameterValues() annonçait ensuite ces défauts
+comme « changés par le plugin ». Un AU qui annonce tard un nouveau « present
+preset » (kAudioUnitProperty_PresentPreset, émis après un
+setStateInformation) faisait donc diffuser ses réglages d'usine à quiconque
+écoute les paramètres — dans OBJEKAT, le miroir d'un FX link les écrivait
+dans les autres membres du lien, et la sauvegarde suivante les figeait.
+
+Seul ChangeDetails::parameterInfoChanged dit que la LISTE a changé ; un
+changement de programme ou d'état n'en justifie pas la reconstruction. JUCE a
+déjà resynchronisé les caches (sendAllParametersChangedEvents), donc
+refreshParameterValues() relaie alors les VRAIES valeurs.
+
+Risque connu : un plugin qui change sa liste sans lever parameterInfoChanged
+(AU : la propriété ParameterList le lève ; VST3 restartComponent le lève ;
+VST2 lève les deux drapeaux) ne serait plus reconstruit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../external/tracktion_ExternalPlugin.cpp     | 27 ++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp b/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
+index 0c52e0482a0..c9fa9c3e2b3 100644
+--- a/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
++++ b/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
+@@ -47,11 +47,16 @@ public:
+         triggerAsyncUpdate();
+     }
+ 
+-    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails&) override
++    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
+     {
+         if (plugin.edit.isLoading())
+             return;
+ 
++        // Remember whether the parameter LIST itself changed: a program change, a state load or a
++        // latency change do not warrant rebuilding it (see updateFromPlugin()).
++        if (details.parameterInfoChanged)
++            parameterListChanged = true;
++
+         processorChanged = true;
+         triggerAsyncUpdate();
+     }
+@@ -92,7 +97,23 @@ private:
+                 plugin.edit.getTransport().triggerClearDevicesOnStop(); // This will fully re-initialise plugins
+             }
+ 
+-            pi->refreshParameterList();
++            // Only rebuild the parameter list when the plugin said the LIST changed
++            // (ChangeDetails::parameterInfoChanged). Doing it on every processor change is not
++            // harmless: for an AudioUnit, AudioUnitPluginInstance::refreshParameterList() recreates
++            // every AUInstanceParameter with its cached value set to the parameter's DEFAULT and
++            // without re-reading the unit. An AU that merely announces a new "present preset" (it
++            // does so, late, after a state has been restored) would then have its factory defaults
++            // relayed below by refreshParameterValues() as if the plugin had just changed them,
++            // overwriting real settings in whoever listens to the parameters (a host that mirrors
++            // them onto other instances ends up writing the defaults into those instances too).
++            // A program change needs no rebuild: JUCE has already resynchronised the cached values
++            // (AudioUnitPluginInstance::sendAllParametersChangedEvents), so refreshParameterValues()
++            // then relays the REAL values.
++            if (parameterListChanged)
++            {
++                parameterListChanged = false;
++                pi->refreshParameterList();
++            }
+ 
+             // refreshParameterList can delete the AudioProcessorParameter that our ExternalAutomatableParameters
+             // are listening too so re-attach any possibly deleted listeners here
+@@ -134,7 +155,7 @@ private:
+         }
+     }
+ 
+-    bool paramChanged = false, processorChanged = false;
++    bool paramChanged = false, processorChanged = false, parameterListChanged = false;
+ };
+ 
+ //==============================================================================
+-- 
+2.50.1 (Apple Git-155)
+

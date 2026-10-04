@@ -1,0 +1,119 @@
+From 17215d464fbdfde74364729151e2c0255d2279bf Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 11:02:14 +0200
+Subject: [PATCH] =?UTF-8?q?fix(plugins)=20:=20apr=C3=A8s=20reconstruction?=
+ =?UTF-8?q?=20de=20la=20liste=20de=20param=C3=A8tres=20d'un=20AU,=20ne=20p?=
+ =?UTF-8?q?as=20relayer=20les=20valeurs=20par=20d=C3=A9faut?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le patch 0035 ne reconstruit plus la liste que si le plugin dit qu'elle a
+changé ; restait le cas où un AU poste VRAIMENT kAudioUnitProperty_ParameterList
+(certains le font en restaurant un état). JUCE recrée alors chaque
+AUInstanceParameter avec sa valeur PAR DÉFAUT en cache, et
+refreshParameterValues() relayait ces défauts à tous les écouteurs comme
+« changés par le plugin » — un membre d'FX link retombait sur ses réglages
+d'usine et le miroir les propageait.
+
+Après une reconstruction de liste d'un AU : pas de refreshParameterValues(),
+mais AUParameterListenerNotify(kAUParameterListener_AnyParameter) — API
+AudioToolbox publique, la seconde moitié de sendAllParametersChangedEvents()
+que JUCE garde privée. Le système d'événements de l'unité livre alors une
+ParameterValueChange par paramètre avec la VRAIE valeur ; l'écouteur de JUCE
+met chaque cache à jour et nous notifie. Rien n'est écrit dans l'unité.
+Les autres formats (VST2 lit en direct) gardent l'ancien chemin.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../external/tracktion_ExternalPlugin.cpp     | 44 ++++++++++++++++++-
+ .../tracktion_engine_plugins.cpp              |  1 +
+ 2 files changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp b/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
+index c9fa9c3e2b3..52adc838efe 100644
+--- a/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
++++ b/modules/tracktion_engine/plugins/external/tracktion_ExternalPlugin.cpp
+@@ -113,6 +113,7 @@ private:
+             {
+                 parameterListChanged = false;
+                 pi->refreshParameterList();
++                valuesAwaitPlugin = askPluginToReannounceValues (*pi);
+             }
+ 
+             // refreshParameterList can delete the AudioProcessorParameter that our ExternalAutomatableParameters
+@@ -134,9 +135,17 @@ private:
+         // Annoyingly, because we can't tell the cause of the plugin change, we'll have to simply not
+         // refresh parameter values if any modifiers have been assigned or they'll blow away the original
+         // modifier values
+-        if (! wasLatencyChange && ! hasAnyModifiers (plugin))
++        // ...nor right after an AudioUnit's list was rebuilt: its recreated parameters hold their
++        // DEFAULT values until the unit announces the real ones (see askPluginToReannounceValues), and
++        // relaying the defaults here would hand them to every listener as "changed by the plugin" —
++        // the very corruption the conditional rebuild above exists to prevent, on the one path it
++        // still left open (an AU that really posts kAudioUnitProperty_ParameterList, as some do when a
++        // state is restored). The real values arrive through the unit's own parameter events instead.
++        if (! wasLatencyChange && ! valuesAwaitPlugin && ! hasAnyModifiers (plugin))
+             plugin.refreshParameterValues();
+ 
++        valuesAwaitPlugin = false;
++
+         plugin.changed();
+         plugin.edit.pluginChanged (plugin);
+     }
+@@ -155,7 +164,40 @@ private:
+         }
+     }
+ 
++    // After AudioUnitPluginInstance::refreshParameterList(), every AUInstanceParameter is new and
++    // caches its DEFAULT value: JUCE does not re-read the unit there (it only does so on a program
++    // change or a state load, through its private sendAllParametersChangedEvents()). Reading
++    // getValue() now would therefore report the factory settings, not the plugin's. What JUCE's
++    // private helper does in its second half is public AudioToolbox API: notifying "any parameter"
++    // of the unit makes the AU event system deliver one ParameterValueChange per parameter, carrying
++    // the value it reads off the unit — and JUCE's own listener then updates each cache and notifies
++    // us (ExternalAutomatableParameter -> valueChangedByPlugin) with the REAL value. Nothing is
++    // written to the unit. Returns true when the values are left to those events (an AudioUnit),
++    // false for the formats whose getValue() reads the plugin live (VST2) or that never rebuild.
++    static bool askPluginToReannounceValues (juce::AudioPluginInstance& pi)
++    {
++       #if JUCE_MAC && JUCE_PLUGINHOST_AU
++        if (auto* au = pi.getAudioUnitClient())
++        {
++            if (auto unit = au->getAudioUnitHandle())
++            {
++                AudioUnitParameter any {};
++                any.mAudioUnit   = unit;
++                any.mParameterID = kAUParameterListener_AnyParameter;
++                any.mScope       = kAudioUnitScope_Global;
++                any.mElement     = 0;
++                AUParameterListenerNotify (nullptr, nullptr, &any);
++                return true;
++            }
++        }
++       #else
++        juce::ignoreUnused (pi);
++       #endif
++        return false;
++    }
++
+     bool paramChanged = false, processorChanged = false, parameterListChanged = false;
++    bool valuesAwaitPlugin = false;
+ };
+ 
+ //==============================================================================
+diff --git a/modules/tracktion_engine/tracktion_engine_plugins.cpp b/modules/tracktion_engine/tracktion_engine_plugins.cpp
+index 5d327f6ec11..ffee647059b 100644
+--- a/modules/tracktion_engine/tracktion_engine_plugins.cpp
++++ b/modules/tracktion_engine/tracktion_engine_plugins.cpp
+@@ -15,6 +15,7 @@
+  #define AudioBuffer DummyAudioBufferName
+  #include <AudioUnit/AudioUnit.h>
+  #include <AudioUnit/AUComponent.h>
++ #include <AudioToolbox/AudioUnitUtilities.h>
+  #undef AudioBuffer
+  #undef Point
+ #endif
+-- 
+2.50.1 (Apple Git-155)
+

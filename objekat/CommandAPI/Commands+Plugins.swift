@@ -524,6 +524,40 @@ extension CommandRegistry {
             return .object(["plugin": .string(pluginID.uuidString)])
         }
 
+        register("debug.plugin_force_processor_changed",
+                 summary: """
+                 DEBUG. Makes a live external plugin instance announce "my processor changed" to \
+                 the engine, as an AudioUnit does — late, on its own — after a state has been \
+                 restored (`kAudioUnitProperty_PresentPreset`). `details` "program" (default) is that \
+                 case: a program change and nothing about the parameter LIST; "paraminfo" also says \
+                 the list changed. It turns a race (the notification arrives some 50 ms after the \
+                 load settles, or not) into a call. An engine that rebuilds the parameter list on \
+                 every such notification (without patch 0035) then reads the factory defaults back, \
+                 and an FX link's mirror writes them into the other members; with 0035, "program" \
+                 moves nothing, and with 0036 neither does "paraminfo" (the AU re-announces its real \
+                 values instead of the rebuilt list's defaults). Wait ~1 s before reading the result \
+                 (the engine's update is asynchronous).
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "Target plugin instance."),
+                          ParamSpec("details", "string", required: false,
+                                    "\"program\" (default) or \"paraminfo\".")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            let details = try p.string("details", or: "program")
+            guard details == "program" || details == "paraminfo" else {
+                throw CommandError(code: .bad_params,
+                                   message: "details must be \"program\" or \"paraminfo\"")
+            }
+            guard engine.debugForcePluginProcessorChanged(pluginID.uuidString,
+                                                          paramInfo: details == "paraminfo") else {
+                throw CommandError(code: .invalid_state,
+                                   message: "cannot force on \(pluginID.uuidString) "
+                                          + "(unknown, built-in, or not loaded yet)")
+            }
+            return .object(["plugin": .string(pluginID.uuidString), "details": .string(details)])
+        }
+
         register("debug.link_state_tick",
                  summary: """
                  DEBUG. One tick of the FX-link resting-state sync on one instance: reads its chunk \
@@ -549,7 +583,12 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. The resting-state sync's counters: pushes (total and by source instance), \
                  the reference chunk size held per instance, gestures open, instances pending, the \
-                 plugin models learned unstable, and whether the 500 ms timer is running.
+                 plugin models learned unstable, and whether the 500 ms timer is running. Plus the \
+                 parameter mirror's: `param_propagations` (changes a hand made and the mirror carried \
+                 to the group) and `param_refused` (changes an instance announced on its own — a \
+                 state laid, a program, a rebuilt parameter list, automation — and that stayed \
+                 with it), and `authority` (group → the instance whose state the bin's definition \
+                 takes; a group absent = nothing edited since it was armed).
                  """,
                  undo: .none) { _ in
             let engine = try CommandContext.shared.requireEngine()
@@ -567,6 +606,10 @@ extension CommandRegistry {
                             "gesture_open": counts("gesture_open"),
                             "pending": names("pending"),
                             "unstable_types": names("unstable_types"),
+                            "param_propagations": .int((info["param_propagations"] as? NSNumber)?.intValue ?? 0),
+                            "param_refused": .int((info["param_refused"] as? NSNumber)?.intValue ?? 0),
+                            "authority": .object((info["authority"] as? [String: String] ?? [:])
+                                                    .mapValues { .string($0) }),
                             "timer_running": .bool((info["timer_running"] as? NSNumber)?.boolValue ?? false)])
         }
 

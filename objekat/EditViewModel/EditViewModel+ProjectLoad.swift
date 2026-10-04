@@ -65,6 +65,11 @@ struct ProjectLoadOutcome: Equatable {
     /// Filled whether or not the repair was asked for — it is what the alert, the report and
     /// `project.load_status` read.
     var duplicatePluginIDs: [PluginIDUniqueness.DuplicateDetail] = []
+    /// The FX link bins whose attached members do not decode to one state, as the file holds them
+    /// (@see `FXLinkDivergence`). Empty = every comparable bin agrees. Detected at every load,
+    /// NEVER repaired by the load itself: a hand is asked afterwards
+    /// (@see `offerFXLinkDivergenceRepair`), a script calls `fxlink.repair_divergences`.
+    var fxLinkDivergences: [FXLinkDivergence.Detail] = []
 }
 
 /// What to do about plugin ids that more than one entry of a file carries, decided BEFORE the load
@@ -446,7 +451,8 @@ extension EditViewModel {
         NSLog("[LOAD] total %d ms", durationMs)
         lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
                                              repairedPluginIDs: pluginIDCheck.repaired,
-                                             duplicatePluginIDs: pluginIDCheck.duplicates)
+                                             duplicatePluginIDs: pluginIDCheck.duplicates,
+                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad())
         loadState = nil
     }
 
@@ -574,9 +580,22 @@ extension EditViewModel {
         NSLog("[LOAD] total %d ms", durationMs)
         lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
                                              repairedPluginIDs: pluginIDCheck.repaired,
-                                             duplicatePluginIDs: pluginIDCheck.duplicates)
+                                             duplicatePluginIDs: pluginIDCheck.duplicates,
+                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad())
         loadState = nil
         return true
+    }
+
+    /// The bins at odds with themselves in the file just loaded, read off the model (the file's
+    /// states: nothing has been edited yet), with a `[LOAD]` line when there are any.
+    private func detectFXLinkDivergencesAfterLoad() -> [FXLinkDivergence.Detail] {
+        let details = fxLinkDivergences(live: false)
+        if !details.isEmpty {
+            let members = details.reduce(0) { $0 + $1.divergentFromDefinition.count }
+            NSLog("[LOAD] %d FX link plugin(s) whose members disagree (%d member(s) off the definition) — NOT repaired",
+                  details.count, members)
+        }
+        return details
     }
 
     /// One line per phase: `[LOAD] <phase> <ms> ms` (`<phase> <ms> ms, <n> plugins` for the plugin

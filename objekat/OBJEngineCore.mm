@@ -712,6 +712,16 @@ static NSString* const kPluginCacheKey = @"OBJPluginListXMLCache";
 
 // MARK: - LINK : mirroir de paramètres entre instances liées
 
+// Fenêtres de la garde du mirror (@see -linkChangeIsUserOriginated:) : ce qui suit une écriture
+// de l'hôte, et la traîne d'un geste natif (ses dernières valeurs arrivent APRÈS sa fin : deux
+// sauts asynchrones, l'évènement AU puis l'AsyncUpdater de Tracktion).
+static constexpr double kObjLinkHostWriteMs    = 1000.0;
+static constexpr double kObjLinkGestureGraceMs = 1000.0;
+static constexpr double kObjLinkStateEchoMs         = 600.0;
+static constexpr double kObjLinkStateGestureStaleMs = 5000.0;
+static constexpr int    kObjLinkStateTimerMs        = 500;
+static constexpr int    kObjLinkStateGestureEndMs   = 300;
+
 // Écoute tous les paramètres automatables d'un plugin et notifie un callback à chaque
 // changement de valeur (index dans la liste des params + nouvelle valeur). Le callback
 // tourne sur le message thread (AsyncCaller de Tracktion), jamais sur le thread audio.
@@ -1439,6 +1449,23 @@ struct OBJRenderChain {
     std::unordered_map<std::string, int>               _linkStatePushCount;   // par SOURCE
     int                                                _linkStatePushTotal;
     std::unique_ptr<OBJCallbackTimer>                  _linkStateTimer;
+
+    // QUI A LE DROIT DE PARLER POUR UN GROUPE (@see -linkChangeIsUserOriginated:). Le mirror ne
+    // rediffuse plus que ce qu'une main a fait : un geste sur l'instance (plus une courte traîne,
+    // les valeurs arrivant après la fin du geste), une écriture de l'hôte (setPluginParam: —
+    // inspecteur, éditeur intégré, API), ou un éditeur natif ouvert sur elle.
+    //   hostWriteUntil : jusqu'à cet instant (ms), les changements de cette instance suivent une
+    //                    écriture de l'hôte ;
+    //   gestureGrace   : jusqu'à cet instant (ms), la traîne d'un geste qui vient de finir.
+    std::unordered_map<std::string, double>            _linkHostWriteUntil;
+    std::unordered_map<std::string, double>            _linkGestureGraceUntil;
+    // groupID → pluginKey du membre dont l'état fait foi pour la DÉFINITION du groupe : celui qui
+    // a porté la dernière modification réelle (propagée par le mirror, ou poussée par la synchro
+    // d'état). Absent = rien n'a été modifié depuis l'armement : la définition enregistrée reste
+    // la référence, quel que soit l'ordre des membres. @see -linkGroupAuthority:
+    std::unordered_map<std::string, std::string>       _linkGroupAuthority;
+    int                                                _linkParamPropagations; // changements rediffusés
+    int                                                _linkParamRefused;      // changements non rediffusés (pas une main)
 
     // Écoute des params tant qu'un objet consolidé est ouvert (re-miroir vivant). Écouteurs
     // installés sur les FX user de l'objet édité ; vidés à la fin de session (begin/end).
@@ -5306,8 +5333,14 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
     if (it == _pluginMap.end()) return;
 
     const auto params = it->second->getAutomatableParameters();
-    if (index >= 0 && index < params.size())
+    if (index >= 0 && index < params.size()) {
+        // Une écriture de l'HÔTE (inspecteur, éditeur intégré, API) : c'est une main, le mirror
+        // d'un groupe lié la rediffuse (@see -linkChangeIsUserOriginated:). La notification arrive
+        // de façon asynchrone, d'où une fenêtre et pas un drapeau.
+        if (_linkGroup.count(pk))
+            _linkHostWriteUntil[pk] = juce::Time::getMillisecondCounterHiRes() + kObjLinkHostWriteMs;
         params[index]->setParameter(value, juce::sendNotification);
+    }
 }
 
 // Retire les courbes d'automation d'un arbre de plugin — sur une COPIE, jamais sur l'arbre vivant.
@@ -5383,6 +5416,12 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     if (desired.getSize() == 0) return;                 // plugin neuf : rien à restaurer
 
     juce::String name = ext->getName();                 // local nommé (getName renvoie par valeur)
+    // Le DERNIER état voulu gagne : une ré-affirmation encore en attente pour la même instance (celle
+    // du chargement, quand une réparation de FX link — F4 — ou une annulation suit de près) poserait
+    // sinon l'ANCIEN état avant le nouveau, et sa baseline de synchro avec.
+    _pendingStateReasserts.erase(std::remove_if(_pendingStateReasserts.begin(), _pendingStateReasserts.end(),
+                                                [&](const OBJPendingStateReassert& r) { return r.plugin == plugin; }),
+                                 _pendingStateReasserts.end());
     _pendingStateReasserts.push_back({ plugin, tree, std::move(desired), name, 0 });
 
     if (!_stateReassertTimer) {
@@ -5812,22 +5851,51 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;   // instance pas (encore) créée
 
-    // Un donneur = n'importe quel membre ENCORE actif du groupe. Ses valeurs courantes font foi.
-    te::Plugin::Ptr donor;
-    for (auto& kv : _linkGroup) {
-        if (kv.second != gid || kv.first == pk) continue;
-        auto dit = _pluginMap.find(kv.first);
-        if (dit != _pluginMap.end()) { donor = dit->second; break; }
+    // Le donneur : le membre qui fait autorité pour le groupe (celui qui a porté la dernière
+    // modification), sinon le premier membre prêt dans l'ordre des clés. Jamais une instance qui
+    // traverse encore ses réglages d'usine (ré-affirmation en attente), et jamais « le premier
+    // trouvé » dans une table non ordonnée : le résultat ne doit pas dépendre du hachage.
+    std::string donorKey;
+    if (auto ait = _linkGroupAuthority.find(gid); ait != _linkGroupAuthority.end()
+        && ait->second != pk && _linkGroup.count(ait->second) && _pluginMap.count(ait->second)
+        && ![self isPluginStateSettling:ait->second])
+        donorKey = ait->second;
+    if (donorKey.empty()) {
+        std::vector<std::string> candidates;
+        for (auto& kv : _linkGroup)
+            if (kv.second == gid && kv.first != pk && _pluginMap.count(kv.first)
+                && ![self isPluginStateSettling:kv.first])
+                candidates.push_back(kv.first);
+        std::sort(candidates.begin(), candidates.end());
+        if (!candidates.empty()) donorKey = candidates.front();
     }
 
-    if (donor != nullptr) {
-        const auto from = donor->getAutomatableParameters();     // NOLINT — copy intentional
-        const auto to   = it->second->getAutomatableParameters();// NOLINT
-        // Appariement par index, comme la propagation : ce sont des instances du MÊME plugin.
-        const int n = juce::jmin(from.size(), to.size());
-        for (int i = 0; i < n; ++i)
-            if (from[i] != nullptr && to[i] != nullptr)
-                to[i]->setParameter(from[i]->getCurrentValue(), juce::sendNotification);
+    if (!donorKey.empty()) {
+        te::Plugin::Ptr donor = _pluginMap[donorKey];
+        // L'ÉTAT ENTIER quand les deux instances savent le lire et l'écrire : les réglages que
+        // l'hôte ne voit pas (le « Spectral » d'une bande de Pro-Q 4) font partie des réglages du
+        // groupe, et une copie des seuls paramètres les laissait à ceux de l'instance détachée.
+        auto* src = [self linkStateExternalForKey:donorKey];
+        auto* dst = [self linkStateExternalForKey:pk];
+        bool laid = false;
+        if (src && dst && objPluginTypeKey(*src) == objPluginTypeKey(*dst)) {
+            juce::AudioPluginInstance& srcPI = *src->getAudioPluginInstance();
+            const juce::MemoryBlock chunk = objReadInstanceState(srcPI);
+            if (chunk.getSize() > 0) {
+                const int program = srcPI.getNumPrograms() > 0 ? srcPI.getCurrentProgram() : -1;
+                [self layLinkedState:chunk program:program onto:pk];
+                laid = true;
+            }
+        }
+        if (!laid) {
+            const auto from = donor->getAutomatableParameters();     // NOLINT — copy intentional
+            const auto to   = it->second->getAutomatableParameters();// NOLINT
+            // Appariement par index, comme la propagation : ce sont des instances du MÊME plugin.
+            const int n = juce::jmin(from.size(), to.size());
+            for (int i = 0; i < n; ++i)
+                if (from[i] != nullptr && to[i] != nullptr)
+                    to[i]->setParameter(from[i]->getCurrentValue(), juce::sendNotification);
+        }
     }
 
     // Armement APRÈS la copie : les notifications ci-dessus ne repartent donc pas vers le groupe.
@@ -5843,14 +5911,23 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     _linkStateEchoUntil.erase(pk);
     _linkStateGestureOpen.erase(pk);
     _linkStatePending.erase(pk);
+    _linkHostWriteUntil.erase(pk);
+    _linkGestureGraceUntil.erase(pk);
     auto git = _linkGroup.find(pk);
     if (git == _linkGroup.end()) { [self updateLinkStateTimer]; return; }
     std::string group = git->second;
     _linkGroup.erase(git);
-    bool stillUsed = false;
+    std::vector<std::string> remaining;
     for (auto& kv : _linkGroup)
-        if (kv.second == group) { stillUsed = true; break; }
-    if (!stillUsed) _groupCanonical.erase(group);
+        if (kv.second == group) remaining.push_back(kv.first);
+    if (remaining.empty()) _groupCanonical.erase(group);
+    // L'autorité quitte le groupe : elle passe à un membre qui reste — il a reçu la même
+    // modification (mirror ou synchro d'état). Plus personne : la définition enregistrée redevient
+    // la référence.
+    if (auto ait = _linkGroupAuthority.find(group); ait != _linkGroupAuthority.end() && ait->second == pk) {
+        if (remaining.empty()) _linkGroupAuthority.erase(ait);
+        else { std::sort(remaining.begin(), remaining.end()); ait->second = remaining.front(); }
+    }
     [self updateLinkStateTimer];
 }
 
@@ -5891,10 +5968,24 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
             && juce::Time::getMillisecondCounterHiRes() < eit->second) return;
     }
 
+    // SEULE UNE MAIN PARLE POUR LE GROUPE. Tout le reste de ce qu'une instance annonce — l'état
+    // qu'on vient de lui reposer (chargement, ré-affirmation, annulation), un programme qui change,
+    // une liste de paramètres reconstruite, une courbe d'automation qui la pilote, un plugin qui
+    // bouge ses propres paramètres — décrit CETTE instance et ne doit pas être écrit dans les
+    // autres. C'est par là que les réglages d'usine d'une instance finissaient dans tout un bac :
+    // ~2 500 rediffusions mesurées à la simple ouverture d'un vrai projet, sans que personne ne
+    // touche à rien. @see -linkChangeIsUserOriginated:
+    if (![self linkChangeIsUserOriginated:pk]) { ++_linkParamRefused; return; }
+
     auto& canon = _groupCanonical[group];
     auto cit = canon.find(index);
     if (cit != canon.end() && std::abs(cit->second - value) <= 1.0e-6f) return;  // écho
     canon[index] = value;
+
+    // Ce membre porte désormais la dernière modification réelle du groupe : son état est celui que
+    // la définition du bac doit retenir (@see -linkGroupAuthority:).
+    _linkGroupAuthority[group] = pk;
+    ++_linkParamPropagations;
 
     for (auto& kv : _linkGroup) {
         if (kv.second != group || kv.first == pk) continue;
@@ -5904,6 +5995,34 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         if (index >= 0 && index < params.size())
             params[index]->setParameter(value, juce::sendNotification);
     }
+}
+
+// Une main est-elle derrière ce que `pk` vient d'annoncer ? Un geste ouvert sur l'instance (ou sa
+// traîne : les dernières valeurs d'un geste natif arrivent après sa fin), une écriture de l'hôte
+// toute récente (setPluginParam:), ou l'éditeur natif de l'instance ouvert — certaines interfaces
+// n'encadrent pas leurs gestes, et c'est là seulement qu'une main peut les toucher. Ce qui bouge
+// sans aucune de ces trois raisons n'est pas rediffusé ; un réglage caché fait dans un éditeur
+// reste porté, au repos, par la synchro d'état (@see -syncLinkedStateFrom:force:).
+- (BOOL)linkChangeIsUserOriginated:(const std::string&)pk {
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (auto h = _linkHostWriteUntil.find(pk); h != _linkHostWriteUntil.end() && now < h->second)
+        return YES;
+    if (auto g = _linkStateGestureOpen.find(pk); g != _linkStateGestureOpen.end()
+        && g->second.first > 0 && (now - g->second.second) < kObjLinkStateGestureStaleMs)
+        return YES;
+    if (auto t = _linkGestureGraceUntil.find(pk); t != _linkGestureGraceUntil.end() && now < t->second)
+        return YES;
+    if (auto e = _editorWindows.find(pk); e != _editorWindows.end() && e->second)
+        return YES;
+    return NO;
+}
+
+- (NSString* _Nullable)linkGroupAuthority:(NSString*)groupID {
+    auto it = _linkGroupAuthority.find(std::string([groupID UTF8String]));
+    if (it == _linkGroupAuthority.end()) return nil;
+    auto git = _linkGroup.find(it->second);
+    if (git == _linkGroup.end() || git->second != it->first) return nil;
+    return [NSString stringWithUTF8String:it->second.c_str()];
 }
 
 // MARK: État des instances liées — synchro AU REPOS
@@ -5924,10 +6043,7 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
 // Le mirror de paramètres n'est pas remplacé pour autant : il reste le chemin rapide, image
 // par image, de tout ce que l'hôte voit. Ceci est le filet du reste.
 
-static constexpr double kObjLinkStateEchoMs         = 600.0;
-static constexpr double kObjLinkStateGestureStaleMs = 5000.0;
-static constexpr int    kObjLinkStateTimerMs        = 500;
-static constexpr int    kObjLinkStateGestureEndMs   = 300;
+// (Constantes de la synchro au repos : en tête de fichier, avec celles de la garde du mirror.)
 
 // L'instance externe d'une clé, seulement si elle est en état de LIRE et d'ÉCRIRE un chunk :
 // instance chargée, état posé (pas de ré-affirmation en attente). nullptr sinon.
@@ -5959,6 +6075,8 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
     auto git = _linkStateGestureOpen.find(pk);
     if (git != _linkStateGestureOpen.end() && git->second.first > 0) --git->second.first;
     if (_linkGroup.find(pk) == _linkGroup.end()) return;
+    // La traîne : les dernières valeurs du geste sont encore en route (@see kObjLinkGestureGraceMs).
+    _linkGestureGraceUntil[pk] = juce::Time::getMillisecondCounterHiRes() + kObjLinkGestureGraceMs;
     _linkStatePending.insert(pk);   // « à regarder » : la synchro dira s'il y a vraiment eu un écart
     __unsafe_unretained OBJEngineCore* rawSelf = self;   // le moteur vit autant que le process
     std::string pkCopy = pk;
@@ -6080,62 +6198,14 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
         if (!force) { _linkStatePending.insert(pk); return pushed; }
     }
 
+    // Ce membre porte la dernière modification réelle du groupe (@see -linkGroupAuthority:).
+    _linkGroupAuthority[group] = pk;
+
     // Pose de l'état sur chacun des autres membres.
-    const juce::String encoded = cur.toBase64Encoding();
     const int program = srcPI.getNumPrograms() > 0 ? srcPI.getCurrentProgram() : -1;
-    for (const auto& tk : targets) {
-        auto* t = [self linkStateExternalForKey:tk];
-        if (!t) continue;
-        juce::AudioPluginInstance& tPI = *t->getAudioPluginInstance();
-        const juce::MemoryBlock tCur = objReadInstanceState(tPI);
-        if (tCur == cur) { _linkStateBaseline[tk] = tCur; continue; }   // déjà pareil
-
-        // AVANT l'écriture : les notifications de paramètres qu'elle va provoquer arrivent
-        // pendant ou juste après, et doivent être reconnues comme un écho.
-        _linkStateEchoUntil[tk] = juce::Time::getMillisecondCounterHiRes() + kObjLinkStateEchoMs;
-
-        // Une copie de l'arbre de la cible portant le chunk de la source : jamais l'arbre vivant
-        // (identité, courbes d'automation) — `restorePluginStateFromValueTree` ne lit que
-        // `state` et `programNum`.
-        juce::ValueTree copy = t->state.createCopy();
-        copy.setProperty(te::IDs::state, encoded, nullptr);
-        if (program >= 0) copy.setProperty(te::IDs::programNum, program, nullptr);
-        t->restorePluginStateFromValueTree(copy);
-
-        // Le plugin change ses paramètres en interne sans le notifier : on relit les valeurs
-        // que l'hôte voit, pour que `currentValue` (celui que l'audio et l'API lisent) suive.
-        // (Ce que fait `ExternalAutomatableParameter::valueChangedByPlugin`, dont le type n'est
-        // pas exposé hors du moteur : le paramètre hôte est retrouvé par le même identifiant
-        // que celui que `ExternalPlugin::buildParameterList` lui donne — l'`paramID` du
-        // paramètre JUCE, sinon son index.)
-        {
-            const auto& jparams = tPI.getParameters();
-            for (int i = 0; i < jparams.size(); ++i) {
-                auto* jp = jparams[i];
-                if (!jp) continue;
-                const juce::String pid = (dynamic_cast<juce::AudioProcessorParameterWithID*>(jp) != nullptr)
-                    ? static_cast<juce::AudioProcessorParameterWithID*>(jp)->paramID
-                    : juce::String(i);
-                if (auto ap = t->getAutomatableParameterByID(pid))
-                    ap->setParameter(jp->getValue(), juce::sendNotification);
-            }
-        }
-
-        // Un état peut changer la LISTE des paramètres (le mirror tient des pointeurs bruts et
-        // un index par position) : on le reconstruit si le compte n'est plus le même.
-        if (auto mit = _mirrors.find(tk); mit != _mirrors.end()
-            && mit->second->params.size() != t->getAutomatableParameters().size()) {
-            auto pit = _pluginMap.find(tk);
-            mit->second.reset();          // retire les écouteurs AVANT d'en poser de nouveaux
-            if (pit != _pluginMap.end())
-                _mirrors[tk] = [self makeLinkMirrorForKey:tk plugin:pit->second];
-        }
-
-        _linkStateBaseline[tk] = objReadInstanceState(tPI);
-        _linkStateLastSeen.erase(tk);
-        _linkStatePending.erase(tk);
-        [pushed addObject:[NSString stringWithUTF8String:tk.c_str()]];
-    }
+    for (const auto& tk : targets)
+        if ([self layLinkedState:cur program:program onto:tk])
+            [pushed addObject:[NSString stringWithUTF8String:tk.c_str()]];
 
     // Les valeurs canoniques du groupe deviennent celles de la source : un paramètre que les
     // cibles rapportent encore à retardement n'est plus pris pour un geste à rediffuser.
@@ -6159,6 +6229,68 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
             _onLinkedPluginStateSynced([NSString stringWithUTF8String:pk.c_str()], pushed);
     }
     return pushed;
+}
+
+// Pose un chunk sur l'instance `tk` d'un groupe (synchro d'état, adoption au retour dans le
+// groupe). Rend NON si l'instance n'est pas prête ou porte déjà exactement ce chunk (sa référence
+// est alors simplement remise à jour), OUI si elle a été écrasée.
+- (BOOL)layLinkedState:(const juce::MemoryBlock&)cur program:(int)program onto:(const std::string&)tk {
+    auto* t = [self linkStateExternalForKey:tk];
+    if (!t) return NO;
+    juce::AudioPluginInstance& tPI = *t->getAudioPluginInstance();
+    const juce::MemoryBlock tCur = objReadInstanceState(tPI);
+    if (tCur == cur) {   // déjà pareil
+        _linkStateBaseline[tk] = tCur;
+        _linkStateLastSeen.erase(tk);
+        _linkStatePending.erase(tk);
+        return NO;
+    }
+
+    // AVANT l'écriture : les notifications de paramètres qu'elle va provoquer arrivent
+    // pendant ou juste après, et doivent être reconnues comme un écho.
+    _linkStateEchoUntil[tk] = juce::Time::getMillisecondCounterHiRes() + kObjLinkStateEchoMs;
+
+    // Une copie de l'arbre de la cible portant le chunk de la source : jamais l'arbre vivant
+    // (identité, courbes d'automation) — `restorePluginStateFromValueTree` ne lit que
+    // `state` et `programNum`.
+    juce::ValueTree copy = t->state.createCopy();
+    copy.setProperty(te::IDs::state, cur.toBase64Encoding(), nullptr);
+    if (program >= 0) copy.setProperty(te::IDs::programNum, program, nullptr);
+    t->restorePluginStateFromValueTree(copy);
+
+    // Le plugin change ses paramètres en interne sans le notifier : on relit les valeurs
+    // que l'hôte voit, pour que `currentValue` (celui que l'audio et l'API lisent) suive.
+    // (Ce que fait `ExternalAutomatableParameter::valueChangedByPlugin`, dont le type n'est
+    // pas exposé hors du moteur : le paramètre hôte est retrouvé par le même identifiant
+    // que celui que `ExternalPlugin::buildParameterList` lui donne — l'`paramID` du
+    // paramètre JUCE, sinon son index.)
+    {
+        const auto& jparams = tPI.getParameters();
+        for (int i = 0; i < jparams.size(); ++i) {
+            auto* jp = jparams[i];
+            if (!jp) continue;
+            const juce::String pid = (dynamic_cast<juce::AudioProcessorParameterWithID*>(jp) != nullptr)
+                ? static_cast<juce::AudioProcessorParameterWithID*>(jp)->paramID
+                : juce::String(i);
+            if (auto ap = t->getAutomatableParameterByID(pid))
+                ap->setParameter(jp->getValue(), juce::sendNotification);
+        }
+    }
+
+    // Un état peut changer la LISTE des paramètres (le mirror tient des pointeurs bruts et
+    // un index par position) : on le reconstruit si le compte n'est plus le même.
+    if (auto mit = _mirrors.find(tk); mit != _mirrors.end()
+        && mit->second->params.size() != t->getAutomatableParameters().size()) {
+        auto pit = _pluginMap.find(tk);
+        mit->second.reset();          // retire les écouteurs AVANT d'en poser de nouveaux
+        if (pit != _pluginMap.end())
+            _mirrors[tk] = [self makeLinkMirrorForKey:tk plugin:pit->second];
+    }
+
+    _linkStateBaseline[tk] = objReadInstanceState(tPI);
+    _linkStateLastSeen.erase(tk);
+    _linkStatePending.erase(tk);
+    return YES;
 }
 
 - (void)flushLinkedStateSync {
@@ -6190,6 +6322,9 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
     _linkStateBaseline[pk] = juce::MemoryBlock();
     _linkStateEchoUntil.erase(pk);
     NSArray<NSString*>* pushed = [self syncLinkedStateFrom:pk force:YES];
+    // Une demande explicite : cette instance fait foi pour le groupe, même si rien n'a dû bouger.
+    if (auto git = _linkGroup.find(pk); git != _linkGroup.end() && [self linkStateExternalForKey:pk])
+        _linkGroupAuthority[git->second] = pk;
     // La synchro a renoncé (pas de cible prête, chunk illisible) sans poser de référence : on
     // ne laisse pas derrière nous une baseline vide qui ferait pousser le prochain tick venu.
     auto it = _linkStateBaseline.find(pk);
@@ -6222,7 +6357,13 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
             gestures[[NSString stringWithUTF8String:kv.first.c_str()]] = @(kv.second.first);
     for (auto& pk : _linkStatePending) [pending addObject:[NSString stringWithUTF8String:pk.c_str()]];
     for (auto& t : _unstableStateTypes) [unstable addObject:[NSString stringWithUTF8String:t.c_str()]];
+    NSMutableDictionary* authority = [NSMutableDictionary dictionary];
+    for (auto& kv : _linkGroupAuthority)
+        authority[[NSString stringWithUTF8String:kv.first.c_str()]] = [NSString stringWithUTF8String:kv.second.c_str()];
     return @{ @"pushes_total": @(_linkStatePushTotal),
+              @"param_propagations": @(_linkParamPropagations),
+              @"param_refused": @(_linkParamRefused),
+              @"authority": authority,
               @"pushes": pushes,
               @"baselines": baseline,
               @"gesture_open": gestures,
@@ -6260,6 +6401,61 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
     juce::ValueTree copy = ext->state.createCopy();
     copy.setProperty(te::IDs::state, chunk.toBase64Encoding(), nullptr);   // l'encodage de JUCE, celui de l'arbre
     ext->restorePluginStateFromValueTree(copy);
+    return YES;
+}
+
+- (BOOL)debugForcePluginProcessorChanged:(NSString*)pluginKey paramInfo:(BOOL)paramInfo {
+    if (!pluginKey) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end()) return NO;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    if (!ext) return NO;
+    auto* pi = ext->getAudioPluginInstance();
+    if (!pi) return NO;
+    // Ce que fait JUCE quand un AU annonce un nouveau « present preset »
+    // (AudioUnitPluginInstance::respondToPropertyChange) : DEUX temps, dans cet ordre.
+    //  1. sendAllParametersChangedEvents() — le cache JUCE de chaque paramètre est relu dans l'AU
+    //     et chaque paramètre notifie : les paramètres Tracktion portent alors les VRAIES valeurs
+    //     (et le miroir d'un FX link diffuse ces vraies valeurs, sans dommage). La méthode est privée
+    //     à JUCE ; on obtient le même effet en reposant à l'AU son propre état, ce que fait
+    //     setStateInformation (SetProperty ClassInfo puis sendAllParametersChangedEvents).
+    //  2. updateHostDisplay(programChanged) — la liste de paramètres n'a PAS changé
+    //     (parameterInfoChanged faux). Tracktion en tire un updateFromPlugin() asynchrone.
+    // Sans le temps 1, les caches Tracktion d'un AU fraîchement chargé valent encore le défaut et la
+    // reconstruction de la liste ne change rien : on ne reproduirait pas le défaut du patch 0035.
+    juce::MemoryBlock own;
+    pi->getStateInformation(own);
+    if (own.getSize() > 0)
+        pi->setStateInformation(own.getData(), (int)own.getSize());
+    // Les événements de paramètre de l'AU ne parviennent pas toujours jusqu'à Tracktion pendant
+    // cette courte fenêtre ; on remonte donc nous-mêmes les valeurs que JUCE vient de relire
+    // (ce que fait valueChangedByPlugin à chaque événement), pour que les caches Tracktion soient
+    // VRAIS avant la notification de programme — c'est la condition de la course réelle.
+    {
+        // La liste Tracktion = quelques paramètres propres au plugin (dry/wet…) PUIS ceux de l'instance
+        // JUCE : on aligne par la fin.
+        auto aps = ext->getAutomatableParameters();
+        auto& jp = pi->getParameters();
+        const int off = (int)aps.size() - (int)jp.size();
+        if (off >= 0)
+            for (int i = 0; i < (int)jp.size(); ++i)
+                aps[i + off]->setParameter(jp[i]->getValue(), juce::sendNotification);
+    }
+    // Temps 2 DIFFÉRÉ : les événements de paramètre de l'AU sont livrés par la run loop principale ;
+    // dans la course réelle, ils précèdent la notification de programme. On rend donc la main
+    // avant de la poster, puis on retrouve le plugin par sa clé (il a pu être détruit entre-temps).
+    const std::string key([pluginKey UTF8String]);
+    const bool withParamInfo = paramInfo;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        auto it2 = _pluginMap.find(key);
+        if (it2 == _pluginMap.end()) return;
+        auto* ext2 = dynamic_cast<te::ExternalPlugin*>(it2->second.get());
+        auto* pi2 = ext2 ? ext2->getAudioPluginInstance() : nullptr;
+        if (!pi2) return;
+        auto details = juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged(true);
+        if (withParamInfo) details = details.withParameterInfoChanged(true);
+        pi2->updateHostDisplay(details);
+    });
     return YES;
 }
 

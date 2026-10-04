@@ -62,6 +62,26 @@ extension CommandRegistry {
         ])
     }
 
+    /// One definition plugin of a bin whose attached members disagree (@see `FXLinkDivergence`).
+    static func fxLinkDivergenceJSON(_ d: FXLinkDivergence.Detail) -> JSONValue {
+        .object([
+            "link": .string(d.linkID.uuidString),
+            "link_name": .string(d.linkName),
+            "definition": .string(d.definitionID.uuidString),
+            "plugin_name": .string(d.pluginName),
+            "definition_in_majority": .bool(d.definitionInMajority),
+            "divergent_count": .int(d.divergentFromDefinition.count),
+            "members": .array(d.members.map { m in
+                .object(["host": .string(m.hostID.uuidString),
+                         "host_name": .string(m.hostName),
+                         "block": .string(m.blockID.uuidString),
+                         "instance": .string(m.instanceID.uuidString),
+                         "matches_definition": .bool(m.matchesDefinition),
+                         "state_class": .int(m.stateClass)])
+            }),
+        ])
+    }
+
     private func requireFXLink(_ p: CommandParams, _ key: String = "link",
                                in vm: EditViewModel) throws -> FXLink {
         let id = try p.uuid(key)
@@ -449,6 +469,59 @@ extension CommandRegistry {
             let pushed = engine.resyncLinkedState(from: id.uuidString)
             return .object(["plugin": .string(id.uuidString),
                             "pushed": .array(pushed.map { .string($0) })])
+        }
+
+        register("fxlink.divergences",
+                 summary: """
+                 The FX link bins whose ATTACHED members do not decode to one state, read off the \
+                 LIVE instances (F4). States are compared on what the plugin plays — Pro-Q 4's \
+                 576 floats, PHA-979's records, an Audio Unit's \"data\" parameters — never on raw \
+                 chunks (instance names make sound members differ); a plugin none of these reads \
+                 is not compared. One entry per definition plugin with members off the definition: \
+                 each member says whether it `matches_definition` and its `state_class` (0 = the \
+                 state most members share). What the FILE held at the last load is in \
+                 `project.load_status`'s `last_load.fx_link_divergences`.
+                 """,
+                 params: [ParamSpec("live", "bool", required: false,
+                                    "false = read the model's stored states instead of the live instances (default true).")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let details = vm.fxLinkDivergences(live: try p.bool("live", or: true))
+            return .object(["count": .int(details.count),
+                            "divergences": .array(details.map(Self.fxLinkDivergenceJSON))])
+        }
+
+        register("fxlink.repair_divergences",
+                 summary: """
+                 Repairs the bins `fxlink.divergences` reports (all of them, or one `link`): every \
+                 member that differs receives the reference state on its live instance and in the \
+                 model. `reference` "definition" (default) lays the definition's state; "majority" \
+                 lays the state most attached members share, and the definition takes it too when \
+                 it was outside it. ONE undo step (`edit.undo` gives the members their former \
+                 states back); nothing at all — no undo point — when everything already agrees. \
+                 Never done by a load on its own: the alert asks a hand, a script calls this.
+                 """,
+                 params: [ParamSpec("reference", "string", required: false, "\"definition\" (default) or \"majority\"."),
+                          ParamSpec("link", "uuid", required: false, "Only this bin.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let reference = FXLinkDivergence.Reference(rawValue: try p.string("reference", or: "definition")) else {
+                throw CommandError(code: .bad_params, message: "reference must be \"definition\" or \"majority\"")
+            }
+            let only = try p.optionalUUID("link")
+            let details = vm.fxLinkDivergences(live: true).filter { only == nil || $0.linkID == only }
+            let fixes = vm.repairFXLinkDivergences(details, reference: reference, live: true)
+            var instances: [JSONValue] = []
+            var definitions: [JSONValue] = []
+            for f in fixes {
+                switch f.target {
+                case .instance(_, _, let id): instances.append(.string(id.uuidString))
+                case .definition(_, let id): definitions.append(.string(id.uuidString))
+                }
+            }
+            return .object(["reference": .string(reference.rawValue),
+                            "bins": .int(details.count),
+                            "instances": .array(instances),
+                            "definitions": .array(definitions)])
         }
 
         register("plugin.link_overlay",
