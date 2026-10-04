@@ -6263,6 +6263,61 @@ static constexpr int    kObjLinkStateGestureEndMs   = 300;
     return YES;
 }
 
+- (BOOL)debugForcePluginProcessorChanged:(NSString*)pluginKey paramInfo:(BOOL)paramInfo {
+    if (!pluginKey) return NO;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end()) return NO;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    if (!ext) return NO;
+    auto* pi = ext->getAudioPluginInstance();
+    if (!pi) return NO;
+    // Ce que fait JUCE quand un AU annonce un nouveau « present preset »
+    // (AudioUnitPluginInstance::respondToPropertyChange) : DEUX temps, dans cet ordre.
+    //  1. sendAllParametersChangedEvents() — le cache JUCE de chaque paramètre est relu dans l'AU
+    //     et chaque paramètre notifie : les paramètres Tracktion portent alors les VRAIES valeurs
+    //     (et le miroir d'un FX link diffuse ces vraies valeurs, sans dommage). La méthode est privée
+    //     à JUCE ; on obtient le même effet en reposant à l'AU son propre état, ce que fait
+    //     setStateInformation (SetProperty ClassInfo puis sendAllParametersChangedEvents).
+    //  2. updateHostDisplay(programChanged) — la liste de paramètres n'a PAS changé
+    //     (parameterInfoChanged faux). Tracktion en tire un updateFromPlugin() asynchrone.
+    // Sans le temps 1, les caches Tracktion d'un AU fraîchement chargé valent encore le défaut et la
+    // reconstruction de la liste ne change rien : on ne reproduirait pas le défaut du patch 0035.
+    juce::MemoryBlock own;
+    pi->getStateInformation(own);
+    if (own.getSize() > 0)
+        pi->setStateInformation(own.getData(), (int)own.getSize());
+    // Les événements de paramètre de l'AU ne parviennent pas toujours jusqu'à Tracktion pendant
+    // cette courte fenêtre ; on remonte donc nous-mêmes les valeurs que JUCE vient de relire
+    // (ce que fait valueChangedByPlugin à chaque événement), pour que les caches Tracktion soient
+    // VRAIS avant la notification de programme — c'est la condition de la course réelle.
+    {
+        // La liste Tracktion = quelques paramètres propres au plugin (dry/wet…) PUIS ceux de l'instance
+        // JUCE : on aligne par la fin.
+        auto aps = ext->getAutomatableParameters();
+        auto& jp = pi->getParameters();
+        const int off = (int)aps.size() - (int)jp.size();
+        if (off >= 0)
+            for (int i = 0; i < (int)jp.size(); ++i)
+                aps[i + off]->setParameter(jp[i]->getValue(), juce::sendNotification);
+    }
+    // Temps 2 DIFFÉRÉ : les événements de paramètre de l'AU sont livrés par la run loop principale ;
+    // dans la course réelle, ils précèdent la notification de programme. On rend donc la main
+    // avant de la poster, puis on retrouve le plugin par sa clé (il a pu être détruit entre-temps).
+    const std::string key([pluginKey UTF8String]);
+    const bool withParamInfo = paramInfo;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        auto it2 = _pluginMap.find(key);
+        if (it2 == _pluginMap.end()) return;
+        auto* ext2 = dynamic_cast<te::ExternalPlugin*>(it2->second.get());
+        auto* pi2 = ext2 ? ext2->getAudioPluginInstance() : nullptr;
+        if (!pi2) return;
+        auto details = juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged(true);
+        if (withParamInfo) details = details.withParameterInfoChanged(true);
+        pi2->updateHostDisplay(details);
+    });
+    return YES;
+}
+
 - (void)removePlugin:(NSString*)pluginKey fromObjectID:(NSString*)uuid {
     std::string pk([pluginKey UTF8String]);
     if ([self refuseForeignPluginKey:pk forHost:std::string([uuid UTF8String]) operation:"removePlugin"]) return;

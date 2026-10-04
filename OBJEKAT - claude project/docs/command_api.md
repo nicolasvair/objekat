@@ -883,6 +883,14 @@ knowing before driving one:
   `baselines` = reference chunk size per instance, `gesture_open`, `pending`, `unstable_types`,
   `timer_running`). None of them opens an editor, so headless can drive the whole path except the
   editor-bound triggers (timer, close).
+  `debug.plugin_force_processor_changed {plugin, details?: "program"|"paraminfo"}` makes an external
+  instance emit the notification an AudioUnit sends when it announces a new "present preset" after a
+  state load (`audioProcessorChanged(programChanged)`): it re-hands the unit its own state, lifts the
+  values JUCE re-read into Tracktion's parameters, then — 300 ms later, on the main thread — posts the
+  notification (`paraminfo` adds `parameterInfoChanged`, the case where the list really changed).
+  It is the deterministic form of a race: without engine patch `0035` it writes the factory settings
+  into every member of the instance's FX link; with it nothing moves. Answers `{plugin, details}`
+  at once (`invalid_state` for a built-in or an unloaded instance); wait > 0.5 s before reading.
   DEBUG builds also add `debug.plugin_id_audit {}` → `{duplicates: [{id, hosts}], count,
   engine_foreign_refusals}`: every plugin id held more than once in the live project (leaves, rack
   carriers, bin blocks and their instances, instruments, bus chains) with the hosts holding it, and

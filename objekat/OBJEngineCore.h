@@ -506,6 +506,11 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Pose un chunk (base64 standard) sur l'instance vivante SANS synchro ni baseline : un changement d'état
 // que rien n'a annoncé, comme celui d'une GUI native. Réservé à l'API de debug.
 - (BOOL)debugInjectPluginStateChunk:(NSString * _Nonnull)base64 forPlugin:(NSString * _Nonnull)pluginKey;
+// Fait émettre à l'instance vivante la notification « le processeur a changé » que certains AudioUnits
+// envoient en retard après un chargement (`kAudioUnitProperty_PresentPreset` → `updateHostDisplay`).
+// `paramInfo` NO = « programme changé » seul (le cas réel), OUI = « liste de paramètres changée » aussi.
+// Rend déterministe une course autrement aléatoire (cf. patch moteur 0035). Réservé à l'API de debug.
+- (BOOL)debugForcePluginProcessorChanged:(NSString * _Nonnull)pluginKey paramInfo:(BOOL)paramInfo;
 
 // Rattache pluginKey à un groupe qu'il avait quitté, en ADOPTANT ses réglages : les valeurs
 // des paramètres d'un membre encore actif sont recopiées sur lui AVANT que ses propres

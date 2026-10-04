@@ -524,6 +524,38 @@ extension CommandRegistry {
             return .object(["plugin": .string(pluginID.uuidString)])
         }
 
+        register("debug.plugin_force_processor_changed",
+                 summary: """
+                 DEBUG. Makes a live external plugin instance announce "my processor changed" to \
+                 the engine, as an AudioUnit does — late, on its own — after a state has been \
+                 restored (`kAudioUnitProperty_PresentPreset`). `details` "program" (default) is that \
+                 case: a program change and nothing about the parameter LIST; "paraminfo" also says \
+                 the list changed. It turns a race (the notification arrives some 50 ms after the \
+                 load settles, or not) into a call. An engine that rebuilds the parameter list on \
+                 every such notification (without patch 0035) then reads the factory defaults back, \
+                 and an FX link's mirror writes them into the other members; with the patch, nothing \
+                 moves. Wait ~1 s before reading the result (the engine's update is asynchronous).
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "Target plugin instance."),
+                          ParamSpec("details", "string", required: false,
+                                    "\"program\" (default) or \"paraminfo\".")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            let details = try p.string("details", or: "program")
+            guard details == "program" || details == "paraminfo" else {
+                throw CommandError(code: .bad_params,
+                                   message: "details must be \"program\" or \"paraminfo\"")
+            }
+            guard engine.debugForcePluginProcessorChanged(pluginID.uuidString,
+                                                          paramInfo: details == "paraminfo") else {
+                throw CommandError(code: .invalid_state,
+                                   message: "cannot force on \(pluginID.uuidString) "
+                                          + "(unknown, built-in, or not loaded yet)")
+            }
+            return .object(["plugin": .string(pluginID.uuidString), "details": .string(details)])
+        }
+
         register("debug.link_state_tick",
                  summary: """
                  DEBUG. One tick of the FX-link resting-state sync on one instance: reads its chunk \
