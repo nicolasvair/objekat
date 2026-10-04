@@ -874,6 +874,17 @@ knowing before driving one:
   chunks. `flushLinkedStateSync` is not an API command; `fxlink.sync {plugin}` is its repair form for
   a bin whose members had already drifted apart (that instance's chunk prevails, whatever the reference
   says; `pushed` lists the instances overwritten; `undo: none`, marks the project modified).
+- **Only a HAND drives the bin** (4 October 2026). The parameter mirror relays a member's change only
+  when it is user-originated: a parameter gesture open on that instance (or ended < 1 s ago), a host
+  write through `plugin.set_param` / the inspector < 1 s ago, or that instance's native editor open
+  (GUIs that send no gesture brackets). A value the PLUGIN reports on its own — a late preset
+  announcement, a list rebuild, its internal logic, an automation curve playing on one member — stays
+  on that member (`debug.link_state.param_refused` counts them). The member that carried the last
+  real edit (mirror or resting sync) is the bin's **authority** (`debug.link_state.authority`,
+  group → plugin): the definition saved, the state a reattached block adopts and the reference a
+  relink adopts all come from it; with no authority yet, the definition keeps the state it already
+  holds (it no longer follows the first member). A relink lays the authority's whole CHUNK, not only
+  its host-visible parameters.
   `plugin.get_state {plugin, include_chunk?}` reads an external instance's LIVE chunk (`state`: standard
   base64, `size` in bytes; `invalid_state` for a built-in or an unloaded instance). DEBUG builds add
   `debug.plugin_inject_state {plugin, state}` (lays a chunk with no sync and no reference: a change of
@@ -881,7 +892,7 @@ knowing before driving one:
   on one instance: `{pushed: [ids], pending}` — wait > 600 ms after a previous push to that instance,
   and call it twice without `force`) and `debug.link_state {}` (`pushes_total`, `pushes` by source,
   `baselines` = reference chunk size per instance, `gesture_open`, `pending`, `unstable_types`,
-  `timer_running`). None of them opens an editor, so headless can drive the whole path except the
+  `timer_running`, `param_propagations` / `param_refused` = mirror relays done / refused as not user-originated, `authority` = group → plugin). None of them opens an editor, so headless can drive the whole path except the
   editor-bound triggers (timer, close).
   `debug.plugin_force_processor_changed {plugin, details?: "program"|"paraminfo"}` makes an external
   instance emit the notification an AudioUnit sends when it announces a new "present preset" after a
@@ -889,7 +900,8 @@ knowing before driving one:
   values JUCE re-read into Tracktion's parameters, then — 300 ms later, on the main thread — posts the
   notification (`paraminfo` adds `parameterInfoChanged`, the case where the list really changed).
   It is the deterministic form of a race: without engine patch `0035` it writes the factory settings
-  into every member of the instance's FX link; with it nothing moves. Answers `{plugin, details}`
+  into every member of the instance's FX link; with `0035` `program` moves nothing, and with `0036`
+  neither does `paraminfo` (the rebuilt AU list re-reads the unit instead of relaying its defaults). Answers `{plugin, details}`
   at once (`invalid_state` for a built-in or an unloaded instance); wait > 0.5 s before reading.
   DEBUG builds also add `debug.plugin_id_audit {}` → `{duplicates: [{id, hosts}], count,
   engine_foreign_refusals}`: every plugin id held more than once in the live project (leaves, rack

@@ -533,8 +533,10 @@ extension CommandRegistry {
                  the list changed. It turns a race (the notification arrives some 50 ms after the \
                  load settles, or not) into a call. An engine that rebuilds the parameter list on \
                  every such notification (without patch 0035) then reads the factory defaults back, \
-                 and an FX link's mirror writes them into the other members; with the patch, nothing \
-                 moves. Wait ~1 s before reading the result (the engine's update is asynchronous).
+                 and an FX link's mirror writes them into the other members; with 0035, "program" \
+                 moves nothing, and with 0036 neither does "paraminfo" (the AU re-announces its real \
+                 values instead of the rebuilt list's defaults). Wait ~1 s before reading the result \
+                 (the engine's update is asynchronous).
                  """,
                  params: [ParamSpec("plugin", "uuid", "Target plugin instance."),
                           ParamSpec("details", "string", required: false,
@@ -581,7 +583,12 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. The resting-state sync's counters: pushes (total and by source instance), \
                  the reference chunk size held per instance, gestures open, instances pending, the \
-                 plugin models learned unstable, and whether the 500 ms timer is running.
+                 plugin models learned unstable, and whether the 500 ms timer is running. Plus the \
+                 parameter mirror's: `param_propagations` (changes a hand made and the mirror carried \
+                 to the group) and `param_refused` (changes an instance announced on its own — a \
+                 state laid, a program, a rebuilt parameter list, automation — and that stayed \
+                 with it), and `authority` (group → the instance whose state the bin's definition \
+                 takes; a group absent = nothing edited since it was armed).
                  """,
                  undo: .none) { _ in
             let engine = try CommandContext.shared.requireEngine()
@@ -599,6 +606,10 @@ extension CommandRegistry {
                             "gesture_open": counts("gesture_open"),
                             "pending": names("pending"),
                             "unstable_types": names("unstable_types"),
+                            "param_propagations": .int((info["param_propagations"] as? NSNumber)?.intValue ?? 0),
+                            "param_refused": .int((info["param_refused"] as? NSNumber)?.intValue ?? 0),
+                            "authority": .object((info["authority"] as? [String: String] ?? [:])
+                                                    .mapValues { .string($0) }),
                             "timer_running": .bool((info["timer_running"] as? NSNumber)?.boolValue ?? false)])
         }
 

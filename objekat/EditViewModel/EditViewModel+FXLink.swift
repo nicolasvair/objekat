@@ -114,7 +114,7 @@ extension EditViewModel {
 
     /// The registry as it is written: only the bins some block still refers to (an orphan is what
     /// a deleted object leaves behind — it is dropped at write time and never in memory, so an undo
-    /// finds it again), each definition plugin carrying the freshest state the members hold.
+    /// finds it again), each definition plugin carrying the state of the bin as it was last EDITED.
     /// `items` are meant to be the ones whose plugin states were just captured from the engine, so
     /// that the definitions' states are the live ones without one more engine read.
     func fxLinksForPersistence(items: [SoundObject], stems: [Stem]) -> [FXLink] {
@@ -125,15 +125,19 @@ extension EditViewModel {
             guard let fb = b.fxBlock else { continue }
             referenced.insert(fb.linkID)
             guard !fb.isDetached else { continue }
-            // ONE member's state stands for the whole definition: the FIRST one met. That is right
-            // only because the members agree — which the engine's resting-state sync guarantees
-            // for anything the host cannot see (`OBJEngineCore.syncLinkedStateFrom:force:`), and
-            // which every caller here has just been assured of through `flushLinkedStateSync`
-            // (`itemsWithCapturedPluginStates`). Were two members to differ, the definition would
-            // silently take the first one's word.
+            // The definition takes the state of the member that carried the bin's LAST REAL EDIT
+            // (`OBJEngineCore.linkGroupAuthority:` — a hand on it, mirrored or synced to the others),
+            // and of nobody else. Nothing edited since the bin was armed: the definition keeps the
+            // state it already holds. It used to take the FIRST member met, which made it follow
+            // whatever that one happened to hold — a member reset to its factory settings by a late
+            // notification, or one of two members that disagree (the order of the chain deciding
+            // which), so the definition could change at every save with no one touching anything.
             for inst in fb.plugins {
-                if let g = inst.linkGroupID, stateByDef[g] == nil,
-                   let xml = inst.stateXML, !xml.isEmpty { stateByDef[g] = xml }
+                guard let g = inst.linkGroupID, stateByDef[g] == nil,
+                      let auth = engine?.linkGroupAuthority(g.uuidString),
+                      auth == inst.id.uuidString,
+                      let xml = inst.stateXML, !xml.isEmpty else { continue }
+                stateByDef[g] = xml
             }
         }
         return fxLinks.filter { referenced.contains($0.id) }.map { link in

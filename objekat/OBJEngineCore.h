@@ -460,10 +460,18 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
                    paramID:(NSString* _Nullable)paramID;
 
 // LINK d'instances de plugin : associe pluginKey à un groupe (groupID). Tant que ≥2
-// plugins partagent un groupID, toute modif d'un paramètre automatable de l'un est
-// répercutée sur les autres (matching par index — instances du MÊME plugin). Idempotent.
+// plugins partagent un groupID, toute modif d'un paramètre automatable de l'un FAITE PAR UNE MAIN
+// — un geste sur l'instance, une écriture de l'hôte (setPluginParam:), ou tant que son éditeur natif
+// est ouvert — est répercutée sur les autres (matching par index — instances du MÊME plugin). Ce que
+// l'instance annonce d'elle-même (état reposé, programme, liste de paramètres reconstruite,
+// automation qui la pilote) ne l'est pas : cela décrit CETTE instance. Idempotent.
 // Doit être (ré)appelé après (re)création des instances (ex. chargement de projet).
 - (void)setPluginLinkGroup:(NSString*)pluginKey groupID:(NSString*)groupID;
+// Le membre dont l'état fait foi pour la DÉFINITION du groupe : celui qui a porté la dernière
+// modification réelle (rediffusée par le mirror, poussée par la synchro d'état, ou désignée par
+// resyncLinkedStateFrom:). nil tant que rien n'a été modifié depuis l'armement : la définition
+// enregistrée reste alors la référence — jamais « le premier membre rencontré ».
+- (NSString * _Nullable)linkGroupAuthority:(NSString * _Nonnull)groupID;
 // Détache pluginKey de son groupe (retire les listeners). À appeler avant destruction.
 - (void)clearPluginLinkGroup:(NSString*)pluginKey;
 
@@ -512,9 +520,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Rend déterministe une course autrement aléatoire (cf. patch moteur 0035). Réservé à l'API de debug.
 - (BOOL)debugForcePluginProcessorChanged:(NSString * _Nonnull)pluginKey paramInfo:(BOOL)paramInfo;
 
-// Rattache pluginKey à un groupe qu'il avait quitté, en ADOPTANT ses réglages : les valeurs
-// des paramètres d'un membre encore actif sont recopiées sur lui AVANT que ses propres
-// listeners ne soient armés. Sans cette précaution, le rejoignant pousserait ses réglages sur
+// Rattache pluginKey à un groupe qu'il avait quitté, en ADOPTANT ses réglages : l'état entier
+// (chunk) du membre qui fait autorité — à défaut du premier membre prêt dans l'ordre des clés — est
+// posé sur lui (les valeurs de ses paramètres, si l'un des deux ne sait pas lire ou écrire son
+// chunk), AVANT que ses propres listeners ne soient armés. Sans cette précaution, le rejoignant pousserait ses réglages sur
 // tout le groupe au premier paramètre touché — l'inverse de ce qu'on veut d'un retour.
 // Sans membre actif (groupe entièrement détaché), il garde ses réglages et rouvre le groupe.
 - (void)relinkPluginAdoptingGroup:(NSString*)pluginKey groupID:(NSString*)groupID;
