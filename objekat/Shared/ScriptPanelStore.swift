@@ -146,42 +146,19 @@ struct ScriptPanel: Equatable, Sendable {
         guard p.state == .open else {
             throw CommandError(code: .invalid_state, message: "panel is \(p.state.rawValue)")
         }
-        for (key, v) in values {
-            guard let c = p.controls.first(where: { $0.id == key }), c.kind.holdsHandValue else {
-                throw CommandError(code: .bad_params, message: "no value control '\(key)'")
-            }
-            switch c.kind {
-            case .bool:
-                guard let b = v.boolValue else {
-                    throw CommandError(code: .bad_params, message: "'\(key)' is a bool")
-                }
-                p.values[key] = .bool(b)
-            case .number:
-                guard let d = v.doubleValue else {
-                    throw CommandError(code: .bad_params, message: "'\(key)' is a number")
-                }
-                p.values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
-            case .choice:
-                guard let s = v.stringValue, c.options.contains(where: { $0.id == s }) else {
-                    throw CommandError(code: .bad_params,
-                                       message: "'\(key)' is one of \(c.options.map(\.id))")
-                }
-                p.values[key] = .string(s)
-            case .button, .progress, .section: break
-            }
-        }
+        try ScriptControls.applyHand(values, controls: p.controls, into: &p.values)
         var immediate = !coalesced
         if let press {
             switch press {
             case "validate":
                 p.state = .validated; immediate = true
                 // Validate is the ONLY thing that remembers: not Cancel, not the window closing.
-                if let key = p.rememberKey { ScriptPanelMemory.save(key, handValues(p)) }
+                if let key = p.rememberKey { ScriptControls.remember(key, controls: p.controls, values: p.values) }
             case "cancel":   p.state = .cancelled; immediate = true
             case "reset" where p.rememberKey != nil:
                 // Back to what the script DECLARED; the script sees it as a hand's input (rev moves).
-                for c in p.controls where c.kind.holdsHandValue { p.values[c.id] = p.declared[c.id] }
-                ScriptPanelMemory.erase(p.rememberKey!)
+                ScriptControls.reset(p.rememberKey!, controls: p.controls, declared: p.declared,
+                                     into: &p.values)
                 immediate = true
             default:
                 guard let c = p.controls.first(where: { $0.id == press }), c.kind == .button else {
@@ -194,13 +171,6 @@ struct ScriptPanel: Equatable, Sendable {
         panels[id] = p
         if immediate { bump(id) } else { bumpCoalesced(id) }
         if p.state != .open { panelEnded?(id) }
-    }
-
-    /// The values a hand can set (never a progress bar, a button or a section).
-    private func handValues(_ p: ScriptPanel) -> [String: JSONValue] {
-        var out: [String: JSONValue] = [:]
-        for c in p.controls where c.kind.holdsHandValue { out[c.id] = p.values[c.id] }
-        return out
     }
 
     private func bump(_ id: UUID) {
@@ -233,29 +203,8 @@ struct ScriptPanel: Equatable, Sendable {
         }
         if let status { p.status = status }
         if let busy { p.busy = busy }
-        for (key, text) in labels {
-            guard let i = p.controls.firstIndex(where: { $0.id == key }) else {
-                throw CommandError(code: .bad_params, message: "no control '\(key)'")
-            }
-            p.controls[i].label = text
-        }
-        for (key, v) in values {
-            guard let c = p.controls.first(where: { $0.id == key }), c.kind.holdsValue else {
-                throw CommandError(code: .bad_params, message: "no value control '\(key)'")
-            }
-            if c.kind == .progress {
-                if case .null = v { p.values[key] = .null }
-                else if let d = v.doubleValue { p.values[key] = .number(Swift.min(1, Swift.max(0, d))) }
-                else { throw CommandError(code: .bad_params, message: "'\(key)': a progress is 0…1 or null") }
-            } else if c.kind == .bool, let b = v.boolValue { p.values[key] = .bool(b) }
-            else if c.kind == .number, let d = v.doubleValue {
-                p.values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
-            } else if c.kind == .choice, let s = v.stringValue, c.options.contains(where: { $0.id == s }) {
-                p.values[key] = .string(s)
-            } else {
-                throw CommandError(code: .bad_params, message: "'\(key)': wrong type")
-            }
-        }
+        try ScriptControls.applyLabels(labels, to: &p.controls)
+        try ScriptControls.applyScript(values, controls: p.controls, into: &p.values)
         panels[id] = p
     }
 
