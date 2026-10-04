@@ -337,6 +337,52 @@ Checked as still biting: `develop` still had the linear `std::find`.
   forced member back on its defaults. Relied on empirically: Apple documents the AnyParameter notify
   for "all parameters changed", not that every AU answers it synchronously. Other formats unchanged
   (VST2's `getValue()` reads the plugin live). Two files (an `AudioUnitUtilities.h` include).
+- `0037` — **the audio bridge: taps, readers, ranks, and latency compensation both ways.**
+  Tracktion's sidechain cannot serve OBJEKAT: its sources are tracks (ours are scheduling
+  compartments with no plugins) and it travels through `SendNode`/`ReturnNode` edges, which a
+  container — a closed local graph — lets neither in nor out. The bridge carries a key by a buffer
+  that outlives the graph instead. A TAP (`BridgeTapNode`, built in place of an engine-only
+  `BridgeTapSource` plugin at the end of a source's chain) passes its input through unchanged and
+  records it in an `objbridge::Ring` held by the tap PLUGIN (so it survives rebuilds), indexed by
+  STREAM sample — the device clock every graph shares, containers' local players included — which
+  makes the ring itself the delay line. A READER (`BridgeReaderNode`, built in
+  `createSidechainInputNodeForPlugin` when the sidechain source names a tap; a source naming a track
+  still takes the native `ReturnNode`) reads it `D` stream samples back and declares a latency `X`.
+  The pure core (`tracktion_ObjBridgeCore.h`, no JUCE, asserted by `tools/test_bridge_core.cpp`)
+  holds the ring (single writer, any readers, runs of contiguous samples, a seqlock that only
+  DETECTS an ordering bug) and the arithmetic.
+  **Latency, two cases** (`docs/plan_sidechain.md` §4): with `L_s` the tap's age and `L_d` the age of
+  the destination plugin's direct input, the reader declares `X = max(L_d, L_s)` and delays by
+  `D = X - L_s`. Key younger (`L_s <= L_d`): `D = L_d - L_s`, the reader is as old as the direct
+  input, nothing in the graph changes. Key older: `X = L_s`, `D = 0`, and the sidechain
+  `SummingNode`'s own `createLatencyNodes` delays the DIRECT input by the difference — the plugin's
+  declared latency, hence the clip's, rises, and the lane equalisation (`0013`/`0023`) and every sum
+  downstream re-align with no other change. The proof needs only that the reader's true age equals
+  its declared one.
+  **The pass loop.** `X` must be known when the reader is CONSTRUCTED, but `L_s` only when its tap
+  is, and the builder may reach the destination first (another track, another depth). Each tap
+  plugin caches the age its node had at the previous build; a reader declares `X` from it;
+  `BridgeBuild::finalise` at the end of the pass resolves every reader against the true ages, and if
+  one is LATE or OVER-declared, `createNodeForEdit` (both overloads, through
+  `buildWithBridgePasses`) throws the pass away — never prepared, so safe to drop — and builds
+  again, at most 8 times. No extra pass in steady state or for a key younger than its destination;
+  one the first time a route is laid; renders converge in their own call. A reader whose tap is not
+  built in the pass (a restricted render) is `sourceAbsent`, silent, and asks for nothing.
+  **Order.** A reader must run after the writer of the same block. Units get a RANK: a
+  `CombiningNode` is now a `BridgeRankedNode` (rank 0 by default) with an optional ordering gate
+  (`BridgeGateNode`), which waits for every ranked node of a LOWER rank in the enclosing graph and
+  refuses any whose subgraph reaches the gate (a wrong rank must never hang the player). Never an
+  edge to a tap itself (it lives inside a `TimedNode`: patch `0019`'s trap). The rank comes from the
+  `objBridgeRank` property: on a pool track (one gated combiner per rank), and on a container's
+  children (`createNodeForContainerClip` builds one combiner per rank, summed, rank 0 keeping the
+  container's own id). With no route nothing changes: no tap, no reader, one pass, no gate, one
+  combiner per container.
+  Not in this patch: the app side (the tap and probe plugins, the pool-slot rank, the transaction —
+  step 1.6) and phase 2 (sends over the bridge; `BridgeTapSource` already has the hooks). Invariant
+  to keep: no node reads ahead (`Clip::compensatesOwnPluginLatency()` stays false everywhere — a
+  debug check in `createNodeForClips` complains if a clip carrying a tap ever overrides it).
+  Written on a machine with no compiler for the engine: see `docs/plan_sidechain.md` for what the
+  Mac still has to build and measure.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

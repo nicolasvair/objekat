@@ -1,6 +1,8 @@
 # Plan — the audio bridge: sidechain, then sends across boundaries (branch `feature/sidechain`)
 
-Status: phase 0 WRITTEN (not compiled). Phases 1–3 are SPECIFIED below, down to the step an executor
+Status: phase 0 WRITTEN (not compiled). Phase 1 steps 1.1–1.5 WRITTEN on 4 October (the pure core and its test
+— 65 assertions, run; the engine side as patch `0037`, applies cleanly onto `17215d464fb`, NOT compiled: no JUCE here).
+Phases 1–3 are SPECIFIED below, down to the step an executor
 codes without taking a design decision. Written 4 October 2026 against a REAL checkout of the engine
 (`tracktion_engine/` at fork commit `17215d464fb`, JUCE `37c894f83d3` not checked out) and of the app.
 Every engine line number below is that commit's; every app line number is `feature/sidechain` at
