@@ -306,6 +306,23 @@ Checked as still biting: `develop` still had the linear `std::find`.
   re-aims its source on a rounded position at every block, a crackle as soon as file and output rates
   differ) and asks for `sincMedium`, which is what exposed it. One file, one line; the timestretch
   path is unaffected (the resampler's `speedRatio` stays 1 under a stretcher).
+- `0035` — **the parameter list is only rebuilt when the plugin says the LIST changed.**
+  `ExternalPlugin::ProcessorChangedManager::updateFromPlugin` called `refreshParameterList()` on
+  EVERY `audioProcessorChanged`, whatever the reason. For an AudioUnit that call recreates every
+  `AUInstanceParameter` with its cached value set to the parameter's DEFAULT, without re-reading the
+  unit, and `refreshParameterValues()` then announces those defaults as "changed by the plugin". An
+  AU announces a new "present preset" (`kAudioUnitProperty_PresentPreset`, JUCE: `programChanged`)
+  late, after a state has been restored — a race, sometimes ~50 ms after a project load has settled —
+  and the host's listeners were handed the factory settings. OBJEKAT's FX link mirror carried them by
+  index to the whole group, the next save froze them, and the bin's definition follows its first
+  member: PHA-979 delays to 0, Weiss Deess and Pro-C 2 to their factory settings, in other words an
+  open + save that silently destroyed the settings of linked instances. Now `audioProcessorChanged`
+  remembers `ChangeDetails::parameterInfoChanged` and `updateFromPlugin` rebuilds only then; after a
+  program change JUCE has already resynchronised its caches (`sendAllParametersChangedEvents`), so
+  `refreshParameterValues()` relays the REAL values. Known risk: a plugin that changes its list
+  without raising `parameterInfoChanged` would no longer be rebuilt (AU raises it through the
+  `ParameterList` property, VST3 `restartComponent` and VST2 raise it too; nothing observed). One
+  file. Guarded by `tools/scenario_fxlink_state_persistence.py`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

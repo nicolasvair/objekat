@@ -35,9 +35,9 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **32** patches in `engine-patches/3.5/`, numbered `0001`→`0034` with two
+An engine series of **33** patches in `engine-patches/3.5/`, numbered `0001`→`0035` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0035`. It is the ONLY series left: the four archives of
+(see its README). The next one will be `0036`. It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
 that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
