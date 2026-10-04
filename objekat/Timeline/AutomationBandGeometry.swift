@@ -86,6 +86,17 @@ struct AutomationBandGeometry {
         return Float(-dy / usableHeight * span)
     }
 
+    /// The hand's vertical travel → the travel this row reads (@see AutomationHandTravel). The step
+    /// is the detent's (`ParamRef.valueStep`), or a hundredth of the range for a parameter with none
+    /// — the same convention as the wheel (@see EditViewModel.automationWheelStepValue).
+    func rowTravel(handDy dy: Double, ref: ParamRef) -> Double {
+        let r = ref.valueRange
+        let span = Double(r.upperBound - r.lowerBound)
+        guard span > 0 else { return dy }
+        let step = Double(ref.valueStep ?? Float(span / 100))
+        return AutomationHandTravel.rowTravel(handDy: dy, rowPxPerStep: usableHeight * step / span)
+    }
+
     // MARK: - Grabbing
 
     /// Half the width / half the height of a point's grab zone. Bounded in pixels: on a tall row,
