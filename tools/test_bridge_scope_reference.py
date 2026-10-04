@@ -172,6 +172,7 @@ def plan(nodes, routes):
             out["refused"][str(i)] = why
         ok.append(why is None)
     graphs = world.data_graphs()
+    data_only = world.data_graphs()      # a second, untouched copy of the data edges
     accepted = []
     for i, r in enumerate(routes):
         if not ok[i]:
@@ -181,6 +182,10 @@ def plan(nodes, routes):
             accepted.append(i)
             continue
         scope, unit, after = edge
+        # A key edge the data graph already implies adds a rank and a gate for nothing.
+        if data_only.get(scope) is not None and data_only[scope].reaches(unit, after):
+            accepted.append(i)
+            continue
         g = graphs.setdefault(scope, Graph())
         if g.reaches(after, unit):
             out["refused"][str(i)] = "cycle"

@@ -83,32 +83,11 @@ enum BridgeScope {
         var plan = Plan()
         let world = World(nodes: nodes)
 
-        // 1. Static refusals, in the order the plan documents.
-        var staticallyOK: [Bool] = []
-        for (i, route) in routes.enumerated() {
-            if let why = world.staticRefusal(route) {
-                plan.refused[i] = why
-                staticallyOK.append(false)
-            } else {
-                staticallyOK.append(true)
-            }
-        }
-
-        // 2. The dependency graph of every scope: data edges first, then the key edges, accepted
-        //    greedily in input order (so the same model always yields the same plan).
-        var graphs = world.dataGraphs()
-        var accepted: [Int] = []
-        for (i, route) in routes.enumerated() where staticallyOK[i] {
-            guard let edge = world.keyEdge(route) else { accepted.append(i); continue }   // no edge needed
-            var g = graphs[edge.scope] ?? ScopeGraph()
-            if g.reaches(from: edge.after, to: edge.unit) {
-                plan.refused[i] = .cycle
-                continue
-            }
-            g.add(unit: edge.unit, after: edge.after, weight: 1)
-            graphs[edge.scope] = g
-            accepted.append(i)
-        }
+        // 1–2. Static refusals, then the key edges (@see `accepted`).
+        let step = accepted(world: world, routes: routes)
+        plan.refused = step.refused
+        let graphs = step.graphs
+        let acceptedRoutes = step.accepted
 
         // 3. Ranks per scope (longest path, key = 1, data = 0).
         var ranks: [UUID: [UUID: Int]] = [:]       // scope → unit → rank
@@ -131,7 +110,7 @@ enum BridgeScope {
             }
         }
 
-        for i in accepted {
+        for i in acceptedRoutes {
             let route = routes[i]
             guard let host = world.node(route.host), let source = world.node(route.source) else { continue }
             if source.kind == .stem { plan.stemRanks[source.id] = rank(source.id, in: World.rootScope) }
@@ -154,16 +133,73 @@ enum BridgeScope {
     /// Every node but `host` itself, each either allowed (nil) or refused, as if it were added as a
     /// route on `host` — replacing route number `replacing` if given. A caller filters what it does
     /// not want to show (the Main, the auxes); the reason is what a menu shows beside a disabled entry.
-    static func candidates(host: UUID, nodes: [Node], routes: [Route], replacing: Int?) -> [(id: UUID, refusal: Refusal?)] {
+    /// `among` restricts the nodes evaluated (a menu offers the selection, the objects at the same
+    /// time and the stems, not all four thousand objects).
+    ///
+    /// The model's routes are laid ONCE; each candidate is then one static check and one reachability
+    /// query in its scope's graph — no copy of the plan, no ranks. The answers are the ones a full
+    /// `plan` with the candidate appended last would give (the case table asserts both).
+    static func candidates(host: UUID, nodes: [Node], routes: [Route], replacing: Int?,
+                           among: Set<UUID>? = nil) -> [(id: UUID, refusal: Refusal?)] {
         var base = routes
         if let r = replacing, base.indices.contains(r) { base.remove(at: r) }
+        let world = World(nodes: nodes)
+        let step = accepted(world: world, routes: base)
+        let dummy = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
         var result: [(id: UUID, refusal: Refusal?)] = []
-        for n in nodes where n.id != host {
-            let probe = Route(source: n.id, host: host, consumer: .sidechain(plugin: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))))
-            let p = plan(nodes: nodes, routes: base + [probe])
-            result.append((id: n.id, refusal: p.refused[base.count]))
+        for n in nodes where n.id != host && (among?.contains(n.id) ?? true) {
+            let probe = Route(source: n.id, host: host, consumer: .sidechain(plugin: dummy))
+            if let why = world.staticRefusal(probe) {
+                result.append((id: n.id, refusal: why))
+            } else if let edge = world.keyEdge(probe),
+                      step.graphs[edge.scope]?.reaches(from: edge.after, to: edge.unit) == true {
+                result.append((id: n.id, refusal: .cycle))
+            } else {
+                result.append((id: n.id, refusal: nil))     // no edge, an implied one, or one that closes no loop
+            }
         }
         return result
+    }
+
+    /// Steps 1 and 2 of the plan: the static refusals, then the key edges laid greedily, in input
+    /// order, over the data graphs (so the same model always yields the same plan).
+    ///
+    /// A key edge the DATA graph already implies — the host's unit already runs after the source's —
+    /// is accepted without being laid: it would add a rank and a gate for nothing (an aux in a stem
+    /// keyed by a member of that stem). A new edge that would close a loop is refused `cycle`.
+    fileprivate static func accepted(world: World, routes: [Route])
+        -> (graphs: [UUID: ScopeGraph], refused: [Int: Refusal], accepted: [Int]) {
+        var refused: [Int: Refusal] = [:]
+        var staticallyOK: [Bool] = []
+        for (i, route) in routes.enumerated() {
+            if let why = world.staticRefusal(route) {
+                refused[i] = why
+                staticallyOK.append(false)
+            } else {
+                staticallyOK.append(true)
+            }
+        }
+
+        var graphs = world.dataGraphs()
+        let dataOnly = graphs
+        var accepted: [Int] = []
+        for (i, route) in routes.enumerated() where staticallyOK[i] {
+            guard let edge = world.keyEdge(route) else { accepted.append(i); continue }   // no edge needed
+            if dataOnly[edge.scope]?.reaches(from: edge.unit, to: edge.after) == true {
+                accepted.append(i)                                                         // implied by the data
+                continue
+            }
+            var g = graphs[edge.scope] ?? ScopeGraph()
+            if g.reaches(from: edge.after, to: edge.unit) {
+                refused[i] = .cycle
+                continue
+            }
+            g.add(unit: edge.unit, after: edge.after, weight: 1)
+            graphs[edge.scope] = g
+            accepted.append(i)
+        }
+        return (graphs, refused, accepted)
     }
 
     // MARK: - Internals
@@ -217,12 +253,19 @@ enum BridgeScope {
 
         let nodes: [Node]
         let index: [UUID: Node]
+        /// The nodes of every container, in array order (built once: a filter per group is O(N · G)).
+        let childrenByParent: [UUID: [Node]]
 
         init(nodes: [Node]) {
             self.nodes = nodes
             var idx: [UUID: Node] = [:]
-            for n in nodes where idx[n.id] == nil { idx[n.id] = n }
+            var kids: [UUID: [Node]] = [:]
+            for n in nodes {
+                if idx[n.id] == nil { idx[n.id] = n }
+                if let p = n.parent, n.kind == .object || n.kind == .group || n.kind == .aux { kids[p, default: []].append(n) }
+            }
             self.index = idx
+            self.childrenByParent = kids
         }
 
         func node(_ id: UUID) -> Node? { index[id] }
@@ -292,8 +335,7 @@ enum BridgeScope {
 
             // Inside a container: an aux child runs after the non-aux children.
             for c in nodes where c.kind == .group {
-                let children = nodes.filter { $0.parent == c.id && ($0.kind == .object || $0.kind == .group || $0.kind == .aux) }
-                if children.isEmpty { continue }
+                guard let children = childrenByParent[c.id], !children.isEmpty else { continue }
                 var g = ScopeGraph()
                 for ch in children { g.touch(ch.id) }
                 for a in children where a.kind == .aux {

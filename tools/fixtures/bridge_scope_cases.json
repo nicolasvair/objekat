@@ -962,7 +962,7 @@
    }
   },
   {
-   "name": "an aux as destination",
+   "name": "an aux keyed by a member of any stem is implied by the data (a Main aux runs after every object)",
    "nodes": [
     {
      "id": "S1",
@@ -996,14 +996,10 @@
    "expect": {
     "refused": {},
     "rootRanks": {},
-    "auxRanks": {
-     "X": 1
-    },
+    "auxRanks": {},
     "innerRanks": {},
     "stemRanks": {},
-    "readerRanks": {
-     "0": 1
-    },
+    "readerRanks": {},
     "taps": {
      "A": -1
     }
@@ -1157,6 +1153,110 @@
      }
     }
    ]
+  },
+  {
+   "name": "an aux in a stem keyed by a member of that stem needs no edge",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "X",
+     "kind": "aux",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "X",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "an aux in a stem keyed by an object of ANOTHER stem is not implied",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S2",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "X",
+     "kind": "aux",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S2"
+    }
+   ],
+   "routes": [
+    {
+     "source": "B",
+     "host": "X",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {
+     "X": 1
+    },
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "B": -1
+    }
+   }
   }
  ]
 }
