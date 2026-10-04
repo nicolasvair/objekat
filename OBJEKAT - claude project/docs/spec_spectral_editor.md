@@ -1,7 +1,7 @@
-# Spectral editor — functional spec (DRAFT, to be confirmed)
+# Spectral editor — functional spec (CONFIRMED)
 
 Status: CONFIRMED by the user on 4 October 2026 — every **[proposed]** below was accepted as is (read them as decided).
-are marked **[decided]**; defaults I proposed and that still need a yes are marked **[proposed]**.
+All points were confirmed by the user; **[decided]** and **[proposed]** only record who first said them.
 
 ## 1. What it is
 
