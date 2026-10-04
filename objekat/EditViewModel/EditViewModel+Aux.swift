@@ -420,6 +420,9 @@ extension EditViewModel {
         // it is the right place to push the rest of the project's curves again as well — a plain
         // tree walk, free for objects with no automation.
         pushAllAutomation()
+        // The same meeting point serves the audio bridge: load, undo/redo, grouping, a stem change
+        // and a paste all reshape who is above whom, which is what a key's validity and rank read.
+        syncBridge(force: true)
     }
 
     /// Copies onto `newAuxID` every send that targeted `origAuxID` (the same level).

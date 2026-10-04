@@ -251,6 +251,9 @@ extension EditViewModel {
         // a compilation makes them anew. No effect for a BUS (stem or master), which is
         // not a sound object and has no automation.
         pushAutomation(objectID)
+        // A recompiled AU is a NEW instance with its sidechain stripped (the model, not the engine,
+        // is the authority on keys): lay them again. Coalesced — a load compiles every object.
+        scheduleBridgeSync(force: true)
         return Array(failed)
     }
 

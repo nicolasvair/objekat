@@ -52,6 +52,9 @@ final class EditViewModel {
             allAuxesCache = nil
             multiSelectionCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
+            // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
+            // pass per run-loop turn, and an unchanged topology costs one comparison.
+            scheduleBridgeSync()
         }
     }
     /// How many times `items` has been written, and how many times the lane entries have been
@@ -321,7 +324,26 @@ final class EditViewModel {
     /// The cheatsheet shown (a tool key or a modifier held ~0.6 s); nil = hidden.
     /// See ShortcutCheatsheet / CheatsheetHold.
     var cheatsheet: CheatsheetContext? = nil
-    var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
+    var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)] {
+        didSet { scheduleBridgeSync() }     // a stem can be a key's source or host (audio bridge)
+    }
+
+    // MARK: - Audio bridge (sidechain) — @see EditViewModel+Bridge
+    //
+    // What the last sync derived, for the UI and the API. DERIVED, never saved, never in an undo
+    // snapshot: `BridgeScope.plan` recomputes it from the model at every sync.
+
+    /// The scope / cycle / rank plan of the current model.
+    var bridgePlan = BridgeScope.Plan()
+    /// Plugin id → why its key is refused. Absent = the key is active (or there is none).
+    var bridgeRouteStatus: [UUID: BridgeScope.Refusal] = [:]
+    @ObservationIgnored var bridgeSyncScheduled = false
+    @ObservationIgnored var bridgeSyncForced = false
+    /// The engine holds taps laid by a previous sync: a sync with no route must still run once, to
+    /// take them away.
+    @ObservationIgnored var bridgeEngineHasTaps = false
+    /// The topology the last sync laid down: an equal one is not laid again (unless forced).
+    @ObservationIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route])? = nil
 
     var mainStemID: UUID { stems.first?.id ?? UUID() }
 
