@@ -54,8 +54,8 @@ extension CommandRegistry {
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)
             payload["reversed"] = .bool(item.isReversed)
-            payload["plugins"] = .array(item.plugins.map(CommandAdapters.pluginPayload))
-            payload["instruments"] = .array(item.instruments.map(CommandAdapters.pluginPayload))
+            payload["plugins"] = .array(item.plugins.map { CommandAdapters.pluginPayload($0) })
+            payload["instruments"] = .array(item.instruments.map { CommandAdapters.pluginPayload($0) })
             payload["sends"] = .array(item.sends.map { send in
                 .object(["aux": .string(send.auxID.uuidString),
                          "level_db": .number(Double(send.levelDb)),

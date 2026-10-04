@@ -377,7 +377,7 @@ extension CommandRegistry {
             let block = try self.requireBlock(p, on: host, in: vm)
             vm.releaseFXBlock(hostID: host, blockID: block.id)
             return .object(["host": .string(host.uuidString),
-                            "plugins": .array((vm.chainPlugins(host) ?? []).map(CommandAdapters.pluginPayload))])
+                            "plugins": .array((vm.chainPlugins(host) ?? []).map { CommandAdapters.pluginPayload($0) })])
         }
 
         register("fxlink.remove_block",
@@ -406,7 +406,7 @@ extension CommandRegistry {
             let block = try self.requireBlock(p, on: host, in: vm)
             vm.moveFXBlock(hostID: host, blockID: block.id, to: .root, at: try p.int("index"))
             return .object(["host": .string(host.uuidString),
-                            "plugins": .array((vm.chainPlugins(host) ?? []).map(CommandAdapters.pluginPayload))])
+                            "plugins": .array((vm.chainPlugins(host) ?? []).map { CommandAdapters.pluginPayload($0) })])
         }
 
         register("fxlink.set_local_output",

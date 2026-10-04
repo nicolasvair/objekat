@@ -413,7 +413,7 @@ extension CommandRegistry {
                  params: []) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             var payload: [String: JSONValue] = [
-                "plugins": .array(vm.orderedSelectedPlugins().map(CommandAdapters.pluginPayload)),
+                "plugins": .array(vm.orderedSelectedPlugins().map { CommandAdapters.pluginPayload($0) }),
                 "count": .int(vm.orderedSelectedPlugins().count),
                 "has_keyboard": .bool(vm.pluginSurfaceHasKeyboard),
                 "clipboard": .int(vm.pluginClipboard.count),
