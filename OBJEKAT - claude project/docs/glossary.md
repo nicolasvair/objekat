@@ -70,6 +70,7 @@ source, not a translation.
 | fx link (bac de plugins partagé) | FX link (shared plugin bin) | fx link (bin de plugins compartido) | the name stays « fx link » in the three languages; a shared bin of plugins, one block in each member's chain |
 | détacher / rattacher (un fx link) | detach / reattach | desvincular / volver a vincular | per host: the host keeps an independent copy, then realigns on the bin |
 | section de sortie (d'un fx link) | output section | sección de salida | volume, pan, mute of the bin, after its plugins |
+| clé (sidechain) | key (sidechain) | clave (sidechain) | the signal of another object or stem that feeds a plugin's sidechain input; the word « sidechain » stays in the three languages for the feature, « clé / key / clave » names the source |
 
 ## What does not get translated
 

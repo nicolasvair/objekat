@@ -254,13 +254,14 @@ extension EditViewModel {
 
     /// The sources a plugin's key menu can offer, each allowed or refused (with the reason). The Main
     /// is left out (it is never a source); auxes are listed, refused. Names are what the user sees.
-    func sidechainCandidates(host: UUID, plugin: UUID)
+    /// `among` restricts the nodes evaluated (the menu offers a few, not every object).
+    func sidechainCandidates(host: UUID, plugin: UUID, among: Set<UUID>? = nil)
         -> [(id: UUID, kind: BridgeScope.Kind, name: String, refusal: BridgeScope.Refusal?)] {
         let topology = bridgeTopology()
         let replacing = topology.routeOwners.firstIndex { $0.plugin == plugin }
         let kinds = Dictionary(topology.nodes.map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
         return BridgeScope.candidates(host: host, nodes: topology.nodes, routes: topology.routes,
-                                      replacing: replacing).compactMap { entry in
+                                      replacing: replacing, among: among).compactMap { entry in
             guard let kind = kinds[entry.id], kind != .main else { return nil }
             let name: String
             if let s = stems.first(where: { $0.id == entry.id }) { name = s.name }
@@ -269,4 +270,92 @@ extension EditViewModel {
             return (id: entry.id, kind: kind, name: name, refusal: entry.refusal)
         }
     }
+
+    // MARK: - What the signal view shows (the card's Sidechain menu and badge)
+
+    /// The reason a key is refused, for a person. A literal key per case, so that the catalogue's
+    /// orphan check sees them used.
+    static func sidechainReasonText(_ why: BridgeScope.Refusal) -> String {
+        switch why {
+        case .unknownSource, .unknownHost: return L("plugin.sidechain.reason.unknownSource")
+        case .selfSource:                  return L("plugin.sidechain.reason.selfSource")
+        case .ancestorSource:              return L("plugin.sidechain.reason.ancestorSource")
+        case .auxSource:                   return L("plugin.sidechain.reason.auxSource")
+        case .mainSource:                  return L("plugin.sidechain.reason.mainSource")
+        case .cycle:                       return L("plugin.sidechain.reason.cycle")
+        }
+    }
+
+    /// One line about a plugin's key — "Key: Kick", or "Key inactive: loop" — nil when it has none.
+    func sidechainBadge(plugin: UUID, host: UUID) -> SidechainBadge? {
+        guard let leaf = Self.flattenLeaves(chainPlugins(host) ?? []).first(where: { $0.id == plugin }),
+              let key = leaf.sidechain else { return nil }
+        let name: String
+        if let s = stems.first(where: { $0.id == key.sourceID }) { name = s.id == mainStemID ? L("stem.main.name") : s.name }
+        else if let o = find(id: key.sourceID) { name = displayName(of: o) }
+        else { name = "?" }
+        if let why = bridgeRouteStatus[plugin] {
+            return SidechainBadge(text: L("plugin.sidechain.inactive", Self.sidechainReasonText(why)), active: false)
+        }
+        return SidechainBadge(text: L("plugin.sidechain.badge", name), active: true)
+    }
+
+    /// The card's Sidechain menu: what is selected in the timeline, the objects playing at the same
+    /// time as the host (by start, at most 40; none for a bus), and the stems — each allowed or
+    /// refused with its reason. nil = no menu: the live plugin has no sidechain input (or is still
+    /// loading), or the host is a closed consolidated object. Any other object stays reachable
+    /// through the API (`plugin.set_sidechain`).
+    func sidechainMenuModel(host: UUID, plugin: UUID) -> SidechainMenuModel? {
+        guard let engine, engine.pluginCanSidechain(plugin.uuidString) else { return nil }
+        let hostObject = find(id: host)
+        if hostObject?.isConsolidateInstance == true { return nil }
+        guard let leaf = Self.flattenLeaves(chainPlugins(host) ?? []).first(where: { $0.id == plugin }) else { return nil }
+
+        var overlapping: [(id: UUID, start: Double)] = []
+        if let h = hostObject {
+            let hEnd = h.startTime + h.duration
+            func walk(_ array: [SoundObject]) {
+                for o in array where o.id != host {
+                    if !o.isAux, o.startTime < hEnd, o.startTime + o.duration > h.startTime { overlapping.append((o.id, o.startTime)) }
+                    if case .group(let children, _) = o.kind { walk(children) }
+                }
+            }
+            walk(items)
+            overlapping.sort { $0.start != $1.start ? $0.start < $1.start : $0.id.uuidString < $1.id.uuidString }
+        }
+        let overlappingIDs = overlapping.prefix(40).map { $0.id }
+        let selectedIDsNow = selectedIDs.filter { $0 != host }
+        let stemIDs = stems.filter { $0.id != mainStemID }.map { $0.id }
+
+        var wanted = Set(overlappingIDs); wanted.formUnion(selectedIDsNow); wanted.formUnion(stemIDs)
+        if let current = leaf.sidechain?.sourceID { wanted.insert(current) }
+        let byID = Dictionary(sidechainCandidates(host: host, plugin: plugin, among: wanted).map { ($0.id, $0) },
+                              uniquingKeysWith: { a, _ in a })
+        func entries(_ ids: [UUID]) -> [SidechainMenuModel.Entry] {
+            ids.compactMap { byID[$0] }.map { SidechainMenuModel.Entry(id: $0.id, name: $0.name, refusal: $0.refusal) }
+        }
+        return SidechainMenuModel(current: leaf.sidechain?.sourceID,
+                                  selected: entries(Array(selectedIDsNow).sorted { $0.uuidString < $1.uuidString }),
+                                  overlapping: entries(overlappingIDs).filter { e in !selectedIDsNow.contains(e.id) },
+                                  stems: entries(stemIDs))
+    }
+}
+
+/// A plugin's key, as the card says it.
+struct SidechainBadge: Equatable {
+    var text: String
+    var active: Bool
+}
+
+/// What the card's Sidechain menu offers. @see EditViewModel.sidechainMenuModel
+struct SidechainMenuModel {
+    struct Entry: Identifiable {
+        let id: UUID
+        let name: String
+        let refusal: BridgeScope.Refusal?
+    }
+    var current: UUID?
+    var selected: [Entry]
+    var overlapping: [Entry]
+    var stems: [Entry]
 }

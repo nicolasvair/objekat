@@ -36,6 +36,13 @@ struct SynopticActions {
     var onRelink: ((UUID) -> Void)? = nil
     var linkSiblingCount: ((UUID) -> Int)? = nil
 
+    // The audio bridge (sidechain): a card's key, as one line (nil = none), the right-click menu of
+    // what can key it (nil = the plugin has no sidechain input, or the host is read-only), and the
+    // gesture itself (source nil = no key).
+    var sidechainBadge: ((UUID) -> SidechainBadge?)? = nil
+    var sidechainMenu: ((UUID) -> SidechainMenuModel?)? = nil
+    var onSetSidechain: ((_ plugin: UUID, _ source: UUID?) -> Void)? = nil
+
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
     // What a release at `target` would do with the drag in flight, for the cursor and the band
@@ -419,11 +426,16 @@ struct SynopticView: View {
                     onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
+                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
+                    sidechainBadge: actions.sidechainBadge?(c.plugin.id)
                 )
                 .contextMenu {
                     // A card outside the selection speaks for itself alone (the drag's own rule).
                     fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
+                    // The key is one plugin's business: not offered over a multiple selection.
+                    if !selection.contains(c.plugin.id) || selection.count == 1 {
+                        sidechainMenu(for: c.plugin.id)
+                    }
                 }
                 .position(x: c.frame.midX, y: c.frame.midY)
             }
@@ -535,6 +547,40 @@ struct SynopticView: View {
                         Button(j.name) { actions.onJoinFXLink?(j.id) }
                     }
                 }
+            }
+        }
+    }
+
+    /// The Sidechain entry of a card's menu (the audio bridge): none, then the selection, the objects
+    /// at the same time and the stems. A refused entry is shown disabled, its reason as help.
+    @ViewBuilder
+    private func sidechainMenu(for id: UUID) -> some View {
+        if !fxReadOnly, let m = actions.sidechainMenu?(id) {
+            Menu(L("plugin.sidechain.menu")) {
+                Button { actions.onSetSidechain?(id, nil) } label: {
+                    if m.current == nil { Label(L("plugin.sidechain.none"), systemImage: "checkmark") }
+                    else { Text(L("plugin.sidechain.none")) }
+                }
+                sidechainSection(L("plugin.sidechain.selected"), m.selected, current: m.current, plugin: id)
+                sidechainSection(L("plugin.sidechain.overlapping"), m.overlapping, current: m.current, plugin: id)
+                sidechainSection(L("plugin.sidechain.stems"), m.stems, current: m.current, plugin: id)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidechainSection(_ title: String, _ entries: [SidechainMenuModel.Entry],
+                                  current: UUID?, plugin: UUID) -> some View {
+        if !entries.isEmpty {
+            Divider()
+            Text(title)
+            ForEach(entries) { e in
+                Button { actions.onSetSidechain?(plugin, e.id) } label: {
+                    if current == e.id { Label(e.name, systemImage: "checkmark") }
+                    else { Text(verbatim: e.name) }
+                }
+                .disabled(e.refusal != nil)
+                .help(e.refusal.map { EditViewModel.sidechainReasonText($0) } ?? "")
             }
         }
     }
@@ -1072,6 +1118,8 @@ struct SynopticCardView: View {
     var onRelink: (() -> Void)? = nil
     /// The number of linked instances (for the tooltip). 0 if unlinked.
     var linkSiblingCount: Int = 0
+    /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
+    var sidechainBadge: SidechainBadge? = nil
 
     @State private var dropTargeted = false
     @State private var dropHintID = UUID()
@@ -1152,6 +1200,15 @@ struct SynopticCardView: View {
                         }
                         .buttonStyle(.plain)
                         .help(linkHelp)
+                    }
+
+                    // The sidechain key: a glyph in the identity colour, orange when the key is refused.
+                    // The sentence ("Key: Kick") is its tooltip — the card is one line high.
+                    if let badge = sidechainBadge {
+                        Image(systemName: "waveform.path")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(badge.active ? plugin.color : Color.orange)
+                            .help(badge.text)
                     }
 
                     // ✕ — remove the fx (always visible)
@@ -2589,6 +2646,9 @@ struct SynopticBoundView: View {
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
+            sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
+            sidechainMenu: { viewModel.sidechainMenuModel(host: objectID, plugin: $0) },
+            onSetSidechain: { plugin, source in try? viewModel.setSidechain(host: objectID, plugin: plugin, source: source) },
             dragProvider: { dragProvider($0) },
             dropOutcome: { target, flags in
                 // The drag in flight says what it carries (@see PluginDragSession); with none to read,
