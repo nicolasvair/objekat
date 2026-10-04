@@ -78,9 +78,14 @@ An eraser rather than a brush: it exists to take away.
 - Parameters, all three adjustable by the hand in the side bar **[decided]**: **size** (diameter, in screen pixels at the time of the stroke **[proposed]** —
   stored in time × frequency units so it does not change meaning when zooming), **attenuation per
   pass** (dB, default −3 dB **[proposed]**), **hardness** (the feather of the brush tip).
-- **Cumulative**: passing again over the same place in a NEW stroke attenuates further
-  (−3, −6, −9 …), floor −∞. Within ONE stroke, a place crossed twice is attenuated ONCE
-  **[proposed]** — otherwise a hand that wobbles would carve holes.
+- **Cumulative, like a spray can in negative** **[decided]**: the stroke deposits DABS along the
+  path the hand travels, at a fixed spacing (a fraction of the diameter **[proposed: ¼]**), each
+  dab attenuating by the per-pass amount weighted by the tip profile (hardness: centre strongest,
+  edges softer). Everything adds up, WITHIN a stroke as across strokes: crossing the same place
+  several times in one stroke attenuates it several times (−3, −6, −9 …), floor −∞.
+  **Distance, not time** **[decided]**: a hand held still with the button down deposits nothing;
+  only travel deposits. The attenuation per pass is calibrated so that ONE straight crossing of a
+  point gives the per-pass figure at the tip's centre, whatever the spacing.
 - The app draws the accumulated attenuation as a veil on the image, so one sees where one has
   already been.
 
