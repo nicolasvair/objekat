@@ -1,6 +1,6 @@
 # Spectral editor — functional spec (DRAFT, to be confirmed)
 
-Status: draft of 4 October 2026, revised the same day after the user's review, written with the user before any code. Decisions already taken
+Status: CONFIRMED by the user on 4 October 2026 — every **[proposed]** below was accepted as is (read them as decided).
 are marked **[decided]**; defaults I proposed and that still need a yes are marked **[proposed]**.
 
 ## 1. What it is
