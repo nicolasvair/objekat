@@ -195,6 +195,25 @@ final class ObjekatSession {
         engine.seek(to: t)
     }
 
+    /// ⌥-click in the ruler: the cursor AND the playhead go there. Playing, playback carries on
+    /// from that point; paused, ⇧space resumes from it; stopped, it is a plain cursor move.
+    /// Unlike `seek(to:)` it keeps a pause a pause.
+    func jumpPlayhead(to seconds: Double) {
+        guard !viewModel.isLoadingProject else { return }
+        let t = max(0, seconds)
+        viewModel.cursorPosition = t
+        playheadPosition = t
+        if pausedAt != nil { pausedAt = t }
+        // The engine loop is armed on ENTERING the region (@see tickPlayhead): a jump out of it
+        // disarms it, and the tick re-arms it if playback reaches the region again.
+        if tracktionLoopActive, let r = viewModel.loopRegion,
+           !(t >= r.lowerBound && t < r.upperBound) {
+            engine.deactivateTracktionLoop()
+            tracktionLoopActive = false
+        }
+        engine.seek(to: t)
+    }
+
     // MARK: - Reacting to changes in the document
 
     /// `viewModel.seekRequest` is the channel through which the interface asks for a move.
