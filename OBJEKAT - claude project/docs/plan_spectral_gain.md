@@ -53,7 +53,7 @@ This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral
 - **Each op records:** the gesture geometry, plus a `params` dictionary snapshotting the values of the controls the tool declares, at the moment of the gesture. The app attaches no meaning to them. The script interprets them.
 - **The app draws only a raw TRACE** of each op the script has not yet reflected:
   - `rect`: an outline;
-  - `stroke`: semi-transparent dark discs of the brush size, laid every ¼ diameter along the path. Passing again darkens more. This is purely visual; there is no dB anywhere in the app.
+  - `stroke`: semi-transparent dark discs of the brush size, laid every `spacing_for(h)` diameters along the path (§3.3: ¼ for a soft brush, down to 1/64 for a hard one). The app has no notion of hardness, so a stroke tool may declare an optional `hardness_control` (a `number` control read as 0…100 %, a purely visual hint); the trace then uses `spacing_for(value / 100)`, and without it ¼. Passing again darkens more. This is purely visual; there is no dB anywhere in the app.
   - `point`: a small ring.
 - The app also owns undo/redo (cursor, ⌘Z guard) and the transport.
 
@@ -128,6 +128,7 @@ Ending a canvas stops its audio and closes its window. A second `open` on the sa
   - `label` is the script's own text, already localised.
   - `icon` is an SF Symbol name. When absent: `rect` → `rectangle.dashed`, `stroke` → `scribble`, `point` → `smallcircle.filled.circle`.
   - `params` lists the hand-value controls (number, bool or choice) snapshotted into each op.
+  - `hardness_control` is optional for `stroke` and forbidden otherwise. It must name a `number` control (0…100). It only sets the spacing of the raw trace (§3.3's `spacing_for`); the app gives it no other meaning. The eraser declares `hardness_control: "hardness"`.
   - `size_control` is required for `stroke` and forbidden otherwise. It must name a `number` control giving the diameter in screen points, clamped to 1…1000 when used.
   - The id `"hand"` is reserved. The Hand tool is always present and is labelled `L("canvas.tool.hand")`.
 - `remember`: as for panels. Validate stores the values, `press: "reset"` restores the declared ones, the key is `scriptPanel.<key>`, and it is ephemeral under `--no-recent` or `--headless`.
@@ -333,9 +334,11 @@ All mask terms are in dB and add up.
 - Contribution: `G += gain_db · wx · wy`.
 
 **Eraser** (tool `stroke` id `eraser`, params `amount`, `hardness`; diameter from the op's `size_x`, `size_y`)
-- Constants: `SPACING = 0.25`, `R = 0.5`.
+- Constants: `R = 0.5`, `SPACING_MAX = 0.25`, `SPACING_MIN = 1/64`, `SPACING_KNEE_H = 0.3`.
+- **Spacing depends on hardness.** `spacing_for(h)` (h clamped to [0, 1]) is `0.25` for `h ≤ 0.3`, then a straight line down to `1/64` at `h = 1`:
+  `spacing_for(h) = 0.25 − (0.25 − 1/64)·(h − 0.3)/0.7`. A fixed ¼ left a ripple along the stroke that grew with hardness (14 % at h = 0.7, 25 % at h = 1: a hard profile is nearly a box and sampling it coarsely beats against the dab lattice). Mirrored in Swift by the trace (`CanvasStrokeTrace`), which must call the same formula.
 - Normalise each point: `u = warp_x(x)/size_x`, `v = warp_y(y)/size_y`.
-- Dab centres sit at arc lengths `(k + 0.5)·SPACING`, k an integer. Use `sqrt(du·du + dv·dv)`:
+- Dab centres sit at arc lengths `(k + 0.5)·spacing`, with `spacing = spacing_for(h)` and k an integer. Use `sqrt(du·du + dv·dv)`:
 
 ```python
 acc = 0.0; k = 0
@@ -343,16 +346,16 @@ for i in range(1, n):
     du = u[i]-u[i-1]; dv = v[i]-v[i-1]
     L = math.sqrt(du*du + dv*dv)
     if L <= 0: continue
-    while (k + 0.5)*SPACING <= acc + L:
-        t = ((k + 0.5)*SPACING - acc) / L
+    while (k + 0.5)*spacing <= acc + L:
+        t = ((k + 0.5)*spacing - acc) / L
         dabs.append((u[i-1] + t*du, v[i-1] + t*dv)); k += 1
     acc += L
 ```
 
   A still hand deposits nothing.
 - Profile, with `h = hardness/100` and `ρ = dist/R`: 0 if ρ ≥ 1; 1 if ρ ≤ h; otherwise `0.5 + 0.5·cos(π(ρ − h)/(1 − h))`.
-- Per dab: `a = amount · SPACING/(R·(1 + h)) = amount · 0.5/(1 + h)`.
-- **Calibration:** one straight crossing deposits `amount` on the centre line. This is exact for h = 0, 0.5 and 1, and within about 1 % for other h. Contributions add up within a stroke and across strokes.
+- Per dab: `a = amount · spacing/(R·(1 + h))`, `spacing = spacing_for(h)` (the profile integrates to `R·(1 + h)` across the centre line). It is `amount · 0.5/(1 + h)` for `h ≤ 0.3`.
+- **Calibration:** one straight crossing deposits `amount` on the centre line. The mean along the line is exactly `amount` for every h, and the ripple around it (a dab-lattice beat) is at most 1.4 % of `amount` for every h in [0, 1] (measured: 0, 1.2, 1.05, 1.3, 0.87, 0.35, 0.93, 0.81, 0.29, 0.99, 0 % at h = 0, 0.1 … 1.0; exactly 0 at h = 0 and 0.25). Cost: 4 dabs per diameter for `h ≤ 0.3`, 64 at `h = 1`. Contributions add up within a stroke and across strokes.
 - **Field:** `G += Σ a·p(ρ)`, with ρ computed in the normalised (u, v) space.
 
 **Total**
@@ -376,13 +379,14 @@ for i in range(1, n):
 **Base image**
 - Magnitude: `max(|X_L|, |X_R|)`.
 - Rows: 1024, log-spaced over the world's y range [20, sr/2]. A row takes the max of the bin magnitudes inside its band; if no bin falls inside, it interpolates linearly at the row centre.
-- Columns: `W = min(J, 8192)`, each the max over its frames.
+- Columns: `W = min(floor(L/H) + 1, 8192)`, tiling the world x range `[0, L/sr]` uniformly (column c covers `[c, c+1)·(L/sr)/W`).
+- A frame j is centred at `t_j = jH/sr` and answers for the stretch `[t_j − H/2, t_j + H/2)`; a column is the max over every frame whose stretch touches it (exact integer arithmetic, clamped). So the frame nearest to a time always feeds the column that contains that time (no half-frame lateness), no column is empty, and a click survives the pooling. `image.frame_columns` and `image.column_of_time` are the definitions.
 - Levels: `dB = 20·log10(max(m, 1e-12)/(N/4))`, mapped to `idx = clip(round((dB + 100)/100·255), 0, 255)` with v0 = −100 and v255 = 0. Written as `OBJKCNV1` with the magma palette.
 
 ### 3.5 Veil layer (Python `veil.py`)
 
 **Grid**
-- Columns: `min(4096, max(256, ceil(T/0.005)))` over the world x range.
+- Columns: `min(4096, max(256, ceil(T/0.005)))` over the world x range. A cell's G is evaluated at its CENTRE time `(c + ½)·T/columns`, exactly as the STFT mask is evaluated at frame centres `jH/sr`, so veil and audio read the same G(t).
 - Rows: 512, log-spaced over [20, sr/2].
 - G is evaluated on cell centres with the functions of §3.3.
 
@@ -404,7 +408,7 @@ for i in range(1, n):
 
 | file | new or touched | content |
 |---|---|---|
-| `objekat/Shared/ScriptCanvasGeometry.swift` | new, pure, `nonisolated` | `CanvasAxisMapping`; `CanvasAxis` (warp, unwarp); `CanvasWorld`; `CanvasViewport` (fit, `zoomedX/Y(by:anchor:in:)`, `panned`, `clamped`, screen ↔ warped); `CanvasStrokeTrace.discCentres(points:sizeX:sizeY:world:) -> [CanvasPoint]` (resampling every ¼ diameter, for drawing only); `CanvasTicks` (1-2-5 steps ≥ 70 pt apart; log axes in decades × {1,2,5}, denser {1…9} when zoomed); `CanvasFormat` (time `m:ss.mmm`, Hz/kHz, value plus unit); `CanvasPoint` |
+| `objekat/Shared/ScriptCanvasGeometry.swift` | new, pure, `nonisolated` | `CanvasAxisMapping`; `CanvasAxis` (warp, unwarp); `CanvasWorld`; `CanvasViewport` (fit, `zoomedX/Y(by:anchor:in:)`, `panned`, `clamped`, screen ↔ warped); `CanvasStrokeTrace.discCentres(points:sizeX:sizeY:world:) -> [CanvasPoint]` (resampling every `spacing_for(h)` diameters, with `h` the hardness, for drawing only; `spacing_for` is a pure Swift mirror of `mask.spacing_for`); `CanvasTicks` (1-2-5 steps ≥ 70 pt apart; log axes in decades × {1,2,5}, denser {1…9} when zoomed); `CanvasFormat` (time `m:ss.mmm`, Hz/kHz, value plus unit); `CanvasPoint` |
 | `objekat/Shared/ScriptCanvasImageFile.swift` | new, pure | `nonisolated enum ScriptCanvasImageFile { enum Kind { indexed(v0, v255, palette), rgba }; struct Parsed { kind; width; height; pixelRange: Range<Int> }; static func parse(_ data: Data) throws -> Parsed }`, with its own `ParseError` |
 | `objekat/Shared/ScriptCanvasImage.swift` | new | `final class ScriptCanvasImage { path; cgImage; width; height; indices: Data?; v0; v255; generation; static func load(path:) throws }`. Throws `CommandError` (`not_found` / `bad_params`). An indexed `CGImage` for CNV1, premultiplied RGBA for RGB1, `CGImageSource` otherwise; `value(column:row:)` |
 | `objekat/Shared/ScriptControls.swift` | new, extraction | `parse`, `applyHand`, `applyScript`, `handValues`, `rememberKey`: code moved verbatim from `Commands+ScriptPanel.parseControls` and `ScriptPanelStore.input` / `update` / `handValues`, with the same messages |
@@ -546,7 +550,7 @@ let scriptCanvases: ScriptCanvasStore = {
   - `write_wav(kind = pcm16 | pcm24 | f32)` rounds, clips (returns the count), applies no dither, adds a `fact` chunk for f32, and writes atomically through `.tmp` + `os.replace`.
 - `dsp.py`: `hop_for`, `hann`, `frame_count`, `process(x, sr, N, k, gain_block_fn, out_dtype, block = 256)`, `analysis_blocks`.
 - `mask.py`, the only home of the gain mathematics:
-  - pure Python: `SPACING`, `warp`, `profile`, `per_dab_db`, `dab_centres`, `ramp`, `rect_weight_1d`, `is_open`, `gain_at(x, y, ops, world)`, `active_ops`;
+  - pure Python: `SPACING_MAX` / `SPACING_MIN` / `spacing_for`, `warp`, `profile`, `per_dab_db`, `dab_centres`, `ramp`, `rect_weight_1d`, `is_open`, `gain_at(x, y, ops, world)`, `active_ops`;
   - interpretation: `rect_from_op` and `eraser_from_op` read `params` and the `size_*` fields;
   - numpy part (imported lazily): `gain_grid(ops, xw, yw, world)`, using `searchsorted` patches.
 - `image.py`: `build_image` (§3.4).
@@ -583,7 +587,7 @@ let scriptCanvases: ScriptCanvasStore = {
 3. **Open the canvas.** `script.canvas.open` with the controls below, and:
    - tools:
      - `{id: "rect", kind: "rect", label: tr(Rectangle), params: ["gain", "feather_ms", "feather_st"]}`;
-     - `{id: "eraser", kind: "stroke", label: tr(Gomme / Eraser / Borrador), icon: "eraser", params: ["amount", "hardness"], size_control: "size_px"}`;
+     - `{id: "eraser", kind: "stroke", label: tr(Gomme / Eraser / Borrador), icon: "eraser", params: ["amount", "hardness"], size_control: "size_px", hardness_control: "hardness"}`;
    - `object`, `remember: "spectral-gain"`, `busy: true`, status "Rendering…".
 
    | id | kind | range | default |
@@ -637,7 +641,7 @@ let scriptCanvases: ScriptCanvasStore = {
   - mono and stereo; lengths that are not a multiple of the hop.
 - `test_mask.py`:
   - **profile:** its values;
-  - **calibration:** a straight stroke at a 0.1·s offset gives exactly `amount` for h = 0, 0.5 and 1, and within 2 % for h = 0.3;
+  - **spacing:** `spacing_for` values, monotone, continuous; **calibration:** the mean of a straight stroke is `amount` for every h and its ripple is ≤ 2 % for every h in [0, 1] (swept in steps of 0.02);
   - **accumulation:** out-and-back gives 2× and three passes 3×; two separate strokes add up;
   - **stillness:** a still hand gives 0 dabs, and dense resampling gives the same dabs to 1e-9;
   - **rectangle:** gain inside, 0 outside, half the gain at an edge with feather, no ramp at open edges, two overlapping −6 dB rects give −12, −60 is applied as −60;
@@ -657,7 +661,7 @@ let scriptCanvases: ScriptCanvasStore = {
 **Swift standalone, compiled on the Mac from `tools/`**
 - `tools/test_script_canvas_geometry.swift`:
   - build: `swiftc -parse-as-library ../objekat/Shared/ScriptCanvasGeometry.swift test_script_canvas_geometry.swift -o /tmp/scg && /tmp/scg`;
-  - asserts: warp/unwarp; viewport fit, zoom with a fixed anchor, pan, clamp and minimum span; `size_x = size_pt / pointsPerX`; trace disc spacing of ¼ diameter, with no discs for a still path; tick count and spacing; the format strings.
+  - asserts: warp/unwarp; viewport fit, zoom with a fixed anchor, pan, clamp and minimum span; `size_x = size_pt / pointsPerX`; trace disc spacing of `spacing_for(h)` diameters (¼ at h = 0.3 and below, 1/64 at h = 1), with no discs for a still path; tick count and spacing; the format strings.
 - `tools/test_script_canvas_image.swift`:
   - built against `ScriptCanvasImageFile.swift`;
   - asserts: both fixtures parse with the right header fields and the right pixel at (c, r); a wrong magic, a truncated file or a zero dimension throws.
