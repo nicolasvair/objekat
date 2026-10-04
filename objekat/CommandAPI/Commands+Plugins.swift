@@ -633,6 +633,32 @@ extension CommandRegistry {
                             "count": .int(dups.count),
                             "engine_foreign_refusals": .int(engine.foreignPluginKeyRefusals())])
         }
+
+        register("debug.plugin_buses",
+                 summary: """
+                 DEBUG. Sidechain probe: what a live instance really exposes. Tracktion's view \
+                 (`can_sidechain`, `te_input_channels` / `te_output_channels` as the graph builder \
+                 reads them, `sidechain_source`, `wires`) and, for an AU/VST3, every bus as JUCE \
+                 negotiated it (`input_buses` / `output_buses`: name, channels, enabled, \
+                 enabled_by_default, main, layout; `total_input_channels`). A plugin whose sidechain \
+                 is usable shows a second input bus ENABLED with channels > 0. `loaded` false = an \
+                 external instance still loading — ask again. Reads only.
+                 """,
+                 params: [ParamSpec("plugin", "uuid", "Target plugin (leaf, instrument or bus-chain plugin).")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            guard let info = engine.pluginBusesInfo(pluginID.uuidString) else {
+                throw CommandError(code: .not_found,
+                                   message: "no live instance for plugin \(pluginID.uuidString)")
+            }
+            var payload = JSONValue.fromFoundation(info)
+            if case .object(var o) = payload {
+                o["plugin"] = .string(pluginID.uuidString)
+                payload = .object(o)
+            }
+            return payload
+        }
         #endif
 
         // MARK: instruments (MIDI clips)

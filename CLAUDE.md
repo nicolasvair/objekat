@@ -2171,6 +2171,20 @@ What has landed since mid-August, in order:
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
+- **Sidechain for AU/VST3 plugins — plan and phase 0** (4 October 2026, ON THE BRANCH
+  `feature/sidechain`, NOT on `main`; **written on a Linux machine: nothing compiled, nothing run**,
+  `py_compile` only). The design, the user's decisions (key tapped POST-FADER like the sends — so a
+  muted source, or a soloed destination, silences the key; everything allowed but ancestors and
+  cycles; cycles refused; objects and stems as sources; bake includes the sources; the source chosen
+  from the plugin's card) and the phases are in `docs/plan_sidechain.md`. The one fact to keep: the
+  native Tracktion sidechain cannot be used as is — its sources are tracks and it travels through
+  graph edges no container lets through — so the key is a buffer held by an engine-only TAP plugin
+  (the `ObjAuxSendPlugin` pattern), read by a new leaf node, and ordered by RANK tiers (hidden pool
+  tracks bounded by stems × lanes × ranks). Phase 0 is a probe only: `pluginBusesInfo:` + DEBUG
+  `debug.plugin_buses`, and `tools/probe_sidechain.py`, which says per AU whether its sidechain bus
+  really comes up enabled. **To do on the Mac first**: a Debug build, then the probe on the
+  sidechain plugins actually used — a `DISABLED` verdict on one that matters changes the plan.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

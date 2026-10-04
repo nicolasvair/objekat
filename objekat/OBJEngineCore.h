@@ -501,6 +501,13 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // it climb: 0 in a sound project. Methods addressed by the key alone cannot refuse, and are ambiguous
 // on such an id.
 - (NSInteger)foreignPluginKeyRefusals;
+// Sidechain probe (debug.plugin_buses) — what an instance REALLY exposes, read off the live
+// instance: Tracktion's own view (`can_sidechain`, the channel names `getChannelNames` hands the
+// graph builder, the sidechain source and its wires) and, for a plugin that wraps a JUCE
+// processor (AU/VST3), every input/output bus as JUCE negotiated it (name, channels, enabled,
+// enabled by default, main, layout). nil = key unknown. `loaded` NO = an external plugin whose
+// instance is still loading: the buses are not known YET, not absent. Reads only, touches nothing.
+- (NSDictionary<NSString*, id>* _Nullable)pluginBusesInfo:(NSString* _Nonnull)pluginKey;
 // Un tick de la synchro d'état sur UNE instance, à la demande (API de debug) — les clés des
 // instances écrasées. `force` NO exige la stabilité, comme le minuteur ; OUI pousse tel quel.
 - (NSArray<NSString *> * _Nonnull)debugLinkStateTick:(NSString * _Nonnull)pluginKey force:(BOOL)force;

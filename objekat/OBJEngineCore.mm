@@ -6342,6 +6342,98 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     return _foreignKeyRefusals;
 }
 
+// Phase 0 of the sidechain work: a probe, nothing more. The question it answers is whether a given
+// AU, as hosted here, really enables its sidechain bus — `ExternalPlugin` calls `enableAllBuses()`,
+// but an AU may refuse it, expose it as mono, or have a saved `layout` that keeps it off.
+// Read-only: no bus is enabled, no layout negotiated, nothing written into the plugin's tree.
+static NSString* objNS(const juce::String& s) {
+    return [NSString stringWithUTF8String:s.toRawUTF8()] ?: @"";
+}
+
+static NSArray* objStringArray(const juce::StringArray& a) {
+    NSMutableArray* out = [NSMutableArray arrayWithCapacity:(NSUInteger)a.size()];
+    for (auto& s : a) [out addObject:objNS(s)];
+    return out;
+}
+
+static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
+    NSMutableArray* out = [NSMutableArray array];
+    const int count = proc.getBusCount(isInput);
+    for (int i = 0; i < count; ++i) {
+        auto* bus = proc.getBus(isInput, i);
+        if (!bus) continue;
+        const juce::String layout = bus->getCurrentLayout().getDescription();
+        const juce::String name   = bus->getName();
+        [out addObject:@{
+            @"index":              @(i),
+            @"name":               objNS(name),
+            @"channels":           @(bus->getNumberOfChannels()),
+            @"enabled":            @(bus->isEnabled()),
+            @"enabled_by_default": @(bus->isEnabledByDefault()),
+            @"main":               @(bus->isMain()),
+            @"layout":             objNS(layout),
+        }];
+    }
+    return out;
+}
+
+- (NSDictionary<NSString*, id>*)pluginBusesInfo:(NSString*)pluginKey {
+    std::string pk([pluginKey UTF8String]);
+    auto it = _pluginMap.find(pk);
+    if (it == _pluginMap.end() || !it->second) return nil;
+    te::Plugin& plugin = *it->second;
+
+    NSMutableDictionary* info = [NSMutableDictionary dictionary];
+    const juce::String pluginName = plugin.getName();
+    const juce::String pluginType = plugin.getPluginType();
+    info[@"name"] = objNS(pluginName);
+    info[@"type"] = objNS(pluginType);
+    info[@"enabled"] = @(plugin.isEnabled());
+
+    auto owner = _pluginOwnerHost.find(pk);
+    info[@"host"] = owner != _pluginOwnerHost.end()
+        ? (id)([NSString stringWithUTF8String:owner->second.c_str()] ?: @"")
+        : (id)[NSNull null];
+
+    auto* external = dynamic_cast<te::ExternalPlugin*>(&plugin);
+    if (external) {
+        const juce::String format = external->desc.pluginFormatName;
+        info[@"format"] = objNS(format);
+    }
+
+    // Tracktion's view — what the graph builder will actually read.
+    juce::StringArray ins, outs;
+    plugin.getChannelNames(&ins, &outs);
+    info[@"te_input_channels"]  = objStringArray(ins);
+    info[@"te_output_channels"] = objStringArray(outs);
+    info[@"can_sidechain"] = @(plugin.canSidechain());
+    info[@"in_rack"] = @(plugin.isInRack());
+
+    const juce::String sourceID = plugin.getSidechainSourceID().toString();
+    info[@"sidechain_source"] = plugin.getSidechainSourceID().isValid() ? (id)objNS(sourceID)
+                                                                         : (id)[NSNull null];
+    NSMutableArray* wires = [NSMutableArray array];
+    for (int i = 0; i < plugin.getNumWires(); ++i)
+        if (auto* w = plugin.getWire(i))
+            [wires addObject:@{ @"src": @(w->sourceChannelIndex.get()),
+                                @"dst": @(w->destChannelIndex.get()) }];
+    info[@"wires"] = wires;
+
+    // JUCE's view — the buses as negotiated with the AU/VST3 itself.
+    juce::AudioProcessor* proc = plugin.getWrappedAudioProcessor();
+    info[@"loaded"] = @(external == nullptr || proc != nullptr);
+    if (proc) {
+        info[@"total_input_channels"]  = @(proc->getTotalNumInputChannels());
+        info[@"total_output_channels"] = @(proc->getTotalNumOutputChannels());
+        info[@"input_buses"]  = objBusList(*proc, true);
+        info[@"output_buses"] = objBusList(*proc, false);
+    } else {
+        info[@"input_buses"]  = [NSNull null];
+        info[@"output_buses"] = [NSNull null];
+    }
+    return info;
+}
+
 - (NSDictionary*)linkStateDebugInfo {
     NSMutableDictionary* pushes   = [NSMutableDictionary dictionary];
     NSMutableDictionary* baseline = [NSMutableDictionary dictionary];

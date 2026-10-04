@@ -933,6 +933,15 @@ knowing before driving one:
   without fresh ids — or that the project was opened with its duplicates left as they are (the
   default of `project.open`): then `count` is what the file held and `engine_foreign_refusals`
   counts the operations the engine refused for a foreign host.
+  DEBUG builds also add `debug.plugin_buses {plugin}` — the sidechain probe (phase 0 of
+  `plan_sidechain.md`). Read-only. It answers `{plugin, name, type, format?, enabled, host,
+  can_sidechain, in_rack, te_input_channels, te_output_channels, sidechain_source, wires: [{src, dst}],
+  loaded, total_input_channels?, total_output_channels?, input_buses, output_buses}`, each bus being
+  `{index, name, channels, enabled, enabled_by_default, main, layout}`. The `te_*` channel names are
+  Tracktion's view, the one the graph builder reads; the buses are JUCE's, as negotiated with the
+  AU/VST3. A sidechain is usable when a SECOND input bus is `enabled` with `channels` > 0 (and then
+  `total_input_channels` > the main bus's). `loaded: false` = an external instance still loading,
+  buses `null` — ask again. `not_found` = no live instance under that key.
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
