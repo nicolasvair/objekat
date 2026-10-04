@@ -3,8 +3,8 @@
 """FX link settings survive open + save — a scenario that ASSERTS.
 
     ./scenario_fxlink_state_persistence.py --app=/path/to/objekat.app [--trials=8] [--jobs=3]
-        [--cases=a,b,c,d,e,f] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
-        [--wait=8] [--real=/tmp/copy/of/a/project.objekat] [--keep]
+        [--cases=a,b,c,d,e,f,h] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
+        [--wait=8] [--real=/tmp/copy/of/a/project.objekat] [--keep] [--h-notick]
 
 DEBUG build only (it drives `debug.plugin_force_processor_changed`, `debug.plugin_inject_state`).
 Unlike its siblings this scenario takes an APP, not a socket: the bug it guards is a RACE of the
@@ -52,6 +52,14 @@ their result is re-opened --trials times):
   (e) three open + save cycles in a row end in the same values as the first;
   (f) ~100 instances (8 PHA links x 10 + 2 Pro-Q links x 10): forced on 10 random members per
       trial, plus statistical trials, and the load time as a performance guard-rail.
+  (h) Pro-Q 4's "Spectral" & co (state only the chunk holds, invisible to the parameter mirror), in a
+      link of 4 Pro-Q: a SILENT change on one member (as scenario_fxlink_state_sync.py makes it), one
+      unforced tick (the "pending" mark a gesture leaves), save, re-open in a fresh process —
+      (h1) on the first member, every member AND the definition carry it; (h2) on a member that is not
+      the first (the definition follows the first one: it neither reverts nor overwrites the changed
+      member); (h3) open + save of a project that already holds it, 576 floats unchanged; (h4) a second
+      generation on another member; (h5) a MIXED bin (PHA-979 + Pro-Q 4 in the same link): the PHA
+      stays intact. Each trial = fresh processes (one per generation + one re-open).
   (r) with --real=PATH: an open + save of a COPY of a real project (refused outside a temp dir).
 
 Fixtures are built by --fixture-app (default: --app). To judge a build WITHOUT the patch, build the
@@ -75,7 +83,7 @@ PROQ = "aumf,FQ4p,FabF"
 TOL = 1e-6
 
 # ── command line ──────────────────────────────────────────────────────────────────────────────
-opts = {"trials": "8", "jobs": "3", "cases": "a,b,c,d,e,f", "seed": "20261004", "wait": "8"}
+opts = {"trials": "8", "jobs": "3", "cases": "a,b,c,d,e,f,h", "seed": "20261004", "wait": "8"}
 for a in sys.argv[1:]:
     if a in ("-h", "--help"):
         print(__doc__)
@@ -588,6 +596,227 @@ def link_by_name(a, name):
     return next(l for l in a.links() if l["name"] == name)
 
 
+
+# ── case (h): Pro-Q 4's "Spectral" & co, which only live in the chunk ──────────────────────────
+# Spectral, the threshold and the side-chain range of a dynamic band are NOT host-visible parameters:
+# a native GUI changes them without a word, so the parameter mirror never carries them; only the
+# resting-state sync (syncLinkedStateFrom, pushed too when the project is saved) does. The change is
+# made SILENT here as scenario_fxlink_state_sync.py does it (fxlink.sync from another member first,
+# so the target is deaf to its own notifications, then the chunk is injected), and one UNFORCED tick
+# leaves the "pending" mark a real gesture would leave; the save then has to push it.
+def pq_flip(v):
+    return 0.0 if v > 0.5 else 1.0
+
+
+PQ_GEN = {
+    # generation 1: the two tracked floats, plus the report's Spectral / threshold ones
+    1: lambda f: {0: pq_flip(f[0]), 553: pq_flip(f[553]), 20: pq_flip(f[20]), 43: pq_flip(f[43]),
+                  12: 1.0 if f[12] < 0.9 else 0.5},
+    # generation 2: other floats of the report (side-chain range, ...), distinct from generation 1's
+    2: lambda f: {**{i: (0.75 if abs(f[i] - 0.75) > 0.01 else 0.25) for i in (17, 18, 35, 40, 41)},
+                  12: 0.77 if abs(f[12] - 0.77) > 0.01 else 0.33},
+}
+
+
+def pq_inject(a, plugin, changes):
+    st = a.cmd("plugin.get_state", plugin=plugin)["state"]
+    pl = plistlib.loads(base64.b64decode(st))
+    blob = bytearray(pl["FabFilterPluginState"])
+    for i, v in changes.items():
+        struct.pack_into("<f", blob, 12 + 4 * i, v)
+    pl["FabFilterPluginState"] = bytes(blob)
+    a.cmd("debug.plugin_inject_state", plugin=plugin,
+          state=base64.b64encode(plistlib.dumps(pl, fmt=plistlib.FMT_BINARY)).decode())
+
+
+def build_h_fixture(dst, mixed, members, label):
+    """Pro-Q 4 left at its FACTORY settings (so a flipped Spectral is never a default that a
+    factory reset could hide). mixed False: link 'PQ 0' (members x Pro-Q) + link 'PHA 0' (3 x PHA-979,
+    a bystander). mixed True: ONE link 'MIX' whose bin holds a PHA-979 AND a Pro-Q 4."""
+    shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(dst)
+    manifest = os.path.join(dst, "proj.objekat")
+    with App(FIXTURE_APP, "build_" + label) as a:
+        a.cmd("project.new")
+        a.cmd("project.save_as", path=manifest)
+        lane = [0]
+
+        def new_host():
+            o = a.cmd("object.add", path=BIP, lane=lane[0], start=0)["id"]
+            lane[0] += 1
+            return a.cmd("group.create", ids=[o])["id"]
+
+        def load(host, ident):
+            pid = a.cmd("plugin.add", host=host, identifier=ident, format="AudioUnit")["plugin"]["id"]
+            dl = time.time() + 60
+            while time.time() < dl:
+                try:
+                    if a.cmd("plugin.get_state", plugin=pid, include_chunk=False)["size"] > 0:
+                        return pid
+                except ObjekatError:
+                    pass
+                time.sleep(0.25)
+            raise RuntimeError("plugin %s never loaded" % pid)
+
+        def set_pha(pid, k):
+            for idx, v in zip((8, 9, 10), PHA_VALUES[k]):
+                a.cmd("plugin.set_param", plugin=pid, index=idx, value=v)
+            time.sleep(0.4)
+
+        if mixed:
+            host = new_host()
+            pp, pq = load(host, PHA), load(host, PROQ)
+            set_pha(pp, 0)
+            link = a.cmd("fxlink.create", host=host, plugins=[pp, pq], name="MIX")
+            for _ in range(members - 1):
+                a.cmd("fxlink.attach", link=link["id"], host=new_host())
+        else:
+            host = new_host()
+            pq = load(host, PROQ)
+            link = a.cmd("fxlink.create", host=host, plugins=[pq], name="PQ 0")
+            for _ in range(members - 1):
+                a.cmd("fxlink.attach", link=link["id"], host=new_host())
+            host = new_host()
+            pp = load(host, PHA)
+            set_pha(pp, 0)
+            link = a.cmd("fxlink.create", host=host, plugins=[pp], name="PHA 0")
+            for _ in range(2):
+                a.cmd("fxlink.attach", link=link["id"], host=new_host())
+        a.idle()
+        time.sleep(3.0)
+        a.cmd("project.save")
+    snap = snapshot(manifest)
+    return manifest, snap
+
+
+def h_fixture_issues(snap):
+    """Every instance reads like its definition (by linkGroupID, so a mixed bin is read per plugin)."""
+    out = []
+    for i, r in snap["inst"].items():
+        d = snap["defs"].get(r["grp"])
+        if d is None:
+            out.append("instance %s has no definition" % sid(i))
+        elif not same(d[1], r["val"]):
+            out.append("instance %s differs from its definition: %s" % (sid(i), describe(d[1], r["val"])))
+    return out
+
+
+def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ):
+    """A chain of FRESH processes. For each generation (role, gen): copy, open, silent change of the
+    Pro-Q of `link_name` held by the member at `role` ('first' | 'middle' | 'last' of the attached
+    members), one unforced tick, save; the saved file must carry the change in EVERY Pro-Q instance of
+    the link AND in its definition, and nothing else may have moved. Last, one more fresh process opens
+    the result, forces a late processor-changed on one member per link, saves, and nothing may move.
+    Returns {pre, file, live, reopen0, reopen1, rfile, err} (empty lists = clean)."""
+    res = {"tag": tag, "pre": [], "file": [], "live": [], "reopen0": [], "reopen1": [], "rfile": [],
+           "err": None, "manifest": None}
+    cur = src_manifest
+    snap_cur = snapshot(src_manifest)
+    try:
+        for g, (role, gen) in enumerate(gens):
+            gtag = "%s_g%d" % (tag, g)
+            manifest = copy_project(cur, os.path.join(WORK, gtag))
+            idents = {i: r["ident"] for i, r in snap_cur["inst"].items()}
+            with App(APP, gtag) as a:
+                a.open(manifest)
+                time.sleep(2.0)
+                link = link_by_name(a, link_name)
+                ids = [i for i in attached_instances(link) if idents.get(i) == target]
+                if len(ids) < 3:
+                    raise RuntimeError("the link %s has %d %s instance(s), 3 needed" % (link_name, len(ids), target))
+                M = {"first": ids[0], "middle": ids[len(ids) // 2], "last": ids[-1]}[role]
+                O = ids[1] if M == ids[0] else ids[0]
+                for _ in range(2):                                   # at rest: baselines laid
+                    for p in ids:
+                        a.cmd("debug.link_state_tick", plugin=p, force=True)
+                    time.sleep(0.8)
+                a.cmd("fxlink.sync", plugin=O)                       # M becomes deaf to its own notifications
+                time.sleep(0.2)
+                before = a.live(ids, idents)
+                f = before[M][1]
+                pq_inject(a, M, gen(f))
+                time.sleep(1.0)
+                after = a.live(ids, idents)
+                if same(after[M], before[M]):
+                    res["pre"].append("g%d: the injection moved nothing on %s" % (g, sid(M)))
+                carried = [sid(i) for i in ids if i != M and not same(after[i], before[i])]
+                if carried:
+                    res["pre"].append("g%d: not silent, the parameter mirror carried it to %s (the case would not test the resting sync)"
+                                      % (g, ",".join(carried)))
+                if "h-notick" not in opts:      # control run: no pending mark, the save has nothing to push
+                    t1 = a.cmd("debug.link_state_tick", plugin=M, force=False)
+                    if t1.get("pushed") or t1.get("pending") is not True:
+                        res["pre"].append("g%d: the first unforced tick should leave it pending, got %s" % (g, t1))
+                a.idle()
+                a.cmd("project.save")
+                mlive = after[M]
+                live = a.live(ids, idents)
+                res["live"] += ["g%d %s %s" % (g, sid(i), describe(mlive, live[i])) for i in ids if not same(live[i], mlive)]
+            snap_new = snapshot(manifest)
+            lid = {l["name"]: l["id"] for l in json.load(open(manifest))["fxLinks"]}[link_name]
+            t_inst = {i for i, r in snap_new["inst"].items() if r["link"] == lid and r["ident"] == target}
+            t_defs = {i for i, d in snap_new["defs"].items() if d[2] == link_name and d[0] == target}
+            for i in t_inst:
+                if not same(snap_new["inst"][i]["val"], mlive):
+                    res["file"].append("g%d file: instance %s (%s) does not carry the change: %s"
+                                       % (g, sid(i), "the changed one" if i == M else "member", describe(mlive, snap_new["inst"][i]["val"])))
+            for i in t_defs:
+                if not same(snap_new["defs"][i][1], mlive):
+                    res["file"].append("g%d file: the DEFINITION %s does not carry the change: %s"
+                                       % (g, sid(i), describe(mlive, snap_new["defs"][i][1])))
+                if same(snap_new["defs"][i][1], snap_cur["defs"][i][1]):
+                    res["file"].append("g%d file: the definition is back at its previous value" % g)
+            extra = unexpected(snap_diff(snap_cur, snap_new), changed=t_inst | t_defs)
+            res["file"] += ["g%d file: %s" % (g, e) for e in extra]
+            cur, snap_cur = manifest, snap_new
+        res["manifest"] = cur
+        if gens:
+            rtag = tag + "_r"
+            manifest = copy_project(cur, os.path.join(WORK, rtag))
+            idents = {i: r["ident"] for i, r in snap_cur["inst"].items()}
+            ids = list(idents)
+            with App(APP, rtag) as a:
+                a.open(manifest)
+                time.sleep(2.0)
+                res["reopen0"] = compare_live(a.live(ids, idents), snap_cur["inst"])
+                for l in a.links():
+                    att = attached_instances(l)
+                    if att:
+                        a.cmd("debug.plugin_force_processor_changed", plugin=rng.choice(att))
+                time.sleep(2.0)
+                a.idle()
+                res["reopen1"] = compare_live(a.live(ids, idents), snap_cur["inst"])
+                a.cmd("project.save")
+            d = snap_diff(snap_cur, snapshot(manifest))
+            res["rfile"] = ["%s %s" % (sid(i), t) for i, t in d["changed"].items()] \
+                + ["%s removed" % sid(i) for i in d["removed"]] + ["%s added" % sid(i) for i in d["added"]]
+    except Exception as e:
+        res["err"] = "%s: %s" % (type(e).__name__, e)
+    return res
+
+
+def run_htrials(label, src_manifest, n, gens, link_name):
+    def one(k):
+        return htrial(src_manifest, "%s_%d" % (label, k), random.Random(SEED * 1000 + k), gens, link_name)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
+        return list(ex.map(one, range(n)))
+
+
+def hreport(label, results, what):
+    keys = ("err", "pre", "live", "file", "reopen0", "reopen1", "rfile")
+    bad = [r for r in results if any(r[k] for k in keys)]
+    check("%s: %s — %d/%d trials clean" % (label, what, len(results) - len(bad), len(results)), not bad, "")
+    note("%s trials with findings, by phase: %s" % (label, " ".join("%s=%d" % (k, sum(1 for r in results if r[k])) for k in keys)))
+    for r in bad[:2]:
+        for k in keys:
+            v = r[k]
+            if v:
+                print("        %s %s: %s" % (r["tag"], k, v if isinstance(v, str) else "%d finding(s); %s" % (len(v), "; ".join(v[:3]))))
+    if len(bad) > 2:
+        print("        … and %d more failing trial(s)" % (len(bad) - 2))
+    return not bad
+
+
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 def main():
     # ── preflight: a DEBUG build, and both plugins installed ───────────────────────────────────
@@ -899,6 +1128,44 @@ def main():
         loads = [r["load"] for r in res + res2 if r["load"]]
         if loads:
             note("(f) load time of the 100-instance project: min %.1f s, max %.1f s" % (min(loads), max(loads)))
+
+
+    # ── (h) Pro-Q 4 Spectral & co, silent change, resting-state sync ──────────────────────────
+    if "h" in CASES:
+        print("\n-- (h) Pro-Q 4 'Spectral' (state only the chunk holds) in an FX link")
+        hman, hsnap = build_h_fixture(os.path.join(WORK, "h_fix"), False, 4, "h")
+        hi = h_fixture_issues(hsnap)
+        check("(h) the fixture is coherent as saved (file)", not hi, "; ".join(hi[:3]))
+        nq = sum(1 for r in hsnap["inst"].values() if r["ident"] == PROQ)
+        check("(h) the Pro-Q link holds 4 members", nq == 4, str(nq))
+        # h1 — the change on the FIRST member
+        gen1 = PQ_GEN[1]
+        gen2 = PQ_GEN[2]
+        r1 = run_htrials("h1", hman, TRIALS, [("first", gen1)], "PQ 0")
+        hreport("(h1) silent change on the first member, save, reopen", r1, "every member AND the definition carry it, nothing else moved")
+        # h2 — the change on a member that is NOT the first attached (the definition follows the first)
+        r2 = run_htrials("h2", hman, TRIALS, [("middle", gen1)], "PQ 0")
+        hreport("(h2) silent change on a member that is not the first", r2, "the definition neither reverts nor overwrites the changed member")
+        # h3 — open + save of a project that ALREADY holds the change (Spectral on)
+        kept = next((r["manifest"] for r in r1 if r["manifest"] and not any(r[k] for k in ("err", "pre", "live", "file"))), None)
+        if kept:
+            ksnap = snapshot(kept)
+            report("(h3) forced", run_trials("h3_force", kept, TRIALS, "force", ksnap), "open + save of a project with Spectral on, 576 floats unchanged")
+            report("(h3) wait %gs" % STAT_WAIT, run_trials("h3_wait", kept, TRIALS, "wait", ksnap), "same, no forcing")
+        else:
+            check("(h3) a project with Spectral on to open", False, "h1 produced none")
+        # h4 — a second generation on ANOTHER member of the reopened project
+        r4 = run_htrials("h4", hman, TRIALS, [("first", gen1), ("last", gen2)], "PQ 0")
+        hreport("(h4) second generation on another member, save, reopen", r4, "coherent after two generations")
+        # h5 — a mixed bin: PHA-979 + Pro-Q 4 in the SAME link
+        mman, msnap = build_h_fixture(os.path.join(WORK, "h5_fix"), True, 4, "h5")
+        mi = h_fixture_issues(msnap)
+        check("(h5) the mixed fixture is coherent as saved (file)", not mi, "; ".join(mi[:3]))
+        npha_m = sum(1 for r in msnap["inst"].values() if r["ident"] == PHA)
+        nproq_m = sum(1 for r in msnap["inst"].values() if r["ident"] == PROQ)
+        check("(h5) the MIX bin holds 4 PHA-979 and 4 Pro-Q 4", (npha_m, nproq_m) == (4, 4), "%d / %d" % (npha_m, nproq_m))
+        r5 = run_htrials("h5", mman, TRIALS, [("middle", gen1)], "MIX")
+        hreport("(h5) mixed bin, silent Spectral change on a Pro-Q member", r5, "the PHA-979 of the bin stays intact (delay, phase)")
 
     # ── (r) a copy of a real project ───────────────────────────────────────────────────────────
     if "real" in opts:
