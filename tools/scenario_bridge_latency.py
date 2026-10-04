@@ -45,6 +45,8 @@ OUT = lambda n: os.path.join(DIR, n)
 
 IMPULSE = OUT("impulse.wav")
 B.make_impulse(IMPULSE)                       # 3 s, one sample at index 48000
+IMPULSE_L = OUT("impulse_l.wav")
+B.make_impulse_left(IMPULSE_L)                # the host's: STEREO, left only — see make_impulse_left
 AT = B.SR                                     # where it sits in the file
 
 
@@ -94,7 +96,7 @@ def run_case(c, label, *, y_lat=None, x_lat=None, expect_declared=None, expect_s
     behind `x_lat` ms), renders, and asserts the alignment. Returns the (L, R) channels."""
     fresh(c)
     kstem = detached_stem(c)
-    y = c.send("object.add", {"path": IMPULSE, "lane": 0, "start": 0.0})["id"]
+    y = c.send("object.add", {"path": IMPULSE_L, "lane": 0, "start": 0.0})["id"]
     x = c.send("object.add", {"path": IMPULSE, "lane": 1, "start": 10.0 if x_outside else x_start})["id"]
     c.send("stem.assign", {"stem": kstem, "ids": [x]})
     bstem = None
@@ -147,7 +149,11 @@ def run_case(c, label, *, y_lat=None, x_lat=None, expect_declared=None, expect_s
     if x_outside:
         check(label + ": the key is silent outside the source's span", ir is None, ir)
     else:
-        check(label + ": idx(L) == idx(R)", il is not None and il == ir, "L %s R %s" % (il, ir))
+        # R is the key and ONLY the key (the host's right channel is silent), but an export mixes the
+        # detached key stem in as well, so R may carry the source twice: once heard, once as the key.
+        # Aligned, they are one cluster at L's index; misaligned, two.
+        rc = B.cluster_peaks(right)
+        check(label + ": idx(L) == idx(R)", il is not None and rc == [il], "L %s R clusters %s" % (il, rc))
         if absolute is not None and il is not None:
             check(label + ": absolute index %d" % absolute, il == absolute, il)
     return {"left": left, "right": right, "x_tester": x_tester}

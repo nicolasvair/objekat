@@ -32,6 +32,43 @@ def make_impulse(path, seconds=3.0, at=SR):
     _write24(path, s)
 
 
+def make_impulse_left(path, seconds=3.0, at=SR):
+    """A STEREO file: one sample at 0.9 in the LEFT channel at index `at`, the right one silent.
+
+    The probe plugin writes the key onto the RIGHT output; an object whose source is MONO is
+    duplicated left -> right at the end of its chain, which would overwrite the key with the direct
+    signal and make a right-versus-left comparison vacuous. A stereo host keeps the right channel."""
+    n = int(seconds * SR)
+    raw = bytearray()
+    for i in range(n):
+        raw += (int(0.9 * 8388607) if i == at else 0).to_bytes(4, "little", signed=True)[:3]
+        raw += (0).to_bytes(3, "little", signed=True)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(3)
+        w.setframerate(SR)
+        w.writeframes(bytes(raw))
+
+
+def cluster_peaks(samples, threshold=0.3, gap=400):
+    """The index of the peak of each burst of samples above `threshold`, bursts being separated by
+    more than `gap` samples: an impulse smeared by a filter is ONE cluster, two copies of it
+    misaligned are two."""
+    out, best, idx, last = [], 0.0, None, None
+    for i, v in enumerate(samples):
+        if abs(v) < threshold:
+            continue
+        if last is not None and i - last > gap:
+            out.append(idx)
+            best, idx = 0.0, None
+        if abs(v) > best:
+            best, idx = abs(v), i
+        last = i
+    if idx is not None:
+        out.append(idx)
+    return out
+
+
 def make_sine(path, seconds=4.0, hz=220.0, dbfs=-12.0):
     a = 10.0 ** (dbfs / 20.0)
     _write24(path, [a * math.sin(2 * math.pi * hz * i / SR) for i in range(int(seconds * SR))])
