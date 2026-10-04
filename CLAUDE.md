@@ -2185,6 +2185,10 @@ What has landed since mid-August, in order:
   geometry — continuous, the whole range stays reachable). A multi-row selection softens with the grabbed
   row's parameter. The notch wheel gives exactly ONE step per notch (`automationWheelSteps`); the trackpad
   keeps its accumulation. The three constants are first guesses.
+  Read off the hand the same day: the wheel over a LINE needed a hard push (precise deltas — trackpad,
+  Magic Mouse, smooth-scrolling mouse — at 10 pt per step, momentum swallowed, 3 pt axis dead zone in
+  front); it now takes 3 pt per step (`automationLinePtPerStep`), the first at ~1.5 pt past the dead
+  zone. The ⌥ curvature wheel keeps 10 pt.
   **The export sheet no longer widens with a long folder path** (path with idealWidth 0, lowered priority,
   `.help` with the full path; the footer, batch label and region names likewise).
   **To check**: a build against the 1550-warning baseline; `tools/test_automation_hand_travel.swift`;
