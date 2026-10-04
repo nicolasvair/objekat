@@ -5,7 +5,7 @@ Everything is in dB and additive. The total G of a list of active ops is clamped
 before it becomes a linear gain; there is no ceiling on boosts.
 
 Layout of the module
-- Pure Python (no numpy import): SPACING, R, warp, profile, per_dab_db, dab_centres, ramp,
+- Pure Python (no numpy import): SPACING_MAX / SPACING_MIN, spacing_for, R, warp, profile, per_dab_db, dab_centres, ramp,
   rect_weight_1d, is_open, active_ops, rect_from_op, eraser_from_op, gain_at.
 - numpy, imported lazily: compile_ops, add_op_to_grid, gain_grid, to_linear,
   stft_gain_block_fn. A grid is shaped (len(xw), len(yw)): columns first, which is the
@@ -24,8 +24,11 @@ Conventions the plan leaves open, and what this module does
 """
 import math
 
-SPACING = 0.25  # distance between dabs, in diameters
-R = 0.5         # dab radius, in diameters
+SPACING_MAX = 0.25        # distance between dabs, in diameters, for a soft brush (h <= SPACING_KNEE_H)
+SPACING_MIN = 1.0 / 64.0  # ... and for a perfectly hard one (h = 1)
+SPACING_KNEE_H = 0.3
+SPACING = SPACING_MAX     # historical name: the spacing of a soft brush
+R = 0.5                   # dab radius, in diameters
 OPEN_TOLERANCE = 1e-9
 MIN_DB = -300.0
 
@@ -51,17 +54,36 @@ def profile(rho, h):
     return 0.5 + 0.5 * math.cos(math.pi * (rho - h) / (1.0 - h))
 
 
+def spacing_for(h):
+    """Distance between dabs, in diameters, for hardness h in [0, 1] (clamped).
+
+    Sampling the dab profile every `s` diameters leaves a ripple along a straight stroke whose
+    size depends on how sharp the profile is. A soft brush is fine at 0.25; a hard one (a nearly
+    box-shaped profile) needs far denser dabs. So: 0.25 up to h = 0.3, then a straight line down
+    to 1/64 at h = 1. Measured worst-case ripple on the centre line of a straight stroke stays
+    under 1.4 % of `amount` for every h (0.0 ... 1.0 in steps of 0.01); with the old fixed 0.25
+    it reached 25 %. The Swift trace (purely visual) mirrors this function.
+    """
+    h = min(1.0, max(0.0, h))
+    if h <= SPACING_KNEE_H:
+        return SPACING_MAX
+    if h >= 1.0:
+        return SPACING_MIN
+    return SPACING_MAX - (SPACING_MAX - SPACING_MIN) * (h - SPACING_KNEE_H) / (1.0 - SPACING_KNEE_H)
+
+
 def per_dab_db(amount, h):
     """dB deposited by ONE dab so that a straight crossing deposits `amount` on its centre line:
-    amount * SPACING / (R * (1 + h)) = amount * 0.5 / (1 + h)."""
-    return amount * SPACING / (R * (1.0 + h))
+    amount * spacing_for(h) / (R * (1 + h)). (The profile's integral across the centre line is
+    R * (1 + h), and dabs sit spacing_for(h) apart.)"""
+    return amount * spacing_for(h) / (R * (1.0 + h))
 
 
-def dab_centres(u, v):
+def dab_centres(u, v, spacing=SPACING_MAX):
     """Dab centres, in normalised (diameter) space, along the polyline (u[i], v[i]).
 
-    Centres sit at arc lengths (k + 0.5) * SPACING. A still hand deposits nothing, and
-    resampling the path more densely does not move any dab.
+    Centres sit at arc lengths (k + 0.5) * spacing (`spacing_for(h)` for an eraser). A still hand
+    deposits nothing, and resampling the path more densely does not move any dab.
     """
     dabs = []
     acc = 0.0
@@ -72,8 +94,8 @@ def dab_centres(u, v):
         seg = math.sqrt(du * du + dv * dv)
         if seg <= 0:
             continue
-        while (k + 0.5) * SPACING <= acc + seg:
-            t = ((k + 0.5) * SPACING - acc) / seg
+        while (k + 0.5) * spacing <= acc + seg:
+            t = ((k + 0.5) * spacing - acc) / seg
             dabs.append((u[i - 1] + t * du, v[i - 1] + t * dv))
             k += 1
         acc += seg
@@ -171,8 +193,8 @@ def eraser_from_op(op, world):
     for p in op["points"]:
         u.append(warp(_finite(p[0], "point x"), xmap) / sx)
         v.append(warp(_finite(p[1], "point y"), ymap) / sy)
-    return {"kind": "eraser", "dabs": dab_centres(u, v), "a": per_dab_db(amount, h),
-            "h": h, "size_x": sx, "size_y": sy}
+    return {"kind": "eraser", "dabs": dab_centres(u, v, spacing_for(h)), "a": per_dab_db(amount, h),
+            "h": h, "spacing": spacing_for(h), "size_x": sx, "size_y": sy}
 
 
 def _primitive(op, world):

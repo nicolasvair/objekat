@@ -40,8 +40,8 @@ class Profile(unittest.TestCase):
 
     def test_per_dab(self):
         self.assertAlmostEqual(mask.per_dab_db(-3, 0.0), -1.5)
-        self.assertAlmostEqual(mask.per_dab_db(-3, 0.5), -1.0)
-        self.assertAlmostEqual(mask.per_dab_db(-3, 1.0), -0.75)
+        self.assertAlmostEqual(mask.per_dab_db(-3, 0.5), -3 * mask.spacing_for(0.5) / 0.75)
+        self.assertAlmostEqual(mask.per_dab_db(-3, 1.0), -3.0 / 64.0)
         self.assertAlmostEqual(mask.per_dab_db(-8, 0.3), -8 * 0.5 / 1.3)
 
     def test_ramp(self):
@@ -53,59 +53,95 @@ class Profile(unittest.TestCase):
         self.assertAlmostEqual(mask.ramp(0.25), 0.5 - 0.5 * math.cos(math.pi / 4))
 
 
+def ripple_percent(hardness, amount=-3.0):
+    """Worst deviation from `amount`, in % of amount, on the centre line of a long straight stroke,
+    over one dab period of phases (offset so that no sample sits on a profile discontinuity)."""
+    s = mask.spacing_for(hardness / 100.0)
+    op = eraser([(10, 50), (90, 50)], amount=amount, hardness=hardness)
+    xs = np.arange(30.0, 30.0 + s, s / 97.0) + 0.00123
+    g = centre_line(op, xs)
+    return 100.0 * float(np.max(np.abs(g - amount))) / abs(amount), float(np.mean(g))
+
+
+class Spacing(unittest.TestCase):
+    def test_values(self):
+        self.assertEqual(mask.spacing_for(0.0), 0.25)
+        self.assertEqual(mask.spacing_for(0.3), 0.25)
+        self.assertEqual(mask.spacing_for(1.0), 1.0 / 64.0)
+        self.assertAlmostEqual(mask.spacing_for(0.65), (0.25 + 1.0 / 64.0) / 2.0)
+        self.assertEqual(mask.spacing_for(-1.0), 0.25)
+        self.assertEqual(mask.spacing_for(7.0), 1.0 / 64.0)
+
+    def test_monotone_and_continuous(self):
+        hs = np.arange(0.0, 1.0001, 0.001)
+        sp = [mask.spacing_for(h) for h in hs]
+        self.assertTrue(all(b <= a + 1e-15 for a, b in zip(sp, sp[1:])))
+        self.assertLess(max(abs(a - b) for a, b in zip(sp, sp[1:])), 0.001)
+
+    def test_dab_density(self):
+        # a stroke of 4 diameters: 4 / spacing dabs
+        for hp, n in ((0, 16), (30, 16), (100, 256)):
+            p = mask.eraser_from_op(eraser([(0, 50), (4, 50)], hardness=float(hp)), LIN)
+            self.assertEqual(len(p["dabs"]), n, hp)
+            self.assertAlmostEqual(p["spacing"], mask.spacing_for(hp / 100.0))
+
+    def test_per_dab_amount_follows_the_spacing(self):
+        for h in (0.0, 0.3, 0.5, 1.0):
+            self.assertAlmostEqual(mask.per_dab_db(-3, h), -3 * mask.spacing_for(h) / (0.5 * (1 + h)))
+        self.assertAlmostEqual(mask.per_dab_db(-3, 1.0), -3.0 / 64.0 / 1.0)
+
+
 class Calibration(unittest.TestCase):
-    PHASES = np.arange(30.0, 30.25, 0.0125)  # one dab lattice period, on the centre line
+    PHASES = np.arange(30.0, 30.25, 0.0125)  # one soft-brush lattice period, on the centre line
 
-    def test_exact_for_h_0_half_1(self):
-        for hp in (0.0, 50.0, 100.0):
-            for amount in (-3.0, -0.5, -24.0):
-                op = eraser([(10, 50), (90, 50)], amount=amount, hardness=hp)
-                g = centre_line(op, self.PHASES)
-                self.assertLessEqual(float(np.max(np.abs(g - amount))), 1e-9, (hp, amount))
+    def test_ripple_is_at_most_2_percent_for_every_hardness(self):
+        worst = {}
+        for hp in list(range(0, 101, 10)) + [5, 15, 25, 35, 45, 55, 65, 75, 85, 95, 98, 99]:
+            worst[hp], mean = ripple_percent(float(hp))
+            self.assertLessEqual(worst[hp], 2.0, hp)
+            self.assertAlmostEqual(mean, -3.0, delta=1e-3, msg=hp)
+        print("eraser ripple %% by hardness: " + ", ".join(
+            "%d: %.2f" % (k, v) for k, v in sorted(worst.items()) if k % 10 == 0))
 
-    def test_exact_also_at_h_quarter(self):
-        op = eraser([(10, 50), (90, 50)], hardness=25.0)
-        self.assertLessEqual(float(np.max(np.abs(centre_line(op, self.PHASES) + 3.0))), 1e-9)
+    def test_ripple_on_a_fine_hardness_sweep(self):
+        for hp in range(0, 101, 2):
+            self.assertLessEqual(ripple_percent(float(hp))[0], 2.0, hp)
+
+    def test_exact_where_the_lattice_is_commensurate(self):
+        # soft brushes keep the historical spacing and the historical exactness
+        for hp in (0.0, 25.0):
+            self.assertLessEqual(ripple_percent(hp)[0], 1e-7, hp)
+
+    def test_amount_scales_linearly(self):
+        for amount in (-0.5, -3.0, -24.0):
+            for hp in (0.0, 50.0, 90.0, 100.0):
+                self.assertLessEqual(ripple_percent(hp, amount)[0], 2.0, (amount, hp))
 
     def test_within_2_percent_for_h_03(self):
         op = eraser([(10, 50), (90, 50)], hardness=30.0)
         g = centre_line(op, self.PHASES)
         self.assertLessEqual(float(np.max(np.abs(g + 3.0))) / 3.0, 0.02)
 
-    def test_mean_over_a_period_is_exact_for_every_h(self):
-        # The calibration holds on average over the lattice phase for ANY hardness
-        for hp in range(0, 101, 10):
-            op = eraser([(10, 50), (90, 50)], hardness=float(hp))
-            g = centre_line(op, np.arange(30.0, 30.25, 0.0025))
-            self.assertAlmostEqual(float(np.mean(g)), -3.0, delta=1e-3, msg=hp)
+    def test_hard_brush_on_a_grid_aligned_stroke_has_no_cell_jumps(self):
+        # h = 1 is a box: a cell lying exactly on its edge used to flip by a whole dab. With 64 dabs
+        # per diameter the worst a single flip can do is 1/64 of the amount.
+        op = eraser([(10, 50), (90, 50)], hardness=100.0)
+        xs = np.arange(30.0, 31.0, 1.0 / 64.0)  # lattice-aligned samples
+        g = centre_line(op, xs)
+        self.assertLessEqual(float(np.max(np.abs(g + 3.0))) / 3.0, 1.0 / 64.0 + 1e-9)
 
-    def test_ripple_with_hardness_is_documented_not_hidden(self):
-        # Measured, not wished: sampling a box-like kernel every 0.25 diameter leaves a phase
-        # ripple that grows with hardness above ~0.5 (about 14 % at h = 0.7, 23 % at h = 0.95).
-        worst = {}
-        for hp in (30, 50, 70, 95):
-            op = eraser([(10, 50), (90, 50)], hardness=float(hp))
-            g = centre_line(op, self.PHASES)
-            worst[hp] = float(np.max(np.abs(g + 3.0))) / 3.0
-        print("calibration ripple by hardness: " + ", ".join("%d%%: %.1f%%" % (k, 100 * v) for k, v in sorted(worst.items())))
-        self.assertLess(worst[30], 0.02)
-        self.assertLess(worst[50], 1e-9)
-        self.assertLess(worst[70], 0.16)
-        self.assertLess(worst[95], 0.25)
-
-    def test_oblique_stroke_and_anisotropic_sizes_are_exact(self):
-        # slanted in (u, v) space, sizes differ on the axes: still `amount` on the centre line
+    def test_oblique_stroke_and_anisotropic_sizes(self):
         op = eraser([(10, 20), (80, 80)], size_x=2.0, size_y=3.0, hardness=50.0)
         t = np.arange(0.4, 0.6, 0.001)
-        g = [mask.gain_at(10 + 70 * s, 20 + 60 * s, [op], LIN) for s in t]
-        self.assertLessEqual(float(np.max(np.abs(np.array(g) + 3.0))), 1e-9)
+        g = np.array([mask.gain_at(10 + 70 * s, 20 + 60 * s, [op], LIN) for s in t])
+        self.assertLessEqual(float(np.max(np.abs(g + 3.0))) / 3.0, 0.02)
 
     def test_calibration_on_a_log_axis_in_octaves(self):
         # size_y = 1 octave, a horizontal stroke at 3 kHz: -3 dB on the line, 0 one half-octave away
         op = eraser([(-1, 3000.0), (11, 3000.0)], size_x=0.5, size_y=1.0, hardness=50.0)
         world = {"x": {"min": -5.0, "max": 15.0, "mapping": "lin"}, "y": AUDIO["y"]}
         for x in (3.0, 5.0, 5.013, 7.77):
-            self.assertAlmostEqual(mask.gain_at(x, 3000.0, [op], world), -3.0, delta=1e-9)
+            self.assertAlmostEqual(mask.gain_at(x, 3000.0, [op], world), -3.0, delta=0.06)
         self.assertAlmostEqual(mask.gain_at(5.0, 3000.0 * 2 ** 0.5, [op], world), 0.0, delta=1e-12)
         self.assertAlmostEqual(mask.gain_at(5.0, 3000.0 / 2 ** 0.5, [op], world), 0.0, delta=1e-12)
         self.assertLess(mask.gain_at(5.0, 3000.0 * 2 ** 0.25, [op], world), 0.0)
@@ -118,22 +154,21 @@ class Accumulation(unittest.TestCase):
             one = eraser([(10, 50), (90, 50)], hardness=hp)
             two = eraser([(10, 50), (90, 50), (10, 50)], hardness=hp)
             three = eraser([(10, 50), (90, 50), (10, 50), (90, 50)], hardness=hp)
-            self.assertLessEqual(float(np.max(np.abs(centre_line(one, xs) + 3))), 1e-9)
-            self.assertLessEqual(float(np.max(np.abs(centre_line(two, xs) + 6))), 1e-9, hp)
-            self.assertLessEqual(float(np.max(np.abs(centre_line(three, xs) + 9))), 1e-9, hp)
+            for op, k in ((one, 1), (two, 2), (three, 3)):
+                self.assertLessEqual(float(np.max(np.abs(centre_line(op, xs) + 3 * k))) / (3 * k), 0.02, (hp, k))
 
     def test_two_separate_strokes_add_up(self):
         a = eraser([(10, 50), (90, 50)], oid=1)
         b = eraser([(20, 50), (80, 50)], oid=2, amount=-5.0)
         for x in (35.0, 50.0, 61.3):
-            self.assertAlmostEqual(mask.gain_at(x, 50, [a, b], LIN), -8.0, delta=1e-9)
+            self.assertAlmostEqual(mask.gain_at(x, 50, [a, b], LIN), -8.0, delta=0.16)
             self.assertAlmostEqual(mask.gain_at(x, 50, [a, b], LIN),
                                    mask.gain_at(x, 50, [a], LIN) + mask.gain_at(x, 50, [b], LIN), delta=1e-12)
 
     def test_crossing_strokes_add_at_the_crossing(self):
         a = eraser([(10, 50), (90, 50)], oid=1)
         b = eraser([(50, 10), (50, 90)], oid=2)
-        self.assertAlmostEqual(mask.gain_at(50, 50, [a, b], LIN), -6.0, delta=1e-9)
+        self.assertAlmostEqual(mask.gain_at(50, 50, [a, b], LIN), -6.0, delta=0.12)
 
 
 class Stillness(unittest.TestCase):
@@ -365,9 +400,11 @@ class OpInterpretation(unittest.TestCase):
     def test_params_changes_do_not_leak_between_ops(self):
         a = eraser([(10, 50), (90, 50)], amount=-3, oid=1)
         b = eraser([(10, 50), (90, 50)], amount=-6, oid=2)
-        self.assertAlmostEqual(mask.gain_at(50, 50, [a], LIN), -3.0, delta=1e-9)
-        self.assertAlmostEqual(mask.gain_at(50, 50, [b], LIN), -6.0, delta=1e-9)
-        self.assertAlmostEqual(mask.gain_at(50, 50, [a, b], LIN), -9.0, delta=1e-9)
+        self.assertAlmostEqual(mask.gain_at(50, 50, [a], LIN), -3.0, delta=0.06)
+        self.assertAlmostEqual(mask.gain_at(50, 50, [b], LIN), -6.0, delta=0.12)
+        self.assertAlmostEqual(mask.gain_at(50, 50, [a, b], LIN), -9.0, delta=0.18)
+        self.assertAlmostEqual(mask.gain_at(50, 50, [a, b], LIN),
+                               mask.gain_at(50, 50, [a], LIN) + mask.gain_at(50, 50, [b], LIN), delta=1e-12)
 
     def test_missing_or_non_finite_params_raise(self):
         bad = rect(1, 3, 100, 1000)
