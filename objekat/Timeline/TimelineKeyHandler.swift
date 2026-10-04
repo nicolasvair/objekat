@@ -7,6 +7,21 @@ extension TimelineView {
     /// undo). Below it, the notches chain within the same gesture.
     static let valueScrollUndoGap: TimeInterval = 0.5
 
+    /// A wheel event → whole automation steps (upwards positive). A NOTCH wheel gives exactly ONE
+    /// step per notch, whatever acceleration macOS put on its delta: scaled, slow notches did nothing
+    /// for five notches and fast ones leapt several steps at once (the vertical lane snap's own rule,
+    /// one lane per notch). A trackpad keeps its continuous accumulation, 10 pt per step.
+    static func automationWheelSteps(_ event: NSEvent, accumulator: inout Float) -> Int {
+        guard event.hasPreciseScrollingDeltas else {
+            let dy = event.scrollingDeltaY
+            return dy > 0 ? -1 : (dy < 0 ? 1 : 0)
+        }
+        accumulator -= Float(event.scrollingDeltaY * 0.1)
+        let n = Int(accumulator.rounded())
+        accumulator -= Float(n)
+        return n
+    }
+
     func registerScrollMonitor() {
         let vm       = viewModel
         let hs       = hoverState
@@ -84,10 +99,8 @@ extension TimelineView {
             // never asked for. One modifier, one meaning: ⌥ over a curve bends it, whatever the
             // hand is doing.
             if flags.contains(.option), let hit = self.automationCurveHit(at: pos) {
-                hs.automationScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
-                let steps = Int(hs.automationScrollAccumulator.rounded())
+                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationScrollAccumulator)
                 if steps != 0 {
-                    hs.automationScrollAccumulator -= Float(steps)
                     let newGesture = opensNewValueGesture(event)
                     DispatchQueue.main.async {
                         if newGesture { vm.beginAutomationEdit() }
@@ -137,10 +150,8 @@ extension TimelineView {
                             hs.automationLineWheelEngaged = true
                             if held == nil { hs.automationLineScrollAccumulator = 0 }
                             hs.automationLineWheel = w
-                            hs.automationLineScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
-                            let n = Int(hs.automationLineScrollAccumulator.rounded())
+                            let n = Self.automationWheelSteps(event, accumulator: &hs.automationLineScrollAccumulator)
                             if n != 0 {
-                                hs.automationLineScrollAccumulator -= Float(n)
                                 _ = opensNewValueGesture(event)     // only to keep the gesture's clock
                                 hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
                                 let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)

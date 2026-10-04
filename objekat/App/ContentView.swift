@@ -113,6 +113,7 @@ struct ContentView: View {
                     onMoveCursor: { t in
                         viewModel.cursorPosition = max(0, t)
                     },
+                    onJumpPlayhead: { t in session.jumpPlayhead(to: t) },
                     onReturnToZero: { session.returnToZero() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

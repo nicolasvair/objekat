@@ -102,6 +102,10 @@ struct AutomationBandView: View {
     /// become ten times twitchier than a tall one.
     private static let curveDragTravel: Double = 60
 
+    /// A point's TIME stays put until the hand has travelled this far sideways (px): a vertical
+    /// edit must not be snapped onto the grid by a hand that wobbles a pixel or two. A first guess.
+    private static let timeDeadZonePx: Double = 4
+
     /// The badge's clearance from the point it names (@see drawReadout): to its right by `dx`, and
     /// `gap` clear of it vertically. WIDER under a gesture than under a hover — dragging, the
     /// pointer sits ON the point and its glyph spills down and to the right of its hotspot, so the
@@ -180,6 +184,11 @@ struct AutomationBandView: View {
         /// alone, which is what it has always done.
         let groupRows: [TransformRow]?
         let start: CGPoint
+        /// Where the hand was when the gesture was RECOGNISED (the first frame past the 3 px
+        /// threshold). Every RELATIVE travel (dx, dy) is measured from here, so the first frame
+        /// does not carry the dead zone as a jump; `start` stays what hit-testing and the marquee's
+        /// corner read.
+        let anchor: CGPoint
         /// Which side of the point the badge sits on, FROZEN at the grab. Recomputing it at every
         /// step would have it leap over the point the moment the drag skims the height where the
         /// rule changes sides; decided once, it holds for the whole gesture (@see drawReadout).
@@ -932,25 +941,31 @@ struct AutomationBandView: View {
     private func applyDrag(at location: CGPoint) {
         guard let d = drag else { return }
 
-        let dy  = location.y - d.start.y
-        let dx  = location.x - d.start.x
+        let dy  = location.y - d.anchor.y
+        let dx  = location.x - d.anchor.x
         let g   = geo
         let ref = d.ref
+        // The vertical travel as the ROW reads it: fine near the anchor, the row's own geometry
+        // past the knee (@see AutomationHandTravel). Taken from the grabbed row's parameter, so a
+        // multi-row selection softens with THAT parameter's detent, whatever the others are.
+        let vdy = g.rowTravel(handDy: dy, ref: ref)
 
         switch d.mode {
         case .point(let i):
             guard d.origPoints.indices.contains(i) else { return }
             let o = d.origPoints[i]
-            let t = snappedT(atX: g.x(ofT: o.t) + dx)
+            // A hand that has not travelled sideways leaves the time ALONE: snapping on the first
+            // frame would throw the point onto the nearest grid line under a purely vertical edit.
+            let t = abs(dx) < Self.timeDeadZonePx ? o.t : snappedT(atX: g.x(ofT: o.t) + dx)
             // The point grabbed was part of the selection: the whole of it travels, by ONE common
             // 2D delta. The TIME half is snapped on the grabbed point and the difference handed to
             // the others — snapping each of them in turn would destroy the curve's internal
             // rhythm, which is the same rule `PianoRollView.moveBody` applies to a chord.
             if let trows = d.groupRows {
-                applyGroupMove(trows, dt: t - o.t, dy: dy, x: location.x, startedRow: d.row, ref: ref)
+                applyGroupMove(trows, dt: t - o.t, dy: vdy, x: location.x, startedRow: d.row, ref: ref)
                 return
             }
-            let v = detentedValue((o.v + g.valueDelta(dy: dy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
+            let v = detentedValue((o.v + g.valueDelta(dy: vdy, ref: ref)).clamped(to: ref.valueRange), ref: ref)
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 guard pts.indices.contains(i) else { return }
                 pts[i].t = t
@@ -963,7 +978,7 @@ struct AutomationBandView: View {
             // goes through the very same function, from its own anchors.
             if let v = viewModel.shiftAutomationLine(
                 .segment(indices: idxs, orig: d.origPoints, carried: d.groupRows),
-                objectID: object.id, param: ref, row: d.row, dy: dy, geo: g) {
+                objectID: object.id, param: ref, row: d.row, dy: vdy, geo: g) {
                 setReadout(row: d.row, x: location.x, ref: ref, value: v)
             }
 
@@ -981,7 +996,7 @@ struct AutomationBandView: View {
         case .staticValue:
             if let v = viewModel.shiftAutomationLine(.staticValue(orig: d.origStatic),
                                                      objectID: object.id, param: ref,
-                                                     row: d.row, dy: dy, geo: g) {
+                                                     row: d.row, dy: vdy, geo: g) {
                 setReadout(row: d.row, x: location.x, ref: ref, value: v)
             }
 
@@ -1097,7 +1112,8 @@ struct AutomationBandView: View {
                                                indices: $0.indices, origPoints: $0.points) }
             beginDrag(ref: anchorRow.ref, row: geo.rowIndex(atY: p.y) ?? anchorRow.row,
                       mode: .transform(handle: handle, rows: trows, box: box),
-                      points: anchorRow.points, groupRows: nil, at: p, edits: true)
+                      points: anchorRow.points, groupRows: nil, at: p,
+                      anchor: value.location, edits: true)
             return
         }
 
@@ -1152,7 +1168,7 @@ struct AutomationBandView: View {
         // that is what a click anywhere in this band has always meant.
         let edits: Bool = { if case .timeZone = mode { return false } else { return true } }()
         beginDrag(ref: ref, row: row, mode: mode, points: pts, groupRows: groupRows,
-                  at: p, edits: edits)
+                  at: p, anchor: value.location, edits: edits)
     }
 
     /// The whole selection, when what was grabbed belongs to it — otherwise nil AND the selection
@@ -1212,11 +1228,12 @@ struct AutomationBandView: View {
     /// badge's frozen side cannot be forgotten by one branch out of six.
     private func beginDrag(ref: ParamRef, row: Int, mode: BandDrag.Mode,
                            points pts: [AutomationPoint], groupRows: [TransformRow]?,
-                           at p: CGPoint, edits: Bool) {
+                           at p: CGPoint, anchor: CGPoint, edits: Bool) {
         viewModel.select(object.id, additive: false)
         if edits { viewModel.beginAutomationEdit() }
         drag = BandDrag(ref: ref, row: row, mode: mode, origPoints: pts,
                         origStatic: staticValue(ref), groupRows: groupRows, start: p,
+                        anchor: anchor,
                         badgeBelow: p.y - Self.readoutHeightGuess - Self.readoutOffset.drag.gap < 3,
                         last: p)
     }

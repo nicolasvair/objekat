@@ -2171,6 +2171,27 @@ What has landed since mid-August, in order:
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
+- **Three fixes read off the hand: ⌥-click in the ruler, a fine start for automation, an export sheet that stays 460 pt**
+  (4 October 2026, on `main`, **written on a Linux machine: nothing compiled, nothing run, nothing
+  seen** — only `xcstrings.py check` / `orphans` and a careful re-read).
+  **⌥-click in the time ruler makes the playhead jump** (`ObjekatSession.jumpPlayhead`, the ruler's click
+  and the end of a ruler click-without-travel read ⌥ through `onJumpPlayhead`). Read as a FEATURE: playing,
+  playback carries on from there; paused, it stays paused and ⇧space resumes at that point; stopped, it is
+  a plain cursor move. A jump out of the loop region disarms the engine loop (the tick re-arms it on entry).
+  **Automation drag and wheel lose their dead-zone jump.** The drag measured from the mouse-down, so the
+  first frame past 3 px jumped; it measures from an ANCHOR (where the gesture was recognised) now, a
+  point's time stays put under 4 px of sideways travel (`timeDeadZonePx`), and the vertical travel is FINE
+  near the anchor (`AutomationHandTravel`: 4 px per detent step, a knee at 6 steps, then the row's own
+  geometry — continuous, the whole range stays reachable). A multi-row selection softens with the grabbed
+  row's parameter. The notch wheel gives exactly ONE step per notch (`automationWheelSteps`); the trackpad
+  keeps its accumulation. The three constants are first guesses.
+  **The export sheet no longer widens with a long folder path** (path with idealWidth 0, lowered priority,
+  `.help` with the full path; the footer, batch label and region names likewise).
+  **To check**: a build against the 1550-warning baseline; `tools/test_automation_hand_travel.swift`;
+  by hand, the feel of the automation drag (the 4 px / 6 steps / 4 px values) and of the wheel on a notch
+  mouse and a trackpad; ⌥-click during play, pause and a loop; the export sheet with a long path in the
+  three languages and in Regions scope.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

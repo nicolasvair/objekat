@@ -158,6 +158,7 @@ struct ExportPanelView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
                         ProgressView(value: batch.overallProgress(currentRegion: job.progress))
                             .progressViewStyle(.linear)
                             .controlSize(.small)
@@ -278,6 +279,8 @@ struct ExportPanelView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(-1)
             } else {
                 Text(estimatedSizeLabel)
                     .font(.system(size: 10))
@@ -507,6 +510,12 @@ struct ExportPanelView: View {
 
     // MARK: - Destination
 
+    /// The export folder, the home directory shown as `~`.
+    private var shownFolderPath: String {
+        settings.folder.path.replacingOccurrences(
+            of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+    }
+
     @ViewBuilder
     private var destinationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -515,15 +524,19 @@ struct ExportPanelView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(width: 78, alignment: .leading)
-                Text(settings.folder.path.replacingOccurrences(
-                        of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
+                // A path never asks for its own length: min/ideal 0 and a lowered priority, so a
+                // long folder cannot widen the 460 pt sheet — it is cut from the head instead.
+                Text(verbatim: shownFolderPath)
                     .font(.system(size: 10, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.head)
                     .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(-1)
+                    .help(shownFolderPath)
                 Button(L("common.choose")) { viewModel.chooseExportFolder() }
                     .controlSize(.small)
+                    .fixedSize()
             }
 
             if !regionsMode {
