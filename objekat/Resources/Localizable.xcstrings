@@ -3773,6 +3773,190 @@
         }
       }
     },
+    "fxLinkDivergence.copyReport": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy report"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copiar el informe"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copier le rapport"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.dontRepair": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't repair"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No reparar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ne pas réparer"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In “%1$@”, instances of the same FX link do not hold the same settings as the bin's definition:\n\n%2$@\n\nRepair lays the definition's state on these members — or, with the box ticked, the state most members share (the definition takes it too). A single ⌘Z undoes the repair. The project is then marked as modified, and nothing is written to disk until you save.\nCopy report puts the list of differences, member by member, on the pasteboard. The project is then left as it is."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En «%1$@», instancias de un mismo FX link no tienen los mismos ajustes que la definición del bin:\n\n%2$@\n\nReparar aplica a esos miembros el estado de la definición — o, con la casilla marcada, el estado que comparten más miembros (la definición también lo toma). Un solo ⌘Z deshace la reparación. El proyecto queda entonces marcado como modificado, y no se escribe nada en el disco hasta que lo guardes.\nCopiar el informe coloca en el portapapeles la lista de diferencias, miembro por miembro. El proyecto queda entonces tal cual."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dans « %1$@ », des instances d'un même FX link n'ont pas les mêmes réglages que la définition du bin :\n\n%2$@\n\nRéparer pose sur ces membres l'état de la définition — ou, case cochée, l'état que partagent le plus de membres (la définition le prend aussi). Un seul ⌘Z annule la réparation. Le projet est alors marqué modifié, et rien n'est écrit sur le disque avant l'enregistrement.\nCopier le rapport place dans le presse-papiers la liste des écarts, membre par membre. Le projet reste alors tel quel."
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@: %3$d of %4$d member(s) differ from the definition"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@: %3$d de %4$d miembro(s) difieren de la definición"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@ : %3$d membre(s) sur %4$d diffèrent de la définition"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.lineMinority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(the definition is not the majority's state)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(la definición no es el estado mayoritario)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(la définition n'est pas l'état majoritaire)"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.repair": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Repair"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reparar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réparer"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some FX links in this project have members that do not sound alike"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Algunos FX links de este proyecto tienen miembros que no suenan igual"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Des FX links de ce projet ont des membres qui ne sonnent pas pareil"
+          }
+        }
+      }
+    },
+    "fxLinkDivergence.useMajority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Align on the state most members share rather than on the definition"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alinear con el estado de la mayoría de los miembros en lugar de la definición"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aligner sur l'état de la majorité des membres plutôt que sur la définition"
+          }
+        }
+      }
+    },
     "fxlink.default_name": {
       "extractionState": "manual",
       "localizations": {

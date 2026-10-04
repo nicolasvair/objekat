@@ -263,6 +263,12 @@ extension CommandRegistry {
                         ])
                     }),
                 ]
+                // FX link bins whose members disagree, as the file held them (never repaired by
+                // the load; @see fxlink.repair_divergences).
+                lastPayload["fx_link_divergence_count"] = .int(last.fxLinkDivergences.count)
+                lastPayload["fx_link_divergences"] = .array(last.fxLinkDivergences.map(Self.fxLinkDivergenceJSON))
+                lastPayload["fx_link_divergence_report"] = last.fxLinkDivergences.isEmpty ? .null
+                    : .string(FXLinkDivergence.report(filePath: last.path ?? "", details: last.fxLinkDivergences))
                 if let msg = last.errorMessage { lastPayload["error"] = .string(msg) }
                 payload["last_load"] = .object(lastPayload)
             }

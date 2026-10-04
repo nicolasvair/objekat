@@ -5416,6 +5416,12 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
     if (desired.getSize() == 0) return;                 // plugin neuf : rien à restaurer
 
     juce::String name = ext->getName();                 // local nommé (getName renvoie par valeur)
+    // Le DERNIER état voulu gagne : une ré-affirmation encore en attente pour la même instance (celle
+    // du chargement, quand une réparation de FX link — F4 — ou une annulation suit de près) poserait
+    // sinon l'ANCIEN état avant le nouveau, et sa baseline de synchro avec.
+    _pendingStateReasserts.erase(std::remove_if(_pendingStateReasserts.begin(), _pendingStateReasserts.end(),
+                                                [&](const OBJPendingStateReassert& r) { return r.plugin == plugin; }),
+                                 _pendingStateReasserts.end());
     _pendingStateReasserts.push_back({ plugin, tree, std::move(desired), name, 0 });
 
     if (!_stateReassertTimer) {

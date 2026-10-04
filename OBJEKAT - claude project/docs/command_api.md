@@ -229,6 +229,13 @@ stays empty. There is no command to repair after the load: reopen with `repair_p
 - `plugin_id_report`: a plain-ASCII English text (`null` when the file is sound) that tells a language
   model how to fix the file by hand (new UUID per FIX entry, that object's own automation re-pointed,
   nothing else touched). It is what the alert's "Copy report" puts on the pasteboard.
+- `fx_link_divergence_count`, `fx_link_divergences`, `fx_link_divergence_report`: the FX link bins
+  whose ATTACHED members do not decode to one state, as the FILE held them (F4, 4 October 2026 —
+  see `fxlink.divergences` below for the entries' shape). Detected at every load, NEVER repaired by
+  it: an opening by a hand (menu, ⌘O, Finder, recent projects, a tab reload) then shows the alert
+  "Some FX links in this project have members that do not sound alike" (Repair / Copy report / Don't
+  repair, and a box "Align on the state most members share rather than on the definition"); the API
+  never shows it, and repairs only through `fxlink.repair_divergences`.
 
 **While a project is loading, almost every other command answers `invalid_state` ("project
 loading")** — the model is being rewritten under it. The only exceptions: `app.info`,
@@ -874,6 +881,21 @@ knowing before driving one:
   chunks. `flushLinkedStateSync` is not an API command; `fxlink.sync {plugin}` is its repair form for
   a bin whose members had already drifted apart (that instance's chunk prevails, whatever the reference
   says; `pushed` lists the instances overwritten; `undo: none`, marks the project modified).
+- **Bins at odds with themselves (F4, 4 October 2026).** `fxlink.divergences {live?}` reports, per
+  definition plugin, the bins whose attached members do not decode to one state: `{count, divergences:
+  [{link, link_name, definition, plugin_name, definition_in_majority, divergent_count, members: [{host,
+  host_name, block, instance, matches_definition, state_class}]}]}` — `state_class` 0 is the state most
+  members share (a tie goes to the definition's). States are compared on what the plugin PLAYS, never on
+  raw chunks (sound members differ there: Pro-Q 4 writes the instance's name at the end of its chunk,
+  TDR Prism numbers its instances): Pro-Q 4's 576 floats, PHA-979's `VoxPluginState` records (its AU
+  "data" block is all zeros), any other Audio Unit's "data" parameters; a plugin none of these reads
+  is NOT compared (no false positive, no detection either). `live: false` reads the model's stored
+  states. `fxlink.repair_divergences {reference?: "definition"|"majority", link?}` lays the reference
+  on every member that differs, on the live instance AND in the model: `"definition"` (default) the
+  definition's state; `"majority"` the state of class 0, which the definition then takes too. Returns
+  `{reference, bins, instances: [ids laid], definitions: [definition ids laid]}`; ONE undo step
+  (`edit.undo` gives the former states back), no undo point and empty lists when everything agrees.
+  The target keeps its identity: only the `state` / `programNum` of its PLUGIN tree are replaced.
 - **Only a HAND drives the bin** (4 October 2026). The parameter mirror relays a member's change only
   when it is user-originated: a parameter gesture open on that instance (or ended < 1 s ago), a host
   write through `plugin.set_param` / the inspector < 1 s ago, or that instance's native editor open

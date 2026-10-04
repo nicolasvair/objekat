@@ -3,8 +3,9 @@
 """FX link settings survive open + save — a scenario that ASSERTS.
 
     ./scenario_fxlink_state_persistence.py --app=/path/to/objekat.app [--trials=8] [--jobs=3]
-        [--cases=a,p,b,c,d,e,f,h,n,s] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
+        [--cases=a,p,b,c,d,e,f,h,n,s,v] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
         [--wait=8] [--real=/tmp/copy/of/a/project.objekat] [--keep] [--h-notick]
+        [--v-real=/tmp/copy/a.objekat=<bins>,/tmp/copy/b.objekat=<bins>]
 
 DEBUG build only (it drives `debug.plugin_force_processor_changed`, `debug.plugin_inject_state`).
 Unlike its siblings this scenario takes an APP, not a socket: the bug it guards is a RACE of the
@@ -72,6 +73,15 @@ their result is re-opened --trials times):
       other four (a real project's "SHUSH 14/2", rebuilt by rewriting two `state` attributes of the
       file): open + save, forced program / paraminfo / unforced, and three saves in a row — nothing
       moves (no member pulled, the pair not spread, the definition kept) and nothing is relayed.
+  (v) F4 — the same divergent bin: DETECTED at the load (`last_load.fx_link_divergences`), never
+      repaired by it; `fxlink.repair_divergences` on the definition lays exactly the 2 members off
+      it, a second call does nothing, ONE `edit.undo` gives them their state back (and the bin is
+      reported again), redo, save, reopen: nothing left. Then the definition rewritten to the
+      MINORITY's state (what an older build saved): the majority repair aligns the 2 and the
+      definition, undo, the definition repair aligns the 4 others instead. No false positive on the
+      sound fixtures (base, Pro-Q h, 100 instances when built). With --v-real: COPIES of real
+      projects (temp dir only), each with the number of bins expected; a copy with bins is
+      repaired, saved, reopened, and must report nothing.
   (r) with --real=PATH: an open + save of a COPY of a real project (refused outside a temp dir).
 
 Fixtures are built by --fixture-app (default: --app). To judge a build WITHOUT the patch, build the
@@ -98,7 +108,7 @@ TOL = 1e-6
 TOL_WEISS = 1e-5          # its host parameters are float32 in the chunk
 
 # ── command line ──────────────────────────────────────────────────────────────────────────────
-opts = {"trials": "8", "jobs": "3", "cases": "a,p,b,c,d,e,f,h,n,s", "seed": "20261004", "wait": "8"}
+opts = {"trials": "8", "jobs": "3", "cases": "a,p,b,c,d,e,f,h,n,s,v", "seed": "20261004", "wait": "8"}
 for a in sys.argv[1:]:
     if a in ("-h", "--help"):
         print(__doc__)
@@ -1395,6 +1405,172 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
             chains = list(ex.map(chain, range(max(2, TRIALS // 2))))
         report("(s) 3 saves in a row", [r for c in chains for r in c], "the definition and every member identical to the original at each save")
+
+    # ── (v) F4: a bin at odds with itself is DETECTED at the load, never repaired by it; the
+    #    repair (definition / majority) is one undo, idempotent, and survives a save ─────────────
+    if "v" in CASES:
+        print("\n-- (v) F4: detect, repair, undo a bin whose members disagree")
+        vman, vsnap, vdiv = build_s_fixture(os.path.join(WORK, "v_fix"), 6, (0, 3), "v")
+        vvals = {i: r["val"] for i, r in vsnap["inst"].items() if r["link"]}
+        ids = list(vvals)
+        idents = {i: PHA for i in ids}
+        ref_a = next(v for i, v in vvals.items() if i not in vdiv)
+        ref_b = vvals[vdiv[0]]
+        def_id = next(i for i, d in vsnap["defs"].items() if d[2] == "SHUSH")
+
+        def live_states(a):
+            time.sleep(1.0)
+            a.idle()
+            return a.live(ids, idents)
+
+        def on(states, want, which):
+            return all(same(states[i], want) for i in which)
+
+        def divergences(a):
+            return a.cmd("fxlink.divergences")["divergences"]
+
+        # (v1) the definition holds the majority: detection, repair on the definition, undo/redo, save
+        work = os.path.join(WORK, "v_def")
+        man = copy_project(vman, work)
+        with App(APP, "v_def") as a:
+            a.open(man)
+            ll = a.cmd("project.load_status")["last_load"]
+            got = ll.get("fx_link_divergences") or []
+            check("(v1) detected at the load: one bin, its 2 members off the definition, the definition in the majority",
+                  ll.get("fx_link_divergence_count") == 1 and len(got) == 1
+                  and {m["instance"] for m in got[0]["members"] if not m["matches_definition"]} == set(vdiv)
+                  and got[0]["definition_in_majority"] is True and got[0]["definition"] == def_id
+                  and "SHUSH" in (ll.get("fx_link_divergence_report") or ""), str(ll.get("fx_link_divergences"))[:300])
+            st = live_states(a)
+            check("(v1) the load repaired NOTHING on its own (the 2 members still on their own state)",
+                  on(st, ref_b, vdiv) and on(st, ref_a, [i for i in ids if i not in vdiv]) and len(divergences(a)) == 1)
+            r = a.cmd("fxlink.repair_divergences")
+            check("(v1) repair (definition): exactly the 2 divergent members receive a state, the definition untouched",
+                  set(r["instances"]) == set(vdiv) and r["definitions"] == [], str(r))
+            st = live_states(a)
+            check("(v1) after the repair every member plays the definition's state, nothing left to report",
+                  on(st, ref_a, ids) and divergences(a) == [])
+            r2 = a.cmd("fxlink.repair_divergences")
+            check("(v1) a second repair has nothing to do (idempotent, no undo point)",
+                  r2["instances"] == [] and r2["definitions"] == [], str(r2))
+            a.cmd("edit.undo")
+            st = live_states(a)
+            dv = divergences(a)
+            check("(v1) ONE undo gives the 2 members their former state back, and the bin is reported again",
+                  on(st, ref_b, vdiv) and on(st, ref_a, [i for i in ids if i not in vdiv]) and len(dv) == 1
+                  and {m["instance"] for m in dv[0]["members"] if not m["matches_definition"]} == set(vdiv))
+            a.cmd("edit.redo")
+            st = live_states(a)
+            check("(v1) redo repairs again", on(st, ref_a, ids) and divergences(a) == [])
+            a.cmd("project.save")
+        s1 = snapshot(man)
+        check("(v1) the saved file: every member AND the definition on the definition's state",
+              all(same(s1["inst"][i]["val"], ref_a) for i in ids) and same(s1["defs"][def_id][1], ref_a))
+        with App(APP, "v_def_reopen") as a:
+            a.open(man)
+            ll = a.cmd("project.load_status")["last_load"]
+            check("(v1) reopened: nothing to report any more", ll.get("fx_link_divergence_count") == 0, str(ll.get("fx_link_divergences"))[:200])
+
+        # (v2) the definition is the MINORITY's state (a file saved by an older build: the definition
+        # followed the first member) — majority repair aligns the 2 and the definition; definition
+        # repair would align the 4 others on the minority
+        work = os.path.join(WORK, "v_min")
+        man = copy_project(vman, work)
+        doc = json.load(open(man))
+        lone = {}
+
+        def find_inst(items):
+            for it in items:
+                for p in it.get("plugins", []):
+                    for q in (p["fxBlock"]["plugins"] if p.get("fxBlock") else [p]):
+                        lone[q["id"]] = q
+                if (it.get("kind") or {}).get("type") == "group":
+                    find_inst(it["kind"].get("children", []))
+        find_inst(doc["items"])
+        b_state = re.search(r'\sstate="([^"]*)"', lone[vdiv[0]]["stateXML"]).group(1)
+        for l in doc["fxLinks"]:
+            for p in l["plugins"]:
+                if p["id"] == def_id:
+                    p["stateXML"] = re.sub(r'(\sstate=")[^"]*(")', lambda m: m.group(1) + b_state + m.group(2), p["stateXML"], count=1)
+        with open(man, "w") as f:
+            json.dump(doc, f, indent=2, ensure_ascii=False)
+        others = [i for i in ids if i not in vdiv]
+        with App(APP, "v_min") as a:
+            a.open(man)
+            ll = a.cmd("project.load_status")["last_load"]
+            got = ll.get("fx_link_divergences") or []
+            check("(v2) detected: the definition is NOT the majority's state, the 4 others are off it",
+                  len(got) == 1 and got[0]["definition_in_majority"] is False and got[0]["divergent_count"] == 4
+                  and {m["instance"] for m in got[0]["members"] if m["state_class"] != 0} == set(vdiv), str(got)[:300])
+            r = a.cmd("fxlink.repair_divergences", reference="majority")
+            check("(v2) repair (majority): the 2 minority members AND the definition take the majority's state",
+                  set(r["instances"]) == set(vdiv) and r["definitions"] == [def_id], str(r))
+            st = live_states(a)
+            check("(v2) every member on the majority's state, nothing left", on(st, ref_a, ids) and divergences(a) == [])
+            a.cmd("edit.undo")
+            dv = divergences(a)
+            check("(v2) one undo: the definition back on the minority's state, the bin reported again",
+                  len(dv) == 1 and dv[0]["definition_in_majority"] is False)
+            r = a.cmd("fxlink.repair_divergences", reference="definition")
+            st = live_states(a)
+            check("(v2) repair (definition) instead: the 4 others take the definition's (minority) state",
+                  set(r["instances"]) == set(others) and on(st, ref_b, ids) and divergences(a) == [], str(r))
+            a.cmd("project.save")
+        with App(APP, "v_min_reopen") as a:
+            a.open(man)
+            check("(v2) reopened after the repair: nothing to report",
+                  a.cmd("project.load_status")["last_load"].get("fx_link_divergence_count") == 0)
+
+        # (v3) no false positive on sound bins (the base fixture; Pro-Q's chunk tails differ between
+        # sound members, PHA's AU "data" is all zeros — neither must be read as a divergence)
+        sound = [("base fixture", base_manifest)]
+        for name, sub in (("Pro-Q fixture (h)", "h_fix"), ("100-instance fixture (f)", "big")):
+            pth = os.path.join(WORK, sub, "proj.objekat")
+            if os.path.exists(pth):
+                sound.append((name, pth))
+        for name, pth in sound:
+            man = copy_project(pth, os.path.join(WORK, "v_sound_" + re.sub(r"\W", "_", name)))
+            with App(APP, "v_sound") as a:
+                a.open(man)
+                ll = a.cmd("project.load_status")["last_load"]
+                time.sleep(2.0)
+                check("(v3) %s: no divergence reported, at the load nor live" % name,
+                      ll.get("fx_link_divergence_count") == 0 and divergences(a) == [],
+                      str(ll.get("fx_link_divergences"))[:200])
+
+        # (v4) real projects, COPIES only: --v-real=<copy>=<expected bins>,…; a copy expecting
+        # divergences is repaired, saved, reopened: nothing left
+        for spec in [s for s in opts.get("v-real", "").split(",") if s]:
+            path, _, n = spec.rpartition("=")
+            path = os.path.abspath(path)
+            if not any(os.path.realpath(path).startswith(d + os.sep) for d in
+                       (os.path.realpath(tempfile.gettempdir()), "/tmp", "/private/tmp")):
+                check("(v4) %s is a COPY in a temp dir" % path, False, "refused: never a user's file")
+                continue
+            work = os.path.join(WORK, "v_real_" + re.sub(r"\W", "_", os.path.basename(path)))
+            shutil.rmtree(work, ignore_errors=True)
+            os.makedirs(work)
+            man = os.path.join(work, os.path.basename(path))
+            shutil.copyfile(path, man)
+            with App(APP, "v_real") as a:
+                a.open(man)
+                ll = a.cmd("project.load_status")["last_load"]
+                got = ll.get("fx_link_divergences") or []
+                desc = ["%s/%s %d/%d" % (d["link_name"], d["plugin_name"], d["divergent_count"], len(d["members"])) for d in got]
+                check("(v4) %s: %s bin(s) reported at the load" % (os.path.basename(path), n), len(got) == int(n), str(desc))
+                note("(v4) %s: %s" % (os.path.basename(path), desc or "nothing"))
+                if got:
+                    r = a.cmd("fxlink.repair_divergences")
+                    time.sleep(2.0)
+                    a.idle()
+                    check("(v4) %s: repaired live, nothing left" % os.path.basename(path),
+                          divergences(a) == [], "%d laid" % len(r["instances"]))
+                    a.cmd("project.save")
+            if int(n):
+                with App(APP, "v_real_reopen") as a:
+                    a.open(man)
+                    check("(v4) %s repaired, saved, reopened: nothing to report" % os.path.basename(path),
+                          a.cmd("project.load_status")["last_load"].get("fx_link_divergence_count") == 0)
 
     # ── (r) a copy of a real project ───────────────────────────────────────────────────────────
     if "real" in opts:

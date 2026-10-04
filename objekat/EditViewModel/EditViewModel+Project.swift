@@ -490,6 +490,7 @@ extension EditViewModel {
             projectName = displayName(for: url)
             settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
+            if pluginIDRepair == .ask { offerFXLinkDivergenceRepair() }
             return true
         } catch {
             // Clears `loadState` even though `applyProjectDocumentAsync` was never reached: the

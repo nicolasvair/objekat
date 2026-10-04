@@ -372,6 +372,7 @@ final class Workspace {
             tabs.append(WorkspaceTab(id: newID, parked: nil, name: displayName, url: url,
                                      cachedDirty: vm.isDirty))
             activeTabID = newID
+            if pluginIDRepair == .ask { vm.offerFXLinkDivergenceRepair() }   // asked once the tab is on screen
             return .success(OpenOutcome(tabID: newID, alreadyOpen: false))
         } else {
             // Replacing the active document tears its Edit down, and a direct render is reading it.
@@ -389,6 +390,7 @@ final class Workspace {
             vm.projectName = displayName
             vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             vm.recordRecentProject(url)
+            if pluginIDRepair == .ask { vm.offerFXLinkDivergenceRepair() }
             return .success(OpenOutcome(tabID: activeTabID, alreadyOpen: false))
         }
     }
@@ -506,6 +508,7 @@ final class Workspace {
         vm.settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
         vm.recordRecentProject(url)
         NSLog("[TABS] reloaded from disk: %@", url.lastPathComponent)
+        if pluginIDRepair == .ask { vm.offerFXLinkDivergenceRepair() }
         return .success(OpenOutcome(tabID: activeTabID, alreadyOpen: true, reloaded: true))
     }
 
