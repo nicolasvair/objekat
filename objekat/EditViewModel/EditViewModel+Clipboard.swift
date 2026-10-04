@@ -196,14 +196,6 @@ extension EditViewModel {
         return copy
     }
 
-    /// Rewrites the sends of a copied sub-tree: a send that aimed at an object PRESENT in the
-    /// table now aims at its copy. What is not in it — an aux left outside — is
-    /// left as it is: the send stays valid there as long as the sender is its sibling.
-    ///
-    /// Without this pass, duplicating a group that holds its own aux gave a copy whose
-    /// children went on feeding the ORIGINAL's aux — a send the engine refuses
-    /// to wire (nothing crosses a container's boundary, @see canRouteSend), hence a silent aux
-    /// in the copy and a send scheme to redo by hand.
     /// `plugins` with every sidechain key whose source is in `idMap` pointed at its copy — leaves,
     /// the voices of a rack, the instances of an FX link block, recursively.
     static func remappingSidechain(in plugins: [ObjectPlugin], using idMap: [UUID: UUID]) -> [ObjectPlugin] {
@@ -222,6 +214,14 @@ extension EditViewModel {
         }
     }
 
+    /// Rewrites the sends of a copied sub-tree: a send that aimed at an object PRESENT in the
+    /// table now aims at its copy. What is not in it — an aux left outside — is
+    /// left as it is: the send stays valid there as long as the sender is its sibling.
+    ///
+    /// Without this pass, duplicating a group that holds its own aux gave a copy whose
+    /// children went on feeding the ORIGINAL's aux — a send the engine refuses
+    /// to wire (nothing crosses a container's boundary, @see canRouteSend), hence a silent aux
+    /// in the copy and a send scheme to redo by hand.
     static func remappingSends(_ obj: SoundObject, using idMap: [UUID: UUID]) -> SoundObject {
         guard !idMap.isEmpty else { return obj }
         var o = obj

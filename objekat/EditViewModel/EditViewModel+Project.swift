@@ -529,6 +529,12 @@ extension EditViewModel {
         selectedMidiNoteIDs = []
         focusedMidiClipID = nil
         bakingIDs = []
+        // The audio bridge's cache goes with the engine's: a new document or a tab switch must never
+        // start from the previous one's topology, plan or "the engine holds taps" belief.
+        bridgeLastTopology = nil
+        bridgeEngineHasTaps = false
+        bridgePlan = BridgeScope.Plan()
+        bridgeRouteStatus = [:]
         // Solo (session state, not persisted): starts again from nothing on a new project / an opening,
         // otherwise orphan IDs would remain. No engine apply here (the graph is rebuilt).
         soloedIDs = []

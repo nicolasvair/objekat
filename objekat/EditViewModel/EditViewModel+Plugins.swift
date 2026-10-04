@@ -253,7 +253,7 @@ extension EditViewModel {
         pushAutomation(objectID)
         // A recompiled AU is a NEW instance with its sidechain stripped (the model, not the engine,
         // is the authority on keys): lay them again. Coalesced — a load compiles every object.
-        scheduleBridgeSync(force: true)
+        scheduleBridgeSync()
         return Array(failed)
     }
 

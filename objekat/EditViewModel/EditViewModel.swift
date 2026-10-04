@@ -338,12 +338,13 @@ final class EditViewModel {
     /// Plugin id → why its key is refused. Absent = the key is active (or there is none).
     var bridgeRouteStatus: [UUID: BridgeScope.Refusal] = [:]
     @ObservationIgnored var bridgeSyncScheduled = false
-    @ObservationIgnored var bridgeSyncForced = false
     /// The engine holds taps laid by a previous sync: a sync with no route must still run once, to
     /// take them away.
     @ObservationIgnored var bridgeEngineHasTaps = false
-    /// The topology the last sync laid down: an equal one is not laid again (unless forced).
-    @ObservationIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route])? = nil
+    /// The topology the last sync laid down and the plan it gave: an equal topology reuses the plan
+    /// (the engine is pushed all the same, @see syncBridge).
+    @ObservationIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
+                                                 plan: BridgeScope.Plan)? = nil
 
     var mainStemID: UUID { stems.first?.id ?? UUID() }
 

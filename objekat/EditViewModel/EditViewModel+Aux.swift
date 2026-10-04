@@ -422,7 +422,7 @@ extension EditViewModel {
         pushAllAutomation()
         // The same meeting point serves the audio bridge: load, undo/redo, grouping, a stem change
         // and a paste all reshape who is above whom, which is what a key's validity and rank read.
-        syncBridge(force: true)
+        syncBridge()
     }
 
     /// Copies onto `newAuxID` every send that targeted `origAuxID` (the same level).

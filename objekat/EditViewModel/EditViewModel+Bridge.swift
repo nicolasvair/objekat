@@ -74,31 +74,29 @@ extension EditViewModel {
     // MARK: - Syncing the engine
 
     /// Coalesces to ONE `syncBridge()` per main run-loop turn: a drag writes `items` on every frame.
-    /// `force` re-pushes even if the topology did not move (a recompiled AU is a NEW instance with its
-    /// sidechain stripped).
-    func scheduleBridgeSync(force: Bool = false) {
-        if force { bridgeSyncForced = true }
+    func scheduleBridgeSync() {
         guard !bridgeSyncScheduled else { return }
         bridgeSyncScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.bridgeSyncScheduled = false
-            let forced = self.bridgeSyncForced
-            self.bridgeSyncForced = false
-            self.syncBridge(force: forced)
+            self.syncBridge()
         }
     }
 
     /// Reads the model, asks `BridgeScope` for the plan, and lays it down: taps, keys, ranks, in one
     /// engine transaction. The common case — no route anywhere and nothing laid before — costs one
-    /// tree walk; an unchanged topology costs one comparison (unless forced).
-    func syncBridge(force: Bool = false) {
+    /// tree walk. An unchanged topology reuses the cached plan (the comparison skips `BridgeScope.plan`
+    /// only) but STILL pushes it: the engine can have changed under an unchanged model (a chain remade,
+    /// an AU re-instantiated, a clip recreated at rank 0), and every engine call is idempotent — it
+    /// marks the transaction dirty, hence rebuilds, only on a real change.
+    func syncBridge() {
         guard let engine else { return }
         // Never modify the Edit during an export (the engine's own rule). Try again shortly: the
         // model may have changed in the meantime and nothing else would sync it.
         if exportJob?.isRunning == true || exportBatch?.isActive == true {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.scheduleBridgeSync(force: true)
+                self?.scheduleBridgeSync()
             }
             return
         }
@@ -110,10 +108,12 @@ extension EditViewModel {
             bridgeLastTopology = nil
             return
         }
-        if !force, let last = bridgeLastTopology,
-           last.nodes == topology.nodes, last.routes == topology.routes { return }
-
-        let plan = BridgeScope.plan(nodes: topology.nodes, routes: topology.routes)
+        let plan: BridgeScope.Plan
+        if let last = bridgeLastTopology, last.nodes == topology.nodes, last.routes == topology.routes {
+            plan = last.plan
+        } else {
+            plan = BridgeScope.plan(nodes: topology.nodes, routes: topology.routes)
+        }
 
         var status: [UUID: BridgeScope.Refusal] = [:]
         for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
@@ -143,7 +143,7 @@ extension EditViewModel {
         engine.commitBridgeSync()
 
         bridgeEngineHasTaps = !plan.taps.isEmpty
-        bridgeLastTopology = (topology.nodes, topology.routes)
+        bridgeLastTopology = (topology.nodes, topology.routes, plan)
     }
 
     // MARK: - Gestures
@@ -235,7 +235,7 @@ extension EditViewModel {
             update(id: host) { $0.instruments = updated }
         }
         isDirty = true
-        syncBridge(force: true)
+        syncBridge()
     }
 
     /// The sources a plugin's key menu can offer, each allowed or refused (with the reason). The Main
