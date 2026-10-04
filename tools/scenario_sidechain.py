@@ -15,8 +15,10 @@ be asserted of it with no screen (docs/plan_sidechain.md §6 step 1.12):
   • UNDO / REDO — the key is patched, not rebuilt (`dest_instance` is unchanged);
   • SAVE / REOPEN, and COPIES — duplicate, split, delete the source (the key stays, inactive).
 
-    objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --language=en \
+    objekat.app/Contents/MacOS/objekat --headless --api --no-recent --language=en \
         --socket=/tmp/o.sock
+
+NOT `--no-audio` (the bridge reads the device's clock); exits 2 if `app.info` says audio is not running.
     ./scenario_sidechain.py /tmp/o.sock /tmp/trial/project.objekat
 
 A DEBUG build (it reads `debug.bridge_report`). Exit: 0 if everything passes, 1 otherwise.
@@ -90,6 +92,7 @@ def report(c):
 
 
 with ObjekatClient(SOCK) as c:
+    B.require_audio(c)
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})
     c.send("project.new")
     c.send("project.save_as", {"path": PROJ})

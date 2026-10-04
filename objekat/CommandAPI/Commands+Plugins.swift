@@ -21,7 +21,7 @@ extension CommandRegistry {
                           ParamSpec("instruments_only", "bool", required: false,
                                     "Keep only the instruments (default false).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            let filter = (try p.stringOrNull("filter"))?.lowercased()
+            let filter = (try p.optionalString("filter"))?.lowercased()
             let instrumentsOnly = try p.bool("instruments_only", or: false)
             let plugins = vm.availablePlugins.filter { plugin in
                 if instrumentsOnly && !plugin.isInstrument { return false }
@@ -75,10 +75,11 @@ extension CommandRegistry {
                  — wait and ask again); `current` is the source now keyed (or null); `sources` lists what \
                  is allowed (`{id, kind, name}`, kind object / group / stem), `refused` what is not, with \
                  the reason (`ancestorSource`, `selfSource`, `cycle`, `auxSource`…). The Main is never a \
-                 source and is not listed. Reads only.
+                 source and is not listed. Reads only. Instruments (a MIDI object's virtual \
+                 instrument) are not supported yet: only leaf plugins of a chain.
                  """,
                  params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
-                          ParamSpec("plugin", "uuid", "Leaf plugin or instrument.")],
+                          ParamSpec("plugin", "uuid", "Leaf plugin of the chain (instruments: not yet).")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
@@ -107,10 +108,11 @@ extension CommandRegistry {
                  the host (`ancestorSource`), is the host (`selfSource`), would close a loop (`cycle`), is an \
                  aux or the Main, or does not exist. `invalid_state`: the live plugin has no sidechain \
                  input (or is still loading). One undo step; undoing it does not rebuild the object. \
-                 Answers `{ok, active, reason}`.
+                 Answers `{ok, active, reason}`. Instruments are not supported yet (only leaf plugins \
+                 of a chain).
                  """,
                  params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
-                          ParamSpec("plugin", "uuid", "Leaf plugin or instrument."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin of the chain (instruments: not yet)."),
                           ParamSpec("source", "uuid", required: false, "The keying object or stem; null clears.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()

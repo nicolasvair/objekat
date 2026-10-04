@@ -187,8 +187,8 @@ extension CommandAdapters {
     /// Names a catalogue entry by `identifier` (exact) or, failing that, by `name` (first
     /// match, case-insensitive), with `format` settling ties between namesakes.
     static func resolvePlugin(_ p: CommandParams, in vm: EditViewModel) throws -> AvailablePlugin {
-        let format = try p.stringOrNull("format")
-        if let identifier = try p.stringOrNull("identifier") {
+        let format = try p.optionalString("format")
+        if let identifier = try p.optionalString("identifier") {
             guard let found = vm.availablePlugins.first(where: {
                 $0.identifier == identifier && (format == nil || $0.formatName == format)
             }) else {
@@ -198,7 +198,7 @@ extension CommandAdapters {
             }
             return found
         }
-        guard let name = try p.stringOrNull("name") else {
+        guard let name = try p.optionalString("name") else {
             throw CommandError(code: .bad_params, message: "'identifier' or 'name' required")
         }
         let needle = name.lowercased()

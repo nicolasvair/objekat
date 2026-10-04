@@ -100,6 +100,15 @@ def window_count_for_pid(pid):
     return sum(1 for w in info if w.get("kCGWindowOwnerPID") == pid)
 
 
+def require_audio(client):
+    """The bridge's clock is the device's: with `--no-audio` there is none. Exit 2 with one line."""
+    info = client.send("app.info")
+    if not info.get("audio_running"):
+        print("this scenario needs the audio device running: launch the app without --no-audio "
+              "(app.info.audio_running is false)")
+        sys.exit(2)
+
+
 class Tally:
     """`step` runs a command and records it, `check` records a condition."""
 

@@ -781,6 +781,9 @@ after its fader and its window, like a send): a muted source stops keying. Desig
 | `plugin.sidechain_sources` | `host` + `plugin` → `{can_sidechain, current, sources: [{id, kind, name}], refused: [{id, kind, name, reason}]}`. `kind` is object / group / stem. `can_sidechain` false = the live instance has no sidechain input, or is still loading (`wait_idle`, ask again). Reads only |
 | `plugin.set_sidechain` | `host` + `plugin` + `source` (a uuid; null or absent clears) → `{ok, active, reason}`. One undo step, and undoing it does not rebuild the object. `bad_params` with `details.reason` when refused; `invalid_state` when the live plugin has no sidechain input; `not_found` when `plugin` is not a leaf of `host` |
 
+Instruments (a MIDI object's virtual instrument) are not supported yet by `plugin.sidechain_sources` /
+`plugin.set_sidechain`: only the leaf plugins of a chain (`plugin.list`'s `plugins`).
+
 Refusal reasons: `unknownSource` (a deleted source: the key stays written and silent, and comes back
 active if the deletion is undone), `unknownHost`, `selfSource`, `ancestorSource` (the source contains
 the host: its group, or its stem), `auxSource`, `mainSource`, `cycle` (a chain of keys that would

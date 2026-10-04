@@ -2238,7 +2238,8 @@ What has landed since mid-August, in order:
   (5) the probe `tools/probe_sidechain.py` on the sidechain plugins actually used (a `DISABLED`
   verdict on one that matters inserts a layout step before the UI is trusted); (6)
   `scenario_sidechain.py` then `scenario_bridge_latency.py`, each against its OWN fresh headless
-  instance (`--headless --api --no-audio --no-recent --language=en`), a Debug build; the first re-pass
+  instance (`--headless --api --no-recent --language=en` — NO `--no-audio` for these two: the bridge
+  reads the device's clock, and they exit 2 if `app.info.audio_running` is false), a Debug build; the first re-pass
   with asserts on (latency case B/H) is the proof that discarding a pass is safe; case J prints
   whether the renderer compensates absolute latency; (7) `debug.plugin_id_audit` and
   `CGWindowListCopyWindowInfo` on the headless pid; (8) by hand: the menu, the glyph, a kick keying a
