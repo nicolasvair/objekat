@@ -519,7 +519,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Points a plugin's sidechain input at `sourceKey`'s tap (nil, or a source with no tap, clears it):
 // source id, wires (laid later by the latency tick if the plugin is still loading), the built-in
 // compressor's trigger flag, and the rank the plugin's reader runs at.
-- (void)setSidechainForPlugin:(NSString* _Nonnull)pluginKey source:(NSString* _Nullable)sourceKey rank:(NSInteger)rank;
+- (void)setSidechainForPlugin:(NSString* _Nonnull)pluginKey source:(NSString* _Nullable)sourceKey rank:(NSInteger)rank NS_SWIFT_NAME(setSidechain(forPlugin:source:rank:));
 // The rank of an object's unit: a child or an aux carries it on its clip, any other top-level object
 // moves to the pool track of (stem, lane, rank). 0 = no rank.
 - (void)setBridgeRank:(NSInteger)rank forID:(NSString* _Nonnull)uuid;
