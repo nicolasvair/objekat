@@ -35,9 +35,10 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **34** patches in `engine-patches/3.5/`, numbered `0001`→`0036` with two
+An engine series of **34** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0036` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0037`. (`0035` and `0036`, the FX link state fixes of
+(see its README). On the branch `feature/sidechain` it is **35** — `0037`, the audio bridge, is there
+and not on `main` (see its entry below); the next one will be `0038`. (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2171,19 +2172,81 @@ What has landed since mid-August, in order:
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
-- **Sidechain for AU/VST3 plugins — plan and phase 0** (4 October 2026, ON THE BRANCH
-  `feature/sidechain`, NOT on `main`; **written on a Linux machine: nothing compiled, nothing run**,
-  `py_compile` only). The design, the user's decisions (key tapped POST-FADER like the sends — so a
-  muted source, or a soloed destination, silences the key; everything allowed but ancestors and
-  cycles; cycles refused; objects and stems as sources; bake includes the sources; the source chosen
-  from the plugin's card) and the phases are in `docs/plan_sidechain.md`. The one fact to keep: the
-  native Tracktion sidechain cannot be used as is — its sources are tracks and it travels through
-  graph edges no container lets through — so the key is a buffer held by an engine-only TAP plugin
-  (the `ObjAuxSendPlugin` pattern), read by a new leaf node, and ordered by RANK tiers (hidden pool
-  tracks bounded by stems × lanes × ranks). Phase 0 is a probe only: `pluginBusesInfo:` + DEBUG
-  `debug.plugin_buses`, and `tools/probe_sidechain.py`, which says per AU whether its sidechain bus
-  really comes up enabled. **To do on the Mac first**: a Debug build, then the probe on the
-  sidechain plugins actually used — a `DISABLED` verdict on one that matters changes the plan.
+- **Sidechain for AU/VST3 plugins — the audio bridge, phase 1** (4 October 2026, ON THE BRANCH
+  `feature/sidechain`, NOT on `main`; **written on a Linux machine: nothing built, nothing run on a
+  Mac, nothing seen or heard**). A plugin's sidechain input keyed by another object or by a stem —
+  across stems and across groups, latency-aligned whether the key is younger or older. Design, the
+  user's decisions, the review rulings and the numbered steps: `docs/plan_sidechain.md`; the API in
+  `command_api.md` ("A plugin's sidechain"); the decision in `architecture_decisions.md`.
+  **Why a bridge.** Tracktion's native sidechain takes tracks as sources (OBJEKAT's tracks are
+  scheduling compartments with no plugins) and travels through graph edges, which a container — a
+  closed local graph — lets neither in nor out. So the key is a BUFFER that outlives the graph: an
+  engine-only TAP plugin (`OBJBridgeTapPlugin.h`, never a model plugin, so plugin-id uniqueness is
+  untouched) at the end of the source's chain — post-fader, post-window, what is HEARD of it, so a
+  muted source stops keying — holds a ring indexed by STREAM sample (the device clock every graph
+  shares: the ring IS the delay line); a READER node replaces the `ReturnNode` at the plugin's
+  sidechain input and declares a latency; RANK tiers (hidden pool tracks `(stem, lane, rank)`,
+  bounded by stems × lanes × ranks; per-rank combiners inside a container) order writers before
+  readers. Engine patch **`0037`** (`engine-patches/3.5/`, submodule branch `objekat-bridge-0037`
+  at `b2a2c0c`, applies cleanly onto `17215d464fb`, **the fork is NOT republished and the gitlink
+  NOT moved** — `tools/publish-engine-forks.sh` before any merge). The next engine patch is `0038`.
+  **Latency, both ways**: reader declares `X = max(L_d, L_s)`, delays by `X − L_s`; a key older than
+  its host makes the sidechain sum delay the DIRECT input and the host's declared latency rises. `X`
+  is needed when the reader is built but the tap's age only once the tap is: each tap caches its age
+  of the previous build, `BridgeBuild::finalise` checks the true ages at the end of the pass and a
+  late or over-declared reader makes `createNodeForEdit` build again (8 at most, none in steady
+  state, renders converge in their own call).
+  **The rules live in ONE pure unit, `Shared/BridgeScope.swift`** — scope (everything but the host's
+  ancestors, aux, Main), cycles (per scheduling unit), ranks, and what a deleted source becomes (the
+  key stays, inactive, `unknownSource`) — because the user has not yet confirmed them: changing one
+  means changing that file and its case table `tools/fixtures/bridge_scope_cases.json`. The model
+  field is `ObjectPlugin.sidechain` (session format 19); validity, ranks and taps are DERIVED on every
+  sync (`EditViewModel+Bridge`), never stored or snapshotted (the `automationTouchOrder` lesson); the
+  engine-side marks (source id, wires, rank, the compressor's trigger) are stripped from every state
+  the model keeps; a key change is PATCHABLE on undo (`adoptingPluginStates`: no rebuild, no AU
+  reload). UI: right click on a card with a sidechain input → a Sidechain submenu (selection / objects
+  at the same time / stems, refused entries disabled with their reason), and a glyph on the card whose
+  tooltip says "Key: Kick". API: `plugin.sidechain_sources`, `plugin.set_sidechain`, `sidechain` in
+  `plugin.list`, DEBUG `debug.bridge_report` / `debug.add_test_plugin` / `debug.set_plugin_property`.
+  Phase 0's probe (`debug.plugin_buses`, `tools/probe_sidechain.py`) is still the first thing to run.
+  **What was verified, and where.** On Linux, RUN: `tools/test_bridge_core.cpp` (the ring and the
+  latency arithmetic, 65 assertions, also under gcc's ASan/UBSan), `tools/test_bridge_scope_reference.py`
+  (the case table against an independent Python mirror, 27 checks), `xcstrings.py check` (580 keys,
+  nothing missing) and `orphans` (none), `py_compile` on the scenarios. `clang++ -fsyntax-only` against
+  hand-made stubs of the few JUCE/Tracktion names used, for the engine files `tracktion_ObjBridge.*`
+  and `tracktion_ObjBridgeNodes.*`. READ as a compiler would, by the author and by the architect (two
+  review passes, E1–E4 / S1–S5 and R1–R2 fixed): everything else — `tracktion_EditNodeBuilder.cpp`,
+  `CombiningNode`, `OBJEngineCore`, the Swift. **NOT compiled: not one line of the engine, the
+  Objective-C++ or the Swift. NOT run: `test_bridge_scope.swift`, the new assertions of
+  `test_cross_project_import.swift`, `scenario_sidechain.py`, `scenario_bridge_latency.py`, nor any
+  existing suite since the format moved to 19.** **Not seen, not heard**: the card's menu and glyph
+  (note: the plan asked for a LINE under the plugin's name, the card is one line high, so it is a
+  glyph with a tooltip), the three languages, and above all the SOUND — a real kick keying a real AU
+  compressor, with and without a look-ahead limiter on the kick; stop/start, loops, seeking.
+  **The checklist for the Mac, in order**: (1) `git submodule`: the engine must be the fork commit
+  `17215d464fb` with `engine-patches/3.5/0037-*.patch` applied (`git -C tracktion_engine am
+  ../engine-patches/3.5/0037-*.patch`, or fetch branch `objekat-bridge-0037` from this machine);
+  (2) a Debug build, **warnings against the 1550 baseline**; (3) `swiftc -parse-as-library
+  objekat/Shared/BridgeScope.swift tools/test_bridge_scope.swift -o /tmp/bs && /tmp/bs`, and
+  `tools/test_cross_project_import.swift` (its header has the compile line); the C++ test again
+  (`clang++ -std=c++17 -Wall -Wextra -Werror -I tracktion_engine/modules/tracktion_engine/plugins
+  tools/test_bridge_core.cpp -o /tmp/bc && /tmp/bc`); (4) `smoke.jsonl` and the non-regression suites
+  (`scenario_families`, `scenario_markers` — it pins format 19 now —, `scenario_plugin_state_undo`,
+  `scenario_plugin_selection`, `scenario_export_preview`, `scenario_fxlink`, `scenario_consolidate`,
+  `scenario_tabs`, `scenario_cross_paste`, `scenario_channel_mode`, `scenario_relink`) — no route
+  anywhere means one pass, no gate, identical graphs, so any change there is a bug of this branch;
+  (5) the probe `tools/probe_sidechain.py` on the sidechain plugins actually used (a `DISABLED`
+  verdict on one that matters inserts a layout step before the UI is trusted); (6)
+  `scenario_sidechain.py` then `scenario_bridge_latency.py`, each against its OWN fresh headless
+  instance (`--headless --api --no-audio --no-recent --language=en`), a Debug build; the first re-pass
+  with asserts on (latency case B/H) is the proof that discarding a pass is safe; case J prints
+  whether the renderer compensates absolute latency; (7) `debug.plugin_id_audit` and
+  `CGWindowListCopyWindowInfo` on the headless pid; (8) by hand: the menu, the glyph, a kick keying a
+  bass through a real AU, the CPU of the live graph on a real session with a few routes (rank tiers
+  reduce parallelism). Known holes, in the plan: Q4 (a MIDI child changing rank during playback may
+  leave a note stuck), Q6 (a muted GROUP or STEM still keys — the mute sits downstream of the tap),
+  Q7 (speed compensation silences keys with a delay), phase 2 (sends over the bridge) and phase 3
+  (bake with key sources) are not started.
 
 ### What is owed
 

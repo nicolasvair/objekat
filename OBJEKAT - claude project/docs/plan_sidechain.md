@@ -1,7 +1,9 @@
 # Plan — the audio bridge: sidechain, then sends across boundaries (branch `feature/sidechain`)
 
-Status: phase 0 WRITTEN (not compiled). Phase 1 steps 1.1–1.5 WRITTEN on 4 October (the pure core and its test
-— 65 assertions, run; the engine side as patch `0037`, applies cleanly onto `17215d464fb`, NOT compiled: no JUCE here).
+Status (4 October 2026): phase 0 and phase 1 steps 1.1–1.13 WRITTEN, on a machine with no macOS: the
+pure core and its test RUN (65 assertions), the case table runs against its Python mirror (27 checks), the
+engine side is patch `0037` (applies cleanly onto `17215d464fb`), and everything else is read, never built. The
+Mac's ordered checklist is in `CLAUDE.md` ("Sidechain for AU/VST3 plugins"). Reviews: §8, §8b.
 Phases 1–3 are SPECIFIED below, down to the step an executor
 codes without taking a design decision. Written 4 October 2026 against a REAL checkout of the engine
 (`tracktion_engine/` at fork commit `17215d464fb`, JUCE `37c894f83d3` not checked out) and of the app.

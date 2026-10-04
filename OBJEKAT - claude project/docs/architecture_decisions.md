@@ -584,6 +584,51 @@ projects", which keeps only ten.
 
 ---
 
+## The audio bridge: a sidechain across containers (October 2026)
+
+*Branch `feature/sidechain`, engine patch `0037`. The plan, with every number and every ruling, is
+`plan_sidechain.md`; this is the decision and its reasons.*
+
+**The problem.** A plugin's sidechain input keyed by another object or stem, across stems and groups.
+Tracktion's native sidechain cannot do it here: its sources are tracks (ours are scheduling
+compartments with no plugins), and it travels through `SendNode`/`ReturnNode` EDGES — which a
+`ContainerClipNode`, a closed local graph with its own player, lets neither in nor out.
+
+**Decision: carry the key in a buffer that outlives the graph, not along an edge.**
+- A TAP (an engine-only plugin the builder replaces by a node) records the end of the source's chain —
+  post-fader, post-window, so the key is what is HEARD of the source — into a ring indexed by STREAM
+  sample, the one clock every graph shares, containers' local players included. The ring is the delay
+  line. It lives on the tap PLUGIN so it survives rebuilds. The tap is never a model plugin: the
+  model never sees it, so the plugin-id uniqueness rule is not concerned.
+- A READER replaces the `ReturnNode` at the plugin's sidechain input, reads `D` samples back and
+  DECLARES a latency `X`. A source naming a track keeps the native path.
+- ORDER by ranks, not by edges to taps (a tap lives inside a `TimedNode`: the trap that killed
+  `LatencyMaskingNode`): each unit — a top-level object, an aux, a stem's bus, a container's child —
+  gets the longest key-path below it (key = 1, data = 0); a `CombiningNode` per rank carries it, and a
+  gate makes a unit of rank r wait for every ranked node of a lower rank. Pool tracks become
+  `(stem, lane, rank)`, bounded by stems × lanes × ranks — never by the number of objects.
+- LATENCY both ways, from the declared latencies of the graph (the node is the source of truth, patch
+  `0023`): `X = max(L_d, L_s)`, `D = X − L_s`. Because `X` must be known when the reader is built and
+  the tap's age only once the tap is, each tap caches the age of the previous build, the end of the
+  pass checks the true ages, and `createNodeForEdit` builds again when a reader is late or
+  over-declared (≤ 8 passes; none in steady state; a render converges inside its own call).
+
+**The model stays the authority.** The key is `ObjectPlugin.sidechain` (format 19), compared and
+patched on undo like a plugin's state; everything derived — validity, ranks, taps — comes from
+`BridgeScope.plan` at every sync and is never stored or snapshotted. The engine's marks on a plugin
+are stripped from the state the model keeps.
+
+**The rules are one pure unit** (`Shared/BridgeScope.swift` + a JSON case table read by a Swift and a
+Python test), because the user has not yet confirmed them: scope (all but ancestors, aux, Main), cycles
+per scheduling unit, key edges the data order already implies are not laid, a deleted source keeps its
+key, inactive.
+
+**Not decided here, left open in the plan**: a muted group or stem still keys (Q6), keys with a delay go
+silent under speed compensation (Q7), sends across boundaries (phase 2) and bakes with key sources
+(phase 3) are the same bridge, not started.
+
+---
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
