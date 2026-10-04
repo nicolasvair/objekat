@@ -20,6 +20,9 @@ belongs to the object — its own plugins, gain and pan, fades, window and speed
 group) — and NOTHING around it: no parent group's chain, no master, no aux or sends. The retouched
 file laid back at the same start is therefore iso with the object as it sounded alone (same level,
 same position), and the new clip has no plugin, gain or fade of its own to apply them a second time.
+The render keeps the sample rate of the original's source file (for a group: the files below it; if they
+disagree, a small panel asks which one — Cancel stops everything before any render); BIT_DEPTH stays 24,
+and SAMPLE_RATE (48 kHz) is only the fallback for an object with no audio file (MIDI).
 The object is put in direct solo for the render (so a mute or another solo cannot silence it), then
 the previous solo is restored.
 """
@@ -27,6 +30,7 @@ the previous solo is restored.
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 
@@ -37,7 +41,7 @@ HERE = os.environ.get("OBJEKAT_PLUGIN_DIR") or os.path.dirname(os.path.abspath(_
 LANG = (os.environ.get("OBJEKAT_LANGUAGE") or "en")[:2]
 LANG = LANG if LANG in ("fr", "en", "es") else "en"
 CONFIG = os.path.join(HERE, "config.json")
-SAMPLE_RATE = 48000
+SAMPLE_RATE = 48000  # fallback only: used when the object has no audio file to read a rate from (MIDI…)
 BIT_DEPTH = 24
 
 
@@ -170,7 +174,86 @@ def unique_path(folder, stem, suffix):
     return path
 
 
-def render_object(app, obj, out_path):
+def file_sample_rate(path):
+    """The sample rate of an audio file, or None. WAV/RF64 header read by hand (stdlib `wave` refuses
+    extensible and float formats); anything else (AIFF, FLAC, MP3, CAF…) through macOS `afinfo`."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) in (b"RIFF", b"RF64"):
+                f.read(4)
+                if f.read(4) == b"WAVE":
+                    while True:
+                        head = f.read(8)
+                        if len(head) < 8:
+                            break
+                        chunk_id, size = head[:4], struct.unpack("<I", head[4:])[0]
+                        if chunk_id == b"fmt ":
+                            fmt = f.read(8)
+                            if len(fmt) == 8:
+                                return struct.unpack("<I", fmt[4:8])[0] or None
+                            break
+                        f.seek(size + (size & 1), 1)
+    except OSError:
+        return None
+    try:
+        out = subprocess.run(["afinfo", path], capture_output=True, text=True).stdout
+        m = re.search(r"(\d+(?:\.\d+)?)\s*Hz", out)
+        return int(round(float(m.group(1)))) if m else None
+    except OSError:
+        return None
+
+
+def source_sample_rates(app, obj):
+    """{rate: number of audio files read at that rate} for the object: its own file, or, for a group,
+    the files of every clip below it. Empty when there is no readable audio file (MIDI…)."""
+    objects = app.send("object.list").get("objects", [])
+    below = {obj["id"]}
+    grew = True
+    while grew:  # the descendants, whatever the depth
+        grew = False
+        for o in objects:
+            if o.get("parent") in below and o["id"] not in below:
+                below.add(o["id"])
+                grew = True
+    rates = {}
+    for o in objects:
+        if o["id"] in below and o.get("kind") == "clip" and o.get("file"):
+            rate = file_sample_rate(o["file"])
+            if rate:
+                rates[rate] = rates.get(rate, 0) + 1
+    return rates
+
+
+def choose_rate(app, rates):
+    """The object's sources do not agree on a rate: ask. Returns the chosen rate, or None if cancelled."""
+    ordered = sorted(rates, key=lambda r: (-rates[r], r))  # the most used first = the default
+    panel = app.send("script.panel.open", {
+        "title": tr("Retouche externe", "External edit", "Edición externa"),
+        "controls": [{"id": "rate", "kind": "choice",
+                      "label": tr("Fréquence d'échantillonnage", "Sample rate", "Frecuencia de muestreo"),
+                      "value": str(ordered[0]),
+                      "options": [{"id": str(r), "label": "%d Hz  (%d)" % (r, rates[r])} for r in ordered]}],
+        "status": tr("Les fichiers de ce groupe n'ont pas tous la même fréquence : laquelle utiliser pour la retouche ?",
+                     "The files in this group do not share one sample rate: which one for the edit?",
+                     "Los archivos de este grupo no comparten frecuencia: ¿cuál usar para el retoque?"),
+    })
+    pid, rev = panel["panel_id"], panel.get("rev", 0)
+    try:
+        while True:
+            state = app.send("script.panel.wait", {"panel_id": pid, "since_rev": rev, "timeout_ms": 2000})
+            rev = state.get("rev", rev)
+            if state.get("state") == "validated":
+                return int((state.get("values") or {}).get("rate") or ordered[0])
+            if state.get("state") in ("cancelled", "closed"):
+                return None
+    finally:
+        try:
+            app.send("script.panel.close", {"panel_id": pid})
+        except Exception:
+            pass
+
+
+def render_object(app, obj, out_path, sample_rate):
     """Renders `obj` ALONE (the object and what belongs to it, nothing of its surroundings — a direct
     solo only guarantees it is audible, restored afterwards) over its own span into out_path."""
     before = app.send("solo.get")
@@ -180,7 +263,7 @@ def render_object(app, obj, out_path):
     try:
         job = app.send("object.render_isolated", {
             "id": obj["id"], "path": out_path,
-            "sample_rate": SAMPLE_RATE, "bit_depth": BIT_DEPTH,
+            "sample_rate": sample_rate, "bit_depth": BIT_DEPTH,
             "start": obj["start"], "end": obj["start"] + obj["duration"],
         })
         while True:
@@ -265,11 +348,21 @@ def run():
     if not obj.get("duration", 0) > 0:
         raise Failure(tr("Objet vide.", "Empty object.", "Objeto vacío."))
 
+    # The rate of the original's source file(s) — the file sent to the editor and the one that comes
+    # back keep it. A group whose files disagree: the user decides (nothing is rendered if cancelled).
+    rates = source_sample_rates(app, obj)
+    if len(rates) > 1:
+        sample_rate = choose_rate(app, rates)
+        if sample_rate is None:
+            return 0
+    else:
+        sample_rate = next(iter(rates), SAMPLE_RATE)
+
     name = obj.get("name") or "object"
     stem = safe_name(name)
     folder = work_folder(app)
     out_path = unique_path(folder, stem, " (retouche)")
-    render_object(app, obj, out_path)
+    render_object(app, obj, out_path, sample_rate)
 
     before = os.stat(out_path).st_mtime_ns
     open_in_editor(editor, out_path)
