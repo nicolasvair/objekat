@@ -287,8 +287,8 @@ def render_object(app, obj, out_path, sample_rate):
 
 
 def next_free_lane(app):
-    objects = app.send("object.list").get("objects", [])
-    return max([o.get("display_lane", 0) for o in objects] + [-1]) + 1
+    roots = [o for o in app.send("object.list").get("objects", []) if not o.get("parent")]
+    return max([o.get("display_lane", 0) + o.get("expanded_span", 0) for o in roots] + [-1]) + 1
 
 
 # --- waiting for the user --------------------------------------------------------------------

@@ -2124,7 +2124,9 @@ A few points of vocabulary that save mistakes:
 
 - **A time selection's lanes are DISPLAY lanes.** An open group shifts everything
   below it. `object.list` returns `display_lane` beside `lane` — the first is the one to
-  aim at.
+  aim at. `object.list` / `object.get` also carry `expanded_span` (read-only int): the number
+  of display lanes the object occupies once unfolded (an open group or piano-roll takes more than
+  one). The first free lane under a root object is `display_lane + expanded_span`.
 - **An FX chain host is indifferently an object or a stem.** "A reverb on the Voice
   stem" and "on this clip" are the same gesture, with the same host identifier.
 - **A send can be laid out of scope**: the model keeps it, silent, until a

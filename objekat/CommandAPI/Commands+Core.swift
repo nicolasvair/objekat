@@ -1036,6 +1036,7 @@ enum CommandAdapters {
             "name": .string(item.displayName),
             "lane": .int(item.lane),
             "display_lane": .int(entry.displayLane),
+            "expanded_span": .int(item.expandedSpan),
             "depth": .int(entry.depth),
             "start": .number(entry.absStart),
             "duration": .number(item.duration),
