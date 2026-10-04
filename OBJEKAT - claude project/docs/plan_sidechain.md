@@ -1188,16 +1188,60 @@ Not scriptable — say it was not done until a person does it:
 
 ---
 
-## 8. Risks and open questions
+## 8. Review of steps 1.1–1.5 (4 October 2026)
+
+Read as a compiler would (nothing builds here): engine branch `objekat-bridge-0037` at `495323ed79a`,
+patch `0037` re-applied on `17215d464fb` in a scratch worktree with an empty diff against it;
+`tools/test_bridge_core.cpp` re-run, 65 assertions pass. No certain compile error found (overloads,
+unity-build order — `ObjBridgeNodes.h` after `TracktionEngineNode.h`/`CombiningNode.h`, before
+`EditNodeBuilder.cpp`; `tracktion_ObjBridge.cpp` after `EditNodeBuilder.cpp`, its anonymous-namespace
+names collide with nothing in that TU; `makeNode` returns `unique_ptr<Node>`; `float**` →
+`const float* const*` is a legal qualification conversion; `std::deque` of non-movable `Counters`
+only uses `emplace_back`). No allocation or lock in any `process`, `Ring::read`, `Ring::write`.
+
+Deviations, ruled: 1 accepted (it also covers a stream that restarts lower after a new playback
+context); 2–10 accepted. Fixes requested:
+- **R1 (before 1.6)** — rings are sized and swapped in `BridgeBuild::finalise` even on a pass that is
+  about to be DISCARDED (`tracktion_ObjBridge.cpp:156-180`): a discarded pass can replace the tap
+  plugin's ring (bumping `ringGeneration`, dropping the key history) only for the next pass to
+  replace it again. Move step 2 into `void BridgeBuild::allocateRings()` (same body), call it from
+  `buildWithBridgePasses` immediately before `build->publish()` (`tracktion_EditNodeBuilder.cpp`,
+  the `if (! anotherPassNeeded || …)` branch), and keep `finalise()` to step 1. `ringForTap` /
+  `readerPlan` are only read at `prepareToPlay`, which follows `publish`.
+- **R2 (before 1.6)** — a bridge reader with NO direct channel
+  (`if (! hasDirectChannels) return sidechainInput;`) would sit alone in a LINEAR `TimedNode` chain,
+  where every node shares one buffer and `ChannelRemappingNode`'s explicit mapping ADDS into its
+  destination (`tracktion_ChannelRemappingNode.cpp:118-139`) — the key would be summed into itself.
+  `guessSidechainRouting` always wires 0→0/1→… so the app never produces it; guard it anyway: in the
+  bridge branch of `createSidechainInputNodeForPlugin`, `if (! hasDirectChannels) { DBG ("[BRIDGE]
+  reader without a direct channel: refused"); return directInput; }` placed BEFORE `registerReader`.
+- Gate cost (open point): `visitNodes` per candidate is O(subgraph) and a stem tap's subgraph is its
+  whole stem, so a build pays O(gates × root nodes) — gates are few (ranked pool tracks + outer
+  readers) and `TimedNode` internals are not visited. Accepted; measure with `OBJ_GRAPH_PROFILE`
+  on the 1.12 scenarios.
+- Minor, left: the live-Edit render path writes the tap plugins' `cachedAge`/`ring` from the render's
+  build thread; I3 (the playback context is freed) makes it the only writer, and the app must not
+  sync the bridge during an export (the existing "do not modify the Edit during an export" rule).
+
+Verdict: proceed to 1.6 once R1 and R2 are committed (on `objekat-bridge-0037-steps`, then
+re-squashed and `0037` re-exported).
+
+## 9. Risks and open questions
 
 - **Q1 — AUs that refuse the sidechain bus** or expose it mono (3 channels) — phase 0 answers; mono
   is handled by the wires (`guessSidechainRouting`, 3 ins → 2,3 summed into 2).
 - **Q2 — a saved `IDs::layout` keeping the sidechain bus off** (`restoreChannelLayout`,
   `tracktion_ExternalPlugin.cpp:563-610`): the model's `stateXML` may carry such a layout from a
   session saved before the bus was wanted. Not settled from the code.
-- **Q3 — discarding a pass**: argued safe (§4.3), not proven. The first re-pass of
-  `scenario_bridge_latency.py` case B under a Debug build (asserts on) is the proof; watch
-  `LiveMidiInjectingNode` (it registers as a listener in its constructor, `tracktion_EditNodeBuilder.cpp:1955-1972`).
+- **Q3 — discarding a pass — SETTLED from the code (review of 1.1–1.5, 4 October).** Every node that
+  registers itself somewhere undoes it in its destructor: `LiveMidiInjectingNode` adds itself as a
+  track listener in its constructor and removes it in its destructor
+  (`tracktion_LiveMidiInjectingNode.cpp:15-27`), so the `hasRealListener` test of pass 2
+  (`tracktion_EditNodeBuilder.cpp:2055-2064` on the patched file) sees no ghost of pass 1; the input
+  device nodes register as consumers only in `prepareToPlay` and deregister in their destructors
+  (`tracktion_WaveInputDeviceNode.cpp:22-42`, `tracktion_MidiInputDeviceNode.cpp:23-62`,
+  `tracktion_HostedMidiInputDeviceNode.cpp:20-36`); `PluginNode` balances `baseClassInitialise`
+  (refcounted). What remains unproven is only the Debug run of case B (asserts on).
 - **Q4 — MIDI note-offs across a rank change inside a container**: per-rank combiners have derived
   ids, so a MIDI child moved to another rank during playback loses `queueNoteOffsForClipsNoLongerPresent`
   (`tracktion_CombiningNode.cpp:346-355, 447-478`) — possible stuck note. Rank 0 keeps the container's
