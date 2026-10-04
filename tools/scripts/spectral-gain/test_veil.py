@@ -130,6 +130,41 @@ class Render(unittest.TestCase):
         self.assertEqual(r_base // 2, r_veil)
 
 
+class TimeAlignment(unittest.TestCase):
+    """The veil and the audio sample the same continuous G(t), each at the CENTRE time of its cell
+    (a veil column's middle, an STFT frame's centre j H / sr), so what is drawn is what is heard."""
+
+    def test_veil_columns_sample_g_at_their_centre_time(self):
+        op = rect(0.9, 1.4, 200, 4000, gain=-18, fms=100, fst=3)
+        xw, yw = veil.veil_grid(WORLD)
+        g = mask.gain_grid([op], xw, yw, WORLD)
+        wc = 2.0 / len(xw)
+        for c in (0, 100, 180, 200, 240, 399):
+            self.assertAlmostEqual(float(xw[c]), (c + 0.5) * wc, delta=1e-12)
+            y = float(yw[250])
+            self.assertAlmostEqual(float(g[c, 250]), mask.gain_at_warped(float(xw[c]), y, [op], WORLD), delta=1e-9)
+
+    def test_veil_and_stft_mask_agree_on_where_a_sharp_edge_is(self):
+        sr, n, k = 48000, 2048, 4
+        h = 512
+        op = rect(1.0, 2.0, 100, 20000, gain=-12, fms=0, fst=0)
+        # audio side: the first STFT frame whose centre is at or after 1.0 s is the first attenuated one
+        fn = mask.stft_gain_block_fn([op], WORLD, sr, n, k)
+        m = fn(0, 200)
+        attenuated = [j for j in range(200) if m[j, 100] < 0.99]
+        self.assertEqual(attenuated[0], int(math.ceil(1.0 * sr / h)))
+        self.assertGreaterEqual(attenuated[0] * h / float(sr), 1.0)
+        self.assertLess((attenuated[0] - 1) * h / float(sr), 1.0)
+        # picture side: same rule at the cell centres
+        xw, yw = veil.veil_grid(WORLD)
+        g = mask.gain_grid([op], xw, yw, WORLD)
+        col = int(np.nonzero(g[:, 300] < -1.0)[0][0])
+        self.assertGreaterEqual(float(xw[col]), 1.0)
+        self.assertLess(float(xw[col - 1]), 1.0)
+        # the two sides never disagree about a time by more than half of the coarser cell
+        self.assertLessEqual(abs(float(xw[col]) - attenuated[0] * h / float(sr)), max(h / float(sr), 2.0 / 400))
+
+
 class Cache(unittest.TestCase):
     def _ops(self, n):
         out = []
