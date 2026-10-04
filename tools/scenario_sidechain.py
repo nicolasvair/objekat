@@ -24,7 +24,7 @@ NOT `--no-audio` (the bridge reads the device's clock); exits 2 if `app.info` sa
 A DEBUG build (it reads `debug.bridge_report`). Exit: 0 if everything passes, 1 otherwise.
 """
 
-import os, sys
+import os, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -44,6 +44,7 @@ OUT = lambda n: os.path.join(DIR, n)
 KICK, SINE = OUT("bursts.wav"), OUT("sine.wav")
 B.make_bursts(KICK)
 B.make_sine(SINE)
+SINE_HZ = 220.0
 BURSTS = [(1.0, 1.5), (2.5, 3.0)]
 QUIET = [(0.2, 0.8), (1.7, 2.3), (3.2, 3.8)]
 
@@ -60,9 +61,12 @@ def render(c, name, t0=0.0, t1=4.0):
 
 
 def duck_db(samples):
-    """How far under the quiet stretches the burst windows sit, in dB (negative = ducked)."""
-    inside = sum(B.rms(samples, a, b) for a, b in BURSTS) / len(BURSTS)
-    outside = sum(B.rms(samples, a, b) for a, b in QUIET) / len(QUIET)
+    """How far under the quiet stretches the host's 220 Hz sine sits inside the burst windows, in dB
+    (negative = ducked). Measured AT 220 Hz: an export mixes every stem, DETACHED ONES INCLUDED
+    (`stem.route_to_main false` does not silence it — see the report), so the 1 kHz bursts are
+    audible in the render and a broadband RMS would measure them, not the ducking."""
+    inside = sum(B.tone_rms(samples, a, b, SINE_HZ) for a, b in BURSTS) / len(BURSTS)
+    outside = sum(B.tone_rms(samples, a, b, SINE_HZ) for a, b in QUIET) / len(QUIET)
     return B.db(inside) - B.db(outside)
 
 
@@ -70,24 +74,44 @@ def add_compressor(c, host, strong=True):
     p = c.send("plugin.add", {"host": host, "identifier": "compressor", "format": "TracktionInternal"})
     pid = p["plugin"]["id"]
     if strong:
-        # threshold and ratio at their minimum: the harshest setting the plugin has, so that a key
-        # above the threshold squashes the sine (r *= (thresh + (level - thresh) * rat) / level).
-        params = c.send("plugin.get_params", {"plugin": pid})["params"]
-        for want in ("Threshold", "Ratio"):
-            for q in params:
-                if q["name"].lower().startswith(want.lower()):
-                    c.send("plugin.set_param", {"plugin": pid, "index": q["index"], "value": q["min"]})
+        # The ratio at its minimum (the harshest), the threshold BETWEEN the two signals: the sine
+        # (-12 dBFS, 0.25) must stay under it, or the compressor squashes its own input with no key
+        # at all (the first version put the threshold at its minimum: the baseline was ducked 24 dB);
+        # the bursts (-3 dBFS, 0.71) must be over it. The key's gain is raised so that the reduction
+        # is deep (r *= (thresh + (level - thresh) * rat) / level, level = key * gain).
+        want = {"Threshold": 0.4, "Sidechain gain": 12.0}
+        for q in c.send("plugin.get_params", {"plugin": pid})["params"]:
+            if q["name"] in want:
+                c.send("plugin.set_param", {"plugin": pid, "index": q["index"], "value": want[q["name"]]})
+            elif q["name"] == "Ratio":
+                c.send("plugin.set_param", {"plugin": pid, "index": q["index"], "value": q["min"]})
     return pid
 
 
+def flat(plugins):
+    """plugin.list answers FX blocks (an FX link, made by default on a copy or a split) holding their
+    plugins in `plugins`: the leaves, in order."""
+    for p in plugins:
+        if p.get("is_fx_block"):
+            yield from flat(p.get("plugins", []))
+        else:
+            yield p
+
+
 def sidechain_of(c, host, plugin):
-    for p in c.send("plugin.list", {"host": host})["plugins"]:
+    for p in flat(c.send("plugin.list", {"host": host})["plugins"]):
         if p["id"] == plugin:
             return p.get("sidechain")
     return "missing"
 
 
 def report(c):
+    """The newest published build. The LIVE graph only exists once the playback context is
+    allocated (a play, an export): play for a moment so that the build under test is the live one."""
+    c.send("transport.play", {})
+    time.sleep(0.8)
+    c.send("transport.stop")
+    wait(c)
     return c.send("debug.bridge_report")
 
 
@@ -244,14 +268,14 @@ with ObjekatClient(SOCK) as c:
         for copy_id in dup["ids"]:
             if copy_id == y:
                 continue
-            leaves = c.send("plugin.list", {"host": copy_id})["plugins"]
+            leaves = list(flat(c.send("plugin.list", {"host": copy_id})["plugins"]))
             keyed_copy = [p for p in leaves if p.get("sidechain")]
             check("a duplicate is keyed by the same source", keyed_copy and keyed_copy[0]["sidechain"]["source"] == x, leaves)
     halves = step("split y", lambda: c.send("object.split_at", {"ids": [y], "seconds": 2.0}))
     wait(c)
     if halves:
         for half in halves["ids"]:
-            leaves = c.send("plugin.list", {"host": half})["plugins"]
+            leaves = list(flat(c.send("plugin.list", {"host": half})["plugins"]))
             check("both halves of a split stay keyed", any(p.get("sidechain") for p in leaves), leaves)
 
     # ---- the source goes, the key stays (inactive), and comes back with the undo

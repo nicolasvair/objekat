@@ -68,6 +68,18 @@ def rms(samples, t0, t1):
     return math.sqrt(sum(v * v for v in seg) / len(seg)) if seg else 0.0
 
 
+def tone_rms(samples, t0, t1, hz):
+    """RMS of the component of the segment at `hz` (a single-bin correlation, in-phase and quadrature)."""
+    a, b = int(t0 * SR), int(t1 * SR)
+    seg = samples[a:b]
+    if not seg:
+        return 0.0
+    w = 2.0 * math.pi * hz / SR
+    re = sum(v * math.cos(w * (a + i)) for i, v in enumerate(seg))
+    im = sum(v * math.sin(w * (a + i)) for i, v in enumerate(seg))
+    return math.sqrt(2.0) * math.hypot(re, im) / len(seg)
+
+
 def db(x):
     return 20.0 * math.log10(max(x, 1e-12))
 

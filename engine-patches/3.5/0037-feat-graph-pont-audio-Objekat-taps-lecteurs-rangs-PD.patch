@@ -1,4 +1,4 @@
-From b2a2c0c4674ba39c1fd85378a42411e231eaa515 Mon Sep 17 00:00:00 2001
+From 1508f752f625d0d1d1ac97ce37612c92f2010e8c Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 4 Oct 2026 21:29:14 +0000
 Subject: [PATCH] =?UTF-8?q?feat(graph):=20pont=20audio=20Objekat=20?=
@@ -40,10 +40,14 @@ latence déclarée du clip monte et la PDC aval s'aligne).
 Aucun comportement ne change sans route : pas de tap, pas de lecteur, une passe,
 pas de porte, un seul combiner par container.
 
+Correctif de mise en route sur Mac : les buffers fournis par un CombiningNode sont
+dimensionnés sur le plus large des nœuds INTERNES de chaque chaîne (un plugin à sidechain
+traite principal + clé = 4 canaux, rogné à 2 en tête), pas seulement sur sa sortie.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_016GeuE4c2SAP154iDoxKr2m
 ---
- .../graph/tracktion_CombiningNode.cpp         |   8 +-
+ .../graph/tracktion_CombiningNode.cpp         |  31 +-
  .../playback/graph/tracktion_CombiningNode.h  |  22 +-
  .../graph/tracktion_EditNodeBuilder.cpp       | 218 +++++++++++-
  .../graph/tracktion_EditNodeBuilder.h         |   2 +
@@ -54,7 +58,7 @@ Claude-Session: https://claude.ai/code/session_016GeuE4c2SAP154iDoxKr2m
  .../plugins/tracktion_ObjBridgeCore.h         | 326 ++++++++++++++++++
  modules/tracktion_engine/tracktion_engine.h   |   1 +
  .../tracktion_engine_playback.cpp             |   3 +
- 11 files changed, 1478 insertions(+), 14 deletions(-)
+ 11 files changed, 1500 insertions(+), 15 deletions(-)
  create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
  create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
  create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
@@ -62,10 +66,31 @@ Claude-Session: https://claude.ai/code/session_016GeuE4c2SAP154iDoxKr2m
  create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
 
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
-index ceb8d2e..a661c2c 100644
+index ceb8d2e757d..12fe6f08eed 100644
 --- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
 +++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
-@@ -322,6 +322,11 @@ std::vector<Node*> CombiningNode::getInternalNodes()
+@@ -61,6 +61,20 @@ struct CombiningNode::TimedNode
+         return nodesToProcess;
+     }
+ 
++    // Patch local Objekat (pont audio) — la largeur la plus grande qu'un nœud INTERNE réclame. Elle
++    // peut dépasser celle du nœud de tête : un plugin à sidechain traite un buffer principal + clé
++    // (4 canaux), et un ChannelRemappingNode en tête le rogne à 2. Les buffers fournis ci-dessous
++    // doivent couvrir ce nœud-là, pas seulement la sortie de la chaîne.
++    int getMaxInternalChannels() const
++    {
++        int widest = 0;
++
++        for (auto n : nodesToProcess)
++            widest = std::max (widest, n->getNodeProperties().numberOfChannels);
++
++        return widest;
++    }
++
+     void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info,
+                         choc::buffer::ChannelArrayView<float> view)
+     {
+@@ -322,6 +336,11 @@ std::vector<Node*> CombiningNode::getInternalNodes()
  
  std::vector<tracktion::graph::Node*> CombiningNode::getDirectInputNodes()
  {
@@ -77,7 +102,23 @@ index ceb8d2e..a661c2c 100644
      return {};
  }
  
-@@ -357,7 +362,8 @@ void CombiningNode::prepareToPlay (const tracktion::graph::PlaybackInitialisatio
+@@ -333,7 +352,14 @@ tracktion::graph::NodeProperties CombiningNode::getNodeProperties()
+ void CombiningNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+ {
+     isReadyToProcessBlock.store (true, std::memory_order_release);
+-    tempAudioBuffer.resize (choc::buffer::Size::create ((choc::buffer::ChannelCount) nodeProperties.numberOfChannels,
++    // Patch local Objekat (pont audio) — wide enough for the widest INTERNAL node of any chain,
++    // not only for the chains' outputs (@see TimedNode::getMaxInternalChannels).
++    int bufferChannels = nodeProperties.numberOfChannels;
++
++    for (auto& i : inputs)
++        bufferChannels = std::max (bufferChannels, i->getMaxInternalChannels());
++
++    tempAudioBuffer.resize (choc::buffer::Size::create ((choc::buffer::ChannelCount) bufferChannels,
+                                                         (choc::buffer::FrameCount) info.blockSize));
+ 
+     for (auto& i : inputs)
+@@ -357,7 +383,8 @@ void CombiningNode::prepareToPlay (const tracktion::graph::PlaybackInitialisatio
  
  bool CombiningNode::isReadyToProcess()
  {
@@ -88,7 +129,7 @@ index ceb8d2e..a661c2c 100644
  
  void CombiningNode::prefetchBlock (juce::Range<int64_t> referenceSampleRange)
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
-index 085bfe2..8f80029 100644
+index 085bfe2ec67..8f8002966e2 100644
 --- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
 +++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
 @@ -19,7 +19,8 @@ namespace tracktion::inline engine {
@@ -135,7 +176,7 @@ index 085bfe2..8f80029 100644
      void queueNoteOffsForClipsNoLongerPresent (const CombiningNode&);
  
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
-index 4fc6fe8..b0ebc69 100644
+index 4fc6fe8f22d..b0ebc69e123 100644
 --- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
 +++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
 @@ -998,6 +998,26 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
@@ -445,7 +486,7 @@ index 4fc6fe8..b0ebc69 100644
                                                                     const CreateNodeParams& params,
                                                                     std::unique_ptr<tracktion::graph::Node> output)
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
-index ebd27f6..464991b 100644
+index ebd27f6045a..464991be83e 100644
 --- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
 +++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
 @@ -45,6 +45,8 @@ struct CreateNodeParams
@@ -459,7 +500,7 @@ index ebd27f6..464991b 100644
  //==============================================================================
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
 new file mode 100644
-index 0000000..cc2e446
+index 00000000000..cc2e44695b9
 --- /dev/null
 +++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
 @@ -0,0 +1,266 @@
@@ -731,7 +772,7 @@ index 0000000..cc2e446
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
 new file mode 100644
-index 0000000..53075ee
+index 00000000000..53075ee360d
 --- /dev/null
 +++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
 @@ -0,0 +1,110 @@
@@ -847,7 +888,7 @@ index 0000000..53075ee
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
 new file mode 100644
-index 0000000..29fdfea
+index 00000000000..29fdfea15cc
 --- /dev/null
 +++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
 @@ -0,0 +1,308 @@
@@ -1161,7 +1202,7 @@ index 0000000..29fdfea
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
 new file mode 100644
-index 0000000..ff0981d
+index 00000000000..ff0981d2ba5
 --- /dev/null
 +++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
 @@ -0,0 +1,228 @@
@@ -1395,7 +1436,7 @@ index 0000000..ff0981d
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
 new file mode 100644
-index 0000000..a4df75f
+index 00000000000..a4df75f514d
 --- /dev/null
 +++ b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
 @@ -0,0 +1,326 @@
@@ -1726,7 +1767,7 @@ index 0000000..a4df75f
 +
 +}}} // namespace tracktion::engine::objbridge
 diff --git a/modules/tracktion_engine/tracktion_engine.h b/modules/tracktion_engine/tracktion_engine.h
-index eda4ac0..dcced26 100644
+index eda4ac01e74..dcced26d8e4 100644
 --- a/modules/tracktion_engine/tracktion_engine.h
 +++ b/modules/tracktion_engine/tracktion_engine.h
 @@ -516,6 +516,7 @@ namespace tracktion::inline engine
@@ -1738,7 +1779,7 @@ index eda4ac0..dcced26 100644
  #include "utilities/tracktion_ParameterHelpers.h"
  
 diff --git a/modules/tracktion_engine/tracktion_engine_playback.cpp b/modules/tracktion_engine/tracktion_engine_playback.cpp
-index 334da32..fc87c1e 100644
+index 334da329902..fc87c1ef79a 100644
 --- a/modules/tracktion_engine/tracktion_engine_playback.cpp
 +++ b/modules/tracktion_engine/tracktion_engine_playback.cpp
 @@ -184,6 +184,7 @@ using namespace std::literals;
@@ -1766,5 +1807,5 @@ index 334da32..fc87c1e 100644
  
  #include "playback/graph/tracktion_NodeRenderContext.h"
 -- 
-2.43.0
+2.50.1 (Apple Git-155)
 
