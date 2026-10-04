@@ -1,6 +1,6 @@
 # Spectral editor — functional spec (DRAFT, to be confirmed)
 
-Status: draft of 4 October 2026, written with the user before any code. Decisions already taken
+Status: draft of 4 October 2026, revised the same day after the user's review, written with the user before any code. Decisions already taken
 are marked **[decided]**; defaults I proposed and that still need a yes are marked **[proposed]**.
 
 ## 1. What it is
@@ -27,7 +27,12 @@ It is made of TWO deliverables, and the split is the point **[decided]**:
    fades, window, speed; a group's content; not the parent's chain, the master, sends). **[decided]**
 3. The script computes the STFT and opens the canvas window with the spectrogram.
 4. The hand edits; every step is an undo/redo step; the ear compares (§5).
-5. **Validate**: the result is written as a 24-bit wav, laid on a new row at the same instant (inside
+5. **Validate**: the result is written as a wav at the **same sample rate and bit depth as the
+   edited object's source file** **[decided]** (the render itself is made at that rate and depth;
+   a non-PCM source — mp3, aac — falls back to 24-bit; a group whose files differ asks which rate,
+   as `retouche-externe` does). **Channels follow the RENDER** **[decided]**: a render whose two
+   channels are identical sample for sample is written mono, otherwise stereo — so a mono source
+   panned or through a stereo plugin comes back stereo. The file is laid on a new row at the same instant (inside
    the same group if any), named "<name> (spectral)", and the original is **muted**, not deleted —
    `retouche-externe`'s exact return path. **Cancel** leaves the session untouched. **[decided]**
 
@@ -41,8 +46,7 @@ refuses above a hard ceiling **[proposed: warn above 2 min, refuse above 10 min]
 A floating, resizable window (same family as the script panel window), **[decided]**:
 
 - **Main area**: the spectrogram, time horizontally, frequency vertically.
-  - Frequency axis **logarithmic** by default **[proposed]**, with a lin/log toggle **[proposed]**
-    (the image is re-sent by the script on toggle, or the app remaps — architect to decide).
+  - Frequency axis **logarithmic**, no linear mode **[decided]**.
   - Rulers: time (s / min:s) and frequency (Hz / kHz); a readout of time, frequency and level
     under the pointer **[proposed]**.
   - Zoom and pan on both axes (wheel / trackpad, ⇧ for zoom as in the timeline **[proposed]**).
@@ -64,14 +68,14 @@ both channels, the display shows the channels combined **[decided; proposed: max
 - Drag a box over time × frequency → one operation.
 - Parameters, taken from the side bar at the moment of the gesture: **gain** (dB, range
   −∞ … +12 dB **[proposed]**, default −12 dB **[proposed]**), **feather in time** (ms) and
-  **feather in frequency** (in semitones/octaves on a log axis **[proposed]**) — a soft edge, so a
+  **feather in frequency** (in semitones **[proposed]**) — a soft edge, so a
   box does not ring.
 - Cumulative like everything else: two overlapping boxes at −6 dB give −12 dB where they overlap.
 
 ### Eraser (cumulative) **[decided]**
 An eraser rather than a brush: it exists to take away.
 - A stroke = one operation (one undo step).
-- Parameters: **size** (diameter, in screen pixels at the time of the stroke **[proposed]** —
+- Parameters, all three adjustable by the hand in the side bar **[decided]**: **size** (diameter, in screen pixels at the time of the stroke **[proposed]** —
   stored in time × frequency units so it does not change meaning when zooming), **attenuation per
   pass** (dB, default −3 dB **[proposed]**), **hardness** (the feather of the brush tip).
 - **Cumulative**: passing again over the same place in a NEW stroke attenuates further
@@ -81,8 +85,8 @@ An eraser rather than a brush: it exists to take away.
   already been.
 
 ### Not in v1
-Lasso / free shapes, magic wand, harmonic selection, editing an existing operation's parameters
-after the fact (the history is undo/redo only) **[proposed]**.
+Lasso / free shapes, magic wand, harmonic selection **[proposed]**; editing an existing operation's
+parameters after the fact — the history is undo/redo only **[decided]**.
 
 ## 5. Listening **[decided]**
 
@@ -101,13 +105,22 @@ Every operation is a step; ⌘Z / ⇧⌘Z inside the window walk the history, an
 so one can compare step by step. This is the window's OWN history: nothing reaches the project's
 undo stack until Validate (which is ONE project undo step, as in `retouche-externe`).
 
-## 7. DSP defaults **[proposed]**
+## 7. DSP
 
-- STFT: Hann window, size 2048, hop 512 (75 % overlap) at the render's rate; weighted
-  overlap-add so that an empty history gives back the input bit for bit (to −120 dB).
-- Display: magnitude in dB, range −100 … 0 dBFS, a perceptual colormap (e.g. magma).
+- Defaults **[proposed]**: Hann window, FFT size 2048, overlap 4 (hop = N/4), at the render's rate;
+  weighted overlap-add (normalised by Σ window²) so that an empty history gives back the input to
+  −120 dB, whatever the overlap.
+- **Expert settings** (behind the side bar's Expert button) **[decided]**:
+  - **FFT size**: 1024 / 2048 / 4096 / 8192 / 16384 / 32768.
+  - **Overlap factor**: an integer 2 … 10 — `k` = k FFTs of size N overlapping, each shifted by
+    N/k (2 = two FFTs shifted by N/2). The hop is `round(N/k)`; the normalisation above keeps the
+    reconstruction exact for every k.
+  - **Window**: Hann only for now **[decided]** (the setting is kept in the model so other windows
+    can be added later, but no choice is shown).
+  - Changing any of them recomputes the display and the preview; the operations already made are
+    KEPT, since they are stored in seconds and Hz, not in bins.
+- Display: magnitude in dB, range −100 … 0 dBFS, a perceptual colormap (magma) **[proposed]**.
 - Mask smoothing: feather applied in the mask domain, before the ISTFT.
-- FFT size exposed as an advanced choice (1024 / 2048 / 4096)? **[question]**
 
 ## 8. Generic surface — what the app must offer any script
 
