@@ -1328,6 +1328,91 @@ includes rank 0: accepted (report only; the sync takes stem ranks from `taps` an
 
 Verdict: fix E1–E4 (and S1–S5, small), then proceed to 1.10–1.13.
 
+## 8c. Final review — E1–E4, S1–S5 and steps 1.10–1.13 (4 October 2026)
+
+Reviewed `fbc1fc6`, `dae4ae8`, `f120d91`, `7790960`, `a19ebed`, `cc5458c`, `7d2f468`, read as a
+compiler would (nothing built). `tools/i18n/xcstrings.py check`: 580 keys, nothing missing.
+
+**The earlier fixes are in, as asked.** E1 (`pluginKeyFor` takes `itemID`); E2 (a loaded plugin that
+cannot sidechain is cleared, in `setSidechainForPlugin:` and in the pending-wires tick); S2 (source id
+through `target.toVar()`, wires through `objLayBridgeWires` with `makeConnection (…, nullptr)`, the
+compressor's trigger through the tree — nothing reaches Tracktion's UndoManager); E3 (`World` builds
+`childrenByParent` once; `candidates` lays the base routes ONCE through `accepted(world:routes:)` and
+asks one static check + one `reaches` per node, `among:` restricts them); S1 (a key edge the data graph
+already implies is accepted without being laid); E4 (the topology comparison only skips `plan`, the
+engine is re-pushed every sync, idempotently); S3, S4, S5 as asked. The API's error mapping, the
+`JSONValue` shapes, `requirePlugin`'s `@discardableResult`, `AvailablePlugin`'s memberwise init and the
+`DEBUG` fence (`Commands+Plugins.swift:573…807`) are right. The menu uses `L()` strings, `Label(String,
+…)`, `Text(verbatim:)` and `.help(String)` — no literal can become a catalogue key. The scenarios
+launch with `--no-recent`, re-read the exports in 24 bits, check the headless pid has no window.
+
+### Must fix before the Mac run
+
+- **F1 — compile error.** `7790960` replaced `p.optionalString(…)` by `p.stringOrNull(…)` at
+  `CommandAPI/Commands+Helpers.swift:190, 191, 201` and `CommandAPI/Commands+Plugins.swift:24`.
+  `CommandParams` has no `stringOrNull` (only `JSONValue.stringOrNull`, a static constructor;
+  `CommandRegistry.swift:135` defines `optionalString`). Restore `p.optionalString` at the four sites.
+- **F2 — a false failure in case C.** `scenario_bridge_latency.py:129` asserts
+  `declared == expect_declared and source_age == expect_declared`; in case C (`:178`) the declared
+  latency is 1440 and the source's age 960, so the case fails while the engine is right. Add
+  `expect_source_age=None` to `run_case` (`:83`), assert each separately, and call C with
+  `expect_declared=1440, expect_source_age=960, expect_delay=480`; the other cases pass both equal.
+- **F3 — a flaky assertion in case H.** `:210` asserts that the build read AFTER `wait_idle` took two
+  passes. A latency change is followed by up to two rebuilds (Tracktion's own on the property change,
+  then `checkLatencyAndRebuild`'s, ≤ 370 ms apart), and only the FIRST needs two passes — the build
+  read after the wait may be the second, warm one (`passes == 1`). Print the observed pass counts
+  instead of asserting them; keep `:211` (declared == source age == 1920) and the impulse alignment,
+  which are the proof.
+- **F4 — the live graph may not exist under `--no-audio`.** Every `debug.bridge_report` assertion reads
+  the LIVE playback graph (`BridgeBuild::latestFor (live edit)`); with zero output devices
+  `createNodeForEdit` builds no track at all (tracks are only built for an enabled output device,
+  `tracktion_EditNodeBuilder.cpp` playback overload) — inferred, and CLAUDE.md records that
+  `--no-audio` does not reliably keep the device closed, so the outcome would even vary by machine.
+  The exports are unaffected (a render builds its own graph). Drop `--no-audio` from both launch lines
+  (`scenario_bridge_latency.py:19`, `scenario_sidechain.py:18`: still `--headless`, no window) and,
+  first thing in both scripts, read `app.info` and exit 2 with a one-line explanation if
+  `audio_running` is false.
+
+### Should fix
+
+- `Commands+Plugins.swift:81, 113` say "Leaf plugin or instrument", but `requirePlugin` only searches the
+  chain (`flattenLeaves (chainPlugins)`): an instrument answers `not_found`. Say "Leaf plugin of the
+  host's chain (instruments: not yet)" here and in `command_api.md`, consistent with the card menu.
+- To measure on the Mac, not fixed blind: if SwiftUI builds `.contextMenu` content with the card's body
+  (it may on macOS), `sidechainMenuModel` (an `items` walk + `candidates`) runs per card per body
+  evaluation. If the signal view stutters on a large session, compute the model only for the card
+  under the right click (or cache it per `bridgeLastTopology` + selection).
+
+### Do the scenarios PROVE it?
+
+- **Ducking — yes.** The compressor at its harshest, a key in a stem routed away from the Main (so it
+  is used and never heard): ≤ −6 dB in the burst windows against the quiet ones; within 0.5 dB with the
+  key cleared AND with the source muted (D1); a stem as source; across groups and stems at t = 100 s
+  with the rest muted. The baseline (no key) also sits within 0.5 dB, because the compressor then
+  detects on the sine itself and squashes uniformly — the measure compares windows, not levels.
+- **Sample alignment, both directions — yes, once F2 is fixed.** The probe's left output is the
+  host's DIRECT input and its right output the KEY, both taken at the plugin's input, then carried by
+  the same downstream path: equal peak indices mean the two buses met on the same sample. Case B
+  (key older: the bridge must delay the direct path) and case C (key younger: the reader must read the
+  ring back) cover the two directions; D, E/E2, F, G cover stems, groups (two levels), a stem source
+  and a reader on a bus (the outer-graph gate); I the silent key; J decides whether absolute indices
+  are asserted. What no case covers: a key whose source is ITSELF keyed (rank 2 and a re-pass per rank)
+  — add it in phase 2 or when a Mac run is cheap.
+
+### Deviations of 1.10–1.13, ruled
+- The key as a glyph + tooltip in the card's name row (card height unchanged): accepted; D6 is met.
+- No card menu for instruments yet: accepted (and see the API text above).
+- `set_sidechain` refusals as `bad_params` + `details.reason`: accepted.
+- `SidechainBadge` / `SidechainMenuModel` living in `EditViewModel+Bridge.swift`: accepted.
+- Case B's warm-cache assertion only when a rebuild is observed: accepted as informative; it proves
+  nothing either way and should say so in its output.
+
+Verdict: fix F1–F4 (four small edits), then it is ready for the user's Mac test, in this order:
+Debug build against the 1550-warning baseline; the standalone tests (`test_bridge_core.cpp`,
+`test_bridge_scope.swift`, `test_cross_project_import.swift`); phase 0's probe on the real AUs;
+`scenario_sidechain.py` and `scenario_bridge_latency.py`; the non-regression list of step 1.4; then the
+ear and the eye (§7).
+
 ## 9. Risks and open questions
 
 - **Q1 — AUs that refuse the sidechain bus** or expose it mono (3 channels) — phase 0 answers; mono
