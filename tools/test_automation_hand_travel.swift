@@ -43,6 +43,20 @@ enum AutomationHandTravelTest {
     check("slope 1 past the knee", near(f(34) - f(30), 4))
     check("monotonic", (0..<200).allSatisfy { f(Double($0)) <= f(Double($0) + 1) })
 
+    // The wheel over a line (precise deltas): steps read off the gesture's TOTAL travel.
+    typealias H = AutomationHandTravel
+    func w(_ t: Double) -> Int { H.wheelSteps(travel: t) }
+    check("wheel: nothing under the first threshold", w(0) == 0 && w(0.9) == 0 && w(-0.9) == 0)
+    check("wheel: first step at once", w(1) == 1 && w(-1) == -1)
+    check("wheel: fine zone spaced", w(1 + 7.9) == 1 && w(1 + 8) == 2 && w(1 + 24) == 4, "\(w(9)) \(w(25))")
+    check("wheel: coarse past the knee", w(1 + 24 + 3) == 5 && w(1 + 24 + 30) == 14)
+    check("wheel: odd symmetry", (0..<200).allSatisfy { w(-Double($0) * 0.7) == -w(Double($0) * 0.7) })
+    check("wheel: monotonic", (0..<400).allSatisfy { w(Double($0) * 0.5) <= w(Double($0) * 0.5 + 0.5) })
+    check("wheel: one step per event in the fine zone",
+          H.wheelStepDelta(travel: 40, applied: 0) == 1 && H.wheelStepDelta(travel: -40, applied: 2) == -1)
+    check("wheel: free past the fine zone", H.wheelStepDelta(travel: 1 + 24 + 30, applied: 4) == 10)
+    check("wheel: nothing to add when caught up", H.wheelStepDelta(travel: 9, applied: 2) == 0)
+
     print(fails.isEmpty ? "\nALL PASS (\(total))"
                         : "\n\(fails.count) FAILURE(S) of \(total): \(fails.joined(separator: ", "))")
     exit(fails.isEmpty ? 0 : 1)

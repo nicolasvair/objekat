@@ -343,6 +343,9 @@ struct TimelineView: View {
         var sendScrollAccumulator: Float = 0
         var automationScrollAccumulator: Float = 0
         var automationLineScrollAccumulator: Float = 0
+        /// The precise-delta travel (pt, upwards positive) of the wheel gesture holding a line, since
+        /// its grab (@see AutomationHandTravel.wheelSteps).
+        var automationLineWheelTravel: Double = 0
         /// The automation line the wheel holds, frozen at its first notch and kept for as long as
         /// the notches follow each other (@see registerScrollMonitor).
         var automationLineWheel: AutomationLineWheel? = nil
