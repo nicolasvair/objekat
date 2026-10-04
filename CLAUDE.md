@@ -38,7 +38,7 @@ unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6
 An engine series of **34** patches in `engine-patches/3.5/`, numbered `0001`→`0036` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). The next one will be `0037`. (`0035` and `0036`, the FX link state fixes of
-4 October 2026, live on the branch `fix/fxlink-state-corruption`, fork NOT republished.) It is the ONLY series left: the four archives of
+4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
 that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
