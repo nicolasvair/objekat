@@ -768,6 +768,37 @@ That is end-of-process noise, with no effect on the result.
 | `audio.*` | the output device really in use — status, the list, switching device / rate / buffer |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
+### A plugin's sidechain (the audio bridge)
+
+A plugin's sidechain input can be keyed by another object or by a stem — a compressor on the bass
+keyed by the kick — across stems and across groups. The key is what is HEARD of the source (tapped
+after its fader and its window, like a send): a muted source stops keying. Design and rules:
+`plan_sidechain.md`.
+
+| | |
+|---|---|
+| `plugin.list` | each plugin (leaf or instrument) also carries `sidechain`: `null`, or `{source, active, reason}` — `reason` is the refusal's raw value, null when active |
+| `plugin.sidechain_sources` | `host` + `plugin` → `{can_sidechain, current, sources: [{id, kind, name}], refused: [{id, kind, name, reason}]}`. `kind` is object / group / stem. `can_sidechain` false = the live instance has no sidechain input, or is still loading (`wait_idle`, ask again). Reads only |
+| `plugin.set_sidechain` | `host` + `plugin` + `source` (a uuid; null or absent clears) → `{ok, active, reason}`. One undo step, and undoing it does not rebuild the object. `bad_params` with `details.reason` when refused; `invalid_state` when the live plugin has no sidechain input; `not_found` when `plugin` is not a leaf of `host` |
+
+Refusal reasons: `unknownSource` (a deleted source: the key stays written and silent, and comes back
+active if the deletion is undone), `unknownHost`, `selfSource`, `ancestorSource` (the source contains
+the host: its group, or its stem), `auxSource`, `mainSource`, `cycle` (a chain of keys that would
+loop, decided per scheduling unit — the rule lives in `BridgeScope`). A key whose source is refused is
+written in the model and silent in the engine.
+
+DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
+(`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,
+source, rank, age, cached_age, ring_capacity, ring_generation, latest_end, runs}], `readers` [{plugin,
+dest_instance, tap, consumer, rank, l_ref, declared, source_age, delay, status, alignment_error_samples,
+blocks_read, blocks_uncovered, blocks_torn}], null before the first build); `model` is the plan. `dest_instance` is the live
+plugin's address: equal before and after an undo = the destination was not rebuilt. `status` is
+`aligned` / `late` / `over_declared` / `source_absent`. `debug.add_test_plugin {host, type,
+latency_ms?}` adds `objKeyProbe` (output left = direct signal, right = the key, for alignment
+measures by export) or `latencyTester` through the normal model path; `debug.set_plugin_property
+{plugin, property, value}` sets a numeric property on a live plugin (the latency tester's `time`, in
+seconds).
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that

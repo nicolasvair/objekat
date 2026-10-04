@@ -146,6 +146,20 @@ extension EditViewModel {
         bridgeLastTopology = (topology.nodes, topology.routes, plan)
     }
 
+    /// Plugin id → why its key is refused, computed NOW from the model (pure: no engine call, no
+    /// published state touched). What a READING command answers with, so that it never depends on
+    /// whether the coalesced sync has run yet.
+    func bridgeStatusNow() -> [UUID: BridgeScope.Refusal] {
+        let topology = bridgeTopology()
+        if topology.routes.isEmpty { return [:] }
+        let plan = BridgeScope.plan(nodes: topology.nodes, routes: topology.routes)
+        var status: [UUID: BridgeScope.Refusal] = [:]
+        for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
+            status[topology.routeOwners[i].plugin] = why
+        }
+        return status
+    }
+
     // MARK: - Gestures
 
     /// The chain a plugin id lives in: the host's `plugins`, or (an object) its `instruments`.

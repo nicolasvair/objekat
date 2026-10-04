@@ -187,8 +187,8 @@ extension CommandAdapters {
     /// Names a catalogue entry by `identifier` (exact) or, failing that, by `name` (first
     /// match, case-insensitive), with `format` settling ties between namesakes.
     static func resolvePlugin(_ p: CommandParams, in vm: EditViewModel) throws -> AvailablePlugin {
-        let format = try p.optionalString("format")
-        if let identifier = try p.optionalString("identifier") {
+        let format = try p.stringOrNull("format")
+        if let identifier = try p.stringOrNull("identifier") {
             guard let found = vm.availablePlugins.first(where: {
                 $0.identifier == identifier && (format == nil || $0.formatName == format)
             }) else {
@@ -198,7 +198,7 @@ extension CommandAdapters {
             }
             return found
         }
-        guard let name = try p.optionalString("name") else {
+        guard let name = try p.stringOrNull("name") else {
             throw CommandError(code: .bad_params, message: "'identifier' or 'name' required")
         }
         let needle = name.lowercased()
@@ -214,7 +214,11 @@ extension CommandAdapters {
         return found
     }
 
-    static func pluginPayload(_ plugin: ObjectPlugin) -> JSONValue {
+    /// `bridgeStatus`: when given (`plugin.list`), a leaf plugin also carries `sidechain` — `null`
+    /// (no key) or `{source, active, reason}`, `reason` being the refusal's raw value (null = active).
+    /// @see EditViewModel.bridgeStatusNow
+    static func pluginPayload(_ plugin: ObjectPlugin,
+                              bridgeStatus: [UUID: BridgeScope.Refusal]? = nil) -> JSONValue {
         var payload: [String: JSONValue] = [
             "id": .string(plugin.id.uuidString),
             "name": .string(plugin.name),
@@ -234,7 +238,17 @@ extension CommandAdapters {
             payload["is_fx_block"] = .bool(true)
             payload["link"] = .string(block.linkID.uuidString)
             payload["detached"] = .bool(block.isDetached)
-            payload["plugins"] = .array(block.plugins.map(pluginPayload))
+            payload["plugins"] = .array(block.plugins.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
+        }
+        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil {
+            if let key = plugin.sidechain {
+                let why = bridgeStatus[plugin.id]
+                payload["sidechain"] = .object(["source": .string(key.sourceID.uuidString),
+                                                "active": .bool(why == nil),
+                                                "reason": .stringOrNull(why?.rawValue)])
+            } else {
+                payload["sidechain"] = .null
+            }
         }
         if let group = plugin.linkGroupID { payload["link_group"] = .string(group.uuidString) }
         return .object(payload)

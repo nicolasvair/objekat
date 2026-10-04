@@ -21,7 +21,7 @@ extension CommandRegistry {
                           ParamSpec("instruments_only", "bool", required: false,
                                     "Keep only the instruments (default false).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            let filter = (try p.optionalString("filter"))?.lowercased()
+            let filter = (try p.stringOrNull("filter"))?.lowercased()
             let instrumentsOnly = try p.bool("instruments_only", or: false)
             let plugins = vm.availablePlugins.filter { plugin in
                 if instrumentsOnly && !plugin.isInstrument { return false }
@@ -54,17 +54,85 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
             let gains = vm.chainGains(host)
+            let status = vm.bridgeStatusNow()
             var payload: [String: JSONValue] = [
                 "host": .string(host.uuidString),
                 "is_stem": .bool(vm.isStemHost(host)),
-                "plugins": .array(plugins.map(CommandAdapters.pluginPayload)),
+                "plugins": .array(plugins.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) }),
                 "chain_in_db": .number(Double(gains.inDb)),
                 "chain_out_db": .number(Double(gains.outDb)),
             ]
             if let object = vm.find(id: host) {
-                payload["instruments"] = .array(object.instruments.map(CommandAdapters.pluginPayload))
+                payload["instruments"] = .array(object.instruments.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) })
             }
             return .object(payload)
+        }
+
+        register("plugin.sidechain_sources",
+                 summary: """
+                 The sources a plugin's sidechain input can be keyed by (the audio bridge): `can_sidechain` \
+                 says whether the LIVE instance has a sidechain input at all (an AU still loading says false \
+                 — wait and ask again); `current` is the source now keyed (or null); `sources` lists what \
+                 is allowed (`{id, kind, name}`, kind object / group / stem), `refused` what is not, with \
+                 the reason (`ancestorSource`, `selfSource`, `cycle`, `auxSource`…). The Main is never a \
+                 source and is not listed. Reads only.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin or instrument.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            let plugin = try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            var allowed: [JSONValue] = [], refused: [JSONValue] = []
+            for c in vm.sidechainCandidates(host: host, plugin: pluginID) {
+                var entry: [String: JSONValue] = ["id": .string(c.id.uuidString),
+                                                  "kind": .string(c.kind.rawValue),
+                                                  "name": .string(c.name)]
+                if let why = c.refusal { entry["reason"] = .string(why.rawValue); refused.append(.object(entry)) }
+                else { allowed.append(.object(entry)) }
+            }
+            return .object(["host": .string(host.uuidString), "plugin": .string(pluginID.uuidString),
+                            "can_sidechain": .bool(engine.pluginCanSidechain(pluginID.uuidString)),
+                            "current": .stringOrNull(plugin.sidechain?.sourceID.uuidString),
+                            "sources": .array(allowed), "refused": .array(refused)])
+        }
+
+        register("plugin.set_sidechain",
+                 summary: """
+                 Keys a plugin's sidechain input by an object or a stem (tapped after its fader and its \
+                 window — what is heard of it), or clears it (`source` null or absent). Refused \
+                 (`bad_params`, the reason in `details.reason`) when the rules say no: the source contains \
+                 the host (`ancestorSource`), is the host (`selfSource`), would close a loop (`cycle`), is an \
+                 aux or the Main, or does not exist. `invalid_state`: the live plugin has no sidechain \
+                 input (or is still loading). One undo step; undoing it does not rebuild the object. \
+                 Answers `{ok, active, reason}`.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin or instrument."),
+                          ParamSpec("source", "uuid", required: false, "The keying object or stem; null clears.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            var source: UUID? = nil
+            if let raw = p.raw["source"], raw != .null { source = try p.uuid("source") }
+            do {
+                try vm.setSidechain(host: host, plugin: pluginID, source: source)
+            } catch BridgeSidechainError.refused(let why) {
+                throw CommandError(code: .bad_params, message: "sidechain source refused: \(why.rawValue)",
+                                   details: .object(["reason": .string(why.rawValue)]))
+            } catch BridgeSidechainError.cannotSidechain {
+                throw CommandError(code: .invalid_state,
+                                   message: "plugin \(pluginID.uuidString) has no sidechain input (or is still loading)")
+            } catch BridgeSidechainError.notAPlugin {
+                throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)")
+            }
+            let why = vm.bridgeStatusNow()[pluginID]
+            return .object(["ok": .bool(true), "active": .bool(source != nil && why == nil),
+                            "reason": .stringOrNull(why?.rawValue)])
         }
 
         register("plugin.add",
@@ -632,6 +700,83 @@ extension CommandRegistry {
                             }),
                             "count": .int(dups.count),
                             "engine_foreign_refusals": .int(engine.foreignPluginKeyRefusals())])
+        }
+
+        register("debug.bridge_report",
+                 summary: """
+                 DEBUG. The audio bridge as the engine built it, plus the model's plan. `engine` (null if no \
+                 build yet): `build` {id, passes, converged, sample_rate, block_size, gate_edges, \
+                 gate_refused}, `taps` [{tap, source, rank, age, cached_age, ring_capacity, ring_generation, \
+                 latest_end, runs}], `readers` [{plugin, dest_instance, tap, consumer, rank, l_ref, declared, \
+                 source_age, delay, status, alignment_error_samples, blocks_read, blocks_uncovered, \
+                 blocks_torn}]. `model`: the plan — `refused` ({plugin: reason}), `root_ranks`, `aux_ranks`, \
+                 `inner_ranks`, `stem_ranks`, `taps`. The static numbers say what the graph BELIEVES; what the \
+                 ear hears is measured by export. Reads only.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            func ranks(_ d: [UUID: Int]) -> JSONValue {
+                .object(Dictionary(uniqueKeysWithValues: d.map { ($0.key.uuidString, JSONValue.int($0.value)) }))
+            }
+            let plan = vm.bridgePlan
+            let refused = vm.bridgeRouteStatus
+            let model: JSONValue = .object([
+                "refused": .object(Dictionary(uniqueKeysWithValues: refused.map { ($0.key.uuidString, JSONValue.string($0.value.rawValue)) })),
+                "root_ranks": ranks(plan.rootRanks), "aux_ranks": ranks(plan.auxRanks),
+                "inner_ranks": ranks(plan.innerRanks), "stem_ranks": ranks(plan.stemRanks),
+                "taps": ranks(plan.taps)])
+            let report = JSONValue.fromFoundation(engine.bridgeReport())
+            return .object(["engine": report, "model": model])
+        }
+
+        register("debug.add_test_plugin",
+                 summary: """
+                 DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \
+                 `objKeyProbe` (its output left = the direct signal, its right = the sidechain key, so an \
+                 export shows whether the key is aligned) or `latencyTester` (declares and applies a delay, \
+                 `latency_ms`). Answers `{plugin}`.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Receiving object or stem."),
+                          ParamSpec("type", "string", "`objKeyProbe` or `latencyTester`."),
+                          ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let host = try p.uuid("host")
+            let type = try p.string("type")
+            guard type == "objKeyProbe" || type == "latencyTester" else {
+                throw CommandError(code: .bad_params, message: "type must be objKeyProbe or latencyTester")
+            }
+            guard let before = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            // A TracktionInternal identifier is resolved by type name (resolvedPluginTreeForInfo:).
+            let available = AvailablePlugin(name: type, manufacturer: "Tracktion", identifier: type,
+                                            formatName: "TracktionInternal")
+            vm.addPlugin(objectID: host, available: available)
+            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last : nil }) else {
+                throw CommandError(code: .engine_error, message: "the engine could not instantiate '\(type)'")
+            }
+            if type == "latencyTester", let ms = try p.optionalDouble("latency_ms") {
+                _ = engine.debugSetPluginProperty("time", value: ms / 1000.0, forPlugin: added.id.uuidString)
+            }
+            return .object(["plugin": .string(added.id.uuidString)])
+        }
+
+        register("debug.set_plugin_property",
+                 summary: "DEBUG. Sets a numeric property on a live plugin's state (the latency tester's `time`, in seconds).",
+                 params: [ParamSpec("plugin", "uuid", "Target plugin."),
+                          ParamSpec("property", "string", "Property name."),
+                          ParamSpec("value", "number", "Numeric value.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let pluginID = try p.uuid("plugin")
+            guard engine.debugSetPluginProperty(try p.string("property"), value: try p.double("value"),
+                                                forPlugin: pluginID.uuidString) else {
+                throw CommandError(code: .not_found, message: "no live instance for plugin \(pluginID.uuidString)")
+            }
+            return .object(["plugin": .string(pluginID.uuidString)])
         }
 
         register("debug.plugin_buses",
