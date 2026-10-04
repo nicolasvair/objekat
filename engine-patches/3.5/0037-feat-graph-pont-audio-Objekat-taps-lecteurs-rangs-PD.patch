@@ -1,6 +1,6 @@
-From 495323ed79a2080c7bd8bfe7d2e17d9a6b7833ac Mon Sep 17 00:00:00 2001
+From b2a2c0c4674ba39c1fd85378a42411e231eaa515 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Sun, 4 Oct 2026 21:21:56 +0000
+Date: Sun, 4 Oct 2026 21:29:14 +0000
 Subject: [PATCH] =?UTF-8?q?feat(graph):=20pont=20audio=20Objekat=20?=
  =?UTF-8?q?=E2=80=94=20taps,=20lecteurs,=20rangs,=20PDC?=
 MIME-Version: 1.0
@@ -45,16 +45,16 @@ Claude-Session: https://claude.ai/code/session_016GeuE4c2SAP154iDoxKr2m
 ---
  .../graph/tracktion_CombiningNode.cpp         |   8 +-
  .../playback/graph/tracktion_CombiningNode.h  |  22 +-
- .../graph/tracktion_EditNodeBuilder.cpp       | 208 ++++++++++-
+ .../graph/tracktion_EditNodeBuilder.cpp       | 218 +++++++++++-
  .../graph/tracktion_EditNodeBuilder.h         |   2 +
  .../graph/tracktion_ObjBridgeNodes.cpp        | 266 ++++++++++++++
  .../playback/graph/tracktion_ObjBridgeNodes.h | 110 ++++++
- .../plugins/tracktion_ObjBridge.cpp           | 303 ++++++++++++++++
- .../plugins/tracktion_ObjBridge.h             | 223 ++++++++++++
+ .../plugins/tracktion_ObjBridge.cpp           | 308 +++++++++++++++++
+ .../plugins/tracktion_ObjBridge.h             | 228 ++++++++++++
  .../plugins/tracktion_ObjBridgeCore.h         | 326 ++++++++++++++++++
  modules/tracktion_engine/tracktion_engine.h   |   1 +
  .../tracktion_engine_playback.cpp             |   3 +
- 11 files changed, 1458 insertions(+), 14 deletions(-)
+ 11 files changed, 1478 insertions(+), 14 deletions(-)
  create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
  create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
  create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
@@ -135,7 +135,7 @@ index 085bfe2..8f80029 100644
      void queueNoteOffsForClipsNoLongerPresent (const CombiningNode&);
  
 diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
-index 4fc6fe8..d846da7 100644
+index 4fc6fe8..b0ebc69 100644
 --- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
 +++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
 @@ -998,6 +998,26 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
@@ -263,7 +263,7 @@ index 4fc6fe8..d846da7 100644
  {
      const auto sidechainSourceID = plugin.getSidechainSourceID();
      const bool usesSidechain = ! plugin.isMissing() && sidechainSourceID.isValid();
-@@ -1508,8 +1587,30 @@ std::unique_ptr<tracktion::graph::Node> createSidechainInputNodeForPlugin (Plugi
+@@ -1508,8 +1587,39 @@ std::unique_ptr<tracktion::graph::Node> createSidechainInputNodeForPlugin (Plugi
      if (! directChannelMap.isIdentity())
          directInput = makeNode<ChannelRemappingNode> (std::move (directInput), std::move (directChannelMap));
  
@@ -278,6 +278,15 @@ index 4fc6fe8..d846da7 100644
 +    // sidechain naming a track still works. @see docs/plan_sidechain.md §4.2, §5.6
 +    if (params.bridgeBuild != nullptr && params.bridgeBuild->hasTap (sidechainSourceID))
 +    {
++        // A reader alone in a linear TimedNode chain would share one buffer with its own
++        // ChannelRemappingNode, whose explicit mapping ADDS into its destination: the key would be
++        // summed into itself. The app never produces it (guessSidechainRouting wires 0->0, 1->1).
++        if (! hasDirectChannels)
++        {
++            DBG ("[BRIDGE] reader without a direct channel: refused");
++            return directInput;
++        }
++
 +        const auto readerIndex = params.bridgeBuild->registerReader (sidechainSourceID, plugin.itemID, &plugin,
 +                                                                     BridgeBuild::Consumer::sidechain,
 +                                                                     directInput->getNodeProperties().latencyNumSamples,
@@ -296,7 +305,7 @@ index 4fc6fe8..d846da7 100644
      sidechainInput = makeNode<ChannelRemappingNode> (std::move (sidechainInput), std::move (sidechainChannelMap));
  
      if (! hasDirectChannels)
-@@ -1578,7 +1679,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForPlugin (Plugin& plugin, con
+@@ -1578,7 +1688,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForPlugin (Plugin& plugin, con
                                                                   ChannelMap::conversion (incomingChannels, pluginInputChannels));
      }
  
@@ -305,7 +314,7 @@ index 4fc6fe8..d846da7 100644
  
      // Create the PluginNode
      auto pluginNode = tracktion::graph::makeNode<PluginNode> (std::move (node),
-@@ -1734,7 +1835,27 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+@@ -1734,7 +1844,27 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
          if (auto auxSend = dynamic_cast<ContainerAuxSend*> (p))
              auxSend->setTapLatencyNumSamples (node != nullptr ? node->getNodeProperties().latencyNumSamples : 0);
  
@@ -334,7 +343,7 @@ index 4fc6fe8..d846da7 100644
          {
              node = makeNode<LevelMeasurerProcessingNode> (std::move (node), *meterPlugin);
          }
-@@ -2494,7 +2615,50 @@ std::unique_ptr<tracktion::graph::Node> createMasterFadeInOutNode (Edit& edit,
+@@ -2494,7 +2624,51 @@ std::unique_ptr<tracktion::graph::Node> createMasterFadeInOutNode (Edit& edit,
  }
  
  //==============================================================================
@@ -372,6 +381,7 @@ index 4fc6fe8..d846da7 100644
 +
 +        if (! anotherPassNeeded || pass + 1 >= maxBridgePasses)
 +        {
++            build->allocateRings();
 +            build->publish();
 +            break;
 +        }
@@ -386,7 +396,7 @@ index 4fc6fe8..d846da7 100644
  {
      Edit& edit = epc.edit;
      auto& playHeadState = params.processState.playHeadState;
-@@ -2700,15 +2864,11 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext&
+@@ -2700,15 +2874,11 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext&
      return finalNode;
  }
  
@@ -403,7 +413,7 @@ index 4fc6fe8..d846da7 100644
      for (auto t : getAllTracks (edit))
      {
          if (params.allowedTracks != nullptr && ! params.allowedTracks->contains (t))
-@@ -2742,6 +2902,30 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const Cre
+@@ -2742,6 +2912,30 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const Cre
      return node;
  }
  
@@ -837,10 +847,10 @@ index 0000000..53075ee
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
 new file mode 100644
-index 0000000..6e0bad0
+index 0000000..29fdfea
 --- /dev/null
 +++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,308 @@
 +/*
 +    OBJEKAT — the audio bridge: BridgeBuild.
 +    See tracktion_ObjBridge.h and docs/plan_sidechain.md.
@@ -996,7 +1006,15 @@ index 0000000..6e0bad0
 +            again = true;
 +    }
 +
-+    // 2. Every ring: the tap plugin's own if it is big enough, else a new one that only the graphs
++    converged = ! again;
++    return again;
++}
++
++void BridgeBuild::allocateRings()
++{
++    const std::lock_guard<std::mutex> lock (mutex);
++
++    // Every ring: the tap plugin's own if it is big enough, else a new one that only the graphs
 +    //    built from now on will reference (a ring is never resized in place).
 +    for (auto& t : taps)
 +    {
@@ -1021,9 +1039,6 @@ index 0000000..6e0bad0
 +            ++t.source->ringGeneration;
 +        }
 +    }
-+
-+    converged = ! again;
-+    return again;
 +}
 +
 +void BridgeBuild::publish()
@@ -1146,10 +1161,10 @@ index 0000000..6e0bad0
 +} // namespace tracktion::inline engine
 diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
 new file mode 100644
-index 0000000..aacddee
+index 0000000..ff0981d
 --- /dev/null
 +++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,228 @@
 +/*
 +    OBJEKAT — the audio bridge: public interface.
 +
@@ -1293,11 +1308,16 @@ index 0000000..aacddee
 +    //==============================================================================
 +    // End of pass (message thread).
 +
-+    /** Resolves every reader (objbridge::resolve), sizes every ring (adopts the tap plugin's ring if
-+        its capacity suffices, else allocates a new Ring and stores it — ringGeneration++), and
-+        returns TRUE if another pass is needed (any reader late or over-declared). A reader whose tap
-+        was not built in this pass is `sourceAbsent` and asks for nothing. */
++    /** Resolves every reader (objbridge::resolve) and returns TRUE if another pass is needed (any
++        reader late or over-declared). A reader whose tap was not built in this pass is `sourceAbsent`
++        and asks for nothing. Touches no ring: this pass may be thrown away. */
 +    bool finalise();
++
++    /** Only for the pass that is KEPT, just before publish(): sizes every ring — adopts the tap
++        plugin's own if its capacity suffices, else allocates a new Ring and stores it on the plugin
++        (ringGeneration++). Done once, so a discarded pass never replaces a ring (and drops the key's
++        history) for the next pass to replace it again. */
++    void allocateRings();
 +
 +    /** Becomes latestFor (edit). */
 +    void publish();

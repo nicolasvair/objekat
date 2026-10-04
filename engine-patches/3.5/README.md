@@ -368,6 +368,9 @@ Checked as still biting: `develop` still had the linear `std::find`.
   again, at most 8 times. No extra pass in steady state or for a key younger than its destination;
   one the first time a route is laid; renders converge in their own call. A reader whose tap is not
   built in the pass (a restricted render) is `sourceAbsent`, silent, and asks for nothing.
+  Rings are sized only for the pass that is KEPT (`allocateRings`, just before `publish`), so a
+  discarded pass never replaces a tap's ring and drops its history. A reader with no direct channel
+  is refused (it would sum its key into itself in a linear `TimedNode` chain).
   **Order.** A reader must run after the writer of the same block. Units get a RANK: a
   `CombiningNode` is now a `BridgeRankedNode` (rank 0 by default) with an optional ordering gate
   (`BridgeGateNode`), which waits for every ranked node of a LOWER rank in the enclosing graph and
