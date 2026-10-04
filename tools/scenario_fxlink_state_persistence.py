@@ -3,7 +3,7 @@
 """FX link settings survive open + save — a scenario that ASSERTS.
 
     ./scenario_fxlink_state_persistence.py --app=/path/to/objekat.app [--trials=8] [--jobs=3]
-        [--cases=a,b,c,d,e,f,h] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
+        [--cases=a,p,b,c,d,e,f,h,n,s] [--work=DIR] [--seed=N] [--fixture-app=/path/to/other.app]
         [--wait=8] [--real=/tmp/copy/of/a/project.objekat] [--keep] [--h-notick]
 
 DEBUG build only (it drives `debug.plugin_force_processor_changed`, `debug.plugin_inject_state`).
@@ -19,7 +19,11 @@ list unconditionally; the recreated parameters hold their DEFAULT value, which
 `refreshParameterValues()` then announced as "changed by the plugin"; the FX link's parameter
 mirror carried it BY INDEX to the whole group, so the factory settings landed in the other
 members' AudioUnits, and the next save froze them (and the bin's definition follows its first
-member). Engine patch 0035 only rebuilds the list when the plugin says the LIST changed.
+member). Engine patch 0035 only rebuilds the list when the plugin says the LIST changed; 0036 closes
+the case where it really did (the rebuilt AU list re-reads the unit instead of relaying defaults).
+And since 4 October 2026 the mirror only relays a change a HAND made (a gesture, a host write, an
+open editor): a value the plugin reports on its own stays on that member, and the bin's definition
+follows the member that carried the last real edit (its "authority"), never the first one met.
 
 HOW IT IS MADE DETERMINISTIC. The notification is a race in the wild (it arrives ~50 ms after the
 load settles, or not, depending on the load). `debug.plugin_force_processor_changed {plugin}` makes
@@ -44,7 +48,10 @@ instance by instance and definition by definition, with a tolerance of 1e-6.
 
 CASES (each repeated --trials times, a fresh process per trial; the mutation steps run once, then
 their result is re-opened --trials times):
-  (a) open + save of PHA-979 and Pro-Q 4 links, nothing touched (forced; plus a statistical run);
+  (a) open + save of PHA-979 and Pro-Q 4 links, nothing touched (forced; plus a statistical run); and
+      the link counters (`debug.link_state`): NOTHING relayed and nothing pushed, at the load and
+      through the forcing — no rebroadcast without a hand;
+  (p) the same, forcing `details: "paraminfo"` (the parameter list rebuilt for real — patch 0036);
   (b) change a parameter on the LAST member of a link, save, re-open: every instance AND the
       definition carry the change, and nothing else moved;
   (c) attach / detach (+ edit the detached one) / reattach / remove_block, each saved and re-opened;
@@ -56,10 +63,15 @@ their result is re-opened --trials times):
       link of 4 Pro-Q: a SILENT change on one member (as scenario_fxlink_state_sync.py makes it), one
       unforced tick (the "pending" mark a gesture leaves), save, re-open in a fresh process —
       (h1) on the first member, every member AND the definition carry it; (h2) on a member that is not
-      the first (the definition follows the first one: it neither reverts nor overwrites the changed
-      member); (h3) open + save of a project that already holds it, 576 floats unchanged; (h4) a second
+      the first (the definition follows the changed member, the bin's authority); (h3) open + save of a project that already holds it, 576 floats unchanged; (h4) a second
       generation on another member; (h5) a MIXED bin (PHA-979 + Pro-Q 4 in the same link): the PHA
       stays intact. Each trial = fresh processes (one per generation + one re-open).
+  (n) a SILENT change with no tick (nothing noticed it, no editor open), save, re-open: the member
+      keeps it, the other members and the definition do not move — the same at every trial;
+  (s) a bin of 6 PHA-979 whose FIRST and fourth members already carry another state than the
+      other four (a real project's "SHUSH 14/2", rebuilt by rewriting two `state` attributes of the
+      file): open + save, forced program / paraminfo / unforced, and three saves in a row — nothing
+      moves (no member pulled, the pair not spread, the definition kept) and nothing is relayed.
   (r) with --real=PATH: an open + save of a COPY of a real project (refused outside a temp dir).
 
 Fixtures are built by --fixture-app (default: --app). To judge a build WITHOUT the patch, build the
@@ -80,10 +92,13 @@ from objekat_cli import ObjekatClient, ObjekatError
 BIP = os.path.join(HERE, "fixtures", "bip.wav")
 PHA = "aufx,1565,Vxng"
 PROQ = "aumf,FQ4p,FabF"
+WEISS = "aufx,fndm,SfTb"
+DECODED = (PHA, PROQ, WEISS)
 TOL = 1e-6
+TOL_WEISS = 1e-5          # its host parameters are float32 in the chunk
 
 # ── command line ──────────────────────────────────────────────────────────────────────────────
-opts = {"trials": "8", "jobs": "3", "cases": "a,b,c,d,e,f,h", "seed": "20261004", "wait": "8"}
+opts = {"trials": "8", "jobs": "3", "cases": "a,p,b,c,d,e,f,h,n,s", "seed": "20261004", "wait": "8"}
 for a in sys.argv[1:]:
     if a in ("-h", "--help"):
         print(__doc__)
@@ -177,6 +192,21 @@ def pha_fields(raw):
     return out
 
 
+def weiss_fields(raw):
+    """Weiss Deess (`aufx,fndm,SfTb`): the AU's "data" records (scope, element, count, then
+    (parameter id, float32) big-endian) -> {id: value}. The Softube blob beside them is left out."""
+    dd = plistlib.loads(raw).get("data") or b""
+    out, off = {}, 0
+    while off + 12 <= len(dd):
+        _sc, _el, n = struct.unpack_from(">III", dd, off)
+        off += 12
+        for _ in range(n):
+            pid, val = struct.unpack_from(">If", dd, off)
+            off += 8
+            out[pid] = val
+    return out
+
+
 def decode(ident, raw):
     """A comparable value for a chunk: ("pha", {record: [..]}) / ("proq", (576 floats)) / None."""
     try:
@@ -184,6 +214,8 @@ def decode(ident, raw):
             return ("pha", pha_fields(raw))
         if ident == PROQ:
             return ("proq", struct.unpack_from("<576f", plistlib.loads(raw)["FabFilterPluginState"], 12))
+        if ident == WEISS:
+            return ("weiss", weiss_fields(raw))
     except Exception as e:                                  # an undecodable chunk is a finding, not a crash
         return ("undecodable", "%s: %s" % (type(e).__name__, e))
     return None
@@ -216,6 +248,8 @@ def same(a, b):
         return True
     if a[0] == "proq":
         return all(close(x, y) for x, y in zip(a[1], b[1]))
+    if a[0] == "weiss":
+        return set(a[1]) == set(b[1]) and all(abs(a[1][k] - b[1][k]) <= TOL_WEISS for k in a[1])
     return a == b
 
 
@@ -234,6 +268,9 @@ def describe(a, b):
     if a[0] == "proq":
         idx = [i for i, (x, y) in enumerate(zip(a[1], b[1])) if not close(x, y)]
         return "%d floats differ (first: %s)" % (len(idx), ", ".join("%d: %.4g->%.4g" % (i, a[1][i], b[1][i]) for i in idx[:3]))
+    if a[0] == "weiss":
+        ks = [k for k in sorted(set(a[1]) | set(b[1])) if abs(a[1].get(k, -9) - b[1].get(k, -9)) > TOL_WEISS]
+        return "%d params differ (first: %s)" % (len(ks), ", ".join("%d: %.4g->%.4g" % (k, a[1].get(k, -9), b[1].get(k, -9)) for k in ks[:3]))
     return str(a)[:80]
 
 
@@ -245,7 +282,7 @@ def snapshot(path):
     defs, inst = {}, {}
     for l in doc.get("fxLinks", []):
         for p in l.get("plugins", []):
-            if p.get("identifier") in (PHA, PROQ):
+            if p.get("identifier") in DECODED:
                 defs[p["id"]] = (p["identifier"], decode_state_xml(p["identifier"], p.get("stateXML")), l.get("name"))
 
     def walk(items):
@@ -254,7 +291,7 @@ def snapshot(path):
                 blk = p.get("fxBlock")
                 plist = blk["plugins"] if blk else [p]
                 for q in plist:
-                    if q.get("identifier") in (PHA, PROQ):
+                    if q.get("identifier") in DECODED:
                         inst[q["id"]] = {"host": it["id"], "link": blk and blk.get("linkID"),
                                          "grp": q.get("linkGroupID"), "ident": q["identifier"],
                                          "val": decode_state_xml(q["identifier"], q.get("stateXML"))}
@@ -367,6 +404,12 @@ class App:
 
     def links(self):
         return self.cmd("fxlink.list")["links"]
+
+    def counters(self):
+        """The link machinery's counters: mirror relays done / refused, resting-sync pushes. A key
+        the build does not report reads None (a build before the user-origin gate)."""
+        info = self.cmd("debug.link_state")
+        return {k: info.get(k) for k in ("param_propagations", "param_refused", "pushes_total")}
 
 
 def attached_instances(link):
@@ -491,11 +534,13 @@ def compare_live(live, exp_inst):
     return bad
 
 
-def trial(src_manifest, tag, mode, rng, expected, force_ids=None, n_random=None, settle=2.0):
-    """mode 'force': settle, read, force the notification on one random attached member per link
-    (or on n_random random instances), wait, read, save. mode 'wait': settle STAT_WAIT, read, save.
-    Returns a dict of what went wrong (empty lists = clean)."""
-    res = {"tag": tag, "load": None, "live0": [], "live1": [], "file": [], "forced": [], "err": None}
+def trial(src_manifest, tag, mode, rng, expected, force_ids=None, n_random=None, settle=2.0, details="program"):
+    """mode 'force': settle, read, force the notification (`details`: "program" or "paraminfo") on one
+    random attached member per link (or on n_random random instances), wait, read, save. mode 'wait':
+    settle STAT_WAIT, read, save. Returns a dict of what went wrong (empty lists = clean), plus the
+    link counters after the load settled (`c_open`) and before the save (`c_end`)."""
+    res = {"tag": tag, "load": None, "live0": [], "live1": [], "file": [], "forced": [], "err": None,
+           "c_open": None, "c_end": None}
     work = os.path.join(WORK, tag)
     manifest = copy_project(src_manifest, work)
     try:
@@ -504,6 +549,7 @@ def trial(src_manifest, tag, mode, rng, expected, force_ids=None, n_random=None,
             idents = {i: r["ident"] for i, r in expected["inst"].items()}
             ids = list(idents)
             time.sleep(settle if mode == "force" else STAT_WAIT)
+            res["c_open"] = a.counters()
             res["live0"] = compare_live(a.live(ids, idents), expected["inst"])
             if mode == "force":
                 if n_random:
@@ -511,11 +557,12 @@ def trial(src_manifest, tag, mode, rng, expected, force_ids=None, n_random=None,
                 else:
                     targets = [rng.choice(attached_instances(l)) for l in a.links() if attached_instances(l)]
                 for t in targets:
-                    a.cmd("debug.plugin_force_processor_changed", plugin=t)
+                    a.cmd("debug.plugin_force_processor_changed", plugin=t, details=details)
                 res["forced"] = [sid(t) for t in targets]
                 time.sleep(2.0)
                 a.idle()
                 res["live1"] = compare_live(a.live(ids, idents), expected["inst"])
+            res["c_end"] = a.counters()
             a.cmd("project.save")
         d = snap_diff(expected, snapshot(manifest))
         res["file"] = ["%s %s" % (sid(i), t) for i, t in d["changed"].items()] \
@@ -525,10 +572,11 @@ def trial(src_manifest, tag, mode, rng, expected, force_ids=None, n_random=None,
     return res
 
 
-def run_trials(label, src_manifest, n, mode, expected, n_random=None):
+def run_trials(label, src_manifest, n, mode, expected, n_random=None, details="program"):
     """n trials in parallel (JOBS at a time); returns the list of results."""
     def one(k):
-        return trial(src_manifest, "%s_%d" % (label, k), mode, random.Random(SEED * 1000 + k), expected, n_random=n_random)
+        return trial(src_manifest, "%s_%d" % (label, k), mode, random.Random(SEED * 1000 + k), expected,
+                     n_random=n_random, details=details)
     with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
         return list(ex.map(one, range(n)))
 
@@ -553,6 +601,33 @@ def report(label, results, what):
     if len(bad) > 2:
         print("        … and %d more corrupted trial(s)" % (len(bad) - 2))
     return not bad
+
+
+def quiet_report(label, results, at_open_only=False):
+    """No relay without a hand: the parameter mirror carried nothing and the resting sync pushed
+    nothing — at the load (`c_open`) and, unless at_open_only, through the forcing too (`c_end`).
+    A notification the plugin raises on its own is refused, never rebroadcast to the group."""
+    keys = ("c_open",) if at_open_only else ("c_open", "c_end")
+    bad, absent, quiet = [], 0, 0
+    for r in results:
+        ok = True
+        for key in keys:
+            c = r.get(key)
+            if not c or c.get("param_propagations") is None:
+                absent += 1
+                ok = False
+            elif c["param_propagations"] or c["pushes_total"]:
+                bad.append("%s %s: %d relayed, %d pushed (%d refused)" % (r["tag"], key, c["param_propagations"],
+                                                                         c["pushes_total"], c["param_refused"] or 0))
+                ok = False
+        quiet += ok
+    check("%s: no rebroadcast without a hand%s — %d/%d trials quiet" % (label, " (at open)" if at_open_only else "", quiet, len(results)),
+          quiet == len(results),
+          ("counters absent (a build before the user-origin gate, or a failed trial): %d reading(s); " % absent if absent else "")
+          + "; ".join(bad[:3]))
+    refused = [r["c_end"]["param_refused"] for r in results if r.get("c_end") and r["c_end"].get("param_refused") is not None]
+    if refused:
+        note("%s: notifications refused by the user-origin gate per trial: min %d, max %d" % (label, min(refused), max(refused)))
 
 
 # ── a mutation step: a fresh process, open, do something, save ────────────────────────────────
@@ -701,12 +776,15 @@ def h_fixture_issues(snap):
     return out
 
 
-def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ):
+def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ, notick=False):
     """A chain of FRESH processes. For each generation (role, gen): copy, open, silent change of the
     Pro-Q of `link_name` held by the member at `role` ('first' | 'middle' | 'last' of the attached
     members), one unforced tick, save; the saved file must carry the change in EVERY Pro-Q instance of
     the link AND in its definition, and nothing else may have moved. Last, one more fresh process opens
     the result, forces a late processor-changed on one member per link, saves, and nothing may move.
+    notick: no tick after the silent change — nothing marked it, no editor is open, so nothing
+    tells a hand from the plugin: the change must stay on M ALONE (the other members and the
+    definition exactly as they were), never be lost from M, never spread.
     Returns {pre, file, live, reopen0, reopen1, rfile, err} (empty lists = clean)."""
     res = {"tag": tag, "pre": [], "file": [], "live": [], "reopen0": [], "reopen1": [], "rfile": [],
            "err": None, "manifest": None}
@@ -743,7 +821,9 @@ def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ):
                 if carried:
                     res["pre"].append("g%d: not silent, the parameter mirror carried it to %s (the case would not test the resting sync)"
                                       % (g, ",".join(carried)))
-                if "h-notick" not in opts:      # control run: no pending mark, the save has nothing to push
+                if notick:
+                    pass
+                elif "h-notick" not in opts:    # control run: no pending mark, the save has nothing to push
                     t1 = a.cmd("debug.link_state_tick", plugin=M, force=False)
                     if t1.get("pushed") or t1.get("pending") is not True:
                         res["pre"].append("g%d: the first unforced tick should leave it pending, got %s" % (g, t1))
@@ -751,11 +831,19 @@ def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ):
                 a.cmd("project.save")
                 mlive = after[M]
                 live = a.live(ids, idents)
-                res["live"] += ["g%d %s %s" % (g, sid(i), describe(mlive, live[i])) for i in ids if not same(live[i], mlive)]
+                want = {i: (mlive if (i == M or not notick) else before[i]) for i in ids}
+                res["live"] += ["g%d %s %s" % (g, sid(i), describe(want[i], live[i])) for i in ids if not same(live[i], want[i])]
             snap_new = snapshot(manifest)
             lid = {l["name"]: l["id"] for l in json.load(open(manifest))["fxLinks"]}[link_name]
             t_inst = {i for i, r in snap_new["inst"].items() if r["link"] == lid and r["ident"] == target}
             t_defs = {i for i, d in snap_new["defs"].items() if d[2] == link_name and d[0] == target}
+            if notick:
+                if not same(snap_new["inst"].get(M, {}).get("val"), mlive):
+                    res["file"].append("g%d file: the changed member %s LOST its change" % (g, sid(M)))
+                extra = unexpected(snap_diff(snap_cur, snap_new), changed={M})
+                res["file"] += ["g%d file: spread or moved: %s" % (g, e) for e in extra]
+                cur, snap_cur = manifest, snap_new
+                continue
             for i in t_inst:
                 if not same(snap_new["inst"][i]["val"], mlive):
                     res["file"].append("g%d file: instance %s (%s) does not carry the change: %s"
@@ -795,9 +883,9 @@ def htrial(src_manifest, tag, rng, gens, link_name, target=PROQ):
     return res
 
 
-def run_htrials(label, src_manifest, n, gens, link_name):
+def run_htrials(label, src_manifest, n, gens, link_name, notick=False):
     def one(k):
-        return htrial(src_manifest, "%s_%d" % (label, k), random.Random(SEED * 1000 + k), gens, link_name)
+        return htrial(src_manifest, "%s_%d" % (label, k), random.Random(SEED * 1000 + k), gens, link_name, notick=notick)
     with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
         return list(ex.map(one, range(n)))
 
@@ -815,6 +903,85 @@ def hreport(label, results, what):
     if len(bad) > 2:
         print("        … and %d more failing trial(s)" % (len(bad) - 2))
     return not bad
+
+
+# ── case (s): a bin whose members ALREADY disagree (the "SHUSH 14/2" of a real project) ────────
+# A real project held a bin of Weiss Deess where 2 members out of 16 carried another state than the
+# other 14 (how they drifted apart is history: an older build, a hand-edited file). Opening and saving
+# it must change NOTHING, and the same way at every trial: no member is pulled onto another, the
+# divergent pair is not spread, and the definition does not jump to whichever member came first
+# (it did: the definition followed the first member met, and two members raced through the mirror
+# on every late notification, so which state won changed from one trial to the next).
+# Repairing such a bin is a DECISION (`fxlink.sync` from the member one trusts), never a side effect.
+# Built with PHA-979, not Weiss Deess: Weiss Deess restores from its own Softube blob and ignores the
+# host-written parameters of its state, so a Weiss state made through `plugin.set_param` does not
+# survive a reload at all (measured, on every build) — a fixture of it would test that, not the bin.
+# The real Weiss case is the --real run on a copy of the real project.
+
+
+def build_s_fixture(dst, members, divergent, label):
+    """Link 'SHUSH' of `members` hosts with a PHA-979 at PHA_VALUES[0], then the members at the
+    positions `divergent` (order of the bin's members) rewritten IN THE FILE with the state of a lone
+    PHA-979 at PHA_VALUES[2], built on another host for that. Only `state` attributes are touched
+    (never an id). Returns (manifest, snapshot, [divergent instance ids])."""
+    shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(dst)
+    manifest = os.path.join(dst, "proj.objekat")
+    with App(FIXTURE_APP, "build_" + label) as a:
+        a.cmd("project.new")
+        a.cmd("project.save_as", path=manifest)
+        lane = [0]
+
+        def new_host():
+            o = a.cmd("object.add", path=BIP, lane=lane[0], start=0)["id"]
+            lane[0] += 1
+            return a.cmd("group.create", ids=[o])["id"]
+
+        def load(host, values):
+            pid = a.cmd("plugin.add", host=host, identifier=PHA, format="AudioUnit")["plugin"]["id"]
+            dl = time.time() + 60
+            while time.time() < dl:
+                try:
+                    if a.cmd("plugin.get_state", plugin=pid, include_chunk=False)["size"] > 0:
+                        break
+                except ObjekatError:
+                    pass
+                time.sleep(0.25)
+            else:
+                raise RuntimeError("plugin %s never loaded" % pid)
+            for idx, v in zip((8, 9, 10), values):
+                a.cmd("plugin.set_param", plugin=pid, index=idx, value=v)
+            time.sleep(0.4)
+            return pid
+
+        host = new_host()
+        pa = load(host, PHA_VALUES[0])
+        link = a.cmd("fxlink.create", host=host, plugins=[pa], name="SHUSH")
+        for _ in range(members - 1):
+            a.cmd("fxlink.attach", link=link["id"], host=new_host())
+        lone = load(new_host(), PHA_VALUES[2])
+        a.idle()
+        time.sleep(3.0)
+        order = attached_instances(link_by_name(a, "SHUSH"))
+        a.cmd("project.save")
+    doc = json.load(open(manifest))
+    by_id = {}
+
+    def walk(items):
+        for it in items:
+            for p in it.get("plugins", []):
+                for q in (p["fxBlock"]["plugins"] if p.get("fxBlock") else [p]):
+                    by_id[q["id"]] = q
+            if (it.get("kind") or {}).get("type") == "group":
+                walk(it["kind"].get("children", []))
+    walk(doc["items"])
+    b_state = re.search(r'\sstate="([^"]*)"', by_id[lone]["stateXML"]).group(1)
+    div = [order[k] for k in divergent]
+    for i in div:
+        by_id[i]["stateXML"] = re.sub(r'(\sstate=")[^"]*(")', lambda m: m.group(1) + b_state + m.group(2), by_id[i]["stateXML"], count=1)
+    with open(manifest, "w") as f:
+        json.dump(doc, f, indent=2, ensure_ascii=False)
+    return manifest, snapshot(manifest), div
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -857,8 +1024,22 @@ def main():
     # ── (a) ────────────────────────────────────────────────────────────────────────────────────
     if "a" in CASES:
         print("\n-- (a) open + save, nothing touched")
-        report("(a) forced", run_trials("a_force", base_manifest, TRIALS, "force", base), "a late processor-changed on one member per link")
-        report("(a) wait %gs" % STAT_WAIT, run_trials("a_wait", base_manifest, TRIALS, "wait", base), "no forcing, the race left to chance")
+        ra = run_trials("a_force", base_manifest, TRIALS, "force", base)
+        report("(a) forced", ra, "a late processor-changed on one member per link")
+        quiet_report("(a) forced", ra)
+        rw = run_trials("a_wait", base_manifest, TRIALS, "wait", base)
+        report("(a) wait %gs" % STAT_WAIT, rw, "no forcing, the race left to chance")
+        quiet_report("(a) wait %gs" % STAT_WAIT, rw, at_open_only=True)
+
+    # ── (p) the parameter LIST rebuilt for real (engine patch 0036) ──────────────────────────────
+    if "p" in CASES:
+        print("\n-- (p) open + save, a late notification that says the parameter LIST changed")
+        # An AU that really posts kAudioUnitProperty_ParameterList: the list IS rebuilt, every JUCE
+        # parameter is recreated holding its DEFAULT, and before 0036 those defaults were relayed as
+        # "changed by the plugin" — the first forced member of each link back to its factory settings.
+        rp = run_trials("p_force", base_manifest, TRIALS, "force", base, details="paraminfo")
+        report("(p) forced paraminfo", rp, "a late processor-changed WITH parameterInfoChanged on one member per link")
+        quiet_report("(p) forced paraminfo", rp)
 
     # ── (b) ────────────────────────────────────────────────────────────────────────────────────
     cur = base_manifest
@@ -1143,9 +1324,10 @@ def main():
         gen2 = PQ_GEN[2]
         r1 = run_htrials("h1", hman, TRIALS, [("first", gen1)], "PQ 0")
         hreport("(h1) silent change on the first member, save, reopen", r1, "every member AND the definition carry it, nothing else moved")
-        # h2 — the change on a member that is NOT the first attached (the definition follows the first)
+        # h2 — the change on a member that is NOT the first attached: the definition follows the member
+        # that carried the change (the bin's authority), never the first one met
         r2 = run_htrials("h2", hman, TRIALS, [("middle", gen1)], "PQ 0")
-        hreport("(h2) silent change on a member that is not the first", r2, "the definition neither reverts nor overwrites the changed member")
+        hreport("(h2) silent change on a member that is not the first", r2, "the definition follows the changed member, nothing reverts")
         # h3 — open + save of a project that ALREADY holds the change (Spectral on)
         kept = next((r["manifest"] for r in r1 if r["manifest"] and not any(r[k] for k in ("err", "pre", "live", "file"))), None)
         if kept:
@@ -1166,6 +1348,53 @@ def main():
         check("(h5) the MIX bin holds 4 PHA-979 and 4 Pro-Q 4", (npha_m, nproq_m) == (4, 4), "%d / %d" % (npha_m, nproq_m))
         r5 = run_htrials("h5", mman, TRIALS, [("middle", gen1)], "MIX")
         hreport("(h5) mixed bin, silent Spectral change on a Pro-Q member", r5, "the PHA-979 of the bin stays intact (delay, phase)")
+
+    # ── (n) a silent change NOTHING announced (no tick, no editor): it stays where it was made ──
+    if "n" in CASES:
+        print("\n-- (n) silent change with no tick: kept on its member, spread nowhere")
+        if "h" not in CASES:
+            hman, hsnap = build_h_fixture(os.path.join(WORK, "h_fix"), False, 4, "h")
+        rn = run_htrials("n", hman, TRIALS, [("middle", PQ_GEN[1])], "PQ 0", notick=True)
+        hreport("(n) silent change on a middle member, no tick, save, reopen", rn,
+                "the member keeps it, the others and the definition do not move — the same at every trial")
+
+    # ── (s) a bin whose members already disagree ─────────────────────────────────────────────────
+    if "s" in CASES:
+        print("\n-- (s) a bin whose members already disagree (the real project's SHUSH 14/2)")
+        sman, ssnap, div = build_s_fixture(os.path.join(WORK, "s_fix"), 6, (0, 3), "s")
+        vals = {i: r["val"] for i, r in ssnap["inst"].items() if r["link"]}
+        na = sum(1 for i, v in vals.items() if i not in div)
+        ref_a = next(v for i, v in vals.items() if i not in div)
+        ref_b = vals[div[0]]
+        check("(s) the fixture holds 6 members, 2 of them (the FIRST and the fourth) on another state",
+              len(vals) == 6 and not same(ref_a, ref_b) and all(same(vals[i], ref_b) for i in div)
+              and all(same(v, ref_a) for i, v in vals.items() if i not in div),
+              "%d members, %d on A" % (len(vals), na))
+        dstate = [d[1] for d in ssnap["defs"].values() if d[2] == "SHUSH"]
+        check("(s) the definition holds the majority's state (not the first member's)",
+              len(dstate) == 1 and same(dstate[0], ref_a), "")
+        rs = run_trials("s_force", sman, TRIALS, "force", ssnap)
+        report("(s) forced program", rs, "nothing moves: no member pulled, the pair not spread, the definition kept")
+        quiet_report("(s) forced program", rs)
+        rs2 = run_trials("s_paraminfo", sman, TRIALS, "force", ssnap, details="paraminfo")
+        report("(s) forced paraminfo", rs2, "the same with a rebuilt parameter list")
+        rs3 = run_trials("s_wait", sman, TRIALS, "wait", ssnap)
+        report("(s) wait %gs" % STAT_WAIT, rs3, "no forcing")
+        quiet_report("(s) wait %gs" % STAT_WAIT, rs3, at_open_only=True)
+
+        # the definition is the same at EVERY save: three open + save in a row, each compared with
+        # the original file, definition included
+        def chain(k):
+            rng = random.Random(SEED * 9000 + k)
+            res, src = [], sman
+            for cyc in range(3):
+                r = trial(src, "s_chain_%d_c%d" % (k, cyc), "force", rng, ssnap)
+                res.append(r)
+                src = os.path.join(WORK, "s_chain_%d_c%d" % (k, cyc), os.path.basename(sman))
+            return res
+        with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
+            chains = list(ex.map(chain, range(max(2, TRIALS // 2))))
+        report("(s) 3 saves in a row", [r for c in chains for r in c], "the definition and every member identical to the original at each save")
 
     # ── (r) a copy of a real project ───────────────────────────────────────────────────────────
     if "real" in opts:
