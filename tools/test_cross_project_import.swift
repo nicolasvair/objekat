@@ -14,6 +14,9 @@
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/Marker.swift \
+//         ../objekat/SoundObject/ChannelMode.swift \
+//         ../objekat/Shared/LaneEntryIndex.swift \
+//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
 //         ../objekat/SoundObject/ConsolidateDefinition.swift \
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
