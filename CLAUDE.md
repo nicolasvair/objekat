@@ -35,9 +35,10 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **33** patches in `engine-patches/3.5/`, numbered `0001`→`0035` with two
+An engine series of **34** patches in `engine-patches/3.5/`, numbered `0001`→`0036` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). The next one will be `0036`. It is the ONLY series left: the four archives of
+(see its README). The next one will be `0037`. (`0035` and `0036`, the FX link state fixes of
+4 October 2026, live on the branch `fix/fxlink-state-corruption`, fork NOT republished.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
 that: the engine branch they rebuilt, `objekat-patches` (head `8d4f23711df`, base Tracktion
@@ -2165,7 +2166,7 @@ What has landed since mid-August, in order:
   5.4 s (lagrange) → 10.2 s (sincMedium, same rate) → 17 s (96 → 44.1) → 25–29 s (sincBest on the clone,
   52 s for 96 → 44.1): roughly ×2 live, ×5 for a render on a copy. **A guard 'same rate and speed 1 →
   keep Lagrange' was evaluated and NOT done**: it is simple in `buildAudioReaderGraph` but is an engine
-  change of its own (a `0035`), and it buys CPU only — sinc at the same rate is already ~120–137 dB, so
+  change of its own (now a `0037` at the earliest — `0035`/`0036` went to the FX link fixes), and it buys CPU only — sinc at the same rate is already ~120–137 dB, so
   nothing audible; worth doing only if the live cost of sinc is felt on a big project.
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).

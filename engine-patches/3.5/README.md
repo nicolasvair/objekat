@@ -323,6 +323,20 @@ Checked as still biting: `develop` still had the linear `std::find`.
   without raising `parameterInfoChanged` would no longer be rebuilt (AU raises it through the
   `ParameterList` property, VST3 `restartComponent` and VST2 raise it too; nothing observed). One
   file. Guarded by `tools/scenario_fxlink_state_persistence.py`.
+- `0036` — **after an AudioUnit's list IS rebuilt, its defaults are not relayed.** `0035` left one
+  path open: an AU that really posts `kAudioUnitProperty_ParameterList` (some do when a state is
+  restored, and `debug.plugin_force_processor_changed` with `details: "paraminfo"` reproduces it).
+  The recreated `AUInstanceParameter`s still cache their DEFAULTS, and `refreshParameterValues()`
+  still relayed them. Now, after a rebuild of an AU's list, `refreshParameterValues()` is skipped
+  and `AUParameterListenerNotify (kAUParameterListener_AnyParameter)` is posted instead — public
+  AudioToolbox API, the second half of JUCE's private `sendAllParametersChangedEvents()`: the unit's
+  event system delivers one `ParameterValueChange` per parameter carrying the value read off the
+  unit, JUCE's own listener updates each cache and notifies the host with the REAL value. Nothing is
+  written to the unit. Measured on real AUs (Pro-Q 4, PHA-979, Weiss Deess): after a forced
+  `paraminfo`, values AND display strings identical to before, where `0035` alone put the first
+  forced member back on its defaults. Relied on empirically: Apple documents the AnyParameter notify
+  for "all parameters changed", not that every AU answers it synchronously. Other formats unchanged
+  (VST2's `getValue()` reads the plugin live). Two files (an `AudioUnitUtilities.h` include).
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit
