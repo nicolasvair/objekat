@@ -4601,7 +4601,10 @@ static NSString* objNS(const juce::String& s);   // defined with the other debug
     auto wires = plugin.state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
     if (wires.isValid()) { plugin.state.removeChild(wires, nullptr); changed = true; }
     if (auto* comp = dynamic_cast<te::CompressorPlugin*>(&plugin))
-        if (comp->useSidechainTrigger.get()) { comp->useSidechainTrigger = false; changed = true; }
+        if (comp->useSidechainTrigger.get()) {
+            plugin.state.setProperty(te::IDs::sidechainTrigger, false, nullptr);   // no undo manager
+            changed = true;
+        }
     if (plugin.state.hasProperty(te::objbridge_ids::rank)) {
         plugin.state.removeProperty(te::objbridge_ids::rank, nullptr);
         changed = true;
@@ -4615,6 +4618,19 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
     return true;
 }
 
+// A local copy of Plugin::guessSidechainRouting's table (tracktion_Plugin.cpp), writing with NO undo
+// manager: the original records into the Edit's UndoManager, where the app writes nothing else.
+static void objLayBridgeWires(te::Plugin& plugin) {
+    juce::StringArray ins;
+    plugin.getChannelNames(&ins, nullptr);
+    auto wire = [&](int src, int dst) { plugin.makeConnection(src, dst, nullptr); };
+
+    if (ins.size() == 1)      { wire(0, 0); wire(1, 0); }
+    else if (ins.size() == 2) { wire(0, 0); wire(1, 0); wire(2, 1); wire(3, 1); }
+    else if (ins.size() == 3) { wire(0, 0); wire(1, 1); wire(2, 2); wire(3, 2); }
+    else                      { wire(0, 0); wire(1, 1); wire(2, 2); wire(3, 3); }
+}
+
 - (void)setSidechainForPlugin:(NSString*)pluginKey source:(NSString* _Nullable)sourceKey rank:(NSInteger)rank {
     if (!_edit || !pluginKey) return;
     std::string pk([pluginKey UTF8String]);
@@ -4623,7 +4639,11 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
     te::Plugin& plugin = *pit->second;
 
     te::EditItemID target;
-    if (sourceKey) {
+    // A plugin with no sidechain input must never be wired: guessSidechainRouting on a plain stereo
+    // plugin sends the key to its RIGHT input and sums the two inputs on the left. Cleared instead
+    // (the branch below) — a hand-edited session, an AU that lost its bus, or a copy can get here.
+    const bool mayBeKeyed = !objPluginIsLoaded(plugin) || plugin.canSidechain();
+    if (sourceKey && mayBeKeyed) {
         if (auto tit = _bridgeTapMap.find(std::string([sourceKey UTF8String])); tit != _bridgeTapMap.end() && tit->second)
             target = tit->second->itemID;
     }
@@ -4640,7 +4660,10 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
 
     const bool sourceChanged = plugin.getSidechainSourceID() != target;
     if (sourceChanged) {
-        plugin.setSidechainSourceID(target);
+        // Written to the tree directly, with NO undo manager: the CachedValue (and
+        // setSidechainSourceID) would record into the Edit's own UndoManager, where the app writes
+        // nothing else — the model is the only undo.
+        plugin.state.setProperty(te::IDs::sidechainSourceID, target.toVar(), nullptr);
         // The wires belong to a source: lay them again, never inherit the previous ones.
         auto wires = plugin.state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
         if (wires.isValid()) plugin.state.removeChild(wires, nullptr);
@@ -4649,7 +4672,7 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
 
     if (sourceChanged || plugin.getNumWires() == 0) {
         if (objPluginIsLoaded(plugin)) {
-            plugin.guessSidechainRouting();
+            objLayBridgeWires(plugin);
             _bridgePendingWires.erase(pk);
             _bridgeDirty = true;
         } else {
@@ -4658,7 +4681,10 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
     }
 
     if (auto* comp = dynamic_cast<te::CompressorPlugin*>(&plugin))
-        if (!comp->useSidechainTrigger.get()) { comp->useSidechainTrigger = true; _bridgeDirty = true; }
+        if (!comp->useSidechainTrigger.get()) {
+            plugin.state.setProperty(te::IDs::sidechainTrigger, true, nullptr);   // no undo manager
+            _bridgeDirty = true;
+        }
 
     if ((int) plugin.state.getProperty(te::objbridge_ids::rank, 0) != (int) rank) {
         if (rank > 0) plugin.state.setProperty(te::objbridge_ids::rank, (int) rank, nullptr);
@@ -4676,7 +4702,13 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
         auto pit = _pluginMap.find(*it);
         if (pit == _pluginMap.end() || !pit->second) { it = _bridgePendingWires.erase(it); continue; }
         if (!objPluginIsLoaded(*pit->second)) { ++it; continue; }
-        if (pit->second->getNumWires() == 0) pit->second->guessSidechainRouting();
+        if (!pit->second->canSidechain()) {
+            // It turned out to have no sidechain input: never wire it, take the key away.
+            [self clearSidechainOnPlugin:*pit->second];
+            _bridgeKeyedPlugins.erase(*it);
+        } else if (pit->second->getNumWires() == 0) {
+            objLayBridgeWires(*pit->second);
+        }
         any = true;
         it = _bridgePendingWires.erase(it);
     }
@@ -4743,8 +4775,9 @@ static bool objPluginIsLoaded(te::Plugin& plugin) {
 
     std::unordered_map<uint64_t, std::string> keyByItemID;
     for (auto& [k, p] : _pluginMap) if (p) keyByItemID[p->itemID.getRawID()] = k;
-    auto pluginKeyFor = [&](te::EditItemID id) -> id {
-        if (auto it = keyByItemID.find(id.getRawID()); it != keyByItemID.end())
+    // The parameter is NOT called `id`: in a trailing return type it would hide the ObjC type.
+    auto pluginKeyFor = [&](te::EditItemID itemID) -> id {
+        if (auto it = keyByItemID.find(itemID.getRawID()); it != keyByItemID.end())
             return [NSString stringWithUTF8String:it->second.c_str()];
         return [NSNull null];
     };
