@@ -441,7 +441,7 @@ extension EditViewModel {
                                   identifier: inst.identifier, formatName: inst.formatName,
                                   isEnabled: inst.isEnabled, stateXML: stateXML,
                                   linkGroupID: gid, detachedLinkGroupID: detached,
-                                  colorIndex: inst.colorIndex)
+                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain)
         pushUndo()
         if copy && linked, let gid, inst.linkGroupID == nil {
             // The source was not linked yet: it enters the group with the copy.
@@ -648,7 +648,8 @@ extension EditViewModel {
             return ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
                                 identifier: inst.identifier, formatName: inst.formatName,
                                 isEnabled: inst.isEnabled,
-                                stateXML: (live?.isEmpty == false) ? live : inst.stateXML)
+                                stateXML: (live?.isEmpty == false) ? live : inst.stateXML,
+                                sidechain: inst.sidechain)
         }
     }
 
@@ -683,7 +684,8 @@ extension EditViewModel {
             ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                          identifier: p.identifier, formatName: p.formatName,
                          isEnabled: p.isEnabled, stateXML: liveState(p),
-                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex)
+                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
+                         sidechain: p.sidechain)
         }
         /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
         /// block gives a detached copy, with its own output section).

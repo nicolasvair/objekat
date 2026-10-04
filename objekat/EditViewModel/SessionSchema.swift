@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 18
+    static let formatVersion = 19
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -60,6 +60,10 @@ enum SessionSchema {
         "sends — sends towards an aux object: { auxID, levelDb, enabled }.",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
+        "sidechain — on a plugin entry, { sourceID }: the object or stem whose sound feeds that plugin's",
+        "  sidechain input, tapped after its fader and its window (what is heard of it). The source must",
+        "  not contain the plugin's host, and no chain of keys may loop. A key whose source is gone or out",
+        "  of scope stays written and is silent. Absent = no sidechain (every session before format 19).",
         "  An entry with an `fxBlock` key is neither: it is the place an FX LINK (a bin of shared",
         "  plugins) takes in the chain — { linkID, isDetached?, plugins, local? }. `plugins` are THIS",
         "  object's own instances of the bin's plugins; each names the bin's definition plugin",

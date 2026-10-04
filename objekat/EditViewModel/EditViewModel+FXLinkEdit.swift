@@ -225,7 +225,8 @@ extension EditViewModel {
             let state = fxLiveState(of: leaf)
             let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                  identifier: leaf.identifier, formatName: leaf.formatName,
-                                 isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex)
+                                 isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
+                                 sidechain: leaf.sidechain)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state
@@ -494,7 +495,7 @@ extension EditViewModel {
                              identifier: inst.identifier, formatName: inst.formatName,
                              isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
                              linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
-                             colorIndex: inst.colorIndex)
+                             colorIndex: inst.colorIndex, sidechain: inst.sidechain)
             }
             var entry = FXLink.blockEntry(linkID: fb.linkID, name: block.name, instances: instances)
             entry.fxBlock?.isDetached = true
@@ -544,7 +545,8 @@ extension EditViewModel {
             let state = fxLiveState(of: leaf)
             let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                  identifier: leaf.identifier, formatName: leaf.formatName,
-                                 isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex)
+                                 isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
+                                 sidechain: leaf.sidechain)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state

@@ -292,18 +292,20 @@ extension EditViewModel {
                                     isEnabled: p.isEnabled, stateXML: stateXML,
                                     linkGroupID: p.linkGroupID,
                                     detachedLinkGroupID: p.detachedLinkGroupID,
-                                    colorIndex: p.colorIndex)
+                                    colorIndex: p.colorIndex, sidechain: p.sidechain)
             case .copy:
                 // No colour carried over: an independent copy draws its own, which is what makes
                 // it recognisable as a second plugin and not the same one seen twice.
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
-                                    isEnabled: p.isEnabled, stateXML: stateXML, linkGroupID: nil)
+                                    isEnabled: p.isEnabled, stateXML: stateXML, linkGroupID: nil,
+                                    sidechain: p.sidechain)
             case .link:
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: stateXML,
-                                    linkGroupID: groups[p.id], colorIndex: p.colorIndex)
+                                    linkGroupID: groups[p.id], colorIndex: p.colorIndex,
+                                    sidechain: p.sidechain)
             }
         }
 
@@ -363,6 +365,7 @@ extension EditViewModel {
     private func independentCopy(of p: ObjectPlugin) -> ObjectPlugin {
         ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                      identifier: p.identifier, formatName: p.formatName,
-                     isEnabled: p.isEnabled, stateXML: liveStateXML(of: p), linkGroupID: nil)
+                     isEnabled: p.isEnabled, stateXML: liveStateXML(of: p), linkGroupID: nil,
+                     sidechain: p.sidechain)
     }
 }

@@ -204,6 +204,24 @@ extension EditViewModel {
     /// children went on feeding the ORIGINAL's aux — a send the engine refuses
     /// to wire (nothing crosses a container's boundary, @see canRouteSend), hence a silent aux
     /// in the copy and a send scheme to redo by hand.
+    /// `plugins` with every sidechain key whose source is in `idMap` pointed at its copy — leaves,
+    /// the voices of a rack, the instances of an FX link block, recursively.
+    static func remappingSidechain(in plugins: [ObjectPlugin], using idMap: [UUID: UUID]) -> [ObjectPlugin] {
+        plugins.map { p in
+            var q = p
+            if let sc = q.sidechain, let mapped = idMap[sc.sourceID] { q.sidechain = SidechainSource(sourceID: mapped) }
+            if var rack = q.rack {
+                rack.voices = rack.voices.map { remappingSidechain(in: $0, using: idMap) }
+                q.rack = rack
+            }
+            if var block = q.fxBlock {
+                block.plugins = remappingSidechain(in: block.plugins, using: idMap)
+                q.fxBlock = block
+            }
+            return q
+        }
+    }
+
     static func remappingSends(_ obj: SoundObject, using idMap: [UUID: UUID]) -> SoundObject {
         guard !idMap.isEmpty else { return obj }
         var o = obj
@@ -217,6 +235,10 @@ extension EditViewModel {
             AutomationLane(param: $0.param.remappingAux(using: idMap), points: $0.points)
         }
         o.automationTouchOrder = o.automationTouchOrder.map { $0.remappingAux(using: idMap) }
+        // A sidechain key names its source by identifier too: a duplicated bass keyed by a duplicated
+        // kick must follow the copy (a source OUTSIDE the batch keeps its key — the same project).
+        o.plugins = remappingSidechain(in: o.plugins, using: idMap)
+        o.instruments = remappingSidechain(in: o.instruments, using: idMap)
         if case .group(let children, let isExpanded) = o.kind {
             o.kind = .group(children: children.map { remappingSends($0, using: idMap) },
                             isExpanded: isExpanded)
