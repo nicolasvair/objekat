@@ -2173,8 +2173,8 @@ What has landed since mid-August, in order:
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
 - **Sidechain for AU/VST3 plugins — the audio bridge, phase 1** (4 October 2026, ON THE BRANCH
-  `feature/sidechain`, NOT on `main`; **written on a Linux machine: nothing built, nothing run on a
-  Mac, nothing seen or heard**). A plugin's sidechain input keyed by another object or by a stem —
+  `feature/sidechain`, NOT on `main`; **written on a Linux machine, then built and tested on a Mac on
+  5 October 2026 (see below): nothing yet HEARD or SEEN**). A plugin's sidechain input keyed by another object or by a stem —
   across stems and across groups, latency-aligned whether the key is younger or older. Design, the
   user's decisions, the review rulings and the numbered steps: `docs/plan_sidechain.md`; the API in
   `command_api.md` ("A plugin's sidechain"); the decision in `architecture_decisions.md`.
@@ -2209,20 +2209,33 @@ What has landed since mid-August, in order:
   tooltip says "Key: Kick". API: `plugin.sidechain_sources`, `plugin.set_sidechain`, `sidechain` in
   `plugin.list`, DEBUG `debug.bridge_report` / `debug.add_test_plugin` / `debug.set_plugin_property`.
   Phase 0's probe (`debug.plugin_buses`, `tools/probe_sidechain.py`) is still the first thing to run.
-  **What was verified, and where.** On Linux, RUN: `tools/test_bridge_core.cpp` (the ring and the
-  latency arithmetic, 65 assertions, also under gcc's ASan/UBSan), `tools/test_bridge_scope_reference.py`
-  (the case table against an independent Python mirror, 27 checks), `xcstrings.py check` (580 keys,
-  nothing missing) and `orphans` (none), `py_compile` on the scenarios. `clang++ -fsyntax-only` against
-  hand-made stubs of the few JUCE/Tracktion names used, for the engine files `tracktion_ObjBridge.*`
-  and `tracktion_ObjBridgeNodes.*`. READ as a compiler would, by the author and by the architect (two
-  review passes, E1–E4 / S1–S5 and R1–R2 fixed): everything else — `tracktion_EditNodeBuilder.cpp`,
-  `CombiningNode`, `OBJEngineCore`, the Swift. **NOT compiled: not one line of the engine, the
-  Objective-C++ or the Swift. NOT run: `test_bridge_scope.swift`, the new assertions of
-  `test_cross_project_import.swift`, `scenario_sidechain.py`, `scenario_bridge_latency.py`, nor any
-  existing suite since the format moved to 19.** **Not seen, not heard**: the card's menu and glyph
-  (note: the plan asked for a LINE under the plugin's name, the card is one line high, so it is a
-  glyph with a tooltip), the three languages, and above all the SOUND — a real kick keying a real AU
-  compressor, with and without a look-ahead limiter on the kick; stop/start, loops, seeking.
+  **What was verified, and where** (first Mac session, 5 October 2026; Debug build). **Compiled**:
+  engine patch `0037` applies onto `17215d464fb` and builds; Swift and Objective-C++ build after
+  three fixes (an explicit `NS_SWIFT_NAME` on `setSidechainForPlugin:`, `pluginPayload` mapped
+  through a closure, one `@MainActor` nested func). Clean Debug build: 1551 `warning:` lines against
+  the 1550 baseline, none on a line this branch added (the +1 is not attributed: the baseline is
+  older than the branch's base). **Run, all green**: `test_bridge_core.cpp` 65, `test_bridge_scope.swift`
+  27, `test_bridge_scope_reference.py` 27, `test_cross_project_import.swift` 37 (its compile line was
+  stale), `scenario_sidechain.py` 55, `scenario_bridge_latency.py` 66 (cases A–J, sample-exact in
+  both latency directions), and the whole non-regression set on a fresh instance each (smoke clean,
+  families 261, markers, plugin_state_undo 5, plugin_selection 58, export_preview 76, fxlink 132,
+  consolidate, tabs 104, cross_paste 31, channel_mode 50, relink), `debug.plugin_id_audit` 0, no window
+  on the headless pid. **One engine bug found and fixed** (in `0037`, re-exported): a keyed plugin
+  processes main + key (4 channels) then a `ChannelRemappingNode` trims to 2, and the `CombiningNode`
+  sized its buffers on the chain's OUTPUT — a Debug assertion in `tracktion_CombiningNode.cpp`, a
+  crash on the first export of a keyed project; the buffers now cover the widest internal node.
+  **Two scenario premises were wrong, learnt the hard way**: (1) an EXPORT MIXES DETACHED STEMS TOO
+  (`stem.route_to_main false` does not silence the stem in a render — not decided here, see the
+  report) so the ducking is measured on the host's own 220 Hz tone; (2) a MONO object is duplicated
+  left -> right at the end of its chain, which overwrites the probe's key on R: with the old mono
+  host `scenario_bridge_latency` passed whatever the reader did (a mutant ignoring the delay now
+  fails case C). The LIVE graph exists only once the playback context is allocated (a play or an
+  export), so `debug.bridge_report` answers `engine: null` before that. **Probe** (`debug.plugin_buses`):
+  FabFilter Pro-C 2 (AU and VST3), UADx API 2500 and SSL G Bus Compressor (AU) are all `OK`, a
+  second 2-channel input bus enabled: no `DISABLED`. **Still not seen, not heard**: the card's menu
+  and glyph, the three languages, and above all the SOUND — a real kick keying a real AU compressor,
+  with and without a look-ahead limiter on the kick; stop/start, loops, seeking; the CPU on a real
+  session; the fluidity of the signal view on a big project.
   **The checklist for the Mac, in order**: (1) `git submodule`: the engine must be the fork commit
   `17215d464fb` with `engine-patches/3.5/0037-*.patch` applied (`git -C tracktion_engine am
   ../engine-patches/3.5/0037-*.patch`, or fetch branch `objekat-bridge-0037` from this machine);
