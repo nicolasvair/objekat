@@ -53,7 +53,7 @@ This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral
 - **Each op records:** the gesture geometry, plus a `params` dictionary snapshotting the values of the controls the tool declares, at the moment of the gesture. The app attaches no meaning to them. The script interprets them.
 - **The app draws only a raw TRACE** of each op the script has not yet reflected:
   - `rect`: an outline;
-  - `stroke`: semi-transparent dark discs of the brush size, laid every `spacing_for(h)` diameters along the path (§3.3: ¼ for a soft brush, down to 1/64 for a hard one). The app has no notion of hardness, so a stroke tool may declare an optional `hardness_control` (a `number` control read as 0…100 %, a purely visual hint); the trace then uses `spacing_for(value / 100)`, and without it ¼. Passing again darkens more. This is purely visual; there is no dB anywhere in the app.
+  - `stroke`: semi-transparent dark discs of the brush size, laid every ¼ diameter along the path (a fixed spacing; the app has no notion of hardness, and the script's veil replaces the trace as soon as it arrives). Passing again darkens more. This is purely visual; there is no dB anywhere in the app.
   - `point`: a small ring.
 - The app also owns undo/redo (cursor, ⌘Z guard) and the transport.
 
@@ -128,7 +128,6 @@ Ending a canvas stops its audio and closes its window. A second `open` on the sa
   - `label` is the script's own text, already localised.
   - `icon` is an SF Symbol name. When absent: `rect` → `rectangle.dashed`, `stroke` → `scribble`, `point` → `smallcircle.filled.circle`.
   - `params` lists the hand-value controls (number, bool or choice) snapshotted into each op.
-  - `hardness_control` is optional for `stroke` and forbidden otherwise. It must name a `number` control (0…100). It only sets the spacing of the raw trace (§3.3's `spacing_for`); the app gives it no other meaning. The eraser declares `hardness_control: "hardness"`.
   - `size_control` is required for `stroke` and forbidden otherwise. It must name a `number` control giving the diameter in screen points, clamped to 1…1000 when used.
   - The id `"hand"` is reserved. The Hand tool is always present and is labelled `L("canvas.tool.hand")`.
 - `remember`: as for panels. Validate stores the values, `press: "reset"` restores the declared ones, the key is `scriptPanel.<key>`, and it is ephemeral under `--no-recent` or `--headless`.
@@ -336,7 +335,7 @@ All mask terms are in dB and add up.
 **Eraser** (tool `stroke` id `eraser`, params `amount`, `hardness`; diameter from the op's `size_x`, `size_y`)
 - Constants: `R = 0.5`, `SPACING_MAX = 0.25`, `SPACING_MIN = 1/64`, `SPACING_KNEE_H = 0.3`.
 - **Spacing depends on hardness.** `spacing_for(h)` (h clamped to [0, 1]) is `0.25` for `h ≤ 0.3`, then a straight line down to `1/64` at `h = 1`:
-  `spacing_for(h) = 0.25 − (0.25 − 1/64)·(h − 0.3)/0.7`. A fixed ¼ left a ripple along the stroke that grew with hardness (14 % at h = 0.7, 25 % at h = 1: a hard profile is nearly a box and sampling it coarsely beats against the dab lattice). Mirrored in Swift by the trace (`CanvasStrokeTrace`), which must call the same formula.
+  `spacing_for(h) = 0.25 − (0.25 − 1/64)·(h − 0.3)/0.7`. A fixed ¼ left a ripple along the stroke that grew with hardness (14 % at h = 0.7, 25 % at h = 1: a hard profile is nearly a box and sampling it coarsely beats against the dab lattice). Python only: the app's raw trace uses a fixed ¼ diameter and does not mirror it.
 - Normalise each point: `u = warp_x(x)/size_x`, `v = warp_y(y)/size_y`.
 - Dab centres sit at arc lengths `(k + 0.5)·spacing`, with `spacing = spacing_for(h)` and k an integer. Use `sqrt(du·du + dv·dv)`:
 
@@ -408,7 +407,7 @@ for i in range(1, n):
 
 | file | new or touched | content |
 |---|---|---|
-| `objekat/Shared/ScriptCanvasGeometry.swift` | new, pure, `nonisolated` | `CanvasAxisMapping`; `CanvasAxis` (warp, unwarp); `CanvasWorld`; `CanvasViewport` (fit, `zoomedX/Y(by:anchor:in:)`, `panned`, `clamped`, screen ↔ warped); `CanvasStrokeTrace.discCentres(points:sizeX:sizeY:world:) -> [CanvasPoint]` (resampling every `spacing_for(h)` diameters, with `h` the hardness, for drawing only; `spacing_for` is a pure Swift mirror of `mask.spacing_for`); `CanvasTicks` (1-2-5 steps ≥ 70 pt apart; log axes in decades × {1,2,5}, denser {1…9} when zoomed); `CanvasFormat` (time `m:ss.mmm`, Hz/kHz, value plus unit); `CanvasPoint` |
+| `objekat/Shared/ScriptCanvasGeometry.swift` | new, pure, `nonisolated` | `CanvasAxisMapping`; `CanvasAxis` (warp, unwarp); `CanvasWorld`; `CanvasViewport` (fit, `zoomedX/Y(by:anchor:in:)`, `panned`, `clamped`, screen ↔ warped); `CanvasStrokeTrace.discCentres(points:sizeX:sizeY:world:) -> [CanvasPoint]` (resampling every ¼ diameter, for drawing only); `CanvasTicks` (1-2-5 steps ≥ 70 pt apart; log axes in decades × {1,2,5}, denser {1…9} when zoomed); `CanvasFormat` (time `m:ss.mmm`, Hz/kHz, value plus unit); `CanvasPoint` |
 | `objekat/Shared/ScriptCanvasImageFile.swift` | new, pure | `nonisolated enum ScriptCanvasImageFile { enum Kind { indexed(v0, v255, palette), rgba }; struct Parsed { kind; width; height; pixelRange: Range<Int> }; static func parse(_ data: Data) throws -> Parsed }`, with its own `ParseError` |
 | `objekat/Shared/ScriptCanvasImage.swift` | new | `final class ScriptCanvasImage { path; cgImage; width; height; indices: Data?; v0; v255; generation; static func load(path:) throws }`. Throws `CommandError` (`not_found` / `bad_params`). An indexed `CGImage` for CNV1, premultiplied RGBA for RGB1, `CGImageSource` otherwise; `value(column:row:)` |
 | `objekat/Shared/ScriptControls.swift` | new, extraction | `parse`, `applyHand`, `applyScript`, `handValues`, `rememberKey`: code moved verbatim from `Commands+ScriptPanel.parseControls` and `ScriptPanelStore.input` / `update` / `handValues`, with the same messages |
@@ -587,7 +586,7 @@ let scriptCanvases: ScriptCanvasStore = {
 3. **Open the canvas.** `script.canvas.open` with the controls below, and:
    - tools:
      - `{id: "rect", kind: "rect", label: tr(Rectangle), params: ["gain", "feather_ms", "feather_st"]}`;
-     - `{id: "eraser", kind: "stroke", label: tr(Gomme / Eraser / Borrador), icon: "eraser", params: ["amount", "hardness"], size_control: "size_px", hardness_control: "hardness"}`;
+     - `{id: "eraser", kind: "stroke", label: tr(Gomme / Eraser / Borrador), icon: "eraser", params: ["amount", "hardness"], size_control: "size_px"}`;
    - `object`, `remember: "spectral-gain"`, `busy: true`, status "Rendering…".
 
    | id | kind | range | default |
@@ -661,7 +660,7 @@ let scriptCanvases: ScriptCanvasStore = {
 **Swift standalone, compiled on the Mac from `tools/`**
 - `tools/test_script_canvas_geometry.swift`:
   - build: `swiftc -parse-as-library ../objekat/Shared/ScriptCanvasGeometry.swift test_script_canvas_geometry.swift -o /tmp/scg && /tmp/scg`;
-  - asserts: warp/unwarp; viewport fit, zoom with a fixed anchor, pan, clamp and minimum span; `size_x = size_pt / pointsPerX`; trace disc spacing of `spacing_for(h)` diameters (¼ at h = 0.3 and below, 1/64 at h = 1), with no discs for a still path; tick count and spacing; the format strings.
+  - asserts: warp/unwarp; viewport fit, zoom with a fixed anchor, pan, clamp and minimum span; `size_x = size_pt / pointsPerX`; trace disc spacing of ¼ diameter, with no discs for a still path; tick count and spacing; the format strings.
 - `tools/test_script_canvas_image.swift`:
   - built against `ScriptCanvasImageFile.swift`;
   - asserts: both fixtures parse with the right header fields and the right pixel at (c, r); a wrong magic, a truncated file or a zero dimension throws.
