@@ -2187,8 +2187,8 @@ What has landed since mid-August, in order:
   keeps its accumulation. The three constants are first guesses.
   Read off the hand the same day, twice: the wheel over a LINE (precise deltas — trackpad, Magic Mouse,
   smooth-scrolling mouse) needed a hard push at 10 pt per step, then at 3 pt sat still and ran off. It now
-  reads the gesture's TOTAL travel through `AutomationHandTravel.wheelSteps`: first step at 1 pt, then
-  8 pt per step up to 4 steps (at most one per event there), then 3 pt; every event keeps the hold alive
+  reads the gesture's TOTAL travel through `AutomationHandTravel.wheelSteps`: first step at 8 pt (1 pt was still
+  far too quick), then 20 pt per step up to 4 steps (at most one per event there), then 3 pt; every event keeps the hold alive
   (no second undo on a slow finger). A notch wheel stays one step per notch; the ⌥ curvature wheel 10 pt.
   **The export sheet no longer widens with a long folder path** (path with idealWidth 0, lowered priority,
   `.help` with the full path; the footer, batch label and region names likewise).

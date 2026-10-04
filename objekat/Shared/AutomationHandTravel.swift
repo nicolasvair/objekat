@@ -29,13 +29,13 @@ enum AutomationHandTravel {
     // The same idea for a trackpad / Magic Mouse / smooth-scrolling mouse carrying a line: a flat
     // rate either needed a hard push (10 pt per step) or, once lowered, sat still for the first
     // points and then ran off (3 pt per step, read off the hand on 4 October 2026). So the steps are
-    // read off the gesture's TOTAL travel: the first comes almost at once, the next few are slow
+    // read off the gesture's TOTAL travel: the first comes after a short, deliberate travel, the next few are slow
     // and spaced (one or two dB is the common edit), and only past that knee does the rate pick up.
 
-    /// Travel (pt) before the FIRST step.
-    static let wheelFirstPt: Double = 1
+    /// Travel (pt) before the FIRST step. 1 pt was felt as far too quick (4 October 2026).
+    static let wheelFirstPt: Double = 8
     /// Travel (pt) per step inside the fine zone.
-    static let wheelFinePtPerStep: Double = 8
+    static let wheelFinePtPerStep: Double = 20
     /// How many steps the fine zone spans (the first one included).
     static let wheelFineSteps: Int = 4
     /// Travel (pt) per step past the fine zone.
