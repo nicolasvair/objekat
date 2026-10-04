@@ -8,6 +8,16 @@ import numpy as np
 import wavio
 
 
+def _read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _write(path, data):
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 def _tmp(name):
     return os.path.join(tempfile.mkdtemp(prefix="sgwav"), name)
 
@@ -44,7 +54,7 @@ class RoundTrip(unittest.TestCase):
         for ch in (1, 2):
             p, info = self._rt("f32", ch, 32, 1e-7)
             self.assertEqual(info.kind, "pcm_float")
-            raw = open(p, "rb").read()
+            raw = _read(p)
             self.assertIn(b"fact", raw)
 
     def test_f32_is_bit_exact_for_float32_input(self):
@@ -103,7 +113,7 @@ class Clipping(unittest.TestCase):
         a, b = _tmp("i.wav"), _tmp("j.wav")
         wavio.write_wav(a, x, 44100, "pcm24")
         wavio.write_wav(b, x, 44100, "pcm24")
-        self.assertEqual(open(a, "rb").read(), open(b, "rb").read())
+        self.assertEqual(_read(a), _read(b))
 
 
 def _build_wave(fmt_chunk, data, rf64=False, extra=b""):
@@ -127,7 +137,7 @@ class Headers(unittest.TestCase):
         ints = np.array([100, -200, 300, -400], dtype=np.int32)
         raw = b"".join(struct.pack("<i", int(v))[:3] for v in ints)
         p = _tmp("k.wav")
-        open(p, "wb").write(_build_wave(_fmt_ext(2, 96000, 24, 1), raw))
+        _write(p, _build_wave(_fmt_ext(2, 96000, 24, 1), raw))
         got, info = wavio.read_wav_int(p)
         self.assertEqual((info.channels, info.sample_rate, info.bit_depth, info.kind), (2, 96000, 24, "pcm_int"))
         self.assertEqual(got.reshape(-1).tolist(), ints.tolist())
@@ -144,7 +154,7 @@ class Headers(unittest.TestCase):
         ints = np.array([1, -2, 3, -4, 5, -6], dtype="<i2")
         fmt = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, 2, 44100, 44100 * 4, 4, 16)
         p = _tmp("m.wav")
-        open(p, "wb").write(_build_wave(fmt, ints.tobytes(), rf64=True))
+        _write(p, _build_wave(fmt, ints.tobytes(), rf64=True))
         got, info = wavio.read_wav_int(p)
         self.assertEqual((info.frames, info.channels), (3, 2))
         self.assertEqual(got.reshape(-1).tolist(), ints.tolist())
@@ -154,7 +164,7 @@ class Headers(unittest.TestCase):
         fmt = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, 1, 8000, 16000, 2, 16)
         junk = struct.pack("<4sI", b"LIST", 3) + b"abc" + b"\0"
         p = _tmp("n.wav")
-        open(p, "wb").write(_build_wave(fmt, ints.tobytes(), extra=junk))
+        _write(p, _build_wave(fmt, ints.tobytes(), extra=junk))
         got, _ = wavio.read_wav_int(p)
         self.assertEqual(got[:, 0].tolist(), [7, 8])
 
@@ -162,18 +172,18 @@ class Headers(unittest.TestCase):
         ints = np.array([2 ** 31 - 1, -2 ** 31, 5], dtype="<i4")
         fmt = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, 1, 8000, 32000, 4, 32)
         p = _tmp("o.wav")
-        open(p, "wb").write(_build_wave(fmt, ints.tobytes()))
+        _write(p, _build_wave(fmt, ints.tobytes()))
         got, info = wavio.read_wav_int(p)
         self.assertEqual(info.bit_depth, 32)
         self.assertEqual(got[:, 0].tolist(), ints.tolist())
 
     def test_errors(self):
         p = _tmp("p.wav")
-        open(p, "wb").write(b"not a wave file at all")
+        _write(p, b"not a wave file at all")
         with self.assertRaises(wavio.WavError):
             wavio.read_wav(p)
         fmt = struct.pack("<4sIHHIIHH", b"fmt ", 16, 85, 1, 8000, 16000, 2, 16)  # mp3 tag
-        open(p, "wb").write(_build_wave(fmt, b"\0\0"))
+        _write(p, _build_wave(fmt, b"\0\0"))
         with self.assertRaises(wavio.WavError):
             wavio.read_wav(p)
 
