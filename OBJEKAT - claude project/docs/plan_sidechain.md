@@ -1226,6 +1226,106 @@ context); 2–10 accepted. Fixes requested:
 Verdict: proceed to 1.6 once R1 and R2 are committed (on `objekat-bridge-0037-steps`, then
 re-squashed and `0037` re-exported).
 
+## 8b. Review of Part A and steps 1.6–1.9 (4 October 2026)
+
+Reviewed: `200bd06` (R1/R2, `0037` re-exported), `7761536` (1.6), `1a647f4` (1.7), `803497b` (1.8),
+`fe17d1c` (1.9). Read as a compiler would, nothing built. `tools/test_bridge_scope_reference.py` re-run
+here: 25 checks pass. Concurrency: the target builds in Swift 5 mode with `SWIFT_DEFAULT_ACTOR_ISOLATION
+= MainActor`; `DispatchQueue.main.async { [weak self] … }` is the pattern `EditViewModel+Consolidate.swift`
+already compiles; `BridgeScope` becomes MainActor by default in the app and stays nonisolated in the
+standalone test — both fine. Codable: `ObjectPlugin` keeps its custom `init(from:)` with the synthesised
+`encode(to:)`, which writes `sidechain` with `encodeIfPresent` (absent when nil) — correct. ObjC→Swift
+names (`ensureBridgeTap(forSource:rank:)`, `setSidechain(forPlugin:source:rank:)`,
+`setBridgeRank(_:forID:)`, `pluginCanSidechain(_:)`, `bridgeReport()`) match the call sites. Every new
+pointer in `OBJEngineCore.h` is annotated. Instruments ARE in `_pluginMap` (`OBJEngineCore.mm:2833`).
+The undo trap is respected: `bridgePlan` / `bridgeRouteStatus` are derived and never snapshotted, the
+key is compared through `adoptingPluginStates` (`EditViewModel+UndoRedo.swift:372-376`), the bridge's
+marks are stripped from every `getPluginStateXML` and kept by `applyPluginStateXML`. The tap plugin is
+never in `_pluginMap` nor the model (id uniqueness untouched). No window, no visible string.
+
+### Must fix before 1.10
+
+- **E1 — compile error.** `OBJEngineCore.mm:4746`: `auto pluginKeyFor = [&](te::EditItemID id) -> id {` —
+  in a trailing return type the PARAMETER `id` is in scope and hides the ObjC type `id`
+  ("'id' does not name a type"). Rename the parameter: `[&](te::EditItemID itemID) -> id { if (auto it =
+  keyByItemID.find(itemID.getRawID()); … }`.
+- **E2 — a key on a plugin with no sidechain input corrupts its audio.** `setSidechainForPlugin:`
+  (`OBJEngineCore.mm:4618ff`) lays wires on any plugin; `guessSidechainRouting` on a plain stereo
+  plugin (`ins.size() == 2`, `tracktion_Plugin.cpp:308-314`) wires 0,1 → 0 and the KEY → 1: the left
+  channel becomes L+R and the right channel the key. Reachable through a hand-edited session, an AU
+  that lost its bus, or a copy. After `te::Plugin& plugin = *pit->second;` add: `if (objPluginIsLoaded
+  (plugin) && ! plugin.canSidechain()) target = te::EditItemID();` (so the plugin is CLEARED, the
+  existing "!target.isValid()" branch), and in `layPendingBridgeWires` call `guessSidechainRouting`
+  only `if (pit->second->canSidechain())`, else clear the source with `clearSidechainOnPlugin:`.
+- **E3 — `BridgeScope.candidates` is O(N² · G).** It runs a full `plan()` per node
+  (`BridgeScope.swift:157-167`), and `plan()` itself filters `nodes` once per group
+  (`:295`). On a 4 000-object session with a few hundred groups the menu (1.11) and every
+  `plugin.set_sidechain` would take seconds to minutes. Fix, both in `BridgeScope.swift`:
+  (a) `World.init` builds `childrenByParent: [UUID: [Node]]` once and `dataGraphs` reads it instead of
+  `nodes.filter`; (b) factor steps 1–2 of `plan` into `private static func accepted(world:, routes:)
+  -> (graphs, refused, accepted)` and make `candidates` call it ONCE on `base`, then per candidate
+  node: `staticRefusal(probe)`; `keyEdge(probe)` nil → allowed; else `graphs[edge.scope]?.reaches(from:
+  edge.after, to: edge.unit) == true` → `.cycle`, else allowed — no copy, no ranks. Add an optional
+  `among: Set<UUID>? = nil` parameter that restricts the candidates evaluated (the UI passes selection +
+  overlapping + stems). The JSON table and the Python mirror are unchanged (same answers).
+- **E4 — an unchanged topology skips the engine, but the engine can have changed under it.**
+  `syncBridge` returns early when `nodes`/`routes` are equal (`EditViewModel+Bridge.swift:113-114`). A
+  chain remade without `compileRack` or `resyncAllSends` (the tap gone, an AU re-instantiated, a clip
+  recreated at rank 0) then stays unrouted until the next topology change. Keep the comparison but use it
+  ONLY to skip `BridgeScope.plan`: cache the last `(topology, plan)` and, when equal, re-push the engine
+  calls from the cached plan. Every engine call is idempotent and only marks `_bridgeDirty` on a real
+  change, so a drag (which writes `items` on every frame without changing the topology) costs a tree walk
+  and a few hash lookups, never a rebuild.
+
+### Should fix (before 1.12)
+
+- **S1 — minimal key edges.** A key edge already implied by the DATA graph adds a rank and a gate for
+  nothing — the executor's own example: an aux in stem S keyed by a member of S gets rank 1, so its
+  reader waits for EVERY rank-0 pool track of every stem. In `plan` step 2 (`BridgeScope.swift:101-111`),
+  keep a data-only copy of the graphs and, before the cycle test,
+  `if dataOnly[edge.scope]?.reaches(from: edge.unit, to: edge.after) == true { accepted.append(i); continue }`.
+  (The existing "stem bus keyed by its own member → no edge" and "host is the container → no edge" are
+  special cases of this rule and may stay.) Add the case to the JSON table and the Python mirror.
+- **S2 — no write to Tracktion's UndoManager.** `setSidechainSourceID`, `guessSidechainRouting` and
+  `useSidechainTrigger = …` record into the Edit's own UndoManager (their CachedValues `referTo` it,
+  `tracktion_Plugin.cpp:108`), where the app writes nothing else (`OBJEngineCore.mm:7816`, "UndoManager
+  NUL"). Write the state directly: `plugin.state.setProperty (te::IDs::sidechainSourceID,
+  juce::var ((juce::int64) target.getRawID()), nullptr)`; the wires through a local copy of
+  `guessSidechainRouting`'s table calling `plugin.makeConnection (src, dst, nullptr)`; the compressor
+  with `plugin.state.setProperty (te::IDs::sidechainTrigger, true, nullptr)`.
+- **S3 — the readme text sits inside the fxBlock paragraph.** `SessionSchema.swift:63-66` were inserted
+  between "A plugin can be a rack…" and "An entry with an `fxBlock` key is neither…", so "neither" now
+  reads as "neither a sidechain". Move the four lines to just before `fxLinks —` (`:72`).
+- **S4 — a doc comment orphaned.** `EditViewModel+Clipboard.swift:199-208`: `remappingSidechain` was
+  inserted between `remappingSends`' doc comment and `remappingSends`; move the function (with its own
+  doc) above line 199.
+- **S5 — reset the Swift side with the engine.** `resetTransientSessionState`
+  (`EditViewModel+Project.swift:521`): add `bridgeLastTopology = nil; bridgeEngineHasTaps = false;
+  bridgePlan = BridgeScope.Plan(); bridgeRouteStatus = [:]`, so a new project or a tab switch never
+  starts from the previous document's cache.
+
+### Deviations of 1.6–1.9, ruled
+(1) three touched-sets: accepted. (2) `_pluginMap` only: accepted (instruments are in it). (3) no
+`_bridgeLastReportedBuild`: accepted, nothing needs it since passes converge inside the build. (4) report
+by model key: accepted, better. (5) `bridgeRouteStatus` holds refusals only: accepted. (6) `stemRanks`
+includes rank 0: accepted (report only; the sync takes stem ranks from `taps` and `readerRanks`).
+(7) `candidates` returns every node: accepted with E3. (8) rack carriers carry no key: accepted.
+(9) attached-instance reconcile copies the definition's key: accepted.
+
+### The executor's open questions, answered
+- Aux in stem S keyed by a member of S: make it minimal — S1.
+- Stem host keyed by its own member: no edge, correct (data order).
+- An AU instrument / plugin still loading answers `cannotSidechain`: accepted. The API caller waits
+  (`wait_idle`) and retries; the card shows no Sidechain entry until the instance is loaded.
+- `plan.clips` order in the new cross-project assertions: safe — `placedClips` is `clipboard.clips.map`
+  (`CrossProjectImport.swift:313`), and `objectIDMap` is filled for the whole batch before any plugin
+  is cloned (`:92`), so the remap does not depend on order.
+- Q4 (rank moves of top-level objects during playback): the same move as a lane change; it only happens
+  when a route changes, never during a drag (S1 and E4 keep ranks stable under edits that do not touch
+  routes). Left as is.
+
+Verdict: fix E1–E4 (and S1–S5, small), then proceed to 1.10–1.13.
+
 ## 9. Risks and open questions
 
 - **Q1 — AUs that refuse the sidechain bus** or expose it mono (3 channels) — phase 0 answers; mono
