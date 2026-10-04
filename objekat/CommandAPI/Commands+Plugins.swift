@@ -718,7 +718,7 @@ extension CommandRegistry {
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
-            func ranks(_ d: [UUID: Int]) -> JSONValue {
+            @MainActor func ranks(_ d: [UUID: Int]) -> JSONValue {
                 .object(Dictionary(uniqueKeysWithValues: d.map { ($0.key.uuidString, JSONValue.int($0.value)) }))
             }
             let plan = vm.bridgePlan
