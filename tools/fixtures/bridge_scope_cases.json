@@ -1,0 +1,1162 @@
+{
+ "_comment": "The case table of BridgeScope (objekat/Shared/BridgeScope.swift). Read by tools/test_bridge_scope_reference.py (a Python mirror, runs anywhere) and tools/test_bridge_scope.swift (the real thing). ids are short names; a route's consumer is {kind, id}.",
+ "cases": [
+  {
+   "name": "same stem",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "sibling stems",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S2",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S2"
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "source in a group, destination at the root",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "K",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "K": -1
+    }
+   }
+  },
+  {
+   "name": "source at the root, destination in a group",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "Y",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "X",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "X",
+     "host": "Y",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "G": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {
+     "X": -1
+    }
+   }
+  },
+  {
+   "name": "both in one group (inner ranks)",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "Y",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "K",
+     "host": "Y",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {
+     "Y": 1
+    },
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "K": -1
+    }
+   }
+  },
+  {
+   "name": "two levels, the common ancestor in the middle",
+   "nodes": [
+    {
+     "id": "G1",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "G2",
+     "kind": "group",
+     "parent": "G1",
+     "stem": null
+    },
+    {
+     "id": "G3",
+     "kind": "group",
+     "parent": "G1",
+     "stem": null
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G2",
+     "stem": null
+    },
+    {
+     "id": "Y",
+     "kind": "object",
+     "parent": "G3",
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "K",
+     "host": "Y",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {
+     "G3": 1
+    },
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {
+     "K": -1
+    }
+   }
+  },
+  {
+   "name": "crossed lanes are not a cycle (the false cycle of plan 2.1)",
+   "nodes": [
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "C",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "D",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "B",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "D",
+     "host": "C",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "A": 1,
+     "C": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1,
+     "1": 1
+    },
+    "taps": {
+     "B": -1,
+     "D": -1
+    }
+   }
+  },
+  {
+   "name": "the container cycle is refused (second route)",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "D",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "X",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": "X",
+     "stem": null
+    },
+    {
+     "id": "C",
+     "kind": "object",
+     "parent": "X",
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "B",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "D",
+     "host": "C",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "1": "cycle"
+    },
+    "rootRanks": {
+     "G": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {
+     "B": -1
+    }
+   }
+  },
+  {
+   "name": "self",
+   "nodes": [
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "selfSource"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "a group is an ancestor of its child",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "G",
+     "host": "K",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "ancestorSource"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "a stem is an ancestor of its members (also through a group)",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "S1",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "S1",
+     "host": "K",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "ancestorSource",
+     "1": "ancestorSource"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "a stem keys another stem's member",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S2",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S2"
+    }
+   ],
+   "routes": [
+    {
+     "source": "S1",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {
+     "S1": 0
+    },
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "S1": 0
+    }
+   }
+  },
+  {
+   "name": "a stem bus keyed by its own member needs no edge",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "S1",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {
+     "S1": 0
+    },
+    "readerRanks": {},
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "the Main as destination",
+   "nodes": [
+    {
+     "id": "main",
+     "kind": "main",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "main",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "the Main is never a source",
+   "nodes": [
+    {
+     "id": "main",
+     "kind": "main",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "main",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "mainSource"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "an aux is never a source",
+   "nodes": [
+    {
+     "id": "X",
+     "kind": "aux",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "X",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "auxSource"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "a keyed source: a chain of three",
+   "nodes": [
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "C",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "B",
+     "host": "C",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1,
+     "C": 2
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1,
+     "1": 2
+    },
+    "taps": {
+     "A": -1,
+     "B": -1
+    }
+   }
+  },
+  {
+   "name": "unknown source and unknown host",
+   "nodes": [
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "ghost",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "B",
+     "host": "ghost",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "0": "unknownSource",
+     "1": "unknownHost"
+    },
+    "rootRanks": {},
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {},
+    "taps": {}
+   }
+  },
+  {
+   "name": "a chain of stems",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S2",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S3",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S2"
+    },
+    {
+     "id": "C",
+     "kind": "object",
+     "parent": null,
+     "stem": "S3"
+    }
+   ],
+   "routes": [
+    {
+     "source": "S1",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "S2",
+     "host": "C",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1,
+     "C": 2
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {
+     "S1": 0,
+     "S2": 1
+    },
+    "readerRanks": {
+     "0": 1,
+     "1": 2
+    },
+    "taps": {
+     "S1": 0,
+     "S2": 1
+    }
+   }
+  },
+  {
+   "name": "an aux as destination",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "X",
+     "kind": "aux",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "X",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {},
+    "auxRanks": {
+     "X": 1
+    },
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "A": -1
+    }
+   }
+  },
+  {
+   "name": "a loop through a stem's bus is refused",
+   "nodes": [
+    {
+     "id": "S1",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "S2",
+     "kind": "stem",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": "S1"
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": "S2"
+    }
+   ],
+   "routes": [
+    {
+     "source": "S2",
+     "host": "A",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p1"
+     }
+    },
+    {
+     "source": "A",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p2"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {
+     "1": "cycle"
+    },
+    "rootRanks": {
+     "A": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {
+     "S2": 0
+    },
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "S2": 0
+    }
+   }
+  },
+  {
+   "name": "candidates: allowed and refused, and replacing",
+   "nodes": [
+    {
+     "id": "G",
+     "kind": "group",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "K",
+     "kind": "object",
+     "parent": "G",
+     "stem": null
+    },
+    {
+     "id": "A",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    },
+    {
+     "id": "B",
+     "kind": "object",
+     "parent": null,
+     "stem": null
+    }
+   ],
+   "routes": [
+    {
+     "source": "A",
+     "host": "B",
+     "consumer": {
+      "kind": "sidechain",
+      "id": "p"
+     }
+    }
+   ],
+   "expect": {
+    "refused": {},
+    "rootRanks": {
+     "B": 1
+    },
+    "auxRanks": {},
+    "innerRanks": {},
+    "stemRanks": {},
+    "readerRanks": {
+     "0": 1
+    },
+    "taps": {
+     "A": -1
+    }
+   },
+   "candidates": [
+    {
+     "host": "K",
+     "replacing": null,
+     "expect": {
+      "G": "ancestorSource",
+      "A": null,
+      "B": null
+     }
+    },
+    {
+     "host": "A",
+     "replacing": null,
+     "expect": {
+      "B": "cycle",
+      "K": null,
+      "G": null
+     }
+    },
+    {
+     "host": "A",
+     "replacing": 0,
+     "expect": {
+      "B": null,
+      "K": null,
+      "G": null
+     }
+    }
+   ]
+  }
+ ]
+}
