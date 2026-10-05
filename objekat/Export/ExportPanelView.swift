@@ -571,24 +571,13 @@ struct ExportPanelView: View {
 
     // MARK: - Render mode
 
-    /// Direct or in the background. The trade-off is real in both directions, hence a sentence that
-    /// changes with the setting rather than a mute checkbox. @see OBJEngineCore
-    @ViewBuilder
+    /// Direct or in the background: a bare checkbox, no explanatory sentence. @see OBJEngineCore
     private var renderModeSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: bound(\.renderInBackground)) {
-                Text(L("export.renderInBackground"))
-                    .font(.system(size: 11))
-            }
-            .toggleStyle(.checkbox)
-
-            if settings.renderInBackground {
-                Text(L("export.renderInBackground.note"))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        Toggle(isOn: bound(\.renderInBackground)) {
+            Text(L("export.renderInBackground"))
+                .font(.system(size: 11))
         }
+        .toggleStyle(.checkbox)
     }
 
     /// The file's approximate size: useful for an MP3 as for a 96 kHz/24-bit WAV, where the order

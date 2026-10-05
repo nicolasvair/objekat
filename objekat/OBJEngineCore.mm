@@ -6620,6 +6620,16 @@ static void objStripAutomationCurves(juce::ValueTree& tree) {
         self.onEditorVisibilityChanged(pluginKey, NO);
 }
 
+- (nullable NSWindow*)pluginEditorNSWindow:(NSString*)pluginKey {
+    std::string pk([pluginKey UTF8String]);
+    auto it = _editorWindows.find(pk);
+    if (it == _editorWindows.end() || !it->second) return nil;
+    auto* peer = it->second->getPeer();
+    if (!peer) return nil;
+    NSView* view = (__bridge NSView*)peer->getNativeHandle();
+    return view.window;
+}
+
 - (BOOL)isPluginEditorOpen:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
     auto it = _editorWindows.find(pk);

@@ -13,14 +13,15 @@ import Foundation
 // only snap when it happened to coincide with an edge of the object one grabbed — never when the
 // range began in silence, never when the grab was on an object lying inside it.
 //
-// The order of precedence, in three steps (the first one that finds something decides):
+// The ONLY references are the range's two bounds — never the edges of the object one grabbed
+// (decided 5 October 2026: an object edge lying inside the range made the selection jump onto a
+// mark its own bounds were nowhere near). The order of precedence, in two steps (the first one that
+// finds something decides):
 //
 //   1. A REAL target — an edge, a marker, a region's bound; the grid does not count — within the
 //      tolerance of the range's START, or of its END. The nearer wins and a tie goes to the start
 //      (the caret). A real target is never beaten by the grid, which `snappedTime` allows.
-//   2. A real target within the tolerance of the GRABBED OBJECT's start or end (what the move of an
-//      object has always done, now second).
-//   3. The grid, on the range's start or end — again the nearer, ties to the start.
+//   2. The grid, on the range's start or end — again the nearer, ties to the start.
 //
 // With the snap off (⌘ inverts it, that is the caller's business) nothing is looked at: the range
 // follows the hand.
@@ -35,10 +36,6 @@ enum SelectionMoveSnap {
         case start
         /// The range's end.
         case end
-        /// The grabbed object's start.
-        case objectStart = "object_start"
-        /// The grabbed object's end.
-        case objectEnd = "object_end"
     }
 
     struct Result: Equatable {
@@ -54,14 +51,12 @@ enum SelectionMoveSnap {
     }
 
     /// - `lo`, `hi`: the range BEFORE the travel. `rawDt`: what the hand asked for.
-    /// - `objectStart`, `objectEnd`: the grabbed object's edges before the travel (nil = none).
     /// - `targets`: the real marks, the grid aside (@see `EditViewModel.snapTargets`).
     /// - `gridInterval`: the grid; <= 0 means none.
     /// - `tolerance`: the reach of a target, in seconds (8 px, so it follows the zoom).
     /// - `onTargetEpsilon`: how close a grid line must fall to a mark to count as landing on it.
     /// - `minDt`: the floor of the travel (the range's start at zero is `-lo`).
     static func resolve(lo: Double, hi: Double, rawDt: Double,
-                        objectStart: Double?, objectEnd: Double?,
                         targets: [Double], gridInterval: Double,
                         tolerance: Double, onTargetEpsilon: Double,
                         snapEnabled: Bool, minDt: Double) -> Result {
@@ -96,13 +91,7 @@ enum SelectionMoveSnap {
                 }
                 onTarget = true
             }
-            // 2. the grabbed object's edges against the real marks
-            else if let o = objectCandidate(objectStart, objectEnd, rawDt, nearest) {
-                dt = o.value - o.anchor
-                edge = o.isStart ? .objectStart : .objectEnd
-                onTarget = true
-            }
-            // 3. the grid, on the range's bounds
+            // 2. the grid, on the range's bounds
             else if gridInterval > 0 {
                 let pLo = gridPoint(near: lo + rawDt)
                 let pHi = gridPoint(near: hi + rawDt)
@@ -123,25 +112,7 @@ enum SelectionMoveSnap {
         if dt < minDt {
             return Result(dt: minDt, guideTime: lo + minDt, onTarget: false, edge: .start, clamped: true)
         }
-        let anchor: Double
-        switch edge {
-        case .start:       anchor = lo
-        case .end:         anchor = hi
-        case .objectStart: anchor = objectStart ?? lo
-        case .objectEnd:   anchor = objectEnd ?? lo
-        }
+        let anchor = edge == .start ? lo : hi
         return Result(dt: dt, guideTime: anchor + dt, onTarget: onTarget, edge: edge, clamped: false)
-    }
-
-    /// Step 2: the grabbed object's edge nearest to a real target, ties to the start.
-    private static func objectCandidate(
-        _ start: Double?, _ end: Double?, _ rawDt: Double,
-        _ nearest: (Double) -> (value: Double, distance: Double)?
-    ) -> (value: Double, anchor: Double, isStart: Bool)? {
-        let s = start.flatMap { a in nearest(a + rawDt).map { (value: $0.value, distance: $0.distance, anchor: a) } }
-        let e = end.flatMap { a in nearest(a + rawDt).map { (value: $0.value, distance: $0.distance, anchor: a) } }
-        if let s, e == nil || s.distance <= e!.distance { return (s.value, s.anchor, true) }
-        if let e { return (e.value, e.anchor, false) }
-        return nil
     }
 }

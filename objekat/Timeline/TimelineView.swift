@@ -937,7 +937,9 @@ struct TimelineView: View {
                     // clickable zone, not the switch laid on it — which has its own material and its
                     // own hover state (@see updateCursor, which puts the veil out as soon as one
                     // comes into the hem).
-                    EditZoneVeilLayer(store: hoverStore)
+                    EditZoneVeilLayer(store: hoverStore, viewModel: viewModel,
+                                      pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                                      laneStep: laneStep, blockHeight: blockHeight)
                         .allowsHitTesting(false)
                         .zIndex(2.565)
                 }
@@ -1562,9 +1564,10 @@ struct TimelineView: View {
         return false
     }
 
-    /// The width of a block's side handles: 25 % of its width, capped at 50 px and removed below
-    /// 60 px wide. Shared by the hover, the gesture and the double click.
-    func handleWidth(blockWidth bw: Double) -> Double { bw < 60 ? 0 : min(50.0, bw * 0.25) }
+    /// The width of a block's side handles: a fixed 20 px at every zoom, capped at a third of the
+    /// block's displayed width (@see ClipEditZone.handleWidth). Shared by the hover, the gesture
+    /// and the double click.
+    func handleWidth(blockWidth bw: Double) -> Double { ClipEditZone.handleWidth(blockWidth: bw) }
 
     /// The block under the cursor and the editing zone aimed at. The same carve-up as
     /// `handleCanvasDrag` (side handles, the upper half = fade / range selection, the lower half =
@@ -1598,11 +1601,12 @@ struct TimelineView: View {
                                         loopInPx: loopInPx, loopOutPx: loopOutPx)
         // A radius aligned on the block's (see SoundObject.blockCornerRadius).
         let radius = entry.item.blockCornerRadius
-        let markerX = zone == .loopIn ? (loopInPx ?? 0) : (zone == .loopOut ? (loopOutPx ?? 0) : 0)
-        let hover = EditZoneHover(id: entry.item.id,
-                                  rect: CGRect(x: bx, y: by, width: bw, height: blockHeight),
-                                  handleW: handleW, zone: zone, cornerRadius: radius,
-                                  fadeInW: fiPx, fadeOutW: foPx, loopMarkerX: markerX)
+        // The veil's pixels: the SAME layout the veil re-derives at every render (@see
+        // `EditZoneHover.layout`, which keeps it glued to its block through a zoom).
+        let hover = EditZoneHover.layout(id: entry.item.id, zone: zone, cornerRadius: radius,
+                                         entry: entry, pixelsPerSecond: pixelsPerSecond,
+                                         rulerHeight: rulerHeight, laneStep: laneStep,
+                                         blockHeight: blockHeight)
         return (hover, entry.item)
     }
 

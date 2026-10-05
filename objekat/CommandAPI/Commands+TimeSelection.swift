@@ -76,13 +76,13 @@ extension CommandRegistry {
                         + "travel the hand asks for; the answer is the travel the drag would APPLY "
                         + "(`dt`), where the guide line would stand (`guide_time`), whether it landed "
                         + "on a real mark (`on_target`, the yellow guide), which edge decided "
-                        + "(`edge`: start | end | object_start | object_end) and whether the wall at "
+                        + "(`edge`: start | end) and whether the wall at "
                         + "zero stopped it (`clamped`), plus the range's bounds after the travel "
                         + "(`start`, `end`). Precedence: a real mark (an edge, a marker, a region's "
                         + "bound — the grid is NOT one) within 8 px of the range's START, or of its "
-                        + "END (nearer wins, a tie goes to the start = the caret); else a real mark "
-                        + "within reach of the grabbed object's edges (`grab`); else the grid, on the "
-                        + "range's bounds. The range itself stops at zero, whatever objects lie later. "
+                        + "END (nearer wins, a tie goes to the start = the caret); else the grid, on "
+                        + "the range's bounds. The edges of the object grabbed are never a reference. "
+                        + "The range itself stops at zero, whatever objects lie later. "
                         + "Without `copy` the scraps a cut leaves at the two bounds (and the objects "
                         + "the range crosses) are kept out of the targets, as the drag does; with "
                         + "`copy` (⌥) the originals stay in place and ARE targets.",
@@ -90,9 +90,6 @@ extension CommandRegistry {
                           ParamSpec("copy", "bool", required: false,
                                     "⌥: the range is COPIED, the originals stay and are targets "
                                   + "(default false)."),
-                          ParamSpec("grab", "uuid", required: false,
-                                    "The object grabbed: its edges, clipped to the range, are the "
-                                  + "second-rank candidates."),
                           ParamSpec("snap", "bool", required: false,
                                     "Snap on or off for the probe (default true; ⌘ is neutralised).")],
                  undo: .none) { p in
@@ -104,16 +101,6 @@ extension CommandRegistry {
             let hi = sel.timeRange.upperBound
             let rawDt = try p.double("dt")
             let copy = try p.bool("copy", or: false)
-            var objectStart: Double? = nil
-            var objectEnd: Double? = nil
-            if let grab = try p.optionalUUID("grab") {
-                guard let e = vm.laneEntries.first(where: { $0.item.id == grab }) else {
-                    throw CommandError(code: .not_found, message: "unknown object: \(grab.uuidString)")
-                }
-                // What the drag's cuts at the bounds leave of it: the part inside the range.
-                objectStart = max(e.absStart, lo)
-                objectEnd = min(e.absStart + e.item.duration, hi)
-            }
             var excluded: Set<UUID> = []
             if !copy {
                 // Everything the range crosses is either carried or cut into scraps; both are kept
@@ -128,9 +115,7 @@ extension CommandRegistry {
             var r = SelectionMoveSnap.Result(dt: rawDt, guideTime: lo + rawDt, onTarget: false,
                                              edge: .start, clamped: false)
             CommandAdapters.withSnapping(snap, vm) {
-                r = vm.snappedSelectionMove(range: sel.timeRange, rawDt: rawDt,
-                                            objectStart: objectStart, objectEnd: objectEnd,
-                                            excluding: excluded)
+                r = vm.snappedSelectionMove(range: sel.timeRange, rawDt: rawDt, excluding: excluded)
             }
             return .object(["dt": .number(r.dt),
                             "guide_time": .number(r.guideTime),

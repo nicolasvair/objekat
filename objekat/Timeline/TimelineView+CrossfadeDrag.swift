@@ -22,8 +22,9 @@ import AppKit
 // That rule is what keeps a long fade from confiscating the trimming under it, and a crossfade IS
 // two long fades, so it applies here with more reason than anywhere.
 //
-//  • the LOWER half is a block's, unchanged: a handle at each end — the same quarter-of-the-width
-//    capped at 50 px, none at all below 60 px — and the whole middle to the BODY. The handles take
+//  • the LOWER half is a block's, unchanged: a handle at each end — the same fixed 20 px capped at
+//    a third of the zone's width (@see ClipEditZone.handleWidth) — and the whole middle to the
+//    BODY. The handles take
 //    the same edges as the sides above them, under the cursor a block's own edge wears: the zone
 //    covers both blocks' trim and resize handles entirely, and a hand reaching for an edge must
 //    find an edge. The body slides the seam, the two going on meeting for just as long somewhere
@@ -178,6 +179,10 @@ struct CrossfadeHit {
     let zone: EditViewModel.CrossfadeZone
     let part: CrossfadeDragState.Part
     let viaEdgeBand: Bool
+    /// Set when the zone was taken through an object's fade handle OUTSIDE it (@see
+    /// fadeHandleOverhang): which fade the hand holds, which is what decides who owns the grab and
+    /// which crossfades of the selection follow (@see CrossfadeGrab.followers).
+    var heldFade: CrossfadeGrab.FadeEdge? = nil
 }
 
 extension TimelineView {
@@ -217,8 +222,7 @@ extension TimelineView {
 
         // ── The LOWER half: the objects' own, and nothing else ──────────────────────────────
         // The same handle as a block's, measured on the ZONE's width by the same function: a
-        // quarter of it capped at 50 px, and none at all below 60 px — where a block gives up its
-        // handles too and leaves its whole lower half to the body.
+        // fixed 20 px, capped at a third of the zone so that a narrow one keeps a body.
         if ly > blockHeight / 2 {
             let band = handleWidth(blockWidth: w)
             if band > 0, lx < band {
@@ -251,13 +255,16 @@ extension TimelineView {
 
     /// A fade handle of an object ENGAGED in a crossfade, grabbed where it sticks out of the zone.
     ///
-    /// The handle band is a quarter of the block's width up to 50 px (@see handleWidth), the zone
+    /// The handle band is 20 px wide (@see handleWidth), the zone
     /// is often narrower, and the part of the band beyond the zone used to fall through to the
     /// per-block fade — which changes one fade and leaves the other at the old overlap. The pair
     /// then stopped being a crossfade (@see isCrossfadePair) and the two clips stayed superposed.
-    /// That band is the crossfade's own side: the one gesture it should start is the one the
-    /// side's triangle already starts inside the zone — the fade-in's is the zone's START, the
-    /// fade-out's its END (@see CrossfadeGrab.pair(forFade:of:partnerLeft:partnerRight:)).
+    /// That band is the crossfade's own side, and the side is the one NEAREST the hand: a fade-in
+    /// handle overhangs the zone on its RIGHT (past the zone's end, inside the right-hand object),
+    /// so it drives the zone's END; a fade-out handle overhangs on the LEFT and drives its START.
+    /// The same side the zone's own upper half gives just across the boundary, so going in and out
+    /// of the zone never swaps the edge under the hand (@see
+    /// CrossfadeGrab.pair(forFade:of:partnerLeft:partnerRight:)).
     ///
     /// The zone is looked up among the SHOWN ones (`visibleCrossfadeZones`) and not through
     /// `crossfadeZone(leftID:rightID:)`: the drag works in the canvas' absolute time, and the
@@ -290,7 +297,7 @@ extension TimelineView {
               let zone = viewModel.visibleCrossfadeZones(onDisplayLane: lane).first(where: {
                   $0.leftID == found.pair.left && $0.rightID == found.pair.right
               }) else { return nil }
-        return CrossfadeHit(zone: zone, part: found.part, viaEdgeBand: false)
+        return CrossfadeHit(zone: zone, part: found.part, viaEdgeBand: false, heldFade: edge)
     }
 
     /// The cursor a point inside a zone deserves. `nil` = not in a zone.
@@ -362,6 +369,7 @@ extension TimelineView {
         var tracks = [track(z)]
         let others = CrossfadeGrab.followers(
             part: hit.part, grabbed: grabbedPair, selected: viewModel.selectedIDs,
+            heldFade: hit.heldFade,
             partners: { id in
                 let c = viewModel.crossfadePartners(of: id)
                 return (c?.left, c?.right)

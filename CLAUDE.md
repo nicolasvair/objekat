@@ -2106,21 +2106,26 @@ What has landed since mid-August, in order:
   the eight-line list, the Copy button).
 
 - **A fade handle that overhangs a crossfade is the crossfade's, and the drag follows the selection**
-  (1 October 2026, ON THE BRANCH `feat/ui-2026-10-01`) — a block's handle band is a quarter of its
-  width (up to 50 px) and a crossfade is usually narrower: the part of the band beyond the zone fell
+  (1 October 2026, ON THE BRANCH `feat/ui-2026-10-01`) — a block's handle band was a quarter of its
+  width (up to 50 px; since 5 October a FIXED 20 px, see the next note) and a crossfade is usually narrower: the part of the band beyond the zone fell
   through to the per-block fade, which changed ONE fade, so the pair stopped satisfying
   `isCrossfadePair` (both fades == overlap) and the clips stayed superposed (the double click had
   the same fault and zeroed one fade). `crossfadeHit` now falls back, when no zone is under the
   point, on `selectionZoneHover` (the block's own carve-up): a fade-in handle whose object has a
-  crossfade partner on its LEFT is that zone's START side, a fade-out with a partner on its right the
-  END side (`CrossfadeGrab.pair(forFade:…)`, pure); the zone is looked up in `visibleCrossfadeZones`
+  crossfade partner on its LEFT drives that zone's END side, a fade-out with a partner on its right
+  its START side — the edge NEAREST the hand, since the overhang of a fade-in lies past the zone's
+  end (`CrossfadeGrab.pair(forFade:…)`, pure; INVERTED on 5 October 2026, rule A: it was fade-in →
+  START, so a hand leaving the zone's right-hand triangle by one pixel swapped to the far edge); the
+  zone is looked up in `visibleCrossfadeZones`
   (absolute time), never `crossfadeZone(leftID:rightID:)` (container time). Hover, drag, double click
   (`closeCrossfade`, both fades) and the solo/slip guards all go through `crossfadeHit`; trim/resize
   handles and objects with no partner on that side keep the plain gesture. The vertical bend is not
   carried by that grab (accepted). **Several objects selected**: the drag takes the selection's other
   crossfades along (`CrossfadeGrab.followers`): a side drives each selected object's crossfade on the
   same side, the whole zone every crossfade touching a selected object, and a grab whose owning object
-  is not selected goes alone. The grabbed zone alone snaps; all zones are laid down from the SAME
+  is not selected goes alone. Through an overhanging handle it is the HELD FADE that owns the grab and
+  names the side that follows (`heldFade:` — a held fade-in drives every selected object's LEFT
+  crossfade, by the zone's end), not the part. The grabbed zone alone snaps; all zones are laid down from the SAME
   shift (`CrossfadeGrab.target`), each keeping its width, place and starting curves; one undo point.
   Verified with no screen: a full Debug build, the 34 Swift warnings IDENTICAL before/after (every Swift
   file recompiled both times); `tools/test_crossfade_grab.swift` 38; `tools/scenario_crossfade_grab.py`
@@ -2132,6 +2137,20 @@ What has landed since mid-August, in order:
   **Left open**: the crossfade drag feeds the model ABSOLUTE canvas time (`idealStart`, `pin`) where
   `openCrossfade` clamps in the container's time — equal at the top level, apart by the group's offset
   for the children of an open group. Not touched here; to check on screen before relying on it.
+
+- **Side handles are a FIXED 20 px at every zoom; the nearest zone edge follows the hand**
+  (5 October 2026, on `main`, NOT committed). `ClipEditZone.handleWidth(blockWidth:)` (the one
+  definition; `TimelineView.handleWidth` forwards to it) is `min(20, bw / 3)`: upper half = fade,
+  lower half = trim/resize, the third keeps a middle on a narrow block. The OLD rule —
+  `bw < 60 ? 0 : min(50, bw * 0.25)` — made a block below 60 px lose its fade and trim zones
+  altogether and the band change width under the hand at every notch of zoom. The crossfade zone's
+  lower half uses the same function on the ZONE's width (no 60 px threshold there either).
+  `ClipEditZone.resolve` now tests the HANDLES before the fade triangles: a set fade is always
+  grabbable by at least its handle however short it is on screen (it used to need > 1 px of
+  triangle), and a long fade from the opposite edge can no longer confiscate the other edge's band;
+  the hover veil covers triangle ∪ handle band. Rule "nearest edge": a fade handle overhanging a
+  crossfade drives the zone edge NEAREST the hand (`CrossfadeGrab.pair(forFade:)`, see the note
+  above). **Not seen, not felt, no test run** (user's instruction: one build, no tests).
 
 - **No more Lagrange: clips resample with sinc, and engine patch `0034` makes sinc usable at any speed**
   (2 October 2026, ON THE BRANCH of the `agent-a67a141ea5337b0c9` worktree, NOT merged, fork NOT

@@ -32,18 +32,20 @@ enum CrossfadeGrabTest {
 
     // MARK: - A fade handle outside the zone → the crossfade's side
 
-    // B has a crossfade with A on its left. Its fade-IN handle is the zone's START, wherever on the
-    // band the hand lands.
+    // B has a crossfade with A on its left. Its fade-IN handle overhangs the zone on the RIGHT
+    // (past the zone's end, inside B): the edge NEAREST the hand is the zone's END (rule A).
     do {
         let r = CrossfadeGrab.pair(forFade: .fadeIn, of: b, partnerLeft: a, partnerRight: nil)
         check("fade-in with a partner on the left -> that pair", r?.pair == P(left: a, right: b))
-        check("fade-in -> the zone's START", r?.part == .sideStart)
+        check("fade-in overhang (right of the zone) -> the zone's END, the nearest edge",
+              r?.part == .sideEnd)
     }
-    // A has a crossfade with B on its right. Its fade-OUT handle is the zone's END.
+    // A has a crossfade with B on its right. Its fade-OUT handle overhangs on the LEFT: the START.
     do {
         let r = CrossfadeGrab.pair(forFade: .fadeOut, of: a, partnerLeft: nil, partnerRight: b)
         check("fade-out with a partner on the right -> that pair", r?.pair == P(left: a, right: b))
-        check("fade-out -> the zone's END", r?.part == .sideEnd)
+        check("fade-out overhang (left of the zone) -> the zone's START, the nearest edge",
+              r?.part == .sideStart)
     }
     // The fade-OUT of B, which only has a partner on its LEFT, is not a crossfade's: plain fade.
     check("fade-out with a partner on the LEFT only -> nothing (plain fade)",
@@ -127,6 +129,28 @@ enum CrossfadeGrabTest {
     // An object with no crossfade at all brings nothing, and does not hurt.
     check("a selected object with no crossfade is harmless",
           CrossfadeGrab.followers(part: .both, grabbed: ab, selected: [a, z], partners: partners).isEmpty)
+
+    // Taken through a fade handle OVERHANGING the zone: the held fade owns the grab and names the
+    // side that follows, while the part (the nearest edge) is the opposite of the plain reading.
+    // B's fade-in held (zone AB, part .sideEnd): B owns it; every selected object's LEFT crossfade
+    // follows — the fade gesture's "same end of its fade".
+    check("held fade-in of B (AB, part end), B+D selected: CD follows (D's left), not BC",
+          CrossfadeGrab.followers(part: .sideEnd, grabbed: ab, selected: [b, d], heldFade: .fadeIn,
+                                  partners: partners) == [cd])
+    check("held fade-in of B (AB, part end), A+D selected (B not): alone",
+          CrossfadeGrab.followers(part: .sideEnd, grabbed: ab, selected: [a, d], heldFade: .fadeIn,
+                                  partners: partners).isEmpty)
+    // A's fade-out held (zone AB, part .sideStart): A owns it; every selected RIGHT crossfade follows.
+    check("held fade-out of A (AB, part start), A+C selected: CD follows (C's right), not BC",
+          CrossfadeGrab.followers(part: .sideStart, grabbed: ab, selected: [a, c], heldFade: .fadeOut,
+                                  partners: partners) == [cd])
+    check("held fade-out of A (AB, part start), B+C selected (A not): alone",
+          CrossfadeGrab.followers(part: .sideStart, grabbed: ab, selected: [b, c], heldFade: .fadeOut,
+                                  partners: partners).isEmpty)
+    // No held fade: unchanged reading (the zone's own upper half).
+    check("no held fade: the part decides, as before",
+          CrossfadeGrab.followers(part: .sideEnd, grabbed: ab, selected: [a, c], heldFade: nil,
+                                  partners: partners) == [cd])
 
     // MARK: - Where a zone goes for one travel
 

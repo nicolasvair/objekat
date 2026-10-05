@@ -36,15 +36,32 @@ enum ClipEditZone: Equatable {
         if let lop = loopOutPx, abs(localX - lop) <= loopTol { return .loopOut }
 
         let upper = localY < bh * 0.50
+        // The HANDLES first: each edge's own band answers for that edge whatever lies over it. A
+        // fade that is set is therefore ALWAYS grabbable by at least the handle, however short it
+        // is on screen, and a long fade from the opposite edge can no longer confiscate it.
+        if handleW > 0 && localX < handleW      { return upper ? .fadeIn  : .trimLeft }
+        if handleW > 0 && localX > bw - handleW { return upper ? .fadeOut : .resizeRight }
         if bh > 0, upper {
             // Fade triangles: (0,0)-(fiPx,0)-(0,bh) and (bw-foPx,0)-(bw,0)-(bw,bh).
             if fadeInPx > 1, (localX / fadeInPx + localY / bh) <= 1 { return .fadeIn }
             if fadeOutPx > 1, ((bw - localX) / fadeOutPx + localY / bh) <= 1 { return .fadeOut }
         }
-        if handleW > 0 && localX < handleW      { return upper ? .fadeIn  : .trimLeft }
-        if handleW > 0 && localX > bw - handleW { return upper ? .fadeOut : .resizeRight }
         return upper ? .timeSelect : .move
     }
+
+    /// The widest a side handle gets, in px — the SAME at every zoom (option B, 5 October 2026).
+    static let handleMaxPx: Double = 20
+
+    /// The width of a block's side handles: a FIXED `handleMaxPx` whatever the zoom, capped at a
+    /// third of the block's DISPLAYED width so that a narrow block keeps a middle (its body, its
+    /// range selection) between its two handles. No threshold any more: every block, however
+    /// narrow, has its two handles. Shared by the hover, the gesture, the double click, the veil's
+    /// re-layout, the crossfade zone's lower half and the automation hem.
+    ///
+    /// It used to be 25 % of the width capped at 50 px, and NOTHING below 60 px: zoomed out, a
+    /// block lost its fade and trim zones altogether, and the width of the zone changed under the
+    /// hand with every notch of zoom.
+    static func handleWidth(blockWidth bw: Double) -> Double { max(0, min(handleMaxPx, bw / 3)) }
 }
 
 /// The hovered block and the active zone, resolved by the canvas (the block stays pure presentation).
@@ -64,6 +81,49 @@ struct EditZoneHover: Equatable {
     var fadeOutW: Double = 0
     /// The position (in local px) of the marker aimed at, for `.loopIn`/`.loopOut` only.
     var loopMarkerX: Double = 0
+}
+
+extension EditZoneHover {
+    /// The same hover (block, zone, radius) laid out AGAIN on `entry` at the CURRENT zoom: the
+    /// single definition of the veil's pixel geometry, read by `selectionZoneHover` (at the pointer)
+    /// AND by `EditZoneVeilLayer` (at every render).
+    ///
+    /// The pixels stored in the hover are those of the day it was resolved. A zoom (⌘/⌥ wheel,
+    /// pinch, keys) or a vertical zoom emits no `mouseMoved`: the stored rect stayed put while the
+    /// block was redrawn at its new size and place — a dark band drifting off its object until the
+    /// mouse moved again. Re-deriving it from the model (time → px with the current zoom) at render
+    /// keeps the veil glued to its block, whatever changes the zoom. The ZONE stays the one last
+    /// resolved by the pointer (the next `mouseMoved` re-resolves it).
+    static func layout(id: UUID, zone: ClipEditZone, cornerRadius: Double,
+                       entry: LaneEntry, pixelsPerSecond pps: Double,
+                       rulerHeight: Double, laneStep: Double, blockHeight: Double) -> EditZoneHover {
+        let item = entry.item
+        let bx   = entry.absStart * pps
+        let bw   = max(item.duration * pps, 2)
+        let by   = rulerHeight + Double(entry.displayLane) * laneStep
+        let fiPx = min(item.fadeIn  * pps, bw)
+        let foPx = min(item.fadeOut * pps, bw)
+        let loop = item.loopMarkerLocalRange
+        let markerX: Double
+        switch zone {
+        case .loopIn:  markerX = loop.map { $0.start * pps } ?? 0
+        case .loopOut: markerX = loop.map { $0.end * pps } ?? 0
+        default:       markerX = 0
+        }
+        return EditZoneHover(id: id,
+                             rect: CGRect(x: bx, y: by, width: bw, height: blockHeight),
+                             handleW: ClipEditZone.handleWidth(blockWidth: bw),
+                             zone: zone, cornerRadius: cornerRadius,
+                             fadeInW: fiPx, fadeOutW: foPx, loopMarkerX: markerX)
+    }
+
+    /// `self` re-laid on `entry` at the current zoom (@see `layout`).
+    func relaid(on entry: LaneEntry, pixelsPerSecond: Double,
+                rulerHeight: Double, laneStep: Double, blockHeight: Double) -> EditZoneHover {
+        Self.layout(id: id, zone: zone, cornerRadius: cornerRadius, entry: entry,
+                    pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                    laneStep: laneStep, blockHeight: blockHeight)
+    }
 }
 
 /// Two full-height vertical bars marking a loop's IN/OUT bounds, each topped with a small flag
@@ -257,11 +317,12 @@ struct ClipEditZonesOverlay: View {
         case .fadeIn where hover.fadeInW > 1:
             // A fade that is set: the triangle carries the shape, but only its UPPER HALF answers the
             // gesture (the lower one is left to trimming) — so the vertical fade-out dies out at
-            // half height, without drawing the middle line.
-            rect = CGRect(x: 0, y: 0, width: min(hover.fadeInW, w), height: mid)
+            // half height, without drawing the middle line. Never narrower than the handle, which
+            // answers too (@see ClipEditZone.resolve) — a fade a few px wide had a veil nobody saw.
+            rect = CGRect(x: 0, y: 0, width: min(max(hover.fadeInW, hw), w), height: mid)
             stops = fromEdge(true); fromTop = true
         case .fadeOut where hover.fadeOutW > 1:
-            let fw = min(hover.fadeOutW, w)
+            let fw = min(max(hover.fadeOutW, hw), w)
             rect = CGRect(x: w - fw, y: 0, width: fw, height: mid)
             stops = fromEdge(false); fromTop = true
         case .fadeIn:
@@ -294,22 +355,30 @@ struct ClipEditZonesOverlay: View {
         return VeilSpec(rect: rect, stops: stops, maskFrom: m.0, maskTo: m.1)
     }
 
-    /// The triangle of the fade aimed at if it is already set (otherwise nil → the handle's veil).
+    /// The triangle of the fade aimed at if it is already set (otherwise nil → the handle's veil),
+    /// joined to the handle's own band in the upper half: the two answer the same gesture
+    /// (@see ClipEditZone.resolve), so the veil covers both — a short fade's triangle alone was
+    /// a sliver.
     private func trianglePath(width w: Double, height h: Double) -> Path? {
         var p = Path()
+        let hw = min(hover.handleW, w)
+        let band: CGRect
         switch hover.zone {
         case .fadeIn where hover.fadeInW > 1:
             p.move(to: .zero)
             p.addLine(to: CGPoint(x: min(hover.fadeInW, w), y: 0))
             p.addLine(to: CGPoint(x: 0, y: h))
+            band = CGRect(x: 0, y: 0, width: hw, height: h / 2)
         case .fadeOut where hover.fadeOutW > 1:
             p.move(to: CGPoint(x: w - min(hover.fadeOutW, w), y: 0))
             p.addLine(to: CGPoint(x: w, y: 0))
             p.addLine(to: CGPoint(x: w, y: h))
+            band = CGRect(x: w - hw, y: 0, width: hw, height: h / 2)
         default:
             return nil
         }
         p.closeSubpath()
-        return p
+        guard hw > 0 else { return p }
+        return p.union(Path(band))
     }
 }

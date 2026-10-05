@@ -2865,10 +2865,7 @@ struct SynopticBoundView: View {
             for p in plugs where viewModel.isPluginEditorOpen(plug: p) { viewModel.closePluginEditor(plug: p) }
             return
         }
-        for p in plugs {
-            if p.isBuiltIn { viewModel.openBuiltInPluginEditor(plug: p) }
-            else { viewModel.openPluginEditor(objectID: objectID, pluginID: p.id) }
-        }
+        viewModel.openPluginEditors(objectID: objectID, plugs: plugs)
     }
 
     /// The FX selection of THIS chain, seen as a `Set`. It reads EMPTY as soon as the view-model's
