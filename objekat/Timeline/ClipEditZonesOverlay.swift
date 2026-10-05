@@ -49,19 +49,25 @@ enum ClipEditZone: Equatable {
         return upper ? .timeSelect : .move
     }
 
-    /// The widest a side handle gets, in px — the SAME at every zoom (option B, 5 October 2026).
-    static let handleMaxPx: Double = 20
+    /// The widest a side handle gets, in px — the SAME at every zoom (option B, 5 October 2026; 20 px, then 40 px the same day).
+    static let handleMaxPx: Double = 40
+
+    /// Below this displayed width a block has NO handle (all body), as before but at 30 px instead
+    /// of 60 (user, 5 October 2026).
+    static let handleMinBlockPx: Double = 30
 
     /// The width of a block's side handles: a FIXED `handleMaxPx` whatever the zoom, capped at a
-    /// third of the block's DISPLAYED width so that a narrow block keeps a middle (its body, its
-    /// range selection) between its two handles. No threshold any more: every block, however
-    /// narrow, has its two handles. Shared by the hover, the gesture, the double click, the veil's
+    /// quarter of the block's DISPLAYED width (as before) so that a narrow block keeps a middle (its body, its
+    /// range selection) between its two handles. Below `handleMinBlockPx` (30 px) a block has no
+    /// handle at all. Shared by the hover, the gesture, the double click, the veil's
     /// re-layout, the crossfade zone's lower half and the automation hem.
     ///
     /// It used to be 25 % of the width capped at 50 px, and NOTHING below 60 px: zoomed out, a
-    /// block lost its fade and trim zones altogether, and the width of the zone changed under the
+    /// block lost its fade and trim zones too early, and the width of the zone changed under the
     /// hand with every notch of zoom.
-    static func handleWidth(blockWidth bw: Double) -> Double { max(0, min(handleMaxPx, bw / 3)) }
+    static func handleWidth(blockWidth bw: Double) -> Double {
+        bw < handleMinBlockPx ? 0 : max(0, min(handleMaxPx, bw / 4))
+    }
 }
 
 /// The hovered block and the active zone, resolved by the canvas (the block stays pure presentation).

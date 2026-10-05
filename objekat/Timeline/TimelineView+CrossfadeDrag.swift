@@ -22,8 +22,8 @@ import AppKit
 // That rule is what keeps a long fade from confiscating the trimming under it, and a crossfade IS
 // two long fades, so it applies here with more reason than anywhere.
 //
-//  • the LOWER half is a block's, unchanged: a handle at each end — the same fixed 20 px capped at
-//    a third of the zone's width (@see ClipEditZone.handleWidth) — and the whole middle to the
+//  • the LOWER half is a block's, unchanged: a handle at each end — the same fixed 40 px capped at
+//    a quarter of the zone's width (@see ClipEditZone.handleWidth) — and the whole middle to the
 //    BODY. The handles take
 //    the same edges as the sides above them, under the cursor a block's own edge wears: the zone
 //    covers both blocks' trim and resize handles entirely, and a hand reaching for an edge must
@@ -222,7 +222,7 @@ extension TimelineView {
 
         // ── The LOWER half: the objects' own, and nothing else ──────────────────────────────
         // The same handle as a block's, measured on the ZONE's width by the same function: a
-        // fixed 20 px, capped at a third of the zone so that a narrow one keeps a body.
+        // fixed 40 px, capped at a quarter of the zone so that a narrow one keeps a body.
         if ly > blockHeight / 2 {
             let band = handleWidth(blockWidth: w)
             if band > 0, lx < band {
@@ -255,7 +255,7 @@ extension TimelineView {
 
     /// A fade handle of an object ENGAGED in a crossfade, grabbed where it sticks out of the zone.
     ///
-    /// The handle band is 20 px wide (@see handleWidth), the zone
+    /// The handle band is 40 px wide (@see handleWidth), the zone
     /// is often narrower, and the part of the band beyond the zone used to fall through to the
     /// per-block fade — which changes one fade and leaves the other at the old overlap. The pair
     /// then stopped being a crossfade (@see isCrossfadePair) and the two clips stayed superposed.

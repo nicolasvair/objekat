@@ -635,13 +635,14 @@ extension EditViewModel {
 
     /// Opens the editors of several plugins at once (a double click on a multiple selection),
     /// each through the SAME path as a single one (`openPluginEditor` / `openBuiltInPluginEditor`),
-    /// and lays them side by side on the screen instead of on top of each other (@see EditorTiling).
+    /// and lays them out on the screen — in rows, or in the four corners when rows cannot hold them
+    /// all — instead of on top of each other (@see EditorTiling).
     /// An editor already open joins the arrangement too.
     func openPluginEditors(objectID: UUID, plugs: [ObjectPlugin]) {
         guard hasInterface, !plugs.isEmpty else { return }
         let screen = (NSApp.keyWindow ?? NSApp.mainWindow)?.screen ?? NSScreen.main
         if let area = screen?.visibleFrame {
-            editorTiling = EditorTiling(area: area, pending: Set(plugs.map(\.id)))
+            editorTiling = EditorTiling(area: area, order: plugs.map(\.id))
         }
         for p in plugs {
             if p.isBuiltIn {
@@ -656,20 +657,35 @@ extension EditViewModel {
         }
     }
 
-    /// Lays the editor of `pluginID` in the batch under way, if it is one of it. Called when a
-    /// window appears (built-in: at once; native: from `onEditorVisibilityChanged`).
+    /// Lays the batch under way again now that the editor of `pluginID` has appeared, if it is one
+    /// of it. Called when a window appears (built-in: at once; native: from `onEditorVisibilityChanged`).
+    ///
+    /// The rows-or-corners choice is made over the WHOLE batch (@see EditorTiling), and an AU/VST
+    /// window's size is only known once it exists — so at every arrival the windows already there are
+    /// laid again together, in chain order. Each window is placed the moment it appears (nothing waits
+    /// on the slowest instance or on a timer), the layout is prefix-stable (an arrival moves the
+    /// earlier ones only when it flips the batch from rows to corners, once), and the final state
+    /// does not depend on the order the instances finished loading in.
     func placeTiledEditor(_ pluginID: UUID) {
         guard var tiling = editorTiling else { return }
         // A native editor that never comes (instance in error, no GUI) must not keep the batch
         // alive forever: past this delay, a later opening is an ordinary one.
         if ProcessInfo.processInfo.systemUptime - tiling.startedAt > 8 { editorTiling = nil; return }
-        guard tiling.pending.contains(pluginID) else { return }
-        let window = builtInEditorWindows[pluginID]?.window
-            ?? engine?.pluginEditorNSWindow(pluginID.uuidString)
-        guard let window else { return }
+        guard tiling.pending.contains(pluginID), tiledEditorWindow(pluginID) != nil else { return }
         tiling.pending.remove(pluginID)
-        window.setFrameOrigin(tiling.place(window.frame.size))
+        // A window closed meanwhile simply drops out of the arrangement.
+        let windows = tiling.arrived.compactMap { tiledEditorWindow($0) }
+        let layout = EditorTiling.layout(sizes: windows.map(\.frame.size), in: tiling.area)
+        for (window, origin) in zip(windows, layout.origins) { window.setFrameOrigin(origin) }
+        // Corners overlap: order them so that no title bar is covered (@see Layout.backToFront).
+        if layout.mode == .corners {
+            for k in layout.backToFront { windows[k].orderFront(nil) }
+        }
         editorTiling = tiling.pending.isEmpty ? nil : tiling
+    }
+
+    private func tiledEditorWindow(_ pluginID: UUID) -> NSWindow? {
+        builtInEditorWindows[pluginID]?.window ?? engine?.pluginEditorNSWindow(pluginID.uuidString)
     }
 
     func pluginInstanceState(pluginID: UUID) -> Int {
@@ -1051,61 +1067,3 @@ extension EditViewModel {
     }
 }
 
-
-/// Lays several editor windows side by side within a screen area, in rows from the TOP-LEFT
-/// corner, each with its real size, as they come. A window that no longer fits (the area is
-/// full, or it is bigger than what is left) falls back to a cascade from the
-/// top-left corner — shifted so that each title bar shows — and never leave the area: a window
-/// bigger than the area keeps its title bar on screen. Pure geometry, AppKit coordinates
-/// (bottom-left origin); the returned point is a window frame's origin.
-struct EditorTiling {
-    let area: CGRect
-    var pending: Set<UUID>
-    var startedAt: TimeInterval = ProcessInfo.processInfo.systemUptime
-    var gap: CGFloat = 8
-    var cascadeStep: CGFloat = 24
-
-    private var cursorX: CGFloat? = nil
-    private var rowTop: CGFloat? = nil
-    private var rowHeight: CGFloat = 0
-    private var cascadeIndex = 0
-
-    init(area: CGRect, pending: Set<UUID>) {
-        self.area = area
-        self.pending = pending
-    }
-
-    mutating func place(_ size: CGSize) -> CGPoint {
-        var x = cursorX ?? area.minX
-        var top = rowTop ?? area.maxY
-        var height = rowHeight
-        // Does not fit in what is left of this row → the next row.
-        if x > area.minX, x + size.width > area.maxX {
-            top -= rowHeight + gap
-            x = area.minX
-            height = 0
-        }
-        // Committed only if it fits: a window too big for what is left goes to the cascade,
-        // and a smaller one coming after it may still take the free space.
-        if x + size.width <= area.maxX, top - size.height >= area.minY {
-            cursorX = x + size.width + gap
-            rowTop = top
-            rowHeight = max(height, size.height)
-            return CGPoint(x: x, y: top - size.height)
-        }
-        return cascade(size)
-    }
-
-    private mutating func cascade(_ size: CGSize) -> CGPoint {
-        let maxX = max(area.minX, area.maxX - size.width)
-        let minY = min(area.maxY - size.height, area.minY)   // too tall: keep the title bar on screen
-        // Restart the cascade once the step would push the window out of the area.
-        let room = min(maxX - area.minX, (area.maxY - size.height) - max(minY, area.minY))
-        let steps = max(1, Int(room / cascadeStep) + 1)
-        let k = CGFloat(cascadeIndex % steps)
-        cascadeIndex += 1
-        let x = min(area.minX + gap + k * cascadeStep, maxX)
-        let y = max(area.maxY - size.height - gap - k * cascadeStep, minY)
-        return CGPoint(x: x, y: y)
-    }
-}
