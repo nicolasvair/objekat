@@ -1933,48 +1933,25 @@
         }
       }
     },
-    "duration.minutesSeconds": {
+    "duration.minutes": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d min %02d.%d s"
+            "value": "%d min"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d min %02d,%d s"
+            "value": "%d min"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d mn %02d,%d s"
-          }
-        }
-      }
-    },
-    "duration.secondsMillis": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
+            "value": "%d mn"
           }
         }
       }
@@ -4712,52 +4689,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Volume — drag / mouse wheel (10 px ≈ 1 dB)"
-          }
-        }
-      }
-    },
-    "hud.crossfade.atLimit": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the seam gives no more"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "la costura no da más"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "la couture ne donne pas plus"
-          }
-        }
-      }
-    },
-    "hud.crossfade.becomesFade": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "becomes a plain fade"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "pasa a ser un fundido simple"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "devient un fondu simple"
           }
         }
       }
@@ -7955,6 +7886,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Liste"
+          }
+        }
+      }
+    },
+    "panel.tab.object": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objeto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objet"
           }
         }
       }

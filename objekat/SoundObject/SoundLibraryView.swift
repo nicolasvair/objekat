@@ -21,17 +21,22 @@ struct FileDragSource: NSViewRepresentable {
     let urls: () -> [URL]
     /// A click without a drag: the selection remains the SwiftUI view's business.
     let onClick: () -> Void
+    /// The row's tooltip: this view covers the whole row, so a SwiftUI `.help` underneath would
+    /// never be reached — the tooltip has to live on the AppKit view itself.
+    var toolTip: String? = nil
 
     func makeNSView(context: Context) -> DragView {
         let view = DragView()
         view.urls = urls
         view.onClick = onClick
+        view.toolTip = toolTip
         return view
     }
 
     func updateNSView(_ view: DragView, context: Context) {
         view.urls = urls
         view.onClick = onClick
+        if view.toolTip != toolTip { view.toolTip = toolTip }
     }
 
     final class DragView: NSView, NSDraggingSource {
@@ -798,7 +803,7 @@ private struct SoundLibraryRowView: View {
         // elements (@see FileDragSource). Folders keep their SwiftUI gestures.
         .overlay {
             if let dragURLsProvider {
-                FileDragSource(urls: dragURLsProvider, onClick: onSelect)
+                FileDragSource(urls: dragURLsProvider, onClick: onSelect, toolTip: node.name)
             }
         }
     }
@@ -829,8 +834,11 @@ private struct SoundLibraryRowView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(.primary)
-
-            Spacer()
+                // Takes the room that is left, and only that: a zero ideal width keeps a long name
+                // from widening the row (hence the left panel) or pushing what follows out.
+                .padding(.trailing, 14)   // the minimum gap the former `Spacer` kept (spacing + 8)
+                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .help(node.name)
         }
         // Double click = go down into the folder; plain click = cursor/focus
         .onTapGesture(count: 2) { onEnter() }
@@ -853,8 +861,9 @@ private struct SoundLibraryRowView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(isSelected ? Color.primary : .secondary)
-
-            Spacer()
+                // Same rule as the folder row; the tooltip lives on `FileDragSource` (it covers the row).
+                .padding(.trailing, 14)   // the minimum gap the former `Spacer` kept (spacing + 8)
+                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             MiniWaveformView(peaks: node.peaks, width: 48, height: 18)
                 .opacity(node.peaks.isEmpty ? 0 : 1)

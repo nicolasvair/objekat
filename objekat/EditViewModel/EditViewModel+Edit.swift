@@ -101,12 +101,16 @@ extension EditViewModel {
     /// applies to (@see ZeroClamp). Asked only when a start would go negative — it walks the tree.
     func isRootObject(_ id: UUID) -> Bool { parentGroup(for: id) == nil }
 
-    func updateStartTime(id: UUID, newStart: Double) {
+    /// - `snap`: true = the start is put on the timeline's snap (the API's `object.move`, ONE
+    ///   object). A move of SEVERAL objects passes false: the gesture already snapped ONE common
+    ///   travel off the grabbed object, and snapping each start again on its own pulled every
+    ///   object to its nearest grid line — the gaps between them changed (5 October 2026).
+    func updateStartTime(id: UUID, newStart: Double, snap: Bool = true) {
         // The wall at zero belongs to the ROOT object: a descendant of a group may start before 0
         // (the group's window is a frame, its children keep an absolute start) — it is the root group
         // above that cannot (@see ZeroClamp, [[project-negative-start-convention]]). The engine bridge
         // already translates the head cut into a source offset (OBJEngineCore, `_headCutMap`).
-        let raw = snapTime(newStart)
+        let raw = snap ? snapTime(newStart) : newStart
         let snapped = raw >= 0 ? raw : ZeroClamp.clamp(raw, isRoot: isRootObject(id))
         guard let obj = find(id: id) else { return }
         let delta = snapped - obj.startTime

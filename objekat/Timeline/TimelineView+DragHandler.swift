@@ -318,11 +318,8 @@ struct MarkerBandDragState {
     }
     var group: [GroupMember] = []
 
-    /// The floor a crop stops at, and it is not cosmetic: `duration == 0` is what MAKES a point
-    /// marker, so a region cropped to nothing would silently become another kind of mark — one
-    /// with different drawing, different hit-testing and no way back but ⌘Z. The comment's own
-    /// floor, for the same reason one row up (@see CommentDragState.minDuration).
-    static let minDuration: Double = 0.05
+    // The floor a crop stops at is `Marker.minRegionDuration` — one definition for every door
+    // that sets a region's length (@see Marker).
 }
 
 /// An infinite bus being carried to another row.
@@ -2202,7 +2199,7 @@ extension TimelineView {
             // the left one moves the start and shortens by as much, pulling the right one only
             // changes the length.
             let originEnd = st.originTime + st.originDuration
-            let minD = MarkerBandDragState.minDuration
+            let minD = Marker.minRegionDuration
             if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
             if st.part == .resizeLeft {
                 let t = min(viewModel.snapTime(max(0, st.originTime + dt), excluding: mine),

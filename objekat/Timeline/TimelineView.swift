@@ -1081,8 +1081,8 @@ struct TimelineView: View {
                         // The pointer leaves the timeline: we release the claim, and it is AppKit
                         // that decides the cursor for whatever is under the pointer
                         // (@see TimelineCursorKeeper). Do not set anything ourselves: the arrow
-                        // would override the neighbouring view's cursor — the inspector's resize
-                        // handle, the transport's fields…
+                        // would override the neighbouring view's cursor — the split view's divider,
+                        // the transport's fields…
                         TimelineCursorKeeper.relinquish()
                         hoverState.position = nil
                         if toolHoveredID != nil { toolHoveredID = nil }
@@ -1169,7 +1169,6 @@ struct TimelineView: View {
                 pluginDropHUD
                 moveDragHUD
                 fadeDragHUD
-                crossfadeDragHUD
                 heldSoloHUD
                 soloHUD
                 stemAssignHUD
@@ -4028,70 +4027,6 @@ struct TimelineView: View {
         }
     }
 
-    /// The crossfade under the hand: what it is, how wide it is now, and the shape both its
-    /// curves are taking. The same three-part reading as the fade's, for the same reason — the
-    /// bend lives in the vertical, which nothing on the block announces.
-    ///
-    /// What is added here is the CEILING. A crossfade is bounded by what two objects can give
-    /// between them, and that bound is invisible: a hand that reaches it sees the zone stop and
-    /// has no way of telling a limit from a dropped gesture. So the HUD says the seam gives no
-    /// more, and goes on saying it while the hand travels on into nothing.
-    @ViewBuilder
-    private var crossfadeDragHUD: some View {
-        if let cd = crossfadeDrag {
-            let curve = cd.curves().left
-            // The zone as the gesture's copies hold it once they exist (the model holds it as the
-            // hand found it); a zone the copies have shut says 0, as the model's did.
-            let width = cd.shadow != nil
-                ? (cd.shadowWidth ?? 0)
-                : (viewModel.crossfadeZone(leftID: cd.leftID, rightID: cd.rightID)?.width ?? 0)
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(L("hud.crossfade.title")).font(.system(size: 11, weight: .bold))
-                Text(Self.selectionDurationString(width))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                if cd.spilloverFade > 0 {
-                    // The zone is shut and the travel that is left has become a PLAIN fade on the
-                    // side being held. The HUD has to say the gesture changed nature, otherwise a
-                    // hand that goes too far reads a crossfade that stopped obeying.
-                    Text(verbatim: "→").foregroundStyle(.secondary)
-                    Text(L("hud.crossfade.becomesFade"))
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
-                    Text(Self.selectionDurationString(cd.spilloverFade))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                } else if cd.atCeiling {
-                    Text(verbatim: "·").foregroundStyle(.secondary)
-                    Text(L("hud.crossfade.atLimit"))
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.orange)
-                }
-                Text(verbatim: "·").foregroundStyle(.secondary)
-                Image(systemName: fadeHUDSymbol(curve.shape))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(L(fadeCurveNameKey(curve.shape)))
-                    .font(.system(size: 11, weight: .bold))
-                if !curve.isStraight {
-                    Text(verbatim: "\(Int((curve.amount * 100).rounded())) %")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.accentColor)
-                }
-                Text(verbatim: "·").foregroundStyle(.secondary)
-                Text(L("hud.fade.leaveLane")).font(.system(size: 10)).foregroundStyle(.secondary)
-                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: curve.isS, locked: false)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
-            .padding(.bottom, 12)
-            .allowsHitTesting(false)
-        }
-    }
-
     /// The translation key naming a shape's FAMILY. Shared with the inspector, so that a curve is
     /// called the same thing wherever it is named.
     func fadeCurveNameKey(_ c: FadeShape) -> String {
@@ -4409,24 +4344,6 @@ struct TimelineView: View {
         return hi - lo
     }
 
-    /// A readable length: beyond the minute we count in min + s, below it in s + ms — the fine unit
-    /// is always the one being handled at that scale. The roundings are done on the total before
-    /// splitting, so as never to show '1 min 60.0 s'.
-    static func selectionDurationString(_ d: Double) -> String {
-        if d >= 60 {
-            let tenths = (d * 10).rounded()
-            let m      = Int(tenths) / 600
-            let s      = (Int(tenths) % 600) / 10
-            let dixth  = Int(tenths) % 10
-            return String(format: L("duration.minutesSeconds"), m, s, dixth)
-        }
-        let totalMs = Int((d * 1000).rounded())
-        if totalMs >= 1000 {
-            return String(format: L("duration.secondsMillis"), totalMs / 1000, totalMs % 1000)
-        }
-        return "\(totalMs) ms"
-    }
-
     /// The number of samples covered, grouped in thousands (a narrow no-break space).
     static func selectionSamplesString(_ d: Double, sampleRate: Double) -> String {
         let n = Int((d * sampleRate).rounded())
@@ -4454,7 +4371,8 @@ struct TimelineView: View {
                 Image(systemName: "timeline.selection").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text(L("hud.selection.title")).font(.system(size: 11, weight: .bold))
-                Text(Self.selectionDurationString(d))
+                // Its own format (`24s 500ms`), not the crossfade HUD's shared one.
+                Text(SelectionDurationText.string(d, minutes: { L("duration.minutes", $0) }))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                 if sr > 0, d < 1 {
                     Text(verbatim: "·").font(.system(size: 10)).foregroundStyle(.secondary)

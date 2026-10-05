@@ -24,15 +24,22 @@ extension CommandRegistry {
                                     "First lane when using 'lane_count' (default 0)."),
                           ParamSpec("all_lanes", "bool", required: false,
                                     "Every OBJECT lane the timeline has (automation rows left out) "
-                                  + "— what a drag in the time ruler traces. Wins over 'lanes'.")]) { p in
+                                  + "— what a drag in the time ruler traces. Wins over 'lanes'."),
+                          ParamSpec("from_ruler", "bool", required: false,
+                                    "Writes the selection AS the ruler drag does (time or BPM half of "
+                                  + "the ruler): every object lane, and the ruler origin set — so a "
+                                  + "`timesel.ripple_delete` also carries the marker band's marks. "
+                                  + "Implies 'all_lanes'.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let start = max(0, try p.double("start"))
             let end = try p.double("end")
             guard end > start else {
                 throw CommandError(code: .bad_params, message: "'end' must come after 'start'")
             }
+            let fromRuler = try p.bool("from_ruler", or: false)
+            let allLanes = try p.bool("all_lanes", or: false)
             var lanes = Set<Int>()
-            if (try p.bool("all_lanes", or: false)) {
+            if fromRuler || allLanes {
                 lanes = vm.allObjectLanes()
             } else if p.raw["lanes"] != nil {
                 for value in try p.array("lanes") {
@@ -49,7 +56,11 @@ extension CommandRegistry {
             guard !lanes.isEmpty else {
                 throw CommandError(code: .bad_params, message: "no lane")
             }
-            vm.timeSelection = TimeSelection(timeRange: start...end, lanes: lanes)
+            if fromRuler {
+                vm.setTimeSelectionFromRuler(TimeSelection(timeRange: start...end, lanes: lanes))
+            } else {
+                vm.timeSelection = TimeSelection(timeRange: start...end, lanes: lanes)
+            }
             return CommandAdapters.selectionPayload(vm)
         }
 
@@ -522,17 +533,22 @@ extension CommandRegistry {
                  summary: "Deletes the time selection AND closes the gap: what follows slides back, "
                         + "on the SELECTED lanes only, bounded by the container (a group ripples alone, "
                         + "the outside does not move; the container's window shrinks only if every one "
-                        + "of its lanes was selected).",
+                        + "of its lanes was selected). A selection traced in the RULER "
+                        + "(`timesel.set from_ruler`) also ripples the marker band: marks after the "
+                        + "range slide back, points inside it go, regions lose the overlap "
+                        + "(`markers_follow`).",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let sel = vm.timeSelection else {
                 throw CommandError(code: .invalid_state, message: "no time selection")
             }
             let container = vm.rippleContainerID(forLanes: sel.lanes)
+            let marksFollow = vm.timeSelectionFromRuler && container == nil
             let before = vm.laneEntries.count
             vm.rippleDeleteTimeSelection()
             return .object(["objects_before": .int(before),
                             "objects_after": .int(vm.laneEntries.count),
+                            "markers_follow": .bool(marksFollow),
                             "closed": .number(sel.timeRange.upperBound - sel.timeRange.lowerBound),
                             "container": container.map { .string($0.uuidString) } ?? .null])
         }

@@ -99,14 +99,11 @@ struct CrossfadePairTrack {
     var didOverCrop = false
 
     /// The width the hand asked for, and the one the seam gave. They part company as soon as the
-    /// clamp bites, and the HUD says so — a gesture that stops must say why it stopped, otherwise
-    /// the limit reads as the app having lost the drag.
+    /// clamp bites.
     var requestedWidth: Double = 0
     var obtainedWidth:  Double = 0
     /// The plain fade the gesture has grown past the shut seam, on the object whose edge it holds.
     var spilloverFade: Double = 0
-    /// The seam has given everything it has: the hand may go on travelling, the zone will not.
-    var atCeiling: Bool { requestedWidth - obtainedWidth > EditViewModel.seamEpsilon }
 }
 
 /// One drag on a crossfade zone — and, with several objects selected, on every crossfade of the
@@ -156,12 +153,6 @@ struct CrossfadeDragState {
     var rightID: UUID { grabbed.rightID }
     var anchorStart: Double { grabbed.anchorStart }
     var anchorEnd:   Double { grabbed.anchorEnd }
-    var spilloverFade: Double { grabbed.spilloverFade }
-    var atCeiling: Bool { grabbed.atCeiling }
-
-    /// The zone under the hand, AS THE GESTURE HAS LEFT IT — what the HUD says the width of. nil
-    /// until a frame has asked for something (the model's zone is then still the right answer).
-    var shadowWidth: Double? { shadow?.zone(leftID, rightID)?.width }
 
     var bendDelta: Double { -overshootY / max(1, bendTravelPx) }
 

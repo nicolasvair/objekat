@@ -613,6 +613,17 @@ extension EditViewModel {
             self.endPluginParamTouchWatch(plug.id)
         }
         controller.window?.level = .floating
+        // Every built-in window is born at the same place: one that would land exactly on top
+        // of another already open (several editors opened at once — a multiple selection) is
+        // shifted down and right until it shows its own title bar.
+        if let window = controller.window {
+            let taken = builtInEditorWindows.values.compactMap { $0.window?.frame.origin }
+            var origin = window.frame.origin
+            while taken.contains(where: { abs($0.x - origin.x) < 2 && abs($0.y - origin.y) < 2 }) {
+                origin.x += 24; origin.y -= 24
+            }
+            window.setFrameOrigin(origin)
+        }
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         builtInEditorWindows[plug.id] = controller
