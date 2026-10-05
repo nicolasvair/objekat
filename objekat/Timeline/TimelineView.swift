@@ -2688,6 +2688,10 @@ struct TimelineView: View {
         let t = viewModel.snapTime(max(0, x / pixelsPerSecond))
         // No lane aimed at above: no black caret, and the line stays grey over its whole height.
         viewModel.caretLane = nil
+        // A click in the ruler (time or BPM half, or an empty stretch of the marker band) lets go
+        // of the selected markers / regions / comments, as a drag there does (@see
+        // EditViewModel.setTimeSelectionFromRuler). A click ON a mark never gets here.
+        if !viewModel.selectedAnnotations.isEmpty { viewModel.selectedAnnotations = [] }
         // ⌥ makes the playhead jump along with the cursor.
         if NSEvent.modifierFlags.contains(.option) {
             onJumpPlayhead(t)

@@ -49,7 +49,18 @@ extension EditViewModel {
         // need the document in front to stay put. @see ExportJob.pinsActiveDocument
         if exportJob?.pinsActiveDocument == true || exportBatch?.isActive == true {
             // A regions batch pins the document for its whole length, a render on a copy included:
-            // every region clones the live Edit afresh. @see EditViewModel+ExportRegions
+            // every region clones the live Edit afresh (`launchNextBatchRegion` → `runExport` →
+            // `exportMixToFileAsync` copies `_edit`, i.e. whichever document is in front THEN).
+            // Switching between two regions would render the next ones from the wrong project.
+            // @see EditViewModel+ExportRegions
+            // The sentence must say WHICH case it is: "only a direct export blocks this" read over a
+            // background render (a regions batch, or the clone being made) contradicts itself.
+            if exportBatch?.isActive == true, exportBatch?.settings.renderInBackground == true {
+                return "tabs.switch.refused.exportRegions"
+            }
+            if let job = exportJob, job.isRunning, job.settings.renderInBackground {
+                return "tabs.switch.refused.exportPreparing"
+            }
             return "tabs.switch.refused.export"
         }
         if !bakingIDs.isEmpty || !recomputingConsolidateIDs.isEmpty || isCascadingRebake {

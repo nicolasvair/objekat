@@ -267,6 +267,10 @@ extension EditViewModel {
         // It KEEPS the panel, it never opens one: an export driven by the API would otherwise put
         // a window on the screen of whoever was working. The same doctrine as `hasInterface`
         // guarding the plugin editors.
+        // A background render launched FROM the panel closes it here, and the sheet then slides
+        // away over ~0.25 s — an animation the clone below would freeze half-way, a sheet stuck
+        // across the window until the render starts. @see the deferral further down.
+        let panelClosingNow = exportPanelPresented && settings.renderInBackground
         exportPanelPresented = exportPanelPresented && !settings.renderInBackground
         // A direct render: the engine is going to suspend playback (it renders the live project). It is
         // asked of the view BEFORE, so that the interface's transport agrees with what
@@ -298,7 +302,12 @@ extension EditViewModel {
         // through (long enough for the bar to be on screen, in the "Preparing" phase), and then it launches.
         // In a direct render there is nothing to instantiate: the "Preparing" phase lasts only that
         // one frame, and that is exactly the point of the setting.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+        // When this launch has just closed the panel (a background render from the window), the
+        // wait covers the sheet's own dismissal too: frozen mid-slide it would sit over the
+        // strip for the whole clone. @see ExportProgressBar (its insertion is not animated, for
+        // the same freeze).
+        let launchDelay = panelClosingNow ? 0.4 : 0.08
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchDelay) { [weak self] in
             guard let self, let engine = self.engine, self.exportJob?.phase == .preparing else { return }
             engine.exportMix(toFileAsync: renderTarget.path,
                              start: range.lowerBound, end: range.upperBound,

@@ -28,8 +28,13 @@ extension CommandRegistry {
                           ParamSpec("from_ruler", "bool", required: false,
                                     "Writes the selection AS the ruler drag does (time or BPM half of "
                                   + "the ruler): every object lane, and the ruler origin set — so a "
-                                  + "`timesel.ripple_delete` also carries the marker band's marks. "
-                                  + "Implies 'all_lanes'.")]) { p in
+                                  + "`timesel.ripple_delete` also carries the marker band's marks — "
+                                  + "and the selected marks (markers, regions, comments) are let go "
+                                  + "of. Implies 'all_lanes'."),
+                          ParamSpec("select_objects", "bool", required: false,
+                                    "With 'from_ruler': also what the hand's RELEASE does — the "
+                                  + "objects the range encloses are selected. ('from_ruler' alone "
+                                  + "already lets go of the selected marks, as the hand does.)")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let start = max(0, try p.double("start"))
             let end = try p.double("end")
@@ -56,7 +61,9 @@ extension CommandRegistry {
             guard !lanes.isEmpty else {
                 throw CommandError(code: .bad_params, message: "no lane")
             }
-            if fromRuler {
+            if fromRuler, try p.bool("select_objects", or: false) {
+                vm.commitRulerSelection(TimeSelection(timeRange: start...end, lanes: lanes))
+            } else if fromRuler {
                 vm.setTimeSelectionFromRuler(TimeSelection(timeRange: start...end, lanes: lanes))
             } else {
                 vm.timeSelection = TimeSelection(timeRange: start...end, lanes: lanes)

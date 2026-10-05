@@ -12490,6 +12490,52 @@
         }
       }
     },
+    "tabs.switch.refused.exportPreparing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs while the export is being prepared (copying the project). It will be possible as soon as the render has started."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña mientras se prepara la exportación (copia del proyecto). Será posible en cuanto empiece el renderizado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet pendant la préparation de l'export (copie du projet). Ce sera possible dès que le rendu aura commencé."
+          }
+        }
+      }
+    },
+    "tabs.switch.refused.exportRegions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs during a regions export: each region is rendered from the project on screen. Wait for the batch to end, or cancel it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña durante una exportación por regiones: cada región se renderiza a partir del proyecto en pantalla. Espera al final del lote o cancélalo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet pendant un export par régions : chaque région est rendue à partir du projet affiché. Attendez la fin du lot ou annulez-le."
+          }
+        }
+      }
+    },
     "tabs.switch.refused.loading": {
       "extractionState": "manual",
       "localizations": {

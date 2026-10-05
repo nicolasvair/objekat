@@ -217,6 +217,15 @@ struct objekatApp: App {
         }
     }
 
+    /// ⌘T. A refusal (a direct export, a regions batch, the clone of a background export being
+    /// made, a load…) is SAID: the result used to be dropped, so the shortcut simply did nothing
+    /// and nothing told the hand why.
+    private func newTab() {
+        if case .failure(.blocked(let reasonKey)) = workspace.newTab() {
+            viewModel.notify(L("tabs.switch.refused.title"), L(reasonKey))
+        }
+    }
+
     private func selectRelativeTab(by delta: Int) {
         let tabs = workspace.tabs
         guard tabs.count > 1, let idx = tabs.firstIndex(where: { $0.id == workspace.activeTabID })
@@ -270,7 +279,7 @@ struct objekatApp: App {
                 Button(L("menu.file.newProject")) { viewModel.newProject() }
                     .keyboardShortcut("n", modifiers: [.command])
                     .disabled(busy)
-                Button(L("menu.file.newTab")) { _ = workspace.newTab() }
+                Button(L("menu.file.newTab")) { newTab() }
                     .keyboardShortcut("t", modifiers: [.command])
                     .disabled(busy)
                 Button(L("menu.file.open")) { openProjectPanel() }

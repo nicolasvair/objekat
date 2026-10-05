@@ -472,8 +472,7 @@ extension TimelineView {
 
         let sel = TimeSelection(timeRange: range, lanes: viewModel.allObjectLanes())
         if phase == .ended {
-            viewModel.setTimeSelectionFromRuler(sel)
-            selectInDisplayLanes(sel)
+            viewModel.commitRulerSelection(sel)   // drops the selected marks (@see there)
             onMoveCursor(max(0, range.lowerBound))
             rulerSelectionDrag = nil
         } else {

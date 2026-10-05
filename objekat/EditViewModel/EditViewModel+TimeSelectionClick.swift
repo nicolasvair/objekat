@@ -100,6 +100,15 @@ extension EditViewModel {
     /// rule above can call it; `TimelineView.selectInDisplayLanes` is now the thin wrapper.
     /// On automation lanes it selects nothing, no object living there, which is what lets the one
     /// rule serve both surfaces without a branch.
+    /// The release of a drag traced in the time RULER (or on an empty stretch of the marker band,
+    /// which is the same gesture): the range with its ruler origin — which lets go of the selected
+    /// marks (@see setTimeSelectionFromRuler) — and the objects it encloses, as the rubber band does.
+    /// Shared by the hand and `timesel.set` (`from_ruler` + `select_objects`).
+    func commitRulerSelection(_ sel: TimeSelection) {
+        setTimeSelectionFromRuler(sel)
+        selectObjectsInDisplayLanes(sel)
+    }
+
     func selectObjectsInDisplayLanes(_ sel: TimeSelection) {
         let t1 = sel.timeRange.lowerBound
         let t2 = sel.timeRange.upperBound

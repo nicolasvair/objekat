@@ -713,6 +713,23 @@ with ObjekatClient(SOCK) as c:
     check("so the band stays put", band_state() == marks0, str(band_state()))
     cmd("edit.undo")
 
+    # 5) tracing in the ruler lets go of the selected marks — ALWAYS: whether the range encloses
+    #    an object or not (before, only an enclosed object selected carried them out).
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=7.5, end=600.0, from_ruler=True, select_objects=True)
+    check("a ruler range selects the object it encloses",
+          ro.upper() in [i.upper() for i in cmd("selection.get").get("ids", [])],
+          json.dumps(cmd("selection.get")))
+    check("and lets go of the selected region", sel_ids() == [], str(sel_ids()))
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=0.2, end=0.8, from_ruler=True, select_objects=True)
+    check("a ruler range over no object lets go of the region too",
+          sel_ids() == [] and cmd("selection.get")["count"] == 0, str(sel_ids()))
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=0.2, end=0.8, from_ruler=True)
+    check("timesel.set from_ruler alone lets go of the marks", sel_ids() == [], str(sel_ids()))
+    cmd("timesel.clear")
+
     # ── a region is never shorter than 1 s (Marker.minRegionDuration) ──────
     cmd("project.new")
     frow = cmd("marker_lane.create", name="floor")["lane"]

@@ -489,6 +489,26 @@ with ObjekatClient(SOCK, timeout=180) as c:
     check("the render survived tab.new, project_name unchanged",
           still.get("running") is True and still.get("project_name") == e_name, still)
 
+    # Opening a FILE in a new tab is the same door with a load behind it (the outgoing document
+    # parked and the incoming one applied to the ONE engine while the clone renders).
+    try:
+        t_c = cmd("tab.open", path=C_JSON)
+        check("tab.open (a new tab) during a background render: works",
+              t_c.get("already_open") is False and t_c.get("active") is True
+              and t_c.get("path") == C_JSON, t_c)
+    except ObjekatError as e:
+        t_c = None
+        check("tab.open (a new tab) during a background render: works", False, e.args[0])
+    still = cmd("export.status")
+    check("the render survived tab.open, project_name unchanged",
+          still.get("running") is True and still.get("project_name") == e_name, still)
+    if t_c is not None:
+        # Closed INACTIVE (synchronous): closing the active one restores its neighbour in a Task,
+        # and the `wait_idle` that would follow waits for the export too — ending the render this
+        # block needs alive. And C must not be open below: the DIRECT refusals open it as a NEW tab.
+        cmd("tab.select", id=tab_e_id)
+        cmd("tab.close", id=t_c["id"], discard=True)
+
     for label, tid in (("E", tab_e_id), ("B", tab_b_id)):
         try:
             cmd("tab.select", id=tid)
