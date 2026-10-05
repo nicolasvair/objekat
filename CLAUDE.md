@@ -2155,9 +2155,8 @@ What has landed since mid-August, in order:
   1-sample tolerance on EVERY chunk (256 frames) and the reader `src_reset()`: a click per chunk, a
   varispeed (the patch `0002` feature) unusable in sinc (SINAD 4–39 dB measured at 1.07 and 0.5). One
   line, `readPosition += numFramesToDo * speedRatio` — what the TimeStretchReaders already did. Measured
-  after: SINAD 122–138 dB at speeds 1.07 and 0.5, no jump. **The fork is NOT republished** — the gitlink
-  of this worktree names a commit (`b945d566f0a`) that exists only in this machine's submodule until
-  `tools/publish-engine-forks.sh` is run; do not merge the branch before it.
+  after: SINAD 122–138 dB at speeds 1.07 and 0.5, no jump. The commit (`b945d566f0a`) is on the fork
+  now (`objekat-patches-3.5`, an ancestor of `17215d464fb`, checked 5 October 2026).
   Measuring it: `tools/scenario_resample_quality.py` (the matrix source × output ∈ {44.1, 48, 96} kHz ×
   speed {1, 1.07, 0.5}, 24-bit export re-read, `--quick`, `--bench`, `--background`, `--expect sinc`) with
   `tools/analyze_resample.py` (SINAD by sine fit, a Hilbert-phase detector of TIMING jumps — a residual-
@@ -2188,8 +2187,10 @@ What has landed since mid-August, in order:
   sidechain input and declares a latency; RANK tiers (hidden pool tracks `(stem, lane, rank)`,
   bounded by stems × lanes × ranks; per-rank combiners inside a container) order writers before
   readers. Engine patch **`0037`** (`engine-patches/3.5/`, submodule branch `objekat-bridge-0037`
-  at `b2a2c0c`, applies cleanly onto `17215d464fb`, **the fork is NOT republished and the gitlink
-  NOT moved** — `tools/publish-engine-forks.sh` before any merge). The next engine patch is `0038`.
+  at `1508f752f62`, on top of `17215d464fb`; **published on the fork 5 October 2026 as its own
+  branch `objekat-bridge-0037`**, and the gitlink of `feature/sidechain` points at it — `main` still
+  pins `17215d464fb` and the fork's `objekat-patches-3.5` was left alone; on merging into `main`,
+  bring `objekat-bridge-0037` into `objekat-patches-3.5`). The next engine patch is `0038`.
   **Latency, both ways**: reader declares `X = max(L_d, L_s)`, delays by `X − L_s`; a key older than
   its host makes the sidechain sum delay the DIRECT input and the host's declared latency rises. `X`
   is needed when the reader is built but the tap's age only once the tap is: each tap caches its age
@@ -2236,9 +2237,8 @@ What has landed since mid-August, in order:
   and glyph, the three languages, and above all the SOUND — a real kick keying a real AU compressor,
   with and without a look-ahead limiter on the kick; stop/start, loops, seeking; the CPU on a real
   session; the fluidity of the signal view on a big project.
-  **The checklist for the Mac, in order**: (1) `git submodule`: the engine must be the fork commit
-  `17215d464fb` with `engine-patches/3.5/0037-*.patch` applied (`git -C tracktion_engine am
-  ../engine-patches/3.5/0037-*.patch`, or fetch branch `objekat-bridge-0037` from this machine);
+  **The checklist for the Mac, in order**: (1) `git submodule update`: the engine must be the fork
+  commit `1508f752f62` (branch `objekat-bridge-0037`, i.e. `17215d464fb` + patch `0037`);
   (2) a Debug build, **warnings against the 1550 baseline**; (3) `swiftc -parse-as-library
   objekat/Shared/BridgeScope.swift tools/test_bridge_scope.swift -o /tmp/bs && /tmp/bs`, and
   `tools/test_cross_project_import.swift` (its header has the compile line); the C++ test again
