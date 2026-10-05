@@ -2261,6 +2261,31 @@ What has landed since mid-August, in order:
   leave a note stuck), Q6 (a muted GROUP or STEM still keys — the mute sits downstream of the tap),
   Q7 (speed compensation silences keys with a delay), phase 2 (sends over the bridge) and phase 3
   (bake with key sources) are not started.
+- **Three fixes read off the hand: ⌥-click in the ruler, a fine start for automation, an export sheet that stays 460 pt**
+  (4 October 2026, on `main`, **written on a Linux machine: nothing compiled, nothing run, nothing
+  seen** — only `xcstrings.py check` / `orphans` and a careful re-read).
+  **⌥-click in the time ruler makes the playhead jump** (`ObjekatSession.jumpPlayhead`, the ruler's click
+  and the end of a ruler click-without-travel read ⌥ through `onJumpPlayhead`). Read as a FEATURE: playing,
+  playback carries on from there; paused, it stays paused and ⇧space resumes at that point; stopped, it is
+  a plain cursor move. A jump out of the loop region disarms the engine loop (the tick re-arms it on entry).
+  **Automation drag and wheel lose their dead-zone jump.** The drag measured from the mouse-down, so the
+  first frame past 3 px jumped; it measures from an ANCHOR (where the gesture was recognised) now, a
+  point's time stays put under 4 px of sideways travel (`timeDeadZonePx`), and the vertical travel is FINE
+  near the anchor (`AutomationHandTravel`: 4 px per detent step, a knee at 6 steps, then the row's own
+  geometry — continuous, the whole range stays reachable). A multi-row selection softens with the grabbed
+  row's parameter. The notch wheel gives exactly ONE step per notch (`automationWheelSteps`); the trackpad
+  keeps its accumulation. The three constants are first guesses.
+  Read off the hand the same day, twice: the wheel over a LINE (precise deltas — trackpad, Magic Mouse,
+  smooth-scrolling mouse) needed a hard push at 10 pt per step, then at 3 pt sat still and ran off. It now
+  reads the gesture's TOTAL travel through `AutomationHandTravel.wheelSteps`: first step at 8 pt (1 pt was still
+  far too quick), then 20 pt per step up to 4 steps (at most one per event there), then 6 pt; every event keeps the hold alive
+  (no second undo on a slow finger). A notch wheel stays one step per notch; the ⌥ curvature wheel 10 pt.
+  **The export sheet no longer widens with a long folder path** (path with idealWidth 0, lowered priority,
+  `.help` with the full path; the footer, batch label and region names likewise).
+  **To check**: a build against the 1550-warning baseline; `tools/test_automation_hand_travel.swift`;
+  by hand, the feel of the automation drag (the 4 px / 6 steps / 4 px values) and of the wheel on a notch
+  mouse and a trackpad; ⌥-click during play, pause and a loop; the export sheet with a long path in the
+  three languages and in Regions scope.
 
 ### What is owed
 

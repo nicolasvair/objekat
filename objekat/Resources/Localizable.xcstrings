@@ -576,6 +576,29 @@
         }
       }
     },
+    "cheatsheet.keys.optClickRuler": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ click in the ruler"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ clic en la regla"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ clic dans la règle"
+          }
+        }
+      }
+    },
     "cheatsheet.keys.optDragCrossfade": {
       "extractionState": "manual",
       "localizations": {
@@ -756,6 +779,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "pause / reprise au même endroit"
+          }
+        }
+      }
+    },
+    "cheatsheet.playheadJump": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "playback jumps to that instant"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la reproducción salta a ese instante"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la lecture saute à cet instant"
           }
         }
       }

@@ -462,7 +462,11 @@ extension TimelineView {
             viewModel.setTimeSelectionFromRuler(nil)
             if phase == .ended {
                 rulerSelectionDrag = nil
-                onMoveCursor(state.anchorTime)
+                if NSEvent.modifierFlags.contains(.option) {
+                    onJumpPlayhead(state.anchorTime)
+                } else {
+                    onMoveCursor(state.anchorTime)
+                }
             } else {
                 rulerSelectionDrag = state
             }

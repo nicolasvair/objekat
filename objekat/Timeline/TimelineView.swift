@@ -65,6 +65,8 @@ struct TimelineView: View {
     /// ⇧space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
+    /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).
+    var onJumpPlayhead: (Double) -> Void = { _ in }
     var onReturnToZero: () -> Void = {}
 
     // Not `private`: read by the gesture handlers (extensions in other files) so as to bound the
@@ -341,6 +343,9 @@ struct TimelineView: View {
         var sendScrollAccumulator: Float = 0
         var automationScrollAccumulator: Float = 0
         var automationLineScrollAccumulator: Float = 0
+        /// The precise-delta travel (pt, upwards positive) of the wheel gesture holding a line, since
+        /// its grab (@see AutomationHandTravel.wheelSteps).
+        var automationLineWheelTravel: Double = 0
         /// The automation line the wheel holds, frozen at its first notch and kept for as long as
         /// the notches follow each other (@see registerScrollMonitor).
         var automationLineWheel: AutomationLineWheel? = nil
@@ -2680,6 +2685,11 @@ struct TimelineView: View {
         let t = viewModel.snapTime(max(0, x / pixelsPerSecond))
         // No lane aimed at above: no black caret, and the line stays grey over its whole height.
         viewModel.caretLane = nil
+        // ⌥ makes the playhead jump along with the cursor.
+        if NSEvent.modifierFlags.contains(.option) {
+            onJumpPlayhead(t)
+            return
+        }
         if !isPlaying { viewModel.engine?.seek(to: t) }
         onMoveCursor(t)
     }

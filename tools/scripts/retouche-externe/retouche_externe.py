@@ -23,6 +23,8 @@ same position), and the new clip has no plugin, gain or fade of its own to apply
 The render keeps the sample rate of the original's source file (for a group: the files below it; if they
 disagree, a small panel asks which one — Cancel stops everything before any render); BIT_DEPTH stays 24,
 and SAMPLE_RATE (48 kHz) is only the fallback for an object with no audio file (MIDI).
+The render is MONO when every audio file of the object (for a group: below it) is mono, STEREO otherwise
+(stereo file, mixed group, no audio file); the app always renders stereo, the script folds it down to mono.
 The object is put in direct solo for the render (so a mute or another solo cannot silence it), then
 the previous solo is restored.
 """
@@ -253,7 +255,100 @@ def choose_rate(app, rates):
             pass
 
 
-def render_object(app, obj, out_path, sample_rate):
+def file_channels(path):
+    """The channel count of an audio file, or None. WAV/RF64 header by hand, else macOS `afinfo`."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) in (b"RIFF", b"RF64"):
+                f.read(4)
+                if f.read(4) == b"WAVE":
+                    while True:
+                        head = f.read(8)
+                        if len(head) < 8:
+                            break
+                        chunk_id, size = head[:4], struct.unpack("<I", head[4:])[0]
+                        if chunk_id == b"fmt ":
+                            fmt = f.read(4)
+                            if len(fmt) == 4:
+                                return struct.unpack("<HH", fmt)[1] or None
+                            break
+                        f.seek(size + (size & 1), 1)
+    except OSError:
+        return None
+    try:
+        out = subprocess.run(["afinfo", path], capture_output=True, text=True).stdout
+        m = re.search(r"(\d+)\s*ch\b", out)
+        return int(m.group(1)) if m else None
+    except OSError:
+        return None
+
+
+def source_channel_count(app, obj):
+    """1 when every audio file read by the object (its own, or those of the clips below a group) is mono,
+    2 otherwise (stereo, mixed, or no readable audio file such as MIDI)."""
+    objects = app.send("object.list").get("objects", [])
+    below = {obj["id"]}
+    grew = True
+    while grew:
+        grew = False
+        for o in objects:
+            if o.get("parent") in below and o["id"] not in below:
+                below.add(o["id"])
+                grew = True
+    counts = set()
+    for o in objects:
+        if o["id"] in below and o.get("kind") == "clip" and o.get("file"):
+            counts.add(file_channels(o["file"]) or 2)
+    return 1 if counts == {1} else 2
+
+
+def downmix_to_mono(path):
+    """Rewrites a 2-channel integer PCM wav (16/24-bit, as written by the render) as a mono wav:
+    (L+R)/2. A centred mono source renders L == R, so this is lossless for it."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:4] not in (b"RIFF", b"RF64") or data[8:12] != b"WAVE":
+        raise Failure(tr("Rendu illisible (wav attendu).", "Unreadable render (wav expected).",
+                         "Renderizado ilegible (se esperaba wav)."))
+    pos, fmt, pcm = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        body = pos + 8
+        if cid == b"fmt ":
+            fmt = struct.unpack("<HHIIHH", data[body:body + 16])
+        elif cid == b"data":
+            if size == 0xFFFFFFFF or body + size > len(data):
+                size = len(data) - body
+            pcm = data[body:body + size]
+            break
+        pos = body + size + (size & 1)
+    if not fmt or pcm is None:
+        raise Failure(tr("Rendu illisible (wav attendu).", "Unreadable render (wav expected).",
+                         "Renderizado ilegible (se esperaba wav)."))
+    _tag, channels, rate, _brate, _align, bits = fmt
+    if channels != 2:
+        return  # already mono (or something else): leave it as is
+    width = bits // 8
+    if bits not in (16, 24):
+        raise Failure("Unsupported render bit depth: %d" % bits)
+    frames = len(pcm) // (2 * width)
+    out = bytearray()
+    for i in range(frames):
+        o = i * 2 * width
+        l = int.from_bytes(pcm[o:o + width], "little", signed=True)
+        r = int.from_bytes(pcm[o + width:o + 2 * width], "little", signed=True)
+        out += ((l + r) >> 1).to_bytes(width, "little", signed=True)
+    header = b"RIFF" + struct.pack("<I", 36 + len(out)) + b"WAVE"
+    header += b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * width, width, bits)
+    header += b"data" + struct.pack("<I", len(out))
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(header)
+        f.write(out)
+    os.replace(tmp, path)
+
+
+def render_object(app, obj, out_path, sample_rate, channels=2):
     """Renders `obj` ALONE (the object and what belongs to it, nothing of its surroundings — a direct
     solo only guarantees it is audible, restored afterwards) over its own span into out_path."""
     before = app.send("solo.get")
@@ -284,6 +379,8 @@ def render_object(app, obj, out_path, sample_rate):
     if not os.path.exists(out_path):
         raise Failure(tr("Le rendu n'a produit aucun fichier.", "The render produced no file.",
                          "El renderizado no produjo ningún archivo."))
+    if channels == 1:
+        downmix_to_mono(out_path)
 
 
 def next_free_lane(app):
@@ -362,7 +459,7 @@ def run():
     stem = safe_name(name)
     folder = work_folder(app)
     out_path = unique_path(folder, stem, " (retouche)")
-    render_object(app, obj, out_path, sample_rate)
+    render_object(app, obj, out_path, sample_rate, source_channel_count(app, obj))
 
     before = os.stat(out_path).st_mtime_ns
     open_in_editor(editor, out_path)
