@@ -904,6 +904,11 @@ def export_wav(c, path, start, end, rate=48000):
     return read_wav_any(path)[3][0]
 
 
+def open_canvases(c):
+    """The canvases still open (an ended one stays listed, state `closed`, until the document changes)."""
+    return [x for x in c.send("script.canvas.list")["canvases"] if x["state"] == "open"]
+
+
 def fresh_saved_project(c, root, name="p"):
     c.send("project.new")
     c.send("project.save_as", {"path": os.path.join(root, name + ".objekat")})
@@ -1054,8 +1059,31 @@ def section_c(c):
     objs = {o["id"]: o for o in c.send("object.list")["objects"]}
     check("c: ONE edit.undo removes the new object and unmutes the original",
           list(objs) == [oid] and objs[oid]["muted"] is False, [o["name"] for o in objs.values()])
-    check("c: the canvas is gone", not [x for x in c.send("script.canvas.list")["canvases"] if x["state"] == "open"])
+    check("c: the canvas is gone", not open_canvases(c))
     check("c: the work folder is removed", not os.path.isdir(CACHE) or os.listdir(CACHE) == [], os.listdir(CACHE) if os.path.isdir(CACHE) else None)
+
+    # ---- launched by the app itself (script.run: the door the context menu goes through) -------
+    listed = {x["name"]: x for x in c.send("script.list")["scripts"]}
+    if "spectral-gain" in listed and listed["spectral-gain"]["available"]:
+        c.send("script.run", {"script": "spectral-gain", "ids": [oid]})
+        cid, end = None, time.time() + 60
+        while time.time() < end and cid is None:
+            for cv in open_canvases(c):
+                if (cv.get("object") or "").lower() == oid.lower():
+                    cid = cv["canvas_id"]
+            time.sleep(0.2)
+        check("c: script.run (the app's own launch, OBJEKAT_OBJECT_IDS) opens the canvas", cid is not None)
+        if cid:
+            c.send("script.canvas.input", {"canvas_id": cid, "press": "cancel"})
+            end = time.time() + 30
+            while time.time() < end and open_canvases(c):
+                time.sleep(0.2)
+            check("c: script.run: Cancel ends it and the canvas goes", not open_canvases(c))
+            check("c: script.run: the project is as the undo left it (one object, unmuted)",
+                  [o["id"] for o in c.send("object.list")["objects"]] == [oid]
+                  and c.send("object.get", {"id": oid})["muted"] is False)
+    else:
+        print("skip  c: script.run: spectral-gain is not installed in the Plugins folder (run install.sh)")
 
 
 def run_to_validate(c, root, tag, wav, name="tone", extra=None):
@@ -1147,8 +1175,7 @@ def section_e(c):
         print("info  e: 601 s -> exit %s, stderr: %s" % (rc, err.strip()))
         check("e: a group of 601 s: the script exits != 0", rc not in (None, 0), rc)
         check("e: ... with a message on stderr", "too long" in err.lower() or "trop long" in err.lower(), err[-300:])
-        check("e: ... and no canvas was opened", not c.send("script.canvas.list")["canvases"],
-              c.send("script.canvas.list")["canvases"])
+        check("e: ... and no canvas was opened", not open_canvases(c), open_canvases(c))
     finally:
         sc.abort()
 
@@ -1189,7 +1216,7 @@ def section_e(c):
             end = time.time() + 10
             gone = False
             while time.time() < end:
-                if not [x for x in c.send("script.canvas.list")["canvases"] if x["state"] == "open"]:
+                if not open_canvases(c):
                     gone = True
                     break
                 time.sleep(0.2)
@@ -1208,7 +1235,7 @@ def section_e(c):
         rc, out, err = sc.finish(60)
         print("info  e: missing file -> exit %s, stderr: %s" % (rc, err.strip()))
         check("e: a missing file: the script exits != 0 with a message", rc not in (None, 0) and err.strip() != "", (rc, err[-200:]))
-        check("e: a missing file: no canvas", not c.send("script.canvas.list")["canvases"])
+        check("e: a missing file: no canvas", not open_canvases(c), open_canvases(c))
     finally:
         sc.abort()
 

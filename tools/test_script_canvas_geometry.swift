@@ -7,8 +7,8 @@
 //         ../objekat/Shared/ScriptCanvasGeometry.swift test_script_canvas_geometry.swift \
 //         -o /tmp/scg && /tmp/scg
 //
-// Exit: 0 if every assertion passes, 1 otherwise. WRITTEN ON A MACHINE WITH NO SWIFT COMPILER:
-// the first run is on a Mac.
+// Exit: 0 if every assertion passes, 1 otherwise. It compiles and passes (125/125, run on a Mac);
+// it was first written on a machine with no Swift compiler.
 
 import Foundation
 

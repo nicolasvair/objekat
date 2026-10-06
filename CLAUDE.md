@@ -2216,6 +2216,69 @@ What has landed since mid-August, in order:
   mouse and a trackpad; ⌥-click during play, pause and a loop; the export sheet with a long path in the
   three languages and in Regions scope.
 
+- **A spectral gain editor: `script.canvas.*` and the script "Spectral gain"** (6 October 2026, ON THE
+  BRANCH `feature/spectral-gain`, NOT merged into `main`, nothing pushed). iZotope-RX-like, GAIN ONLY:
+  right-click ONE object, Scripts, "Spectral edit…" opens a floating window with the object's
+  spectrogram (log frequency), a Rectangle and an Eraser, an undo/redo of its own, A/B and Delta
+  listening; Validate lays the result back like `retouche-externe` (a new row at the same instant,
+  "<name> (spectral)", the original MUTED, ONE batch = ONE undo), Cancel touches nothing. Authority:
+  `docs/spec_spectral_editor.md` (confirmed 4 October) and `docs/plan_spectral_gain.md` (revision 2).
+  **The split is the point.** The app owns a GENERIC surface, `script.canvas.*` (`command_api.md`, "A
+  canvas a script asks for"): gestures (`rect`, `stroke`, `point`, always a Hand), the history and its
+  traces, image layers the script supplies, three audio slots with a transport. It knows NOTHING about
+  FFTs, dB or a mask: each op records its geometry and a snapshot of the controls its tool declares, and
+  the script reads them. All the gain mathematics lives in ONE file, `tools/scripts/spectral-gain/mask.py`
+  (rectangle with a feathered edge, eraser as dabs deposited by DISTANCE, never by time, so a still hand
+  deposits nothing; everything adds up in dB). The rest of the script is numpy only: `dsp.py` (STFT and
+  weighted overlap-add, exact to -300 dB with an empty history), `image.py` (the base spectrogram),
+  `veil.py` (the mask drawn as a layer), `wavio.py`, `canvasfile.py` (the two raw image formats
+  `OBJKCNV1` / `OBJKRGB1`), `decide.py` (the pure decisions: depth class, rates, 120 s warning and 600 s
+  refusal, mono, names). `object.get` gained `source_sample_rate` / `source_bit_depth` / `source_format`,
+  `object.add` a `name` (so the return path is one `batch`).
+  **What comes back**: the sample rate and the depth CLASS of the source (16 to 16, 24 to 24, 32-bit float
+  to float, anything else to 24; a group takes the highest and asks for a rate if its files disagree), MONO
+  if the render's two channels are identical sample for sample, stereo otherwise. No dither.
+  **Traps worth keeping.** (1) A connection serves its requests one after another, so the script is ONE
+  loop (wait, compute, update) and `script.canvas.wait` carries the sidebar values AND the history in one
+  long poll. (2) The timeline's NSEvent monitors are app-wide and never looked at which window an event
+  came from: with the canvas key, a bare ⌘Z undid the PROJECT; they now check (`TimelineKeyHandler`,
+  `TimeRulerView`) and any future app-wide monitor must too. (3) The app draws only a raw TRACE of an op
+  the script has not yet reflected (`history_rev` on a layer says which ops it covers); a layer is never
+  trusted to be current, and `history.unreflected` makes the rule testable headless. (4) A canvas that
+  has ended stays LISTED, state `closed`, until the document changes: a test that asks "is there a
+  canvas?" must filter on `open` (it cost the first full run two false failures). (5) `script.canvas.get`
+  was added to the manifest's `requires` beyond the plan's list, since the script calls it.
+  Verified with no screen, on this Mac: Python unit tests 133 (`run_tests.sh`, with the system numpy 1.26
+  AND the venv's 2.5); `tools/test_script_canvas_geometry.swift` 125 and
+  `tools/test_script_canvas_image.swift` 46, both compiled standalone (their headers said "not
+  compiled" until today); a Debug build, no warning attributed to a file of this branch;
+  `tools/scenario_spectral_gain.py`, 217 assertions in six sections, against a headless `--no-audio` instance: (a) the API
+  additions, (b) the canvas contract, (c) END TO END with the REAL script launched as its own process
+  (rect at -24 dB measured -24 on the result by Goertzel and on the veil's pixel alpha; undo back within
+  0.2 dB; the eraser calibrated, one pass -3, two passes -6 within the tolerances of the plan; an expert
+  change keeping the ops; Validate; a WAV export of the session compared with the one made before: 3 kHz
+  -6.00 dB, 300 Hz 0.00; one `edit.undo` takes it all back), plus the app's own launch through
+  `script.run`, (d) the formats (44.1 kHz / 16-bit mono, float, stereo L != R, stereo L == R),
+  (e) a 601 s group refused with a message and no canvas, Cancel changing nothing, a SIGKILLed script
+  taking its canvas with it, a missing file refused, (f) no window on the headless pid.
+  Computing cost measured OUTSIDE the app on a synthetic 120 s stereo signal (white noise, one rectangle
+  and one 400-point stroke): base image 0.7 s, veil 0.07 s, result 0.9 s.
+  **NOT seen, NOT heard, NOT felt, and no path to it from here: every pixel and every second.**
+  The window itself: the plot, the rulers and the readout, the zoom and the pan, the tool bar, the cursors
+  over the plot, the trace of a gesture and its hand-over to the veil, the colours of the veil, the
+  "computing" indicator, the Expert button, the window's own ⌘Z and the guards of the two monitors, and
+  the context-menu entry itself (the script is seen as available by `script.list`, a click on it has
+  never been made). THE EAR: A/B, Delta and the position kept across a swap have never been heard
+  (a second `AVAudioEngine`, three player nodes; the plan's risk R4, an aligned swap that might click, is
+  untested), nor whether the preview is fast enough to compare step by step. REAL MATERIAL: everything
+  above ran on synthetic tones, never on a recorded sound; the 120 s warning, the rate-choice panel of a
+  group with mixed rates, a MIDI object and a mixed-depth group have never been run through the app.
+  The answers N1 to N3 of the plan stand at their defaults (a blocky veil at strong zoom, the old veil
+  showing an undone op for the length of a recompute, traces disappearing once reflected).
+  Cost to know: `install.sh` was run on this machine; it made the venv
+  `~/Library/Application Support/Objekat/venvs/spectral-gain` and a symlink in
+  `~/Library/Application Support/Objekat/Plugins/spectral-gain`.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

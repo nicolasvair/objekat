@@ -12,8 +12,8 @@
 //         -o /tmp/sci && /tmp/sci
 //
 // Run from `tools/` (or from anywhere: the fixtures are found relative to this file). Exit: 0 if
-// every assertion passes, 1 otherwise. WRITTEN ON A MACHINE WITH NO SWIFT COMPILER: the first run
-// is on a Mac.
+// every assertion passes, 1 otherwise. It compiles and passes (46/46, run on a Mac); it was first
+// written on a machine with no Swift compiler.
 
 import Foundation
 

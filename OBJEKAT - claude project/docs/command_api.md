@@ -2177,6 +2177,10 @@ A few points of vocabulary that save mistakes:
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
+| `tools/scenario_spectral_gain.py` | the spectral editor, app side: 217 assertions in six sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script); (c) END TO END with the real script (`tools/scripts/spectral-gain/run.sh --object ID`): a rectangle, an undo, two calibrated eraser strokes, an expert change, Validate, checked on the veil's pixels, on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid. (c), (d), (e) skip when the script's venv is missing. `SECTIONS=` picks sections |
+| `tools/test_script_canvas_geometry.swift` | the canvas's axes, viewport, trace discs, ticks and number formats, compiled standalone: 125 assertions, no app needed |
+| `tools/test_script_canvas_image.swift` | the two raw image files (`OBJKCNV1`, `OBJKRGB1`) against the committed fixtures, compiled standalone: 46 assertions, no app needed |
+| `tools/scripts/spectral-gain/` | the "Spectral gain" third-party script (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 133 tests: STFT round trip, the whole gain mathematics, the images, the veil, the WAV reader / writer, the pure decisions) |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
