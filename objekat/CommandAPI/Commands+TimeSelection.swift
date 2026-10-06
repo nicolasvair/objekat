@@ -24,15 +24,27 @@ extension CommandRegistry {
                                     "First lane when using 'lane_count' (default 0)."),
                           ParamSpec("all_lanes", "bool", required: false,
                                     "Every OBJECT lane the timeline has (automation rows left out) "
-                                  + "— what a drag in the time ruler traces. Wins over 'lanes'.")]) { p in
+                                  + "— what a drag in the time ruler traces. Wins over 'lanes'."),
+                          ParamSpec("from_ruler", "bool", required: false,
+                                    "Writes the selection AS the ruler drag does (time or BPM half of "
+                                  + "the ruler): every object lane, and the ruler origin set — so a "
+                                  + "`timesel.ripple_delete` also carries the marker band's marks — "
+                                  + "and the selected marks (markers, regions, comments) are let go "
+                                  + "of. Implies 'all_lanes'."),
+                          ParamSpec("select_objects", "bool", required: false,
+                                    "With 'from_ruler': also what the hand's RELEASE does — the "
+                                  + "objects the range encloses are selected. ('from_ruler' alone "
+                                  + "already lets go of the selected marks, as the hand does.)")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let start = max(0, try p.double("start"))
             let end = try p.double("end")
             guard end > start else {
                 throw CommandError(code: .bad_params, message: "'end' must come after 'start'")
             }
+            let fromRuler = try p.bool("from_ruler", or: false)
+            let allLanes = try p.bool("all_lanes", or: false)
             var lanes = Set<Int>()
-            if (try p.bool("all_lanes", or: false)) {
+            if fromRuler || allLanes {
                 lanes = vm.allObjectLanes()
             } else if p.raw["lanes"] != nil {
                 for value in try p.array("lanes") {
@@ -49,7 +61,13 @@ extension CommandRegistry {
             guard !lanes.isEmpty else {
                 throw CommandError(code: .bad_params, message: "no lane")
             }
-            vm.timeSelection = TimeSelection(timeRange: start...end, lanes: lanes)
+            if fromRuler, try p.bool("select_objects", or: false) {
+                vm.commitRulerSelection(TimeSelection(timeRange: start...end, lanes: lanes))
+            } else if fromRuler {
+                vm.setTimeSelectionFromRuler(TimeSelection(timeRange: start...end, lanes: lanes))
+            } else {
+                vm.timeSelection = TimeSelection(timeRange: start...end, lanes: lanes)
+            }
             return CommandAdapters.selectionPayload(vm)
         }
 
@@ -65,13 +83,13 @@ extension CommandRegistry {
                         + "travel the hand asks for; the answer is the travel the drag would APPLY "
                         + "(`dt`), where the guide line would stand (`guide_time`), whether it landed "
                         + "on a real mark (`on_target`, the yellow guide), which edge decided "
-                        + "(`edge`: start | end | object_start | object_end) and whether the wall at "
+                        + "(`edge`: start | end) and whether the wall at "
                         + "zero stopped it (`clamped`), plus the range's bounds after the travel "
                         + "(`start`, `end`). Precedence: a real mark (an edge, a marker, a region's "
                         + "bound — the grid is NOT one) within 8 px of the range's START, or of its "
-                        + "END (nearer wins, a tie goes to the start = the caret); else a real mark "
-                        + "within reach of the grabbed object's edges (`grab`); else the grid, on the "
-                        + "range's bounds. The range itself stops at zero, whatever objects lie later. "
+                        + "END (nearer wins, a tie goes to the start = the caret); else the grid, on "
+                        + "the range's bounds. The edges of the object grabbed are never a reference. "
+                        + "The range itself stops at zero, whatever objects lie later. "
                         + "Without `copy` the scraps a cut leaves at the two bounds (and the objects "
                         + "the range crosses) are kept out of the targets, as the drag does; with "
                         + "`copy` (⌥) the originals stay in place and ARE targets.",
@@ -79,9 +97,6 @@ extension CommandRegistry {
                           ParamSpec("copy", "bool", required: false,
                                     "⌥: the range is COPIED, the originals stay and are targets "
                                   + "(default false)."),
-                          ParamSpec("grab", "uuid", required: false,
-                                    "The object grabbed: its edges, clipped to the range, are the "
-                                  + "second-rank candidates."),
                           ParamSpec("snap", "bool", required: false,
                                     "Snap on or off for the probe (default true; ⌘ is neutralised).")],
                  undo: .none) { p in
@@ -93,16 +108,6 @@ extension CommandRegistry {
             let hi = sel.timeRange.upperBound
             let rawDt = try p.double("dt")
             let copy = try p.bool("copy", or: false)
-            var objectStart: Double? = nil
-            var objectEnd: Double? = nil
-            if let grab = try p.optionalUUID("grab") {
-                guard let e = vm.laneEntries.first(where: { $0.item.id == grab }) else {
-                    throw CommandError(code: .not_found, message: "unknown object: \(grab.uuidString)")
-                }
-                // What the drag's cuts at the bounds leave of it: the part inside the range.
-                objectStart = max(e.absStart, lo)
-                objectEnd = min(e.absStart + e.item.duration, hi)
-            }
             var excluded: Set<UUID> = []
             if !copy {
                 // Everything the range crosses is either carried or cut into scraps; both are kept
@@ -117,9 +122,7 @@ extension CommandRegistry {
             var r = SelectionMoveSnap.Result(dt: rawDt, guideTime: lo + rawDt, onTarget: false,
                                              edge: .start, clamped: false)
             CommandAdapters.withSnapping(snap, vm) {
-                r = vm.snappedSelectionMove(range: sel.timeRange, rawDt: rawDt,
-                                            objectStart: objectStart, objectEnd: objectEnd,
-                                            excluding: excluded)
+                r = vm.snappedSelectionMove(range: sel.timeRange, rawDt: rawDt, excluding: excluded)
             }
             return .object(["dt": .number(r.dt),
                             "guide_time": .number(r.guideTime),
@@ -522,17 +525,22 @@ extension CommandRegistry {
                  summary: "Deletes the time selection AND closes the gap: what follows slides back, "
                         + "on the SELECTED lanes only, bounded by the container (a group ripples alone, "
                         + "the outside does not move; the container's window shrinks only if every one "
-                        + "of its lanes was selected).",
+                        + "of its lanes was selected). A selection traced in the RULER "
+                        + "(`timesel.set from_ruler`) also ripples the marker band: marks after the "
+                        + "range slide back, points inside it go, regions lose the overlap "
+                        + "(`markers_follow`).",
                  undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             guard let sel = vm.timeSelection else {
                 throw CommandError(code: .invalid_state, message: "no time selection")
             }
             let container = vm.rippleContainerID(forLanes: sel.lanes)
+            let marksFollow = vm.timeSelectionFromRuler && container == nil
             let before = vm.laneEntries.count
             vm.rippleDeleteTimeSelection()
             return .object(["objects_before": .int(before),
                             "objects_after": .int(vm.laneEntries.count),
+                            "markers_follow": .bool(marksFollow),
                             "closed": .number(sel.timeRange.upperBound - sel.timeRange.lowerBound),
                             "container": container.map { .string($0.uuidString) } ?? .null])
         }

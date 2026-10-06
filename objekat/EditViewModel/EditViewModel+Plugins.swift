@@ -604,6 +604,7 @@ extension EditViewModel {
         guard hasInterface else { return }
         if let existing = builtInEditorWindows[plug.id] {
             existing.window?.makeKeyAndOrderFront(nil)
+            placeTiledEditor(plug.id)
             return
         }
         let controller = BuiltInPluginEditorWindowController(plug: plug, viewModel: self) { [weak self] in
@@ -613,11 +614,78 @@ extension EditViewModel {
             self.endPluginParamTouchWatch(plug.id)
         }
         controller.window?.level = .floating
+        // Every built-in window is born at the same place: one that would land exactly on top
+        // of another already open (several editors opened at once — a multiple selection) is
+        // shifted down and right until it shows its own title bar.
+        if let window = controller.window {
+            let taken = builtInEditorWindows.values.compactMap { $0.window?.frame.origin }
+            var origin = window.frame.origin
+            while taken.contains(where: { abs($0.x - origin.x) < 2 && abs($0.y - origin.y) < 2 }) {
+                origin.x += 24; origin.y -= 24
+            }
+            window.setFrameOrigin(origin)
+        }
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         builtInEditorWindows[plug.id] = controller
         openEditorPluginID = plug.id
         beginPluginParamTouchWatch(plug.id)
+        placeTiledEditor(plug.id)
+    }
+
+    /// Opens the editors of several plugins at once (a double click on a multiple selection),
+    /// each through the SAME path as a single one (`openPluginEditor` / `openBuiltInPluginEditor`),
+    /// and lays them out on the screen — in rows, or in the four corners when rows cannot hold them
+    /// all — instead of on top of each other (@see EditorTiling).
+    /// An editor already open joins the arrangement too.
+    func openPluginEditors(objectID: UUID, plugs: [ObjectPlugin]) {
+        guard hasInterface, !plugs.isEmpty else { return }
+        let screen = (NSApp.keyWindow ?? NSApp.mainWindow)?.screen ?? NSScreen.main
+        if let area = screen?.visibleFrame {
+            editorTiling = EditorTiling(area: area, order: plugs.map(\.id))
+        }
+        for p in plugs {
+            if p.isBuiltIn {
+                openBuiltInPluginEditor(plug: p)
+            } else {
+                // Already open: the engine only brings it to the front, no "opened" callback
+                // will come — it is placed now. Otherwise it is placed when it appears.
+                let wasOpen = isPluginEditorOpen(plug: p)
+                openPluginEditor(objectID: objectID, pluginID: p.id)
+                if wasOpen { placeTiledEditor(p.id) }
+            }
+        }
+    }
+
+    /// Lays the batch under way again now that the editor of `pluginID` has appeared, if it is one
+    /// of it. Called when a window appears (built-in: at once; native: from `onEditorVisibilityChanged`).
+    ///
+    /// The rows-or-corners choice is made over the WHOLE batch (@see EditorTiling), and an AU/VST
+    /// window's size is only known once it exists — so at every arrival the windows already there are
+    /// laid again together, in chain order. Each window is placed the moment it appears (nothing waits
+    /// on the slowest instance or on a timer), the layout is prefix-stable (an arrival moves the
+    /// earlier ones only when it flips the batch from rows to corners, once), and the final state
+    /// does not depend on the order the instances finished loading in.
+    func placeTiledEditor(_ pluginID: UUID) {
+        guard var tiling = editorTiling else { return }
+        // A native editor that never comes (instance in error, no GUI) must not keep the batch
+        // alive forever: past this delay, a later opening is an ordinary one.
+        if ProcessInfo.processInfo.systemUptime - tiling.startedAt > 8 { editorTiling = nil; return }
+        guard tiling.pending.contains(pluginID), tiledEditorWindow(pluginID) != nil else { return }
+        tiling.pending.remove(pluginID)
+        // A window closed meanwhile simply drops out of the arrangement.
+        let windows = tiling.arrived.compactMap { tiledEditorWindow($0) }
+        let layout = EditorTiling.layout(sizes: windows.map(\.frame.size), in: tiling.area)
+        for (window, origin) in zip(windows, layout.origins) { window.setFrameOrigin(origin) }
+        // Corners overlap: order them so that no title bar is covered (@see Layout.backToFront).
+        if layout.mode == .corners {
+            for k in layout.backToFront { windows[k].orderFront(nil) }
+        }
+        editorTiling = tiling.pending.isEmpty ? nil : tiling
+    }
+
+    private func tiledEditorWindow(_ pluginID: UUID) -> NSWindow? {
+        builtInEditorWindows[pluginID]?.window ?? engine?.pluginEditorNSWindow(pluginID.uuidString)
     }
 
     func pluginInstanceState(pluginID: UUID) -> Int {
@@ -998,3 +1066,4 @@ extension EditViewModel {
         PluginIDUniqueness.duplicates(items: items, stems: stems)
     }
 }
+

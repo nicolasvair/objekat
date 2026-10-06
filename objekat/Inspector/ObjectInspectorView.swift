@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Main inspector (bottom panel, horizontal columns)
+// MARK: - Main inspector (the left panel's "Object" tab)
 //
 // A single object: ONE column, the vertical signal view, which absorbs every attribute.
 // Speed / semitones / bpm / reverse live in the 'audio file' rectangle at the head;

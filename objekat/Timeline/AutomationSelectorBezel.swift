@@ -58,8 +58,7 @@ enum AutomationBezel {
     static func metrics(width: Double, blockHeight: Double,
                         handleW: Double, corner: Double) -> Metrics? {
         // Three ceilings: the fixed one, the object's share, and what the trim / resize handles
-        // leave free (they take up to 25 % of each side, in the lower half — exactly where the
-        // hem sits).
+        // leave free (up to 20 px on each side, in the lower half — exactly where the hem sits).
         let pw = min(plateauCap, width * plateauShare, width - 2 * handleW - 8)
         guard pw >= minIcons else { return nil }
         let h  = min(heightCap, blockHeight * heightShare)

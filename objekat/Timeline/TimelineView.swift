@@ -65,6 +65,8 @@ struct TimelineView: View {
     /// ⇧space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
+    /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).
+    var onJumpPlayhead: (Double) -> Void = { _ in }
     var onReturnToZero: () -> Void = {}
 
     // Not `private`: read by the gesture handlers (extensions in other files) so as to bound the
@@ -341,6 +343,9 @@ struct TimelineView: View {
         var sendScrollAccumulator: Float = 0
         var automationScrollAccumulator: Float = 0
         var automationLineScrollAccumulator: Float = 0
+        /// The precise-delta travel (pt, upwards positive) of the wheel gesture holding a line, since
+        /// its grab (@see AutomationHandTravel.wheelSteps).
+        var automationLineWheelTravel: Double = 0
         /// The automation line the wheel holds, frozen at its first notch and kept for as long as
         /// the notches follow each other (@see registerScrollMonitor).
         var automationLineWheel: AutomationLineWheel? = nil
@@ -932,7 +937,9 @@ struct TimelineView: View {
                     // clickable zone, not the switch laid on it — which has its own material and its
                     // own hover state (@see updateCursor, which puts the veil out as soon as one
                     // comes into the hem).
-                    EditZoneVeilLayer(store: hoverStore)
+                    EditZoneVeilLayer(store: hoverStore, viewModel: viewModel,
+                                      pixelsPerSecond: pixelsPerSecond, rulerHeight: rulerHeight,
+                                      laneStep: laneStep, blockHeight: blockHeight)
                         .allowsHitTesting(false)
                         .zIndex(2.565)
                 }
@@ -1076,8 +1083,8 @@ struct TimelineView: View {
                         // The pointer leaves the timeline: we release the claim, and it is AppKit
                         // that decides the cursor for whatever is under the pointer
                         // (@see TimelineCursorKeeper). Do not set anything ourselves: the arrow
-                        // would override the neighbouring view's cursor — the inspector's resize
-                        // handle, the transport's fields…
+                        // would override the neighbouring view's cursor — the split view's divider,
+                        // the transport's fields…
                         TimelineCursorKeeper.relinquish()
                         hoverState.position = nil
                         if toolHoveredID != nil { toolHoveredID = nil }
@@ -1164,7 +1171,6 @@ struct TimelineView: View {
                 pluginDropHUD
                 moveDragHUD
                 fadeDragHUD
-                crossfadeDragHUD
                 heldSoloHUD
                 soloHUD
                 stemAssignHUD
@@ -1558,9 +1564,10 @@ struct TimelineView: View {
         return false
     }
 
-    /// The width of a block's side handles: 25 % of its width, capped at 50 px and removed below
-    /// 60 px wide. Shared by the hover, the gesture and the double click.
-    func handleWidth(blockWidth bw: Double) -> Double { bw < 60 ? 0 : min(50.0, bw * 0.25) }
+    /// The width of a block's side handles: a fixed 20 px at every zoom, capped at a third of the
+    /// block's displayed width (@see ClipEditZone.handleWidth). Shared by the hover, the gesture
+    /// and the double click.
+    func handleWidth(blockWidth bw: Double) -> Double { ClipEditZone.handleWidth(blockWidth: bw) }
 
     /// The block under the cursor and the editing zone aimed at. The same carve-up as
     /// `handleCanvasDrag` (side handles, the upper half = fade / range selection, the lower half =
@@ -1594,11 +1601,12 @@ struct TimelineView: View {
                                         loopInPx: loopInPx, loopOutPx: loopOutPx)
         // A radius aligned on the block's (see SoundObject.blockCornerRadius).
         let radius = entry.item.blockCornerRadius
-        let markerX = zone == .loopIn ? (loopInPx ?? 0) : (zone == .loopOut ? (loopOutPx ?? 0) : 0)
-        let hover = EditZoneHover(id: entry.item.id,
-                                  rect: CGRect(x: bx, y: by, width: bw, height: blockHeight),
-                                  handleW: handleW, zone: zone, cornerRadius: radius,
-                                  fadeInW: fiPx, fadeOutW: foPx, loopMarkerX: markerX)
+        // The veil's pixels: the SAME layout the veil re-derives at every render (@see
+        // `EditZoneHover.layout`, which keeps it glued to its block through a zoom).
+        let hover = EditZoneHover.layout(id: entry.item.id, zone: zone, cornerRadius: radius,
+                                         entry: entry, pixelsPerSecond: pixelsPerSecond,
+                                         rulerHeight: rulerHeight, laneStep: laneStep,
+                                         blockHeight: blockHeight)
         return (hover, entry.item)
     }
 
@@ -2680,6 +2688,15 @@ struct TimelineView: View {
         let t = viewModel.snapTime(max(0, x / pixelsPerSecond))
         // No lane aimed at above: no black caret, and the line stays grey over its whole height.
         viewModel.caretLane = nil
+        // A click in the ruler (time or BPM half, or an empty stretch of the marker band) lets go
+        // of the selected markers / regions / comments, as a drag there does (@see
+        // EditViewModel.setTimeSelectionFromRuler). A click ON a mark never gets here.
+        if !viewModel.selectedAnnotations.isEmpty { viewModel.selectedAnnotations = [] }
+        // ⌥ makes the playhead jump along with the cursor.
+        if NSEvent.modifierFlags.contains(.option) {
+            onJumpPlayhead(t)
+            return
+        }
         if !isPlaying { viewModel.engine?.seek(to: t) }
         onMoveCursor(t)
     }
@@ -4018,70 +4035,6 @@ struct TimelineView: View {
         }
     }
 
-    /// The crossfade under the hand: what it is, how wide it is now, and the shape both its
-    /// curves are taking. The same three-part reading as the fade's, for the same reason — the
-    /// bend lives in the vertical, which nothing on the block announces.
-    ///
-    /// What is added here is the CEILING. A crossfade is bounded by what two objects can give
-    /// between them, and that bound is invisible: a hand that reaches it sees the zone stop and
-    /// has no way of telling a limit from a dropped gesture. So the HUD says the seam gives no
-    /// more, and goes on saying it while the hand travels on into nothing.
-    @ViewBuilder
-    private var crossfadeDragHUD: some View {
-        if let cd = crossfadeDrag {
-            let curve = cd.curves().left
-            // The zone as the gesture's copies hold it once they exist (the model holds it as the
-            // hand found it); a zone the copies have shut says 0, as the model's did.
-            let width = cd.shadow != nil
-                ? (cd.shadowWidth ?? 0)
-                : (viewModel.crossfadeZone(leftID: cd.leftID, rightID: cd.rightID)?.width ?? 0)
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(L("hud.crossfade.title")).font(.system(size: 11, weight: .bold))
-                Text(Self.selectionDurationString(width))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                if cd.spilloverFade > 0 {
-                    // The zone is shut and the travel that is left has become a PLAIN fade on the
-                    // side being held. The HUD has to say the gesture changed nature, otherwise a
-                    // hand that goes too far reads a crossfade that stopped obeying.
-                    Text(verbatim: "→").foregroundStyle(.secondary)
-                    Text(L("hud.crossfade.becomesFade"))
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
-                    Text(Self.selectionDurationString(cd.spilloverFade))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                } else if cd.atCeiling {
-                    Text(verbatim: "·").foregroundStyle(.secondary)
-                    Text(L("hud.crossfade.atLimit"))
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.orange)
-                }
-                Text(verbatim: "·").foregroundStyle(.secondary)
-                Image(systemName: fadeHUDSymbol(curve.shape))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(L(fadeCurveNameKey(curve.shape)))
-                    .font(.system(size: 11, weight: .bold))
-                if !curve.isStraight {
-                    Text(verbatim: "\(Int((curve.amount * 100).rounded())) %")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.accentColor)
-                }
-                Text(verbatim: "·").foregroundStyle(.secondary)
-                Text(L("hud.fade.leaveLane")).font(.system(size: 10)).foregroundStyle(.secondary)
-                modifierChip("⌥", L("hud.fade.chip.sCurve"), on: curve.isS, locked: false)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
-            .padding(.bottom, 12)
-            .allowsHitTesting(false)
-        }
-    }
-
     /// The translation key naming a shape's FAMILY. Shared with the inspector, so that a curve is
     /// called the same thing wherever it is named.
     func fadeCurveNameKey(_ c: FadeShape) -> String {
@@ -4399,24 +4352,6 @@ struct TimelineView: View {
         return hi - lo
     }
 
-    /// A readable length: beyond the minute we count in min + s, below it in s + ms — the fine unit
-    /// is always the one being handled at that scale. The roundings are done on the total before
-    /// splitting, so as never to show '1 min 60.0 s'.
-    static func selectionDurationString(_ d: Double) -> String {
-        if d >= 60 {
-            let tenths = (d * 10).rounded()
-            let m      = Int(tenths) / 600
-            let s      = (Int(tenths) % 600) / 10
-            let dixth  = Int(tenths) % 10
-            return String(format: L("duration.minutesSeconds"), m, s, dixth)
-        }
-        let totalMs = Int((d * 1000).rounded())
-        if totalMs >= 1000 {
-            return String(format: L("duration.secondsMillis"), totalMs / 1000, totalMs % 1000)
-        }
-        return "\(totalMs) ms"
-    }
-
     /// The number of samples covered, grouped in thousands (a narrow no-break space).
     static func selectionSamplesString(_ d: Double, sampleRate: Double) -> String {
         let n = Int((d * sampleRate).rounded())
@@ -4444,7 +4379,8 @@ struct TimelineView: View {
                 Image(systemName: "timeline.selection").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text(L("hud.selection.title")).font(.system(size: 11, weight: .bold))
-                Text(Self.selectionDurationString(d))
+                // Its own format (`24s 500ms`), not the crossfade HUD's shared one.
+                Text(SelectionDurationText.string(d, minutes: { L("duration.minutes", $0) }))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                 if sr > 0, d < 1 {
                     Text(verbatim: "·").font(.system(size: 10)).foregroundStyle(.secondary)

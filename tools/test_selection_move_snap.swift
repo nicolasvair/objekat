@@ -28,10 +28,9 @@ typealias S = SelectionMoveSnap
 
 /// 100 px/s: 8 px = 0.08 s of tolerance, a grid of 0.5 s.
 func resolve(lo: Double = 4, hi: Double = 6, rawDt: Double,
-             objectStart: Double? = nil, objectEnd: Double? = nil,
              targets: [Double] = [], grid: Double = 0.5, snap: Bool = true,
              minDt: Double? = nil) -> S.Result {
-    S.resolve(lo: lo, hi: hi, rawDt: rawDt, objectStart: objectStart, objectEnd: objectEnd,
+    S.resolve(lo: lo, hi: hi, rawDt: rawDt,
               targets: targets, gridInterval: grid, tolerance: 0.08, onTargetEpsilon: 0.005,
               snapEnabled: snap, minDt: minDt ?? -lo)
 }
@@ -77,29 +76,20 @@ enum SelectionMoveSnapTest {
               !r.onTarget && near(4 + r.dt, 10.5), "\(r)")
     }
 
-    // MARK: - 2. The grabbed object's edges come SECOND
+    // MARK: - 2. Only the range's bounds are references (no object edge)
 
-    // The object grabbed starts at 4.8 and the marker is for IT: nothing within reach of the range.
+    // A mark lies where the start of an object INSIDE the range (4.8) would land (10.91): with
+    // the range's own bounds out of reach of every mark, it is the GRID that decides, on them.
     do {
-        let r = resolve(rawDt: 6.10, objectStart: 4.8, objectEnd: 6, targets: [10.91])
-        check("the object's start lands when the range's bounds find nothing",
-              r.edge == .objectStart && near(4.8 + r.dt, 10.91) && r.onTarget && near(r.guideTime, 10.91), "\(r)")
-    }
-    // The same object edge is NEARER (0.01) than the start's target (0.07): the start still wins.
-    do {
-        let r = resolve(rawDt: 6.10, objectStart: 4.8, objectEnd: 6, targets: [10.03, 10.91])
-        check("a nearer OBJECT edge does not beat a range bound within reach",
-              r.edge == .start && near(4 + r.dt, 10.03), "\(r)")
+        let r = resolve(rawDt: 6.10, targets: [10.91])      // start -> 10.10, end -> 12.10
+        check("a mark out of reach of the range's bounds is ignored: the grid takes the start",
+              r.edge == .start && near(4 + r.dt, 10.0) && !r.onTarget && near(r.guideTime, 10.0), "\(r)")
     }
     do {
-        // The object's end is 6.0, the marker 6.0625 is out of reach of 7.0: the grid decides.
-        let r = resolve(rawDt: 1.0, objectStart: 4.0, objectEnd: 6.0, targets: [6.0625])
-        check("out of reach of every edge it falls through to the grid",
+        // The marker 6.0625 is out of reach of both bounds (5.0, 7.0): the grid decides.
+        let r = resolve(rawDt: 1.0, targets: [6.0625])
+        check("out of reach of both bounds it falls through to the grid",
               !r.onTarget && near(4 + r.dt, 5.0), "\(r)")
-    }
-    do {
-        let r = resolve(lo: 4, hi: 10, rawDt: 0.5, objectStart: 4.0, objectEnd: 6.125, targets: [6.625])
-        check("object end on a marker", r.edge == .objectEnd && near(6.125 + r.dt, 6.625) && r.onTarget, "\(r)")
     }
 
     // MARK: - 3. The grid, on the range's bounds
@@ -141,7 +131,7 @@ enum SelectionMoveSnapTest {
     // The first object inside begins at 4.8 — later than the range's start. It limits nothing: the
     // floor is the RANGE's start, so the travel is -4 (not -4.8, which would be the object's).
     do {
-        let r = resolve(rawDt: -4.5, objectStart: 4.8, objectEnd: 6)
+        let r = resolve(rawDt: -4.5)
         check("a later object does not limit the travel: it is cut at the range's start",
               r.clamped && near(r.dt, -4) && near(r.guideTime, 0), "\(r)")
     }

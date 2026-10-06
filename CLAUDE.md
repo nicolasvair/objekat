@@ -2106,21 +2106,26 @@ What has landed since mid-August, in order:
   the eight-line list, the Copy button).
 
 - **A fade handle that overhangs a crossfade is the crossfade's, and the drag follows the selection**
-  (1 October 2026, ON THE BRANCH `feat/ui-2026-10-01`) — a block's handle band is a quarter of its
-  width (up to 50 px) and a crossfade is usually narrower: the part of the band beyond the zone fell
+  (1 October 2026, ON THE BRANCH `feat/ui-2026-10-01`) — a block's handle band was a quarter of its
+  width (up to 50 px; since 5 October a FIXED 40 px, see the next note) and a crossfade is usually narrower: the part of the band beyond the zone fell
   through to the per-block fade, which changed ONE fade, so the pair stopped satisfying
   `isCrossfadePair` (both fades == overlap) and the clips stayed superposed (the double click had
   the same fault and zeroed one fade). `crossfadeHit` now falls back, when no zone is under the
   point, on `selectionZoneHover` (the block's own carve-up): a fade-in handle whose object has a
-  crossfade partner on its LEFT is that zone's START side, a fade-out with a partner on its right the
-  END side (`CrossfadeGrab.pair(forFade:…)`, pure); the zone is looked up in `visibleCrossfadeZones`
+  crossfade partner on its LEFT drives that zone's END side, a fade-out with a partner on its right
+  its START side — the edge NEAREST the hand, since the overhang of a fade-in lies past the zone's
+  end (`CrossfadeGrab.pair(forFade:…)`, pure; INVERTED on 5 October 2026, rule A: it was fade-in →
+  START, so a hand leaving the zone's right-hand triangle by one pixel swapped to the far edge); the
+  zone is looked up in `visibleCrossfadeZones`
   (absolute time), never `crossfadeZone(leftID:rightID:)` (container time). Hover, drag, double click
   (`closeCrossfade`, both fades) and the solo/slip guards all go through `crossfadeHit`; trim/resize
   handles and objects with no partner on that side keep the plain gesture. The vertical bend is not
   carried by that grab (accepted). **Several objects selected**: the drag takes the selection's other
   crossfades along (`CrossfadeGrab.followers`): a side drives each selected object's crossfade on the
   same side, the whole zone every crossfade touching a selected object, and a grab whose owning object
-  is not selected goes alone. The grabbed zone alone snaps; all zones are laid down from the SAME
+  is not selected goes alone. Through an overhanging handle it is the HELD FADE that owns the grab and
+  names the side that follows (`heldFade:` — a held fade-in drives every selected object's LEFT
+  crossfade, by the zone's end), not the part. The grabbed zone alone snaps; all zones are laid down from the SAME
   shift (`CrossfadeGrab.target`), each keeping its width, place and starting curves; one undo point.
   Verified with no screen: a full Debug build, the 34 Swift warnings IDENTICAL before/after (every Swift
   file recompiled both times); `tools/test_crossfade_grab.swift` 38; `tools/scenario_crossfade_grab.py`
@@ -2132,6 +2137,20 @@ What has landed since mid-August, in order:
   **Left open**: the crossfade drag feeds the model ABSOLUTE canvas time (`idealStart`, `pin`) where
   `openCrossfade` clamps in the container's time — equal at the top level, apart by the group's offset
   for the children of an open group. Not touched here; to check on screen before relying on it.
+
+- **Side handles are a FIXED 40 px (capped at a quarter of the block) at every zoom; the nearest zone edge follows the hand**
+  (5 October 2026, on `main`; 20 px first, 40 px the same day at the user's request). `ClipEditZone.handleWidth(blockWidth:)` (the one
+  definition; `TimelineView.handleWidth` forwards to it) is `bw < 30 ? 0 : min(40, bw / 4)`: upper half = fade,
+  lower half = trim/resize, the quarter keeps a middle on a narrow block (as the old rule did). The OLD rule —
+  `bw < 60 ? 0 : min(50, bw * 0.25)` — made a block below 60 px lose its fade and trim zones
+  altogether and the band change width under the hand at every notch of zoom. The crossfade zone's
+  lower half uses the same function on the ZONE's width (the same 30 px threshold).
+  `ClipEditZone.resolve` now tests the HANDLES before the fade triangles: a set fade is always
+  grabbable by at least its handle however short it is on screen (it used to need > 1 px of
+  triangle), and a long fade from the opposite edge can no longer confiscate the other edge's band;
+  the hover veil covers triangle ∪ handle band. Rule "nearest edge": a fade handle overhanging a
+  crossfade drives the zone edge NEAREST the hand (`CrossfadeGrab.pair(forFade:)`, see the note
+  above). **Not seen, not felt, no test run** (user's instruction: one build, no tests).
 
 - **No more Lagrange: clips resample with sinc, and engine patch `0034` makes sinc usable at any speed**
   (2 October 2026, ON THE BRANCH of the `agent-a67a141ea5337b0c9` worktree, NOT merged, fork NOT
@@ -2170,6 +2189,32 @@ What has landed since mid-August, in order:
   nothing audible; worth doing only if the live cost of sinc is felt on a big project.
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
+
+- **Three fixes read off the hand: ⌥-click in the ruler, a fine start for automation, an export sheet that stays 460 pt**
+  (4 October 2026, on `main`, **written on a Linux machine: nothing compiled, nothing run, nothing
+  seen** — only `xcstrings.py check` / `orphans` and a careful re-read).
+  **⌥-click in the time ruler makes the playhead jump** (`ObjekatSession.jumpPlayhead`, the ruler's click
+  and the end of a ruler click-without-travel read ⌥ through `onJumpPlayhead`). Read as a FEATURE: playing,
+  playback carries on from there; paused, it stays paused and ⇧space resumes at that point; stopped, it is
+  a plain cursor move. A jump out of the loop region disarms the engine loop (the tick re-arms it on entry).
+  **Automation drag and wheel lose their dead-zone jump.** The drag measured from the mouse-down, so the
+  first frame past 3 px jumped; it measures from an ANCHOR (where the gesture was recognised) now, a
+  point's time stays put under 4 px of sideways travel (`timeDeadZonePx`), and the vertical travel is FINE
+  near the anchor (`AutomationHandTravel`: 4 px per detent step, a knee at 6 steps, then the row's own
+  geometry — continuous, the whole range stays reachable). A multi-row selection softens with the grabbed
+  row's parameter. The notch wheel gives exactly ONE step per notch (`automationWheelSteps`); the trackpad
+  keeps its accumulation. The three constants are first guesses.
+  Read off the hand the same day, twice: the wheel over a LINE (precise deltas — trackpad, Magic Mouse,
+  smooth-scrolling mouse) needed a hard push at 10 pt per step, then at 3 pt sat still and ran off. It now
+  reads the gesture's TOTAL travel through `AutomationHandTravel.wheelSteps`: first step at 8 pt (1 pt was still
+  far too quick), then 20 pt per step up to 4 steps (at most one per event there), then 6 pt; every event keeps the hold alive
+  (no second undo on a slow finger). A notch wheel stays one step per notch; the ⌥ curvature wheel 10 pt.
+  **The export sheet no longer widens with a long folder path** (path with idealWidth 0, lowered priority,
+  `.help` with the full path; the footer, batch label and region names likewise).
+  **To check**: a build against the 1550-warning baseline; `tools/test_automation_hand_travel.swift`;
+  by hand, the feel of the automation drag (the 4 px / 6 steps / 4 px values) and of the wheel on a notch
+  mouse and a trackpad; ⌥-click during play, pause and a loop; the export sheet with a long path in the
+  three languages and in Regions scope.
 
 ### What is owed
 

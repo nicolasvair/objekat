@@ -254,20 +254,64 @@ extension EditViewModel {
     // MARK: - The two gestures
 
     /// ⌥⌫ over a time selection: the passage goes, and the scope closes up behind it.
+    ///
+    /// When the selection was traced in the RULER (its time half or its BPM half — one band, one
+    /// gesture, @see `timeSelectionFromRuler`), it is TIME that goes, not just the matter on the
+    /// lanes: the marks of the band follow (@see `rippleMarkerLanes`). The same range covering
+    /// every lane but traced in the timeline leaves them where they are — the rubber band names
+    /// lanes, the ruler names the timeline itself.
     func rippleDeleteTimeSelection() {
         guard let sel = timeSelection else { return }
         let lo = sel.timeRange.lowerBound
         let hi = sel.timeRange.upperBound
         let container = rippleContainerID(forLanes: sel.lanes)
         let rows = rippleRows(forLanes: sel.lanes)
+        // Read BEFORE anything writes `timeSelection` (its didSet drops the ruler origin). The
+        // band's marks live on the TIMELINE: a ripple scoped inside a group never moves them.
+        let marksFollow = timeSelectionFromRuler && container == nil
         pushUndo()
-        guard rippleRemoveTimeRange(lo: lo, hi: hi, container: container, rows: rows) else {
+        let rippled = rippleRemoveTimeRange(lo: lo, hi: hi, container: container, rows: rows)
+        // `||` in this order on purpose: the marks move even when no object did (a ruler range
+        // over an empty stretch with only marks after it is still time being removed).
+        let marksMoved = marksFollow && rippleMarkerLanes(removing: lo, hi)
+        guard rippled || marksMoved else {
             _ = undoStack.popLast()
             return
         }
         selectedIDs   = []
         timeSelection = nil
         isDirty       = true
+    }
+
+    /// The marker band's share of a ruler ripple: the span [lo, hi] is taken out of every row,
+    /// hidden ones included (hiding a row is not opting out of the timeline's time). Same rule as
+    /// an object's own markers under a ripple (`splicedInTime`): a mark AFTER the hole slides back
+    /// by its length; a point marker INSIDE it disappears (it named material that has gone); a
+    /// region loses the part overlapping the hole and keeps the rest, and disappears if wholly
+    /// swallowed. Pushes no undo — the ripple's own transaction holds it. Returns true if anything
+    /// changed.
+    @discardableResult
+    func rippleMarkerLanes(removing lo: Double, _ hi: Double) -> Bool {
+        guard hi - lo > 0.001 else { return false }
+        var changed = false
+        var survivors = Set<UUID>()
+        for i in markerLanes.indices {
+            let spliced = markerLanes[i].markers.splicedInTime(removing: lo, to: hi)
+            survivors.formUnion(spliced.map(\.id))
+            if spliced != markerLanes[i].markers {
+                markerLanes[i].markers = spliced
+                changed = true
+            }
+        }
+        // A mark swallowed by the hole must not stay selected (⌫ would aim at nothing).
+        if changed {
+            let pruned = selectedAnnotations.filter {
+                if case .laneMarker(_, let m) = $0 { return survivors.contains(m) }
+                return true
+            }
+            if pruned != selectedAnnotations { selectedAnnotations = pruned }
+        }
+        return changed
     }
 
     /// The scope of a ripple laid on OBJECTS.

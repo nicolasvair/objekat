@@ -106,15 +106,16 @@ extension EditViewModel {
 
     // MARK: Markers and regions of the band
 
-    /// Lays a marker (`duration == 0`) or a region (`duration > 0`) on a row. Time is ABSOLUTE
-    /// here — it is the timeline's own, not an object's frame (@see Marker, the two frames).
+    /// Lays a marker (`duration == 0`) or a region (`duration > 0`, raised to
+    /// `Marker.minRegionDuration`) on a row. Time is ABSOLUTE here — it is the timeline's own, not
+    /// an object's frame (@see Marker, the two frames).
     @discardableResult
     func addMarker(laneID: UUID? = nil, at time: Double, duration: Double = 0,
                    name: String = "") -> (lane: UUID, marker: UUID)? {
         let lid = laneID ?? ensureMarkerLane()
         guard let idx = markerLanes.firstIndex(where: { $0.id == lid }) else { return nil }
         pushUndo()
-        let m = Marker(time: max(0, time), duration: max(0, duration), name: name)
+        let m = Marker(time: max(0, time), duration: Marker.clampedRegionDuration(duration), name: name)
         markerLanes[idx].markers.append(m)
         isDirty = true
         return (lid, m.id)
@@ -147,7 +148,8 @@ extension EditViewModel {
         return true
     }
 
-    /// Moves a marker, and resizes it when it is a region. `duration` nil = leave it alone.
+    /// Moves a marker, and resizes it when it is a region. `duration` nil = leave it alone; 0 = a
+    /// point again; anything positive is raised to `Marker.minRegionDuration`.
     @discardableResult
     func moveMarker(laneID: UUID, markerID: UUID, to time: Double,
                     duration: Double? = nil, pushesUndo: Bool = true) -> Bool {
@@ -156,7 +158,7 @@ extension EditViewModel {
         else { return false }
         if pushesUndo { pushUndo() }
         markerLanes[li].markers[mi].time = max(0, time)
-        if let d = duration { markerLanes[li].markers[mi].duration = max(0, d) }
+        if let d = duration { markerLanes[li].markers[mi].duration = Marker.clampedRegionDuration(d) }
         isDirty = true
         return true
     }
@@ -229,7 +231,7 @@ extension EditViewModel {
                          duration: Double = 0, name: String = "") -> UUID? {
         guard find(id: objectID) != nil else { return nil }
         pushUndo()
-        let m = Marker(time: t, duration: max(0, duration), name: name)
+        let m = Marker(time: t, duration: Marker.clampedRegionDuration(duration), name: name)
         update(id: objectID) { $0.markers.append(m) }
         isDirty = true
         return m.id
@@ -276,7 +278,7 @@ extension EditViewModel {
         update(id: objectID) { obj in
             guard let i = obj.markers.firstIndex(where: { $0.id == markerID }) else { return }
             obj.markers[i].time = t
-            if let d = duration { obj.markers[i].duration = max(0, d) }
+            if let d = duration { obj.markers[i].duration = Marker.clampedRegionDuration(d) }
         }
         isDirty = true
         return true

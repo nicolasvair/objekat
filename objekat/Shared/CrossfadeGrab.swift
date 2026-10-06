@@ -36,26 +36,33 @@ enum CrossfadeGrab {
     /// The crossfade a fade handle belongs to, when the hand took hold of the handle OUTSIDE the
     /// zone.
     ///
-    /// A block's handle band is a quarter of its width, up to 50 px; a crossfade is often narrower
-    /// than that. The part of the band that sticks out of the zone fell through to the per-block
+    /// A block's handle band is 20 px wide (`ClipEditZone.handleWidth`); a crossfade is often
+    /// narrower than that. The part of the band that sticks out of the zone fell through to the per-block
     /// fade, which changes ONE fade and leaves the other at the old overlap — the pair stopped being
     /// a crossfade (`isCrossfadePair` wants both fades equal to the overlap) and the two clips were
     /// left superposed. The handle of an edge that is engaged in a crossfade is that crossfade's
     /// side, wherever on the band the hand lands.
     ///
     /// A fade-IN is the left edge of its object, so its crossfade is the one with the partner on the
-    /// LEFT, and the part is the zone's start; a fade-OUT is the mirror image. An object with no
-    /// partner on that side has no crossfade there: `nil`, the plain fade gesture is what it gets.
+    /// LEFT; a fade-OUT is the mirror image. An object with no partner on that side has no
+    /// crossfade there: `nil`, the plain fade gesture is what it gets.
+    ///
+    /// The PART is the zone's edge NEAREST the hand (rule A, 5 October 2026). The handle starts at
+    /// the object's own edge, which is the zone's FAR edge — the fade-in's object begins at the
+    /// zone's start —, so the bit of it that overhangs the zone lies past the zone's END for a
+    /// fade-in, and before its START for a fade-out. It used to be the other way round (fade-in →
+    /// start): the hand entering the zone from the right drove its end, and stepping back out of it
+    /// by one pixel swapped to the start, at the far side of the zone.
     static func pair(forFade edge: FadeEdge, of id: UUID,
                      partnerLeft: UUID?, partnerRight: UUID?)
         -> (pair: Pair, part: CrossfadePart)? {
         switch edge {
         case .fadeIn:
             guard let l = partnerLeft else { return nil }
-            return (Pair(left: l, right: id), .sideStart)
+            return (Pair(left: l, right: id), .sideEnd)
         case .fadeOut:
             guard let r = partnerRight else { return nil }
-            return (Pair(left: id, right: r), .sideEnd)
+            return (Pair(left: id, right: r), .sideStart)
         }
     }
 
@@ -81,30 +88,42 @@ enum CrossfadeGrab {
     ///
     /// A zone whose two objects are both selected is named once (a set), and the order is the
     /// caller's to fix — it depends on times this function knows nothing about.
+    ///
+    /// `heldFade`: the zone was taken through a fade handle OVERHANGING it (@see `pair(forFade:)`).
+    /// What the hand holds is then that OBJECT's fade, and it is what owns the grab and names the
+    /// side that follows — exactly the fade gesture's "every selected object, same end of its
+    /// fade": a fade-in held drives each selected object's crossfade on its LEFT, a fade-out each
+    /// one's on its RIGHT. The part (the zone edge that travels — the nearest one, hence the
+    /// opposite of the plain reading) is the same for every zone of the gesture.
     static func followers(part: CrossfadePart,
                           grabbed: Pair,
                           selected: Set<UUID>,
+                          heldFade: FadeEdge? = nil,
                           partners: (UUID) -> (left: UUID?, right: UUID?))
         -> Set<Pair> {
+        /// Which side of each selected object follows: its crossfade on the left (where it is the
+        /// RIGHT-hand object), on the right, or both.
+        enum Side { case left, right, both }
+        let side: Side
+        switch (heldFade, part) {
+        case (.fadeIn?, _):             side = .left
+        case (.fadeOut?, _):            side = .right
+        case (nil, .sideStart):         side = .left
+        case (nil, .sideEnd):           side = .right
+        case (nil, .both), (nil, .move): side = .both
+        }
         let owned: Bool
-        switch part {
-        case .sideStart:   owned = selected.contains(grabbed.right)
-        case .sideEnd:     owned = selected.contains(grabbed.left)
-        case .both, .move: owned = selected.contains(grabbed.left) || selected.contains(grabbed.right)
+        switch side {
+        case .left:  owned = selected.contains(grabbed.right)
+        case .right: owned = selected.contains(grabbed.left)
+        case .both:  owned = selected.contains(grabbed.left) || selected.contains(grabbed.right)
         }
         guard owned else { return [] }
         var out = Set<Pair>()
         for id in selected {
             let p = partners(id)
-            switch part {
-            case .sideStart:
-                if let l = p.left { out.insert(Pair(left: l, right: id)) }
-            case .sideEnd:
-                if let r = p.right { out.insert(Pair(left: id, right: r)) }
-            case .both, .move:
-                if let l = p.left { out.insert(Pair(left: l, right: id)) }
-                if let r = p.right { out.insert(Pair(left: id, right: r)) }
-            }
+            if side != .right, let l = p.left  { out.insert(Pair(left: l, right: id)) }
+            if side != .left,  let r = p.right { out.insert(Pair(left: id, right: r)) }
         }
         out.remove(grabbed)
         return out

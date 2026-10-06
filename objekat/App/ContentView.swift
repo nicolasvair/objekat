@@ -21,21 +21,22 @@ struct ContentView: View {
     @State private var outputDevices: [String] = []
     @State private var selectedDevice: String = ""
     @State private var leftPanelTab: LeftPanelTab = .liste
-    // Height of the bottom inspector, persisted in UserDefaults and applied straight away at
-    // launch (the draggable separator updates it in place).
-    @AppStorage("inspectorHeight") private var inspectorHeight: Double = 190
-    @State private var resizeStartHeight: Double? = nil
     /// The monitor that gives back the click coming home from a plugin's window
     /// (@see FirstClickThrough). A token in a `@State`, removed in `.onDisappear`.
     @State private var firstClickMonitor: Any? = nil
 
-    private let inspectorMinHeight: Double = 120
-    // The minimum height guaranteed to the list / sound library above the docked inspector
-    // (the inspector cannot grow to the point of hiding it).
-    private let listMinHeight: Double = 140
-    // The reduced height of the inspector when nothing is selected (icon and message alone).
-    private let inspectorCollapsedHeight: CGFloat = 92
-    enum LeftPanelTab { case liste, sons }
+    /// The left panel's tabs. The inspector is a tab of its own ("Object") — it used to be docked
+    /// under the list with a draggable separator; it now gets the panel's whole height.
+    enum LeftPanelTab { case objet, liste, sons }
+
+    /// The selection the LIST itself just made (a click or an arrow in it), or nil. Selecting an
+    /// object brings the "Object" tab forward on its own — except when the selection comes from
+    /// the list: switching away there would hide the very list one is walking. The list hands its
+    /// own result over (`onOwnSelection`) BEFORE the `onChange` on `selectedIDs` runs, which
+    /// compares and consumes it. Consumed at every change, so it cannot go stale: a list click
+    /// that changed nothing leaves it equal to the CURRENT selection, and any later change is by
+    /// definition to another set.
+    @State private var listMadeSelection: Set<UUID>? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,40 +66,24 @@ struct ContentView: View {
 
             HSplitView {
                 VStack(spacing: 0) {
-                    // Tab switcher: project list / sound library
+                    // Tab switcher: project list / sound library / object inspector
                     HStack(spacing: 0) {
+                        tabButton(L("panel.tab.object"), tab: .objet)
                         tabButton(L("panel.tab.list"), tab: .liste)
                         tabButton(L("panel.tab.sounds"), tab: .sons)
                     }
                     .frame(height: 28)
                     Divider()
 
-                    // List / sound library (top, flexible) plus the docked inspector at the bottom.
-                    GeometryReader { geo in
-                        VStack(spacing: 0) {
-                            Group {
-                                if leftPanelTab == .liste {
-                                    SoundObjectListView(viewModel: viewModel)
-                                } else {
-                                    SoundLibraryView()
-                                }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                            // With no selection: the inspector shrinks to its minimum (icon and message).
-                            // With a selection: resizable by the handle, the list keeping its minimum
-                            // height → the inspector never hides what is above it.
-                            if viewModel.selectedIDs.isEmpty {
-                                Divider()
-                                ObjectInspectorView(viewModel: viewModel)
-                                    .frame(height: inspectorCollapsedHeight)
-                            } else {
-                                inspectorResizeHandle(totalHeight: geo.size.height)
-                                ObjectInspectorView(viewModel: viewModel)
-                                    .frame(height: clampedInspectorHeight(totalHeight: geo.size.height))
-                            }
+                    Group {
+                        switch leftPanelTab {
+                        case .liste: SoundObjectListView(viewModel: viewModel,
+                                                         onOwnSelection: { listMadeSelection = $0 })
+                        case .sons:  SoundLibraryView()
+                        case .objet: ObjectInspectorView(viewModel: viewModel)
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(minWidth: 250, maxWidth: 360)
 
@@ -113,6 +98,7 @@ struct ContentView: View {
                     onMoveCursor: { t in
                         viewModel.cursorPosition = max(0, t)
                     },
+                    onJumpPlayhead: { t in session.jumpPlayhead(to: t) },
                     onReturnToZero: { session.returnToZero() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,6 +129,14 @@ struct ContentView: View {
             guard stopRequested else { return }
             viewModel.pendingPlaybackStop = false
             if session.isPlaying { session.stop() }
+        }
+        // A NEW, non-empty object selection brings the inspector forward — unless the list made
+        // it (@see `listMadeSelection`). An emptied selection leaves the panel where it is.
+        .onChange(of: viewModel.selectedIDs) { old, new in
+            let fromList = listMadeSelection == new
+            listMadeSelection = nil
+            guard !new.isEmpty, new != old, !fromList else { return }
+            leftPanelTab = .objet
         }
         .onChange(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
@@ -214,42 +208,6 @@ struct ContentView: View {
                 releaseInitialTextFocus(attempt: attempt + 1)
             }
         }
-    }
-
-    // MARK: - Bottom inspector: height and draggable separator
-
-    /// Bounds the inspector's height between its minimum and the space left to the list.
-    private func clampedInspectorHeight(totalHeight: CGFloat) -> CGFloat {
-        let maxHeight = max(inspectorMinHeight, Double(totalHeight) - listMinHeight)
-        return CGFloat(min(max(inspectorHeight, inspectorMinHeight), maxHeight))
-    }
-
-    @ViewBuilder
-    private func inspectorResizeHandle(totalHeight: CGFloat) -> some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor)
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 1)
-        }
-        .frame(height: 6)
-        .contentShape(Rectangle())
-        // `.onHover` plus `push()/pop()` did not hold: AppKit puts the arrow back on every window
-        // update, so a couple of dozen times a second during playback, and the ↕ vanished as soon
-        // as the mouse stopped on the handle (@see CursorClaim).
-        .cursorZone(.resizeUpDown)
-        .gesture(
-            // Global coordinates: the translation stays stable even if the handle moves
-            // with the layout during the resize (otherwise it jumps).
-            DragGesture(coordinateSpace: .global)
-                .onChanged { value in
-                    let start = resizeStartHeight ?? inspectorHeight
-                    if resizeStartHeight == nil { resizeStartHeight = start }
-                    let maxHeight = max(inspectorMinHeight, Double(totalHeight) - listMinHeight)
-                    inspectorHeight = min(max(start - Double(value.translation.height), inspectorMinHeight), maxHeight)
-                }
-                .onEnded { _ in resizeStartHeight = nil }
-        )
     }
 
     // MARK: - Left tab switcher

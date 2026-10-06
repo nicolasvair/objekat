@@ -364,7 +364,7 @@ final class EditViewModel {
                 let id = UUID(uuidString: key)
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    if isOpen { self.openEditorPluginID = id }
+                    if isOpen { self.openEditorPluginID = id; if let id { self.placeTiledEditor(id) } }
                     else if self.openEditorPluginID == id { self.openEditorPluginID = nil }
                     // An editor window that closes by itself (the ✕ button) goes back through
                     // no Swift call: it is here, and nowhere else, that the parameter-touch
@@ -403,6 +403,12 @@ final class EditViewModel {
     /// The editor windows open for Tracktion built-in plugins, by plugin id.
     /// The counterpart of `_editorWindows` on the JUCE side (@see openBuiltInPluginEditor).
     var builtInEditorWindows: [UUID: BuiltInPluginEditorWindowController] = [:]
+
+    /// The placement under way of several editors opened TOGETHER (a double click on a multiple
+    /// selection), native and built-in alike. Each window is laid as it appears — a native one only
+    /// exists once its instance is loaded, so its size is not known before. nil = no batch: a
+    /// single editor opens where it always did (@see openPluginEditors).
+    @ObservationIgnored var editorTiling: EditorTiling? = nil
 
     /// The names and ranges of the automatable parameters, by plugin (@see pluginParamInfos). A PURE cache:
     /// outside observation, because it fills lazily FROM the rendering — an automation
@@ -628,7 +634,14 @@ final class EditViewModel {
 
     /// The ruler drag's way of writing the selection: the only door that sets the ruler origin.
     /// `nil` clears the selection (and the origin with it).
+    ///
+    /// It lets go of the selected MARKS (markers, regions, comments), always — whether the range
+    /// encloses an object or not. Before, they went only when an enclosed object got selected
+    /// (through `selectedIDs`' didSet), so a range over nothing left a marker selected beside it
+    /// and ⌫ / ⌥⌫ took the marker instead of the passage. The ruler's plain click does the same
+    /// (@see TimelineView.moveCursorFromRuler).
     func setTimeSelectionFromRuler(_ selection: TimeSelection?) {
+        if !selectedAnnotations.isEmpty { selectedAnnotations = [] }
         rulerWriteInProgress = true
         timeSelection = selection
         rulerWriteInProgress = false

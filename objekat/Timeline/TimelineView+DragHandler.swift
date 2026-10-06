@@ -318,11 +318,8 @@ struct MarkerBandDragState {
     }
     var group: [GroupMember] = []
 
-    /// The floor a crop stops at, and it is not cosmetic: `duration == 0` is what MAKES a point
-    /// marker, so a region cropped to nothing would silently become another kind of mark — one
-    /// with different drawing, different hit-testing and no way back but ⌘Z. The comment's own
-    /// floor, for the same reason one row up (@see CommentDragState.minDuration).
-    static let minDuration: Double = 0.05
+    // The floor a crop stops at is `Marker.minRegionDuration` — one definition for every door
+    // that sets a region's length (@see Marker).
 }
 
 /// An infinite bus being carried to another row.
@@ -462,7 +459,11 @@ extension TimelineView {
             viewModel.setTimeSelectionFromRuler(nil)
             if phase == .ended {
                 rulerSelectionDrag = nil
-                onMoveCursor(state.anchorTime)
+                if NSEvent.modifierFlags.contains(.option) {
+                    onJumpPlayhead(state.anchorTime)
+                } else {
+                    onMoveCursor(state.anchorTime)
+                }
             } else {
                 rulerSelectionDrag = state
             }
@@ -471,8 +472,7 @@ extension TimelineView {
 
         let sel = TimeSelection(timeRange: range, lanes: viewModel.allObjectLanes())
         if phase == .ended {
-            viewModel.setTimeSelectionFromRuler(sel)
-            selectInDisplayLanes(sel)
+            viewModel.commitRulerSelection(sel)   // drops the selected marks (@see there)
             onMoveCursor(max(0, range.lowerBound))
             rulerSelectionDrag = nil
         } else {
@@ -1287,22 +1287,22 @@ extension TimelineView {
         var dt: Double
         if let anchor = state.timeSelectionAnchor {
             // A carried time selection: it is the RANGE that snaps — its start above all, which is
-            // where the caret sits — and the grabbed object's edges only come second (@see
-            // SelectionMoveSnap). Without ⌥ the scraps the cut leaves at the two bounds are kept out
-            // of the targets; with ⌥ the originals stay in place and are targets. The guide, the
+            // where the caret sits — and ONLY the range: the grabbed object's edges are no
+            // reference (@see SelectionMoveSnap). Without ⌥ the scraps the cut leaves at the two
+            // bounds are kept out of the targets; with ⌥ the originals stay in place and are targets. The guide, the
             // wall at zero (the range's own start) and its pin all come out of the one answer.
-            let grabbedFrag = state.altFragmentObjects?.first { $0.id == state.grabbedID }
-            let selDur = (grabbedFrag ?? viewModel.find(id: state.grabbedID))?.duration ?? 0
             let selExcl = state.isAltCopy ? []
                 : viewModel.selectionMoveExcluded(range: anchor.timeRange, lanes: anchor.lanes, moved: excl)
             dt = viewModel.snapSelectionMove(range: anchor.timeRange, rawDt: rawDt,
-                                             objectStart: grabbedAnchor.start,
-                                             objectEnd: grabbedAnchor.start + selDur,
                                              excluding: selExcl).dt
         } else {
-            let candStart  = viewModel.snapTime(rawStart,   excluding: excl)
+            // The ONLY references are the grabbed object's two edges; the other moved objects
+            // only follow with the same `dt`. Nothing carried by the hand is a target — the
+            // children of a carried open group included (@see moveSnapExcluded).
+            let moveExcl   = viewModel.moveSnapExcluded(moved: excl)
+            let candStart  = viewModel.snapTime(rawStart,   excluding: moveExcl)
             let guideStart = viewModel.snapGuide
-            let candEnd    = viewModel.snapTime(clipEndRaw, excluding: excl)
+            let candEnd    = viewModel.snapTime(clipEndRaw, excluding: moveExcl)
             let guideEnd   = viewModel.snapGuide
 
             let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
@@ -2198,7 +2198,7 @@ extension TimelineView {
             // the left one moves the start and shortens by as much, pulling the right one only
             // changes the length.
             let originEnd = st.originTime + st.originDuration
-            let minD = MarkerBandDragState.minDuration
+            let minD = Marker.minRegionDuration
             if !st.didPushUndo { viewModel.pushUndo(); st.didPushUndo = true }
             if st.part == .resizeLeft {
                 let t = min(viewModel.snapTime(max(0, st.originTime + dt), excluding: mine),
@@ -2287,10 +2287,9 @@ extension TimelineView {
 
     /// The part of a comment a point lands on: its body, or one of its two ends.
     ///
-    /// The handles are proportional and capped, the same rule as a clip's (@see handleWidth), with
-    /// one difference that matters: a comment can be made very short, and a handle taking a quarter
-    /// of a narrow one would leave no body to grab. Hence the cap at 10 px, under which the two
-    /// ends give way to the move.
+    /// The handles are capped like a clip's (@see handleWidth), with one difference that matters:
+    /// a comment can be made very short, and a wide handle on a narrow one would leave no body to
+    /// grab. Hence a quarter of it capped at 10 px, under which the two ends give way to the move.
     func commentZone(at point: CGPoint) -> (id: UUID, part: CommentDragState.Part)? {
         guard pixelsPerSecond > 0 else { return nil }
         for p in viewModel.visibleComments.reversed() {  // the last laid is the one on top

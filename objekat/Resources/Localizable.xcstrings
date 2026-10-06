@@ -576,6 +576,29 @@
         }
       }
     },
+    "cheatsheet.keys.optClickRuler": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ click in the ruler"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ clic en la regla"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ clic dans la règle"
+          }
+        }
+      }
+    },
     "cheatsheet.keys.optDragCrossfade": {
       "extractionState": "manual",
       "localizations": {
@@ -756,6 +779,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "pause / reprise au même endroit"
+          }
+        }
+      }
+    },
+    "cheatsheet.playheadJump": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "playback jumps to that instant"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la reproducción salta a ese instante"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la lecture saute à cet instant"
           }
         }
       }
@@ -1887,48 +1933,25 @@
         }
       }
     },
-    "duration.minutesSeconds": {
+    "duration.minutes": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d min %02d.%d s"
+            "value": "%d min"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d min %02d,%d s"
+            "value": "%d min"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d mn %02d,%d s"
-          }
-        }
-      }
-    },
-    "duration.secondsMillis": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d s %03d ms"
+            "value": "%d mn"
           }
         }
       }
@@ -3474,29 +3497,6 @@
         }
       }
     },
-    "export.renderInBackground.note": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The project stays playable and editable during the export, but preparing it reloads every plugin: on a large project the app freezes for several seconds before the render starts. The window closes, and a strip under the transport takes over."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El proyecto sigue siendo reproducible y editable durante la exportación, pero la preparación recarga todos los plugins: en un proyecto grande la app se congela varios segundos antes de que arranque el render. La ventana se cierra y una banda bajo el transporte toma el relevo."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le projet reste jouable et modifiable pendant l'export, mais la préparation recharge tous les plugins : sur un gros projet, l'app se fige plusieurs secondes avant que le rendu démarre. La fenêtre se ferme, et un bandeau sous le transport prend le relais."
-          }
-        }
-      }
-    },
     "export.reveal": {
       "extractionState": "manual",
       "localizations": {
@@ -4666,52 +4666,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Volume — drag / mouse wheel (10 px ≈ 1 dB)"
-          }
-        }
-      }
-    },
-    "hud.crossfade.atLimit": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the seam gives no more"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "la costura no da más"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "la couture ne donne pas plus"
-          }
-        }
-      }
-    },
-    "hud.crossfade.becomesFade": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "becomes a plain fade"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "pasa a ser un fundido simple"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "devient un fondu simple"
           }
         }
       }
@@ -7909,6 +7863,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Liste"
+          }
+        }
+      }
+    },
+    "panel.tab.object": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objeto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Objet"
           }
         }
       }
@@ -12509,6 +12486,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Impossible de changer d'onglet pendant un export direct. Un export en arrière-plan le permet."
+          }
+        }
+      }
+    },
+    "tabs.switch.refused.exportPreparing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs while the export is being prepared (copying the project). It will be possible as soon as the render has started."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña mientras se prepara la exportación (copia del proyecto). Será posible en cuanto empiece el renderizado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet pendant la préparation de l'export (copie du projet). Ce sera possible dès que le rendu aura commencé."
+          }
+        }
+      }
+    },
+    "tabs.switch.refused.exportRegions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs during a regions export: each region is rendered from the project on screen. Wait for the batch to end, or cancel it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña durante una exportación por regiones: cada región se renderiza a partir del proyecto en pantalla. Espera al final del lote o cancélalo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet pendant un export par régions : chaque région est rendue à partir du projet affiché. Attendez la fin du lot ou annulez-le."
           }
         }
       }

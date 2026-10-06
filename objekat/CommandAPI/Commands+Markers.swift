@@ -166,7 +166,8 @@ extension CommandRegistry {
                  params: [ParamSpec("at", "number", "Where, in seconds."),
                           ParamSpec("lane", "uuid", required: false, "Which row."),
                           ParamSpec("duration", "number", required: false,
-                                    "Its length in seconds. 0 or absent = a point, not a region."),
+                                    "Its length in seconds. 0 or absent = a point, not a region; a region is never "
+                                  + "shorter than 1 s (raised to it)."),
                           ParamSpec("name", "string", required: false, "Its name.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -190,7 +191,7 @@ extension CommandRegistry {
                           ParamSpec("at", "number", "Its new time, in seconds."),
                           ParamSpec("duration", "number", required: false,
                                     "Its new length. Absent = left alone. 0 turns a region back "
-                                  + "into a point."),
+                                  + "into a point. A positive length under 1 s is raised to 1 s."),
                           ParamSpec("snap", "bool", required: false,
                                     "Apply snapping (default false: exact positioning).")],
                  undo: .handled) { p in
@@ -419,7 +420,7 @@ extension CommandRegistry {
                           ParamSpec("rel", "number", required: false,
                                     "Failing `at`: time from the start of the object."),
                           ParamSpec("duration", "number", required: false,
-                                    "Its length. 0 or absent = a point."),
+                                    "Its length. 0 or absent = a point; a region is never shorter than 1 s (raised to it)."),
                           ParamSpec("name", "string", required: false, "Its name.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -500,7 +501,7 @@ extension CommandRegistry {
                                     "Failing `at`: time from the start of the object."),
                           ParamSpec("duration", "number", required: false,
                                     "Its new length. Absent = left alone. 0 turns a region back "
-                                  + "into a point."),
+                                  + "into a point. A positive length under 1 s is raised to 1 s."),
                           ParamSpec("snap", "bool", required: false,
                                     "Apply snapping (default false: exact positioning).")],
                  undo: .handled) { p in
