@@ -1078,6 +1078,25 @@ the `lr` export of the same clip** and not against absolute levels: `l` and `r` 
 on both sides at the level that side had in `lr`, and `c` sits 6 dB under `l` for a signal that lives
 in one channel only. `tools/scenario_channel_mode.py` is the reference.
 
+### How a clip's file is stored (`object.get` `source_*`), and naming at `object.add`
+
+`object.get` answers three more fields on an audio clip, read from the file's OWN header (not the
+32-bit float AVFoundation decodes to) and remembered per path like `channels`:
+
+| field | meaning |
+|---|---|
+| `source_sample_rate` | the file's sample rate in Hz (a number) |
+| `source_bit_depth` | bits per sample of a linear-PCM file (16, 24, 32…), `null` for a compressed one |
+| `source_format` | `pcm_int`, `pcm_float` or `compressed` |
+
+All three are `null` for anything that is not an audio clip (a group, an aux, a MIDI clip), and for a
+clip whose file cannot be read. It is what a script needs to hand back a file "like the source": a
+16-bit source comes back at 16 bits, a float one as float, and no resolution is invented.
+
+`object.add` accepts `name`: the object's label, set BEFORE the clip is laid down, so it costs no
+second undo step. It is what lets a script place a file and name it inside ONE `batch` (a
+sub-command cannot use the id an earlier sub-command returned). Empty or absent = the file's name.
+
 ### Exploding an object into sub-lanes
 
 **`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?, fade_ms?}`** cuts a plain audio clip at

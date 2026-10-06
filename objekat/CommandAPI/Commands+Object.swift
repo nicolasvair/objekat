@@ -47,8 +47,18 @@ extension CommandRegistry {
                 payload["channels"] = ClipChannels.count(atPath: path).map { JSONValue.int($0) } ?? JSONValue.null
                 payload["engine_channel_mode"] = .string(
                     ChannelMode.allCases.first { $0.engineCode == vm.engineChannelMode(for: id) }?.rawValue ?? "lr")
+                // How the file is STORED (@see ClipSourceFormat): the rate and the depth a script
+                // writes back "like the source". null for a file that cannot be read, and for the
+                // depth of a compressed format.
+                let stored = ClipSourceFormat.info(atPath: path)
+                payload["source_sample_rate"] = stored.map { JSONValue.number($0.sampleRate) } ?? JSONValue.null
+                payload["source_bit_depth"] = stored?.bitDepth.map { JSONValue.int($0) } ?? JSONValue.null
+                payload["source_format"] = stored.map { JSONValue.string($0.kind) } ?? JSONValue.null
             } else {
                 payload["channels"] = .null
+                payload["source_sample_rate"] = .null
+                payload["source_bit_depth"] = .null
+                payload["source_format"] = .null
             }
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
