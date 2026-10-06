@@ -229,6 +229,20 @@ struct ScriptCanvas {
         guard let audio = transport.audioHistoryRev else { return false }
         return historyRev > audio
     }
+
+    /// What the toolbar's "Calcul…" shows: the files are behind the history, OR the script said it is
+    /// busy. A live re-render of a pending selection (a gain moved) does not move the history, so
+    /// only the script's own `busy` can announce it (plan §9.2).
+    var showsComputing: Bool { busy || isComputing }
+
+    /// The polarity a gesture drawn NOW carries: the Draw / Erase toggle's, flipped while ⌘ is held.
+    /// Always `add` in Instant (there is no Erase there). `commandHeld` is the window's to read
+    /// (the plot reads the modifier flags at mouseDown and freezes the answer for the gesture).
+    func effectivePolarity(commandHeld: Bool) -> CanvasPolarity {
+        guard mode == .select else { return .add }
+        guard commandHeld else { return polarity }
+        return polarity == .add ? .subtract : .add
+    }
 }
 
 // MARK: - The store

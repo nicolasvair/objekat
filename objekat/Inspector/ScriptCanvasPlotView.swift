@@ -29,7 +29,7 @@ import SwiftUI
 /// viewport's screen y), 56 pt of ruler on the left and 22 pt on top.
 ///
 /// The view decides NOTHING about what a gesture means. It turns the hand into the store's three
-/// doors — `addRect`, `addStroke`, `addPoint` — and into a pan, a zoom or a seek; the geometry is
+/// doors — `addRect`, `addStroke`, `addPoint` — and into a zoom, a pan (wheel) or a seek; the geometry is
 /// `CanvasViewport`'s (@see ScriptCanvasGeometry), the history, the layers and the transport the
 /// store's. It holds no copy of any of it: every draw reads the store again, and the store being
 /// `@Observable`, an observation armed on `canvases` is what says "redraw" (the viewports are not
@@ -43,23 +43,24 @@ final class ScriptCanvasPlotNSView: NSView {
     static let leftRuler: CGFloat = 56
     static let topRuler: CGFloat = 22
     /// The alpha of one disc of a stroke's raw trace. Purely visual (the script's veil replaces the
-    /// trace as soon as it arrives), and cumulative: passing again darkens more.
+    /// trace as soon as it arrives), and cumulative: passing again darkens more. A SUBTRACT stroke
+    /// (Erase) is traced in white, a little stronger, so that it reads on the dark traces it undoes.
     static let traceDiscAlpha: CGFloat = 0.15
-    /// A click that travels less than this (points) is a click, not a drag.
-    static let clickSlop: CGFloat = 3
+    static let subtractTraceDiscAlpha: CGFloat = 0.25
 
     let store: ScriptCanvasStore
     let canvasID: UUID
     let pointer: ScriptCanvasPointer
 
+    /// What the left button is doing. The POLARITY (Draw / Erase, ⌘ flip included) is read at
+    /// mouseDown and frozen for the gesture, like the brush: a ⌘ pressed or released mid-gesture
+    /// changes nothing of what is being drawn.
     private enum Gesture {
-        /// The Hand: `moved` once the travel is over the slop (then it pans, until the button goes up).
-        case pan(start: CGPoint, last: CGPoint, moved: Bool)
-        case rect(start: CGPoint, current: CGPoint)
+        case rect(start: CGPoint, current: CGPoint, polarity: CanvasPolarity)
         /// `points` are in DATA units (kept as the hand draws them, whatever the view does meanwhile);
         /// `last` is the last SAMPLED screen point; the brush and the scale are frozen at mouseDown.
         case stroke(points: [CanvasPoint], last: CGPoint, sizeX: Double, sizeY: Double,
-                    scaleX: Double, scaleY: Double)
+                    scaleX: Double, scaleY: Double, polarity: CanvasPolarity)
     }
 
     private var gesture: Gesture? = nil
@@ -271,9 +272,11 @@ final class ScriptCanvasPlotNSView: NSView {
                 let a = screen(CanvasPoint(x: x0, y: y0), world: world, vp: vp)
                 let b = screen(CanvasPoint(x: x1, y: y1), world: world, vp: vp)
                 strokeOutline(CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
-                                     width: abs(b.x - a.x), height: abs(b.y - a.y)), in: ctx)
+                                     width: abs(b.x - a.x), height: abs(b.y - a.y)),
+                              dashed: op.polarity == .subtract, in: ctx)
             case .stroke(let points, _, let sizeX, let sizeY):
-                drawDiscs(points: points, sizeX: sizeX, sizeY: sizeY, in: ctx, world: world, vp: vp)
+                drawDiscs(points: points, sizeX: sizeX, sizeY: sizeY, polarity: op.polarity,
+                          in: ctx, world: world, vp: vp)
             case .point(let x, let y):
                 let s = screen(CanvasPoint(x: x, y: y), world: world, vp: vp)
                 ctx.setStrokeColor(NSColor.white.cgColor)
@@ -283,23 +286,30 @@ final class ScriptCanvasPlotNSView: NSView {
         }
     }
 
-    private func strokeOutline(_ r: CGRect, in ctx: CGContext) {
+    /// A rectangle's outline: solid for Draw, DASHED for Erase (a subtract rectangle clears what it
+    /// encloses — the dashes say it is not a selection of its own).
+    private func strokeOutline(_ r: CGRect, dashed: Bool, in ctx: CGContext) {
         guard r.origin.x.isFinite, r.origin.y.isFinite, r.width.isFinite, r.height.isFinite else { return }
+        ctx.saveGState()
         ctx.setStrokeColor(NSColor.white.cgColor)
         ctx.setLineWidth(1)
+        if dashed { ctx.setLineDash(phase: 0, lengths: [4, 3]) }
         ctx.stroke(r.insetBy(dx: 0.5, dy: 0.5))
+        ctx.restoreGState()
     }
 
-    /// Dark translucent discs of the brush, a quarter of a diameter apart along the path (@see
+    /// Translucent discs of the brush, a quarter of a diameter apart along the path (@see
     /// CanvasStrokeTrace) — as ellipses of `sizeX × sizeY` WARPED units mapped to the current zoom, so
-    /// a brush drawn before a zoom keeps its meaning.
-    private func drawDiscs(points: [CanvasPoint], sizeX: Double, sizeY: Double, in ctx: CGContext,
-                           world: CanvasWorld, vp: CanvasViewport) {
+    /// a brush drawn before a zoom keeps its meaning. Dark for Draw, white for Erase.
+    private func drawDiscs(points: [CanvasPoint], sizeX: Double, sizeY: Double, polarity: CanvasPolarity,
+                           in ctx: CGContext, world: CanvasWorld, vp: CanvasViewport) {
         let centres = CanvasStrokeTrace.discCentres(points: points, sizeX: sizeX, sizeY: sizeY, world: world)
         let w = sizeX * vp.pointsPerX, h = sizeY * vp.pointsPerY
         guard w.isFinite, h.isFinite, w > 0, h > 0 else { return }
         let plot = plotRect
-        ctx.setFillColor(NSColor.black.withAlphaComponent(Self.traceDiscAlpha).cgColor)
+        ctx.setFillColor((polarity == .subtract
+            ? NSColor.white.withAlphaComponent(Self.subtractTraceDiscAlpha)
+            : NSColor.black.withAlphaComponent(Self.traceDiscAlpha)).cgColor)
         for centre in centres {
             let s = screen(centre, world: world, vp: vp)
             let r = CGRect(x: s.x - w / 2, y: s.y - h / 2, width: w, height: h)
@@ -310,14 +320,15 @@ final class ScriptCanvasPlotNSView: NSView {
     /// The gesture under the hand: the rubber band of a rectangle, the discs of a stroke so far.
     private func drawGesture(_ c: ScriptCanvas, in ctx: CGContext, world: CanvasWorld, vp: CanvasViewport) {
         switch gesture {
-        case .rect(let a, let b)?:
+        case .rect(let a, let b, let polarity)?:
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-            ctx.setFillColor(NSColor.white.withAlphaComponent(0.08).cgColor)
+            ctx.setFillColor(NSColor.white.withAlphaComponent(polarity == .subtract ? 0.04 : 0.08).cgColor)
             ctx.fill(r)
-            strokeOutline(r, in: ctx)
-        case .stroke(let points, _, let sizeX, let sizeY, _, _)?:
-            drawDiscs(points: points, sizeX: sizeX, sizeY: sizeY, in: ctx, world: world, vp: vp)
-        default:
+            strokeOutline(r, dashed: polarity == .subtract, in: ctx)
+        case .stroke(let points, _, let sizeX, let sizeY, _, _, let polarity)?:
+            drawDiscs(points: points, sizeX: sizeX, sizeY: sizeY, polarity: polarity,
+                      in: ctx, world: world, vp: vp)
+        case nil:
             break
         }
     }
@@ -493,22 +504,34 @@ final class ScriptCanvasPlotNSView: NSView {
         try? store.seek(canvasID, to: target)
     }
 
+    /// The polarity a gesture starting NOW carries: the Draw / Erase toggle, flipped by ⌘ held at the
+    /// instant of the click (@see ScriptCanvas.effectivePolarity). Frozen into the gesture.
+    private func polarity(_ c: ScriptCanvas, _ event: NSEvent) -> CanvasPolarity {
+        c.effectivePolarity(commandHeld: event.modifierFlags.contains(.command))
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard let c = store.canvases[canvasID], c.state == .open, let world = c.world,
               let vp = viewport() else { return }
         let p = point(of: event)
-        // A click in the time ruler always seeks, whatever the tool.
+        // A left click in the time ruler always seeks, whatever the tool.
         if p.y < Self.topRuler, p.x >= Self.leftRuler {
             seek(toScreenX: p.x)
             return
         }
         guard plotRect.contains(p) else { return }
         updatePointer(p)
+        // ⌃-click is the right click of a one-button mouse: the playhead, nothing else.
+        if event.modifierFlags.contains(.control) {
+            seek(toScreenX: p.x)
+            return
+        }
         // No tool declared: a left click in the plot does nothing (there is no Hand any more).
         guard let kind = activeKind(c) else { return }
+        let pol = polarity(c, event)
         switch kind {
         case .rect:
-            gesture = .rect(start: p, current: p)
+            gesture = .rect(start: p, current: p, polarity: pol)
         case .stroke:
             // The brush, frozen NOW: a zoom made during the stroke must not change what was drawn.
             var sizePt = 32.0
@@ -517,12 +540,23 @@ final class ScriptCanvasPlotNSView: NSView {
             sizePt = min(1000, max(1, sizePt))
             let size = vp.warpedSize(forPoints: sizePt)
             gesture = .stroke(points: [data(p, world: world, vp: vp)], last: p, sizeX: size.x, sizeY: size.y,
-                              scaleX: vp.pointsPerX, scaleY: vp.pointsPerY)
+                              scaleX: vp.pointsPerX, scaleY: vp.pointsPerY, polarity: pol)
         case .point:
             let d = data(p, world: world, vp: vp)
-            _ = try? store.addPoint(canvasID, x: d.x, y: d.y)
+            _ = try? store.addPoint(canvasID, x: d.x, y: d.y, polarity: pol)
         }
         needsDisplay = true
+    }
+
+    /// A right click in the plot (or its time ruler) moves the playhead — and does nothing else: no
+    /// menu, no drag-follow, whatever the tool. The timeline's own right-click monitor lets a canvas
+    /// window's events alone (@see TimelineCursorKeeper.canvasPoint).
+    override func rightMouseDown(with event: NSEvent) {
+        guard let c = store.canvases[canvasID], c.state == .open, c.world != nil, viewport() != nil else { return }
+        let p = point(of: event)
+        guard p.x >= Self.leftRuler, p.y >= 0, p.x <= bounds.width, p.y <= bounds.height else { return }
+        updatePointer(p)
+        seek(toScreenX: p.x)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -530,24 +564,15 @@ final class ScriptCanvasPlotNSView: NSView {
         updatePointer(p)
         guard let c = store.canvases[canvasID], let world = c.world, let vp = viewport() else { return }
         switch gesture {
-        case .pan(let start, let last, let moved)?:
-            // The travel over the slop is what makes it a drag; the frame that crosses it only
-            // starts the pan (the next ones move the view).
-            if moved {
-                store.setViewport(canvasID, vp.panned(byScreenDX: Double(p.x - last.x),
-                                                      dy: Double(p.y - last.y), in: world))
-            }
-            gesture = .pan(start: start, last: p,
-                           moved: moved || hypot(p.x - start.x, p.y - start.y) >= Self.clickSlop)
-        case .rect(let start, _)?:
-            gesture = .rect(start: start, current: clampedToPlot(p))
+        case .rect(let start, _, let pol)?:
+            gesture = .rect(start: start, current: clampedToPlot(p), polarity: pol)
             needsDisplay = true
-        case .stroke(var points, let last, let sx, let sy, let scx, let scy)?:
+        case .stroke(var points, let last, let sx, let sy, let scx, let scy, let pol)?:
             let q = clampedToPlot(p)
             guard hypot(q.x - last.x, q.y - last.y) >= 0.5,
                   points.count < ScriptCanvasStore.maxStrokePoints else { return }
             points.append(data(q, world: world, vp: vp))
-            gesture = .stroke(points: points, last: q, sizeX: sx, sizeY: sy, scaleX: scx, scaleY: scy)
+            gesture = .stroke(points: points, last: q, sizeX: sx, sizeY: sy, scaleX: scx, scaleY: scy, polarity: pol)
             needsDisplay = true
         case nil:
             break
@@ -560,14 +585,11 @@ final class ScriptCanvasPlotNSView: NSView {
         guard let g = gesture, let c = store.canvases[canvasID], c.state == .open,
               let world = c.world, let vp = viewport() else { return }
         switch g {
-        case .pan(let start, _, let moved):
-            // A click that did not travel puts the caret there.
-            if !moved, hypot(p.x - start.x, p.y - start.y) < Self.clickSlop { seek(toScreenX: start.x) }
-        case .rect(let start, _):
+        case .rect(let start, _, let pol):
             let a = data(start, world: world, vp: vp), b = data(clampedToPlot(p), world: world, vp: vp)
-            _ = try? store.addRect(canvasID, x0: a.x, x1: b.x, y0: a.y, y1: b.y)
-        case .stroke(let points, _, _, _, let scx, let scy):
-            _ = try? store.addStroke(canvasID, points: points, scale: (scx, scy))
+            _ = try? store.addRect(canvasID, x0: a.x, x1: b.x, y0: a.y, y1: b.y, polarity: pol)
+        case .stroke(let points, _, _, _, let scx, let scy, let pol):
+            _ = try? store.addStroke(canvasID, points: points, scale: (scx, scy), polarity: pol)
         }
     }
 
@@ -635,7 +657,9 @@ struct ScriptCanvasPlotView: NSViewRepresentable {
 // MARK: - The cursors of the tools
 
 /// The cursor each kind of tool shows over the plot. Made once and reused (`set()` is called by the
-/// claim on every AppKit query); a stroke's circle is cached by whole diameter.
+/// claim on every AppKit query); a stroke's circle is cached by whole diameter and polarity. No tool:
+/// the arrow (there is no Hand any more). A brush that would SUBTRACT (Erase, ⌘ flip included) shows a
+/// minus mark inside its circle.
 @MainActor
 enum ScriptCanvasCursors {
 
@@ -643,9 +667,10 @@ enum ScriptCanvasCursors {
 
     /// A circle the size of the brush (points), a dark outline around a light one so that it reads on
     /// the spectrogram and on its black. Clamped: a cursor image has no business being bigger.
-    static func circle(diameter: Double) -> NSCursor {
+    static func circle(diameter: Double, subtract: Bool = false) -> NSCursor {
         let d = Int(min(128, max(8, diameter.rounded())))
-        if let c = circles[d] { return c }
+        let key = subtract ? -d : d
+        if let c = circles[key] { return c }
         let side = CGFloat(d + 4)
         let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
             let ring = rect.insetBy(dx: 2.5, dy: 2.5)
@@ -657,14 +682,28 @@ enum ScriptCanvasCursors {
             let path = NSBezierPath(ovalIn: ring)
             path.lineWidth = 1
             path.stroke()
+            if subtract {
+                // A minus, centred, never wider than a third of the ring (but at least 4 points).
+                let half = max(2, CGFloat(d) / 6)
+                let mid = NSPoint(x: rect.midX, y: rect.midY)
+                for (color, width) in [(NSColor.black.withAlphaComponent(0.6), CGFloat(3)), (NSColor.white, CGFloat(1))] {
+                    let minus = NSBezierPath()
+                    minus.move(to: NSPoint(x: mid.x - half, y: mid.y))
+                    minus.line(to: NSPoint(x: mid.x + half, y: mid.y))
+                    minus.lineWidth = width
+                    color.setStroke()
+                    minus.stroke()
+                }
+            }
             return true
         }
         let c = NSCursor(image: image, hotSpot: NSPoint(x: side / 2, y: side / 2))
-        circles[d] = c
+        circles[key] = c
         return c
     }
 
-    static func cursor(for c: ScriptCanvas) -> NSCursor {
+    /// `commandHeld`: ⌘ is down right now (@see ScriptCanvas.effectivePolarity).
+    static func cursor(for c: ScriptCanvas, commandHeld: Bool) -> NSCursor {
         guard let tool = c.tools.first(where: { $0.id == c.activeTool }) else { return .arrow }
         switch tool.kind {
         case .rect, .point:
@@ -672,7 +711,7 @@ enum ScriptCanvasCursors {
         case .stroke:
             var size = 32.0
             if let key = tool.sizeControl, let v = c.values[key]?.doubleValue { size = v }
-            return circle(diameter: size)
+            return circle(diameter: size, subtract: c.effectivePolarity(commandHeld: commandHeld) == .subtract)
         }
     }
 }

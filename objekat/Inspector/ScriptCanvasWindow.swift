@@ -10,12 +10,33 @@ import SwiftUI
 ///
 /// Its own keys: ⌘Z and ⇧⌘Z walk the canvas's history, Space starts and stops the audition. Return
 /// and Esc are bound to nothing — a hand that slips on Return must not Validate.
+///
+/// It also tells the window whether ⌘ is held (`modifiers`, UI only): the Draw / Erase switch shows
+/// its flipped state while ⌘ is down. Read from `.flagsChanged` events as they pass through
+/// `sendEvent`, re-read when the panel becomes key, and cleared when it stops being key (a ⌘ released
+/// elsewhere would otherwise stay "held" here).
 final class ScriptCanvasPanel: NSPanel {
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
     var onTogglePlay: (() -> Void)?
+    var modifiers: ScriptCanvasModifiers?
 
     override var canBecomeKey: Bool { true }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .flagsChanged { modifiers?.set(command: event.modifierFlags.contains(.command)) }
+        super.sendEvent(event)
+    }
+
+    override func becomeKey() {
+        super.becomeKey()
+        modifiers?.set(command: NSEvent.modifierFlags.contains(.command))
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        modifiers?.set(command: false)
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -38,6 +59,18 @@ final class ScriptCanvasPanel: NSPanel {
     }
 }
 
+/// Which modifier keys the canvas window shows a state for. Today only ⌘ (the Draw / Erase flip).
+/// UI only: what a gesture carries is read by the plot from the event at mouseDown.
+@Observable final class ScriptCanvasModifiers {
+    private(set) var commandHeld = false
+
+    func set(command: Bool) { if commandHeld != command { commandHeld = command } }
+}
+
+/// What the hand answered when the window asked about a PENDING selection (a mode switch to Instant,
+/// or Validate): apply it first, throw it away, or stay.
+enum CanvasPendingChoice { case apply, ignore, cancel }
+
 // MARK: - The windows
 
 /// Draws the canvases scripts declare (@see ScriptCanvasStore) as floating utility panels.
@@ -59,6 +92,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
 
     private var windows: [UUID: ScriptCanvasPanel] = [:]
     private var pointers: [UUID: ScriptCanvasPointer] = [:]
+    private var modifiers: [UUID: ScriptCanvasModifiers] = [:]
     private var closing: Set<UUID> = []
     private weak var store: ScriptCanvasStore?
 
@@ -106,7 +140,10 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
 
         let pointer = ScriptCanvasPointer()
         pointers[id] = pointer
-        let hosting = NSHostingView(rootView: ScriptCanvasView(store: store, canvasID: id, pointer: pointer))
+        let modifier = ScriptCanvasModifiers()
+        modifiers[id] = modifier
+        let hosting = NSHostingView(rootView: ScriptCanvasView(store: store, canvasID: id, pointer: pointer,
+                                                               modifiers: modifier))
         // The window's size is ours (1100 × 660, 720 × 420 at the least); the SwiftUI content must
         // not push constraints of its own onto it.
         hosting.sizingOptions = []
@@ -124,6 +161,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
         w.becomesKeyOnlyIfNeeded = false
         w.isReleasedWhenClosed = false
         w.delegate = self
+        w.modifiers = modifier
         w.onUndo = { [weak store] in if let store { _ = try? store.undo(id) } }
         w.onRedo = { [weak store] in if let store { _ = try? store.redo(id) } }
         w.onTogglePlay = { [weak store] in
@@ -146,11 +184,34 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
     private func dismiss(_ id: UUID) {
         plots.removeValue(forKey: id)
         pointers.removeValue(forKey: id)
+        modifiers.removeValue(forKey: id)
         auditions.removeValue(forKey: id)?.shutdown()
         guard let w = windows.removeValue(forKey: id) else { return }
         closing.insert(id)
         w.close()
         closing.remove(id)
+    }
+
+    /// Asks, in a sheet on the canvas window, what to do with the PENDING selection: Apply, Ignore or
+    /// Cancel (stay where one was). `message` says what is about to happen (a mode switch, Validate).
+    /// No window (headless, or already closed) answers Cancel, so nothing is ever done blind.
+    func askAboutPending(_ id: UUID, message: String, then: @escaping (CanvasPendingChoice) -> Void) {
+        guard let w = windows[id], w.attachedSheet == nil else { then(.cancel); return }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L("canvas.pending.title")
+        alert.informativeText = message
+        alert.addButton(withTitle: L("canvas.apply"))
+        alert.addButton(withTitle: L("canvas.pending.ignore"))
+        let cancel = alert.addButton(withTitle: L("common.cancel"))
+        cancel.keyEquivalent = "\u{1b}"
+        alert.beginSheetModal(for: w) { response in
+            switch response {
+            case .alertFirstButtonReturn: then(.apply)
+            case .alertSecondButtonReturn: then(.ignore)
+            default: then(.cancel)
+            }
+        }
     }
 
     /// The ✕ of the title bar is a Cancel — the script is told, and cleans up.
@@ -161,6 +222,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
         windows.removeValue(forKey: id)
         plots.removeValue(forKey: id)
         pointers.removeValue(forKey: id)
+        modifiers.removeValue(forKey: id)
         auditions.removeValue(forKey: id)?.shutdown()
         try? store?.input(id, values: [:], press: "cancel")
     }
@@ -170,13 +232,18 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
 
 /// The toolbar, the plot, the sidebar of the script's own controls, the readout. All of it reads the
 /// store and writes through the store's doors — the very ones `script.canvas.input` goes through —
-/// and holds no state of its own but the Expert toggle.
+/// and holds no state of its own but the Expert toggle (and a counter that makes a segmented control
+/// read the store again after a change the store refused or the hand cancelled).
 struct ScriptCanvasView: View {
     let store: ScriptCanvasStore
     let canvasID: UUID
     let pointer: ScriptCanvasPointer
+    let modifiers: ScriptCanvasModifiers
     /// The window's own state: whether the `advanced` controls are drawn.
     @State private var expert = false
+    /// A segmented control that was clicked but whose value did not change in the store keeps showing
+    /// the clicked segment; bumping this rebuilds it from the store.
+    @State private var reread = 0
 
     var body: some View {
         if let c = store.canvases[canvasID] {
@@ -209,7 +276,7 @@ struct ScriptCanvasView: View {
             Color.clear
                 .padding(.leading, ScriptCanvasPlotNSView.leftRuler)
                 .padding(.top, ScriptCanvasPlotNSView.topRuler)
-                .cursorZone(ScriptCanvasCursors.cursor(for: c))
+                .cursorZone(ScriptCanvasCursors.cursor(for: c, commandHeld: modifiers.commandHeld))
                 .allowsHitTesting(false)
         }
     }
@@ -231,6 +298,11 @@ struct ScriptCanvasView: View {
                     toolToggle(c, id: t.id, label: t.label, icon: symbol(for: t))
                 }
             }
+            if c.modes {
+                Divider().frame(height: 18)
+                modeSwitch(c)
+                if c.mode == .select { polaritySwitch(c) }
+            }
             Divider().frame(height: 18)
             HStack(spacing: 2) {
                 Button { _ = try? store.undo(canvasID) } label: { Image(systemName: "arrow.uturn.backward") }
@@ -249,7 +321,7 @@ struct ScriptCanvasView: View {
             .help(c.transport.playing ? L("canvas.stop") : L("canvas.play"))
             .disabled(!hasOriginal)
             Picker(selection: Binding(get: { c.transport.listen },
-                                      set: { try? store.setListen(canvasID, $0) })) {
+                                      set: { do { try store.setListen(canvasID, $0) } catch { reread += 1 } })) {
                 Text(L("canvas.listen.original")).tag(CanvasListen.original)
                 Text(L("canvas.listen.result")).tag(CanvasListen.result)
                 Text(L("canvas.listen.delta")).tag(CanvasListen.delta)
@@ -257,6 +329,8 @@ struct ScriptCanvasView: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .frame(width: 250)
+            .help(L("canvas.listen.help"))
+            .id(reread)
             // Choosing an empty slot is refused by the store's setter (the segment springs back).
             .disabled(!hasOriginal)
             Divider().frame(height: 18)
@@ -264,7 +338,9 @@ struct ScriptCanvasView: View {
                 .help(L("canvas.fit"))
                 .disabled(c.world == nil)
             Spacer(minLength: 8)
-            if c.isComputing {
+            // The files are behind the history, or the script says it is busy (a live re-render of a
+            // pending selection does not move the history: only its `busy` announces it).
+            if c.showsComputing {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text(L("canvas.status.computing")).font(.caption).foregroundStyle(.secondary)
@@ -279,6 +355,58 @@ struct ScriptCanvasView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+    }
+
+    /// Instantané | Sélection. Going BACK to Instant with a selection pending asks first (Apply / Ignore
+    /// / Cancel); Cancel leaves the canvas in Sélection. The store refuses the switch while pending, so
+    /// the answer is always applied (or discarded) BEFORE the switch.
+    private func modeSwitch(_ c: ScriptCanvas) -> some View {
+        Picker(selection: Binding(get: { c.mode }, set: { requestMode($0, from: c) })) {
+            Text(L("canvas.mode.instant")).tag(CanvasMode.instant)
+            Text(L("canvas.mode.select")).tag(CanvasMode.select)
+        } label: { EmptyView() }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 190)
+        .help(L("canvas.mode.help"))
+        .id(reread)
+    }
+
+    private func requestMode(_ mode: CanvasMode, from c: ScriptCanvas) {
+        guard mode != c.mode else { return }
+        guard mode == .instant, c.history.pending > 0 else {
+            do { try store.setMode(canvasID, mode) } catch { reread += 1 }
+            return
+        }
+        let id = canvasID, store = store
+        ScriptCanvasWindows.shared.askAboutPending(id, message: L("canvas.pending.mode.message")) { choice in
+            switch choice {
+            case .apply:
+                _ = try? store.commit(id)
+                try? store.setMode(id, .instant)
+            case .ignore:
+                _ = try? store.discardPending(id)
+                try? store.setMode(id, .instant)
+            case .cancel:
+                break
+            }
+            reread += 1
+        }
+        reread += 1   // the segment the hand pressed springs back while the sheet is up
+    }
+
+    /// Dessiner | Effacer, Sélection only. It shows the EFFECTIVE state — the toggle flipped while ⌘ is
+    /// held — and a click sets the toggle itself (to the segment clicked).
+    private func polaritySwitch(_ c: ScriptCanvas) -> some View {
+        Picker(selection: Binding(get: { c.effectivePolarity(commandHeld: modifiers.commandHeld) },
+                                  set: { try? store.setPolarity(canvasID, $0) })) {
+            Text(L("canvas.polarity.add")).tag(CanvasPolarity.add)
+            Text(L("canvas.polarity.subtract")).tag(CanvasPolarity.subtract)
+        } label: { EmptyView() }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 160)
+        .help(L("canvas.polarity.help"))
     }
 
     private func toolToggle(_ c: ScriptCanvas, id: String, label: String, icon: String) -> some View {
@@ -305,6 +433,17 @@ struct ScriptCanvasView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 8) {
+                // Apply ≠ Validate: it seals the pending selection into ONE history step and clears
+                // it; the window stays. No shortcut (Return stays unbound).
+                if c.modes && c.mode == .select {
+                    Button { _ = try? store.commit(canvasID) } label: {
+                        Text(L("canvas.apply")).frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(c.history.pending == 0)
+                    .help(L("canvas.apply.help"))
+                }
                 HStack(spacing: 6) {
                     if c.busy { ProgressView().controlSize(.small) }
                     Text(verbatim: c.status)
@@ -329,11 +468,33 @@ struct ScriptCanvasView: View {
                     Spacer(minLength: 0)
                     Button(L("common.cancel")) { try? store.input(canvasID, values: [:], press: "cancel") }
                         .tint(.red)
-                    Button(L("scriptpanel.validate")) { try? store.input(canvasID, values: [:], press: "validate") }
-                        .disabled(c.busy || c.isComputing)
+                    Button(L("scriptpanel.validate")) { validate(c) }
+                        .disabled(c.showsComputing)
                 }
             }
             .padding(12)
+        }
+    }
+
+    /// Validate closes the window, so a PENDING selection asks first: Apply it (then validate), Ignore
+    /// it (validate without), or Cancel (stay in the window).
+    private func validate(_ c: ScriptCanvas) {
+        let id = canvasID, store = store
+        guard c.history.pending > 0 else {
+            try? store.input(id, values: [:], press: "validate")
+            return
+        }
+        ScriptCanvasWindows.shared.askAboutPending(id, message: L("canvas.pending.validate.message")) { choice in
+            switch choice {
+            case .apply:
+                _ = try? store.commit(id)
+                try? store.input(id, values: [:], press: "validate")
+            case .ignore:
+                _ = try? store.discardPending(id)
+                try? store.input(id, values: [:], press: "validate")
+            case .cancel:
+                break
+            }
         }
     }
 

@@ -415,6 +415,52 @@
         }
       }
     },
+    "canvas.apply": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aplicar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appliquer"
+          }
+        }
+      }
+    },
+    "canvas.apply.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply the selection with the current settings: one history step"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aplica la selección con los ajustes actuales: un paso del historial"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applique la sélection avec les réglages actuels : une étape d'historique"
+          }
+        }
+      }
+    },
     "canvas.fit": {
       "extractionState": "manual",
       "localizations": {
@@ -444,7 +490,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Delta"
+            "value": "Difference"
           }
         },
         "es": {
@@ -461,25 +507,25 @@
         }
       }
     },
-    "canvas.listen.delta.help": {
+    "canvas.listen.help": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hear only what the operations take away"
+            "value": "Original: the starting sound · Result: after the operations · Difference: what they take away"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Escuchar solo lo que quitan las operaciones"
+            "value": "Original: el sonido inicial · Resultado: tras las operaciones · Diferencia: lo que quitan"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "N'écouter que ce que les opérations retirent"
+            "value": "Original : le son de départ · Résultat : après les opérations · Différence : ce qu'elles retirent"
           }
         }
       }
@@ -530,6 +576,167 @@
         }
       }
     },
+    "canvas.mode.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instant: each gesture is applied at once. Selection: build, listen, then Apply"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instantáneo: cada gesto se aplica al momento. Selección: construir, escuchar y Aplicar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instantané : chaque geste est appliqué aussitôt. Sélection : construire, écouter, puis Appliquer"
+          }
+        }
+      }
+    },
+    "canvas.mode.instant": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instant"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instantáneo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instantané"
+          }
+        }
+      }
+    },
+    "canvas.mode.select": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selection"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selección"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélection"
+          }
+        }
+      }
+    },
+    "canvas.pending.ignore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ignore"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ignorar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ignorer"
+          }
+        }
+      }
+    },
+    "canvas.pending.mode.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching to Instant mode: apply the selection, ignore it, or stay in Selection mode?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pasar al modo Instantáneo: ¿aplicar la selección, ignorarla o seguir en el modo Selección?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passer en mode Instantané : appliquer la sélection, l'ignorer, ou rester en mode Sélection ?"
+          }
+        }
+      }
+    },
+    "canvas.pending.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A selection has not been applied"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay una selección sin aplicar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une sélection n'est pas appliquée"
+          }
+        }
+      }
+    },
+    "canvas.pending.validate.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Validating closes the window: apply the selection, ignore it, or go back to the window?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Validar cierra la ventana: ¿aplicar la selección, ignorarla o volver a la ventana?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valider ferme la fenêtre : appliquer la sélection, l'ignorer, ou revenir à la fenêtre ?"
+          }
+        }
+      }
+    },
     "canvas.play": {
       "extractionState": "manual",
       "localizations": {
@@ -549,6 +756,75 @@
           "stringUnit": {
             "state": "translated",
             "value": "Lire"
+          }
+        }
+      }
+    },
+    "canvas.polarity.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Draw"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dibujar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dessiner"
+          }
+        }
+      }
+    },
+    "canvas.polarity.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold ⌘ to flip while drawing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantenga ⌘ para invertir al dibujar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘ maintenu : inverse le temps du geste"
+          }
+        }
+      }
+    },
+    "canvas.polarity.subtract": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erase"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Borrar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effacer"
           }
         }
       }
@@ -664,29 +940,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Toile du script"
-          }
-        }
-      }
-    },
-    "canvas.tool.hand": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hand"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mano"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Main"
           }
         }
       }
