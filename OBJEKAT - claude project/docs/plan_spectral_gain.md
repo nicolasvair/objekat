@@ -1,5 +1,7 @@
 # Spectral editor: technical plan, revision 2 (`script.canvas.*` and `tools/scripts/spectral-gain/`)
 
+> **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Where it conflicts with §1–§8, §9 wins.**
+
 This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral_gain.md`. It applies your review:
 - The canvas is now truly generic. All brush, rectangle and gain logic lives only in Python.
 - The rectangle gain slider runs −60…+12 dB and −60 means −60 dB.
@@ -791,3 +793,240 @@ Also document the new `object.get` fields next to `channel_mode` (around l.1062)
 - **N2. Undo while the veil is being recomputed.** For 50–200 ms the old veil still shows the undone op, and the computing indicator is on. Default: accept. Alternative: the app hides layers whose `history_rev` is behind until the new veil arrives.
 - **N3. Traces once reflected.** Default: they disappear entirely and the veil alone shows the result. Alternative: keep a faint permanent outline of each active rectangle.
 - **N4. Tool icons.** The script names an SF Symbol (`eraser`, `rectangle.dashed`). Default: accept; an unknown name falls back to the kind's icon.
+---
+
+## 9. Revision 3 (6 October 2026): two modes, a weighted selection, the Brush
+
+The user tried steps 1–11 and decided six changes (all to be implemented):
+1. ONE three-state switch Original / Résultat / Différence replaces A/B + the Delta toggle.
+2. Two modes: **Instant** (each gesture is applied at once, one history step, as today) and
+   **Sélection** (gestures build a weighted selection, the hand tunes the settings while listening, then
+   **Appliquer** makes ONE history step and clears the selection; Appliquer ≠ Valider).
+3. A Dessiner / Effacer switch, Sélection mode only; holding ⌘ flips it while held.
+4. Right click in the spectrogram = move the playhead, nothing else. Left click there only draws. A left
+   click in the time ruler still moves the playhead.
+5. The Hand tool goes. Navigation = wheel (pan), ⇧-wheel (zoom), pinch, Fit.
+6. "Gomme / Eraser / Borrador" becomes "Pinceau / Brush / Pincel" everywhere.
+
+The invariant holds: **the canvas knows gestures, layers, history and playback; it never knows gain.**
+The selection is a script LAYER; what a step MEANS is the script's; only the shape of the history is the app's.
+
+### 9.1 Where each decision lives, and why
+
+| thing | owner | why |
+|---|---|---|
+| Mode Instant / Sélection | **canvas** (opt-in at `open`) | it changes the SHAPE of the history (one step per gesture vs one per Apply) and how ⌘Z walks it; it must be decided synchronously at mouseUp. A script control would round-trip through the long poll and misfile a fast gesture. |
+| Appliquer | **canvas** (`commit`) | it seals history entries; same reason. |
+| Dessiner / Effacer | **canvas** (`polarity` on each op) | it is a property of the gesture, frozen at mouseDown, like the brush size; ⌘-flip is a keyboard state only the window sees. The app does not know what "subtract" does. |
+| The selection's intensity, its look | **script** (a layer `"selection"`) | it is pure interpretation of ops + values. The existing layer / `history_rev` machinery already covers it. |
+| Gain, feather, pro rata | **script** (`mask.py`) | unchanged rule. |
+| Right-click seek, no Hand | **canvas** | navigation and transport were always the app's. |
+
+### 9.2 Contract changes to `script.canvas.*` (`command_api.md` is updated in the same commit as the code)
+
+**`open`** gains `modes?: bool` (default false). With `modes: true` the window shows the mode switch,
+the Dessiner / Effacer switch (Sélection only) and Appliquer. Without it the canvas is Instant only and no
+op is ever `subtract`. The mode at opening is `instant` (not remembered).
+`tools[].id == "hand"` is no longer reserved (no Hand any more); with no tool declared, a left click does nothing.
+
+**History: entries instead of ops.** The history is ONE linear stack of ENTRIES, `cursor` over entries:
+- `{"id", "kind": "draft", "active_since", "ops": [op]}` — one selection gesture not yet applied (exactly one op);
+- `{"id", "kind": "step", "active_since", "params": {…}, "ops": [op, …]}` — a committed step. `params` is
+  the snapshot of EVERY hand-value control at the moment it was sealed (the app does not choose which).
+
+Rules (pure, in `CanvasHistory`, §9.4):
+- Instant: a gesture appends a `step` of one op, `params` = the values at mouseUp.
+- Sélection: a gesture appends a `draft`.
+- `commit`: the trailing active drafts (they are always contiguous at the top: a commit consumes them all)
+  are REPLACED by one `step` holding their ops in order, `params` = the values now. The redo tail is dropped.
+  No active draft → a no-op (`added: false`).
+- Any new entry drops the redo tail (linear history, chronology kept).
+- **⌘Z = one entry back**: the last selection gesture alone if the top is a draft; a WHOLE applied step
+  otherwise (its selection does NOT come back: the ear hears the step disappear, which is what ⌘Z must do).
+  ⇧⌘Z = one entry forward, a step comes back whole. So in Sélection mode ⌘Z first peels the pending
+  selection gesture by gesture, then the applied steps.
+- `active_since` moves to the entry (set when added, sealed or redone); `unreflected` still lists OP ids
+  (those of active entries whose `active_since > reflected_rev`). Sealing refreshes `active_since`, so the
+  sealed ops' traces show until the script's next layer — the same gap as Instant today.
+- `history` payload: `{rev, cursor, count, pending, unreflected, entries?}`. `pending` = number of
+  trailing active drafts. `entries` is omitted when `known_history_rev == rev` (was `ops`).
+
+**Op JSON** gains `"polarity": "add" | "subtract"` (always `add` in Instant). `active_since` leaves the op.
+
+**Top-level state** gains `"modes": bool, "mode": "instant"|"select", "polarity": "add"|"subtract"`
+(the toggle's state; the ⌘ flip is not in it, it only decides the polarity of the op being drawn).
+
+**`input`** gains `mode?`, `polarity?`, `commit?: true`; `op` gains `polarity?` (default: the toggle's).
+Order: values, tool, mode, polarity, view, op, commit, undo, redo, seek, listen, play, press.
+- `mode` while `pending > 0` → `invalid_state` (default answer to Q-A below); without `modes` → `invalid_state`.
+- `polarity: "subtract"` (toggle or op) in Instant → `invalid_state`.
+- `commit` moves `rev` and `historyRev` when it seals something. `mode` and `polarity` do not move `rev`
+  (like `tool`): the entries already say everything the script needs.
+- `tool: "hand"` → `bad_params` (unknown tool).
+- `listen` takes `"original" | "result" | "delta"`; `invalid_state` if that slot is empty.
+  The `delta` field of `input` and of `transport` is REMOVED (branch never merged: no compatibility kept).
+  `set_audio`'s `delta` SLOT is unchanged. Clearing the slot being heard falls back to `original`.
+
+**Busy indicator.** The toolbar's "Calcul…" shows when `busy` OR `audio_history_rev < history.rev`: a live
+re-render (§9.3) does not move the history, so the script signals it with `update {busy: true}`.
+
+### 9.3 Python
+
+**Controls** (`canvas_controls`): one `gain` (−60…12, default −12) now serves BOTH tools. Section
+`sec_brush` "Pinceau / Brush / Pincel": `size_px` (unchanged), `quantity` "Quantité par passage / Amount per
+pass / Cantidad por pasada", %, 1…100 step 1, default **25** (so −12 × 25 % = −3 dB, today's default per
+pass), `hardness` (unchanged). `amount` is removed (an old remembered `amount` is simply ignored).
+**Tools**: `{id: "rect", kind: "rect", params: []}` (feathers now come from the step's `params`, so they
+can be tuned live on a selection); `{id: "brush", kind: "stroke", label: Pinceau/Brush/Pincel, icon:
+"paintbrush.pointed", params: ["quantity", "hardness"], size_control: "size_px"}`. `open` with `modes: true`.
+
+**`mask.py` — the selection-intensity model** (the only home of it; plan §3.3 dab machinery kept):
+- `split_history(history) -> (steps, draft_ops)`: active steps `[(ops, params)]` and the ops of the trailing drafts.
+- Brush deposit `D(cell) = Σ_dabs w·p(ρ)`, `w = per_dab_weight(h) = spacing_for(h)/(R(1+h))` (today's
+  `per_dab_db` with amount 1): one straight crossing deposits exactly 1 on the centre line.
+- `selection_grid(ops, xw, yw, world, feather_ms, feather_st)`: S starts at 0, ops IN ORDER:
+  - brush add `S ← min(1, S + q·D)`, subtract `S ← max(0, S − q·D)`, `q = quantity/100` (clamp per op:
+    crossing the same place inside one stroke adds up, then the op is capped);
+  - rect add `S ← max(S, W)`, subtract `S ← min(S, 1 − W)`, `W = wx·wy` (feathered, open edges as §3.3).
+- Total gain `G = Σ_steps gain_s · S_s` (`S_s` with the step's own `feather_*`) `+ gain_now · S_draft`
+  (current values; preview only). Floor −300 dB as before. So Instant: rect = `gain·W` (as today); brush =
+  `gain·min(1, q·D)` per stroke (−3, −6 out-and-back, at most `gain` per stroke), strokes add in dB across steps.
+- Renames: `eraser_from_op` → `brush_from_op`, tool id `eraser` → `brush`, `per_dab_db` → `per_dab_weight`.
+- `stft_gain_block_fn(steps, draft, live, …)`: per block, each step's S on the block grid, then G.
+  Per-step compiled primitives keep the per-op-id cache.
+
+**`veil.py`**: the **veil = committed steps only** (`G_committed`, cached per appended step; any undo → full
+recompute); a new **selection layer** `render_selection(S_draft)`: colour (1, 0.85, 0.25), alpha `0.6·S`,
+premultiplied, same grid as the veil; `SelectionCache` incremental on appended drafts (valid: the clamped
+updates are sequential), full recompute on undo or a feather change.
+
+**`decide.py`**: `LIVE_KEYS = ("gain", "feather_ms", "feather_st")`; `preview_dirty(prev_values, values,
+pending) -> {"selection", "audio"}` subset: empty when `pending == 0`; `feather_*` changed → both; `gain`
+alone → audio only.
+
+**`spectral_gain.py` loop** (`sync`): the key of the result becomes `(history rev, n, k, live)` with `live` =
+the `LIVE_KEYS` values when `pending > 0`, else None. Order on a change: `update busy` → selection layer
+(`set_layer {layer: "selection", z: 2, history_rev}`, or `path: null` when `pending == 0`) → veil (only if the
+committed steps changed) → audio → `busy false`. A live tweak never touches the history. Status: "%d étape(s)"
++ " — sélection : %d geste(s)" when pending. **Validate** writes what is HEARD: committed steps + the pending
+selection at the current values (default answer to Q-B).
+
+### 9.4 Swift
+
+- **New pure file `objekat/Shared/ScriptCanvasHistory.swift`**: `nonisolated struct CanvasHistory<Op>` with
+  `entries`, `cursor`, `rev`, `nextEntryID`; `appendStep(ops:params:)`, `appendDraft(_:)`, `commit(params:) ->
+  Bool`, `undo() -> Bool`, `redo() -> Bool`, `pending`, `activeEntries`, `activeSince` bookkeeping. Generic over
+  `Op` and `Params` so it compiles standalone (no `JSONValue` needed in the test).
+- **`ScriptCanvasStore`**: `ops / cursor / historyRev` → `history: CanvasHistory<CanvasOp, [String: JSONValue]>`;
+  `CanvasPolarity {add, subtract}`, `CanvasMode {instant, select}`, `modes`, `mode`, `polarity` on
+  `ScriptCanvas`; `addRect / addStroke / addPoint` take `polarity:`; new `commit`, `setMode`, `setPolarity`;
+  `handToolID` removed (`activeTool: String?`); `CanvasListen` gains `.delta`, `transport.delta` and
+  `setDelta` removed. Step params = `ScriptControls.handValues`.
+- **`Commands+ScriptCanvas.swift`**: payload (`entries`, `pending`, `mode`, `polarity`, `modes`, op
+  `polarity`, `listen` 3 values), `open.modes`, `input.mode / polarity / commit / op.polarity`, the `delta`
+  input removed, the `hand` reservation removed.
+- **`ScriptCanvasAudition`**: `setAudible` reads `listen` only (delta = the delta node).
+- **Window**: toolbar = script tools · [Instantané | Sélection] (if `modes`; disabled while `pending > 0`, help
+  `canvas.mode.locked.help`) · [Dessiner | Effacer] (Sélection only; shows the EFFECTIVE state, flipped
+  while ⌘ is held) · undo / redo · play · [Original | Résultat | Différence] (one segmented control;
+  choosing an empty slot is refused by the setter) · Fit · time · indicator. **Appliquer**: a full-width
+  button at the top of the sidebar's bottom block, above Cancel / Validate, shown in Sélection mode, enabled
+  iff `pending > 0`; no shortcut (Return stays unbound). `ScriptCanvasPanel.sendEvent` watches
+  `.flagsChanged` → an `@Observable` `commandHeld` (UI only); cleared on `resignKey`.
+- **Plot**: the `.pan` gesture state and the click-seek go. `rightMouseDown` (and `mouseDown` with ⌃) seeks
+  to the clicked x, nothing else (no drag-follow). Left click in the plot only draws; the time ruler keeps its
+  left-click seek. Effective polarity = toggle XOR `NSEvent.modifierFlags.contains(.command)`, read at
+  mouseDown, frozen for the gesture. Traces: `subtract` discs white at 0.25 alpha (`add` stays black 0.15),
+  a `subtract` rect outline dashed. Cursor: crosshair / brush circle, a minus mark inside the circle when the
+  effective polarity is subtract; no tool → arrow; `.openHand` gone.
+- **Monitors**: the timeline's `.flagsChanged` monitor already returns early for a `ScriptCanvasPanel`; nothing
+  new to guard. Known residue: ⌘ pressed in the timeline and released over the canvas leaves `vm.cmdKeyHeld`
+  stale until the next flags event there (pre-existing, left alone).
+
+**i18n (fr / en / es)** — removed: `canvas.tool.hand`, `canvas.listen.delta.help`. Changed:
+`canvas.listen.delta` = Différence / Difference / Diferencia. Added:
+
+| key | fr | en | es |
+|---|---|---|---|
+| `canvas.listen.help` | Original : le son de départ · Résultat : après les opérations · Différence : ce qu'elles retirent | Original: the starting sound · Result: after the operations · Difference: what they take away | Original: el sonido inicial · Resultado: tras las operaciones · Diferencia: lo que quitan |
+| `canvas.mode.instant` | Instantané | Instant | Instantáneo |
+| `canvas.mode.select` | Sélection | Selection | Selección |
+| `canvas.mode.help` | Instantané : chaque geste est appliqué aussitôt. Sélection : construire, écouter, puis Appliquer | Instant: each gesture is applied at once. Selection: build, listen, then Apply | Instantáneo: cada gesto se aplica al momento. Selección: construir, escuchar y Aplicar |
+| `canvas.mode.locked.help` | Appliquez ou annulez (⌘Z) la sélection d'abord | Apply or undo (⌘Z) the selection first | Aplique o deshaga (⌘Z) la selección primero |
+| `canvas.polarity.add` | Dessiner | Draw | Dibujar |
+| `canvas.polarity.subtract` | Effacer | Erase | Borrar |
+| `canvas.polarity.help` | ⌘ maintenu : inverse le temps du geste | Hold ⌘ to flip while drawing | Mantenga ⌘ para invertir al dibujar |
+| `canvas.apply` | Appliquer | Apply | Aplicar |
+| `canvas.apply.help` | Applique la sélection avec les réglages actuels : une étape d'historique | Apply the selection with the current settings: one history step | Aplica la selección con los ajustes actuales: un paso del historial |
+
+Glossary: gomme / eraser / borrador → **pinceau / brush / pincel**; add mode instantané / instant mode / modo
+instantáneo; sélection (pondérée) / (weighted) selection / selección (ponderada); appliquer / apply / aplicar;
+dessiner·effacer / draw·erase / dibujar·borrar; intensité / intensity / intensidad. The script's own `tr()`
+strings follow the same words. Rename also in `command_api.md`, `README.md` of the script, the spec, and a
+dated line in the `CLAUDE.md` entry (history kept, the state updated).
+
+### 9.5 Tests (each run < 5 min; the scenario's end-to-end signals stay 2 s long)
+
+**Python** (`run_tests.sh`, both numpys):
+- `test_mask.py` (eraser tests rewritten for the brush): one crossing at q 25 % → S = 0.25 ± 1.4 % on the
+  centre line for h ∈ [0, 1]; out-and-back 0.5; five crossings capped at 1.0; subtract floors at 0;
+  draw-then-erase ≠ erase-then-draw (order kept); a still hand → 0; rect add 1 inside, 0.5 at a feathered
+  edge, open edges; rect subtract `min(S, 1 − W)`; pro rata: gain −12 on S 0.5 → −6.00, on S 1 → −12.00;
+  two steps add in dB; the draft uses `live` values, a step its own `params`; `split_history` on every shape
+  (only drafts, only steps, steps + drafts, cursor inside the tail); `selection_grid` == pointwise.
+- `test_veil.py`: veil ignores drafts; selection alpha `0.6·S` at S 0, 0.5, 1; both caches == full recompute
+  after appends, after an undo, after a feather change.
+- `test_decide.py`: the `preview_dirty` table (pending 0 → ∅; gain → {audio}; feather → both; fft → ∅ here).
+
+**Swift standalone**: new `tools/test_script_canvas_history.swift` (built with `ScriptCanvasHistory.swift`
+only): Instant appends steps; drafts then commit = one step with the ops in order and the new params; commit
+with nothing pending is a no-op; ⌘Z peels drafts one by one, then a whole step; redo brings a step back whole;
+a new entry drops the redo tail, including after an undone commit; `pending`, `active_since` refreshed by
+seal and redo; ids never reused. Geometry and image tests unchanged, re-run.
+
+**Scenario `tools/scenario_spectral_gain.py`**:
+- **b** (contract, updated): `entries` shape; Instant gesture = one `step` whose `params` = every value;
+  `modes: true` + `mode: "select"`: two gestures → `pending 2`, `commit` → one step of 2 ops, `pending 0`;
+  `undo` order (draft, draft, then a whole step; the step's drafts do NOT come back); `redo` whole; `mode`
+  refused while pending; `subtract` in Instant refused; `polarity` recorded on the op; `commit` moves `rev`,
+  `mode`/`polarity` do not; without `modes`, `mode` refused; `tool: "hand"` → `bad_params`; `listen: "delta"`
+  works, refused without a delta slot; clearing the heard slot falls back to original; a value change with
+  `pending > 0` moves `rev` but not `history.rev`.
+- **c** (end to end, Instant, kept + adapted): rect −24 → −24 ± 1 dB at 3 kHz, 300 Hz ± 0.2; undo; brush
+  (gain −12, quantity 25) one pass −3 ± 0.4, an out-and-back IN ONE stroke −6 ± 0.5; expert change; Validate,
+  export, one `edit.undo`.
+- **g** (NEW, end to end, Sélection): `mode: select`; rect selection over 2–4.5 kHz → the `selection` layer
+  alpha ≈ 0.6 at (1 s, 3 kHz), 0 at 300 Hz, `history.rev` moved once, no veil change; gain −6 → result 3 kHz at
+  −6 ± 1 with `history.rev` UNCHANGED; gain −12 → −12 ± 1; a brush pass at quantity 50 over a second band →
+  that band at −6 ± 0.6 (pro rata); an Erase pass at 50 over it → back to 0 ± 0.3; `commit` → one step, the
+  selection layer gone, the veil shows −12 at 3 kHz; gain moved afterwards changes nothing; `undo` → 3 kHz
+  back to 0 ± 0.2 and `pending 0`; then a pending selection + Validate → the written file carries it.
+- **d, e, f** re-run unchanged.
+- **Not verifiable headless** (to the user's eye/ear): the switches' look, ⌘-flip feedback, right-click seek,
+  the selection colour over magma, how fast a live tweak is heard.
+
+### 9.6 Ordered commits (each builds; the tests it names are green)
+
+| # | commit | verifies |
+|---|---|---|
+| R3-1 | `mask.py`: selection-intensity model, `split_history`, brush rename; `test_mask.py` | `run_tests.sh` (both numpys) |
+| R3-2 | `veil.py` (committed veil, selection layer, caches), `decide.preview_dirty`; `test_veil.py`, `test_decide.py` | `run_tests.sh` |
+| R3-3 | `ScriptCanvasHistory.swift` + `tools/test_script_canvas_history.swift` (not yet used by the store) | standalone test; Debug build |
+| R3-4 | Store + commands: entries, modes, polarity, commit, 3-state listen, no Hand; audition `setAudible`; the window adjusted only enough to compile (Hand toggle and Delta toggle removed, listen picker 3 values); `command_api.md`; scenario **b** updated. The script still runs Instant-only (tool ids renamed in R3-6) — section c is NOT run at this commit | build (no new warning); section b |
+| R3-5 | Window + plot: mode / polarity switches, Appliquer, ⌘ flip, right-click seek, pan state removed, traces and cursors by polarity, busy indicator; i18n keys + glossary | build; sections b, f; `xcstrings.py check` + `orphans`; then the user's eye |
+| R3-6 | `spectral_gain.py` (controls, tools `rect`/`brush`, `modes: true`, the live loop, two layers, Validate = heard), README; scenario **c** adapted, **g** added | `run_tests.sh`; sections c, d, e, g (after `install.sh` if the venv needs it) |
+| R3-7 | Docs: the spec, `command_api.md` rename pass, the dated `CLAUDE.md` line (what was verified, what was not seen or heard) | — |
+| (R3-8) | ONLY if a live tweak measures > 300 ms on a 30 s object: `dsp.process_range` recomputing just the frames the selection's bounding box touches (± N/2) and splicing them (exact under WOLA: outside those frames the mask is unchanged) | test_dsp: splice == full process to −120 dB |
+
+### 9.7 Open questions (each with the default the executor applies until answered)
+
+- **Q-A. Switching mode with a pending selection.** Default: the switch is disabled until Apply or ⌘Z empties it.
+  Alternatives: switching applies it; switching discards it.
+- **Q-B. Valider with a pending selection.** Default: it is included (what you hear is what you get).
+  Alternative: only applied steps count, the pending selection is dropped (or Valider is disabled while pending).
+- **Q-C. One gain for both tools.** Default: the brush no longer has its own "−3 dB per pass": a pass deposits
+  Quantité (default 25 %) of selection, times the shared Gain (−12 → −3 dB). In Instant this caps one stroke at
+  the Gain (today an out-and-back-and-back kept going: −9, −12, …); successive strokes still add up. OK?
+- **Q-D. A rectangle in Effacer.** Default: it clears the selection inside it (feathered), `min(S, 1 − W)`.
+- **Q-E. What the veil shows while a selection is pending.** Default: applied steps only; the pending selection
+  has its own amber overlay (opacity = intensity) and is only heard, not shown as attenuation.

@@ -3,6 +3,12 @@
 Status: CONFIRMED by the user on 4 October 2026 — every **[proposed]** below was accepted as is (read them as decided).
 All points were confirmed by the user; **[decided]** and **[proposed]** only record who first said them.
 
+**Revision 3 (6 October 2026), decided by the user after trying it:** one Original / Result / Difference
+switch; two modes, Instant and Selection (a weighted selection, then Apply); a Draw / Erase switch in
+Selection mode (⌘ held flips it); right click = playhead; no Hand tool; the Eraser is renamed **Brush**.
+The sections below are updated; the technical side is `plan_spectral_gain.md` §9. Points marked
+**[r3 default]** are the architect's defaults awaiting the user's answer (plan §9.7).
+
 ## 1. What it is
 
 A third-party script, **"Spectral gain"**, reached from an object's right click
@@ -49,45 +55,62 @@ A floating, resizable window (same family as the script panel window), **[decide
   - Frequency axis **logarithmic**, no linear mode **[decided]**.
   - Rulers: time (s / min:s) and frequency (Hz / kHz); a readout of time, frequency and level
     under the pointer **[proposed]**.
-  - Zoom and pan on both axes (wheel / trackpad, ⇧ for zoom as in the timeline **[proposed]**).
+  - Zoom and pan on both axes (wheel / trackpad, ⇧ for zoom as in the timeline **[proposed]**), pinch,
+    Fit. There is no Hand tool **[r3]**.
+  - Left click in the spectrogram only DRAWS; **right click** (or ⌃-click) only moves the playhead; a left
+    click in the time ruler also moves it **[r3]**.
   - The operations drawn ON TOP, immediately, by the app (the mask preview), before the script has
     recomputed anything.
   - A playhead.
 - **Side bar**: the script's own controls, same vocabulary as `script.panel` (number, bool, choice,
   button, progress, section), plus Validate / Cancel.
-- **Tool bar**: tool choice (Rectangle / Eraser / Hand-pan), transport (play/stop, A/B, delta),
-  undo/redo.
+- **Tool bar**: tool choice (Rectangle / Brush), the mode (Instant / Selection), Draw / Erase (Selection
+  mode only), undo/redo, play/stop, ONE listening switch Original / Result / Difference, Fit **[r3]**.
+- **Apply** (Selection mode): in the side bar, above Cancel / Validate, distinct from Validate **[r3]**.
 
 ## 4. Tools — the gain is SUBTRACTIVE first
 
-The model is an **ordered list of operations**, each one a step of the history. The mask applied to
-the audio is the product of all operations, in order (gains in dB add up). Linked L+R: ONE mask for
-both channels, the display shows the channels combined **[decided; proposed: max of L and R]**.
+The model is an **ordered history of steps**. The mask applied to the audio is the sum, in dB, of every
+applied step. Linked L+R: ONE mask for both channels, the display shows the channels combined **[decided;
+proposed: max of L and R]**.
+
+### Two modes **[r3, decided]**
+- **Instant**: each gesture is applied at once with the current settings and becomes one history step;
+  its trace gives way to the veil. There is no Erase in Instant: ⌘Z corrects.
+- **Selection**: gestures build a **weighted selection** that stays on screen, over as many gestures as
+  wanted. The hand changes the settings while listening (try −6, then −12 dB): the preview follows live and
+  no history step is added. **Apply** makes ONE history step from the selection at the current settings and
+  clears it. Apply is not Validate (which closes the window).
+- Mode at opening: Instant. Switching mode while a selection is pending is not allowed until it is applied or
+  undone **[r3 default]**. Validate with a pending selection includes it, as heard **[r3 default]**.
+
+### The weighted selection **[r3, decided]**
+- An intensity from 0 to 100 % at every point of time × frequency, shown by the selection overlay's opacity.
+- A **Brush** pass adds intensity according to its **Quantity** (%, per pass), capped at 100 %; an
+  **Erase** pass subtracts it, floor 0 %.
+- A **Rectangle** sets 100 % inside, with feathered edges; in Erase it clears the inside **[r3 default]**.
+- The **gain** applies pro rata: at −12 dB, a 50 % zone gets −6 dB, a 100 % zone −12 dB.
+- Changing the gain or the feathers while a selection exists re-renders the preview live.
+- **Draw / Erase** switch, Selection mode only; holding **⌘** flips it while held (as in Photoshop).
 
 ### Rectangle **[decided]**
-- Drag a box over time × frequency → one operation.
-- Parameters, taken from the side bar at the moment of the gesture: **gain** (dB, range
-  −∞ … +12 dB **[proposed]**, default −12 dB **[proposed]**), **feather in time** (ms) and
-  **feather in frequency** (in semitones **[proposed]**) — a soft edge, so a
-  box does not ring.
-- Cumulative like everything else: two overlapping boxes at −6 dB give −12 dB where they overlap.
+- Drag a box over time × frequency.
+- Settings: the shared **gain** (dB, −60 … +12, default −12), **feather in time** (ms) and **feather in
+  frequency** (semitones) — a soft edge, so a box does not ring. In Instant they are taken at the gesture;
+  in Selection, at Apply.
+- Cumulative across steps: two overlapping applied boxes at −6 dB give −12 dB where they overlap.
 
-### Eraser (cumulative) **[decided]**
-An eraser rather than a brush: it exists to take away.
-- A stroke = one operation (one undo step).
-- Parameters, all three adjustable by the hand in the side bar **[decided]**: **size** (diameter, in screen pixels at the time of the stroke **[proposed]** —
-  stored in time × frequency units so it does not change meaning when zooming), **attenuation per
-  pass** (dB, default −3 dB **[proposed]**), **hardness** (the feather of the brush tip).
-- **Cumulative, like a spray can in negative** **[decided]**: the stroke deposits DABS along the
-  path the hand travels, at a fixed spacing (a fraction of the diameter **[proposed: ¼]**), each
-  dab attenuating by the per-pass amount weighted by the tip profile (hardness: centre strongest,
-  edges softer). Everything adds up, WITHIN a stroke as across strokes: crossing the same place
-  several times in one stroke attenuates it several times (−3, −6, −9 …), floor −∞.
-  **Distance, not time** **[decided]**: a hand held still with the button down deposits nothing;
-  only travel deposits. The attenuation per pass is calibrated so that ONE straight crossing of a
-  point gives the per-pass figure at the tip's centre, whatever the spacing.
-- The app draws the accumulated attenuation as a veil on the image, so one sees where one has
-  already been.
+### Brush (formerly "Eraser") **[decided; renamed r3]**
+- A stroke = one gesture (one step in Instant, one selection gesture in Selection).
+- Settings: **size** (diameter in screen points at the time of the stroke, stored in time × frequency units),
+  **quantity per pass** (%, default 25 % **[r3 default]**: with the default gain −12 dB, one pass = −3 dB),
+  **hardness** (the feather of the tip). The gain is the shared one **[r3 default]**.
+- **Like a spray can**: the stroke deposits DABS along the path the hand travels, each weighted by the tip
+  profile; crossing the same place several times in one stroke deposits several times, up to 100 % of the
+  gain for that stroke. **Distance, not time** **[decided]**: a hand held still deposits nothing. One straight
+  crossing deposits exactly the quantity at the tip's centre, whatever the spacing.
+- In Instant, successive strokes still add up in dB (−3, −6, −9 … across strokes).
+- The app draws the applied attenuation as a veil, and the pending selection as its own overlay.
 
 ### Not in v1
 Lasso / free shapes, magic wand, harmonic selection **[proposed]**; editing an existing operation's
@@ -96,9 +119,9 @@ parameters after the fact — the history is undo/redo only **[decided]**.
 ## 5. Listening **[decided]**
 
 Inside the window, independently of the project's transport (which is stopped on play **[proposed]**):
-- **Play / stop** from the point clicked in the view, with a playhead.
-- **A/B**: switch instantly between the ORIGINAL and the RESULT while playing, same position.
-- **Delta**: hear only what the operations take away (original − result), to check one is not
+- **Play / stop** from the caret (set by a right click in the view, or a click in the time ruler), with a playhead.
+- **ONE switch Original / Result / Difference** **[r3]**: switch instantly, same position, between the
+  original, the result, and only what the operations take away (original − result), to check one is not
   damaging the sound.
 - The result follows the history: after an operation (or an undo/redo), the script recomputes and
   hands the app a new preview file; the app swaps it at the same position. Until then the status
@@ -106,8 +129,10 @@ Inside the window, independently of the project's transport (which is stopped on
 
 ## 6. Undo / redo **[decided]**
 
-Every operation is a step; ⌘Z / ⇧⌘Z inside the window walk the history, and the ear follows (§5),
-so one can compare step by step. This is the window's OWN history: nothing reaches the project's
+Every applied step (an Instant gesture, or an Apply) is a history entry; in Selection mode each pending
+selection gesture is one too. ⌘Z goes back ONE entry: the last selection gesture alone while a selection is
+pending, otherwise a whole applied step — whose selection does not come back **[r3]**. ⇧⌘Z goes forward the
+same way. ⌘Z / ⇧⌘Z inside the window walk the history, and the ear follows (§5), so one can compare step by step. This is the window's OWN history: nothing reaches the project's
 undo stack until Validate (which is ONE project undo step, as in `retouche-externe`).
 
 ## 7. DSP
@@ -133,18 +158,19 @@ undo stack until Validate (which is ONE project undo step, as in `retouche-exter
 - Open / close a canvas window bound to the calling connection (same lifetime as `script.panel`:
   the script dying closes it), optionally bound to an object.
 - Set an image (file path) with its axes: x and y ranges, units, lin/log mapping.
-- Declare which tools are offered and their parameters (sidebar controls).
+- Declare which tools are offered and their parameters (sidebar controls); optionally the two modes
+  (Instant / Selection with Apply), which give each gesture a polarity (add / subtract) and seal selection
+  gestures into one step — the app knows the shape of the history, never what a step means **[r3]**.
 - Report the operation history (ordered list, with the undo cursor) by long poll; never an edit of
   the project, never dirty, never in the project's undo stack.
-- Draw the operations as overlays (rectangles with feather, strokes with size/hardness, cumulative
-  veil).
-- Play audio files the script provides, with A/B/delta slots, a playhead, seek, and a swap that keeps
-  the position.
+- Draw a raw trace of each operation until the script's layers (the veil, the selection) reflect it.
+- Play audio files the script provides, with original / result / delta slots heard through ONE
+  three-state switch, a playhead, seek (right click), and a swap that keeps the position.
 - Headless: the canvas exists, no window opens; an `input`-style door lets a test inject gestures.
 
 ## 9. Verification plan
 
-- Python: STFT/ISTFT round trip (identity to −120 dB), mask arithmetic (cumulative eraser, feather,
+- Python: STFT/ISTFT round trip (identity to −120 dB), mask arithmetic (cumulative brush, weighted selection, feather,
   one-stroke-once), against synthetic signals — runnable on this Linux machine.
 - App: a headless scenario driving `script.canvas.*` and the script end to end (inject a rectangle,
   undo, validate, check the new object and the mute; an export re-read at RMS proving the band was
