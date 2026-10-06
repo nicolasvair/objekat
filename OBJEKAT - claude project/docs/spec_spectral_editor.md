@@ -6,8 +6,9 @@ All points were confirmed by the user; **[decided]** and **[proposed]** only rec
 **Revision 3 (6 October 2026), decided by the user after trying it:** one Original / Result / Difference
 switch; two modes, Instant and Selection (a weighted selection, then Apply); a Draw / Erase switch in
 Selection mode (⌘ held flips it); right click = playhead; no Hand tool; the Eraser is renamed **Brush**.
-The sections below are updated; the technical side is `plan_spectral_gain.md` §9. Points marked
-**[r3 default]** are the architect's defaults awaiting the user's answer (plan §9.7).
+The sections below are updated; the technical side is `plan_spectral_gain.md` §9. The architect's open
+questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
+others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
 ## 1. What it is
 
@@ -81,14 +82,20 @@ proposed: max of L and R]**.
   wanted. The hand changes the settings while listening (try −6, then −12 dB): the preview follows live and
   no history step is added. **Apply** makes ONE history step from the selection at the current settings and
   clears it. Apply is not Validate (which closes the window).
-- Mode at opening: Instant. Switching mode while a selection is pending is not allowed until it is applied or
-  undone **[r3 default]**. Validate with a pending selection includes it, as heard **[r3 default]**.
+- Mode at opening: Instant (not remembered).
+- **Switching from Selection to Instant while a selection is pending** asks, in an alert on the window:
+  **Apply** (seal it, then switch) / **Ignore** (throw it away, then switch) / **Cancel** (stay in Selection)
+  **[Q-A, decided 7 October]**. Switching to Selection never asks (Instant holds nothing pending).
+- **Validate while a selection is pending** asks the same three things: Apply (then Validate), Ignore (Validate
+  without it), Cancel (stay in the window) **[Q-B, decided 7 October]**. A script that validates through the
+  API (no window to ask) writes what is heard: the committed steps and the pending selection at the current
+  values.
 
 ### The weighted selection **[r3, decided]**
 - An intensity from 0 to 100 % at every point of time × frequency, shown by the selection overlay's opacity.
 - A **Brush** pass adds intensity according to its **Quantity** (%, per pass), capped at 100 %; an
   **Erase** pass subtracts it, floor 0 %.
-- A **Rectangle** sets 100 % inside, with feathered edges; in Erase it clears the inside **[r3 default]**.
+- A **Rectangle** sets 100 % inside, with feathered edges; in Erase it clears the inside **[r3, kept]**.
 - The **gain** applies pro rata: at −12 dB, a 50 % zone gets −6 dB, a 100 % zone −12 dB.
 - Changing the gain or the feathers while a selection exists re-renders the preview live.
 - **Draw / Erase** switch, Selection mode only; holding **⌘** flips it while held (as in Photoshop).
@@ -103,8 +110,8 @@ proposed: max of L and R]**.
 ### Brush (formerly "Eraser") **[decided; renamed r3]**
 - A stroke = one gesture (one step in Instant, one selection gesture in Selection).
 - Settings: **size** (diameter in screen points at the time of the stroke, stored in time × frequency units),
-  **quantity per pass** (%, default 25 % **[r3 default]**: with the default gain −12 dB, one pass = −3 dB),
-  **hardness** (the feather of the tip). The gain is the shared one **[r3 default]**.
+  **quantity per pass** (%, default 25 % **[r3, kept]**: with the default gain −12 dB, one pass = −3 dB),
+  **hardness** (the feather of the tip). The gain is the shared one **[r3, kept]**.
 - **Like a spray can**: the stroke deposits DABS along the path the hand travels, each weighted by the tip
   profile; crossing the same place several times in one stroke deposits several times, up to 100 % of the
   gain for that stroke. **Distance, not time** **[decided]**: a hand held still deposits nothing. One straight

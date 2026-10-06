@@ -1020,6 +1020,12 @@ seal and redo; ids never reused. Geometry and image tests unchanged, re-run.
 
 ### 9.7 Open questions (each with the default the executor applies until answered)
 
+**Answered by the user, 7 October 2026.** Q-A: switching Sélection → Instant with a selection pending shows an
+alert **Appliquer / Ignorer / Annuler** (Annuler stays in Sélection) — this REPLACES the default below and §9.4's
+"disabled while `pending > 0`" (so `canvas.mode.locked.help` was never added). Q-B: Valider with a selection
+pending shows the same alert (Annuler stays in the window); the script itself, reached through the API with no
+window to ask, still writes what is heard (§9.3). Q-C, Q-D, Q-E and the smaller defaults: kept as written.
+
 - **Q-A. Switching mode with a pending selection.** Default: the switch is disabled until Apply or ⌘Z empties it.
   Alternatives: switching applies it; switching discards it.
 - **Q-B. Valider with a pending selection.** Default: it is included (what you hear is what you get).
