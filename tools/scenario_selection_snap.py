@@ -10,7 +10,8 @@ also asserted alone by `tools/test_selection_move_snap.swift`.
   * the range's START lands on a real mark even when the range begins in silence (no object edge
     there) — which the old two-edges-of-the-grabbed-object snap could never do;
   * a real mark beats the grid even when the grid line is nearer;
-  * the range's START beats an object edge that is nearer still; the object's edge comes second;
+  * only the range's bounds are references: a mark that only the grabbed object's edge would
+    reach is ignored, the bounds then go to the grid (`grab` no longer exists);
   * the range's END lands on a mark the start does not reach;
   * snap off: the raw travel;
   * the wall at zero belongs to the RANGE: an object lying later does not limit the travel;
@@ -74,7 +75,7 @@ with ObjekatClient(SOCK) as c:
     # ── a range that begins in SILENCE ───────────────────────────────────────────────────────
     # M1 starts at 4.8, the range is 4 -> 6: nothing at all sits at the range's start.
     lane = fresh()
-    m1 = cmd("midi.create_clip", start=4.8, end=9.0, lane=0)["id"]
+    cmd("midi.create_clip", start=4.8, end=9.0, lane=0)["id"]
     cmd("timesel.set", start=4.0, end=6.0, lanes=[0])
     mk = mark(lane, 10.03)
 
@@ -82,10 +83,6 @@ with ObjekatClient(SOCK) as c:
     check("the range's START lands on a marker, the range beginning in silence",
           near(r["start"], 10.03) and r["edge"] == "start" and r["on_target"] is True
           and near(r["guide_time"], 10.03), json.dumps(r))
-    r = probe(6.02, grab=m1)
-    check("… with an object grabbed inside, the same",
-          near(r["start"], 10.03) and r["edge"] == "start", json.dumps(r))
-
     # 10.01 is 0.01 from the grid line 10.0 and 0.02 from the marker: the REAL mark still wins.
     r = probe(6.01)
     check("a real mark is never beaten by the grid, even a nearer one",
@@ -95,21 +92,19 @@ with ObjekatClient(SOCK) as c:
     check("out of reach nothing pulls: the grid decides, grey",
           near(r["start"], 10.0) and r["on_target"] is False, json.dumps(r))
 
-    # ── the grabbed object's edge comes SECOND ───────────────────────────────────────────────
-    # The object's start is 4.8: at dt = 6.10 it sits 0.01 from a mark at 10.91, while the range's
-    # start (10.10) is 0.07 from 10.03. The START still wins: it is the caret.
+    # ── the object inside is NO reference: only the range's bounds are ───────────────────────
+    # M1 starts at 4.8: at dt = 6.10 its start would sit 0.01 from a mark at 10.91, while the range's
+    # start (10.10) is 0.07 from 10.03. The START wins (it is the caret).
     mk2 = mark(lane, 10.91)
-    r = probe(6.10, grab=m1)
-    check("a nearer OBJECT edge does not beat the range's start within reach",
+    r = probe(6.10)
+    check("the range's start within reach lands, whatever an object inside would reach",
           r["edge"] == "start" and near(r["start"], 10.03), json.dumps(r))
     cmd("marker.remove", lane=lane, marker=mk)
-    r = probe(6.10, grab=m1)
-    check("with the start out of reach the object's start lands",
-          r["edge"] == "object_start" and near(4.8 + r["dt"], 10.91) and r["on_target"] is True
-          and near(r["guide_time"], 10.91), json.dumps(r))
+    # With the start out of reach, the mark M1's start would reach is ignored: the grid decides.
     r = probe(6.10)
-    check("and with NO object grabbed that same travel falls to the grid",
-          r["on_target"] is False and near(r["start"], 10.0), json.dumps(r))
+    check("a mark only an object's edge would reach is ignored: the grid takes the start, grey",
+          r["edge"] == "start" and r["on_target"] is False and near(r["start"], 10.0)
+          and near(r["guide_time"], 10.0), json.dumps(r))
     cmd("marker.remove", lane=lane, marker=mk2)
 
     # ── the END ──────────────────────────────────────────────────────────────────────────────
@@ -139,9 +134,6 @@ with ObjekatClient(SOCK) as c:
     r = probe(-10)
     check("the RANGE stops at zero", near(r["dt"], -4.0) and r["clamped"] is True
           and near(r["start"], 0.0) and near(r["guide_time"], 0.0), json.dumps(r))
-    r = probe(-10, grab=m1)
-    check("… and a later object grabbed does not change that",
-          near(r["dt"], -4.0) and r["clamped"] is True, json.dumps(r))
     r = probe(-3.0)
     check("short of the wall nothing is clamped", r["clamped"] is False and near(r["start"], 1.0),
           json.dumps(r))
@@ -164,13 +156,12 @@ with ObjekatClient(SOCK) as c:
     pieces = cmd("object.split_at", seconds=4.13, ids=[m2])["ids"]
     right = [i for i in pieces if i != m2][0]
     pieces = cmd("object.split_at", seconds=6.13, ids=[right])["ids"]
-    middle = right
     cmd("timesel.set", start=4.13, end=6.13, lanes=[0])
     n_before = len(cmd("object.list")["objects"])
-    r = probe(0.03, grab=middle)
+    r = probe(0.03)
     check("no ⌥: the scraps cut at the bounds are NOT targets — the range is free to leave",
           not near(r["dt"], 0.0) and near(r["dt"], -0.13) and r["on_target"] is False, json.dumps(r))
-    r = probe(0.03, copy=True, grab=middle)
+    r = probe(0.03, copy=True)
     check("⌥: the same scraps ARE there (the originals stay) and hold the range back",
           near(r["dt"], 0.0) and r["on_target"] is True, json.dumps(r))
 

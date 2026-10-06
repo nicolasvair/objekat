@@ -48,6 +48,20 @@ struct Marker: Codable, Equatable, Identifiable {
     var isRegion: Bool { duration > 1e-9 }
     var endTime: Double { time + duration }
 
+    /// The shortest a REGION may be, in seconds — the ONE definition, read by every door that sets
+    /// a region's length: the band's crop, the creation from a time selection, the `marker.*` and
+    /// `object.*_marker` commands, and the ripple's splice. Under a second a region no longer
+    /// names a passage one can hear, and it is also what keeps it from collapsing into a point
+    /// (`duration == 0` is what MAKES a marker). A floor, not a snap: nothing rounds to it.
+    /// NOT applied on load — an older session's shorter region is read as it was written.
+    static let minRegionDuration: Double = 1.0
+
+    /// A length as a region may hold it: 0 (or less) stays 0 — a point, a marker — and anything
+    /// positive is raised to `minRegionDuration`.
+    static func clampedRegionDuration(_ d: Double) -> Double {
+        d > 1e-9 ? Swift.max(minRegionDuration, d) : 0
+    }
+
     enum CodingKeys: String, CodingKey { case id, time, duration, name, colorIndex }
 
     init(from decoder: Decoder) throws {
@@ -272,8 +286,9 @@ extension Array where Element == Marker {
     /// `splitInTime`, for an object that keeps ONE identity).
     ///
     /// A marker inside the hole DISAPPEARS: it named material that has gone. A region overlapping
-    /// the hole loses the overlapping part and keeps the rest; one entirely inside disappears with
-    /// it. Times local to the object, as everywhere here.
+    /// the hole loses the overlapping part and keeps the rest — never less than
+    /// `minRegionDuration`, lengthened from its start if need be; one entirely inside disappears
+    /// with it. Times local to the object, as everywhere here.
     func splicedInTime(removing from: Double, to: Double) -> [Marker] {
         let hole = to - from
         guard hole > 1e-9 else { return self }
@@ -296,7 +311,9 @@ extension Array where Element == Marker {
             guard newDuration > 1e-9 else { continue }    // wholly swallowed
             var q = m
             q.time = Swift.min(m.time, from)
-            q.duration = newDuration
+            // Never shorter than the floor: what is left is kept, and lengthened from its (shifted)
+            // start up to `minRegionDuration` if the hole ate too much of it.
+            q.duration = Marker.clampedRegionDuration(newDuration)
             out.append(q)
         }
         return out

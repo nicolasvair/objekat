@@ -396,18 +396,19 @@ with ObjekatClient(SOCK) as c:
     got = move_to(3.20)
     check("out of reach it does not pull — 8 px and no more", abs(got - 3.0) < 1e-9, str(got))
 
-    reg = cmd("marker.add", lane=lane, at=6.03, duration=0.90)["marker"]
+    # 1.90 s rather than 0.90: a region is never shorter than 1 s (Marker.minRegionDuration).
+    reg = cmd("marker.add", lane=lane, at=6.03, duration=1.90)["marker"]
     got = move_to(6.02)
     check("a REGION's start catches it", abs(got - 6.03) < 1e-9, str(got))
-    got = move_to(6.92)
+    got = move_to(7.92)
     check("and its END too — a region is two targets, not one",
-          abs(got - 6.93) < 1e-9, str(got))
+          abs(got - 7.93) < 1e-9, str(got))
 
     move_to(1.0)                                    # out of its own way first
     cmd("marker_lane.set_visible", lane=lane, visible=False)
-    got = move_to(6.92)
+    got = move_to(7.92)
     check("a HIDDEN row catches nothing: what one cannot see must not pull",
-          abs(got - 7.0) < 1e-9, str(got))
+          abs(got - 8.0) < 1e-9, str(got))
     cmd("marker_lane.set_visible", lane=lane, visible=True)
     cmd("marker.remove", lane=lane, marker=mk)
     cmd("marker.remove", lane=lane, marker=reg)
@@ -640,6 +641,141 @@ with ObjekatClient(SOCK) as c:
         check("remove_selected with nothing selected is refused", False, "it went through")
     except ObjekatError as e:
         check("remove_selected with nothing selected is refused", e.code == "invalid_state", e.code)
+
+    # ── removing TIME from the ruler carries the band's marks ──────────────
+    # ⌥⌫ over a range traced in the RULER (time or BPM half) removes time: the marks of the
+    # band follow the objects. The same range over every lane but traced in the TIMELINE only
+    # removes matter on lanes: the marks stay. Rule = `Marker.splicedInTime` (the one an
+    # object's own markers already obey): after → slides back, point inside → goes, region
+    # straddling → loses the overlap.
+    cmd("project.new")
+    rrow = cmd("marker_lane.create", name="ripple")["lane"]
+    k_before = cmd("marker.add", lane=rrow, at=1.0, name="avant")["marker"]
+    k_strad = cmd("marker.add", lane=rrow, at=1.5, duration=1.0, name="chevauche")["marker"]
+    k_inside = cmd("marker.add", lane=rrow, at=3.0, name="dedans")["marker"]
+    k_after = cmd("marker.add", lane=rrow, at=6.0, name="apres")["marker"]
+    k_region = cmd("marker.add", lane=rrow, at=7.0, duration=1.0, name="region apres")["marker"]
+    ro = cmd("object.add", path=FIXTURE, lane=0, start=8.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+
+    def band_state():
+        return {m["id"]: (m["time"], m.get("duration", 0.0))
+                for m in cmd("marker_lane.list")["lanes"][0]["markers"]}
+
+    def obj_start(oid_):
+        return [o for o in cmd("object.list")["objects"] if o["id"] == oid_][0]["start"]
+
+    marks0 = band_state()
+
+    # 1) from the ruler: the marks follow.
+    cmd("timesel.set", start=2.0, end=4.0, from_ruler=True)
+    res = cmd("timesel.ripple_delete")
+    check("ruler ripple: reported as carrying the marks", res.get("markers_follow") is True, str(res))
+    st = band_state()
+    check("ruler ripple: the object after slid back", approx(obj_start(ro), 6.0), str(obj_start(ro)))
+    check("ruler ripple: a mark before the range does not move",
+          k_before in st and approx(st[k_before][0], 1.0), str(st.get(k_before)))
+    check("ruler ripple: a mark after the range slides back by its length",
+          k_after in st and approx(st[k_after][0], 4.0), str(st.get(k_after)))
+    check("ruler ripple: a region after slides back whole",
+          k_region in st and approx(st[k_region][0], 5.0) and approx(st[k_region][1], 1.0),
+          str(st.get(k_region)))
+    check("ruler ripple: a point inside the range goes", k_inside not in st, str(st.get(k_inside)))
+    # [1.5, 2.5] minus [2, 4] would leave 0.5 s: a region never goes under 1 s, so it is kept at
+    # 1 s from its start (Marker.minRegionDuration).
+    check("ruler ripple: a straddling region trimmed under 1 s is kept at 1 s",
+          k_strad in st and approx(st[k_strad][0], 1.5) and approx(st[k_strad][1], 1.0),
+          str(st.get(k_strad)))
+
+    # 2) ONE undo gives back the objects AND the marks.
+    cmd("edit.undo")
+    check("ruler ripple: one undo puts the marks back", band_state() == marks0, str(band_state()))
+    check("ruler ripple: and the object", approx(obj_start(ro), 8.0), str(obj_start(ro)))
+
+    # 3) the same range over every lane, traced in the TIMELINE: the marks stay.
+    cmd("timesel.set", start=2.0, end=4.0, all_lanes=True)
+    res = cmd("timesel.ripple_delete")
+    check("lanes-only ripple: reported as NOT carrying the marks",
+          res.get("markers_follow") is False, str(res))
+    check("lanes-only ripple: the object still slid back", approx(obj_start(ro), 6.0),
+          str(obj_start(ro)))
+    check("lanes-only ripple: the band is untouched", band_state() == marks0, str(band_state()))
+    cmd("edit.undo")
+    check("lanes-only ripple: undo puts the object back", approx(obj_start(ro), 8.0),
+          str(obj_start(ro)))
+
+    # 4) the ruler origin does not outlive a timeline write: re-setting the range without
+    #    `from_ruler` drops it.
+    cmd("timesel.set", start=2.0, end=4.0, from_ruler=True)
+    cmd("timesel.set", start=2.0, end=4.0, all_lanes=True)
+    res = cmd("timesel.ripple_delete")
+    check("a timeline write drops the ruler origin", res.get("markers_follow") is False, str(res))
+    check("so the band stays put", band_state() == marks0, str(band_state()))
+    cmd("edit.undo")
+
+    # 5) tracing in the ruler lets go of the selected marks — ALWAYS: whether the range encloses
+    #    an object or not (before, only an enclosed object selected carried them out).
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=7.5, end=600.0, from_ruler=True, select_objects=True)
+    check("a ruler range selects the object it encloses",
+          ro.upper() in [i.upper() for i in cmd("selection.get").get("ids", [])],
+          json.dumps(cmd("selection.get")))
+    check("and lets go of the selected region", sel_ids() == [], str(sel_ids()))
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=0.2, end=0.8, from_ruler=True, select_objects=True)
+    check("a ruler range over no object lets go of the region too",
+          sel_ids() == [] and cmd("selection.get")["count"] == 0, str(sel_ids()))
+    select([lm(rrow, k_region)])
+    cmd("timesel.set", start=0.2, end=0.8, from_ruler=True)
+    check("timesel.set from_ruler alone lets go of the marks", sel_ids() == [], str(sel_ids()))
+    cmd("timesel.clear")
+
+    # ── a region is never shorter than 1 s (Marker.minRegionDuration) ──────
+    cmd("project.new")
+    frow = cmd("marker_lane.create", name="floor")["lane"]
+
+    def band_mark(mid):
+        for m in cmd("marker_lane.list")["lanes"][0]["markers"]:
+            if m["id"] == mid:
+                return m
+        return None
+
+    short = cmd("marker.add", lane=frow, at=2.0, duration=0.4)["marker"]
+    m = band_mark(short)
+    check("floor: marker.add of a 0.4 s region makes it 1 s",
+          m is not None and approx(m.get("duration", 0.0), 1.0), str(m))
+    big = cmd("marker.add", lane=frow, at=5.0, duration=3.0)["marker"]
+    r = cmd("marker.move", lane=frow, marker=big, at=5.0, duration=0.3)
+    m = band_mark(big)
+    check("floor: marker.move cropping a region under 1 s keeps it at 1 s",
+          m is not None and approx(m["time"], 5.0) and approx(m.get("duration", 0.0), 1.0)
+          and approx(r["duration"], 1.0), str(m) + " " + json.dumps(r))
+    cmd("marker.move", lane=frow, marker=big, at=5.0, duration=0)
+    m = band_mark(big)
+    check("floor: duration 0 still turns a region back into a point",
+          m is not None and approx(m.get("duration", 0.0), 0.0), str(m))
+    pt = cmd("marker.add", lane=frow, at=9.0)["marker"]
+    m = band_mark(pt)
+    check("floor: a point marker stays a point", m is not None and approx(m.get("duration", 0.0), 0.0),
+          str(m))
+
+    fo = cmd("object.add", path=FIXTURE, lane=0, start=0.0)["id"]
+    cmd("wait_idle", timeout_ms=5000)
+
+    def obj_mark(mid):
+        for mm in cmd("object.list_markers", object=fo)["markers"]:
+            if mm["id"] == mid:
+                return mm
+        return None
+
+    om = cmd("object.add_marker", object=fo, rel=0.1, duration=0.2)["marker"]
+    m = obj_mark(om)
+    check("floor: object.add_marker of a 0.2 s region makes it 1 s",
+          m is not None and approx(m.get("duration", 0.0), 1.0), str(m))
+    cmd("object.move_marker", object=fo, marker=om, rel=0.1, duration=0.5)
+    m = obj_mark(om)
+    check("floor: object.move_marker under 1 s keeps it at 1 s",
+          m is not None and approx(m.get("duration", 0.0), 1.0), str(m))
 
 print("\nALL PASS" if not fails else "\n%d FAILURE(S): %s" % (len(fails), ", ".join(fails)))
 sys.exit(0 if not fails else 1)

@@ -571,6 +571,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // qui vivent côté Swift (@see EditViewModel.builtInEditorWindows).
 - (BOOL)isPluginEditorOpen:(NSString*)pluginKey;
 
+// La fenêtre AppKit de l'éditeur natif ouvert (nil s'il ne l'est pas) — pour que Swift dispose
+// éditeurs natifs et built-in dans UN MÊME placement (@see EditViewModel.EditorTiling).
+- (nullable NSWindow*)pluginEditorNSWindow:(NSString*)pluginKey;
+
 // Fait flotter ou non les éditeurs natifs (niveau « toujours au premier plan »).
 // Les éditeurs sont flottants par défaut, pour rester visibles au-dessus de la fenêtre
 // principale. Il faut pouvoir les redescendre le temps qu'une UI de l'app doive passer devant

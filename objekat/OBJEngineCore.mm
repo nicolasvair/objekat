@@ -7069,6 +7069,24 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
         [engineRef updateLinkStateTimer];
         if (engineRef.onEditorVisibilityChanged) engineRef.onEditorVisibilityChanged(nsKey, NO);
     }, floating, accent);
+    // Chaque fenêtre naît CENTRÉE : plusieurs éditeurs ouverts d'un coup (sélection multiple)
+    // s'empileraient au même endroit. Celle qui tomberait pile sur une autre déjà ouverte (même
+    // coin ou même centre) descend en cascade jusqu'à montrer sa propre barre de titre.
+    {
+        auto& open = _editorWindows;
+        auto overlaps = [&open](const juce::Rectangle<int>& r) {
+            for (auto& kv : open) {
+                if (!kv.second) continue;
+                auto o = kv.second->getBounds();
+                if (o.getTopLeft().getDistanceFrom(r.getTopLeft()) < 2
+                    || o.getCentre().getDistanceFrom(r.getCentre()) < 2) return true;
+            }
+            return false;
+        };
+        auto b = win->getBounds();
+        for (int i = 0; i < 64 && overlaps(b); ++i) b.translate(24, 24);
+        if (b != win->getBounds()) win->setBounds(b);
+    }
     _editorWindows[pk].reset(win);
     // Un éditeur ouvert sur un membre lié : la référence de la synchro d'état est ce que
     // l'instance a À L'OUVERTURE, et le minuteur se met à surveiller ce que la main va y changer.
@@ -7089,6 +7107,16 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
     [self updateLinkStateTimer];
     if (closed && self.onEditorVisibilityChanged)
         self.onEditorVisibilityChanged(pluginKey, NO);
+}
+
+- (nullable NSWindow*)pluginEditorNSWindow:(NSString*)pluginKey {
+    std::string pk([pluginKey UTF8String]);
+    auto it = _editorWindows.find(pk);
+    if (it == _editorWindows.end() || !it->second) return nil;
+    auto* peer = it->second->getPeer();
+    if (!peer) return nil;
+    NSView* view = (__bridge NSView*)peer->getNativeHandle();
+    return view.window;
 }
 
 - (BOOL)isPluginEditorOpen:(NSString*)pluginKey {

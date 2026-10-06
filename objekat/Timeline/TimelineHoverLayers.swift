@@ -35,13 +35,28 @@ struct CutHoverLine: View {
 /// The hovered block's editing zone under the selection tool: the veil over the zone that would
 /// answer the click (@see `ClipEditZonesOverlay`). The parent only mounts it under the selection
 /// tool, outside any gesture — once a drag is engaged its own preview says what is happening.
+///
+/// The veil's PIXELS are re-derived here, at every render, from the block's lane entry and the
+/// current zoom (@see `EditZoneHover.relaid`) — exactly as `CutHoverLine` does — and never taken
+/// from the rect stored at hover time: a zoom moves no mouse, and that frozen rect drifted off its
+/// block as a dark band. The store keeps WHICH block and WHICH zone; the geometry is the model's.
 struct EditZoneVeilLayer: View {
     let store: TimelineHoverStore
+    let viewModel: EditViewModel
+    let pixelsPerSecond: Double
+    let rulerHeight: Double
+    let laneStep: Double
+    let blockHeight: Double
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let hover = store.editZoneHover {
-                ClipEditZonesOverlay(hover: hover)
+            if let hover = store.editZoneHover,
+               let entry = viewModel.laneEntry(forID: hover.id) {
+                ClipEditZonesOverlay(hover: hover.relaid(on: entry,
+                                                         pixelsPerSecond: pixelsPerSecond,
+                                                         rulerHeight: rulerHeight,
+                                                         laneStep: laneStep,
+                                                         blockHeight: blockHeight))
             }
         }
     }

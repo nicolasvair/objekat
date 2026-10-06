@@ -29,6 +29,10 @@ struct SoundObjectListView: View {
     /// centring it again on a re-click would move a row from under the hand that pressed it.
     @State private var ownClickToken: Int = -1
 
+    /// Told the selection a click or an arrow IN THIS LIST has just produced, so the window does
+    /// not switch the left panel away to the inspector under the hand walking the list.
+    var onOwnSelection: (Set<UUID>) -> Void = { _ in }
+
     /// The rows actually drawn.
     ///
     /// The text filter is applied inside `soundListRows` (it reads `filterText`, which belongs to
@@ -250,6 +254,7 @@ struct SoundObjectListView: View {
         if flags.contains(.shift) { extendSelection(to: id) }
         else { viewModel.select(id, additive: flags.contains(.command)) }
         ownClickToken = viewModel.listRevealToken
+        onOwnSelection(viewModel.selectedIDs)
         // ⌘ that took the row OUT of the selection has nothing to show.
         if viewModel.isSelected(id) { viewModel.revealInTimeline(ids: viewModel.selectedIDs) }
     }
@@ -258,6 +263,7 @@ struct SoundObjectListView: View {
     /// `EditViewModel.revealInTimeline`), the way it follows a click on the row.
     private func selectAndReveal(_ id: UUID) {
         viewModel.select(id, additive: false)
+        onOwnSelection(viewModel.selectedIDs)
         viewModel.revealInTimeline(ids: [id])
     }
 

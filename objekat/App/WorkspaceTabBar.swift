@@ -56,7 +56,11 @@ struct WorkspaceTabBar: View {
                 }
 
                 Button {
-                    _ = workspace.newTab()
+                    // A refusal is said, as a switch's is (@see TabCapsule): dropped, the button
+                    // just did nothing.
+                    if case .failure(.blocked(let reasonKey)) = workspace.newTab() {
+                        workspace.session.viewModel.notify(L("tabs.switch.refused.title"), L(reasonKey))
+                    }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 10, weight: .medium))

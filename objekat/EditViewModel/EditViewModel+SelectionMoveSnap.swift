@@ -1,7 +1,8 @@
 import Foundation
 
 // The model-side half of the snap of a CARRIED time selection. The precedence itself (the range's
-// bounds first, the grabbed object's edges second, the grid last) is pure arithmetic and lives in
+// bounds against the real marks first, the same bounds against the grid second — the grabbed
+// object's edges are never a reference) is pure arithmetic and lives in
 // `Shared/SelectionMoveSnap.swift`; this knows what the targets are and what to leave out of them.
 // `snappedTime` / `snapTime` are not touched — a dozen other gestures stand on them.
 extension EditViewModel {
@@ -32,17 +33,30 @@ extension EditViewModel {
         return out
     }
 
+    /// The ids to leave OUT of the targets while `moved` are carried by a plain MOVE (no time
+    /// selection): the moved objects AND everything they carry. Only the grabbed object is a
+    /// reference of the snap (its start or its end); nothing that travels with the hand may be a
+    /// magnet — the moved objects are still drawn from their ORIGINAL place in the model, so each
+    /// would pull the selection back onto where it came from. The children of a carried OPEN group
+    /// are on `laneEntries` with their own marks (@see `snapTargets`), and they travel too.
+    func moveSnapExcluded(moved: Set<UUID>) -> Set<UUID> {
+        var out = moved
+        // `laneEntries` lists a group before its children: one pass sees the parent first.
+        for e in laneEntries {
+            if let p = e.parentID, out.contains(p) { out.insert(e.item.id) }
+        }
+        return out
+    }
+
     /// The snap of the range `range` carried by `rawDt`, with NO side effect (@see `snappedTime`).
     ///
-    /// `objectStart` / `objectEnd` are the grabbed object's edges BEFORE the travel. The floor is
+    /// Only the range's bounds are references, never the grabbed object's edges. The floor is
     /// the range's own start at zero: it is the selection that is walled, not its first object.
     func snappedSelectionMove(range: ClosedRange<Double>, rawDt: Double,
-                              objectStart: Double?, objectEnd: Double?,
                               excluding: Set<UUID>) -> SelectionMoveSnap.Result {
         SelectionMoveSnap.resolve(
             lo: range.lowerBound, hi: range.upperBound, rawDt: rawDt,
-            objectStart: objectStart, objectEnd: objectEnd,
-            // Only the REAL marks: the grid is the third step of the precedence, never a rival.
+            // Only the REAL marks: the grid is the second step of the precedence, never a rival.
             targets: effectiveSnapEnabled ? snapTargets(excluding: excluding) : [],
             gridInterval: effectiveSnapGrid,
             tolerance: 8.0 / pixelsPerSecond,
@@ -54,11 +68,8 @@ extension EditViewModel {
     /// The same, plus the guide line it leaves behind (@see `snapTime`): on the winning edge, yellow
     /// when it landed on a mark, grey otherwise — and grey on the start when the wall stopped it.
     func snapSelectionMove(range: ClosedRange<Double>, rawDt: Double,
-                           objectStart: Double?, objectEnd: Double?,
                            excluding: Set<UUID>) -> SelectionMoveSnap.Result {
-        let r = snappedSelectionMove(range: range, rawDt: rawDt,
-                                     objectStart: objectStart, objectEnd: objectEnd,
-                                     excluding: excluding)
+        let r = snappedSelectionMove(range: range, rawDt: rawDt, excluding: excluding)
         snapGuide = SnapGuide(time: r.guideTime, onTarget: r.onTarget)
         return r
     }

@@ -161,9 +161,13 @@ extension EditViewModel {
                 selectedIDs = Set(copies.map(\.id))
             } else {
                 // The crossfades FOLLOW the objects that carry them (@see refitCrossfade).
+                // `dt` is ONE travel, already snapped by the gesture off the grabbed object (and
+                // already stopped by the wall at 0): it is applied as is to every anchor, NEVER
+                // re-snapped per object — that rounded each start to its own grid line and broke
+                // the gaps between the moved objects (@see updateStartTime's `snap`).
                 withCrossfadeRefit(around: ids) {
                     for (id, anchor) in anchors {
-                        updateStartTime(id: id, newStart: anchor.start + dt)
+                        updateStartTime(id: id, newStart: anchor.start + dt, snap: false)
                         updateLane(id: id, lane: max(0, anchor.lane + dActual))
                     }
                 }

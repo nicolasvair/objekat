@@ -23,6 +23,9 @@ enum SynopticDropTarget: Equatable {
 
 struct SynopticActions {
     var onOpenEditor: ((UUID) -> Void)? = nil
+    /// The double click on a card that belongs to a MULTIPLE selection: opens the editors of the
+    /// whole selection (`clicked` decides open vs close). nil = falls back to `onOpenEditor`.
+    var onOpenEditors: ((_ clicked: UUID, _ ids: Set<UUID>) -> Void)? = nil
     var onToggleBypass: (UUID) -> Void = { _ in }
     var onRemove: (UUID) -> Void = { _ in }
     var onInsertSeries: (_ seriesID: UUID, _ index: Int) -> Void = { _, _ in }
@@ -333,6 +336,10 @@ struct SynopticView: View {
     @State private var marqueeBase: Set<UUID> = []
     @State private var marqueeAdds = false
     @State private var marqueeFlips = false
+    /// The multiple selection a plain click has just collapsed onto one of its cards, and when.
+    /// The first click of a double click IS such a click (the card's single tap fires before
+    /// the name's double tap): without this the double click would only ever see one card.
+    @State private var collapsedSelection: (ids: Set<UUID>, at: TimeInterval)? = nil
 
     var body: some View {
         let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
@@ -417,7 +424,7 @@ struct SynopticView: View {
                     plugin: c.plugin,
                     isSelected: selection.contains(c.plugin.id),
                     onSelect: { clickCard(c.plugin.id, cards: d.placement.cards) },
-                    onOpenEditor: actions.onOpenEditor.map { f in { f(c.plugin.id) } },
+                    onOpenEditor: actions.onOpenEditor.map { _ in { openEditorFromCard(c.plugin.id) } },
                     onToggleBypass: { actions.onToggleBypass(c.plugin.id) },
                     onRemove: { actions.onRemove(c.plugin.id) },
                     dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
@@ -600,7 +607,28 @@ struct SynopticView: View {
             selection = Set(SynopticMarquee.boundingBox(of: selection, extendedTo: id,
                                                         cards: marqueeCards(cards)))
         } else {
+            // Remembered for the double click that may follow (@see openEditorFromCard).
+            collapsedSelection = (selection.count > 1 && selection.contains(id))
+                ? (selection, ProcessInfo.processInfo.systemUptime) : nil
             selection = [id]
+        }
+    }
+
+    /// The double click on a card's name. A card that belongs to a MULTIPLE selection opens the
+    /// editors of the whole selection — the selection as it was BEFORE the first click of this
+    /// double click collapsed it, which is then given back. A card outside it opens its own alone.
+    private func openEditorFromCard(_ id: UUID) {
+        var group = selection
+        if let c = collapsedSelection, c.ids.contains(id),
+           ProcessInfo.processInfo.systemUptime - c.at <= NSEvent.doubleClickInterval + 0.2 {
+            group = c.ids
+            selection = c.ids
+        }
+        collapsedSelection = nil
+        if group.count > 1, group.contains(id), let many = actions.onOpenEditors {
+            many(id, group)
+        } else {
+            actions.onOpenEditor?(id)
         }
     }
 
@@ -2616,6 +2644,7 @@ struct SynopticBoundView: View {
                             fxReadOnly: (obj?.isConsolidateInstance ?? false),
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
+            onOpenEditors: { openEditors(clicked: $0, ids: $1) },
             // The power button of a card that is IN the selection speaks for the WHOLE selection;
             // one outside it speaks for itself alone. The same rule as the drag just below and as
             // the clips before it: what you GRAB is what decides. Without this the batch on/off
@@ -2880,6 +2909,23 @@ struct SynopticBoundView: View {
         guard let plug = candidates.first(where: { $0.id == pluginID })
         else { return }
         viewModel.togglePluginEditor(objectID: objectID, plug: plug)
+    }
+
+    /// The double click on a card of a multiple selection: one editor per selected plugin, each
+    /// through the SAME opening path as a single double click (an external one goes through the
+    /// engine, which prepares the unit before showing its GUI; a built-in gets its SwiftUI window).
+    /// The clicked card decides for all: its editor open → close those of the selection, otherwise
+    /// open them all (one already open is brought to the front).
+    private func openEditors(clicked: UUID, ids: Set<UUID>) {
+        let candidates = viewModel.leafPlugins(objectID: objectID)
+            + (viewModel.find(id: objectID)?.instruments ?? [])
+        let plugs = candidates.filter { ids.contains($0.id) }      // reading order
+        guard let clickedPlug = plugs.first(where: { $0.id == clicked }) else { return }
+        if viewModel.isPluginEditorOpen(plug: clickedPlug) {
+            for p in plugs where viewModel.isPluginEditorOpen(plug: p) { viewModel.closePluginEditor(plug: p) }
+            return
+        }
+        viewModel.openPluginEditors(objectID: objectID, plugs: plugs)
     }
 
     /// The FX selection of THIS chain, seen as a `Set`. It reads EMPTY as soon as the view-model's

@@ -112,7 +112,17 @@ struct ExportProgressBar: View {
                 .padding(.vertical, 6)
                 .background(background(for: job))
             }
-            .transition(.move(edge: .top).combined(with: .opacity))
+            // NO animated insertion. The strip appears in `.preparing`, and ~80 ms later the main
+            // thread freezes for as long as the clone of a background render takes (seconds with
+            // AUs — @see EditViewModel.runExport). SwiftUI drives this animation on the main thread,
+            // so an insertion that slid in from the top edge (0.15 s) was FROZEN half-way: the strip
+            // sat offset upwards, over the transport bar, while the content below had already jumped
+            // to its final place (the implicit `.animation` in ContentView reaches this subtree
+            // only) — and it "settled" only when the render started and the thread was given back.
+            // Laid in place on its first frame, it has nothing to be caught in the middle of.
+            // The way OUT keeps its slide: nothing freezes when a job is dismissed.
+            .transition(.asymmetric(insertion: .identity,
+                                    removal: .move(edge: .top).combined(with: .opacity)))
         }
     }
 
