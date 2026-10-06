@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sets up the "Spectral gain" script: a dedicated venv under
+# Sets up the "Spectral editor" script (folder and id: spectral-gain): a dedicated venv under
 # ~/Library/Application Support/Objekat/venvs/spectral-gain (never the system Python's site-packages, never
 # the app bundle), numpy installed in it, and a symlink into OBJEKAT's own Plugins folder. No model to
 # download: the script is pure numpy.
@@ -10,7 +10,7 @@ SUPPORT_DIR="$HOME/Library/Application Support/Objekat"
 VENV_DIR="$SUPPORT_DIR/venvs/spectral-gain"
 PLUGINS_DIR="$SUPPORT_DIR/Plugins"
 
-echo "== Spectral gain — install =="
+echo "== Spectral editor — install =="
 
 # Any Python >= 3.9 hosts numpy: the newest one found in PATH and in Homebrew's prefixes, else macOS's own.
 PY=""

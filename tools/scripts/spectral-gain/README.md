@@ -1,8 +1,10 @@
-# Spectral gain
+# Spectral editor
+
+(Folder and id: `spectral-gain`; they did not change when the script was renamed.)
 
 An OBJEKAT third-party script (spec: `OBJEKAT - claude project/docs/spec_spectral_editor.md`,
 technical plan: `plan_spectral_gain.md`, same folder). Right-click ONE object → **Scripts → "Spectral
-edit…"**.
+editor…"**.
 
 It opens a floating window with the **spectrogram** of the object (logarithmic frequency axis), lets
 the hand **attenuate — or boost — regions of time × frequency**, lets the ear compare, and brings the
@@ -26,7 +28,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
 ## Use
 
 1. Right-click one object (a clip, or a group) → **Scripts → Spectral
-   edit…**. The object is **rendered** exactly as `retouche-externe` renders it: its own plugins,
+   editor…**. The object is **rendered** exactly as `retouche-externe` renders it: its own plugins,
    gain, pan, fades, window and speed (a group's content included), and nothing around it (no parent
    chain, no master, no sends).
 2. The window shows the spectrogram. One **Gain** (−60…+12 dB, default −12) serves both tools, with the

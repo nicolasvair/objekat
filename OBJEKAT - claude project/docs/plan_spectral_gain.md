@@ -540,7 +540,7 @@ let scriptCanvases: ScriptCanvasStore = {
 - `install.sh`: as separateur-voix, without models. The venv lives at `~/Library/Application Support/Objekat/venvs/spectral-gain`, and a symlink is made in `Plugins/`.
 - `run.sh`: checks `import numpy`, then runs the script.
 - `manifest.json`:
-  - "Spectral gain", context `object`, menu "Spectral edit…";
+  - "Spectral editor" (renamed from "Spectral gain" on 7 October, revision 4; the folder and id stay `spectral-gain`), context `object`, menu "Spectral editor…";
   - `requires`: app.info, object.get, object.list, object.add, object.set_mute, solo.get, solo.set, solo.clear, object.render_isolated, job.wait, batch, script.panel.open / wait / close, script.canvas.open / wait / update / set_image / set_layer / set_audio / close.
 - `README.md`.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Spectral gain — a spectrogram of ONE object, edited by hand with gain only (attenuate, or boost).
+"""Spectral editor — a spectrogram of ONE object, edited by hand with gain only (attenuate, or boost).
 
 The script renders the object (exactly as `retouche-externe` does), computes its STFT, opens a canvas
 (`script.canvas.*`, @see docs/plan_spectral_gain.md, section 9) with the spectrogram and the rectangle /
@@ -138,7 +138,7 @@ def choose_rate(app, rates):
     """The object's sources do not agree on a rate: ask. Returns the chosen rate, or None if cancelled."""
     ordered = sorted(rates, key=lambda r: (-rates[r], r))  # the most used first = the default
     panel = app.send("script.panel.open", {
-        "title": tr("Gain spectral", "Spectral gain", "Ganancia espectral"),
+        "title": tr("Éditeur spectral", "Spectral editor", "Editor espectral"),
         "controls": [{"id": "rate", "kind": "choice",
                       "label": tr("Fréquence d'échantillonnage", "Sample rate", "Frecuencia de muestreo"),
                       "value": str(ordered[0]),
@@ -535,7 +535,7 @@ def run():
     try:
         # 3. Open the canvas (busy until the render is read).
         opened = app.send("script.canvas.open", {
-            "title": tr("Gain spectral — %s", "Spectral gain — %s", "Ganancia espectral — %s") % (obj.get("name") or ""),
+            "title": tr("Éditeur spectral — %s", "Spectral editor — %s", "Editor espectral — %s") % (obj.get("name") or ""),
             "object": obj["id"], "controls": canvas_controls(), "tools": canvas_tools(),
             "modes": True, "remember": "spectral-gain", "busy": True,
             "status": tr("Rendu…", "Rendering…", "Renderizando…")})

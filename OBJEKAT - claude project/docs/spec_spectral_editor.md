@@ -12,8 +12,8 @@ others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now s
 
 ## 1. What it is
 
-A third-party script, **"Spectral gain"**, reached from an object's right click
-(Scripts ▸ "Spectral edit…"), that opens a spectrogram of the object in a floating window, lets the
+A third-party script, **"Spectral editor"** (folder and id `spectral-gain`), reached from an object's right click
+(Scripts ▸ "Spectral editor…"), that opens a spectrogram of the object in a floating window, lets the
 hand attenuate (or boost) regions of time × frequency, lets the ear compare, and brings the result
 back into the session. In the spirit of iZotope RX, restricted to **gain**: no spectral repair, no
 de-noise, no pitch editing.
@@ -29,7 +29,7 @@ It is made of TWO deliverables, and the split is the point **[decided]**:
 
 ## 2. Workflow
 
-1. Right click on ONE object → Scripts ▸ "Spectral edit…". **[decided]**
+1. Right click on ONE object → Scripts ▸ "Spectral editor…". **[decided]**
 2. The object is **rendered** exactly as `retouche-externe` renders it (its own plugins, gain, pan,
    fades, window, speed; a group's content; not the parent's chain, the master, sends). **[decided]**
 3. The script computes the STFT and opens the canvas window with the spectrogram.

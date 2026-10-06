@@ -1,5 +1,5 @@
 {
-  "name": "Spectral gain",
+  "name": "Spectral editor",
   "description": "Opens a spectrogram of one object and lets the hand attenuate or boost regions of time and frequency (gain only), compare by ear, and bring the result back into the session.",
   "version": "1.0",
   "executable": "run.sh",
@@ -30,7 +30,7 @@
   "context": "object",
   "menu": [
     {
-      "title": "Spectral edit…",
+      "title": "Spectral editor…",
       "arguments": []
     }
   ]

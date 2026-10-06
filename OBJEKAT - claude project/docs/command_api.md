@@ -2181,7 +2181,7 @@ A few points of vocabulary that save mistakes:
 | `tools/test_script_canvas_geometry.swift` | the canvas's axes, viewport, trace discs, ticks and number formats, compiled standalone: 125 assertions, no app needed |
 | `tools/test_script_canvas_image.swift` | the two raw image files (`OBJKCNV1`, `OBJKRGB1`) against the committed fixtures, compiled standalone: 46 assertions, no app needed |
 | `tools/test_script_canvas_history.swift` | the canvas's history as ENTRIES (drafts, steps, commit, discard, undo / redo peeling one entry, `active_since`), compiled standalone: 78 assertions, no app needed |
-| `tools/scripts/spectral-gain/` | the "Spectral gain" third-party script (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 184 tests: STFT round trip, the whole gain mathematics, the images, the veil, the WAV reader / writer, the pure decisions) |
+| `tools/scripts/spectral-gain/` | the "Spectral editor" third-party script (folder and id `spectral-gain`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 184 tests: STFT round trip, the whole gain mathematics, the images, the veil, the WAV reader / writer, the pure decisions) |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
