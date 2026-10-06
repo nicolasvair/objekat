@@ -2359,6 +2359,145 @@ dictionary of the process, with the same behaviour, so a scenario can assert it
 (`tools/scenario_breath_eval.py`, section g, also checks that `defaults read` of the bundle shows
 no `scriptPanel` key).
 
+### A canvas a script asks for: `script.canvas.*`
+
+**Purpose, and what the app does NOT know.** A script that edits a SIGNAL (a spectrogram it computed, a
+mask it wants painted) needs more than a form: a resizable plot, gestures drawn on it, a history, image
+layers, a transport. It declares a **canvas** and the app draws it. The app knows **gestures** (a
+rectangle, a stroke, a click), the **history** of those gestures (undo / redo), the **layers** of pixels
+the script supplies and **playback**. It knows nothing about what a gesture MEANS: each op records its
+geometry and a snapshot of the values of the controls its tool declares, and the script interprets them.
+There is no gain, no dB and no mask anywhere in the app. Reference: `docs/plan_spectral_gain.md` §2–§3;
+the test client is `tools/scenario_spectral_gain.py` (section b).
+
+**Lifetime and headless.** Nothing here is an edit: `undo: none`, no dirty flag, nothing saved, nothing in
+an undo snapshot. The owner is the connection. A canvas ends (state `closed`, its audio stopped, its window
+closed) when `script.canvas.close` is called, when its connection closes (the record is then removed), when
+its `object` disappears, or when the document changes (`project.new`, a load, a tab switch). A second `open`
+on a connection replaces its first canvas, which ends `closed`. A connection may hold one panel and one
+canvas at once. Headless, the canvas exists but no window opens and no audio device is touched: the
+viewport is a nominal plot of 1000 × 500 points fitted to the world, and the transport is a wall-clock model.
+
+**Controls** are exactly the `script.panel.open` vocabulary (the same parser, the same messages), `remember`
+included: Validate stores the values, `press: "reset"` restores the declared ones, the key is
+`scriptPanel.<key>`, and it is ephemeral under `--no-recent` or `--headless`.
+
+**Tools** are gesture kinds: `rect` (a box in data units), `stroke` (a polyline in data units with a diameter
+in SCREEN POINTS read from a bound control) and `point` (a click). The **Hand** is the app's own navigation
+tool, always present, id `"hand"` (reserved); the first declared tool is active, the Hand when there is none.
+A tool is `{id, kind, label, icon?, params?, size_control?}`: `label` is the script's own text; `icon` an SF
+Symbol name (default `rectangle.dashed` / `scribble` / `smallcircle.filled.circle` by kind); `params` lists the
+hand-value controls (bool, number or choice) snapshotted into every op of that tool; `size_control` is
+required for `stroke` and refused otherwise, and must name a `number` control (the diameter in points, clamped
+to 1…1000 when used).
+
+**Axes and warped units.** An axis is `{min, max, unit?, mapping?}`. `unit "s"` gives time rulers, `"Hz"`
+Hz / kHz rulers, anything else a number plus the unit. `mapping` is `"lin"` (default) or `"log"` (needs
+`min > 0`). Every LENGTH is expressed in WARPED units: axis units on a `lin` axis, octaves on a `log` axis
+(`warp(v) = log2(v)`). That is what turns a diameter in points into data units: `size_x = size_pt /
+pointsPerX`, `size_y = size_pt / pointsPerY`, with `pointsPerX = plotWidth / warped x span`, frozen when the
+gesture starts. Zoom keeps its anchor's warped value fixed; the visible span is bounded to world/10000 on x
+and world/1000 on y, and the window stays inside the world.
+
+**Images.** Two raw formats, little-endian, row-major, **row 0 = the top** (y max), column 0 = x min, rows and
+columns uniform in warped coordinates: `OBJKCNV1` (indexed: `"OBJKCNV1"`, u32 W, u32 H, f32 value of index 0,
+f32 value of index 255, u32 0, a 256 × RGB palette, W·H uint8 indices; size exactly 796 + W·H; it feeds the
+pointer readout `v0 + idx·(v255 − v0)/255`, index 0 read "≤ v0") and `OBJKRGB1` (`"OBJKRGB1"`, u32 W, u32 H,
+8 zero bytes, W·H premultiplied RGBA; size exactly 24 + 4·W·H). Extensions `.objkcnv` / `.objkrgb`. Any file
+ImageIO can read is also accepted, with no readout. Caps: width ≤ 16384, height ≤ 4096, W × H ≤ 32 M.
+Writers: `tools/scripts/spectral-gain/canvasfile.py`; the committed fixtures are in `tools/fixtures/spectral/`.
+
+**Layers, `history_rev`, traces.** The BASE image (`set_image`) fixes the world. A **layer** always covers
+the world rectangle exactly (the app scales it), is drawn above the base in ascending `z`, and may say which
+history revision it reflects. Each op carries `active_since`, the history rev at which it last became active
+(when added, and again when redone). `reflected_rev` is the largest `history_rev` any layer carries (−1 when
+none does). The app draws the raw TRACE of an active op iff `active_since > reflected_rev`; `history.unreflected`
+lists those ids, so the rule is testable headless. An undone op's trace disappears at once, while the layer
+keeps showing it until the script sends a new one (the window shows "computing" in that gap).
+
+**Op JSON.** `id` is a monotonic integer per canvas, from 1. `params` is the snapshot of the tool's declared
+controls AT THE MOMENT of the gesture; later changes of a control never touch an earlier op.
+
+```json
+{"id":7,"kind":"rect","tool":"rect","x0":…,"x1":…,"y0":…,"y1":…,"params":{"gain":-12},"active_since":5}
+{"id":8,"kind":"stroke","tool":"eraser","points":[[x,y],…],"size_pt":32,"size_x":…,"size_y":…,"params":{…},"active_since":6}
+{"id":9,"kind":"point","tool":"…","x":…,"y":…,"params":{…},"active_since":7}
+```
+
+**Audio and transport.** Three slots — `original`, `result`, `delta` — each a file path. `offset` is the x
+value at which a file's sample 0 plays (default 0). A/B and delta are volumes, never a restart. The model
+(the store's, the window's and the headless clock's): while playing, `position = anchor + (now − since)`;
+stopped, `position = caret`. Play starts at the caret and stops the PROJECT's transport; **stop returns the
+position to the caret**; reaching the end (the longest file placed at `offset`) is a stop; a seek while
+playing jumps there and moves the caret, clamped to [0, end]; `listen` and `delta` changes touch no clock.
+
+- **`script.canvas.open {title?, object?, controls?, tools, status?, busy?, remember?}`** → `{canvas_id, rev: 0}`.
+  `bad_params`: a control error (as for a panel), a missing or non-array `tools`, a tool with no id / kind /
+  label, a duplicate tool id, an unknown kind, the id `"hand"`, an unknown or non-hand-value control in
+  `params`, a missing, unknown, non-number or (on a non-stroke tool) present `size_control`. `not_found`:
+  unknown `object`.
+- **`script.canvas.set_image {canvas_id, path, x, y, value_unit?}`** → `{width, height, has_values}`. Sets the
+  BASE image and the world. Same axes as before: the view and the layers are kept; otherwise the view is
+  refitted and every layer dropped. `not_found` (file), `bad_params` (format, size, caps, `min >= max`, a log
+  axis with `min <= 0`, an unknown mapping), `invalid_state` (the canvas is not open). Never moves `rev`.
+- **`script.canvas.set_layer {canvas_id, layer, path?, history_rev?, opacity?, z?}`** → `{layers: [{layer,
+  width, height, path, z, opacity, history_rev}]}` in draw order. `path: null` removes. An existing id is
+  replaced: same `z` / `opacity` unless given, `history_rev` as given (none = reflects nothing). `opacity`
+  0…1 (default 1), `z` an integer (default 0), at most 8 layers. `invalid_state`: no base image yet.
+  `bad_params` / `not_found` as for `set_image`; an empty layer id and a ninth layer are `bad_params`.
+- **`script.canvas.set_audio {canvas_id, original?, result?, delta?, offset?, history_rev?}`** → `{slots,
+  durations, playing, position, caret}`. A slot is a path, `null` to clear it, absent to keep it; every file
+  is opened first (`not_found`, `bad_params` if unreadable) so a refused call changes nothing. `history_rev`
+  is the revision the files reflect: while `history.rev` is ahead of it the window shows "computing". A
+  cleared `result` heard falls back to `original`, a cleared `delta` turns delta off, a cleared `original`
+  stops playback. If a playing slot's path changes it is swapped at the same position.
+- **`script.canvas.get {canvas_id, known_history_rev?}`** and **`script.canvas.wait {canvas_id, since_rev,
+  timeout_ms?, known_history_rev?}`** — the panel's long poll (the answer comes as soon as `rev > since_rev`
+  or the state is no longer `open`; at the timeout, ≤ 5000 ms, default 1000, it answers the CURRENT state
+  with no error). **Reading drains `events`.** `history.ops` is omitted when `known_history_rev ==
+  history.rev`.
+
+```json
+{"canvas_id","rev","state":"open|validated|cancelled|closed","values":{},"events":[{"button":"id"}],
+ "status","busy","remember":null,"tool":"rect",
+ "history":{"rev":3,"cursor":2,"count":3,"unreflected":[8],"ops":[…]},
+ "image":{"path","width","height","has_values"}|null,
+ "layers":[{"layer","path","width","height","z","opacity","history_rev"}],
+ "world":{"x":{"min","max","unit","mapping"},"y":{…}}|null,
+ "view":{"x0","x1","y0","y1","width","height"}|null,
+ "transport":{"playing","position","caret","listen":"original|result","delta":false,
+              "slots":{"original":null,"result":null,"delta":null},"durations":{},"audio_history_rev":null}}
+```
+
+  `history.ops` lists every op, undone ones included; the active ones are `ops[:cursor]`. `view` is in data
+  units, `null` until there is a world.
+- **`script.canvas.input {canvas_id, values?, press?, tool?, view?, op?, undo?, redo?, seek?, listen?, delta?,
+  play?}`** → `{rev, history_rev, cursor, added}` — the HAND's door (the window goes through the same store
+  functions). Applied in this order: values, tool, view, op, undo, redo, seek, listen, delta, play, press.
+  - `op` is `{kind: "rect", x0, x1, y0, y1}` (sorted and clamped to the world; zero area gives `added: false`),
+    `{kind: "stroke", points: [[x, y], …], view_scale?: {x, y}}` (2…20000 points, kept as given — not clamped;
+    `view_scale` is points per WARPED unit, default the current viewport; a path shorter than 1 point on screen
+    gives `added: false`) or `{kind: "point", x, y}`. It uses the active tool when its kind matches, otherwise the
+    first tool of that kind. `invalid_state`: no world yet, or no tool of that kind. `bad_params`: non-finite
+    values, a stroke of too few or too many points, a point at `x <= 0` / `y <= 0` on a log axis.
+  - Adding an op drops the undone tail, appends, moves `history.rev`, stamps `active_since`. `undo` / `redo`
+    at either end of the history are no-ops (`rev` unmoved). `added` is true only when an op was added.
+  - `view` is `{x0, x1, y0, y1}` in data units, clamped to the world. `seek` is clamped to [0, end]. `listen`
+    is `"original"` or `"result"` (`invalid_state` if that slot is empty); `delta` true is `invalid_state`
+    without a delta slot; `play` true is `invalid_state` without an `original`, and stops the PROJECT's
+    transport; `play` false stops. `press` is a button id, `"validate"`, `"cancel"` or (remember canvases)
+    `"reset"`. A canvas that is not open answers `invalid_state`.
+  - **`rev` moves** on a values change, an added op, an undo, a redo and a press; **not** on a tool, view or
+    transport change, nor on anything the script writes back. The fields are applied one after the other: a
+    refusal midway leaves the earlier ones applied (the `values` batch alone is all-or-nothing).
+- **`script.canvas.update {canvas_id, status?, busy?, values?, labels?}`** — as for panels; never moves `rev`.
+- **`script.canvas.close {canvas_id}`** → `{closed: true}`.
+- **`script.canvas.list`** → `{canvases: [{canvas_id, title, state, object}]}` (it prunes the canvases whose
+  object has gone first).
+
+**Reserved, not implemented:** detail on demand — a future `events` entry `{"detail": {…}}` and a `region`
+field on `set_image` and `set_layer`. Version 1 never emits them.
+
 ---
 
 ## Known reservations
