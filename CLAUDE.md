@@ -2208,8 +2208,7 @@ What has landed since mid-August, in order:
   readers. Engine patch **`0037`** (`engine-patches/3.5/`, submodule branch `objekat-bridge-0037`
   at `1508f752f62`, on top of `17215d464fb`; **published on the fork 5 October 2026 as its own
   branch `objekat-bridge-0037`**, and the gitlink points at it — on `main` too since the merge; the
-  fork's `objekat-patches-3.5` is still at `17215d464fb`, to be fast-forwarded onto
-  `objekat-bridge-0037` when `main` is published). The next engine patch is `0038`.
+  fork's `objekat-patches-3.5` was fast-forwarded onto it the same day, `1508f752f62`). The next engine patch is `0038`.
   **Latency, both ways**: reader declares `X = max(L_d, L_s)`, delays by `X − L_s`; a key older than
   its host makes the sidechain sum delay the DIRECT input and the host's declared latency rises. `X`
   is needed when the reader is built but the tap's age only once the tap is: each tap caches its age
