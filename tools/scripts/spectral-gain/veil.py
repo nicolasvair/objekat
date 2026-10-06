@@ -5,8 +5,8 @@
   over the world y range, G evaluated at cell centres with `mask`.
 - Colours (premultiplied): attenuation (G < 0): (0, 0.75, 1), alpha 0.75 * (1 - 10^(G/20));
   boost (G > 0): (0.4, 1, 0.3), alpha 0.5 * min(1, (10^(G/20) - 1) / 3).
-- `VeilCache` adds only the new contributions when the active list is the previous one plus appended
-  ops, and recomputes the whole grid otherwise.
+- `VeilCache` adds only the new steps when the active list is the previous one plus appended
+  steps, and recomputes the whole grid otherwise.
 
 Orientation: `veil_grid` and G are ascending in both axes, G shaped (columns, rows-from-bottom);
 `render_veil` flips to the picture's order (row 0 = the top).
@@ -70,11 +70,12 @@ def write_veil(path, g):
 
 
 class VeilCache:
-    """Keeps G for the last active list. `update(ops, world)` returns G (do not mutate it)."""
+    """Keeps G for the last list of steps. `update(steps, world)` returns G (do not mutate it).
+    `steps` = [(ops, params)], the committed steps (@see mask.split_history)."""
 
     def __init__(self):
         self.world = None
-        self.ops = []
+        self.steps = []
         self.g = None
         self.xw = None
         self.yw = None
@@ -86,24 +87,24 @@ class VeilCache:
     def _world_key(world):
         return tuple((a, float(world[a]["min"]), float(world[a]["max"]), world[a].get("mapping") or "lin") for a in ("x", "y"))
 
-    def update(self, ops, world):
-        ops = list(ops)
+    def update(self, steps, world):
+        steps = [(list(ops), dict(params)) for ops, params in steps]
         key = self._world_key(world)
-        n = len(self.ops)
-        appended = (self.g is not None and key == self.world and len(ops) >= n and ops[:n] == self.ops)
+        n = len(self.steps)
+        appended = (self.g is not None and key == self.world and len(steps) >= n and steps[:n] == self.steps)
         if not appended:
             self.xw, self.yw = veil_grid(world)
             self.world = key
             self.g = np.zeros((len(self.xw), len(self.yw)))
             self.compiled_cache = {}
-            self.ops = []
+            self.steps = []
             self.full_recomputes += 1
-            new = ops
+            new = steps
         else:
-            if len(ops) > n:
+            if len(steps) > n:
                 self.incremental_updates += 1
-            new = ops[n:]
-        for p in mask.compile_ops(new, world, self.compiled_cache):
-            mask.add_op_to_grid(self.g, p, self.xw, self.yw)
-        self.ops = ops
+            new = steps[n:]
+        for ops, params in new:
+            self.g += mask.step_gain_grid(ops, params, self.xw, self.yw, world, self.compiled_cache)
+        self.steps = steps
         return self.g

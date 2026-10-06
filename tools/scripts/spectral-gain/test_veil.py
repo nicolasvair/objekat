@@ -25,14 +25,18 @@ def _write(path, data):
 
 
 def rect(x0, x1, y0, y1, gain=-12.0, fms=10.0, fst=1.0, oid=1):
-    return {"id": oid, "kind": "rect", "tool": "rect", "x0": x0, "x1": x1, "y0": y0, "y1": y1,
-            "params": {"gain": gain, "feather_ms": fms, "feather_st": fst}}
+    """A STEP [(ops, params)] of one rect: the gain and the feathers belong to the step, not to the op."""
+    op = {"id": oid, "kind": "rect", "tool": "rect", "polarity": "add", "x0": x0, "x1": x1, "y0": y0, "y1": y1,
+          "params": {}}
+    return ([op], {"gain": gain, "feather_ms": fms, "feather_st": fst})
 
 
-def eraser(points, size_x, size_y, amount=-3.0, hardness=50.0, oid=1):
-    return {"id": oid, "kind": "stroke", "tool": "eraser", "points": [list(p) for p in points],
-            "size_pt": 32, "size_x": size_x, "size_y": size_y,
-            "params": {"amount": amount, "hardness": hardness}}
+def brush(points, size_x, size_y, quantity=25.0, hardness=50.0, gain=-12.0, oid=1):
+    """A STEP of one brush stroke (gain -12 and quantity 25 % make the historical -3 dB per pass)."""
+    op = {"id": oid, "kind": "stroke", "tool": "brush", "polarity": "add", "points": [list(p) for p in points],
+          "size_pt": 32, "size_x": size_x, "size_y": size_y,
+          "params": {"quantity": quantity, "hardness": hardness}}
+    return ([op], {"gain": gain, "feather_ms": 0.0, "feather_st": 0.0})
 
 
 def world_t(seconds):
@@ -149,7 +153,7 @@ class TimeAlignment(unittest.TestCase):
         h = 512
         op = rect(1.0, 2.0, 100, 20000, gain=-12, fms=0, fst=0)
         # audio side: the first STFT frame whose centre is at or after 1.0 s is the first attenuated one
-        fn = mask.stft_gain_block_fn([op], WORLD, sr, n, k)
+        fn = mask.stft_gain_block_fn([op], [], None, WORLD, sr, n, k)
         m = fn(0, 200)
         attenuated = [j for j in range(200) if m[j, 100] < 0.99]
         self.assertEqual(attenuated[0], int(math.ceil(1.0 * sr / h)))
@@ -167,12 +171,13 @@ class TimeAlignment(unittest.TestCase):
 
 class Cache(unittest.TestCase):
     def _ops(self, n):
+        """n steps: rects and brush strokes alternating."""
         out = []
         for i in range(n):
             if i % 2 == 0:
                 out.append(rect(0.1 * i, 0.1 * i + 0.8, 200 * (i + 1), 900 * (i + 1), gain=-3 - i, oid=i + 1))
             else:
-                out.append(eraser([(0.1 * i, 300), (0.1 * i + 1.0, 4000)], 0.1, 1.0, oid=i + 1))
+                out.append(brush([(0.1 * i, 300), (0.1 * i + 1.0, 4000)], 0.1, 1.0, oid=i + 1))
         return out
 
     def test_incremental_equals_full_exactly(self):
@@ -210,7 +215,7 @@ class Cache(unittest.TestCase):
         xw, yw = veil.veil_grid(WORLD)
         self.assertTrue(np.array_equal(g, mask.gain_grid(other, xw, yw, WORLD)))
 
-    def test_a_changed_op_with_the_same_id_is_not_trusted(self):
+    def test_a_changed_step_with_the_same_op_id_is_not_trusted(self):
         a = rect(0.2, 0.6, 100, 300, gain=-9, oid=1)
         b = rect(0.2, 0.6, 100, 300, gain=-18, oid=1)
         c = veil.VeilCache()
@@ -230,7 +235,7 @@ class Cache(unittest.TestCase):
     def test_ops_without_gain_meaning_are_inert(self):
         c = veil.VeilCache()
         point = {"id": 5, "kind": "point", "tool": "pt", "x": 1, "y": 100, "params": {}}
-        g = c.update([point], WORLD)
+        g = c.update([([point], {"gain": -12.0, "feather_ms": 0.0, "feather_st": 0.0})], WORLD)
         self.assertEqual(float(np.abs(g).max()), 0.0)
 
 
@@ -247,7 +252,7 @@ class Timing(unittest.TestCase):
             # strokes at roughly the size of a 32 pt brush on a 1000 pt wide view
             x0 = rng.uniform(0, 60)
             pts = [(x0 + s * 1.7, 200 * 2 ** rng.uniform(0, 6)) for s in range(20)]
-            ops.append(eraser(pts, size_x=3.84, size_y=0.5, oid=len(ops) + 1))
+            ops.append(brush(pts, size_x=3.84, size_y=0.5, oid=len(ops) + 1))
         c = veil.VeilCache()
         t0 = time.time()
         g = c.update(ops, world)
