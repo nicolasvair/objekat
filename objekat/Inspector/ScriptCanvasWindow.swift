@@ -64,6 +64,9 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
 
     private struct WeakPlot { weak var view: ScriptCanvasPlotNSView? }
     private var plots: [UUID: WeakPlot] = [:]
+    /// What each canvas plays (@see ScriptCanvasAudition). Made at the first play, never under
+    /// `--headless` or `--no-audio`.
+    private var auditions: [UUID: ScriptCanvasAudition] = [:]
 
     private static var idKey: UInt8 = 0
 
@@ -73,12 +76,28 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
         store.canvasOpened = { id in shared.show(id, store: store) }
         store.canvasEnded = { id in shared.dismiss(id) }
         store.viewportChanged = { id in shared.plots[id]?.view?.viewportDidChange() }
-        store.transportChanged = { id in shared.plots[id]?.view?.stateDidChange() }
+        store.transportChanged = { id in shared.transportDidChange(id) }
     }
 
     /// The plot says it exists, so the viewport hook can reach it.
     func register(plot: ScriptCanvasPlotNSView, for id: UUID) {
         plots[id] = WeakPlot(view: plot)
+    }
+
+    /// Anything the transport did (a play, a stop, a seek, A / B, Delta, a new file): the plot follows
+    /// the clock, and the sound follows the model.
+    private func transportDidChange(_ id: UUID) {
+        plots[id]?.view?.stateDidChange()
+        // No audio device is touched without an interface, nor under `--no-audio`.
+        let args = LaunchArguments.process
+        guard !args.headless, !args.noAudio, let transport = store?.canvases[id]?.transport else { return }
+        if let audition = auditions[id] {
+            audition.follow(transport)
+        } else if transport.playing {
+            let audition = ScriptCanvasAudition()
+            auditions[id] = audition
+            audition.follow(transport)
+        }
     }
 
     private func show(_ id: UUID, store: ScriptCanvasStore) {
@@ -127,6 +146,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
     private func dismiss(_ id: UUID) {
         plots.removeValue(forKey: id)
         pointers.removeValue(forKey: id)
+        auditions.removeValue(forKey: id)?.shutdown()
         guard let w = windows.removeValue(forKey: id) else { return }
         closing.insert(id)
         w.close()
@@ -141,6 +161,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
         windows.removeValue(forKey: id)
         plots.removeValue(forKey: id)
         pointers.removeValue(forKey: id)
+        auditions.removeValue(forKey: id)?.shutdown()
         try? store?.input(id, values: [:], press: "cancel")
     }
 }
