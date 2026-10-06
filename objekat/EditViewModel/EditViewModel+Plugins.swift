@@ -539,6 +539,7 @@ extension EditViewModel {
     func openPluginEditor(objectID: UUID, pluginID: UUID) {
         guard hasInterface, let engine else { return }
         let colorIndex = leafPlugins(objectID: objectID).first(where: { $0.id == pluginID })?.colorIndex ?? 0
+        nativeEditorHosts[pluginID] = objectID
         engine.openPluginEditor(pluginID.uuidString, colorHex: ObjekatPalette.pluginHex(colorIndex))
         // The opening is ASYNCHRONOUS (the engine waits for the instance to be loaded); arming
         // the listening straight away is risk-free — it returns by itself if the plugin is not

@@ -299,46 +299,6 @@ extension EditViewModel {
         }
         return SidechainBadge(text: L("plugin.sidechain.badge", name), active: true)
     }
-
-    /// The card's Sidechain menu: what is selected in the timeline, the objects playing at the same
-    /// time as the host (by start, at most 40; none for a bus), and the stems — each allowed or
-    /// refused with its reason. nil = no menu: the live plugin has no sidechain input (or is still
-    /// loading), or the host is a closed consolidated object. Any other object stays reachable
-    /// through the API (`plugin.set_sidechain`).
-    func sidechainMenuModel(host: UUID, plugin: UUID) -> SidechainMenuModel? {
-        guard let engine, engine.pluginCanSidechain(plugin.uuidString) else { return nil }
-        let hostObject = find(id: host)
-        if hostObject?.isConsolidateInstance == true { return nil }
-        guard let leaf = Self.flattenLeaves(chainPlugins(host) ?? []).first(where: { $0.id == plugin }) else { return nil }
-
-        var overlapping: [(id: UUID, start: Double)] = []
-        if let h = hostObject {
-            let hEnd = h.startTime + h.duration
-            func walk(_ array: [SoundObject]) {
-                for o in array where o.id != host {
-                    if !o.isAux, o.startTime < hEnd, o.startTime + o.duration > h.startTime { overlapping.append((o.id, o.startTime)) }
-                    if case .group(let children, _) = o.kind { walk(children) }
-                }
-            }
-            walk(items)
-            overlapping.sort { $0.start != $1.start ? $0.start < $1.start : $0.id.uuidString < $1.id.uuidString }
-        }
-        let overlappingIDs = overlapping.prefix(40).map { $0.id }
-        let selectedIDsNow = selectedIDs.filter { $0 != host }
-        let stemIDs = stems.filter { $0.id != mainStemID }.map { $0.id }
-
-        var wanted = Set(overlappingIDs); wanted.formUnion(selectedIDsNow); wanted.formUnion(stemIDs)
-        if let current = leaf.sidechain?.sourceID { wanted.insert(current) }
-        let byID = Dictionary(sidechainCandidates(host: host, plugin: plugin, among: wanted).map { ($0.id, $0) },
-                              uniquingKeysWith: { a, _ in a })
-        func entries(_ ids: [UUID]) -> [SidechainMenuModel.Entry] {
-            ids.compactMap { byID[$0] }.map { SidechainMenuModel.Entry(id: $0.id, name: $0.name, refusal: $0.refusal) }
-        }
-        return SidechainMenuModel(current: leaf.sidechain?.sourceID,
-                                  selected: entries(Array(selectedIDsNow).sorted { $0.uuidString < $1.uuidString }),
-                                  overlapping: entries(overlappingIDs).filter { e in !selectedIDsNow.contains(e.id) },
-                                  stems: entries(stemIDs))
-    }
 }
 
 /// A plugin's key, as the card says it.
@@ -347,15 +307,3 @@ struct SidechainBadge: Equatable {
     var active: Bool
 }
 
-/// What the card's Sidechain menu offers. @see EditViewModel.sidechainMenuModel
-struct SidechainMenuModel {
-    struct Entry: Identifiable {
-        let id: UUID
-        let name: String
-        let refusal: BridgeScope.Refusal?
-    }
-    var current: UUID?
-    var selected: [Entry]
-    var overlapping: [Entry]
-    var stems: [Entry]
-}

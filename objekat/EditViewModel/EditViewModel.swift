@@ -319,6 +319,12 @@ final class EditViewModel {
     /// The mode arms by holding a digit, or locks with ⇧ (`isToolPermanent`),
     /// exactly like C/V/P/S. Drives the assignment on click, the Enter commit and the HUD.
     var stemAssignIndex: Int? = nil
+    /// "Choose object" armed from a plugin editor's Sidechain strip: the next click on an object of
+    /// the timeline becomes that plugin's key. nil = not armed. @see EditViewModel+SidechainStrip
+    var sidechainPick: SidechainPick? = nil
+    /// The host each native editor was opened FOR — the engine names a plugin by its key alone, and
+    /// the Sidechain strip it asks for at the window's creation needs the host.
+    @ObservationIgnored var nativeEditorHosts: [UUID: UUID] = [:]
     /// The send brought forward by the Send tool (a drag/hover on a knob) — drives the visual accent.
     var sendToolFocus: SendFocus? = nil
     /// The cheatsheet shown (a tool key or a modifier held ~0.6 s); nil = hidden.
@@ -399,6 +405,15 @@ final class EditViewModel {
             // others (@see OBJEngineCore `syncLinkedStateFrom:force:`): the project changed with
             // no gesture of the model to say so. The states themselves are read live at every
             // snapshot and save, so the flag is all there is to set.
+            // The Sidechain strip under a native editor: asked for when its window is created, the
+            // instance being loaded by then (which is what `pluginCanSidechain` needs).
+            engine?.setPluginEditorAccessoryProvider { [weak self] key in
+                MainActor.assumeIsolated {
+                    guard let self, let plugin = UUID(uuidString: key),
+                          let host = self.nativeEditorHosts[plugin] else { return nil }
+                    return self.sidechainStripView(host: host, plugin: plugin)
+                }
+            }
             engine?.onLinkedPluginStateSynced = { [weak self] _, _ in
                 DispatchQueue.main.async { self?.isDirty = true }
             }

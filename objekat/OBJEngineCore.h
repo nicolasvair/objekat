@@ -564,6 +564,12 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // utilisée pour teinter la barre de titre JUCE et le liseret de la fenêtre.
 - (void)openPluginEditor:(NSString*)pluginKey colorHex:(NSInteger)colorHex;
 
+// Une bande que Swift pose SOUS l'UI native d'un éditeur (la bande Sidechain), demandée au moment
+// où la fenêtre se crée — l'instance est alors chargée, donc `pluginCanSidechain:` sait répondre.
+// Le bloc rend nil pour « pas de bande » ; la vue rendue garde sa hauteur (`frame.size.height`) et
+// prend la largeur de l'éditeur. nil = jamais de bande.
+- (void)setPluginEditorAccessoryProvider:(NSView* _Nullable (^ _Nullable)(NSString* _Nonnull pluginKey))provider;
+
 // Ferme l'éditeur natif du plugin (si ouvert).
 - (void)closePluginEditor:(NSString*)pluginKey;
 

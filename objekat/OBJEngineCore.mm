@@ -599,21 +599,39 @@ static void collectCompileKeys(const CompileSeries& s, std::unordered_set<std::s
 // Le wrapper recale toujours l'éditeur dans son repère local (sous la barre de titre) et
 // propage les changements de taille de l'éditeur vers la fenêtre, qui conserve sa barre.
 // Calque sur AudioProcessorEditorContentComp de l'exemple Tracktion (PluginWindow.h).
+//
+// Une BANDE optionnelle sous l'éditeur (la bande Sidechain, une vue SwiftUI fournie par l'app,
+// @see -setPluginEditorAccessoryProvider:) : hauteur fixe, largeur de l'éditeur. Le wrapper fait
+// alors éditeur + bande ; l'éditeur garde exactement sa taille à lui.
 struct OBJEditorHolder : public juce::Component {
     std::unique_ptr<juce::AudioProcessorEditor> editor;
+    std::unique_ptr<juce::NSViewComponent> band;
+    int bandHeight = 0;
 
-    explicit OBJEditorHolder(juce::AudioProcessorEditor* ed) : editor(ed) {
+    OBJEditorHolder(juce::AudioProcessorEditor* ed, NSView* accessory) : editor(ed) {
         if (editor) addAndMakeVisible(*editor);
+        if (accessory) {
+            bandHeight = juce::jmax(1, (int) accessory.frame.size.height);
+            band = std::make_unique<juce::NSViewComponent>();
+            addAndMakeVisible(*band);
+            band->setView(accessory);
+        }
         setSize(juce::jmax(8, editor ? editor->getWidth()  : 0),
-                juce::jmax(8, editor ? editor->getHeight() : 0));
+                juce::jmax(8, (editor ? editor->getHeight() : 0) + bandHeight));
+    }
+    ~OBJEditorHolder() override {
+        // La vue AppKit d'abord : elle peut encore être dans la fenêtre au moment où l'éditeur part.
+        if (band) band->setView(nullptr);
     }
     void resized() override {
-        if (editor) editor->setBounds(getLocalBounds());
+        auto r = getLocalBounds();
+        if (band) band->setBounds(r.removeFromBottom(bandHeight));
+        if (editor) editor->setBounds(r);
     }
     void childBoundsChanged(juce::Component* c) override {
         if (c == editor.get())
             setSize(juce::jmax(8, editor->getWidth()),
-                    juce::jmax(8, editor->getHeight()));
+                    juce::jmax(8, editor->getHeight() + bandHeight));
     }
 };
 
@@ -623,6 +641,9 @@ struct OBJEditorHolder : public juce::Component {
 // Relais clavier des fenêtres d'éditeur : @see -setPluginKeyFallback: (OBJEngineCore.h).
 // Global et non par-fenêtre — il n'y a qu'un seul destinataire, la timeline.
 static BOOL (^gPluginKeyFallback)(NSEvent*) = nil;
+// La bande posée sous un éditeur natif (@see -setPluginEditorAccessoryProvider:). Global comme le
+// relais clavier : un seul fournisseur, l'app.
+static NSView* (^gPluginEditorAccessoryProvider)(NSString*) = nil;
 
 struct OBJPluginEditorWindow : public juce::DocumentWindow {
     std::function<void()> onClose;
@@ -649,6 +670,7 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
 
     OBJPluginEditorWindow(const juce::String& name,
                           juce::AudioProcessorEditor* editor,
+                          NSView* accessory,
                           std::function<void()> closeCb,
                           bool floating,
                           juce::Colour accent)
@@ -667,7 +689,7 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
         const bool resizable = editor->isResizable();
         // La fenêtre possède le wrapper (qui possède l'éditeur) ; resizeToFit=true pour
         // que les redimensionnements asynchrones du plugin remontent à la fenêtre.
-        setContentOwned(new OBJEditorHolder(editor), true);
+        setContentOwned(new OBJEditorHolder(editor, accessory), true);
         setResizable(resizable, false);
         centreWithSize(juce::jmax(400, getWidth()),
                        juce::jmax(200, getHeight()));
@@ -1719,6 +1741,11 @@ static BOOL gOBJAudioDisabled = NO;
 
 - (void)setPluginKeyFallback:(BOOL (^)(NSEvent*))handler {
     gPluginKeyFallback = [handler copy];
+}
+
+- (void)setPluginEditorAccessoryProvider:(NSView* (^)(NSString*))provider {
+    if (gPluginEditorAccessoryProvider) [gPluginEditorAccessoryProvider release];
+    gPluginEditorAccessoryProvider = [provider copy];
 }
 
 // App passée à l'arrière-plan : on masque les éditeurs visibles et on retient lesquels, pour ne
@@ -7056,7 +7083,9 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
     juce::Colour accent((juce::uint8)((colorHex >> 16) & 0xFF),
                         (juce::uint8)((colorHex >> 8) & 0xFF),
                         (juce::uint8)(colorHex & 0xFF));
-    auto* win = new OBJPluginEditorWindow(title, editor, [rawSelf, pk] {
+    // La bande Sidechain (ou rien) : demandée MAINTENANT, l'instance étant chargée.
+    NSView* accessory = gPluginEditorAccessoryProvider ? gPluginEditorAccessoryProvider(pluginKey) : nil;
+    auto* win = new OBJPluginEditorWindow(title, editor, accessory, [rawSelf, pk] {
         // « delete this » indirect (erase détruit la fenêtre + ce lambda + pk) :
         // on sort tout ce dont on a besoin sur la pile AVANT l'erase.
         OBJEngineCore* engineRef = rawSelf;

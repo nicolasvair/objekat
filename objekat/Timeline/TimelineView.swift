@@ -385,6 +385,9 @@ struct TimelineView: View {
     /// a property of `hoverStore`: it is the one trigger the body legitimately has, and routing it
     /// through Observation measured ~25 % slower per hover on a heavy project (@see TimelineHoverStore).
     @State private var toolHoveredID: UUID? = nil
+    /// The object "Choose object" (the Sidechain strip) is aiming at, with its verdict read once
+    /// per change of target — not per mouse move. nil = nothing aimed at, or the mode is off.
+    @State private var sidechainPickHover: (id: UUID, refusal: BridgeScope.Refusal?)? = nil
     /// The rest of what the pointer is aiming at (the block's editing zone, the hovered cut position,
     /// the tooltip). A REFERENCE out of the view's state on purpose: read by leaf views alone, so a
     /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
@@ -1026,6 +1029,15 @@ struct TimelineView: View {
                     .zIndex(2.7)
                 }
 
+                // "Choose object" (the Sidechain strip): the aimed block is veiled and says what the
+                // click will do — or, in orange, why it will not.
+                if viewModel.sidechainPick != nil, let aim = sidechainPickHover,
+                   let entry = viewModel.laneEntries.first(where: { $0.item.id == aim.id }) {
+                    sidechainPickVeil(entry: entry, refusal: aim.refusal)
+                        .allowsHitTesting(false)
+                        .zIndex(2.8)
+                }
+
                 // SEND overlay: red lines from the clip towards the auxes it feeds.
                 // The send in focus (dragging/hovering a knob) is emphasised (a vivid red plus a
                 // glow); the same clip's other wired sends stay discreet.
@@ -1088,6 +1100,7 @@ struct TimelineView: View {
                         TimelineCursorKeeper.relinquish()
                         hoverState.position = nil
                         if toolHoveredID != nil { toolHoveredID = nil }
+                        if sidechainPickHover != nil { sidechainPickHover = nil }
                         hoverStore.clearAll()
                     }
                 }
@@ -1174,6 +1187,7 @@ struct TimelineView: View {
                 heldSoloHUD
                 soloHUD
                 stemAssignHUD
+                sidechainPickHUD
                 selectionInfoHUD
             }
         }
@@ -1366,6 +1380,13 @@ struct TimelineView: View {
     }
 
     private func updateCursor(at pos: CGPoint) {
+        // "Choose object" armed: a pointing hand on an object, an arrow elsewhere — nothing else
+        // the canvas could do under this click is offered.
+        if viewModel.sidechainPick != nil {
+            TimelineCursorKeeper.set(stemPaintHitTest(at: pos) != nil ? NSCursor.pointingHand : NSCursor.arrow)
+            hoverStore.clearZoneAndCut()
+            return
+        }
         // Over an open piano roll or an automation band: those views drive the cursor (a note, a
         // point, a segment, a curvature) from their own `onContinuousHover`, and go through the same
         // `TimelineCursorKeeper` as we do. We let them speak, deciding nothing here — least of all
@@ -1613,6 +1634,15 @@ struct TimelineView: View {
     // MARK: - Tool hover (Volume / Pan)
 
     private func updateToolHover(at pos: CGPoint) {
+        if viewModel.sidechainPick != nil {
+            let id = rulerBandContains(pos) ? nil : stemPaintHitTest(at: pos)
+            if sidechainPickHover?.id != id {
+                sidechainPickHover = id.map { ($0, viewModel.sidechainPickRefusal(for: $0)) }
+            }
+            return
+        } else if sidechainPickHover != nil {
+            sidechainPickHover = nil
+        }
         let help = toolZoneHelp(at: pos)
         hoverStore.setHelpText(help)
         // See updateCursor: under the ruler, no object is aimed at.
@@ -4318,6 +4348,56 @@ struct TimelineView: View {
                 .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
             .padding(.bottom, 12)
         }
+    }
+
+    /// "Choose object" armed from a plugin editor's Sidechain strip: whose key the click sets, and the
+    /// two ways out (Esc, a click in empty space).
+    @ViewBuilder
+    private var sidechainPickHUD: some View {
+        if let pick = viewModel.sidechainPick {
+            HStack(spacing: 7) {
+                Image(systemName: "scope")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(L("sidechain.pick.hud", viewModel.sidechainPickPluginName(pick)))
+                    .font(.system(size: 11, weight: .semibold))
+                Text(L("sidechain.pick.hint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.regularMaterial, in: Capsule())
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The veil "Choose object" lays on the block it aims at, in canvas coordinates. An infinite bus
+    /// is its whole lane, as the hit-test reads it.
+    private func sidechainPickVeil(entry: LaneEntry, refusal: BridgeScope.Refusal?) -> some View {
+        let x = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
+        let w = entry.item.isInfiniteBus ? contentWidth : max(entry.item.duration * pixelsPerSecond, 2)
+        let y = rulerHeight + Double(entry.displayLane) * laneStep
+        let text = refusal.map { L("sidechain.pick.refused", EditViewModel.sidechainReasonText($0)) }
+            ?? L("sidechain.pick.assign", viewModel.displayName(of: entry.item))
+        return ZStack {
+            RoundedRectangle(cornerRadius: entry.item.blockCornerRadius)
+                .fill(Color.black.opacity(0.72))
+            RoundedRectangle(cornerRadius: entry.item.blockCornerRadius)
+                .strokeBorder(refusal == nil ? Color.accentColor : Color.orange, lineWidth: 2)
+            HStack(spacing: 5) {
+                Image(systemName: refusal == nil ? "waveform.path" : "nosign")
+                    .font(.system(size: 9, weight: .bold))
+                Text(text)
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            .foregroundStyle(refusal == nil ? Color.white : Color.orange)
+            .padding(.horizontal, 4)
+        }
+        .frame(width: w, height: blockHeight)
+        .offset(x: x, y: y)
+        .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
     }
 
     /// The stem the assignment tool is aiming at, or nil if the tool is not armed. Resolved here so

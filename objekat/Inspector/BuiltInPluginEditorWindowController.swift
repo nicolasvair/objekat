@@ -13,7 +13,10 @@ final class BuiltInPluginEditorWindowController: NSWindowController, NSWindowDel
     init(plug: ObjectPlugin, viewModel: EditViewModel, onClose: @escaping () -> Void) {
         self.onClose = onClose
 
-        let content = BuiltInPluginEditorView(viewModel: viewModel, plug: plug)
+        let content = VStack(spacing: 0) {
+            BuiltInPluginEditorView(viewModel: viewModel, plug: plug)
+            SidechainStripIfAny(viewModel: viewModel, plugin: plug.id)
+        }
             .padding(2)
             .background(
                 RoundedRectangle(cornerRadius: 6)
