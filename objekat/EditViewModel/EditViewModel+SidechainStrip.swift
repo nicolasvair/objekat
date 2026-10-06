@@ -60,38 +60,28 @@ extension EditViewModel {
 
     /// The source picker's content. Objects: those whose span meets the host's (all of them when the
     /// host is a stem or an infinite bus, which play throughout), auxes left out (they cannot be a
-    /// source), a group kept when it or one of its descendants qualifies. Times are ABSOLUTE: a
-    /// child's `startTime` is relative to its group.
+    /// source), a group kept when it or one of its descendants qualifies. Ordered as the sound list
+    /// orders them (`listOrdered`): the order things happen on the timeline. A child's `startTime`
+    /// is already ABSOLUTE (@see SoundListRow.absStart).
     func sidechainSourceTree(host: UUID, plugin: UUID) -> SidechainSourceTree? {
         guard showsSidechainStrip(host: host, plugin: plugin) else { return nil }
         let current = Self.flattenLeaves(chainPlugins(host) ?? []).first { $0.id == plugin }?.sidechain?.sourceID
 
-        // The host's absolute span. nil = the whole timeline (a stem, an infinite bus).
+        // The host's span. nil = the whole timeline (a stem, an infinite bus).
         var span: (lo: Double, hi: Double)? = nil
-        func locate(_ array: [SoundObject], _ base: Double) -> Bool {
-            for o in array {
-                if o.id == host {
-                    if !o.isInfiniteBus { span = (base + o.startTime, base + o.startTime + o.duration) }
-                    return true
-                }
-                if case .group(let children, _) = o.kind, locate(children, base + o.startTime) { return true }
-            }
-            return false
-        }
-        _ = locate(items, 0)
+        if let h = find(id: host), !h.isInfiniteBus { span = (h.startTime, h.startTime + h.duration) }
 
-        struct Raw { let object: SoundObject; let start: Double; let children: [Raw] }
-        func build(_ array: [SoundObject], _ base: Double) -> [Raw] {
+        struct Raw { let object: SoundObject; let children: [Raw] }
+        func build(_ array: [SoundObject], _ laneOffset: Int) -> [Raw] {
             var out: [Raw] = []
-            for o in array where !o.isAux {
-                let a = base + o.startTime
+            for e in Self.listOrdered(array, displayLaneOffset: laneOffset) where !e.item.isAux {
+                let o = e.item
                 var kids: [Raw] = []
-                if case .group(let children, _) = o.kind { kids = build(children, a) }
-                let meets = o.isInfiniteBus || span.map { a < $0.hi && a + o.duration > $0.lo } ?? true
-                if meets || !kids.isEmpty { out.append(Raw(object: o, start: a, children: kids)) }
+                if case .group(let children, _) = o.kind { kids = build(children, e.displayLane + 1) }
+                let meets = o.isInfiniteBus || span.map { o.startTime < $0.hi && o.startTime + o.duration > $0.lo } ?? true
+                if meets || !kids.isEmpty { out.append(Raw(object: o, children: kids)) }
             }
-            return out.sorted { $0.start != $1.start ? $0.start < $1.start
-                                                     : $0.object.id.uuidString < $1.object.id.uuidString }
+            return out
         }
         let raw = build(items, 0)
 
@@ -179,6 +169,12 @@ extension EditViewModel {
         sidechainPick = nil
         do { try setSidechain(host: pick.host, plugin: pick.plugin, source: objectID); return true }
         catch { NSSound.beep(); return false }
+    }
+
+    /// The name of what receives the key: the host object or stem.
+    func sidechainHostName(_ host: UUID) -> String {
+        if let s = stems.first(where: { $0.id == host }) { return s.id == mainStemID ? L("stem.main.name") : s.name }
+        return find(id: host).map { displayName(of: $0) } ?? ""
     }
 
     /// The plugin's display name, for the pick's HUD and veil.

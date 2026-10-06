@@ -22,10 +22,8 @@ struct SidechainStripView: View {
             Image(systemName: "waveform.path")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
-            Text(L("plugin.sidechain.menu"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
 
+            // KEY → sidechain PLUGIN / RECEIVER: the key is the control, the rest says where it goes.
             Button { pickerShown.toggle() } label: {
                 HStack(spacing: 4) {
                     Text(verbatim: current?.name ?? L("plugin.sidechain.none"))
@@ -36,18 +34,30 @@ struct SidechainStripView: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 11))
+                .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .frame(maxWidth: 220, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .layoutPriority(2)
             .help(current?.inactiveReason.map { L("plugin.sidechain.inactive", $0) } ?? L("sidechain.strip.source.help"))
             .popover(isPresented: $pickerShown, arrowEdge: .bottom) {
                 SidechainSourcePicker(viewModel: viewModel, host: host, plugin: plugin) { pickerShown = false }
             }
+
+            Text(verbatim: "→")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Text(L("sidechain.strip.receiver",
+                   viewModel.sidechainPickPluginName(SidechainPick(host: host, plugin: plugin)),
+                   viewModel.sidechainHostName(host)))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
 
             Spacer(minLength: 4)
 
@@ -124,10 +134,28 @@ struct SidechainSourcePicker: View {
             }
             .padding(6)
         }
-        .frame(width: 280)
+        .frame(width: Self.width(for: tree))
         .frame(maxHeight: 420)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { seed(tree) }
+    }
+
+    /// As wide as the longest name needs (every row, folded ones included, so unfolding never makes
+    /// the popover jump), from 280 pt up to what the screen leaves.
+    static func width(for tree: SidechainSourceTree?) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11)
+        func w(_ name: String, _ depth: Int) -> CGFloat {
+            // indent + chevron + gap + row padding + check + gap + text + scroll padding & slack
+            CGFloat(depth) * 14 + 14 + 4 + 8 + 9 + 5
+                + ceil((name as NSString).size(withAttributes: [.font: font]).width) + 12 + 16
+        }
+        var widest: CGFloat = 0
+        func walk(_ list: [SidechainSourceTree.Node], _ depth: Int) {
+            for n in list { widest = max(widest, w(n.name, depth)); walk(n.children, depth + 1) }
+        }
+        if let tree { walk(tree.stems, 1); walk(tree.objects, 1) }
+        let screen = (NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame.width ?? 1200
+        return min(max(280, widest), max(280, screen - 80))
     }
 
     /// Opens the section and the groups that lead to the current key, once.

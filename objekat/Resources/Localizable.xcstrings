@@ -8028,29 +8028,6 @@
         }
       }
     },
-    "plugin.sidechain.menu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidechain"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidechain"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidechain"
-          }
-        }
-      }
-    },
     "plugin.sidechain.none": {
       "extractionState": "manual",
       "localizations": {
@@ -11129,6 +11106,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Cliquez un objet…"
+          }
+        }
+      }
+    },
+    "sidechain.strip.receiver": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sidechain %1$@ / %2$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sidechain %1$@ / %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sidechain %1$@ / %2$@"
           }
         }
       }
