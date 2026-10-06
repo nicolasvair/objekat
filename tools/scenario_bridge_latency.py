@@ -162,6 +162,12 @@ def run_case(c, label, *, y_lat=None, x_lat=None, expect_declared=None, expect_s
 with ObjekatClient(SOCK) as c:
     require_audio(c)
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})
+    # `debug.bridge_report` counts in the LIVE graph's samples, i.e. at the device's rate (44.1 kHz
+    # on many machines), not at the export's B.SR: the expected latencies follow the device.
+    DEV_SR = c.send("app.info")["sample_rate"]
+    def smp(ms):
+        return int(round(ms * DEV_SR / 1000.0))
+    print("  ..   device at %g Hz: 20 ms = %d samples" % (DEV_SR, smp(20)))
 
     # ---- J first: does a render compensate the output latency, i.e. is an impulse behind a 20 ms
     #      plugin written at 48000 (compensated) or at 48000 + 960 (not)? It sets what "absolute" means.
@@ -180,8 +186,8 @@ with ObjekatClient(SOCK) as c:
     # ---- A: nothing anywhere
     run_case(c, "A no latency", expect_declared=0, expect_delay=0, absolute=ABS)
 
-    # ---- B: key OLDER than the signal (a latency on the source). 20 ms = 960 samples.
-    run_case(c, "B key older", x_lat=20, expect_declared=960, expect_delay=0, absolute=ABS)
+    # ---- B: key OLDER than the signal (a latency on the source). 20 ms (960 samples at 48 kHz).
+    run_case(c, "B key older", x_lat=20, expect_declared=smp(20), expect_delay=0, absolute=ABS)
     rd1, b1 = reader(c)
     # A second render after a live render's rebuild: the cache is warm, no second pass.
     render(c, "lat_B_again.wav")
@@ -192,9 +198,9 @@ with ObjekatClient(SOCK) as c:
     else:
         print("  ..   B: no rebuild observed after the second render (nothing to say about the warm cache)")
 
-    # ---- C: key YOUNGER than the signal: 30 ms before the probe, 20 ms on the source: delay 480
-    run_case(c, "C key younger", y_lat=30, x_lat=20, expect_declared=1440, expect_source_age=960,
-             expect_delay=480, absolute=ABS)
+    # ---- C: key YOUNGER than the signal: 30 ms before the probe, 20 ms on the source: delay 10 ms
+    run_case(c, "C key younger", y_lat=30, x_lat=20, expect_declared=smp(30), expect_source_age=smp(20),
+             expect_delay=smp(30) - smp(20), absolute=ABS)
 
     # ---- D: different stems (the host in a stem that IS heard, the source in a detached one)
     run_case(c, "D different stems", y_stem=True, x_lat=20, absolute=ABS)
@@ -204,7 +210,7 @@ with ObjekatClient(SOCK) as c:
     run_case(c, "E2 two levels deep", nest="deep", x_lat=20, absolute=ABS)
 
     # ---- F: the source is a STEM with a latency on its bus
-    run_case(c, "F stem source", key_is_stem=True, x_lat=20, expect_declared=960, absolute=ABS)
+    run_case(c, "F stem source", key_is_stem=True, x_lat=20, expect_declared=smp(20), absolute=ABS)
 
     # ---- G: the probe sits on a STEM BUS
     run_case(c, "G probe on a bus", probe_on_bus=True, x_lat=20, absolute=ABS)
@@ -213,7 +219,7 @@ with ObjekatClient(SOCK) as c:
     run_case(c, "I source outside", x_outside=True)
 
     # ---- H: the source's latency CHANGES while running: 20 ms -> 40 ms
-    info = run_case(c, "H before", x_lat=20, expect_declared=960)
+    info = run_case(c, "H before", x_lat=20, expect_declared=smp(20))
     rd0, b0 = reader(c)
     if info["x_tester"]:
         step("H: 20 -> 40 ms", lambda: c.send("debug.set_plugin_property",
@@ -228,7 +234,8 @@ with ObjekatClient(SOCK) as c:
         rdn, bn = reader(c)
         print("  ..   H: the first build after the change took %s pass(es) (expected 2; informative only — "
               "a rebuild that began after the latency was already read can take one)" % bn.get("passes"))
-        check("H: declared == source age == 1920", rdn and rdn["declared"] == 1920 and rdn["source_age"] == 1920, rdn)
+        check("H: declared == source age == %d" % smp(40),
+              rdn and rdn["declared"] == smp(40) and rdn["source_age"] == smp(40), rdn)
         left, right = render(c, "lat_H_after.wav")
         il, ir = B.peak_index(left), B.peak_index(right)
         check("H: idx(L) == idx(R) after the change", il is not None and il == ir, "L %s R %s" % (il, ir))
