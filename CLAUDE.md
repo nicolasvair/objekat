@@ -35,10 +35,10 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **34** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0036` with two
+An engine series of **35** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0037` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
-(see its README). On the branch `feature/sidechain` it is **35** — `0037`, the audio bridge, is there
-and not on `main` (see its entry below); the next one will be `0038`. (`0035` and `0036`, the FX link state fixes of
+(see its README). `0037`, the audio bridge, came in with the sidechain merge of 6 October 2026 (see its
+entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); the next one will be `0038`. (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2190,8 +2190,8 @@ What has landed since mid-August, in order:
   **Not heard, not measured on a real project**: nobody has listened to it, the CPU of the live graph on
   a real session (the bench measures offline renders), and varispeed under playback (only exports).
 
-- **Sidechain for AU/VST3 plugins — the audio bridge, phase 1** (4 October 2026, ON THE BRANCH
-  `feature/sidechain`, NOT on `main`; **written on a Linux machine, then built and tested on a Mac on
+- **Sidechain for AU/VST3 plugins — the audio bridge, phase 1** (4 October 2026, branch
+  `feature/sidechain`, MERGED into `main` on 6 October 2026, `ce6eed04`; **written on a Linux machine, then built and tested on a Mac on
   5 October 2026 (see below): nothing yet HEARD or SEEN**). A plugin's sidechain input keyed by another object or by a stem —
   across stems and across groups, latency-aligned whether the key is younger or older. Design, the
   user's decisions, the review rulings and the numbered steps: `docs/plan_sidechain.md`; the API in
@@ -2207,9 +2207,9 @@ What has landed since mid-August, in order:
   bounded by stems × lanes × ranks; per-rank combiners inside a container) order writers before
   readers. Engine patch **`0037`** (`engine-patches/3.5/`, submodule branch `objekat-bridge-0037`
   at `1508f752f62`, on top of `17215d464fb`; **published on the fork 5 October 2026 as its own
-  branch `objekat-bridge-0037`**, and the gitlink of `feature/sidechain` points at it — `main` still
-  pins `17215d464fb` and the fork's `objekat-patches-3.5` was left alone; on merging into `main`,
-  bring `objekat-bridge-0037` into `objekat-patches-3.5`). The next engine patch is `0038`.
+  branch `objekat-bridge-0037`**, and the gitlink points at it — on `main` too since the merge; the
+  fork's `objekat-patches-3.5` is still at `17215d464fb`, to be fast-forwarded onto
+  `objekat-bridge-0037` when `main` is published). The next engine patch is `0038`.
   **Latency, both ways**: reader declares `X = max(L_d, L_s)`, delays by `X − L_s`; a key older than
   its host makes the sidechain sum delay the DIRECT input and the host's declared latency rises. `X`
   is needed when the reader is built but the tap's age only once the tap is: each tap caches its age
