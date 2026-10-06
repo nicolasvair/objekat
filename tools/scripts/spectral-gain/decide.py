@@ -21,6 +21,11 @@ REFUSE_SECONDS = 600.0
 
 OUTPUT_SUFFIX = " (spectral)"
 
+# The controls that can be tuned while a selection is pending, and are heard / seen at once without
+# touching the history (plan 9.3): the gain, and the two feathers.
+LIVE_KEYS = ("gain", "feather_ms", "feather_st")
+FEATHER_KEYS = ("feather_ms", "feather_st")
+
 
 def depth_class(source_format, bit_depth):
     """The class of one source file: pcm_int 16 -> 16, pcm_int 24 -> 24, pcm_float 32 -> "f32",
@@ -99,3 +104,24 @@ def unique_path(folder, stem, suffix):
         path = os.path.join(folder, "%s%s %d.wav" % (stem, suffix, n))
         n += 1
     return path
+
+
+def preview_dirty(prev_values, values, pending):
+    """What a change of the side bar's values makes stale while `pending` selection gestures exist:
+    a subset of {"selection", "audio"}.
+
+    - nothing pending: the empty set (the values only matter to the NEXT gesture; a step carries its own);
+    - a feather moved: both (the selection's edges moved, so the overlay AND the sound change);
+    - only the gain moved: the audio alone (the overlay's opacity is the intensity, not the gain);
+    - any other value (the brush, the analysis settings...): nothing here — the analysis settings are
+      the loop's own business (a new base image), not a live preview.
+    `prev_values` None means "not seen yet": every live key counts as changed."""
+    if pending <= 0:
+        return set()
+    prev = prev_values or {}
+    changed = {k for k in LIVE_KEYS if prev_values is None or prev.get(k) != (values or {}).get(k)}
+    if changed & set(FEATHER_KEYS):
+        return {"selection", "audio"}
+    if "gain" in changed:
+        return {"audio"}
+    return set()

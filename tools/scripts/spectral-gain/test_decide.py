@@ -100,5 +100,54 @@ class TestNames(unittest.TestCase):
             self.assertEqual(decide.unique_path(d, "tone", " (spectral)"), os.path.join(d, "tone (spectral) 3.wav"))
 
 
+class TestPreviewDirty(unittest.TestCase):
+    BASE = {"gain": -12.0, "feather_ms": 10.0, "feather_st": 1.0, "fft_size": "2048", "overlap": 4, "size_px": 32,
+            "quantity": 25.0, "hardness": 50.0}
+
+    def dirty(self, pending, **changes):
+        values = dict(self.BASE)
+        values.update(changes)
+        return decide.preview_dirty(dict(self.BASE), values, pending)
+
+    def test_live_keys(self):
+        self.assertEqual(decide.LIVE_KEYS, ("gain", "feather_ms", "feather_st"))
+
+    def test_nothing_pending_nothing_stale(self):
+        for changes in ({}, {"gain": -6.0}, {"feather_ms": 50.0}, {"feather_st": 3.0},
+                        {"gain": 0.0, "feather_ms": 0.0, "feather_st": 0.0}, {"fft_size": "4096"}):
+            self.assertEqual(self.dirty(0, **changes), set(), changes)
+
+    def test_nothing_changed(self):
+        self.assertEqual(self.dirty(1), set())
+        self.assertEqual(self.dirty(4), set())
+
+    def test_gain_alone_is_audio_only(self):
+        self.assertEqual(self.dirty(1, gain=-6.0), {"audio"})
+        self.assertEqual(self.dirty(3, gain=12.0), {"audio"})
+
+    def test_a_feather_is_both(self):
+        self.assertEqual(self.dirty(1, feather_ms=50.0), {"selection", "audio"})
+        self.assertEqual(self.dirty(1, feather_st=2.5), {"selection", "audio"})
+        self.assertEqual(self.dirty(2, feather_ms=50.0, feather_st=0.0), {"selection", "audio"})
+
+    def test_a_feather_with_the_gain_is_still_both(self):
+        self.assertEqual(self.dirty(1, gain=-3.0, feather_ms=5.0), {"selection", "audio"})
+
+    def test_the_other_values_are_not_a_live_preview(self):
+        for changes in ({"fft_size": "4096"}, {"overlap": 6}, {"size_px": 80}, {"quantity": 60.0}, {"hardness": 10.0}):
+            self.assertEqual(self.dirty(2, **changes), set(), changes)
+
+    def test_int_and_float_of_one_value_are_equal(self):
+        self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -12.0}, 1), set())
+
+    def test_never_seen_before_counts_as_all_changed(self):
+        self.assertEqual(decide.preview_dirty(None, dict(self.BASE), 1), {"selection", "audio"})
+        self.assertEqual(decide.preview_dirty(None, dict(self.BASE), 0), set())
+
+    def test_a_key_absent_from_both_is_not_a_change(self):
+        self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -12}, 1), set())
+        self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -6}, 1), {"audio"})
+
+
 if __name__ == "__main__":
     unittest.main()
