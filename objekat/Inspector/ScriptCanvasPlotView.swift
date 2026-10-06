@@ -263,9 +263,9 @@ final class ScriptCanvasPlotNSView: NSView {
     /// The raw trace of every active op the script has not yet reflected (@see
     /// ScriptCanvas.unreflectedOpIDs): the veil the script sends replaces it.
     private func drawTraces(_ c: ScriptCanvas, in ctx: CGContext, world: CanvasWorld, vp: CanvasViewport) {
-        let visible = Set(c.unreflectedOpIDs)
-        guard !visible.isEmpty else { return }
-        for op in c.ops[..<c.cursor] where visible.contains(op.id) {
+        let unreflected = c.unreflectedOps
+        guard !unreflected.isEmpty else { return }
+        for op in unreflected {
             switch op.shape {
             case .rect(let x0, let x1, let y0, let y1):
                 let a = screen(CanvasPoint(x: x0, y: y0), world: world, vp: vp)
@@ -482,7 +482,7 @@ final class ScriptCanvasPlotNSView: NSView {
                     y: CanvasFormat.axisValue(y, unit: world.y.unit), value: value)
     }
 
-    /// The tool the hand holds: the Hand, or the kind of the script's active tool.
+    /// The kind of the script's active tool; nil when it declared none.
     private func activeKind(_ c: ScriptCanvas) -> CanvasToolKind? {
         c.tools.first(where: { $0.id == c.activeTool })?.kind
     }
@@ -504,10 +504,8 @@ final class ScriptCanvasPlotNSView: NSView {
         }
         guard plotRect.contains(p) else { return }
         updatePointer(p)
-        guard let kind = activeKind(c) else {
-            gesture = .pan(start: p, last: p, moved: false)   // the Hand
-            return
-        }
+        // No tool declared: a left click in the plot does nothing (there is no Hand any more).
+        guard let kind = activeKind(c) else { return }
         switch kind {
         case .rect:
             gesture = .rect(start: p, current: p)
@@ -667,7 +665,7 @@ enum ScriptCanvasCursors {
     }
 
     static func cursor(for c: ScriptCanvas) -> NSCursor {
-        guard let tool = c.tools.first(where: { $0.id == c.activeTool }) else { return .openHand }
+        guard let tool = c.tools.first(where: { $0.id == c.activeTool }) else { return .arrow }
         switch tool.kind {
         case .rect, .point:
             return .crosshair

@@ -190,16 +190,11 @@ final class ScriptCanvasAudition {
 
     // MARK: Listening
 
-    /// A/B and Delta: the slot that is heard has its node at 1, the others at 0.
+    /// The three-state switch (Original / Result / Delta): the slot that is heard has its node at 1,
+    /// the others at 0. `listen` alone says which (an empty slot falls back to the original).
     private func setAudible(_ t: ScriptCanvasTransport) {
-        let heard: CanvasSlot
-        if t.delta, t.slots[.delta] != nil {
-            heard = .delta
-        } else if t.listen == .result, t.slots[.result] != nil {
-            heard = .result
-        } else {
-            heard = .original
-        }
+        let named = CanvasSlot(rawValue: t.listen.rawValue) ?? .original
+        let heard: CanvasSlot = t.slots[named] != nil ? named : .original
         for slot in CanvasSlot.allCases { players[slot]?.volume = slot == heard ? 1 : 0 }
     }
 

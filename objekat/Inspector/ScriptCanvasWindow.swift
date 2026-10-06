@@ -224,12 +224,9 @@ struct ScriptCanvasView: View {
 
     private func toolbar(_ c: ScriptCanvas) -> some View {
         let hasOriginal = c.transport.slots[.original] != nil
-        let hasResult = c.transport.slots[.result] != nil
-        let hasDelta = c.transport.slots[.delta] != nil
         return HStack(spacing: 10) {
-            // The Hand, then the script's tools.
+            // The script's tools (there is no Hand: navigation is the wheel, ⇧-wheel, pinch and Fit).
             HStack(spacing: 4) {
-                toolToggle(c, id: ScriptCanvas.handToolID, label: L("canvas.tool.hand"), icon: "hand.raised")
                 ForEach(c.tools, id: \.id) { t in
                     toolToggle(c, id: t.id, label: t.label, icon: symbol(for: t))
                 }
@@ -238,10 +235,10 @@ struct ScriptCanvasView: View {
             HStack(spacing: 2) {
                 Button { _ = try? store.undo(canvasID) } label: { Image(systemName: "arrow.uturn.backward") }
                     .help(L("canvas.undo.help"))
-                    .disabled(c.cursor == 0)
+                    .disabled(!c.history.canUndo)
                 Button { _ = try? store.redo(canvasID) } label: { Image(systemName: "arrow.uturn.forward") }
                     .help(L("canvas.redo.help"))
-                    .disabled(c.cursor >= c.ops.count)
+                    .disabled(!c.history.canRedo)
             }
             Divider().frame(height: 18)
             Button {
@@ -255,18 +252,13 @@ struct ScriptCanvasView: View {
                                       set: { try? store.setListen(canvasID, $0) })) {
                 Text(L("canvas.listen.original")).tag(CanvasListen.original)
                 Text(L("canvas.listen.result")).tag(CanvasListen.result)
+                Text(L("canvas.listen.delta")).tag(CanvasListen.delta)
             } label: { EmptyView() }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 170)
-            .disabled(!hasOriginal || !hasResult)
-            Toggle(isOn: Binding(get: { c.transport.delta },
-                                 set: { try? store.setDelta(canvasID, $0) })) {
-                Text(L("canvas.listen.delta"))
-            }
-            .toggleStyle(.button)
-            .help(L("canvas.listen.delta.help"))
-            .disabled(!hasDelta)
+            .frame(width: 250)
+            // Choosing an empty slot is refused by the store's setter (the segment springs back).
+            .disabled(!hasOriginal)
             Divider().frame(height: 18)
             Button { store.fitAll(canvasID) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
                 .help(L("canvas.fit"))

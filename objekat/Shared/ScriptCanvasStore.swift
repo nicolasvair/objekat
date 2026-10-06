@@ -24,11 +24,19 @@ import AVFoundation
 // they are not the script's business.
 //
 // TWO REVISIONS. `rev` is the canvas's (the long poll's); `historyRev` is the history's — it moves
-// each time the active list of ops changes (an op added, an undo, a redo), and a script stamps what
-// it computed from it (`set_layer {history_rev}`, `set_audio {history_rev}`). The app hides the trace
-// of an op once a layer reflecting it has arrived (§2.4): `reflectedRev` is the largest
-// `history_rev` any layer carries, and an active op shows its raw trace iff `activeSince >
-// reflectedRev`.
+// each time the active list of ENTRIES changes (an entry added, sealed, discarded, an undo, a redo),
+// and a script stamps what it computed from it (`set_layer {history_rev}`, `set_audio
+// {history_rev}`). The app hides the trace of an op once a layer reflecting it has arrived (§2.4):
+// `reflectedRev` is the largest `history_rev` any layer carries, and an active op shows its raw trace
+// iff its ENTRY's `activeSince > reflectedRev`.
+//
+// THE HISTORY IS ENTRIES (plan §9, revision 3): a `draft` (one gesture of a pending selection) or a
+// `step` (a committed step: its ops and a snapshot of every hand value at the moment it was sealed).
+// The pure rules live in `CanvasHistory` (ScriptCanvasHistory.swift); this file only feeds it. Two
+// MODES, opt-in at `open` (`modes`): Instant (a gesture is a step at once) and Selection (a gesture is
+// a draft; `commit` seals the drafts into one step; `discardPending` throws them away — the window
+// asks which before a mode switch or Validate finds a selection pending). A gesture carries a
+// POLARITY, add or subtract, that the app records and never interprets.
 //
 // HEADLESS. The store never touches a window or an audio device: the transport is a wall-clock model
 // (§2.8), and the viewport a nominal plot of 1000 × 500 points. The window layer (step 8) and the
@@ -44,8 +52,8 @@ enum CanvasToolKind: String, Sendable {
     case rect, stroke, point
 }
 
-/// A gesture the script offers. The Hand is not one: it is the app's own navigation tool, always
-/// there, and `ScriptCanvas.handToolID` is its reserved id.
+/// A gesture the script offers. There is no Hand any more: navigation is the wheel, ⇧-wheel, the
+/// pinch and Fit, and with no tool declared a left click in the plot does nothing.
 struct CanvasTool: Equatable, Sendable {
     let id: String
     let kind: CanvasToolKind
@@ -77,6 +85,18 @@ enum CanvasOpShape: Equatable {
     case point(x: Double, y: Double)
 }
 
+/// Add or subtract: a property of the gesture, frozen when it starts. The app records it and does not
+/// know what "subtract" does; always `add` in Instant mode.
+enum CanvasPolarity: String, Sendable {
+    case add, subtract
+}
+
+/// Instant: each gesture is applied at once (one history step). Selection: gestures build a pending
+/// selection that `commit` seals into one step.
+enum CanvasMode: String, Sendable {
+    case instant, select
+}
+
 struct CanvasOp: Equatable {
     /// Monotonic per canvas, from 1; an id is never reused, even after the op has been undone and
     /// dropped by a new one.
@@ -86,9 +106,7 @@ struct CanvasOp: Equatable {
     /// The values of the tool's declared controls AT THE MOMENT of the gesture. The app attaches no
     /// meaning to them.
     let params: [String: JSONValue]
-    /// The history revision at which the op last became active: when it was added, and again when
-    /// it is redone.
-    var activeSince: Int
+    let polarity: CanvasPolarity
 
     var kind: CanvasToolKind {
         switch shape {
@@ -116,8 +134,9 @@ enum CanvasSlot: String, CaseIterable, Sendable {
     case original, result, delta
 }
 
-enum CanvasListen: String, Sendable {
-    case original, result
+/// The ONE three-state switch: what the ear hears. Each case is the slot of the same name.
+enum CanvasListen: String, CaseIterable, Sendable {
+    case original, result, delta
 }
 
 /// The transport model (§2.8), the same one for the store, the window and the headless clock.
@@ -129,7 +148,6 @@ struct ScriptCanvasTransport {
     var anchorPosition = 0.0
     var anchorSince: Date? = nil
     var listen: CanvasListen = .original
-    var delta = false
     /// The path of each slot that holds a file.
     var slots: [CanvasSlot: String] = [:]
     /// The length, in seconds, of each file.
@@ -153,10 +171,10 @@ struct ScriptCanvasTransport {
 
 // MARK: - The canvas
 
-struct ScriptCanvas {
-    /// The Hand's reserved tool id.
-    static let handToolID = "hand"
+/// One entry of a canvas's history: a draft or a step (@see CanvasHistory).
+typealias CanvasHistoryEntry = CanvasEntry<CanvasOp, [String: JSONValue]>
 
+struct ScriptCanvas {
     let id: UUID
     let owner: UUID
     let objectID: UUID?
@@ -164,8 +182,13 @@ struct ScriptCanvas {
     var controls: [ScriptPanelControl]
     var values: [String: JSONValue]
     var tools: [CanvasTool]
-    /// A tool id, or `handToolID`.
-    var activeTool: String
+    /// A tool id; nil when the script declared none.
+    var activeTool: String?
+    /// Opt-in at `open`: the canvas offers the two modes and subtract. Without it, Instant only.
+    var modes = false
+    var mode: CanvasMode = .instant
+    /// The Draw / Erase TOGGLE's state (the ⌘ flip is the window's and is not in it). `add` in Instant.
+    var polarity: CanvasPolarity = .add
     var rev = 0
     var state: ScriptCanvasState = .open
     var pendingEvents: [String] = []
@@ -174,11 +197,8 @@ struct ScriptCanvas {
     var rememberKey: String? = nil
     var declared: [String: JSONValue] = [:]
 
-    // History
-    var ops: [CanvasOp] = []
-    /// The active ops are `ops[..<cursor]`.
-    var cursor = 0
-    var historyRev = 0
+    // History: entries (@see CanvasHistory); ops keep their own ids.
+    var history = CanvasHistory<CanvasOp, [String: JSONValue]>()
     var nextOpID = 1
 
     // What is drawn
@@ -193,11 +213,16 @@ struct ScriptCanvas {
     /// The largest `history_rev` any layer carries, −1 when none does.
     var reflectedRev: Int { layers.compactMap(\.historyRev).max() ?? -1 }
 
-    /// The active ops whose raw trace is still visible: those the script has not yet reflected.
-    var unreflectedOpIDs: [Int] {
-        let reflected = reflectedRev
-        return ops[..<cursor].filter { $0.activeSince > reflected }.map(\.id)
+    /// The history's revision: moves each time the active list of entries changes.
+    var historyRev: Int { history.rev }
+
+    /// The ops whose raw trace is still visible: those of the active entries the script has not yet
+    /// reflected, in order.
+    var unreflectedOps: [CanvasOp] {
+        history.activeEntries(since: reflectedRev).flatMap(\.ops)
     }
+
+    var unreflectedOpIDs: [Int] { unreflectedOps.map(\.id) }
 
     /// True while the files the script supplied are behind the history.
     var isComputing: Bool {
@@ -218,7 +243,7 @@ struct ScriptCanvas {
     @ObservationIgnored var canvasEnded: ((UUID) -> Void)?
     /// The view moved (a script-side change of world, `view` from the hand's door, a fit).
     @ObservationIgnored var viewportChanged: ((UUID) -> Void)?
-    /// Anything the audio layer must follow: play, stop, seek, a listen or delta change, a slot.
+    /// Anything the audio layer must follow: play, stop, seek, a listen change, a slot.
     @ObservationIgnored var transportChanged: ((UUID) -> Void)?
     /// Starting a canvas's playback stops the PROJECT's (set by the view-model).
     @ObservationIgnored var stopProjectTransport: (() -> Void)?
@@ -469,10 +494,11 @@ struct ScriptCanvas {
         }
         if let offset { c.transport.offset = offset }
         if let historyRev { c.transport.audioHistoryRev = historyRev }
-        // What can no longer be heard falls back: a cleared `result` to the original, a cleared
-        // delta to off, a cleared original to silence.
-        if c.transport.listen == .result && c.transport.slots[.result] == nil { c.transport.listen = .original }
-        if c.transport.delta && c.transport.slots[.delta] == nil { c.transport.delta = false }
+        // What can no longer be heard falls back: a cleared `result` or `delta` being heard to the
+        // original, a cleared original to silence.
+        if c.transport.listen != .original, c.transport.slots[CanvasSlot(rawValue: c.transport.listen.rawValue)!] == nil {
+            c.transport.listen = .original
+        }
         if c.transport.slots[.original] == nil { Self.stopPlayback(&c.transport) }
         canvases[id] = c
         transportChanged?(id)
@@ -493,7 +519,7 @@ struct ScriptCanvas {
 
     func selectTool(_ id: UUID, tool: String) throws {
         var c = try openCanvas(id)
-        guard tool == ScriptCanvas.handToolID || c.tools.contains(where: { $0.id == tool }) else {
+        guard c.tools.contains(where: { $0.id == tool }) else {
             throw Self.bad("no tool '\(tool)'")
         }
         c.activeTool = tool
@@ -534,6 +560,32 @@ struct ScriptCanvas {
         setViewport(id, CanvasViewport.fit(world: world, width: current.width, height: current.height))
     }
 
+    // MARK: Modes and polarity — never move `rev` (like a tool, they are not the script's business:
+    // the entries already say everything it needs)
+
+    /// Switches mode. Refused (`invalid_state`) without `modes`, and while a selection is PENDING:
+    /// the window asks first (Apply = `commit`, Ignore = `discardPending`) and switches after. Going
+    /// to Instant puts the polarity toggle back to `add`.
+    func setMode(_ id: UUID, _ mode: CanvasMode) throws {
+        let c = try openCanvas(id)
+        guard c.modes else { throw Self.invalid("this canvas has no modes (open with modes: true)") }
+        guard c.mode != mode else { return }
+        guard c.history.pending == 0 else {
+            throw Self.invalid("a selection is pending (commit it or discard it first)")
+        }
+        canvases[id]!.mode = mode
+        if mode == .instant { canvases[id]!.polarity = .add }
+    }
+
+    /// The Draw / Erase toggle. `subtract` is refused in Instant mode.
+    func setPolarity(_ id: UUID, _ polarity: CanvasPolarity) throws {
+        let c = try openCanvas(id)
+        if polarity == .subtract && c.mode == .instant {
+            throw Self.invalid("subtract needs the selection mode")
+        }
+        canvases[id]!.polarity = polarity
+    }
+
     // MARK: The history — each of these moves `rev` when it changes something
 
     private func tool(for kind: CanvasToolKind, in c: ScriptCanvas) throws -> CanvasTool {
@@ -550,31 +602,48 @@ struct ScriptCanvas {
         return out
     }
 
-    /// Drops the undone tail, appends, and moves the history.
-    private func append(_ id: UUID, shape: CanvasOpShape, tool: CanvasTool) {
+    /// The polarity a gesture will carry: the one given (the window's, with the ⌘ flip), else the
+    /// toggle's in Selection mode, else `add`. An explicit `subtract` in Instant mode is refused.
+    private func resolvePolarity(_ given: CanvasPolarity?, in c: ScriptCanvas) throws -> CanvasPolarity {
+        if let given {
+            if given == .subtract && c.mode == .instant { throw Self.invalid("subtract needs the selection mode") }
+            return given
+        }
+        return c.mode == .select ? c.polarity : .add
+    }
+
+    /// Instant: one step of one op, `params` = every hand value now. Selection: a draft. Either way
+    /// the redo tail goes and the history moves.
+    private func append(_ id: UUID, shape: CanvasOpShape, tool: CanvasTool, polarity: CanvasPolarity) {
         var c = canvases[id]!
-        if c.cursor < c.ops.count { c.ops.removeSubrange(c.cursor...) }
-        c.historyRev += 1
-        let params = snapshot(of: tool, in: c)
-        c.ops.append(CanvasOp(id: c.nextOpID, tool: tool.id, shape: shape, params: params,
-                              activeSince: c.historyRev))
+        let op = CanvasOp(id: c.nextOpID, tool: tool.id, shape: shape, params: snapshot(of: tool, in: c),
+                          polarity: polarity)
+        switch c.mode {
+        case .instant:
+            // Cannot be refused: Instant never holds a pending selection (a mode switch needs none).
+            guard c.history.appendStep(ops: [op], params: ScriptControls.handValues(c.controls, c.values)) else { return }
+        case .select:
+            c.history.appendDraft(op)
+        }
         c.nextOpID += 1
-        c.cursor = c.ops.count
         canvases[id] = c
         bump(id)
     }
 
-    /// A rectangle in data units: sorted, clamped to the world. Zero area adds nothing.
+    /// A rectangle in data units: sorted, clamped to the world. Zero area adds nothing. `polarity`
+    /// nil = the toggle's (Selection) or `add` (Instant).
     @discardableResult
-    func addRect(_ id: UUID, x0: Double, x1: Double, y0: Double, y1: Double) throws -> Bool {
+    func addRect(_ id: UUID, x0: Double, x1: Double, y0: Double, y1: Double,
+                 polarity: CanvasPolarity? = nil) throws -> Bool {
         let c = try openCanvas(id)
         guard let world = c.world else { throw Self.invalid("no world yet") }
         let t = try tool(for: .rect, in: c)
+        let pol = try resolvePolarity(polarity, in: c)
         guard [x0, x1, y0, y1].allSatisfy(\.isFinite) else { throw Self.bad("rect bounds must be finite numbers") }
         let ax0 = world.x.clamp(Swift.min(x0, x1)), ax1 = world.x.clamp(Swift.max(x0, x1))
         let ay0 = world.y.clamp(Swift.min(y0, y1)), ay1 = world.y.clamp(Swift.max(y0, y1))
         guard ax0 < ax1, ay0 < ay1 else { return false }
-        append(id, shape: .rect(x0: ax0, x1: ax1, y0: ay0, y1: ay1), tool: t)
+        append(id, shape: .rect(x0: ax0, x1: ax1, y0: ay0, y1: ay1), tool: t, polarity: pol)
         return true
     }
 
@@ -582,10 +651,12 @@ struct ScriptCanvas {
     /// (the window's, frozen when the gesture started; the current viewport's when absent). A path
     /// shorter than one point on screen adds nothing.
     @discardableResult
-    func addStroke(_ id: UUID, points: [CanvasPoint], scale: (x: Double, y: Double)? = nil) throws -> Bool {
+    func addStroke(_ id: UUID, points: [CanvasPoint], scale: (x: Double, y: Double)? = nil,
+                   polarity: CanvasPolarity? = nil) throws -> Bool {
         let c = try openCanvas(id)
         guard let world = c.world, let vp = viewport(id) else { throw Self.invalid("no world yet") }
         let t = try tool(for: .stroke, in: c)
+        let pol = try resolvePolarity(polarity, in: c)
         guard points.count >= Self.minStrokePoints, points.count <= Self.maxStrokePoints else {
             throw Self.bad("a stroke has \(Self.minStrokePoints) to \(Self.maxStrokePoints) points")
         }
@@ -609,43 +680,62 @@ struct ScriptCanvas {
         var sizePt = 32.0
         if let key = t.sizeControl, let v = c.values[key]?.doubleValue { sizePt = v }
         sizePt = Swift.min(1000, Swift.max(1, sizePt))
-        append(id, shape: .stroke(points: points, sizePt: sizePt, sizeX: sizePt / sx, sizeY: sizePt / sy), tool: t)
+        append(id, shape: .stroke(points: points, sizePt: sizePt, sizeX: sizePt / sx, sizeY: sizePt / sy),
+               tool: t, polarity: pol)
         return true
     }
 
     @discardableResult
-    func addPoint(_ id: UUID, x: Double, y: Double) throws -> Bool {
+    func addPoint(_ id: UUID, x: Double, y: Double, polarity: CanvasPolarity? = nil) throws -> Bool {
         let c = try openCanvas(id)
         guard let world = c.world else { throw Self.invalid("no world yet") }
         let t = try tool(for: .point, in: c)
+        let pol = try resolvePolarity(polarity, in: c)
         guard x.isFinite, y.isFinite else { throw Self.bad("point must be finite numbers") }
         if world.x.mapping == .log && x <= 0 { throw Self.bad("point x must be > 0 on a log axis") }
         if world.y.mapping == .log && y <= 0 { throw Self.bad("point y must be > 0 on a log axis") }
-        append(id, shape: .point(x: x, y: y), tool: t)
+        append(id, shape: .point(x: x, y: y), tool: t, polarity: pol)
         return true
     }
 
-    /// One step back. At the start of the history it is a no-op (false, `rev` unmoved).
+    /// "Apply": seals the pending selection into ONE step, `params` = every hand value NOW. False
+    /// (`rev` unmoved) with nothing pending.
     @discardableResult
-    func undo(_ id: UUID) throws -> Bool {
+    func commit(_ id: UUID) throws -> Bool {
         let c = try openCanvas(id)
-        guard c.cursor > 0 else { return false }
-        canvases[id]!.cursor -= 1
-        canvases[id]!.historyRev += 1
+        guard canvases[id]!.history.commit(params: ScriptControls.handValues(c.controls, c.values)) else {
+            return false
+        }
         bump(id)
         return true
     }
 
-    /// One step forward: the op becomes active AGAIN, so its trace shows until the script reflects
-    /// it. At the end of the history it is a no-op.
+    /// "Ignore": throws the pending selection away (nothing of it can be redone). False with nothing
+    /// pending. The window offers it beside `commit` when a mode switch or Validate finds a selection
+    /// pending.
+    @discardableResult
+    func discardPending(_ id: UUID) throws -> Bool {
+        _ = try openCanvas(id)
+        guard canvases[id]!.history.discardPending() else { return false }
+        bump(id)
+        return true
+    }
+
+    /// One entry back. At the start of the history it is a no-op (false, `rev` unmoved).
+    @discardableResult
+    func undo(_ id: UUID) throws -> Bool {
+        _ = try openCanvas(id)
+        guard canvases[id]!.history.undo() else { return false }
+        bump(id)
+        return true
+    }
+
+    /// One entry forward: it becomes active AGAIN, so its trace shows until the script reflects it.
+    /// At the end of the history it is a no-op.
     @discardableResult
     func redo(_ id: UUID) throws -> Bool {
-        let c = try openCanvas(id)
-        guard c.cursor < c.ops.count else { return false }
-        canvases[id]!.historyRev += 1
-        let rev = canvases[id]!.historyRev
-        canvases[id]!.ops[c.cursor].activeSince = rev
-        canvases[id]!.cursor += 1
+        _ = try openCanvas(id)
+        guard canvases[id]!.history.redo() else { return false }
         bump(id)
         return true
     }
@@ -708,19 +798,13 @@ struct ScriptCanvas {
         transportChanged?(id)
     }
 
+    /// The three-state switch. `invalid_state` when the slot of that name is empty.
     func setListen(_ id: UUID, _ listen: CanvasListen) throws {
         let c = try openCanvas(id)
         guard c.transport.slots[CanvasSlot(rawValue: listen.rawValue)!] != nil else {
             throw Self.invalid("the \(listen.rawValue) slot is empty")
         }
         canvases[id]!.transport.listen = listen
-        transportChanged?(id)
-    }
-
-    func setDelta(_ id: UUID, _ on: Bool) throws {
-        let c = try openCanvas(id)
-        if on && c.transport.slots[.delta] == nil { throw Self.invalid("no delta audio") }
-        canvases[id]!.transport.delta = on
         transportChanged?(id)
     }
 }

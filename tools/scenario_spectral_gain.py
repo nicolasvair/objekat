@@ -211,8 +211,8 @@ def timed(fn):
 
 TOOLS = [
     {"id": "rect", "kind": "rect", "label": "Rectangle", "params": ["gain", "feather_ms", "feather_st"]},
-    {"id": "eraser", "kind": "stroke", "label": "Eraser", "icon": "eraser",
-     "params": ["amount", "hardness"], "size_control": "size_px"},
+    {"id": "brush", "kind": "stroke", "label": "Brush", "icon": "paintbrush.pointed",
+     "params": ["quantity", "hardness"], "size_control": "size_px"},
     {"id": "pick", "kind": "point", "label": "Pick"},
 ]
 
@@ -222,11 +222,14 @@ CANVAS_CONTROLS = [
     {"id": "feather_ms", "kind": "number", "label": "Feather", "value": 10, "min": 0, "max": 200, "step": 1, "unit": "ms"},
     {"id": "feather_st", "kind": "number", "label": "Feather", "value": 1, "min": 0, "max": 12, "step": 0.1, "unit": "st"},
     {"id": "size_px", "kind": "number", "label": "Size", "value": 32, "min": 4, "max": 200, "step": 1, "unit": "px"},
-    {"id": "amount", "kind": "number", "label": "Amount", "value": -3, "min": -24, "max": -0.5, "step": 0.5, "unit": "dB"},
+    {"id": "quantity", "kind": "number", "label": "Amount per pass", "value": 25, "min": 1, "max": 100, "step": 1, "unit": "%"},
     {"id": "hardness", "kind": "number", "label": "Hardness", "value": 50, "min": 0, "max": 100, "step": 1, "unit": "%"},
     {"id": "go", "kind": "button", "label": "Go"},
     {"id": "prog", "kind": "progress", "label": "Progress"},
 ]
+
+# Every hand-value control (bool, number, choice) — what a committed STEP snapshots when it is sealed.
+ALL_VALUES = {"gain": -12, "feather_ms": 10, "feather_st": 1, "size_px": 32, "quantity": 25, "hardness": 50}
 
 X_AXIS = {"min": 0, "max": 10, "unit": "s"}
 Y_AXIS = {"min": 20, "max": 24000, "unit": "Hz", "mapping": "log"}
@@ -258,17 +261,20 @@ def section_b(c):
           and g["layers"] == [] and g["view"] is None, g)
     check("b: get: values hold the declared defaults", g["values"]["gain"] == -12 and g["values"]["size_px"] == 32, g["values"])
     check("b: get: empty history", g["history"]["rev"] == 0 and g["history"]["cursor"] == 0
-          and g["history"]["count"] == 0 and g["history"]["unreflected"] == [] and g["history"]["ops"] == [], g["history"])
+          and g["history"]["count"] == 0 and g["history"]["pending"] == 0 and g["history"]["unreflected"] == []
+          and g["history"]["entries"] == [] and "ops" not in g["history"], g["history"])
+    check("b: get: no modes by default — Instant, polarity add", g["modes"] is False and g["mode"] == "instant"
+          and g["polarity"] == "add", (g["modes"], g["mode"], g["polarity"]))
     check("b: get: transport at rest", g["transport"]["playing"] is False and g["transport"]["caret"] == 0
           and g["transport"]["position"] == 0 and g["transport"]["listen"] == "original"
-          and g["transport"]["delta"] is False
+          and "delta" not in g["transport"]
           and g["transport"]["slots"] == {"original": None, "result": None, "delta": None}, g["transport"])
     check("b: a second open on the same connection replaces the first (it ends closed)",
           c.send("script.canvas.open", {"title": "Open2", "tools": []})["rev"] == 0
           and [x["title"] for x in c.send("script.canvas.list")["canvases"]] == ["Open2"],
           c.send("script.canvas.list"))
     g = c.send("script.canvas.get", {"canvas_id": c.send("script.canvas.list")["canvases"][0]["canvas_id"]})
-    check("b: with no tool the Hand is the active one", g["tool"] == "hand", g["tool"])
+    check("b: with no tool declared there is no active tool (no Hand any more)", g["tool"] is None, g["tool"])
     cid = open_canvas(c)
 
     def refuse(label, **kw):
@@ -279,7 +285,6 @@ def section_b(c):
 
     refuse("a duplicate tool id", tools=[TOOLS[0], dict(TOOLS[0])])
     refuse("an unknown tool kind", tools=[{"id": "x", "kind": "lasso", "label": "X"}])
-    refuse("the reserved id hand", tools=[{"id": "hand", "kind": "rect", "label": "H"}])
     refuse("a tool with no label", tools=[{"id": "x", "kind": "rect"}])
     refuse("an unknown control in params", tools=[{"id": "x", "kind": "rect", "label": "X", "params": ["nope"]}])
     refuse("a button in params", tools=[{"id": "x", "kind": "rect", "label": "X", "params": ["go"]}])
@@ -299,6 +304,10 @@ def section_b(c):
     expect_error(lambda: c.send("script.canvas.open", {"title": "", "tools": [], "remember": True}),
                  "bad_params", "b: remember true with no title refused")
     cid = open_canvas(c, object=obj)           # the refusals above must not have replaced a live canvas
+    cid_h = open_canvas(c, tools=[{"id": "hand", "kind": "rect", "label": "H"}])
+    check("b: the id \"hand\" is no longer reserved: an ordinary tool",
+          c.send("script.canvas.get", {"canvas_id": cid_h})["tool"] == "hand")
+    cid = open_canvas(c, object=obj)
 
     # -- set_image -------------------------------------------------------------------------
     expect_error(lambda: c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB}),
@@ -354,17 +363,23 @@ def section_b(c):
     check("b: a rect input is added, moves rev, history and cursor",
           r["added"] is True and r["rev"] > rev0 and r["history_rev"] == 1 and r["cursor"] == 1, r)
     g = c.send("script.canvas.get", {"canvas_id": cid})
-    op1 = g["history"]["ops"][0]
+    e1 = g["history"]["entries"][0]
+    op1 = e1["ops"][0]
+    check("b: Instant: a gesture is ONE step of one op, params = EVERY hand value, polarity add",
+          e1["kind"] == "step" and e1["id"] == 1 and e1["active_since"] == 1 and len(e1["ops"]) == 1
+          and e1["params"] == ALL_VALUES and op1["polarity"] == "add" and "active_since" not in op1, e1)
     check("b: the rect is sorted and clamped to the world",
           (op1["kind"], op1["tool"], op1["x0"], op1["x1"], op1["y0"], op1["y1"]) == ("rect", "rect", 0, 10, 100, 10000), op1)
     check("b: the op's params snapshot the tool's controls (and only those)",
-          op1["params"] == {"gain": -12, "feather_ms": 10, "feather_st": 1} and op1["id"] == 1
-          and op1["active_since"] == 1, op1)
+          op1["params"] == {"gain": -12, "feather_ms": 10, "feather_st": 1} and op1["id"] == 1, op1)
     c.send("script.canvas.input", {"canvas_id": cid, "values": {"gain": -24}})
     c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 1, "x1": 2, "y0": 200, "y1": 400}})
-    ops = c.send("script.canvas.get", {"canvas_id": cid})["history"]["ops"]
+    ents = c.send("script.canvas.get", {"canvas_id": cid})["history"]["entries"]
+    ops = [o for e in ents for o in e["ops"]]
     check("b: the next op snapshots the new value and the earlier op is unchanged",
           ops[1]["params"]["gain"] == -24 and ops[0]["params"]["gain"] == -12 and ops[1]["id"] == 2, ops)
+    check("b: ... and so does its step (the earlier step keeps -12)",
+          ents[1]["params"]["gain"] == -24 and ents[0]["params"]["gain"] == -12, ents)
     rev_before = c.send("script.canvas.get", {"canvas_id": cid})["rev"]
     r = c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 3, "x1": 3, "y0": 200, "y1": 400}})
     check("b: a rect of zero area adds nothing and leaves rev alone",
@@ -374,12 +389,12 @@ def section_b(c):
     pts = [[1.0, 3000.0], [2.5, 3000.0], [4.0, 3100.0]]
     r = c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "stroke", "points": pts, "view_scale": {"x": 500, "y": 100}}})
     check("b: a stroke is added", r["added"] is True and r["cursor"] == 3, r)
-    op3 = c.send("script.canvas.get", {"canvas_id": cid})["history"]["ops"][2]
+    op3 = c.send("script.canvas.get", {"canvas_id": cid})["history"]["entries"][2]["ops"][0]
     check("b: stroke: size_pt from size_px, size_x = 32/500, size_y = 32/100",
-          op3["kind"] == "stroke" and op3["tool"] == "eraser" and op3["size_pt"] == 32
+          op3["kind"] == "stroke" and op3["tool"] == "brush" and op3["size_pt"] == 32
           and abs(op3["size_x"] - 0.064) < 1e-12 and abs(op3["size_y"] - 0.32) < 1e-12, op3)
-    check("b: stroke: points stored as given, params are the eraser's",
-          op3["points"] == pts and op3["params"] == {"amount": -3, "hardness": 50}, op3)
+    check("b: stroke: points stored as given, params are the brush's",
+          op3["points"] == pts and op3["params"] == {"quantity": 25, "hardness": 50}, op3)
     rev_before = c.send("script.canvas.get", {"canvas_id": cid})["rev"]
     r = c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "stroke", "points": [[1.0, 3000.0], [1.0001, 3000.0]],
                                                                   "view_scale": {"x": 500, "y": 100}}})
@@ -394,19 +409,21 @@ def section_b(c):
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 1, "x1": "a", "y0": 1, "y1": 2}}),
                  "bad_params", "b: a rect with a non-number -> bad_params")
     r = c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "point", "x": 5, "y": 1000}})
-    op4 = c.send("script.canvas.get", {"canvas_id": cid})["history"]["ops"][3]
+    op4 = c.send("script.canvas.get", {"canvas_id": cid})["history"]["entries"][3]["ops"][0]
     check("b: a point op (the first point tool is used)",
           r["added"] is True and op4["kind"] == "point" and op4["tool"] == "pick" and op4["x"] == 5 and op4["y"] == 1000
           and op4["params"] == {}, op4)
-    c.send("script.canvas.input", {"canvas_id": cid, "tool": "eraser"})
-    check("b: tool moves no rev", c.send("script.canvas.get", {"canvas_id": cid})["tool"] == "eraser")
+    rev_before = c.send("script.canvas.get", {"canvas_id": cid})["rev"]
+    c.send("script.canvas.input", {"canvas_id": cid, "tool": "brush"})
+    g = c.send("script.canvas.get", {"canvas_id": cid})
+    check("b: tool moves no rev", g["tool"] == "brush" and g["rev"] == rev_before)
     c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 0, "x1": 1, "y0": 100, "y1": 200}})
-    ops = c.send("script.canvas.get", {"canvas_id": cid})["history"]["ops"]
-    check("b: a rect with the stroke tool active uses the first tool of its kind", ops[-1]["tool"] == "rect", ops[-1])
+    last = c.send("script.canvas.get", {"canvas_id": cid})["history"]["entries"][-1]["ops"][-1]
+    check("b: a rect with the stroke tool active uses the first tool of its kind", last["tool"] == "rect", last)
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "tool": "nope"}),
                  "bad_params", "b: an unknown tool -> bad_params")
-    c.send("script.canvas.input", {"canvas_id": cid, "tool": "hand"})
-    check("b: the Hand can be selected", c.send("script.canvas.get", {"canvas_id": cid})["tool"] == "hand")
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "tool": "hand"}),
+                 "bad_params", "b: tool \"hand\" -> bad_params (there is no Hand any more)")
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "values": {"nope": 1}}),
                  "bad_params", "b: input: an unknown control is refused")
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "values": {"prog": 0.5}}),
@@ -432,13 +449,14 @@ def section_b(c):
 
     r1, r2, r3 = rect(0, 1), rect(1, 2), rect(2, 3)
     h = hist()
-    check("b: three ops, cursor 3, ids 1 2 3", h["cursor"] == 3 and h["count"] == 3 and [o["id"] for o in h["ops"]] == [1, 2, 3], h)
+    check("b: three steps, cursor 3, ids 1 2 3, pending 0", h["cursor"] == 3 and h["count"] == 3 and h["pending"] == 0
+          and [e["id"] for e in h["entries"]] == [1, 2, 3] and all(e["kind"] == "step" for e in h["entries"]), h)
     rev = c.send("script.canvas.get", {"canvas_id": cid})["rev"]
     r = c.send("script.canvas.input", {"canvas_id": cid, "undo": True})
     check("b: undo moves the cursor, the history rev and rev", r["cursor"] == 2 and r["history_rev"] == 4 and r["rev"] > rev
           and r["added"] is False, r)
     h = hist()
-    check("b: an undone op stays in the list", h["count"] == 3 and h["cursor"] == 2, h)
+    check("b: an undone entry stays in the list", h["count"] == 3 and h["cursor"] == 2, h)
     r = c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
     check("b: redo moves it back", r["cursor"] == 3 and r["history_rev"] == 5, r)
     c.send("script.canvas.input", {"canvas_id": cid, "undo": True})
@@ -446,7 +464,7 @@ def section_b(c):
     r = rect(5, 6)
     h = hist()
     check("b: a new op after an undo truncates the redo tail (ids stay monotonic)",
-          h["count"] == 2 and h["cursor"] == 2 and [o["id"] for o in h["ops"]] == [1, 4], h)
+          h["count"] == 2 and h["cursor"] == 2 and [e["id"] for e in h["entries"]] == [1, 4], h)
     rev = c.send("script.canvas.get", {"canvas_id": cid})["rev"]
     r = c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
     check("b: redo at the end is a no-op", r["rev"] == rev and r["cursor"] == 2 and r["added"] is False, r)
@@ -457,6 +475,144 @@ def section_b(c):
     check("b: undo at the start is a no-op", r["rev"] == rev and r["cursor"] == 0 and r["added"] is False, r)
     c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
     c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
+
+    # -- modes, drafts, commit, polarity ---------------------------------------------------
+    cm_no = open_canvas(c, object=obj)
+    c.send("script.canvas.set_image", {"canvas_id": cm_no, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cm_no, "mode": "select"}),
+                 "invalid_state", "b: without modes, mode -> invalid_state")
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cm_no, "mode": "instant"}),
+                 "invalid_state", "b: without modes, even mode instant -> invalid_state")
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cm_no, "polarity": "subtract"}),
+                 "invalid_state", "b: without modes, polarity subtract -> invalid_state")
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cm_no, "op": {
+                     "kind": "rect", "x0": 0, "x1": 1, "y0": 100, "y1": 200, "polarity": "subtract"}}),
+                 "invalid_state", "b: without modes, an op with polarity subtract -> invalid_state")
+    r = c.send("script.canvas.input", {"canvas_id": cm_no, "commit": True})
+    check("b: commit with nothing pending is a no-op (added false, rev and history unmoved)",
+          r["added"] is False and r["committed"] is False and r["history_rev"] == 0 and r["rev"] == 0, r)
+
+    cm = open_canvas(c, object=obj, modes=True)
+    c.send("script.canvas.set_image", {"canvas_id": cm, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+
+    def cg():
+        return c.send("script.canvas.get", {"canvas_id": cm})
+
+    def cinput(**kw):
+        kw["canvas_id"] = cm
+        return c.send("script.canvas.input", kw)
+
+    def crect(x0, x1, **extra):
+        op = {"kind": "rect", "x0": x0, "x1": x1, "y0": 100, "y1": 200}
+        op.update(extra)
+        return cinput(op=op)
+
+    g = cg()
+    check("b: modes: true -> modes, mode instant, polarity add", g["modes"] is True and g["mode"] == "instant"
+          and g["polarity"] == "add", (g["modes"], g["mode"], g["polarity"]))
+    expect_error(lambda: cinput(polarity="subtract"), "invalid_state", "b: polarity subtract in Instant -> invalid_state")
+    expect_error(lambda: crect(0, 1, polarity="subtract"), "invalid_state", "b: an op with polarity subtract in Instant -> invalid_state")
+    expect_error(lambda: cinput(mode="sideways"), "bad_params", "b: an unknown mode -> bad_params")
+    expect_error(lambda: cinput(polarity="sideways"), "bad_params", "b: an unknown polarity -> bad_params")
+    crect(0, 1)
+    e = cg()["history"]["entries"][0]
+    check("b: modes: an Instant gesture is still a step with every value",
+          e["kind"] == "step" and e["params"] == ALL_VALUES and e["ops"][0]["polarity"] == "add", e)
+    rev0 = cg()["rev"]
+    cinput(mode="select")
+    cinput(polarity="subtract")
+    g = cg()
+    check("b: mode and polarity move no rev", g["rev"] == rev0 and g["mode"] == "select" and g["polarity"] == "subtract"
+          and g["history"]["rev"] == 1, (g["rev"], rev0, g["mode"], g["polarity"]))
+    r = crect(1, 2)
+    check("b: Selection: a gesture is a DRAFT (pending 1), polarity = the toggle's, history and rev move",
+          r["added"] is True and r["pending"] == 1 and r["history_rev"] == 2 and r["rev"] > rev0, r)
+    r = crect(2, 3, polarity="add")
+    h = cg()["history"]
+    d1, d2 = h["entries"][1], h["entries"][2]
+    check("b: a second draft; an op's own polarity overrides the toggle's; a draft has no params and one op",
+          r["pending"] == 2 and h["pending"] == 2 and h["count"] == 3 and h["cursor"] == 3
+          and [d1["kind"], d2["kind"]] == ["draft", "draft"] and "params" not in d1 and len(d1["ops"]) == 1
+          and d1["ops"][0]["polarity"] == "subtract" and d2["ops"][0]["polarity"] == "add"
+          and d1["active_since"] == 2 and d2["active_since"] == 3, h)
+    rev1 = cg()["rev"]
+    cinput(values={"gain": -6})
+    g = cg()
+    check("b: a value change with a pending selection moves rev but NOT history.rev",
+          g["rev"] > rev1 and g["history"]["rev"] == 3 and g["history"]["pending"] == 2, (g["rev"], rev1, g["history"]))
+    expect_error(lambda: cinput(mode="instant"), "invalid_state", "b: mode while a selection is pending -> invalid_state")
+    check("b: ... and the refused switch changed nothing", cg()["mode"] == "select")
+    # undo peels the drafts one by one, then a whole step
+    cinput(undo=True)
+    h = cg()["history"]
+    check("b: undo #1 peels the last draft alone", h["cursor"] == 2 and h["pending"] == 1 and h["count"] == 3, h)
+    cinput(undo=True)
+    h = cg()["history"]
+    check("b: undo #2 peels the first draft", h["cursor"] == 1 and h["pending"] == 0, h)
+    cinput(undo=True)
+    h = cg()["history"]
+    check("b: undo #3 removes the whole applied step", h["cursor"] == 0 and h["pending"] == 0 and h["count"] == 3, h)
+    cinput(redo=True)
+    cinput(redo=True)
+    cinput(redo=True)
+    h = cg()["history"]
+    check("b: three redos bring the step and both drafts back", h["cursor"] == 3 and h["pending"] == 2, h)
+    check("b: a redone entry's active_since is refreshed (> the draft's first)",
+          h["entries"][1]["active_since"] > 2 and h["entries"][2]["active_since"] > h["entries"][1]["active_since"], h)
+    rev2 = cg()["rev"]
+    hrev2 = cg()["history"]["rev"]
+    r = cinput(commit=True)
+    g = cg()
+    h = g["history"]
+    st = h["entries"][1]
+    check("b: commit: ONE step replaces the two drafts, ops in order, params = every value NOW",
+          r["added"] is True and r["committed"] is True and r["pending"] == 0 and h["count"] == 2 and h["cursor"] == 2
+          and h["pending"] == 0 and st["kind"] == "step" and len(st["ops"]) == 2
+          and [o["polarity"] for o in st["ops"]] == ["subtract", "add"] and st["ops"][0]["id"] < st["ops"][1]["id"]
+          and st["params"] == dict(ALL_VALUES, gain=-6), (r, h))
+    check("b: the sealed ops keep their own params (gain -12 at the gesture), the step has -6 (at the seal)",
+          st["ops"][0]["params"]["gain"] == -12 and st["params"]["gain"] == -6, st)
+    check("b: commit moves rev and history.rev; the seal refreshes active_since",
+          g["rev"] > rev2 and h["rev"] > hrev2 and st["active_since"] == h["rev"], (g["rev"], rev2, h["rev"], hrev2))
+    check("b: after the seal the op traces show until the script reflects them (unreflected lists the sealed ops)",
+          set(h["unreflected"]) >= {o["id"] for o in st["ops"]}, h["unreflected"])
+    rev3, hrev3 = g["rev"], h["rev"]
+    r = cinput(commit=True)
+    g = cg()
+    check("b: a second commit is a no-op (nothing pending): added false, nothing moved",
+          r["added"] is False and r["committed"] is False and g["rev"] == rev3 and g["history"]["rev"] == hrev3, r)
+    cinput(undo=True)
+    h = cg()["history"]
+    check("b: undo after a commit removes the WHOLE step; its drafts do not come back",
+          h["cursor"] == 1 and h["count"] == 2 and h["pending"] == 0 and h["entries"][1]["kind"] == "step", h)
+    cinput(redo=True)
+    h = cg()["history"]
+    check("b: redo brings the step back whole", h["cursor"] == 2 and len(h["entries"][1]["ops"]) == 2, h)
+    cinput(undo=True)
+    r = crect(4, 5)
+    h = cg()["history"]
+    check("b: a new draft drops the redo tail (the undone commit); entry ids stay monotonic",
+          h["count"] == 2 and h["pending"] == 1 and [e["id"] for e in h["entries"]] == [1, 5], h)
+    rev4 = cg()["rev"]
+    r = cinput(discard=True)
+    g = cg()
+    h = g["history"]
+    check("b: discard throws the pending selection away (nothing to redo), moves rev",
+          r["discarded"] is True and r["pending"] == 0 and h["count"] == 1 and h["cursor"] == 1 and h["pending"] == 0
+          and g["rev"] > rev4, (r, h))
+    r = cinput(discard=True)
+    check("b: discard with nothing pending is a no-op", r["discarded"] is False)
+    cinput(mode="instant")
+    g = cg()
+    check("b: back to Instant once nothing is pending; the polarity toggle returns to add",
+          g["mode"] == "instant" and g["polarity"] == "add", (g["mode"], g["polarity"]))
+    cinput(mode="select")
+    crect(6, 7)
+    expect_error(lambda: cinput(mode="instant"), "invalid_state", "b: mode refused again with a new pending draft")
+    cinput(commit=True)
+    cinput(mode="instant")
+    cinput(mode="instant")                      # same mode: no-op, never an error
+    check("b: switching to the mode already held is a no-op", cg()["mode"] == "instant")
 
     # -- layers and reflection -------------------------------------------------------------
     cid = open_canvas(c, object=obj)
@@ -475,7 +631,7 @@ def section_b(c):
     check("b: undo: the undone op has no trace; the veil still shows it until the script answers",
           hist()["unreflected"] == [], hist())
     c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
-    check("b: redo of op 2 -> its trace is back (active_since refreshed)", hist()["unreflected"] == [2], hist())
+    check("b: redo of op 2 -> its trace is back (the entry's active_since refreshed)", hist()["unreflected"] == [2], hist())
     r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB2, "opacity": 0.5})
     check("b: replacing a layer keeps its z, takes the opacity, history_rev as given (none)",
           r["layers"] == [{"layer": "veil", "path": RGB2, "width": 2, "height": 2, "z": 1, "opacity": 0.5, "history_rev": None}], r)
@@ -550,12 +706,13 @@ def section_b(c):
           "r" in woke and woke["r"]["rev"] > rev and 0.3 < woke["dt"] < 2.5, woke)
     h_rev = c.send("script.canvas.get", {"canvas_id": cid})["history"]["rev"]
     g = c.send("script.canvas.get", {"canvas_id": cid, "known_history_rev": h_rev})
-    check("b: known_history_rev == history.rev omits ops, keeps the rest",
-          "ops" not in g["history"] and g["history"]["rev"] == h_rev and "unreflected" in g["history"], g["history"])
+    check("b: known_history_rev == history.rev omits the entries, keeps the rest",
+          "entries" not in g["history"] and g["history"]["rev"] == h_rev and "unreflected" in g["history"]
+          and "pending" in g["history"], g["history"])
     g = c.send("script.canvas.get", {"canvas_id": cid, "known_history_rev": h_rev - 1})
-    check("b: another known_history_rev keeps the ops", "ops" in g["history"])
+    check("b: another known_history_rev keeps the entries", "entries" in g["history"])
     r = c.send("script.canvas.wait", {"canvas_id": cid, "since_rev": 10 ** 6, "timeout_ms": 50, "known_history_rev": h_rev})
-    check("b: wait honours known_history_rev", "ops" not in r["history"])
+    check("b: wait honours known_history_rev", "entries" not in r["history"])
     c.send("script.canvas.input", {"canvas_id": cid, "press": "go"})
     g = c.send("script.canvas.get", {"canvas_id": cid})
     check("b: a button press is an event, read once", g["events"] == [{"button": "go"}]
@@ -582,8 +739,8 @@ def section_b(c):
           c.send("script.canvas.get", {"canvas_id": cid})["transport"]["audio_history_rev"] == 0)
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "listen": "result"}),
                  "invalid_state", "b: listen on an empty slot -> invalid_state")
-    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "delta": True}),
-                 "invalid_state", "b: delta without a delta slot -> invalid_state")
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "listen": "delta"}),
+                 "invalid_state", "b: listen delta without a delta slot -> invalid_state")
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "listen": "sideways"}),
                  "bad_params", "b: an unknown listen value -> bad_params")
     c.send("script.canvas.set_audio", {"canvas_id": cid, "result": WAV3, "delta": WAV1, "history_rev": 0})
@@ -604,8 +761,11 @@ def section_b(c):
     t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
     check("b: switching to result keeps the position (< 0.05 s drift) and keeps playing",
           t["listen"] == "result" and t["playing"] is True and 0 <= t["position"] - pos_before < 0.25, (pos_before, t))
-    c.send("script.canvas.input", {"canvas_id": cid, "delta": True})
-    check("b: delta on", c.send("script.canvas.get", {"canvas_id": cid})["transport"]["delta"] is True)
+    pos_before = c.send("script.canvas.get", {"canvas_id": cid})["transport"]["position"]
+    c.send("script.canvas.input", {"canvas_id": cid, "listen": "delta"})
+    t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
+    check("b: listen delta (the third state of the one switch): no restart, still playing, no `delta` field",
+          t["listen"] == "delta" and t["playing"] is True and "delta" not in t and 0 <= t["position"] - pos_before < 0.25, t)
     c.send("script.canvas.input", {"canvas_id": cid, "seek": 2.0})
     t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
     check("b: seek while playing jumps there and moves the caret",
@@ -623,8 +783,16 @@ def section_b(c):
     # running past the end is a stop, back on the caret
     c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV1, "result": None, "delta": None})
     t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
-    check("b: clearing the heard slot falls back to the original; a cleared delta is off",
-          t["listen"] == "original" and t["delta"] is False and t["slots"]["result"] is None, t)
+    check("b: clearing the heard slot (delta) falls back to the original",
+          t["listen"] == "original" and t["slots"]["result"] is None and t["slots"]["delta"] is None, t)
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "result": WAV1})
+    c.send("script.canvas.input", {"canvas_id": cid, "listen": "result"})
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "delta": WAV1})
+    check("b: clearing a slot that is NOT heard leaves listen alone",
+          c.send("script.canvas.get", {"canvas_id": cid})["transport"]["listen"] == "result")
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "result": None, "delta": None})
+    check("b: clearing the heard result falls back to the original",
+          c.send("script.canvas.get", {"canvas_id": cid})["transport"]["listen"] == "original")
     c.send("script.canvas.input", {"canvas_id": cid, "seek": 0.2})
     c.send("script.canvas.input", {"canvas_id": cid, "play": True})
     time.sleep(1.3)

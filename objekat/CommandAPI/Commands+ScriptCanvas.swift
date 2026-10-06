@@ -10,7 +10,10 @@ import Foundation
 /// `update` to answer. `input` is the hand's own door for a headless test: the window goes through
 /// the very same store functions.
 ///
-/// The app records GESTURES; it never interprets them. No gain, no dB, no mask in this file.
+/// The app records GESTURES; it never interprets them. No gain, no dB, no mask in this file. The
+/// history is ENTRIES (a draft = one gesture of a pending selection, a step = a committed step), and a
+/// canvas opened with `modes` has two modes — Instant and Selection — and a polarity on each gesture
+/// (plan §9).
 extension CommandRegistry {
 
     func registerScriptCanvasCommands() {
@@ -28,7 +31,7 @@ extension CommandRegistry {
         func opPayload(_ op: CanvasOp) -> JSONValue {
             var o: [String: JSONValue] = [
                 "id": .int(op.id), "kind": .string(op.kind.rawValue), "tool": .string(op.tool),
-                "params": .object(op.params), "active_since": .int(op.activeSince),
+                "params": .object(op.params), "polarity": .string(op.polarity.rawValue),
             ]
             switch op.shape {
             case .rect(let x0, let x1, let y0, let y1):
@@ -39,6 +42,16 @@ extension CommandRegistry {
             case .point(let x, let y):
                 o["x"] = num(x); o["y"] = num(y)
             }
+            return .object(o)
+        }
+
+        func entryPayload(_ e: CanvasHistoryEntry) -> JSONValue {
+            var o: [String: JSONValue] = [
+                "id": .int(e.id), "kind": .string(e.kind.rawValue), "active_since": .int(e.activeSince),
+                "ops": .array(e.ops.map(opPayload)),
+            ]
+            // A step's snapshot of EVERY hand value, taken when it was sealed; a draft has none.
+            if let params = e.params { o["params"] = .object(params) }
             return .object(o)
         }
 
@@ -62,16 +75,16 @@ extension CommandRegistry {
         func canvasPayload(_ c: ScriptCanvas, knownHistoryRev: Int?, viewport: CanvasViewport?,
                            position: Double) -> JSONValue {
             var history: [String: JSONValue] = [
-                "rev": .int(c.historyRev), "cursor": .int(c.cursor), "count": .int(c.ops.count),
+                "rev": .int(c.historyRev), "cursor": .int(c.history.cursor), "count": .int(c.history.count),
+                "pending": .int(c.history.pending),
                 "unreflected": .array(c.unreflectedOpIDs.map { JSONValue.int($0) }),
             ]
-            // The ops are the bulk of the answer: omitted when the script already holds this rev.
-            if knownHistoryRev != c.historyRev { history["ops"] = .array(c.ops.map(opPayload)) }
+            // The entries are the bulk of the answer: omitted when the script already holds this rev.
+            if knownHistoryRev != c.historyRev { history["entries"] = .array(c.history.entries.map(entryPayload)) }
 
             var transport: [String: JSONValue] = [
                 "playing": .bool(c.transport.playing), "position": num(position),
                 "caret": num(c.transport.caret), "listen": .string(c.transport.listen.rawValue),
-                "delta": .bool(c.transport.delta),
                 "audio_history_rev": c.transport.audioHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null,
             ]
             if let both = slotsPayload(c.transport).objectValue { transport.merge(both) { a, _ in a } }
@@ -87,7 +100,9 @@ extension CommandRegistry {
                 "state": .string(c.state.rawValue), "values": .object(c.values),
                 "events": .array(c.pendingEvents.map { .object(["button": .string($0)]) }),
                 "status": .string(c.status), "busy": .bool(c.busy),
-                "remember": .stringOrNull(c.rememberKey), "tool": .string(c.activeTool),
+                "remember": .stringOrNull(c.rememberKey), "tool": .stringOrNull(c.activeTool),
+                "modes": .bool(c.modes), "mode": .string(c.mode.rawValue),
+                "polarity": .string(c.polarity.rawValue),
                 "history": .object(history),
                 "image": c.image.map { img in
                     .object(["path": .string(img.path), "width": .int(img.width),
@@ -117,9 +132,6 @@ extension CommandRegistry {
                       let kindName = o["kind"]?.stringValue,
                       let label = o["label"]?.stringValue else {
                     throw bad("a tool is {id, kind: rect|stroke|point, label, icon?, params?, size_control?}")
-                }
-                guard id != ScriptCanvas.handToolID else {
-                    throw bad("the tool id '\(ScriptCanvas.handToolID)' is reserved (the Hand is always there)")
                 }
                 guard let kind = CanvasToolKind(rawValue: kindName) else {
                     throw bad("tool '\(id)': unknown kind '\(kindName)' (rect, stroke or point)")
@@ -186,10 +198,13 @@ extension CommandRegistry {
 
         register("script.canvas.open",
                  summary: "Opens a canvas the app draws for the script: a resizable plot with the "
-                        + "script's tools (rectangle, stroke, point) beside the app's Hand, a history "
-                        + "(undo / redo), image layers, a transport, and a sidebar of controls. One "
-                        + "canvas per connection (a second replaces the first). Headless: the canvas "
-                        + "exists, no window opens and no audio device is touched.",
+                        + "script's tools (rectangle, stroke, point), a history of ENTRIES (undo / redo), "
+                        + "image layers, a transport, and a sidebar of controls. With `modes: true` the "
+                        + "hand also gets two modes (Instant: each gesture is a history step at once; "
+                        + "Selection: gestures build a pending selection that `commit` seals into one "
+                        + "step) and a draw / erase polarity on each gesture. One canvas per connection "
+                        + "(a second replaces the first). Headless: the canvas exists, no window opens "
+                        + "and no audio device is touched.",
                  params: [ParamSpec("title", "string", required: false, "Window title."),
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the canvas closes if it disappears."),
@@ -199,10 +214,15 @@ extension CommandRegistry {
                                     "kind: rect | stroke | point. `params` lists the bool / number / choice controls "
                                   + "snapshotted into each op. A stroke tool needs `size_control`, a number "
                                   + "control giving the diameter in screen points (1…1000); any other kind "
-                                  + "refuses it. The id \"hand\" is reserved: the Hand is always present. The "
-                                  + "first declared tool is active (the Hand when there is none)."),
+                                  + "refuses it. The first declared tool is active; with none declared a left "
+                                  + "click in the plot does nothing (there is no Hand: navigation is the wheel, "
+                                  + "⇧-wheel, the pinch and Fit)."),
                           ParamSpec("status", "string", required: false, "Initial status line."),
                           ParamSpec("busy", "bool", required: false, "Initial busy indicator."),
+                          ParamSpec("modes", "bool", required: false,
+                                    "Offer the Instant / Selection modes and the draw / erase polarity "
+                                  + "(default false: Instant only, no operation is ever `subtract`). The "
+                                  + "mode at opening is `instant`, never remembered."),
                           ParamSpec("remember", "string|true", required: false,
                                     "As for a panel: Validate stores the values, a re-open shows them, Reset restores the declared ones.")],
                  undo: .none) { p in
@@ -216,7 +236,8 @@ extension CommandRegistry {
             var canvas = ScriptCanvas(id: UUID(), owner: CommandCallContext.caller, objectID: object,
                                       title: try p.string("title", or: ""), controls: controls,
                                       values: values, tools: tools,
-                                      activeTool: tools.first?.id ?? ScriptCanvas.handToolID)
+                                      activeTool: tools.first?.id)
+            canvas.modes = try p.bool("modes", or: false)
             canvas.declared = values
             if let key = try ScriptControls.rememberKey(p.raw["remember"], title: canvas.title) {
                 canvas.rememberKey = key
@@ -303,8 +324,8 @@ extension CommandRegistry {
                         + "clear it (an absent slot is kept). `offset` = the x value at which the files' sample 0 "
                         + "plays (default 0, kept when absent). `history_rev` = the history revision the files "
                         + "reflect: while history.rev is ahead of it the window shows \"computing\". Clearing the "
-                        + "slot being heard falls back to the original; clearing the original stops playback. "
-                        + "Never moves rev.",
+                        + "slot being heard (`listen`) falls back to the original; clearing the original stops "
+                        + "playback. Never moves rev.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
                           ParamSpec("original", "string|null", required: false, "Path, or null."),
                           ParamSpec("result", "string|null", required: false, "Path, or null."),
@@ -335,11 +356,12 @@ extension CommandRegistry {
 
         register("script.canvas.get",
                  summary: "The canvas as it stands: rev, state (open|validated|cancelled|closed), values, the "
-                        + "button events since the last read (which this read empties), tool, history (rev, "
-                        + "cursor, count, unreflected op ids, ops), image, layers, world, view, transport.",
+                        + "button events since the last read (which this read empties), tool, modes / mode / "
+                        + "polarity, history (rev, cursor, count, pending, unreflected op ids, entries), "
+                        + "image, layers, world, view, transport.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
                           ParamSpec("known_history_rev", "int", required: false,
-                                    "When equal to history.rev, history.ops is omitted.")],
+                                    "When equal to history.rev, history.entries is omitted.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             return try readPayload(vm, try p.uuid("canvas_id"), knownHistoryRev: try p.optionalInt("known_history_rev"))
@@ -352,7 +374,7 @@ extension CommandRegistry {
                           ParamSpec("since_rev", "int", "The last rev the script has seen."),
                           ParamSpec("timeout_ms", "int", required: false, "At most 5000 (default 1000)."),
                           ParamSpec("known_history_rev", "int", required: false,
-                                    "When equal to history.rev, history.ops is omitted.")],
+                                    "When equal to history.rev, history.entries is omitted.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("canvas_id")
@@ -406,25 +428,39 @@ extension CommandRegistry {
 
         register("script.canvas.input",
                  summary: "The HAND's door, for a headless test — the window goes through the same store "
-                        + "functions. Applied in this order: values, tool, view, op, undo, redo, seek, listen, "
-                        + "delta, play, press. `op` is {kind: rect, x0, x1, y0, y1} (sorted and clamped to the "
-                        + "world; zero area adds nothing), {kind: stroke, points: [[x, y], …] (2…20000, kept as "
-                        + "given), view_scale?: {x, y} (points per warped unit; default the current view)} or "
-                        + "{kind: point, x, y}; it uses the active tool when its kind matches, else the first tool "
-                        + "of that kind. A stroke shorter than 1 point on screen adds nothing. Moves rev on a "
-                        + "values change, an added op, an undo, a redo or a press; not on tool, view or transport.",
+                        + "functions. Applied in this order: values, tool, mode, polarity, view, op, commit, "
+                        + "discard, undo, redo, seek, listen, play, press. `op` is {kind: rect, x0, x1, y0, y1, "
+                        + "polarity?} (sorted and clamped to the world; zero area adds nothing), {kind: stroke, "
+                        + "points: [[x, y], …] (2…20000, kept as given), view_scale?: {x, y} (points per warped "
+                        + "unit; default the current view), polarity?} or {kind: point, x, y, polarity?}; it uses "
+                        + "the active tool when its kind matches, else the first tool of that kind. `polarity` "
+                        + "defaults to the toggle's (Selection mode) or `add` (Instant); `subtract` in Instant "
+                        + "is `invalid_state`. A stroke shorter than 1 point on screen adds nothing. In Instant "
+                        + "mode an op is a history STEP at once; in Selection mode it is a DRAFT (pending "
+                        + "selection). `commit` seals the pending drafts into ONE step (`added: false` with "
+                        + "none); `discard` throws them away (the window's \"Ignore\"). `mode` (instant | "
+                        + "select) is `invalid_state` without `modes` and while a selection is pending. Moves "
+                        + "rev on a values change, an added op, a commit, a discard, an undo, a redo or a "
+                        + "press; not on tool, mode, polarity, view or transport.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
                           ParamSpec("values", "object", required: false, "Control id → value."),
                           ParamSpec("press", "string", required: false,
                                     "A button id, 'validate', 'cancel' or (remember canvases) 'reset'."),
-                          ParamSpec("tool", "string", required: false, "A tool id, or \"hand\"."),
+                          ParamSpec("tool", "string", required: false, "A tool id."),
+                          ParamSpec("mode", "string", required: false, "instant | select (needs `modes`)."),
+                          ParamSpec("polarity", "string", required: false,
+                                    "add | subtract: the toggle's state (subtract needs the selection mode)."),
                           ParamSpec("view", "object", required: false, "{x0, x1, y0, y1} in data units."),
                           ParamSpec("op", "object", required: false, "A gesture (see above)."),
-                          ParamSpec("undo", "bool", required: false, "One step back."),
-                          ParamSpec("redo", "bool", required: false, "One step forward."),
+                          ParamSpec("commit", "bool", required: false,
+                                    "true seals the pending selection into one step (the window's \"Apply\")."),
+                          ParamSpec("discard", "bool", required: false,
+                                    "true throws the pending selection away (the window's \"Ignore\")."),
+                          ParamSpec("undo", "bool", required: false, "One entry back."),
+                          ParamSpec("redo", "bool", required: false, "One entry forward."),
                           ParamSpec("seek", "number", required: false, "Caret (and playhead if playing), clamped to [0, end]."),
-                          ParamSpec("listen", "string", required: false, "original | result."),
-                          ParamSpec("delta", "bool", required: false, "Hear only what the operations take away."),
+                          ParamSpec("listen", "string", required: false,
+                                    "original | result | delta (`invalid_state` when that slot is empty)."),
                           ParamSpec("play", "bool", required: false, "true starts at the caret, false stops.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -440,6 +476,19 @@ extension CommandRegistry {
             let values = try ScriptControls.parseValues(p)
             let press = try p.optionalString("press")
             let tool = try p.optionalString("tool")
+            var mode: CanvasMode? = nil
+            if let s = try p.optionalString("mode") {
+                guard let m = CanvasMode(rawValue: s) else { throw bad("'mode' is \"instant\" or \"select\"") }
+                mode = m
+            }
+            func parsePolarity(_ raw: String, _ what: String) throws -> CanvasPolarity {
+                guard let pol = CanvasPolarity(rawValue: raw) else {
+                    throw CommandError(code: .bad_params, message: "'\(what)' is \"add\" or \"subtract\"")
+                }
+                return pol
+            }
+            var polarity: CanvasPolarity? = nil
+            if let s = try p.optionalString("polarity") { polarity = try parsePolarity(s, "polarity") }
             var view: [Double]? = nil
             if let raw = p.raw["view"] {
                 guard let o = raw.objectValue, let x0 = o["x0"]?.doubleValue, let x1 = o["x1"]?.doubleValue,
@@ -450,11 +499,12 @@ extension CommandRegistry {
             }
             var listen: CanvasListen? = nil
             if let s = try p.optionalString("listen") {
-                guard let l = CanvasListen(rawValue: s) else { throw bad("'listen' is \"original\" or \"result\"") }
+                guard let l = CanvasListen(rawValue: s) else { throw bad("'listen' is \"original\", \"result\" or \"delta\"") }
                 listen = l
             }
             var opKind: String? = nil
             var opObject: [String: JSONValue] = [:]
+            var opPolarity: CanvasPolarity? = nil
             if let raw = p.raw["op"] {
                 guard let o = raw.objectValue, let k = o["kind"]?.stringValue,
                       CanvasToolKind(rawValue: k) != nil else {
@@ -462,11 +512,16 @@ extension CommandRegistry {
                 }
                 opKind = k
                 opObject = o
+                if let rawPol = o["polarity"], rawPol != .null {
+                    guard let s = rawPol.stringValue else { throw bad("'op.polarity' is \"add\" or \"subtract\"") }
+                    opPolarity = try parsePolarity(s, "op.polarity")
+                }
             }
+            let wantCommit = try p.bool("commit", or: false)
+            let wantDiscard = try p.bool("discard", or: false)
             let wantUndo = try p.bool("undo", or: false)
             let wantRedo = try p.bool("redo", or: false)
             let seek = try p.optionalDouble("seek")
-            let delta: Bool? = p.raw["delta"] == nil ? nil : try p.bool("delta")
             let play: Bool? = p.raw["play"] == nil ? nil : try p.bool("play")
 
             let number = { (o: [String: JSONValue], key: String) throws -> Double in
@@ -479,13 +534,16 @@ extension CommandRegistry {
             // Values first, and alone: a refused batch changes nothing (the store's own rule).
             if !values.isEmpty { try store.input(id, values: values, press: nil) }
             if let tool { try store.selectTool(id, tool: tool) }
+            if let mode { try store.setMode(id, mode) }
+            if let polarity { try store.setPolarity(id, polarity) }
             if let v = view { try store.setView(id, x0: v[0], x1: v[1], y0: v[2], y1: v[3]) }
             var added = false
             if let kind = opKind {
                 switch kind {
                 case "rect":
                     added = try store.addRect(id, x0: try number(opObject, "x0"), x1: try number(opObject, "x1"),
-                                              y0: try number(opObject, "y0"), y1: try number(opObject, "y1"))
+                                              y0: try number(opObject, "y0"), y1: try number(opObject, "y1"),
+                                              polarity: opPolarity)
                 case "stroke":
                     guard let raw = opObject["points"]?.arrayValue else { throw bad("op.points is [[x, y], …]") }
                     guard raw.count >= ScriptCanvasStore.minStrokePoints, raw.count <= ScriptCanvasStore.maxStrokePoints else {
@@ -508,21 +566,27 @@ extension CommandRegistry {
                         }
                         scale = (sx, sy)
                     }
-                    added = try store.addStroke(id, points: points, scale: scale)
+                    added = try store.addStroke(id, points: points, scale: scale, polarity: opPolarity)
                 default:
-                    added = try store.addPoint(id, x: try number(opObject, "x"), y: try number(opObject, "y"))
+                    added = try store.addPoint(id, x: try number(opObject, "x"), y: try number(opObject, "y"),
+                                               polarity: opPolarity)
                 }
             }
+            var committed = false
+            if wantCommit { committed = try store.commit(id) }
+            var discarded = false
+            if wantDiscard { discarded = try store.discardPending(id) }
             if wantUndo { try store.undo(id) }
             if wantRedo { try store.redo(id) }
             if let seek { try store.seek(id, to: seek) }
             if let listen { try store.setListen(id, listen) }
-            if let delta { try store.setDelta(id, delta) }
             if let play { if play { try store.play(id) } else { try store.stop(id) } }
             if let press { try store.input(id, values: [:], press: press) }
             let c = store.canvases[id]
             return .object(["rev": .int(c?.rev ?? 0), "history_rev": .int(c?.historyRev ?? 0),
-                            "cursor": .int(c?.cursor ?? 0), "added": .bool(added)])
+                            "cursor": .int(c?.history.cursor ?? 0), "pending": .int(c?.history.pending ?? 0),
+                            "added": .bool(added || committed), "committed": .bool(committed),
+                            "discarded": .bool(discarded)])
         }
 
         register("script.canvas.list",
