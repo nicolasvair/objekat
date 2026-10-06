@@ -70,6 +70,11 @@ source, not a translation.
 | fx link (bac de plugins partagé) | FX link (shared plugin bin) | fx link (bin de plugins compartido) | the name stays « fx link » in the three languages; a shared bin of plugins, one block in each member's chain |
 | détacher / rattacher (un fx link) | detach / reattach | desvincular / volver a vincular | per host: the host keeps an independent copy, then realigns on the bin |
 | section de sortie (d'un fx link) | output section | sección de salida | volume, pan, mute of the bin, after its plugins |
+| toile (d'un script) | script canvas | lienzo | the resizable plot a script asks the app to draw (`script.canvas.*`): an image with axes, gestures, a history, layers, a transport |
+| calque | layer | capa | an image a script lays over a canvas's base image; always covers the whole world |
+| gomme | eraser | borrador | the stroke tool of the spectral editor: it takes away, cumulatively |
+| original / résultat / différence | original / result / delta | original / resultado / diferencia | the three things one can listen to in a canvas: the source, what the operations make of it, and what they take away |
+| spectrogramme | spectrogram | espectrograma | time × frequency × level, drawn as an image |
 
 ## What does not get translated
 

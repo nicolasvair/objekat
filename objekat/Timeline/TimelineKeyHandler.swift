@@ -38,6 +38,9 @@ extension TimelineView {
         }
 
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            // A script canvas's window has its own wheel (@see ScriptCanvasPlotNSView): this monitor is
+            // app-wide and would pan / zoom the TIMELINE from a stale hover position.
+            if event.window is ScriptCanvasPanel { return event }
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             // The anti-reentrance guard (step 4): no zoom/value-scroll while a project load owns
             // the model.
@@ -377,6 +380,7 @@ extension TimelineView {
         let hs = hoverState
 
         magnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { event in
+            if event.window is ScriptCanvasPanel { return event }   // the canvas has its own pinch
             // The anti-reentrance guard (step 4): no pinch-zoom while a project load owns the model.
             if vm.isLoadingProject { return event }
             // Like the wheel: only a pinch over the timeline zooms it.
@@ -1001,6 +1005,9 @@ extension TimelineView {
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            // A script canvas's window has its own keys (⌘Z walks ITS history, Space plays its audio):
+            // this monitor is app-wide, and ⌘Z there would have undone the PROJECT.
+            if event.window is ScriptCanvasPanel { return event }
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             if event.type == .flagsChanged {
                 let held = event.modifierFlags.contains(.command)

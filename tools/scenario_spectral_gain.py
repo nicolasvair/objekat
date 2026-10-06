@@ -16,6 +16,10 @@ and its refusals, the base image, the ops the hand draws, the history, the layer
 says which traces are still visible, the long poll, the audio and the transport model, `remember`,
 the absence of any trace in the project, and the canvas's life.
 
+Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
+an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
+window is the window layer's only side effect, and `--headless` forbids it).
+
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
@@ -23,6 +27,7 @@ import math
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -707,12 +712,60 @@ def section_b(c):
                  "invalid_state", "b: input on a closed canvas -> invalid_state")
 
 # ---------------------------------------------------------------------------------------------
+# f. No window on the headless pid
+# ---------------------------------------------------------------------------------------------
+
+def app_pid():
+    """The pid of the instance that listens on SOCK (the socket's owner, else the command line)."""
+    for cmd in (["lsof", "-t", SOCK], ["pgrep", "-f", "socket=" + SOCK]):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
+        except OSError:
+            continue
+        if out:
+            return int(out[0])
+    return None
+
+
+def section_f(c):
+    try:
+        import Quartz
+    except ImportError:
+        print("skip  f: Quartz not available")
+        return
+    pid = app_pid()
+    if pid is None:
+        print("skip  f: cannot find the app's pid")
+        return
+    ROOT = tmproot("f")
+    WAV1 = make_wav(os.path.join(ROOT, "tone1.wav"), 1.0, 48000, 24)
+    CNV = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
+    RGB = write_rgb(os.path.join(ROOT, "veil.objkrgb"), 8, 4)
+    c.send("project.new")
+    cid = open_canvas(c)
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB, "history_rev": 0})
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV1, "result": WAV1})
+    c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 1, "x1": 3, "y0": 100, "y1": 1000}})
+    c.send("script.canvas.input", {"canvas_id": cid, "play": True})
+    time.sleep(0.3)
+
+    def windows():
+        info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID) or []
+        return [w for w in info if w.get("kCGWindowOwnerPID") == pid]
+
+    check("f: no window on the headless pid while a canvas is open and playing", windows() == [], str(windows())[:200])
+    c.send("script.canvas.close", {"canvas_id": cid})
+    check("f: nor after it is closed", windows() == [], str(windows())[:200])
+
+
+# ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "ab")
-        for name, fn in (("a", section_a), ("b", section_b)):
+        only = os.environ.get("SECTIONS", "abf")
+        for name, fn in (("a", section_a), ("b", section_b), ("f", section_f)):
             if name in only:
                 fn(c)
 finally:
