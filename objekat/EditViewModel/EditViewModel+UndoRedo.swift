@@ -370,6 +370,10 @@ extension EditViewModel {
             switch (old[i].rack, new[i].rack) {
             case (nil, nil):
                 out[i].stateXML = new[i].stateXML
+                // A sidechain key is a route, not a plugin: the engine's tap/wires are laid by the
+                // bridge sync that follows every restore (EditViewModel+Bridge), so a key change
+                // must not rebuild the object — and reload its AU.
+                out[i].sidechain = new[i].sidechain
             case let (oldRack?, newRack?):
                 guard oldRack.voices.count == newRack.voices.count else { return nil }
                 var voices: [[ObjectPlugin]] = []

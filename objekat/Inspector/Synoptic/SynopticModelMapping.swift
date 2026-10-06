@@ -221,7 +221,8 @@ extension EditViewModel {
         let stateXML = (live?.isEmpty == false) ? live : plug.stateXML
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
                                 identifier: plug.identifier, formatName: plug.formatName,
-                                isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil)
+                                isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil,
+                                sidechain: plug.sidechain)
         pushUndo()
         updateChainPlugins(objectID) {
             $0 = Self.simplifyTree(Self.inserting(copy, into: location, at: index, plugins: plugins))

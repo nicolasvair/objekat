@@ -103,6 +103,14 @@ enum ObjectColorPalette {
 
 // MARK: - A plugin in an object's rack
 
+/// Where a plugin's SIDECHAIN input comes from: the object (or stem) whose sound feeds it, tapped
+/// after its fader and its window — what is heard of it. The route's validity is DERIVED, never
+/// stored (@see BridgeScope, EditViewModel+Bridge): a key whose source is gone, or out of scope,
+/// stays written and is silent. @see docs/plan_sidechain.md §5.9
+struct SidechainSource: Codable, Equatable {
+    var sourceID: UUID
+}
+
 struct ObjectPlugin: Identifiable, Codable, Equatable {
     var id: UUID
     var name: String
@@ -136,13 +144,17 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// (the same identity); an independent copy (⌥) or a fresh addition draws a new one at
     /// random.
     var colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count)
+    /// The object or stem keying this plugin's sidechain input (nil = none). Meaningful on a leaf
+    /// plugin or an instrument only. Session format 19. @see SidechainSource
+    var sidechain: SidechainSource? = nil
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
          linkGroupID: UUID? = nil, detachedLinkGroupID: UUID? = nil,
          rack: PluginRack? = nil,
          fxBlock: FXLinkBlock? = nil,
-         colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count)) {
+         colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
+         sidechain: SidechainSource? = nil) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -155,6 +167,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.rack = rack
         self.fxBlock = fxBlock
         self.colorIndex = colorIndex
+        self.sidechain = sidechain
     }
 
     /// True if this entry represents a parallel block (and not a plain plugin).
@@ -180,7 +193,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -199,6 +212,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         // stable from the first save that follows.
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
                         ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
+        sidechain = try c.decodeIfPresent(SidechainSource.self, forKey: .sidechain)
     }
 }
 

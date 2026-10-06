@@ -127,6 +127,14 @@ enum CrossProjectImport {
         /// any leaf. A link group is remapped to a NEW, batch-scoped one only when the plugin
         /// ALREADY had one — never invented (no "link by default" backfill, unlike the
         /// intra-project `copiedPlugins`, which does not apply across a paste this cold).
+        /// A sidechain key follows its source into the batch when the source was pasted too; a key
+        /// naming anything else (another project's object, a stem — everything lands on Main) is
+        /// dropped: it would name nothing of this project. @see SidechainSource
+        func remapSidechain(_ sc: SidechainSource?) -> SidechainSource? {
+            guard let sc, let mapped = objectIDMap[sc.sourceID] else { return nil }
+            return SidechainSource(sourceID: mapped)
+        }
+
         func clonePlugins(_ plugins: [ObjectPlugin]) -> ([ObjectPlugin], [UUID: UUID]) {
             var pluginIDMap: [UUID: UUID] = [:]
             func cloneLeaf(_ p: ObjectPlugin) -> ObjectPlugin {
@@ -144,7 +152,8 @@ enum CrossProjectImport {
                 return ObjectPlugin(id: newID, name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: p.stateXML,
-                                    linkGroupID: newGroup, colorIndex: p.colorIndex)
+                                    linkGroupID: newGroup, colorIndex: p.colorIndex,
+                                    sidechain: remapSidechain(p.sidechain))
             }
             /// A bin's block: the bin is recreated as a NEW one (once per source bin of the batch, so
             /// two pasted objects sharing a bin still share it), the instances get fresh ids and
@@ -158,7 +167,8 @@ enum CrossProjectImport {
                         return ObjectPlugin(id: newID, name: inst.name, manufacturer: inst.manufacturer,
                                             identifier: inst.identifier, formatName: inst.formatName,
                                             isEnabled: inst.isEnabled, stateXML: inst.stateXML,
-                                            colorIndex: inst.colorIndex)
+                                            colorIndex: inst.colorIndex,
+                                            sidechain: remapSidechain(inst.sidechain))
                     }
                 }
                 let newLinkID: UUID
@@ -171,6 +181,7 @@ enum CrossProjectImport {
                         fxDefMap[d.id] = nd
                         var c = d
                         c.id = nd
+                        c.sidechain = remapSidechain(d.sidechain)
                         defs.append(c)
                     }
                     let nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
@@ -189,6 +200,7 @@ enum CrossProjectImport {
                     q.id = newID
                     q.linkGroupID = inst.linkGroupID.flatMap { fxDefMap[$0] }
                     q.detachedLinkGroupID = inst.detachedLinkGroupID.flatMap { fxDefMap[$0] }
+                    q.sidechain = remapSidechain(inst.sidechain)
                     return q
                 }
                 let newBlockID = UUID()
@@ -256,7 +268,8 @@ enum CrossProjectImport {
                 ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
                             identifier: inst.identifier, formatName: inst.formatName,
                             isEnabled: inst.isEnabled, stateXML: inst.stateXML,
-                            colorIndex: inst.colorIndex)
+                            colorIndex: inst.colorIndex,
+                            sidechain: remapSidechain(inst.sidechain))
             }
 
             no.sends = o.sends.compactMap { send -> AuxSend? in

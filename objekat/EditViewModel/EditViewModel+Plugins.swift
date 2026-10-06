@@ -251,6 +251,9 @@ extension EditViewModel {
         // a compilation makes them anew. No effect for a BUS (stem or master), which is
         // not a sound object and has no automation.
         pushAutomation(objectID)
+        // A recompiled AU is a NEW instance with its sidechain stripped (the model, not the engine,
+        // is the authority on keys): lay them again. Coalesced — a load compiles every object.
+        scheduleBridgeSync()
         return Array(failed)
     }
 
@@ -441,7 +444,7 @@ extension EditViewModel {
                                   identifier: inst.identifier, formatName: inst.formatName,
                                   isEnabled: inst.isEnabled, stateXML: stateXML,
                                   linkGroupID: gid, detachedLinkGroupID: detached,
-                                  colorIndex: inst.colorIndex)
+                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain)
         pushUndo()
         if copy && linked, let gid, inst.linkGroupID == nil {
             // The source was not linked yet: it enters the group with the copy.
@@ -536,6 +539,7 @@ extension EditViewModel {
     func openPluginEditor(objectID: UUID, pluginID: UUID) {
         guard hasInterface, let engine else { return }
         let colorIndex = leafPlugins(objectID: objectID).first(where: { $0.id == pluginID })?.colorIndex ?? 0
+        nativeEditorHosts[pluginID] = objectID
         engine.openPluginEditor(pluginID.uuidString, colorHex: ObjekatPalette.pluginHex(colorIndex))
         // The opening is ASYNCHRONOUS (the engine waits for the instance to be loaded); arming
         // the listening straight away is risk-free — it returns by itself if the plugin is not
@@ -716,7 +720,8 @@ extension EditViewModel {
             return ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
                                 identifier: inst.identifier, formatName: inst.formatName,
                                 isEnabled: inst.isEnabled,
-                                stateXML: (live?.isEmpty == false) ? live : inst.stateXML)
+                                stateXML: (live?.isEmpty == false) ? live : inst.stateXML,
+                                sidechain: inst.sidechain)
         }
     }
 
@@ -751,7 +756,8 @@ extension EditViewModel {
             ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                          identifier: p.identifier, formatName: p.formatName,
                          isEnabled: p.isEnabled, stateXML: liveState(p),
-                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex)
+                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
+                         sidechain: p.sidechain)
         }
         /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
         /// block gives a detached copy, with its own output section).

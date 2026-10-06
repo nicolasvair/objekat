@@ -501,6 +501,35 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // it climb: 0 in a sound project. Methods addressed by the key alone cannot refuse, and are ambiguous
 // on such an id.
 - (NSInteger)foreignPluginKeyRefusals;
+// Sidechain probe (debug.plugin_buses) — what an instance REALLY exposes, read off the live
+// instance: Tracktion's own view (`can_sidechain`, the channel names `getChannelNames` hands the
+// graph builder, the sidechain source and its wires) and, for a plugin that wraps a JUCE
+// processor (AU/VST3), every input/output bus as JUCE negotiated it (name, channels, enabled,
+// enabled by default, main, layout). nil = key unknown. `loaded` NO = an external plugin whose
+// instance is still loading: the buses are not known YET, not absent. Reads only, touches nothing.
+- (NSDictionary<NSString*, id>* _Nullable)pluginBusesInfo:(NSString* _Nonnull)pluginKey;
+// MARK: The audio bridge (sidechain) — docs/plan_sidechain.md §5.8. The model decides what is routed
+// (EditViewModel+Bridge); these lay it down in ONE transaction per sync, on the main thread:
+// beginBridgeSync, the ensure/set calls for every active route, commitBridgeSync (clears what the
+// sync did not touch, then ONE restartPlayback if anything the graph reads changed).
+- (void)beginBridgeSync;
+// An engine-only TAP plugin at the end of `sourceKey`'s chain (an object, or a stem; never the Main),
+// post-fader and post-window. `rank`: -1 for an object, the stem's rank for a stem.
+- (void)ensureBridgeTapForSource:(NSString* _Nonnull)sourceKey rank:(NSInteger)rank;
+// Points a plugin's sidechain input at `sourceKey`'s tap (nil, or a source with no tap, clears it):
+// source id, wires (laid later by the latency tick if the plugin is still loading), the built-in
+// compressor's trigger flag, and the rank the plugin's reader runs at.
+- (void)setSidechainForPlugin:(NSString* _Nonnull)pluginKey source:(NSString* _Nullable)sourceKey rank:(NSInteger)rank NS_SWIFT_NAME(setSidechain(forPlugin:source:rank:));
+// The rank of an object's unit: a child or an aux carries it on its clip, any other top-level object
+// moves to the pool track of (stem, lane, rank). 0 = no rank.
+- (void)setBridgeRank:(NSInteger)rank forID:(NSString* _Nonnull)uuid;
+- (void)commitBridgeSync;
+// The newest published build, as plain data (plan §4.8): `build`, `taps`, `readers`. nil = none yet.
+- (NSDictionary<NSString*, id>* _Nullable)bridgeReport;
+// YES if the LIVE instance can take a sidechain (an AU still loading answers NO: not known yet).
+- (BOOL)pluginCanSidechain:(NSString* _Nonnull)pluginKey;
+// DEBUG tool: sets a numeric property on a live plugin's state (the latency tester's `time`).
+- (BOOL)debugSetPluginProperty:(NSString* _Nonnull)property value:(double)v forPlugin:(NSString* _Nonnull)pluginKey;
 // Un tick de la synchro d'état sur UNE instance, à la demande (API de debug) — les clés des
 // instances écrasées. `force` NO exige la stabilité, comme le minuteur ; OUI pousse tel quel.
 - (NSArray<NSString *> * _Nonnull)debugLinkStateTick:(NSString * _Nonnull)pluginKey force:(BOOL)force;
@@ -534,6 +563,12 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // colorHex : couleur d'identité de l'instance (0xRRGGBB, @see ObjectPlugin.colorIndex),
 // utilisée pour teinter la barre de titre JUCE et le liseret de la fenêtre.
 - (void)openPluginEditor:(NSString*)pluginKey colorHex:(NSInteger)colorHex;
+
+// Une bande que Swift pose SOUS l'UI native d'un éditeur (la bande Sidechain), demandée au moment
+// où la fenêtre se crée — l'instance est alors chargée, donc `pluginCanSidechain:` sait répondre.
+// Le bloc rend nil pour « pas de bande » ; la vue rendue garde sa hauteur (`frame.size.height`) et
+// prend la largeur de l'éditeur. nil = jamais de bande.
+- (void)setPluginEditorAccessoryProvider:(NSView* _Nullable (^ _Nullable)(NSString* _Nonnull pluginKey))provider;
 
 // Ferme l'éditeur natif du plugin (si ouvert).
 - (void)closePluginEditor:(NSString*)pluginKey;

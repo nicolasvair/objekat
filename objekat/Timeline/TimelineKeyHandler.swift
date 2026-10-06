@@ -591,6 +591,11 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.removeSelected() } }
                 }
             case 53:  // Escape
+                // "Choose object" armed (the Sidechain strip): Esc leaves THAT mode and nothing else.
+                if vm.sidechainPick != nil {
+                    DispatchQueue.main.async { vm.endSidechainPick() }
+                    return nil
+                }
                 // An open consolidated object → Esc = cancel with a rollback (a design decision),
                 // with priority over resetting the selection/tool.
                 if vm.isEditingConsolidate {

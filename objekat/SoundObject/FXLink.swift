@@ -119,7 +119,7 @@ struct FXLink: Identifiable, Codable, Equatable {
             if var old = existing.first(where: { $0.effectiveLinkGroupID == d.id }) {
                 old.linkGroupID         = attached ? d.id : nil
                 old.detachedLinkGroupID = attached ? nil : d.id
-                if attached { old.isEnabled = d.isEnabled }
+                if attached { old.isEnabled = d.isEnabled; old.sidechain = d.sidechain }
                 return old
             }
             return ObjectPlugin(id: UUID(), name: d.name, manufacturer: d.manufacturer,
@@ -127,7 +127,7 @@ struct FXLink: Identifiable, Codable, Equatable {
                                 isEnabled: d.isEnabled, stateXML: stateForNew(d),
                                 linkGroupID: attached ? d.id : nil,
                                 detachedLinkGroupID: attached ? nil : d.id,
-                                colorIndex: d.colorIndex)
+                                colorIndex: d.colorIndex, sidechain: d.sidechain)
         }
     }
 

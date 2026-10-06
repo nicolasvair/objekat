@@ -482,6 +482,8 @@ extension TimelineView {
     }
 
     func handleCanvasDrag(_ value: CanvasDrag, phase: DragPhase) {
+        // "Choose object" armed: the canvas is a picker, nothing is dragged (the click decides).
+        if viewModel.sidechainPick != nil { return }
         // Remembered for a scroll that might come while the hand holds still (@see
         // CanvasDragScrollFollow). Only for the drags that PLACE something under the hand: the
         // Volume, Pan and Send tools read the travel as an amount, and a scroll would change the

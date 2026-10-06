@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 18
+    static let formatVersion = 19
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -65,6 +65,10 @@ enum SessionSchema {
         "  object's own instances of the bin's plugins; each names the bin's definition plugin",
         "  through its linkGroupID (detachedLinkGroupID once detached). A reader that does not know",
         "  the key (a build from before format 17) cannot decode the entry: forward incompatibility.",
+        "sidechain — on a plugin entry, { sourceID }: the object or stem whose sound feeds that plugin's",
+        "  sidechain input, tapped after its fader and its window (what is heard of it). The source must",
+        "  not contain the plugin's host, and no chain of keys may loop. A key whose source is gone or out",
+        "  of scope stays written and is silent. Absent = no sidechain (every session before format 19).",
         "fxLinks — the registry of FX LINKS: { id, name, colorIndex, plugins, isEnabled, gainDb, pan,",
         "  muted }. plugins are the DEFINITION (leaves only, in the bin's order), whose ids the",
         "  members' linkGroupID names. isEnabled is the bin's common on/off (off = every member's",

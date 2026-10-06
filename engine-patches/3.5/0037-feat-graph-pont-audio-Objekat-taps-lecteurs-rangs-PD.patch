@@ -1,0 +1,1811 @@
+From 1508f752f625d0d1d1ac97ce37612c92f2010e8c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 4 Oct 2026 21:29:14 +0000
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20pont=20audio=20Objekat=20?=
+ =?UTF-8?q?=E2=80=94=20taps,=20lecteurs,=20rangs,=20PDC?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Un pont audio pour qu'une clé (entrée sidechain d'un plugin ; plus tard l'entrée
+d'un aux) traverse les frontières qu'une arête de graphe ne passe pas : un
+container est un graphe local fermé. Conception : docs/plan_sidechain.md.
+
+- tracktion_ObjBridgeCore.h : noyau pur C++17 (sans JUCE) — un anneau indexé par
+  échantillon de FLUX (l'anneau EST la ligne à retard), un écrivain, N lecteurs,
+  seqlock qui détecte (sans le réparer) un défaut d'ordonnancement ; arithmétique
+  de latence : X = max(L_d, âge du tap), D = X - L_s.
+- tracktion_ObjBridge.h/.cpp : BridgeTapSource (le plugin tap, qui porte l'anneau
+  et l'âge du build précédent), BridgeBuild (le registre d'UNE passe de
+  construction : taps, lecteurs, résolution, dimensionnement des anneaux, rapport).
+- tracktion_ObjBridgeNodes.h/.cpp : BridgeTapNode (passe-plat qui enregistre),
+  BridgeReaderNode (lit D échantillons en arrière, DÉCLARE X), BridgeGateNode
+  (arête d'ordre vers les unités de rang inférieur, refuse ce qui bouclerait).
+- CombiningNode : devient un BridgeRankedNode, porte un rang et une porte d'ordre
+  optionnelle (sans porte : strictement l'ancien comportement).
+- Builder : le tap remplace son plugin dans createPluginNodeForList ; le lecteur
+  remplace le ReturnNode dans createSidechainInputNodeForPlugin quand la source est
+  un tap (le chemin natif reste pour une piste) ; rang des pistes de pool ; un
+  combiner par rang dans un container ; invariant I1 (aucun nœud ne lit en avance).
+- Boucle de passes autour des deux createNodeForEdit : un lecteur déclare X d'après
+  l'âge que son tap avait au build précédent, et BridgeBuild::finalise vérifie les
+  âges réels en fin de passe ; si un lecteur est en retard ou sur-déclaré, la passe
+  est jetée (jamais préparée) et refaite, 8 au plus. Aucune passe de plus en régime
+  établi, ni pour une clé plus jeune que sa destination.
+
+Deux cas de latence : clé plus jeune (D = L_d - L_s, le graphe ne change pas) ; clé
+plus ancienne (X = L_s, D = 0 : la somme du sidechain retarde l'entrée directe, la
+latence déclarée du clip monte et la PDC aval s'aligne).
+
+Aucun comportement ne change sans route : pas de tap, pas de lecteur, une passe,
+pas de porte, un seul combiner par container.
+
+Correctif de mise en route sur Mac : les buffers fournis par un CombiningNode sont
+dimensionnés sur le plus large des nœuds INTERNES de chaque chaîne (un plugin à sidechain
+traite principal + clé = 4 canaux, rogné à 2 en tête), pas seulement sur sa sortie.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016GeuE4c2SAP154iDoxKr2m
+---
+ .../graph/tracktion_CombiningNode.cpp         |  31 +-
+ .../playback/graph/tracktion_CombiningNode.h  |  22 +-
+ .../graph/tracktion_EditNodeBuilder.cpp       | 218 +++++++++++-
+ .../graph/tracktion_EditNodeBuilder.h         |   2 +
+ .../graph/tracktion_ObjBridgeNodes.cpp        | 266 ++++++++++++++
+ .../playback/graph/tracktion_ObjBridgeNodes.h | 110 ++++++
+ .../plugins/tracktion_ObjBridge.cpp           | 308 +++++++++++++++++
+ .../plugins/tracktion_ObjBridge.h             | 228 ++++++++++++
+ .../plugins/tracktion_ObjBridgeCore.h         | 326 ++++++++++++++++++
+ modules/tracktion_engine/tracktion_engine.h   |   1 +
+ .../tracktion_engine_playback.cpp             |   3 +
+ 11 files changed, 1500 insertions(+), 15 deletions(-)
+ create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+ create mode 100644 modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+ create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
+ create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+ create mode 100644 modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+index ceb8d2e757d..12fe6f08eed 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.cpp
+@@ -61,6 +61,20 @@ struct CombiningNode::TimedNode
+         return nodesToProcess;
+     }
+ 
++    // Patch local Objekat (pont audio) — la largeur la plus grande qu'un nœud INTERNE réclame. Elle
++    // peut dépasser celle du nœud de tête : un plugin à sidechain traite un buffer principal + clé
++    // (4 canaux), et un ChannelRemappingNode en tête le rogne à 2. Les buffers fournis ci-dessous
++    // doivent couvrir ce nœud-là, pas seulement la sortie de la chaîne.
++    int getMaxInternalChannels() const
++    {
++        int widest = 0;
++
++        for (auto n : nodesToProcess)
++            widest = std::max (widest, n->getNodeProperties().numberOfChannels);
++
++        return widest;
++    }
++
+     void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info,
+                         choc::buffer::ChannelArrayView<float> view)
+     {
+@@ -322,6 +336,11 @@ std::vector<Node*> CombiningNode::getInternalNodes()
+ 
+ std::vector<tracktion::graph::Node*> CombiningNode::getDirectInputNodes()
+ {
++    // The clips' chains are deliberately NOT inputs (see the class doc); only the bridge's
++    // ordering gate, when there is one, is an edge of the enclosing graph.
++    if (orderingGate != nullptr)
++        return { orderingGate.get() };
++
+     return {};
+ }
+ 
+@@ -333,7 +352,14 @@ tracktion::graph::NodeProperties CombiningNode::getNodeProperties()
+ void CombiningNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+ {
+     isReadyToProcessBlock.store (true, std::memory_order_release);
+-    tempAudioBuffer.resize (choc::buffer::Size::create ((choc::buffer::ChannelCount) nodeProperties.numberOfChannels,
++    // Patch local Objekat (pont audio) — wide enough for the widest INTERNAL node of any chain,
++    // not only for the chains' outputs (@see TimedNode::getMaxInternalChannels).
++    int bufferChannels = nodeProperties.numberOfChannels;
++
++    for (auto& i : inputs)
++        bufferChannels = std::max (bufferChannels, i->getMaxInternalChannels());
++
++    tempAudioBuffer.resize (choc::buffer::Size::create ((choc::buffer::ChannelCount) bufferChannels,
+                                                         (choc::buffer::FrameCount) info.blockSize));
+ 
+     for (auto& i : inputs)
+@@ -357,7 +383,8 @@ void CombiningNode::prepareToPlay (const tracktion::graph::PlaybackInitialisatio
+ 
+ bool CombiningNode::isReadyToProcess()
+ {
+-    return isReadyToProcessBlock.load (std::memory_order_acquire);
++    return (orderingGate == nullptr || orderingGate->hasProcessed())
++            && isReadyToProcessBlock.load (std::memory_order_acquire);
+ }
+ 
+ void CombiningNode::prefetchBlock (juce::Range<int64_t> referenceSampleRange)
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
+index 085bfe2ec67..8f8002966e2 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_CombiningNode.h
+@@ -19,7 +19,8 @@ namespace tracktion::inline engine {
+     play position.
+ */
+ class CombiningNode final : public tracktion::graph::Node,
+-                            public TracktionEngineNode
++                            public TracktionEngineNode,
++                            public BridgeRankedNode
+ {
+ public:
+     CombiningNode (EditItemID, ProcessState&);
+@@ -47,6 +48,22 @@ public:
+     /** Returns the number of inputs added. */
+     int getNumInputs() const;
+ 
++    //==============================================================================
++    // Objekat — the audio bridge's scheduling order (docs/plan_sidechain.md §5.4, §5.5).
++    // A combiner is a unit the bridge's gates may wait for, and may itself wait for a gate:
++    // a reader inside its clips reads a key that a LOWER-rank unit writes, so the lower rank
++    // has to have finished the block first. Construction only.
++
++    /** The bridge rank of this combiner. Default 0: every existing pool track is a gate target
++        for a rank >= 1, which is what makes "everything below me" right with no list of names. */
++    void setBridgeRank (int newRank)                    { bridgeRank = newRank; }
++
++    /** A node this combiner must wait for before processing (a BridgeGateNode). Its output is
++        ignored: it is a pure ordering edge. With none set, the combiner is exactly what it was. */
++    void setOrderingGate (std::unique_ptr<tracktion::graph::Node> gate)     { orderingGate = std::move (gate); }
++
++    int getBridgeRank() const override                  { return bridgeRank; }
++
+     /** Returns the inputs that have been added.
+         N.B. This is a bit of a temporary hack to ensure WaveNodes can access previous
+         Nodes that have been added via a CombinngNode. This will be cleaned up in the future.
+@@ -75,6 +92,9 @@ private:
+ 
+     tracktion::graph::NodeProperties nodeProperties;
+ 
++    int bridgeRank = 0;
++    std::unique_ptr<tracktion::graph::Node> orderingGate;
++
+     void prefetchGroup (juce::Range<int64_t>, TimeRange, BeatRange);
+     void queueNoteOffsForClipsNoLongerPresent (const CombiningNode&);
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 4fc6fe8f22d..b0ebc69e123 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -998,6 +998,26 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
+     return makeNode<tracktion::graph::SummingNode> (std::move (summedNodes));
+ }
+ 
++// Patch local Objekat — the audio bridge's scheduling order. A combiner (a pool track's, or one of a
++// container's per-rank ones) is a unit the gates may wait for, and the units of rank >= 1 wait for
++// every unit of a lower rank: a reader in their clips reads what those write. Rank 0 gets no gate and
++// stays byte-identical to what it always was. A node that is not a CombiningNode is left alone.
++// @see CombiningNode::setBridgeRank, BridgeGateNode, docs/plan_sidechain.md §5.5
++static void applyBridgeRank (Node& node, int rank, EditItemID unitID, const CreateNodeParams& params)
++{
++    auto combiner = dynamic_cast<CombiningNode*> (&node);
++
++    if (combiner == nullptr)
++        return;
++
++    combiner->setBridgeRank (rank);
++
++    if (rank >= 1 && params.bridgeBuild != nullptr)
++        combiner->setOrderingGate (makeNode<BridgeGateNode> (rank,
++                                                             hash (hash ((size_t) 0x0B76A7E0, unitID.getRawID()), (size_t) rank),
++                                                             params.bridgeBuild));
++}
++
+ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerClip& clip, [[ maybe_unused ]] const TrackMuteState& trackMuteState,
+                                                                     const CreateNodeParams& params, ClipRole role)
+ {
+@@ -1070,13 +1090,52 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+     // retarde le reste, et rien n'a besoin d'élan. Le container fait pareil désormais.
+     const auto pluginLatencyNumSamples = 0;
+ 
++    // Patch local Objekat — the audio bridge: a container's children may have different ranks (a
++    // child that reads a key written by a sibling must run after it), so each rank gets its own
++    // combiner. Rank 0 keeps the container's own id, and with every child at rank 0 (every session
++    // without a route) the content is the single combiner it always was. The sum equalises the
++    // combiners exactly as one combiner padded its lanes. senderPluginLists keeps the FULL list.
++    // @see docs/plan_sidechain.md §5.5, §5.6
++    auto contentNode = [&]() -> std::unique_ptr<Node>
++    {
++        std::map<int, juce::Array<Clip*>> clipsByRank;
++
++        for (auto c : clips)
++            clipsByRank[(int) c->state.getProperty (objbridge_ids::rank, 0)].add (c);
++
++        if (clipsByRank.size() == 1 && clipsByRank.begin()->first == 0)
++            return createNodeForClips (clip.itemID, clips, trackMuteState, params);
++
++        std::vector<std::unique_ptr<Node>> rankNodes;
++
++        for (auto& [rank, rankClips] : clipsByRank)      // ascending
++        {
++            const auto rankID = rank == 0 ? clip.itemID
++                                          : EditItemID::fromRawID (clip.itemID.getRawID() ^ (0x0B51D6E000000000ull + (uint64_t) rank));
++
++            if (auto n = createNodeForClips (rankID, rankClips, trackMuteState, params))
++            {
++                applyBridgeRank (*n, rank, rankID, params);
++                rankNodes.push_back (std::move (n));
++            }
++        }
++
++        if (rankNodes.empty())
++            return {};
++
++        if (rankNodes.size() == 1)
++            return std::move (rankNodes.front());
++
++        return std::make_unique<SummingNode> (std::move (rankNodes));
++    }();
++
+     auto node = makeNode<ContainerClipNode> (params.processState,
+                                              clip.itemID,
+                                              BeatRange (clip.getStartBeat(), clip.getEndBeat()),
+                                              clip.getOffsetInBeats(),
+                                              clip.getLoopRangeBeats(),
+                                              createAuxReturns (senderPluginLists (clips), auxClips,
+-                                                               createNodeForClips (clip.itemID, clips, trackMuteState, params),
++                                                               std::move (contentNode),
+                                                                params),
+                                              pluginLatencyNumSamples);
+    #endif
+@@ -1191,6 +1250,21 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClips (EditItemID trackID,
+             if (auto clipNode = createNodeForClip (*clip, trackMuteState, params, ClipRole::arranger))
+             {
+                 const auto latency = clipNode->getNodeProperties().latencyNumSamples;
++                // Patch local Objekat — invariant I1 of the audio bridge: no node reads ahead, so a tap's
++                // age is the true age of what it recorded. A clip that compensated its own latency
++                // (reading its material early) would make a tap on its chain report an age too high.
++                // @see docs/plan_sidechain.md §4.7
++               #if JUCE_DEBUG
++                if (params.bridgeBuild != nullptr && clip->compensatesOwnPluginLatency())
++                    if (auto* chain = clip->getPluginList())
++                        for (auto p : *chain)
++                            if (dynamic_cast<BridgeTapSource*> (p) != nullptr)
++                            {
++                                DBG ("[BRIDGE] read-ahead clip carries a tap: its age is wrong");
++                                jassertfalse;
++                            }
++               #endif
++
+                 clipEntries.push_back ({ clip, std::move (clipNode), latency, {}, clip->compensatesOwnPluginLatency() });
+             }
+ 
+@@ -1383,7 +1457,11 @@ std::unique_ptr<tracktion::graph::Node> createClipsNode (AudioTrack& at, const T
+     const auto& clips = at.getClips();
+ 
+     if (auto clipsNode = createNodeForClips (trackID, clips, trackMuteState, params))
++    {
++        // Patch local Objekat — the pool track's rank. @see applyBridgeRank
++        applyBridgeRank (*clipsNode, (int) at.state.getProperty (objbridge_ids::rank, 0), trackID, params);
+         arrangerNodes.push_back (std::move (clipsNode));
++    }
+ 
+     if (auto araNode = createARAClipsNode (clips, trackMuteState, params))
+         arrangerNodes.push_back (std::move (araNode));
+@@ -1468,7 +1546,8 @@ std::unique_ptr<tracktion::graph::Node> createLiveInputsNode (AudioTrack& track,
+     return std::make_unique<SummingNode> (std::move (nodes));
+ }
+ 
+-std::unique_ptr<tracktion::graph::Node> createSidechainInputNodeForPlugin (Plugin& plugin, std::unique_ptr<Node> node)
++std::unique_ptr<tracktion::graph::Node> createSidechainInputNodeForPlugin (Plugin& plugin, std::unique_ptr<Node> node,
++                                                                           const CreateNodeParams& params)
+ {
+     const auto sidechainSourceID = plugin.getSidechainSourceID();
+     const bool usesSidechain = ! plugin.isMissing() && sidechainSourceID.isValid();
+@@ -1508,8 +1587,39 @@ std::unique_ptr<tracktion::graph::Node> createSidechainInputNodeForPlugin (Plugi
+     if (! directChannelMap.isIdentity())
+         directInput = makeNode<ChannelRemappingNode> (std::move (directInput), std::move (directChannelMap));
+ 
+-    auto sidechainInput = makeNode<ReturnNode> (getSidechainBusID (sidechainSourceID),
+-                                                std::make_optional (static_cast<size_t> (plugin.itemID.getRawID())));
++    std::unique_ptr<Node> sidechainInput;
++
++    // Patch local Objekat — the audio bridge. A key named by a tap plugin (not by a track) is read
++    // from the tap's ring instead of through a ReturnNode: the ring crosses the containers' boundaries,
++    // which an edge cannot. L_d is the age of the DIRECT input, read AFTER its channel pre-conversion
++    // (a ChannelRemappingNode keeps latency). Anything else falls through to the native path, so a
++    // sidechain naming a track still works. @see docs/plan_sidechain.md §4.2, §5.6
++    if (params.bridgeBuild != nullptr && params.bridgeBuild->hasTap (sidechainSourceID))
++    {
++        // A reader alone in a linear TimedNode chain would share one buffer with its own
++        // ChannelRemappingNode, whose explicit mapping ADDS into its destination: the key would be
++        // summed into itself. The app never produces it (guessSidechainRouting wires 0->0, 1->1).
++        if (! hasDirectChannels)
++        {
++            DBG ("[BRIDGE] reader without a direct channel: refused");
++            return directInput;
++        }
++
++        const auto readerIndex = params.bridgeBuild->registerReader (sidechainSourceID, plugin.itemID, &plugin,
++                                                                     BridgeBuild::Consumer::sidechain,
++                                                                     directInput->getNodeProperties().latencyNumSamples,
++                                                                     plugin.itemID.getRawID());
++        const int readerRank = (int) plugin.state.getProperty (objbridge_ids::rank, 0);
++
++        sidechainInput = makeNode<BridgeReaderNode> (params.processState, params.bridgeBuild, readerIndex, readerRank,
++                                                     hash ((size_t) 0x0B71D6E5, plugin.itemID.getRawID()));
++    }
++    else
++    {
++        sidechainInput = makeNode<ReturnNode> (getSidechainBusID (sidechainSourceID),
++                                               std::make_optional (static_cast<size_t> (plugin.itemID.getRawID())));
++    }
++
+     sidechainInput = makeNode<ChannelRemappingNode> (std::move (sidechainInput), std::move (sidechainChannelMap));
+ 
+     if (! hasDirectChannels)
+@@ -1578,7 +1688,7 @@ std::unique_ptr<tracktion::graph::Node> createNodeForPlugin (Plugin& plugin, con
+                                                                  ChannelMap::conversion (incomingChannels, pluginInputChannels));
+     }
+ 
+-    node = createSidechainInputNodeForPlugin (plugin, std::move (node));
++    node = createSidechainInputNodeForPlugin (plugin, std::move (node), params);
+ 
+     // Create the PluginNode
+     auto pluginNode = tracktion::graph::makeNode<PluginNode> (std::move (node),
+@@ -1734,7 +1844,27 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+         if (auto auxSend = dynamic_cast<ContainerAuxSend*> (p))
+             auxSend->setTapLatencyNumSamples (node != nullptr ? node->getNodeProperties().latencyNumSamples : 0);
+ 
+-        if (auto meterPlugin = dynamic_cast<LevelMeterPlugin*> (p))
++        // Patch local Objekat — a bridge tap: the plugin is never processed, a BridgeTapNode takes its
++        // place. It records the age of its input (the tap's age, which the readers align on) on the
++        // plugin, for the NEXT build to start from, and in this pass's registry for the readers of
++        // THIS pass. @see docs/plan_sidechain.md §4.3, §5.6
++        if (auto tap = dynamic_cast<BridgeTapSource*> (p))
++        {
++            if (node == nullptr)
++                continue;
++
++            const int age = node->getNodeProperties().latencyNumSamples;
++            const int rank = (int) p->state.getProperty (objbridge_ids::rank, -1);
++
++            tap->cachedAgeNumSamples = age;
++            tap->cachedAgeSampleRate = params.sampleRate;
++
++            if (params.bridgeBuild != nullptr)
++                params.bridgeBuild->registerTap (*p, *tap, age, rank);
++
++            node = makeNode<BridgeTapNode> (params.processState, std::move (node), p, *tap, params.bridgeBuild, rank);
++        }
++        else if (auto meterPlugin = dynamic_cast<LevelMeterPlugin*> (p))
+         {
+             node = makeNode<LevelMeasurerProcessingNode> (std::move (node), *meterPlugin);
+         }
+@@ -2494,7 +2624,51 @@ std::unique_ptr<tracktion::graph::Node> createMasterFadeInOutNode (Edit& edit,
+ }
+ 
+ //==============================================================================
+-std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext& epc, std::atomic<double>& audibleTimeToUpdate, const CreateNodeParams& params)
++// Patch local Objekat — the audio bridge's construction passes (docs/plan_sidechain.md §4.3).
++//
++// A reader must declare its latency X when it is CONSTRUCTED, but the true age of its tap is only
++// known once the tap is constructed too — and the builder may reach the destination before the
++// source (another track, another depth). So a reader declares X from the age its tap had at the
++// PREVIOUS build (cached on the tap plugin), and at the end of the pass BridgeBuild::finalise
++// checks every reader against the true ages. If one is late (X < true age) or over-declared
++// (X > what it needs), the pass is thrown away and built again, the taps now caching the truth.
++//
++// In steady state (ages unchanged) and for any key younger than its destination this costs no extra
++// pass. A discarded graph was never prepared, so dropping it on this thread is safe.
++// Renders converge in their own call: an export is never misaligned for want of a timer.
++static constexpr int maxBridgePasses = 8;
++
++template<typename BuildOnePass>
++static std::unique_ptr<tracktion::graph::Node> buildWithBridgePasses (Edit& edit, const CreateNodeParams& params,
++                                                                      BuildOnePass&& buildOnePass)
++{
++    const auto buildID = BridgeBuild::nextBuildID();
++    std::unique_ptr<tracktion::graph::Node> node;
++
++    for (int pass = 0;; ++pass)
++    {
++        auto build = std::make_shared<BridgeBuild> (edit, buildID, pass, params.sampleRate, params.blockSize);
++        auto passParams = params;
++        passParams.bridgeBuild = build;
++
++        node = buildOnePass (passParams);
++
++        const bool anotherPassNeeded = build->finalise();
++
++        if (! anotherPassNeeded || pass + 1 >= maxBridgePasses)
++        {
++            build->allocateRings();
++            build->publish();
++            break;
++        }
++
++        node.reset();
++    }
++
++    return node;
++}
++
++static std::unique_ptr<tracktion::graph::Node> createNodeForEditPass (EditPlaybackContext& epc, std::atomic<double>& audibleTimeToUpdate, const CreateNodeParams& params)
+ {
+     Edit& edit = epc.edit;
+     auto& playHeadState = params.processState.playHeadState;
+@@ -2700,15 +2874,11 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext&
+     return finalNode;
+ }
+ 
+-std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const CreateNodeParams& originalParams)
++static std::unique_ptr<tracktion::graph::Node> createNodeForEditPass (Edit& edit, const CreateNodeParams& params)
+ {
+     std::vector<std::unique_ptr<tracktion::graph::Node>> trackNodes;
+-    auto params = originalParams;
+     auto& playHeadState = params.processState.playHeadState;
+ 
+-    if (params.implicitlyIncludeSubmixChildTracks && params.allowedTracks != nullptr)
+-        *params.allowedTracks = addImplicitSubmixChildTracks (*params.allowedTracks);
+-
+     for (auto t : getAllTracks (edit))
+     {
+         if (params.allowedTracks != nullptr && ! params.allowedTracks->contains (t))
+@@ -2742,6 +2912,30 @@ std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const Cre
+     return node;
+ }
+ 
++std::unique_ptr<tracktion::graph::Node> createNodeForEdit (EditPlaybackContext& epc, std::atomic<double>& audibleTimeToUpdate, const CreateNodeParams& params)
++{
++    return buildWithBridgePasses (epc.edit, params,
++                                  [&] (const CreateNodeParams& passParams)
++                                  {
++                                      return createNodeForEditPass (epc, audibleTimeToUpdate, passParams);
++                                  });
++}
++
++std::unique_ptr<tracktion::graph::Node> createNodeForEdit (Edit& edit, const CreateNodeParams& originalParams)
++{
++    auto params = originalParams;
++
++    // Once, before the passes: the implicit submix children are added through the caller's array.
++    if (params.implicitlyIncludeSubmixChildTracks && params.allowedTracks != nullptr)
++        *params.allowedTracks = addImplicitSubmixChildTracks (*params.allowedTracks);
++
++    return buildWithBridgePasses (edit, params,
++                                  [&] (const CreateNodeParams& passParams)
++                                  {
++                                      return createNodeForEditPass (edit, passParams);
++                                  });
++}
++
+ std::unique_ptr<tracktion::graph::Node> createGeneratorPluginNode (const Plugin::Ptr& plugin,
+                                                                    const CreateNodeParams& params,
+                                                                    std::unique_ptr<tracktion::graph::Node> output)
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
+index ebd27f6045a..464991be83e 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.h
+@@ -45,6 +45,8 @@ struct CreateNodeParams
+     std::function<std::unique_ptr<graph::Node> (OutputDevice&,
+                                                 const CreateNodeParams&,
+                                                 std::unique_ptr<graph::Node>)> insertOptionalLastStageNodeForDevice = {};
++
++    std::shared_ptr<BridgeBuild> bridgeBuild;           /**< Objekat — the audio bridge's per-pass registry. Null outside createNodeForEdit: taps then pass through and readers are not built. */
+ };
+ 
+ //==============================================================================
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+new file mode 100644
+index 00000000000..cc2e44695b9
+--- /dev/null
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+@@ -0,0 +1,266 @@
++/*
++    OBJEKAT — the audio bridge: the three graph nodes. See tracktion_ObjBridgeNodes.h.
++*/
++
++namespace tracktion::inline engine
++{
++
++namespace
++{
++    constexpr size_t bridgeTapMagicHash     = size_t (0x62726964676574);    // "bridget"
++    constexpr size_t bridgeReaderMagicHash  = size_t (0x62726964676572);    // "bridger"
++    constexpr size_t bridgeGateMagicHash    = size_t (0x62726964676761);    // "bridgga"
++    constexpr size_t gateCacheKey           = size_t (0x0B76A7E0C0DEull);   // TransformCache key
++}
++
++//==============================================================================
++BridgeTapNode::BridgeTapNode (ProcessState& ps,
++                              std::unique_ptr<tracktion::graph::Node> inputNode,
++                              Plugin::Ptr tapPluginToUse,
++                              BridgeTapSource&,
++                              std::shared_ptr<BridgeBuild> buildToUse,
++                              int rankToUse)
++    : TracktionEngineNode (ps),
++      input (std::move (inputNode)),
++      tapPlugin (std::move (tapPluginToUse)),
++      build (std::move (buildToUse)),
++      rank (rankToUse),
++      tapID (tapPlugin->itemID)
++{
++    jassert (input != nullptr);
++
++    // The output IS the input (copied unless aliased): nothing to clear, the copy overwrites it.
++    setOptimisations ({ tracktion::graph::ClearBuffers::no,
++                        tracktion::graph::AllocateAudioBuffer::yes });
++}
++
++tracktion::graph::NodeProperties BridgeTapNode::getNodeProperties()
++{
++    auto props = input->getNodeProperties();     // latency UNCHANGED: the tap's age is its input's
++
++    if (props.nodeID != 0)
++    {
++        hash_combine (props.nodeID, (size_t) tapID.getRawID());
++        hash_combine (props.nodeID, bridgeTapMagicHash);
++    }
++
++    return props;
++}
++
++std::vector<tracktion::graph::Node*> BridgeTapNode::getDirectInputNodes()
++{
++    return { input.get() };
++}
++
++bool BridgeTapNode::isReadyToProcess()
++{
++    return input->hasProcessed();
++}
++
++void BridgeTapNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&)
++{
++    // The ring was sized by BridgeBuild::finalise; nothing is allocated here.
++    ring = build != nullptr ? build->ringForTap (tapID) : nullptr;
++}
++
++void BridgeTapNode::process (ProcessContext& pc)
++{
++    auto sourceBuffers = input->getProcessedOutput();
++
++    // In a linear TimedNode chain the two views are the same buffer (tracktion_CombiningNode.cpp),
++    // hence copyIfNotAliased.
++    tracktion::graph::copyIfNotAliased (pc.buffers.audio, sourceBuffers.audio);
++    pc.buffers.midi.copyFrom (sourceBuffers.midi);
++
++    if (ring == nullptr)
++        return;
++
++    float* channels[2] = { nullptr, nullptr };
++    const int numChannels = std::min (2, (int) pc.buffers.audio.getNumChannels());
++
++    for (int c = 0; c < numChannels; ++c)
++        channels[c] = pc.buffers.audio.getIterator ((choc::buffer::ChannelCount) c).sample;
++
++    // didPlayheadJump excludes loop wraps: a folding container keeps ONE run.
++    ring->write (pc.referenceSampleRange.getStart(), (int) pc.numSamples,
++                 channels, numChannels, getPlayHeadState().didPlayheadJump());
++}
++
++//==============================================================================
++BridgeReaderNode::BridgeReaderNode (ProcessState& ps, std::shared_ptr<BridgeBuild> buildToUse,
++                                    int index, int rank, size_t id)
++    : TracktionEngineNode (ps),
++      build (std::move (buildToUse)),
++      readerIndex (index),
++      nodeID (id),
++      declaredLatencyNumSamples (build->getDeclaredLatency (index))
++{
++    if (rank >= 1)
++        gate = tracktion::graph::makeNode<BridgeGateNode> (rank, nodeID ^ size_t (0x6A7E), build);
++
++    // Every sample of the output is written by process (or cleared there).
++    setOptimisations ({ tracktion::graph::ClearBuffers::no,
++                        tracktion::graph::AllocateAudioBuffer::yes });
++}
++
++tracktion::graph::NodeProperties BridgeReaderNode::getNodeProperties()
++{
++    tracktion::graph::NodeProperties props;
++    props.hasAudio = true;
++    props.hasMidi = false;
++    props.numberOfChannels = 2;
++    props.latencyNumSamples = declaredLatencyNumSamples;     // X, fixed at construction
++    props.nodeID = nodeID;
++
++    if (props.nodeID != 0)
++        hash_combine (props.nodeID, bridgeReaderMagicHash);
++
++    return props;
++}
++
++std::vector<tracktion::graph::Node*> BridgeReaderNode::getDirectInputNodes()
++{
++    if (gate != nullptr)
++        return { gate.get() };
++
++    return {};
++}
++
++bool BridgeReaderNode::isReadyToProcess()
++{
++    return gate == nullptr || gate->hasProcessed();
++}
++
++void BridgeReaderNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&)
++{
++    plan = build->readerPlan (readerIndex);
++    counters = &build->counters (readerIndex);
++}
++
++void BridgeReaderNode::process (ProcessContext& pc)
++{
++    auto audio = pc.buffers.audio;
++
++    if (plan.ring == nullptr || plan.status == objbridge::ReaderStatus::sourceAbsent)
++    {
++        audio.clear();
++        return;
++    }
++
++    float* dest[2] = { nullptr, nullptr };
++
++    for (int c = 0; c < 2; ++c)
++        dest[c] = audio.getIterator ((choc::buffer::ChannelCount) c).sample;
++
++    // If the reference range is not as long as the block (speed compensation, I2) the ring's run
++    // logic is what makes the key silent: nothing special to do here.
++    const auto result = plan.ring->read (pc.referenceSampleRange.getStart() - (int64_t) plan.delay,
++                                         (int) pc.numSamples, dest, 2);
++
++    counters->blocksRead.fetch_add (1, std::memory_order_relaxed);
++
++    if (result.framesCovered < (int) pc.numSamples)
++        counters->blocksUncovered.fetch_add (1, std::memory_order_relaxed);
++
++    if (result.torn)
++        counters->blocksTorn.fetch_add (1, std::memory_order_relaxed);
++}
++
++//==============================================================================
++BridgeGateNode::BridgeGateNode (int r, size_t id, std::shared_ptr<BridgeBuild> buildToUse)
++    : rank (r), nodeID (id), build (std::move (buildToUse))
++{
++    // No channels, no audio: there is nothing to allocate or clear.
++    setOptimisations ({ tracktion::graph::ClearBuffers::no,
++                        tracktion::graph::AllocateAudioBuffer::no });
++}
++
++tracktion::graph::NodeProperties BridgeGateNode::getNodeProperties()
++{
++    tracktion::graph::NodeProperties props;
++    props.hasAudio = false;
++    props.hasMidi = false;
++    props.numberOfChannels = 0;
++    props.latencyNumSamples = 0;
++    props.nodeID = nodeID;
++
++    if (props.nodeID != 0)
++        hash_combine (props.nodeID, bridgeGateMagicHash);
++
++    return props;
++}
++
++tracktion::graph::TransformResult BridgeGateNode::transform (TransformOptions& options)
++{
++    // Once: the candidates are collected on the first call, as ReturnNode::findSendNodes does.
++    if (hasTransformed)
++        return tracktion::graph::TransformResult::none;
++
++    hasTransformed = true;
++
++    using RankedNodes = std::vector<std::pair<tracktion::graph::Node*, BridgeRankedNode*>>;
++    RankedNodes allRanked;
++
++    if (auto cached = options.cache.getCachedProperty<RankedNodes> (gateCacheKey))
++    {
++        allRanked = *cached;
++    }
++    else
++    {
++        for (auto n : options.postOrderedNodes)
++            if (auto rn = dynamic_cast<BridgeRankedNode*> (n))
++                allRanked.emplace_back (n, rn);
++
++        options.cache.cacheProperty (gateCacheKey, allRanked);
++    }
++
++    int added = 0, refused = 0;
++
++    for (auto& [node, ranked] : allRanked)
++    {
++        const int r = ranked->getBridgeRank();
++
++        if (node == this || r < 0 || r >= rank)
++            continue;
++
++        // A would-be cycle: the candidate's own graph reaches this gate.
++        bool reachesThis = false;
++
++        tracktion::graph::visitNodes (*node, [&] (tracktion::graph::Node& n) { if (&n == this) reachesThis = true; }, true);
++
++        if (reachesThis)
++        {
++            ++refused;
++            continue;
++        }
++
++        waitsFor.push_back (node);
++        ++added;
++    }
++
++    if (build != nullptr)
++        build->noteGateEdges (added, refused);
++
++    return added > 0 ? tracktion::graph::TransformResult::connectionsMade
++                     : tracktion::graph::TransformResult::none;
++}
++
++std::vector<tracktion::graph::Node*> BridgeGateNode::getDirectInputNodes()
++{
++    return waitsFor;
++}
++
++bool BridgeGateNode::isReadyToProcess()
++{
++    for (auto n : waitsFor)
++        if (! n->hasProcessed())
++            return false;
++
++    return true;
++}
++
++void BridgeGateNode::process (ProcessContext&)
++{
++}
++
++} // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+new file mode 100644
+index 00000000000..53075ee360d
+--- /dev/null
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+@@ -0,0 +1,110 @@
++/*
++    OBJEKAT — the audio bridge: the three graph nodes (docs/plan_sidechain.md §5.4).
++
++    BridgeTapNode     copies a source's signal into the tap plugin's ring, passing it through unchanged.
++    BridgeReaderNode  reads the ring, D stream samples back, and declares the latency X.
++    BridgeGateNode    an ordering edge: waits for the units of a lower rank, produces nothing.
++
++    Nothing here allocates, locks or constructs a std::function in process().
++*/
++
++#pragma once
++
++namespace tracktion::inline engine
++{
++
++//==============================================================================
++/** A pass-through node that records its input into a ring, indexed by STREAM sample.
++
++    It reports its input's properties unchanged (latency included): the tap's age is the age of
++    its input, which is what the readers' arithmetic needs. It never relies on `numOutputNodes`
++    (-1 inside a TimedNode: the trap that killed LatencyMaskingNode, patch 0019). */
++class BridgeTapNode final : public tracktion::graph::Node,
++                            public TracktionEngineNode,
++                            public BridgeRankedNode
++{
++public:
++    BridgeTapNode (ProcessState&,
++                   std::unique_ptr<tracktion::graph::Node> input,
++                   Plugin::Ptr tapPlugin,
++                   BridgeTapSource&,   // the tap's persistent state; the ring is reached through BridgeBuild
++                   std::shared_ptr<BridgeBuild>,
++                   int rank);
++
++    //==============================================================================
++    tracktion::graph::NodeProperties getNodeProperties() override;
++    std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    bool isReadyToProcess() override;
++    void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&) override;
++    void process (ProcessContext&) override;
++
++    int getBridgeRank() const override                  { return rank; }
++
++private:
++    std::unique_ptr<tracktion::graph::Node> input;
++    Plugin::Ptr tapPlugin;
++    std::shared_ptr<BridgeBuild> build;
++    const int rank;
++    const EditItemID tapID;
++    std::shared_ptr<objbridge::Ring> ring;      // set in prepareToPlay, null = nobody reads this tap
++};
++
++//==============================================================================
++/** Delivers a key: stereo audio read from a tap's ring, `delay` stream samples back, declaring
++    the latency `X` fixed when it was registered (BridgeBuild::registerReader).
++
++    In a TimedNode (a clip's chain) it is a LEAF and must be ready at once; with a rank >= 1 it owns
++    a BridgeGateNode, which stays an always-ready leaf there (no ranked node lives in a clip chain —
++    object taps report -1), and does its work when the reader sits in the root or a container graph. */
++class BridgeReaderNode final : public tracktion::graph::Node,
++                               public TracktionEngineNode
++{
++public:
++    BridgeReaderNode (ProcessState&, std::shared_ptr<BridgeBuild>, int readerIndex, int rank, size_t nodeID);
++
++    //==============================================================================
++    tracktion::graph::NodeProperties getNodeProperties() override;
++    std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    bool isReadyToProcess() override;
++    void prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&) override;
++    void process (ProcessContext&) override;
++
++private:
++    std::shared_ptr<BridgeBuild> build;
++    const int readerIndex;
++    const size_t nodeID;
++    const int declaredLatencyNumSamples;
++    std::unique_ptr<tracktion::graph::Node> gate;       // BridgeGateNode, rank >= 1 only
++    BridgeBuild::ReaderPlan plan;
++    BridgeBuild::Counters* counters = nullptr;
++};
++
++//==============================================================================
++/** Waits for every BridgeRankedNode of a lower rank to have processed this block. Produces nothing:
++    it exists to be a direct input, so the scheduler runs the readers' unit after the writers'.
++
++    It never adds an edge to a tap (a tap lives inside a TimedNode, where an outer edge would have
++    it scheduled twice): it waits for the pool tracks' combiners and the stems' taps, which are
++    ordinary nodes of the enclosing graph. A candidate whose subgraph reaches this gate would close
++    a cycle and is refused — the app's ranks are trusted, but a wrong rank must never hang the player. */
++class BridgeGateNode final : public tracktion::graph::Node
++{
++public:
++    BridgeGateNode (int rank, size_t nodeID, std::shared_ptr<BridgeBuild>);
++
++    //==============================================================================
++    tracktion::graph::TransformResult transform (TransformOptions&) override;
++    tracktion::graph::NodeProperties getNodeProperties() override;
++    std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    bool isReadyToProcess() override;
++    void process (ProcessContext&) override;
++
++private:
++    const int rank;
++    const size_t nodeID;
++    std::shared_ptr<BridgeBuild> build;
++    bool hasTransformed = false;
++    std::vector<tracktion::graph::Node*> waitsFor;
++};
++
++} // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
+new file mode 100644
+index 00000000000..29fdfea15cc
+--- /dev/null
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
+@@ -0,0 +1,308 @@
++/*
++    OBJEKAT — the audio bridge: BridgeBuild.
++    See tracktion_ObjBridge.h and docs/plan_sidechain.md.
++*/
++
++namespace tracktion::inline engine
++{
++
++namespace
++{
++    // Edit* -> its newest published build. A FUNCTION-LOCAL static guarded by a mutex (engine patch
++    // 0032: function statics are shared between threads that build graphs at the same time).
++    struct LatestMap
++    {
++        std::mutex mutex;
++        std::map<const Edit*, std::weak_ptr<const BridgeBuild>> map;
++    };
++
++    LatestMap& getLatestMap()
++    {
++        static LatestMap latest;
++        return latest;
++    }
++
++    const char* statusName (objbridge::ReaderStatus s)
++    {
++        switch (s)
++        {
++            case objbridge::ReaderStatus::aligned:       return "aligned";
++            case objbridge::ReaderStatus::late:          return "late";
++            case objbridge::ReaderStatus::overDeclared:  return "over_declared";
++            case objbridge::ReaderStatus::sourceAbsent:  return "source_absent";
++        }
++
++        return "?";
++    }
++}
++
++//==============================================================================
++BridgeBuild::BridgeBuild (Edit& e, uint64_t id, int pass, double sr, int bs)
++    : edit (e), buildID (id), passIndex (pass), sampleRate (sr), blockSize (bs)
++{
++}
++
++BridgeBuild::~BridgeBuild() = default;
++
++uint64_t BridgeBuild::nextBuildID() noexcept
++{
++    static std::atomic<uint64_t> counter { 0 };
++    return ++counter;
++}
++
++//==============================================================================
++const BridgeBuild::TapEntry* BridgeBuild::findTap (EditItemID id) const
++{
++    for (auto& t : taps)
++        if (t.id == id)
++            return &t;
++
++    return nullptr;
++}
++
++void BridgeBuild::registerTap (Plugin& tapPlugin, BridgeTapSource& source, int ageNumSamples, int rank)
++{
++    const std::lock_guard<std::mutex> lock (mutex);
++
++    TapEntry entry;
++    entry.id = tapPlugin.itemID;
++    entry.plugin = &tapPlugin;
++    entry.source = &source;
++    entry.age = ageNumSamples;
++    entry.rank = rank;
++
++    for (auto& t : taps)
++    {
++        if (t.id == entry.id)
++        {
++            t = std::move (entry);      // the same plugin built twice in one pass: the last one wins
++            return;
++        }
++    }
++
++    taps.push_back (std::move (entry));
++}
++
++bool BridgeBuild::hasTap (EditItemID tapPluginID) const
++{
++    if (! tapPluginID.isValid())
++        return false;
++
++    auto p = edit.getPluginCache().getPluginFor (tapPluginID);
++
++    // Still attached: the cache is pruned by a timer, so a plugin removed a moment ago can linger.
++    return p != nullptr
++            && dynamic_cast<BridgeTapSource*> (p.get()) != nullptr
++            && p->state.getParent().isValid();
++}
++
++int BridgeBuild::registerReader (EditItemID tapPluginID, EditItemID destPluginID, Plugin* destPlugin,
++                                 Consumer consumer, int referenceLatency, uint64_t groupKey)
++{
++    int cached = -1;
++
++    if (auto p = edit.getPluginCache().getPluginFor (tapPluginID))
++        if (auto* src = dynamic_cast<BridgeTapSource*> (p.get()))
++            cached = objbridge::scaleCachedAge (src->cachedAgeNumSamples, src->cachedAgeSampleRate, sampleRate);
++
++    const std::lock_guard<std::mutex> lock (mutex);
++
++    ReaderEntry r;
++    r.tapID = tapPluginID;
++    r.destID = destPluginID;
++    r.destPlugin = destPlugin;
++    r.consumer = consumer;
++    r.referenceLatency = referenceLatency;
++    r.declared = objbridge::declaredLatency (referenceLatency, cached);
++    r.groupKey = groupKey;
++
++    readers.push_back (std::move (r));
++    readerCounters.emplace_back();
++    return (int) readers.size() - 1;
++}
++
++int BridgeBuild::getDeclaredLatency (int readerIndex) const
++{
++    jassert (juce::isPositiveAndBelow (readerIndex, (int) readers.size()));
++    return readers[(size_t) readerIndex].declared;
++}
++
++void BridgeBuild::noteGateEdges (int added, int refused)
++{
++    gateEdges += added;
++    gateRefused += refused;
++}
++
++//==============================================================================
++bool BridgeBuild::finalise()
++{
++    const std::lock_guard<std::mutex> lock (mutex);
++    bool again = false;
++
++    // 1. Every reader, now that every tap of the pass exists (containers' content included: it is
++    //    constructed synchronously by createNodeForContainerClip).
++    for (auto& r : readers)
++    {
++        const TapEntry* tap = findTap (r.tapID);
++
++        r.sourceAge = tap != nullptr ? tap->age : 0;
++        r.resolution = objbridge::resolve (r.referenceLatency, r.declared, tap != nullptr, r.sourceAge);
++
++        if (r.resolution.status == objbridge::ReaderStatus::late
++             || r.resolution.status == objbridge::ReaderStatus::overDeclared)
++            again = true;
++    }
++
++    converged = ! again;
++    return again;
++}
++
++void BridgeBuild::allocateRings()
++{
++    const std::lock_guard<std::mutex> lock (mutex);
++
++    // Every ring: the tap plugin's own if it is big enough, else a new one that only the graphs
++    //    built from now on will reference (a ring is never resized in place).
++    for (auto& t : taps)
++    {
++        int maxDelay = 0;
++
++        for (auto& r : readers)
++            if (r.tapID == t.id)
++                maxDelay = std::max (maxDelay, r.resolution.delay);
++
++        const int needed = objbridge::requiredRingCapacity (maxDelay, blockSize);
++
++        if (t.source->ring != nullptr
++             && t.source->ring->getNumChannels() == 2
++             && t.source->ring->getCapacity() >= needed)
++        {
++            t.ring = t.source->ring;
++        }
++        else
++        {
++            t.ring = std::make_shared<objbridge::Ring> (2, needed);
++            t.source->ring = t.ring;
++            ++t.source->ringGeneration;
++        }
++    }
++}
++
++void BridgeBuild::publish()
++{
++    auto self = shared_from_this();
++    auto& latest = getLatestMap();
++    const std::lock_guard<std::mutex> lock (latest.mutex);
++
++    for (auto it = latest.map.begin(); it != latest.map.end();)
++        it = it->second.expired() ? latest.map.erase (it) : std::next (it);
++
++    latest.map[&edit] = self;
++}
++
++std::shared_ptr<const BridgeBuild> BridgeBuild::latestFor (const Edit& e)
++{
++    auto& latest = getLatestMap();
++    const std::lock_guard<std::mutex> lock (latest.mutex);
++
++    if (auto it = latest.map.find (&e); it != latest.map.end())
++        return it->second.lock();
++
++    return {};
++}
++
++//==============================================================================
++BridgeBuild::ReaderPlan BridgeBuild::readerPlan (int readerIndex) const
++{
++    ReaderPlan plan;
++
++    if (! juce::isPositiveAndBelow (readerIndex, (int) readers.size()))
++        return plan;
++
++    auto& r = readers[(size_t) readerIndex];
++    plan.ring = ringForTap (r.tapID);
++    plan.delay = r.resolution.delay;
++    plan.status = r.resolution.status;
++    return plan;
++}
++
++std::shared_ptr<objbridge::Ring> BridgeBuild::ringForTap (EditItemID id) const
++{
++    if (auto* t = findTap (id))
++        return t->ring;
++
++    return {};
++}
++
++BridgeBuild::Counters& BridgeBuild::counters (int readerIndex) const
++{
++    jassert (juce::isPositiveAndBelow (readerIndex, (int) readerCounters.size()));
++    return readerCounters[(size_t) readerIndex];
++}
++
++//==============================================================================
++BridgeReport BridgeBuild::getReport() const
++{
++    const std::lock_guard<std::mutex> lock (mutex);
++    BridgeReport report;
++
++    report.build.id = buildID;
++    report.build.passes = passIndex + 1;
++    report.build.converged = converged;
++    report.build.sampleRate = sampleRate;
++    report.build.blockSize = blockSize;
++    report.build.gateEdges = gateEdges.load();
++    report.build.gateRefused = gateRefused.load();
++
++    for (auto& t : taps)
++    {
++        BridgeReport::Tap out;
++        out.tap = t.id;
++        out.source = t.plugin != nullptr ? t.plugin->state[objbridge_ids::source].toString() : juce::String();
++        out.rank = t.rank;
++        out.age = t.age;
++        out.cachedAge = t.source->cachedAgeNumSamples;
++        out.ringGeneration = t.source->ringGeneration;
++
++        if (t.ring != nullptr)
++        {
++            out.ringCapacity = t.ring->getCapacity();
++            out.latestEnd = t.ring->getLatestEnd();
++
++            std::array<std::array<int64_t, 2>, 4> snapshot {};
++            const int n = t.ring->getRunsSnapshot (snapshot);
++
++            for (int i = 0; i < n; ++i)
++                out.runs.emplace_back (snapshot[(size_t) i][0], snapshot[(size_t) i][1]);
++        }
++
++        report.taps.push_back (std::move (out));
++    }
++
++    for (size_t i = 0; i < readers.size(); ++i)
++    {
++        auto& r = readers[i];
++        BridgeReport::Reader out;
++
++        out.plugin = r.destID;
++        out.destInstance = juce::String::toHexString ((juce::int64) (intptr_t) r.destPlugin.get());
++        out.tap = r.tapID;
++        out.consumer = r.consumer == Consumer::sidechain ? "sidechain" : "auxInput";
++        out.rank = r.destPlugin != nullptr ? (int) r.destPlugin->state.getProperty (objbridge_ids::rank, 0) : 0;
++        out.lRef = r.referenceLatency;
++        out.declared = r.declared;
++        out.sourceAge = r.sourceAge;
++        out.delay = r.resolution.delay;
++        out.status = statusName (r.resolution.status);
++        out.alignmentErrorSamples = r.resolution.alignmentError;
++        out.blocksRead = readerCounters[i].blocksRead.load();
++        out.blocksUncovered = readerCounters[i].blocksUncovered.load();
++        out.blocksTorn = readerCounters[i].blocksTorn.load();
++
++        report.readers.push_back (std::move (out));
++    }
++
++    return report;
++}
++
++} // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+new file mode 100644
+index 00000000000..ff0981d2ba5
+--- /dev/null
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+@@ -0,0 +1,228 @@
++/*
++    OBJEKAT — the audio bridge: public interface.
++
++    A key (a plugin's sidechain input; later an aux's input) travels from a TAP, at the end of a
++    source's chain, to a READER in the destination's chain, through a ring that belongs to the tap
++    plugin and outlives every graph. Neither Tracktion's sends nor its sidechain wires can do that:
++    a container is a closed local graph, and an edge cannot enter or leave it. The design, the
++    latency model and the ranks are in docs/plan_sidechain.md (§4, §5).
++
++    The nodes themselves (tap, reader, gate) are private to playback:
++    playback/graph/tracktion_ObjBridgeNodes.h.
++*/
++
++#pragma once
++
++#include <deque>
++#include <memory>
++#include <mutex>
++#include <vector>
++
++#include "tracktion_ObjBridgeCore.h"
++
++namespace tracktion::inline engine
++{
++
++namespace objbridge_ids
++{
++    /** int: on pool AudioTracks, child clips, aux clips, tap plugins and destination plugins.
++        Absent = 0 (for a tap: -1, "never a gate target"). */
++    inline const juce::Identifier rank   ("objBridgeRank");
++
++    /** string: the model UUID a tap plugin serves (report only). */
++    inline const juce::Identifier source ("objBridgeSource");
++}
++
++//==============================================================================
++/** Implemented by an app plugin that marks a TAP point. The builder never processes it through a
++    PluginNode: it builds a BridgeTapNode in its place (createPluginNodeForList). */
++struct BridgeTapSource
++{
++    virtual ~BridgeTapSource() = default;
++
++    // Message thread only (builder + app), never the audio thread.
++    int    cachedAgeNumSamples = -1;           /**< The tap's age at the previous build. -1 = never built. */
++    double cachedAgeSampleRate = 0.0;          /**< The sample rate that age was taken at. */
++    std::shared_ptr<objbridge::Ring> ring;     /**< Swapped only when it must GROW; old graphs keep theirs. */
++    int    ringGeneration = 0;
++
++    // Phase 2 — a bridge SEND: the aux it targets (invalid for a sidechain tap), and whether the
++    // tap must run the plugin on its copy (the send level).
++    virtual EditItemID getBridgeTargetAuxClipID() const     { return {}; }
++    virtual bool processesTapCopy() const                   { return false; }
++};
++
++//==============================================================================
++/** A node the gates may wait for: pool-track / per-rank CombiningNodes, stem BridgeTapNodes.
++    getBridgeRank() < 0 means "never a gate target" (object taps, which live inside TimedNodes). */
++struct BridgeRankedNode
++{
++    virtual ~BridgeRankedNode() = default;
++    virtual int getBridgeRank() const = 0;
++};
++
++//==============================================================================
++/** Plain structs mirroring docs/plan_sidechain.md §4.8, filled by BridgeBuild::getReport(). */
++struct BridgeReport
++{
++    struct Build
++    {
++        uint64_t id = 0;
++        int passes = 0;
++        bool converged = false;
++        double sampleRate = 0.0;
++        int blockSize = 0;
++        int gateEdges = 0, gateRefused = 0;
++    };
++
++    struct Tap
++    {
++        EditItemID tap;
++        juce::String source;                     // the model UUID, from objbridge_ids::source
++        int rank = -1, age = 0, cachedAge = -1;
++        int ringCapacity = 0, ringGeneration = 0;
++        int64_t latestEnd = 0;
++        std::vector<std::pair<int64_t, int64_t>> runs;   // [start, end) in stream samples, newest first
++    };
++
++    struct Reader
++    {
++        EditItemID plugin;                       // the destination plugin (the app maps it to its model UUID)
++        juce::String destInstance;               // hex pointer of the live plugin: proves no reload across an undo
++        EditItemID tap;
++        juce::String consumer;                   // "sidechain" | "auxInput"
++        int rank = 0;
++        int lRef = 0, declared = 0, sourceAge = 0, delay = 0;
++        juce::String status;                     // "aligned" | "late" | "over_declared" | "source_absent"
++        int alignmentErrorSamples = 0;
++        uint32_t blocksRead = 0, blocksUncovered = 0, blocksTorn = 0;
++    };
++
++    Build build;
++    std::vector<Tap> taps;
++    std::vector<Reader> readers;
++};
++
++//==============================================================================
++/** One per construction PASS of createNodeForEdit. Created and finalised on the message thread;
++    read-only afterwards except the per-reader atomic counters. */
++class BridgeBuild : public std::enable_shared_from_this<BridgeBuild>
++{
++public:
++    BridgeBuild (Edit&, uint64_t buildID, int passIndex, double sampleRate, int blockSize);
++    ~BridgeBuild();
++
++    /** A fresh id for one createNodeForEdit call (not one per pass). */
++    static uint64_t nextBuildID() noexcept;
++
++    //==============================================================================
++    // Construction (message thread).
++
++    /** Called by the builder as it builds a tap node: `ageNumSamples` is the age of the tap's input. */
++    void registerTap (Plugin& tapPlugin, BridgeTapSource&, int ageNumSamples, int rank);
++
++    enum class Consumer { sidechain, auxInput };
++
++    /** Looks the tap plugin up by id (Edit::getPluginCache().getPluginFor, checked still attached to
++        this Edit). Returns the reader's index; X is computed NOW from the tap's cached age, since the
++        tap may be built after the reader, in another track or at another depth. */
++    int  registerReader (EditItemID tapPluginID, EditItemID destPluginID, Plugin* destPlugin,
++                         Consumer, int referenceLatency, uint64_t groupKey);
++
++    /** What the reader declares (X), fixed at registration. */
++    int  getDeclaredLatency (int readerIndex) const;
++
++    /** A BridgeTapSource plugin with that id exists in the Edit. */
++    bool hasTap (EditItemID tapPluginID) const;
++
++    /** From BridgeGateNode::transform (any thread that builds a graph). */
++    void noteGateEdges (int added, int refused);
++
++    //==============================================================================
++    // End of pass (message thread).
++
++    /** Resolves every reader (objbridge::resolve) and returns TRUE if another pass is needed (any
++        reader late or over-declared). A reader whose tap was not built in this pass is `sourceAbsent`
++        and asks for nothing. Touches no ring: this pass may be thrown away. */
++    bool finalise();
++
++    /** Only for the pass that is KEPT, just before publish(): sizes every ring — adopts the tap
++        plugin's own if its capacity suffices, else allocates a new Ring and stores it on the plugin
++        (ringGeneration++). Done once, so a discarded pass never replaces a ring (and drops the key's
++        history) for the next pass to replace it again. */
++    void allocateRings();
++
++    /** Becomes latestFor (edit). */
++    void publish();
++
++    //==============================================================================
++    // After finalise (prepare / audio thread, read-only).
++
++    struct ReaderPlan
++    {
++        std::shared_ptr<objbridge::Ring> ring;
++        int delay = 0;
++        objbridge::ReaderStatus status = objbridge::ReaderStatus::sourceAbsent;
++    };
++
++    ReaderPlan readerPlan (int readerIndex) const;
++    std::shared_ptr<objbridge::Ring> ringForTap (EditItemID) const;
++
++    struct Counters
++    {
++        std::atomic<uint32_t> blocksRead { 0 }, blocksUncovered { 0 }, blocksTorn { 0 };
++    };
++
++    /** A stable address: the counters live in a std::deque that only ever grows at its end. */
++    Counters& counters (int readerIndex) const;
++
++    //==============================================================================
++    // The app.
++
++    /** The newest published build of that Edit, or null. Guarded by a mutex (message + render threads). */
++    static std::shared_ptr<const BridgeBuild> latestFor (const Edit&);
++
++    /** Message thread. */
++    BridgeReport getReport() const;
++
++private:
++    struct TapEntry
++    {
++        EditItemID id;
++        Plugin::Ptr plugin;
++        BridgeTapSource* source = nullptr;
++        int age = 0, rank = -1;
++        std::shared_ptr<objbridge::Ring> ring;
++    };
++
++    struct ReaderEntry
++    {
++        EditItemID tapID, destID;
++        Plugin::Ptr destPlugin;
++        Consumer consumer = Consumer::sidechain;
++        int referenceLatency = 0, declared = 0;
++        uint64_t groupKey = 0;
++        objbridge::ReaderResolution resolution;
++        int sourceAge = 0;
++    };
++
++    const TapEntry* findTap (EditItemID) const;
++
++    Edit& edit;
++    const uint64_t buildID;
++    const int passIndex;
++    const double sampleRate;
++    const int blockSize;
++
++    mutable std::mutex mutex;                  // registration only: never taken on the audio thread
++    std::vector<TapEntry> taps;
++    std::vector<ReaderEntry> readers;
++    mutable std::deque<Counters> readerCounters;
++
++    std::atomic<int> gateEdges { 0 }, gateRefused { 0 };
++    bool converged = false;
++
++    JUCE_DECLARE_NON_COPYABLE (BridgeBuild)
++};
++
++} // namespace tracktion::inline engine
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
+new file mode 100644
+index 00000000000..a4df75f514d
+--- /dev/null
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
+@@ -0,0 +1,326 @@
++/*
++    OBJEKAT — the audio bridge's pure core.
++
++    No JUCE, no Tracktion, nothing but the standard library: this header is compiled by the engine
++    AND by `tools/test_bridge_core.cpp` on any machine, so the half of the bridge that has nothing
++    behind it (the ring that carries a key from a tap to its readers, the latency arithmetic) can be
++    asserted with no engine and no screen. The design is in docs/plan_sidechain.md (§4, §5.2).
++*/
++
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <vector>
++
++namespace tracktion { inline namespace engine { namespace objbridge
++{
++
++//==============================================================================
++/** A stretch of CONTIGUOUS stream samples a tap has written: [start, end). */
++struct Run
++{
++    std::atomic<int64_t> start { 0 }, end { 0 };
++};
++
++//==============================================================================
++/** The key's buffer: a ring indexed by STREAM sample (the device clock every graph shares), so the
++    ring IS the delay line — a reader asks for [s - D, s - D + n) and gets what was written there.
++
++    One writer (the tap node, audio thread), any number of readers (the reader nodes). The graph's
++    ordering makes the writer and the readers of one block sequential; the seqlock below only DETECTS
++    an ordering bug (a torn read answers silence), it does not make the payload thread-safe. */
++class Ring
++{
++public:
++    /** Message thread / prepare only. `capacity` is rounded UP to a power of two, `numChannels`
++        clamped to [1, 2]. */
++    Ring (int numChannelsToUse, int capacityToUse)
++        : numChannels (std::min (2, std::max (1, numChannelsToUse)))
++    {
++        int c = 2;
++        while (c < capacityToUse && c < (1 << 30))
++            c <<= 1;
++
++        capacity = c;
++        data.assign ((size_t) numChannels * (size_t) capacity, 0.0f);
++    }
++
++    int getCapacity() const noexcept     { return capacity; }
++    int getNumChannels() const noexcept  { return numChannels; }
++
++    /** End of the newest run, 0 if there is none. */
++    int64_t getLatestEnd() const noexcept
++    {
++        return numRuns.load (std::memory_order_acquire) > 0 ? runs[0].end.load (std::memory_order_acquire) : 0;
++    }
++
++    /** For the report only (message thread, racy by nature): copies the runs, newest first, as
++        [start, end) pairs into `out` and returns how many. */
++    int getRunsSnapshot (std::array<std::array<int64_t, 2>, 4>& out) const noexcept
++    {
++        const int n = std::min (numRuns.load (std::memory_order_acquire), maxRuns);
++
++        for (int i = 0; i < n; ++i)
++        {
++            out[(size_t) i][0] = runs[(size_t) i].start.load (std::memory_order_relaxed);
++            out[(size_t) i][1] = runs[(size_t) i].end.load (std::memory_order_relaxed);
++        }
++
++        return n;
++    }
++
++    /** AUDIO THREAD, single writer. Writes src[c][0..numFrames) at stream samples
++        [streamStart, streamStart + numFrames). A source with ONE channel is duplicated on channel 1;
++        channels beyond numChannels are ignored. Starts a NEW run when streamStart is not the newest
++        run's end, or when forceNewRun (a transport jump). Never allocates, never locks.
++
++        A new run that starts BEFORE an older run's end drops that older run: stream time only moves
++        forward, so such a run is "from the future" and its slots may be overwritten by this one —
++        keeping it would let a read return material that is no longer there. Every run that is kept
++        therefore lies entirely before the newer ones, which is what makes `read`'s validity bound
++        (latestEnd - capacity) exact for all of them. */
++    void write (int64_t streamStart, int numFrames, const float* const* src, int numSrcChannels,
++                bool forceNewRun) noexcept
++    {
++        if (numFrames <= 0)
++            return;
++
++        seq.fetch_add (1, std::memory_order_relaxed);               // odd: a write is in progress
++        std::atomic_thread_fence (std::memory_order_release);
++
++        int n = numRuns.load (std::memory_order_relaxed);
++
++        if (n == 0 || forceNewRun || streamStart != runs[0].end.load (std::memory_order_relaxed))
++        {
++            // Forget the runs that reach into the stretch about to be written (see above).
++            int drop = 0;   // runs[0..drop) are the newer ones that reach into the new span
++
++            while (drop < n && runs[(size_t) drop].end.load (std::memory_order_relaxed) > streamStart)
++                ++drop;
++
++            if (drop > 0)
++            {
++                for (int i = drop; i < n; ++i)
++                {
++                    runs[(size_t) (i - drop)].start.store (runs[(size_t) i].start.load (std::memory_order_relaxed), std::memory_order_relaxed);
++                    runs[(size_t) (i - drop)].end.store   (runs[(size_t) i].end.load   (std::memory_order_relaxed), std::memory_order_relaxed);
++                }
++
++                n -= drop;
++            }
++
++            const int last = std::min (n, maxRuns - 1);
++
++            for (int i = last; i > 0; --i)
++            {
++                runs[(size_t) i].start.store (runs[(size_t) (i - 1)].start.load (std::memory_order_relaxed), std::memory_order_relaxed);
++                runs[(size_t) i].end.store   (runs[(size_t) (i - 1)].end.load   (std::memory_order_relaxed), std::memory_order_relaxed);
++            }
++
++            runs[0].start.store (streamStart, std::memory_order_relaxed);
++            runs[0].end.store (streamStart + numFrames, std::memory_order_relaxed);
++            numRuns.store (std::min (n + 1, maxRuns), std::memory_order_relaxed);
++        }
++        else
++        {
++            runs[0].end.store (streamStart + numFrames, std::memory_order_relaxed);
++        }
++
++        // A block longer than the ring keeps only its tail: the older part is already "overwritten".
++        const int skip = numFrames > capacity ? numFrames - capacity : 0;
++        const int count = numFrames - skip;
++        const int mask = capacity - 1;
++        const int first = (int) ((uint64_t) (streamStart + skip) & (uint64_t) mask);
++        const int slice1 = std::min (count, capacity - first);
++
++        for (int c = 0; c < numChannels; ++c)
++        {
++            float* dst = data.data() + (size_t) c * (size_t) capacity;
++            const int srcCh = numSrcChannels <= 0 ? -1 : std::min (c, numSrcChannels - 1);
++
++            if (srcCh < 0 || src == nullptr || src[srcCh] == nullptr)
++            {
++                std::fill (dst + first, dst + first + slice1, 0.0f);
++                std::fill (dst, dst + (count - slice1), 0.0f);
++                continue;
++            }
++
++            const float* s = src[srcCh] + skip;
++            std::copy (s, s + slice1, dst + first);
++            std::copy (s + slice1, s + count, dst);
++        }
++
++        std::atomic_thread_fence (std::memory_order_release);
++        seq.fetch_add (1, std::memory_order_release);               // even: the write is complete
++    }
++
++    struct ReadResult
++    {
++        int framesCovered = 0;
++        bool torn = false;
++    };
++
++    /** AUDIO THREAD, any number of readers. Fills dest[c][0..numFrames) with what was written for
++        [streamStart, streamStart + numFrames); ZERO where no run covers it or where the ring has
++        already overwritten it (older than getLatestEnd() - capacity). Destination channels beyond the
++        ring's are zeroed. torn = a write happened during the read (seqlock): dest is zeroed entirely. */
++    ReadResult read (int64_t streamStart, int numFrames, float* const* dest, int numDestChannels) const noexcept
++    {
++        ReadResult result;
++
++        if (numFrames <= 0)
++            return result;
++
++        for (int c = 0; c < numDestChannels; ++c)
++            if (dest[c] != nullptr)
++                std::fill (dest[c], dest[c] + numFrames, 0.0f);
++
++        const uint32_t s1 = seq.load (std::memory_order_acquire);
++
++        if ((s1 & 1u) != 0)
++        {
++            result.torn = true;
++            return result;
++        }
++
++        const int n = numRuns.load (std::memory_order_relaxed);
++        int64_t latestEnd = 0;
++
++        if (n > 0)
++            latestEnd = runs[0].end.load (std::memory_order_relaxed);
++
++        const int64_t validFrom = latestEnd - (int64_t) capacity;
++        const int64_t reqEnd = streamStart + numFrames;
++        const int mask = capacity - 1;
++        const int channelsToCopy = std::min (numDestChannels, numChannels);
++        int covered = 0;
++
++        for (int i = 0; i < n; ++i)      // newest first; the kept runs are disjoint (see write)
++        {
++            const int64_t lo = std::max ({ streamStart, runs[(size_t) i].start.load (std::memory_order_relaxed), validFrom });
++            const int64_t hi = std::min (reqEnd, runs[(size_t) i].end.load (std::memory_order_relaxed));
++
++            if (hi <= lo)
++                continue;
++
++            const int count = (int) (hi - lo);
++            const int destOffset = (int) (lo - streamStart);
++            const int first = (int) ((uint64_t) lo & (uint64_t) mask);
++            const int slice1 = std::min (count, capacity - first);
++
++            for (int c = 0; c < channelsToCopy; ++c)
++            {
++                if (dest[c] == nullptr)
++                    continue;
++
++                const float* src = data.data() + (size_t) c * (size_t) capacity;
++                std::copy (src + first, src + first + slice1, dest[c] + destOffset);
++                std::copy (src, src + (count - slice1), dest[c] + destOffset + slice1);
++            }
++
++            covered += count;
++        }
++
++        std::atomic_thread_fence (std::memory_order_acquire);
++
++        if (seq.load (std::memory_order_relaxed) != s1)
++        {
++            for (int c = 0; c < numDestChannels; ++c)
++                if (dest[c] != nullptr)
++                    std::fill (dest[c], dest[c] + numFrames, 0.0f);
++
++            result.torn = true;
++            return result;
++        }
++
++        result.framesCovered = covered;
++        return result;
++    }
++
++private:
++    static constexpr int maxRuns = 4;   // newest first
++
++    std::vector<float> data;            // channel-major, numChannels x capacity
++    int numChannels = 2, capacity = 0;
++    std::array<Run, maxRuns> runs;
++    std::atomic<int> numRuns { 0 };
++    std::atomic<uint32_t> seq { 0 };    // odd while writing
++};
++
++//==============================================================================
++// Latency arithmetic (docs/plan_sidechain.md §4.2). Ages are in stream samples.
++
++enum class ReaderStatus { aligned, late, overDeclared, sourceAbsent };
++
++struct ReaderResolution
++{
++    int delay = 0;
++    ReaderStatus status = ReaderStatus::sourceAbsent;
++    int alignmentError = 0;
++};
++
++/** X = max(L_ref, cachedAge): what a reader DECLARES. A negative cachedAge means "never built". */
++inline int declaredLatency (int referenceLatency, int cachedSourceAge) noexcept
++{
++    return std::max (referenceLatency, std::max (0, cachedSourceAge));
++}
++
++/** Once the tap's TRUE age is known. sourceBuilt false -> {0, sourceAbsent, 0}. trueAge > declared ->
++    {0, late, trueAge - declared}: the key arrives late and nothing can be done but build again.
++    Otherwise delay = declared - trueAge, and the status is overDeclared iff the reader says more
++    than it needs to (declared > max(referenceLatency, trueAge)). */
++inline ReaderResolution resolve (int referenceLatency, int declared, bool sourceBuilt, int trueAge) noexcept
++{
++    ReaderResolution r;
++
++    if (! sourceBuilt)
++        return r;
++
++    if (trueAge > declared)
++    {
++        r.delay = 0;
++        r.status = ReaderStatus::late;
++        r.alignmentError = trueAge - declared;
++        return r;
++    }
++
++    r.delay = declared - trueAge;
++    r.status = declared > std::max (referenceLatency, trueAge) ? ReaderStatus::overDeclared
++                                                                : ReaderStatus::aligned;
++    return r;
++}
++
++// Phase 2 (an aux's input): every reader of one aux shares one declared X = max(ref, max cached),
++// and the group is late / over-declared as a whole. The signature is reserved here and implemented
++// in step 2.1 — nothing in phase 1 calls it.
++
++/** Ring sizing: the next power of two >= maxDelay + 2 x blockSize, and >= 4 x blockSize. */
++inline int requiredRingCapacity (int maxDelay, int blockSize) noexcept
++{
++    const int64_t block = std::max (1, blockSize);
++    const int64_t need = std::max<int64_t> (std::max<int64_t> (0, maxDelay) + 2 * block, 4 * block);
++    int64_t c = 2;
++
++    while (c < need && c < ((int64_t) 1 << 30))
++        c <<= 1;
++
++    return (int) c;
++}
++
++/** A cached age taken at another sample rate: round (age x newRate / oldRate). An unknown rate (or an
++    unknown age) gives -1, "never built". */
++inline int scaleCachedAge (int cachedAge, double cachedRate, double newRate) noexcept
++{
++    if (cachedAge < 0 || cachedRate <= 0.0 || newRate <= 0.0)
++        return -1;
++
++    if (cachedRate == newRate)
++        return cachedAge;
++
++    return (int) ((double) cachedAge * newRate / cachedRate + 0.5);
++}
++
++}}} // namespace tracktion::engine::objbridge
+diff --git a/modules/tracktion_engine/tracktion_engine.h b/modules/tracktion_engine/tracktion_engine.h
+index eda4ac01e74..dcced26d8e4 100644
+--- a/modules/tracktion_engine/tracktion_engine.h
++++ b/modules/tracktion_engine/tracktion_engine.h
+@@ -516,6 +516,7 @@ namespace tracktion::inline engine
+ #include "plugins/tracktion_PluginWindowState.h"
+ #include "plugins/tracktion_Plugin.h"
+ #include "plugins/tracktion_PluginList.h"
++#include "plugins/tracktion_ObjBridge.h"
+ #include "plugins/tracktion_PluginManager.h"
+ #include "utilities/tracktion_ParameterHelpers.h"
+ 
+diff --git a/modules/tracktion_engine/tracktion_engine_playback.cpp b/modules/tracktion_engine/tracktion_engine_playback.cpp
+index 334da329902..fc87c1ef79a 100644
+--- a/modules/tracktion_engine/tracktion_engine_playback.cpp
++++ b/modules/tracktion_engine/tracktion_engine_playback.cpp
+@@ -184,6 +184,7 @@ using namespace std::literals;
+ #include "playback/graph/tracktion_ClickNode.h"
+ #include "playback/graph/tracktion_CombiningNode.h"
+ #include "playback/graph/tracktion_ContainerClipNode.h"
++#include "playback/graph/tracktion_ObjBridgeNodes.h"
+ #include "playback/graph/tracktion_DynamicOffsetNode.h"
+ #include "playback/graph/tracktion_FadeInOutNode.h"
+ #include "playback/graph/tracktion_PluginNode.h"
+@@ -222,6 +223,7 @@ using namespace std::literals;
+ #include "playback/graph/tracktion_ClickNode.test.cpp"
+ #include "playback/graph/tracktion_CombiningNode.cpp"
+ #include "playback/graph/tracktion_ContainerClipNode.cpp"
++#include "playback/graph/tracktion_ObjBridgeNodes.cpp"
+ #include "playback/graph/tracktion_DynamicOffsetNode.cpp"
+ #include "playback/graph/tracktion_FadeInOutNode.cpp"
+ #include "playback/graph/tracktion_InsertSendNode.cpp"
+@@ -259,6 +261,7 @@ using namespace std::literals;
+ 
+ #include "playback/graph/tracktion_EditNodeBuilder.h"
+ #include "playback/graph/tracktion_EditNodeBuilder.cpp"
++#include "plugins/tracktion_ObjBridge.cpp"
+ #include "playback/graph/tracktion_EditNodeBuilder.test.cpp"
+ 
+ #include "playback/graph/tracktion_NodeRenderContext.h"
+-- 
+2.50.1 (Apple Git-155)
+

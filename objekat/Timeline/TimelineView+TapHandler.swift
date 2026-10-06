@@ -21,6 +21,17 @@ extension TimelineView {
         // committed on the way out (@see MarkerRenameField).
         viewModel.renamingID = nil
 
+        // "Choose object" armed (a plugin editor's Sidechain strip): a click on an object sets the
+        // key, a click anywhere else leaves the mode. It takes priority over every other reading.
+        if viewModel.sidechainPick != nil {
+            if !rulerBandContains(point), let id = stemPaintHitTest(at: point) {
+                viewModel.commitSidechainPick(objectID: id)
+            } else {
+                viewModel.endSidechainPick()
+            }
+            return
+        }
+
         // The time ruler: it moves the cursor and changes nothing else. It takes priority over
         // everything — whatever the active tool, the ruler does not edit the content.
         if rulerBandContains(point) {

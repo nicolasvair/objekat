@@ -88,14 +88,10 @@ extension EditViewModel {
 
     // MARK: - The walk
 
-    private static func appendListRows(
-        _ siblings: [SoundObject],
-        parentID: UUID?,
-        depth: Int,
-        displayLaneOffset: Int,
-        filter: String,
-        into out: inout [SoundListRow]
-    ) {
+    /// One level of siblings in the list's order — the order things HAPPEN, as the timeline is
+    /// read. Shared with the sidechain's source picker, which must list objects in the same order.
+    static func listOrdered(_ siblings: [SoundObject], displayLaneOffset: Int)
+        -> [(index: Int, item: SoundObject, displayLane: Int)] {
         // The display row of a sibling, arrived at EXACTLY as `buildLaneEntries` does it: an
         // item's row is its own lane plus the rows opened above it by everything unfolded on a
         // strictly higher lane. Prefix sum → O(N) instead of the O(N²) of a filter per item.
@@ -126,6 +122,18 @@ extension EditViewModel {
             if $0.displayLane != $1.displayLane { return $0.displayLane < $1.displayLane }
             return $0.index < $1.index
         }
+        return ordered
+    }
+
+    private static func appendListRows(
+        _ siblings: [SoundObject],
+        parentID: UUID?,
+        depth: Int,
+        displayLaneOffset: Int,
+        filter: String,
+        into out: inout [SoundListRow]
+    ) {
+        let ordered = listOrdered(siblings, displayLaneOffset: displayLaneOffset)
 
         for entry in ordered {
             let item = entry.item

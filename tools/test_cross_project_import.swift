@@ -14,6 +14,9 @@
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/Marker.swift \
+//         ../objekat/SoundObject/ChannelMode.swift \
+//         ../objekat/Shared/LaneEntryIndex.swift \
+//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
 //         ../objekat/SoundObject/ConsolidateDefinition.swift \
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
@@ -313,6 +316,33 @@ enum CrossProjectImportTest {
             check("a bin absent from the clipboard degrades to plain, unlinked plugins",
                   plan.newFXLinks.isEmpty && plan.clips[0].plugins.count == 1
                   && plan.clips[0].plugins[0].fxBlock == nil && plan.clips[0].plugins[0].linkGroupID == nil)
+        }
+
+        // MARK: - Sidechain keys (docs/plan_sidechain.md §5.9)
+
+        do {
+            let kick = clip(startTime: 0, lane: 0)
+            let outsider = UUID()          // an object of the origin project, not in the batch
+            let stem = UUID()              // a stem: everything lands on Main, it can never follow
+            func keyed(_ source: UUID) -> ObjectPlugin {
+                var p = plugin()
+                p.sidechain = SidechainSource(sourceID: source)
+                return p
+            }
+            let bass = clip(startTime: 0, lane: 1, plugins: [keyed(kick.id)])
+            let loner = clip(startTime: 0, lane: 2, plugins: [keyed(outsider)])
+            let staged = clip(startTime: 0, lane: 3, plugins: [keyed(stem)])
+            let cb = CrossProjectImport.Clipboard(clips: [kick, bass, loner, staged], comments: [],
+                                                  consolidateDefinitions: [:], originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            let newKick = plan.clips[0].id
+            check("a key whose source is in the batch is remapped onto the pasted source",
+                  plan.clips[1].plugins[0].sidechain == SidechainSource(sourceID: newKick) && newKick != kick.id)
+            check("a key whose source is outside the batch is dropped",
+                  plan.clips[2].plugins[0].sidechain == nil)
+            check("a key naming a stem is dropped (everything lands on Main)",
+                  plan.clips[3].plugins[0].sidechain == nil)
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"

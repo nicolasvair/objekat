@@ -768,6 +768,40 @@ That is end-of-process noise, with no effect on the result.
 | `audio.*` | the output device really in use — status, the list, switching device / rate / buffer |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
+### A plugin's sidechain (the audio bridge)
+
+A plugin's sidechain input can be keyed by another object or by a stem — a compressor on the bass
+keyed by the kick — across stems and across groups. The key is what is HEARD of the source (tapped
+after its fader and its window, like a send): a muted source stops keying. Design and rules:
+`plan_sidechain.md`.
+
+| | |
+|---|---|
+| `plugin.list` | each plugin (leaf or instrument) also carries `sidechain`: `null`, or `{source, active, reason}` — `reason` is the refusal's raw value, null when active |
+| `plugin.sidechain_sources` | `host` + `plugin` → `{can_sidechain, current, sources: [{id, kind, name}], refused: [{id, kind, name, reason}]}`. `kind` is object / group / stem. `can_sidechain` false = the live instance has no sidechain input, or is still loading (`wait_idle`, ask again). Reads only |
+| `plugin.set_sidechain` | `host` + `plugin` + `source` (a uuid; null or absent clears) → `{ok, active, reason}`. One undo step, and undoing it does not rebuild the object. `bad_params` with `details.reason` when refused; `invalid_state` when the live plugin has no sidechain input; `not_found` when `plugin` is not a leaf of `host` |
+
+Instruments (a MIDI object's virtual instrument) are not supported yet by `plugin.sidechain_sources` /
+`plugin.set_sidechain`: only the leaf plugins of a chain (`plugin.list`'s `plugins`).
+
+Refusal reasons: `unknownSource` (a deleted source: the key stays written and silent, and comes back
+active if the deletion is undone), `unknownHost`, `selfSource`, `ancestorSource` (the source contains
+the host: its group, or its stem), `auxSource`, `mainSource`, `cycle` (a chain of keys that would
+loop, decided per scheduling unit — the rule lives in `BridgeScope`). A key whose source is refused is
+written in the model and silent in the engine.
+
+DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
+(`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,
+source, rank, age, cached_age, ring_capacity, ring_generation, latest_end, runs}], `readers` [{plugin,
+dest_instance, tap, consumer, rank, l_ref, declared, source_age, delay, status, alignment_error_samples,
+blocks_read, blocks_uncovered, blocks_torn}], null before the first build); `model` is the plan. `dest_instance` is the live
+plugin's address: equal before and after an undo = the destination was not rebuilt. `status` is
+`aligned` / `late` / `over_declared` / `source_absent`. `debug.add_test_plugin {host, type,
+latency_ms?}` adds `objKeyProbe` (output left = direct signal, right = the key, for alignment
+measures by export) or `latencyTester` through the normal model path; `debug.set_plugin_property
+{plugin, property, value}` sets a numeric property on a live plugin (the latency tester's `time`, in
+seconds).
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that
@@ -933,6 +967,15 @@ knowing before driving one:
   without fresh ids — or that the project was opened with its duplicates left as they are (the
   default of `project.open`): then `count` is what the file held and `engine_foreign_refusals`
   counts the operations the engine refused for a foreign host.
+  DEBUG builds also add `debug.plugin_buses {plugin}` — the sidechain probe (phase 0 of
+  `plan_sidechain.md`). Read-only. It answers `{plugin, name, type, format?, enabled, host,
+  can_sidechain, in_rack, te_input_channels, te_output_channels, sidechain_source, wires: [{src, dst}],
+  loaded, total_input_channels?, total_output_channels?, input_buses, output_buses}`, each bus being
+  `{index, name, channels, enabled, enabled_by_default, main, layout}`. The `te_*` channel names are
+  Tracktion's view, the one the graph builder reads; the buses are JUCE's, as negotiated with the
+  AU/VST3. A sidechain is usable when a SECOND input bus is `enabled` with `channels` > 0 (and then
+  `total_input_channels` > the main bus's). `loaded: false` = an external instance still loading,
+  buses `null` — ask again. `not_found` = no live instance under that key.
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
   reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
   bin's block — attached or detached — a card carries no link badge and no linked emphasis (the

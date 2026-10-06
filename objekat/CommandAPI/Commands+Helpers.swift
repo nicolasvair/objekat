@@ -214,7 +214,11 @@ extension CommandAdapters {
         return found
     }
 
-    static func pluginPayload(_ plugin: ObjectPlugin) -> JSONValue {
+    /// `bridgeStatus`: when given (`plugin.list`), a leaf plugin also carries `sidechain` — `null`
+    /// (no key) or `{source, active, reason}`, `reason` being the refusal's raw value (null = active).
+    /// @see EditViewModel.bridgeStatusNow
+    static func pluginPayload(_ plugin: ObjectPlugin,
+                              bridgeStatus: [UUID: BridgeScope.Refusal]? = nil) -> JSONValue {
         var payload: [String: JSONValue] = [
             "id": .string(plugin.id.uuidString),
             "name": .string(plugin.name),
@@ -234,7 +238,17 @@ extension CommandAdapters {
             payload["is_fx_block"] = .bool(true)
             payload["link"] = .string(block.linkID.uuidString)
             payload["detached"] = .bool(block.isDetached)
-            payload["plugins"] = .array(block.plugins.map(pluginPayload))
+            payload["plugins"] = .array(block.plugins.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
+        }
+        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil {
+            if let key = plugin.sidechain {
+                let why = bridgeStatus[plugin.id]
+                payload["sidechain"] = .object(["source": .string(key.sourceID.uuidString),
+                                                "active": .bool(why == nil),
+                                                "reason": .stringOrNull(why?.rawValue)])
+            } else {
+                payload["sidechain"] = .null
+            }
         }
         if let group = plugin.linkGroupID { payload["link_group"] = .string(group.uuidString) }
         return .object(payload)

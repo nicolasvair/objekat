@@ -50,6 +50,14 @@ extension EditViewModel {
         }
         collectIDs(root)
 
+        // A sidechain key naming an object OF the sub-tree follows it to its fresh id; one naming
+        // something outside keeps its source (the same project). @see SidechainSource
+        func freshSidechain(_ sc: SidechainSource?) -> SidechainSource? {
+            guard var sc else { return nil }
+            if let mapped = idMap[sc.sourceID] { sc.sourceID = mapped }
+            return sc
+        }
+
         var linkMap: [UUID: UUID] = [:]
         func freshLink(_ old: UUID?) -> UUID? {
             guard let old else { return nil }
@@ -92,7 +100,8 @@ extension EditViewModel {
                                                               formatName: inst.formatName,
                                                               isEnabled: inst.isEnabled,
                                                               stateXML: inst.stateXML,
-                                                              colorIndex: inst.colorIndex)
+                                                              colorIndex: inst.colorIndex,
+                                                              sidechain: freshSidechain(inst.sidechain))
                                       })
                     link.output = out
                     createdFXLinks[nb.linkID] = link
@@ -103,6 +112,7 @@ extension EditViewModel {
                 q.id = UUID()
                 q.linkGroupID = inst.linkGroupID.map(freshFXDef)
                 q.detachedLinkGroupID = inst.detachedLinkGroupID.map(freshFXDef)
+                q.sidechain = freshSidechain(inst.sidechain)
                 return q
             }
             var np = p
@@ -131,7 +141,8 @@ extension EditViewModel {
                                     // The same correspondence table as the active links: a
                                     // detached member stays reattachable to its peers after a bake.
                                     detachedLinkGroupID: freshLink(p.detachedLinkGroupID),
-                                    colorIndex: p.colorIndex)
+                                    colorIndex: p.colorIndex,
+                                    sidechain: freshSidechain(p.sidechain))
             }
         }
 

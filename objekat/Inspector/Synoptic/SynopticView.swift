@@ -39,6 +39,10 @@ struct SynopticActions {
     var onRelink: ((UUID) -> Void)? = nil
     var linkSiblingCount: ((UUID) -> Int)? = nil
 
+    // The audio bridge (sidechain): a card's key, as one line (nil = none). The key is CHOSEN in the
+    // plugin editor's Sidechain strip (@see SidechainStripView), not from the card.
+    var sidechainBadge: ((UUID) -> SidechainBadge?)? = nil
+
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
     // What a release at `target` would do with the drag in flight, for the cursor and the band
@@ -426,7 +430,8 @@ struct SynopticView: View {
                     onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
                     onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
                     onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0
+                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
+                    sidechainBadge: actions.sidechainBadge?(c.plugin.id)
                 )
                 .contextMenu {
                     // A card outside the selection speaks for itself alone (the drag's own rule).
@@ -1100,6 +1105,8 @@ struct SynopticCardView: View {
     var onRelink: (() -> Void)? = nil
     /// The number of linked instances (for the tooltip). 0 if unlinked.
     var linkSiblingCount: Int = 0
+    /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
+    var sidechainBadge: SidechainBadge? = nil
 
     @State private var dropTargeted = false
     @State private var dropHintID = UUID()
@@ -1245,6 +1252,29 @@ struct SynopticCardView: View {
         // (with no descendant source) received drops but the axis did not. The background steals no
         // click from the buttons (bypass / ✕ / link), which stay above it.
         .background(dropLayer)
+        // The sidechain key, OUTSIDE the card: a small tag hanging above its top-left corner, in the
+        // gap of the series (the wire arrives at the card's centre). Orange when the key is refused.
+        .overlay(alignment: .topLeading) {
+            if let badge = sidechainBadge {
+                HStack(spacing: 3) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 8, weight: .bold))
+                    Text(verbatim: badge.text)
+                        .font(.system(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .foregroundStyle(badge.active ? plugin.color : Color.orange)
+                .padding(.horizontal, 5)
+                .frame(height: 13)
+                .frame(maxWidth: cardW / 2 - 8, alignment: .leading)
+                .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(Capsule().strokeBorder((badge.active ? plugin.color : Color.orange).opacity(0.6), lineWidth: 1))
+                .fixedSize(horizontal: false, vertical: true)
+                .offset(x: 4, y: -15)
+                .help(badge.text)
+            }
+        }
     }
 
     @ViewBuilder private var dropLayer: some View {
@@ -2618,6 +2648,7 @@ struct SynopticBoundView: View {
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
+            sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
             dragProvider: { dragProvider($0) },
             dropOutcome: { target, flags in
                 // The drag in flight says what it carries (@see PluginDragSession); with none to read,

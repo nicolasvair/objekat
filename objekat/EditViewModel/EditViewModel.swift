@@ -52,6 +52,9 @@ final class EditViewModel {
             allAuxesCache = nil
             multiSelectionCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
+            // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
+            // pass per run-loop turn, and an unchanged topology costs one comparison.
+            scheduleBridgeSync()
         }
     }
     /// How many times `items` has been written, and how many times the lane entries have been
@@ -316,12 +319,38 @@ final class EditViewModel {
     /// The mode arms by holding a digit, or locks with ⇧ (`isToolPermanent`),
     /// exactly like C/V/P/S. Drives the assignment on click, the Enter commit and the HUD.
     var stemAssignIndex: Int? = nil
+    /// "Choose object" armed from a plugin editor's Sidechain strip: the next click on an object of
+    /// the timeline becomes that plugin's key. nil = not armed. @see EditViewModel+SidechainStrip
+    var sidechainPick: SidechainPick? = nil
+    /// The host each native editor was opened FOR — the engine names a plugin by its key alone, and
+    /// the Sidechain strip it asks for at the window's creation needs the host.
+    @ObservationIgnored var nativeEditorHosts: [UUID: UUID] = [:]
     /// The send brought forward by the Send tool (a drag/hover on a knob) — drives the visual accent.
     var sendToolFocus: SendFocus? = nil
     /// The cheatsheet shown (a tool key or a modifier held ~0.6 s); nil = hidden.
     /// See ShortcutCheatsheet / CheatsheetHold.
     var cheatsheet: CheatsheetContext? = nil
-    var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
+    var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)] {
+        didSet { scheduleBridgeSync() }     // a stem can be a key's source or host (audio bridge)
+    }
+
+    // MARK: - Audio bridge (sidechain) — @see EditViewModel+Bridge
+    //
+    // What the last sync derived, for the UI and the API. DERIVED, never saved, never in an undo
+    // snapshot: `BridgeScope.plan` recomputes it from the model at every sync.
+
+    /// The scope / cycle / rank plan of the current model.
+    var bridgePlan = BridgeScope.Plan()
+    /// Plugin id → why its key is refused. Absent = the key is active (or there is none).
+    var bridgeRouteStatus: [UUID: BridgeScope.Refusal] = [:]
+    @ObservationIgnored var bridgeSyncScheduled = false
+    /// The engine holds taps laid by a previous sync: a sync with no route must still run once, to
+    /// take them away.
+    @ObservationIgnored var bridgeEngineHasTaps = false
+    /// The topology the last sync laid down and the plan it gave: an equal topology reuses the plan
+    /// (the engine is pushed all the same, @see syncBridge).
+    @ObservationIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
+                                                 plan: BridgeScope.Plan)? = nil
 
     var mainStemID: UUID { stems.first?.id ?? UUID() }
 
@@ -376,6 +405,15 @@ final class EditViewModel {
             // others (@see OBJEngineCore `syncLinkedStateFrom:force:`): the project changed with
             // no gesture of the model to say so. The states themselves are read live at every
             // snapshot and save, so the flag is all there is to set.
+            // The Sidechain strip under a native editor: asked for when its window is created, the
+            // instance being loaded by then (which is what `pluginCanSidechain` needs).
+            engine?.setPluginEditorAccessoryProvider { [weak self] key in
+                MainActor.assumeIsolated {
+                    guard let self, let plugin = UUID(uuidString: key),
+                          let host = self.nativeEditorHosts[plugin] else { return nil }
+                    return self.sidechainStripView(host: host, plugin: plugin)
+                }
+            }
             engine?.onLinkedPluginStateSynced = { [weak self] _, _ in
                 DispatchQueue.main.async { self?.isDirty = true }
             }
