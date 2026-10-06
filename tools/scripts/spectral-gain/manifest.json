@@ -1,0 +1,37 @@
+{
+  "name": "Spectral gain",
+  "description": "Opens a spectrogram of one object and lets the hand attenuate or boost regions of time and frequency (gain only), compare by ear, and bring the result back into the session.",
+  "version": "1.0",
+  "executable": "run.sh",
+  "requires": [
+    "app.info",
+    "object.get",
+    "object.list",
+    "object.add",
+    "object.set_mute",
+    "solo.get",
+    "solo.set",
+    "solo.clear",
+    "object.render_isolated",
+    "job.wait",
+    "batch",
+    "script.panel.open",
+    "script.panel.wait",
+    "script.panel.close",
+    "script.canvas.open",
+    "script.canvas.get",
+    "script.canvas.wait",
+    "script.canvas.update",
+    "script.canvas.set_image",
+    "script.canvas.set_layer",
+    "script.canvas.set_audio",
+    "script.canvas.close"
+  ],
+  "context": "object",
+  "menu": [
+    {
+      "title": "Spectral edit…",
+      "arguments": []
+    }
+  ]
+}
