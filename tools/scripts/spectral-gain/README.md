@@ -29,23 +29,30 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
    edit…**. The object is **rendered** exactly as `retouche-externe` renders it: its own plugins,
    gain, pan, fades, window and speed (a group's content included), and nothing around it (no parent
    chain, no master, no sends).
-2. The window shows the spectrogram. Tools:
-   - **Rectangle**: drag a box over time × frequency. Side bar: **Gain** (−60…+12 dB, default −12),
-     **feather in time** (ms) and **in frequency** (semitones) so a box does not ring.
-   - **Eraser**: draw over the picture; each pass takes away **Amount** dB (default −3), with a
-     **Size** (screen pixels, stored in time × frequency so zooming does not change its meaning) and a
-     **Hardness**. Cumulative like a spray can in negative: crossing a place again attenuates it again;
-     a hand held still deposits nothing.
-   - Everything is cumulative (gains in dB add up), one operation = one history step.
-   - A cyan veil shows where the signal is attenuated, a green one where it is boosted.
-3. Listen, independently of the project transport: **play/stop** from the clicked point, **A/B**
-   between the original and the result at the same position, **Delta** to hear only what the operations
-   take away. ⌘Z / ⇧⌘Z walk the history (the window's own; nothing reaches the project's undo stack
-   before Validate).
+2. The window shows the spectrogram. One **Gain** (−60…+12 dB, default −12) serves both tools, with the
+   rectangle's **feathers** (in time, ms; in frequency, semitones). Tools:
+   - **Rectangle**: drag a box over time × frequency; a soft edge so the box does not ring.
+   - **Brush** (Pinceau): draw over the picture, like a spray can. A pass deposits **Amount per pass**
+     (default 25 %) of the gain — at the default −12 dB, −3 dB — up to 100 % in one stroke; **Size** (screen
+     pixels, stored in time × frequency so zooming does not change its meaning) and **Hardness**. Crossing
+     a place again deposits again; a hand held still deposits nothing.
+   - Two **modes**. **Instant**: each gesture is applied at once, one history step. **Selection**: gestures
+     build a weighted **selection** (0–100 % at every point, drawn in amber, opacity = intensity) over as many
+     gestures as you want — a rectangle sets 100 %, a brush pass adds its amount; **Draw / Erase** (⌘ held
+     flips it) adds or removes; **move the Gain or a feather and the sound follows live**, no history step.
+     **Apply** then makes ONE history step at the current values and clears the selection. The gain applies
+     pro rata: at −12 dB a 50 % zone gets −6 dB. Apply is not Validate.
+   - Steps are cumulative (gains in dB add up). A cyan veil shows where the committed steps attenuate, a
+     green one where they boost.
+3. Listen, independently of the project transport: **play/stop** from the point you right-click (or click in
+   the time ruler), and ONE switch **Original / Result / Difference** — instantly, at the same position —
+   the last being only what the operations take away. ⌘Z / ⇧⌘Z walk the history one entry back (the
+   last selection gesture, then whole applied steps; the window's own, nothing reaches the project's undo
+   stack before Validate).
 4. **Expert** (side bar): FFT size (1024…32768, default 2048) and overlap (2…10, default 4). Changing
    them recomputes the picture and the preview; the operations made are kept (they are stored in
    seconds and Hz, not in bins).
-5. **Validate** writes the result as a wav, lays it on a **new row at the same instant** (inside the
+5. **Validate** writes what you HEAR (a selection still pending asks first: Apply, Ignore or Cancel) as a wav, lays it on a **new row at the same instant** (inside the
    same group if there is one), named **"<name> (spectral)"**, and **mutes the original** (it is not
    deleted). ONE project undo step takes it all back. **Cancel** (or closing the window) leaves the
    session untouched.
@@ -67,7 +74,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
   single picture degrades, the computing is slower); above **10 minutes** it **refuses**.
 - A bus (aux, infinite group), an object whose file is missing and an empty object are refused. One
   object at a time.
-- The veil is a fixed grid (at most 4096 × 512 cells): a very small eraser stroke looks blocky at a
+- The veil is a fixed grid (at most 4096 × 512 cells): a very small brush stroke looks blocky at a
   strong zoom. The result does not: the audio is computed on the STFT grid.
 - Memory: about 0.5 GB of float32 at the 10-minute ceiling at 96 kHz stereo.
 
@@ -77,15 +84,15 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
 |---|---|
 | `spectral_gain.py` | the script: one connection, one loop (wait → compute → update) |
 | `run.sh`, `install.sh`, `manifest.json`, `requirements.txt` | packaging |
-| `mask.py` | **the only home of the gain mathematics** (rectangle, eraser dabs, cumulative G in dB) |
+| `mask.py` | **the only home of the gain mathematics** (rectangle, brush dabs, the weighted selection, pro rata gain in dB) |
 | `dsp.py` | STFT / ISTFT with a time-frequency gain, streamed in blocks |
-| `image.py`, `veil.py`, `canvasfile.py`, `colormap.py` | the base spectrogram, the veil layer, the two raw image formats |
+| `image.py`, `veil.py`, `canvasfile.py`, `colormap.py` | the base spectrogram, the veil and selection layers, the two raw image formats |
 | `wavio.py` | WAV reader / writer (RIFF / RF64, PCM 16 / 24 / 32, float) |
 | `decide.py` | the small pure decisions: depth class, rates, durations, mono, names |
 | `make_fixture.py` | writes the two image-format fixtures to `tools/fixtures/spectral/` |
 | `test_*.py`, `run_tests.sh` | the unit tests (`./run_tests.sh [python]`) |
 
-End to end, headless: `tools/scenario_spectral_gain.py` (sections c, d, e drive this script through the
+End to end, headless: `tools/scenario_spectral_gain.py` (sections c, d, e, g drive this script through the
 real app).
 
 ## Testing hooks

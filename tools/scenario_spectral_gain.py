@@ -16,10 +16,14 @@ and its refusals, the base image, the ops the hand draws, the history, the layer
 says which traces are still visible, the long poll, the audio and the transport model, `remember`,
 the absence of any trace in the project, and the canvas's life.
 
-Section (c) — END TO END: the real script (`tools/scripts/spectral-gain/run.sh --object ID`, its own
-process and its own connection) is driven through the canvas door like a hand would: a rectangle, an
-undo, two eraser strokes, an expert change, Validate. Checked on the veil's pixels, on the result's
-tones (Goertzel) and on a WAV export of the session before / after. Section (d) — THE FORMATS the file
+Section (c) — END TO END, INSTANT MODE: the real script (`tools/scripts/spectral-gain/run.sh --object ID`,
+its own process and its own connection) is driven through the canvas door like a hand would: a rectangle,
+an undo, two brush strokes, an out-and-back stroke, an expert change, Validate. Checked on the veil's
+pixels, on the result's tones (Goertzel) and on a WAV export of the session before / after.
+Section (g) — END TO END, SELECTION MODE: a weighted selection built with a rectangle, a brush pass and
+an Erase pass, the gain tuned LIVE (the history does not move, the preview does), Apply (one step, the
+selection layer gone, the veil shows it), undo, and Validate with a selection still pending (what is
+heard is written). Section (d) — THE FORMATS the file
 comes back in (44.1 kHz / 16-bit mono, float, stereo with L != R, stereo with L == R). Section (e) —
 REFUSALS AND ENDINGS: a group of 601 s, Cancel, a SIGKILLed script, a clip whose file has gone. (c), (d)
 and (e) are skipped when the script's venv is missing (`install.sh`).
@@ -1037,10 +1041,19 @@ class Script:
 
     @staticmethod
     def synced(s):
-        """The veil and the audio reflect the history at hand, and no trace is left."""
+        """Instant mode: the veil and the audio reflect the history at hand, and no trace is left."""
         veil_l = [l for l in s["layers"] if l["layer"] == "veil"]
         rev = s["history"]["rev"]
         return (bool(veil_l) and veil_l[0]["history_rev"] == rev and s["history"]["unreflected"] == []
+                and s["transport"]["audio_history_rev"] == rev and not s["busy"])
+
+    @staticmethod
+    def synced_selection(s):
+        """Selection mode with something pending: the selection layer and the audio reflect the history at
+        hand, and no trace is left. (The veil is NOT restamped by a draft: it shows committed steps only.)"""
+        sel = [l for l in s["layers"] if l["layer"] == "selection"]
+        rev = s["history"]["rev"]
+        return (bool(sel) and sel[0]["history_rev"] == rev and s["history"]["unreflected"] == []
                 and s["transport"]["audio_history_rev"] == rev and not s["busy"])
 
     def settle(self, timeout=90):
@@ -1120,7 +1133,8 @@ def section_c(c):
         check("c: defaults 2048 / 4", st["values"].get("fft_size") == "2048" and st["values"].get("overlap") == 4, st["values"])
         check("c: the base image is an indexed picture with a readout", st["image"]["has_values"] is True, st["image"])
         check("c: the canvas remembers (spectral-gain)", st["remember"] == "spectral-gain", st["remember"])
-        check("c: tools are rect + eraser (stroke)", st["tool"] == "rect", st["tool"])
+        check("c: tools are rect + brush (stroke); the canvas has modes, opens in Instant",
+              st["tool"] == "rect" and st["modes"] is True and st["mode"] == "instant", (st["tool"], st["modes"], st["mode"]))
         orig_path = st["transport"]["slots"]["original"]
         orig = read_wav_any(orig_path)[3][0]
         check("c: the project is untouched while the canvas is open (not dirty)",
@@ -1149,6 +1163,11 @@ def section_c(c):
               goertzel_db(dl, RATE, 3000) > goertzel_db(dl, RATE, 300) + 30,
               (goertzel_db(dl, RATE, 3000), goertzel_db(dl, RATE, 300)))
 
+        e = st["history"]["entries"][st["history"]["cursor"] - 1]
+        check("c: rect: ONE step, sealed with every hand value (the gain it was drawn at)",
+              e["kind"] == "step" and e["params"]["gain"] == -24 and e["params"]["quantity"] == 25
+              and e["ops"][0]["polarity"] == "add" and st["history"]["pending"] == 0, e)
+
         # ---- undo ------------------------------------------------------------------------
         prev_res = st["transport"]["slots"]["result"]
         sc.hand(undo=True)
@@ -1163,28 +1182,48 @@ def section_c(c):
         veil_l = [l for l in st["layers"] if l["layer"] == "veil"][0]
         check("c: undo: the veil is empty again at (1 s, 3 kHz)", veil_alpha(veil_l, st["world"], 1.0, 3000) == 0.0)
 
-        # ---- eraser, calibrated ----------------------------------------------------------
+        # ---- brush, calibrated (gain -12, quantity 25: one pass = -3 dB) ---------------------
+        sc.hand(values={"gain": -12})
         stroke = {"kind": "stroke", "points": [[-0.2, 3000], [2.2, 3000]], "view_scale": {"x": 400, "y": 32}}
-        sc.hand(tool="eraser", op=stroke)
+        sc.hand(tool="brush", op=stroke)
         st = sc.settle()
-        check("c: eraser: caught up after the first stroke", st is not None)
+        check("c: brush: caught up after the first stroke", st is not None)
         if st is None:
             return
-        op = st["history"]["ops"][st["history"]["cursor"] - 1]
-        check("c: eraser: the op carries size_y = 1 octave (32 pt at 32 pt/oct)", abs(op["size_y"] - 1.0) < 1e-9, op)
+        e = st["history"]["entries"][st["history"]["cursor"] - 1]
+        check("c: brush: the op carries size_y = 1 octave (32 pt at 32 pt/oct), quantity 25 in its params",
+              abs(e["ops"][0]["size_y"] - 1.0) < 1e-9 and e["ops"][0]["params"] == {"quantity": 25, "hardness": 50}, e)
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d1 = goertzel_db(res, RATE, 3000, 0.5, 1.5) - goertzel_db(orig, RATE, 3000, 0.5, 1.5)
         d1_300 = goertzel_db(res, RATE, 300, 0.5, 1.5) - goertzel_db(orig, RATE, 300, 0.5, 1.5)
-        check("c: eraser: one pass gives -3 dB +-0.4 on the middle second", abs(d1 + 3) <= 0.4, d1)
-        check("c: eraser: 300 Hz is not touched", abs(d1_300) <= 0.2, d1_300)
-        sc.hand(tool="eraser", op=stroke)
+        check("c: brush: one pass gives -3 dB +-0.4 on the middle second", abs(d1 + 3) <= 0.4, d1)
+        check("c: brush: 300 Hz is not touched", abs(d1_300) <= 0.2, d1_300)
+        sc.hand(tool="brush", op=stroke)
         st = sc.settle()
-        check("c: eraser: caught up after the second stroke", st is not None and st["history"]["cursor"] == 2)
+        check("c: brush: caught up after the second stroke (two steps)", st is not None and st["history"]["cursor"] == 2)
         if st is None:
             return
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d2 = goertzel_db(res, RATE, 3000, 0.5, 1.5) - goertzel_db(orig, RATE, 3000, 0.5, 1.5)
-        check("c: eraser: the same stroke again gives -6 dB +-0.5", abs(d2 + 6) <= 0.5, d2)
+        check("c: brush: the same stroke again, as a second step, gives -6 dB +-0.5 (steps add in dB)", abs(d2 + 6) <= 0.5, d2)
+
+        # ---- out and back in ONE stroke: the same -6, from a single step ------------------------
+        sc.hand(undo=True)
+        sc.hand(undo=True)
+        st = sc.wait_for(lambda s: Script.synced(s) and s["history"]["cursor"] == 0)
+        check("c: two undos bring the history back to 0", st is not None)
+        if st is None:
+            return
+        back = {"kind": "stroke", "points": [[-0.2, 3000], [2.2, 3000], [-0.2, 3000]], "view_scale": {"x": 400, "y": 32}}
+        sc.hand(tool="brush", op=back)
+        st = sc.settle()
+        check("c: out-and-back: caught up (one step)", st is not None and st["history"]["cursor"] == 1
+              and st["history"]["count"] == 1, st and st["history"])
+        if st is None:
+            return
+        res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
+        d2 = goertzel_db(res, RATE, 3000, 0.5, 1.5) - goertzel_db(orig, RATE, 3000, 0.5, 1.5)
+        check("c: out-and-back: ONE stroke crossing twice gives -6 dB +-0.5", abs(d2 + 6) <= 0.5, d2)
 
         # ---- expert change ---------------------------------------------------------------
         img_before, res_before = st["image"]["path"], st["transport"]["slots"]["result"]
@@ -1194,11 +1233,11 @@ def section_c(c):
         check("c: overlap 8: a new base image and a new result", st is not None)
         if st is None:
             return
-        check("c: overlap 8: the operations are kept", st["history"]["count"] == 2 and st["history"]["cursor"] == 2,
+        check("c: overlap 8: the operations are kept", st["history"]["count"] == 1 and st["history"]["cursor"] == 1,
               st["history"]["count"])
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d8 = goertzel_db(res, RATE, 3000, 0.5, 1.5) - goertzel_db(orig, RATE, 3000, 0.5, 1.5)
-        check("c: overlap 8: the result still carries the two passes (-6 dB +-0.5)", abs(d8 + 6) <= 0.5, d8)
+        check("c: overlap 8: the result still carries the stroke (-6 dB +-0.5)", abs(d8 + 6) <= 0.5, d8)
 
         # ---- validate --------------------------------------------------------------------
         sc.hand(press="validate")
@@ -1221,7 +1260,7 @@ def section_c(c):
     e3 = goertzel_db(after, RATE, 3000, 0.5, 1.5) - goertzel_db(base, RATE, 3000, 0.5, 1.5)
     e300 = goertzel_db(after, RATE, 300, 0.5, 1.5) - goertzel_db(base, RATE, 300, 0.5, 1.5)
     print("info  c: export before/after Validate: 3 kHz %+.2f dB, 300 Hz %+.2f dB" % (e3, e300))
-    check("c: validate: the export shows 3 kHz down by the two passes (-6 dB +-1)", abs(e3 + 6) <= 1.0, e3)
+    check("c: validate: the export shows 3 kHz down by the out-and-back stroke (-6 dB +-1)", abs(e3 + 6) <= 1.0, e3)
     check("c: validate: the export keeps 300 Hz (+-0.3 dB)", abs(e300) <= 0.3, e300)
     c.send("edit.undo")
     objs = {o["id"]: o for o in c.send("object.list")["objects"]}
@@ -1252,6 +1291,199 @@ def section_c(c):
                   and c.send("object.get", {"id": oid})["muted"] is False)
     else:
         print("skip  c: script.run: spectral-gain is not installed in the Plugins folder (run install.sh)")
+
+
+def section_g(c):
+    """END TO END, SELECTION MODE (plan 9.5 g): the real script, a weighted selection, live tuning, Apply."""
+    if not venv_ok():
+        print("skip  g: the script's venv is missing (run tools/scripts/spectral-gain/install.sh)")
+        return
+    ROOT = tmproot("g")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    TONES = {300.0: 0.2, 3000.0: 0.2, 8000.0: 0.2}
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tone.wav"), T, RATE, TONES, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tone"})["id"]
+    base = export_wav(c, os.path.join(ROOT, "baseline.wav"), 0.0, T)
+
+    def result_of(st):
+        return read_wav_any(st["transport"]["slots"]["result"])[3][0]
+
+    def db(res, orig, hz):
+        return goertzel_db(res, RATE, hz, 0.5, 1.5) - goertzel_db(orig, RATE, hz, 0.5, 1.5)
+
+    def layer(st, name):
+        found = [l for l in st["layers"] if l["layer"] == name]
+        return found[0] if found else None
+
+    def caught_up(sc, prev_result, timeout=60):
+        """After a LIVE tweak the history does not move: the new result is told by its path (and busy off)."""
+        return sc.wait_for(lambda s: s["transport"]["slots"]["result"] != prev_result and not s["busy"], timeout)
+
+    sc = Script(c, oid, CACHE)
+    try:
+        if sc.find_canvas() is None:
+            check("g: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("g: the canvas is ready", st is not None)
+        if st is None:
+            return
+        orig = read_wav_any(st["transport"]["slots"]["original"])[3][0]
+        sc.hand(mode="select")
+        st = sc.get()
+        check("g: mode select accepted (modes were declared at open)", st["mode"] == "select" and st["modes"] is True, st["mode"])
+
+        # ---- a rectangle over 2-4.5 kHz: a pending selection, no step, no veil ---------------
+        rev0 = st["history"]["rev"]
+        sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(Script.synced_selection)
+        check("g: rect: the selection layer and the audio catch up", st is not None)
+        if st is None:
+            return
+        h = st["history"]
+        check("g: rect: ONE draft pending, no step, history.rev moved once",
+              h["pending"] == 1 and h["cursor"] == 1 and h["entries"][0]["kind"] == "draft" and h["rev"] == rev0 + 1, h)
+        sel = layer(st, "selection")
+        a3k, a300 = veil_alpha(sel, st["world"], 1.0, 3000), veil_alpha(sel, st["world"], 1.0, 300)
+        check("g: rect: the selection layer is amber-opaque 0.6 at (1 s, 3 kHz), 0 at 300 Hz",
+              abs(a3k - 0.6) <= 0.03 and a300 == 0.0, (a3k, a300))
+        check("g: rect: no veil (nothing is committed)", layer(st, "veil") is None, [l["layer"] for l in st["layers"]])
+        res = result_of(st)
+        d3 = db(res, orig, 3000)
+        check("g: rect: the result already carries the pending selection (3 kHz at -12 +-1, 300 Hz untouched)",
+              abs(d3 + 12) <= 1.0 and abs(db(res, orig, 300)) <= 0.2, (d3, db(res, orig, 300)))
+
+        # ---- live tuning: the gain moves, the history does not ----------------------------------
+        hist_rev, sel_path = st["history"]["rev"], sel["path"]
+        prev = st["transport"]["slots"]["result"]
+        sc.hand(values={"gain": -6})
+        st = caught_up(sc, prev)
+        check("g: gain -6: the result is recomputed", st is not None)
+        if st is None:
+            return
+        check("g: gain -6: history.rev UNCHANGED, the selection layer untouched (the gain is not its opacity)",
+              st["history"]["rev"] == hist_rev and layer(st, "selection")["path"] == sel_path, st["history"]["rev"])
+        d3 = db(result_of(st), orig, 3000)
+        check("g: gain -6: 3 kHz at -6 dB +-1", abs(d3 + 6) <= 1.0, d3)
+        prev = st["transport"]["slots"]["result"]
+        sc.hand(values={"gain": -12})
+        st = caught_up(sc, prev)
+        d3 = db(result_of(st), orig, 3000) if st else None
+        check("g: gain -12: 3 kHz at -12 dB +-1, history.rev still UNCHANGED",
+              st is not None and abs(d3 + 12) <= 1.0 and st["history"]["rev"] == hist_rev, d3)
+        if st is None:
+            return
+        # A feather moves the selection's edges: the selection layer IS redrawn (and the history still not).
+        prev, sel_path = st["transport"]["slots"]["result"], layer(st, "selection")["path"]
+        sc.hand(values={"feather_ms": 40})
+        st = sc.wait_for(lambda s: s["transport"]["slots"]["result"] != prev and not s["busy"]
+                         and layer(s, "selection")["path"] != sel_path)
+        check("g: a feather change redraws the selection layer too, history.rev unchanged",
+              st is not None and st["history"]["rev"] == hist_rev, st and st["history"]["rev"])
+        if st is None:
+            return
+        sc.hand(values={"feather_ms": 10})
+        st = sc.wait_for(lambda s: not s["busy"] and layer(s, "selection")["path"] != layer(st, "selection")["path"])
+        if st is None:
+            return
+
+        # ---- a brush pass at quantity 50 over a second band: pro rata, -6 ----------------------------
+        prev = st["transport"]["slots"]["result"]
+        sc.hand(values={"quantity": 50})
+        stroke = {"kind": "stroke", "points": [[-0.2, 8000], [2.2, 8000]], "view_scale": {"x": 400, "y": 32}}
+        sc.hand(tool="brush", op=stroke)
+        st = sc.wait_for(lambda s: Script.synced_selection(s) and s["history"]["pending"] == 2)
+        check("g: brush: a second draft pending", st is not None)
+        if st is None:
+            return
+        res = result_of(st)
+        d8 = db(res, orig, 8000)
+        check("g: brush at quantity 50: the 8 kHz band is at -6 dB +-0.6 (pro rata: 50 % of -12)", abs(d8 + 6) <= 0.6, d8)
+        check("g: brush: the rectangle's band is still at -12 +-1", abs(db(res, orig, 3000) + 12) <= 1.0, db(res, orig, 3000))
+        a8 = veil_alpha(layer(st, "selection"), st["world"], 1.0, 8000)
+        check("g: brush: the selection layer's alpha at 8 kHz is 0.6 * 0.5", abs(a8 - 0.3) <= 0.03, a8)
+
+        # ---- an Erase pass at 50 over it: back to 0 ----------------------------------------------------
+        sc.hand(polarity="subtract")
+        sc.hand(op=stroke)
+        st = sc.wait_for(lambda s: Script.synced_selection(s) and s["history"]["pending"] == 3)
+        check("g: erase: a third draft pending, recorded as subtract",
+              st is not None and st["history"]["entries"][2]["ops"][0]["polarity"] == "subtract", st and st["history"])
+        if st is None:
+            return
+        res = result_of(st)
+        d8 = db(res, orig, 8000)
+        check("g: erase at 50 over the brush pass: 8 kHz back to 0 +-0.3", abs(d8) <= 0.3, d8)
+        check("g: erase: 3 kHz still at -12 +-1", abs(db(res, orig, 3000) + 12) <= 1.0)
+        sc.hand(polarity="add")
+
+        # ---- Apply: ONE step, the selection layer gone, the veil shows it -----------------------------
+        sc.hand(commit=True)
+        st = sc.wait_for(lambda s: Script.synced(s) and layer(s, "selection") is None)
+        check("g: commit: the veil catches up and the selection layer is gone", st is not None)
+        if st is None:
+            return
+        h = st["history"]
+        check("g: commit: ONE step of three ops, params = the values now, pending 0",
+              h["pending"] == 0 and h["count"] == 1 and h["entries"][0]["kind"] == "step"
+              and len(h["entries"][0]["ops"]) == 3 and h["entries"][0]["params"]["gain"] == -12
+              and h["entries"][0]["params"]["quantity"] == 50, h)
+        av = veil_alpha(layer(st, "veil"), st["world"], 1.0, 3000)
+        expect = 0.75 * (1 - 10 ** (-12 / 20))
+        check("g: commit: the veil shows -12 at 3 kHz (alpha about %.2f)" % expect, abs(av - expect) <= 0.05, av)
+        d3 = db(result_of(st), orig, 3000)
+        check("g: commit: the result keeps 3 kHz at -12 +-1", abs(d3 + 12) <= 1.0, d3)
+
+        # ---- the gain moved AFTER Apply changes nothing (the step carries its own) --------------------
+        res_path, veil_path = st["transport"]["slots"]["result"], layer(st, "veil")["path"]
+        sc.hand(values={"gain": -3})
+        time.sleep(2.5)
+        st = sc.get()
+        check("g: the gain moved after Apply changes neither the result nor the veil",
+              st["transport"]["slots"]["result"] == res_path and layer(st, "veil")["path"] == veil_path
+              and abs(db(result_of(st), orig, 3000) + 12) <= 1.0, st["transport"]["slots"]["result"])
+
+        # ---- undo = the whole step; its drafts do not come back --------------------------------------
+        sc.hand(undo=True)
+        st = sc.wait_for(lambda s: Script.synced(s) and s["history"]["cursor"] == 0)
+        check("g: undo: the step goes whole, pending stays 0",
+              st is not None and st["history"]["pending"] == 0 and st["history"]["count"] == 1, st and st["history"])
+        if st is None:
+            return
+        check("g: undo: 3 kHz back to 0 +-0.2", abs(db(result_of(st), orig, 3000)) <= 0.2, db(result_of(st), orig, 3000))
+
+        # ---- Validate with a selection still pending writes what is HEARD ------------------------------
+        sc.hand(values={"gain": -12})
+        sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: Script.synced_selection(s) and s["history"]["pending"] == 1
+                         and s["history"]["cursor"] == 1)
+        check("g: a new pending selection (after the undone step: the redo tail is dropped)",
+              st is not None and st["history"]["count"] == 1 and st["history"]["entries"][0]["kind"] == "draft", st and st["history"])
+        if st is None:
+            return
+        sc.hand(press="validate")
+        rc, out, err = sc.finish(90)
+        check("g: validate with a pending selection: the script exits 0", rc == 0, (rc, out, err[-300:]))
+    finally:
+        sc.abort()
+
+    objs = {o["id"]: o for o in c.send("object.list")["objects"]}
+    new = [o for o in objs.values() if o["name"] == "tone (spectral)"]
+    check("g: validate: one new object, the original muted", len(new) == 1 and objs[oid]["muted"] is True,
+          [o["name"] for o in objs.values()])
+    after = export_wav(c, os.path.join(ROOT, "after.wav"), 0.0, T)
+    e3 = goertzel_db(after, RATE, 3000, 0.5, 1.5) - goertzel_db(base, RATE, 3000, 0.5, 1.5)
+    e300 = goertzel_db(after, RATE, 300, 0.5, 1.5) - goertzel_db(base, RATE, 300, 0.5, 1.5)
+    e8k = goertzel_db(after, RATE, 8000, 0.5, 1.5) - goertzel_db(base, RATE, 8000, 0.5, 1.5)
+    print("info  g: export before/after Validate: 3 kHz %+.2f dB, 300 Hz %+.2f dB, 8 kHz %+.2f dB" % (e3, e300, e8k))
+    check("g: validate: the written file carries the pending selection (3 kHz at -12 dB +-1)", abs(e3 + 12) <= 1.0, e3)
+    check("g: validate: 300 Hz and 8 kHz are untouched (+-0.3)", abs(e300) <= 0.3 and abs(e8k) <= 0.3, (e300, e8k))
+    c.send("edit.undo")
+    check("g: ONE edit.undo takes it all back",
+          [o["id"] for o in c.send("object.list")["objects"]] == [oid] and c.send("object.get", {"id": oid})["muted"] is False)
+    check("g: the canvas is gone", not open_canvases(c))
 
 
 def run_to_validate(c, root, tag, wav, name="tone", extra=None):
@@ -1461,8 +1693,9 @@ def section_f(c):
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdef")
-        for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e), ("f", section_f)):
+        only = os.environ.get("SECTIONS", "abcdefg")
+        for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
+                         ("f", section_f), ("g", section_g)):
             if name in only:
                 fn(c)
 finally:
