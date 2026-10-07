@@ -43,10 +43,14 @@ final class ScriptCanvasPlotNSView: NSView {
     static let leftRuler: CGFloat = 56
     static let topRuler: CGFloat = 22
     /// The alpha of one disc of a stroke's raw trace. Purely visual (the script's refreshed picture replaces the
-    /// trace as soon as it arrives), and cumulative: passing again darkens more. A SUBTRACT stroke
-    /// (Erase) is traced in white, a little stronger, so that it reads on the dark traces it undoes.
-    static let traceDiscAlpha: CGFloat = 0.15
+    /// trace as soon as it arrives), and cumulative: passing again brightens it. A SUBTRACT stroke
+    /// (Erase) is traced in white, so that it reads on the yellow traces it undoes.
+    static let traceDiscAlpha: CGFloat = 0.30
     static let subtractTraceDiscAlpha: CGFloat = 0.25
+    /// The colour of a DRAW gesture's trace — the brush's discs, the rectangle's band and outline — while
+    /// the hand draws and until the script's picture replaces it: yellow (it was black, which vanished on
+    /// the dark spectrogram). An ERASE gesture keeps its white and dashes.
+    static let addTraceColor = NSColor(srgbRed: 1.0, green: 0.92, blue: 0.1, alpha: 1)
 
     let store: ScriptCanvasStore
     let canvasID: UUID
@@ -279,19 +283,19 @@ final class ScriptCanvasPlotNSView: NSView {
                           in: ctx, world: world, vp: vp)
             case .point(let x, let y):
                 let s = screen(CanvasPoint(x: x, y: y), world: world, vp: vp)
-                ctx.setStrokeColor(NSColor.white.cgColor)
+                ctx.setStrokeColor((op.polarity == .subtract ? NSColor.white : Self.addTraceColor).cgColor)
                 ctx.setLineWidth(1)
                 ctx.strokeEllipse(in: CGRect(x: s.x - 6, y: s.y - 6, width: 12, height: 12))
             }
         }
     }
 
-    /// A rectangle's outline: solid for Draw, DASHED for Erase (a subtract rectangle clears what it
-    /// encloses — the dashes say it is not a selection of its own).
+    /// A rectangle's outline: solid yellow for Draw, DASHED white for Erase (a subtract rectangle clears
+    /// what it encloses — the dashes say it is not a selection of its own).
     private func strokeOutline(_ r: CGRect, dashed: Bool, in ctx: CGContext) {
         guard r.origin.x.isFinite, r.origin.y.isFinite, r.width.isFinite, r.height.isFinite else { return }
         ctx.saveGState()
-        ctx.setStrokeColor(NSColor.white.cgColor)
+        ctx.setStrokeColor((dashed ? NSColor.white : Self.addTraceColor).cgColor)
         ctx.setLineWidth(1)
         if dashed { ctx.setLineDash(phase: 0, lengths: [4, 3]) }
         ctx.stroke(r.insetBy(dx: 0.5, dy: 0.5))
@@ -300,7 +304,7 @@ final class ScriptCanvasPlotNSView: NSView {
 
     /// Translucent discs of the brush, a quarter of a diameter apart along the path (@see
     /// CanvasStrokeTrace) — as ellipses of `sizeX × sizeY` WARPED units mapped to the current zoom, so
-    /// a brush drawn before a zoom keeps its meaning. Dark for Draw, white for Erase.
+    /// a brush drawn before a zoom keeps its meaning. Yellow for Draw, white for Erase.
     private func drawDiscs(points: [CanvasPoint], sizeX: Double, sizeY: Double, polarity: CanvasPolarity,
                            in ctx: CGContext, world: CanvasWorld, vp: CanvasViewport) {
         let centres = CanvasStrokeTrace.discCentres(points: points, sizeX: sizeX, sizeY: sizeY, world: world)
@@ -309,7 +313,7 @@ final class ScriptCanvasPlotNSView: NSView {
         let plot = plotRect
         ctx.setFillColor((polarity == .subtract
             ? NSColor.white.withAlphaComponent(Self.subtractTraceDiscAlpha)
-            : NSColor.black.withAlphaComponent(Self.traceDiscAlpha)).cgColor)
+            : Self.addTraceColor.withAlphaComponent(Self.traceDiscAlpha)).cgColor)
         for centre in centres {
             let s = screen(centre, world: world, vp: vp)
             let r = CGRect(x: s.x - w / 2, y: s.y - h / 2, width: w, height: h)
@@ -322,7 +326,8 @@ final class ScriptCanvasPlotNSView: NSView {
         switch gesture {
         case .rect(let a, let b, let polarity)?:
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-            ctx.setFillColor(NSColor.white.withAlphaComponent(polarity == .subtract ? 0.04 : 0.08).cgColor)
+            ctx.setFillColor((polarity == .subtract ? NSColor.white.withAlphaComponent(0.04)
+                                                    : Self.addTraceColor.withAlphaComponent(0.10)).cgColor)
             ctx.fill(r)
             strokeOutline(r, dashed: polarity == .subtract, in: ctx)
         case .stroke(let points, _, let sizeX, let sizeY, _, _, let polarity)?:
