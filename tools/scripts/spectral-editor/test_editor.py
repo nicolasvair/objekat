@@ -123,6 +123,27 @@ class EditorProtocol(unittest.TestCase):
         layer = self.app.named("script.canvas.set_layer")[0]
         self.assertIsNone(layer["path"])  # the amber layer goes, nothing blue replaces it
 
+    def test_a_new_overlap_redraws_the_picture_and_the_audio_at_once_with_the_history_kept(self):
+        import struct
+        self.start()
+        entries = [step(1)]
+        self.ed.sync(answer(entries, rev=1))
+        self.app.calls.clear()
+        self.ed.sync(answer(entries, values=dict(VALUES, overlap=8), rev=2))   # the hand moved the slider
+        images, audios = self.app.named("script.canvas.set_image"), self.app.named("script.canvas.set_audio")
+        self.assertEqual((len(images), len(audios)), (1, 1))
+        self.assertEqual(self.ed.fft, (1024, 8))
+        with open(images[0]["path"], "rb") as f:
+            width = struct.unpack("<I", f.read(12)[8:12])[0]
+        self.assertEqual(width, SR // sg.dsp.hop_for(1024, 8) + 1)   # one column per NEW hop
+        self.assertEqual(len(self.ed.image_steps), 1)                # the step is still applied
+        y = self.ed.committed[3]
+        self.assertEqual(self.ed.committed[1:3], (1024, 8))
+        self.assertGreater(float(np.abs(y - self.ed.x).max()), 1e-3)             # and still attenuates
+        self.app.calls.clear()
+        self.ed.sync(answer(entries, values=dict(VALUES, overlap=8), rev=2))      # nothing changed: nothing sent
+        self.assertEqual(self.app.calls, [])
+
     def test_the_feather_range_goes_to_one_second_and_the_defaults_are_unchanged(self):
         ctl = {c["id"]: c for c in sg.canvas_controls()}
         self.assertEqual((ctl["feather_ms"]["min"], ctl["feather_ms"]["max"], ctl["feather_ms"]["value"]), (0, 1000, 10))

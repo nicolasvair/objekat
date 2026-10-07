@@ -493,7 +493,8 @@ def stft_gain_block_fn(steps, draft_ops, live, world, sr, n, k, cache=None):
     committed steps [(ops, params)]; `draft_ops` + `live` the pending selection at the current values
     (both may be empty / None)."""
     np = _np()
-    h = int(math.floor(n / float(k) + 0.5))
+    import dsp  # the hop is dsp's: the mask is sampled at the very frames the transform takes
+    h = dsp.hop_for(n, k)
     steps = [(list(ops), dict(params)) for ops, params in steps]
 
     def fn(j0, j1):
