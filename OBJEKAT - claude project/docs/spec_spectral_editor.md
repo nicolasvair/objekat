@@ -6,7 +6,7 @@ All points were confirmed by the user; **[decided]** and **[proposed]** only rec
 **Revision 3 (6 October 2026), decided by the user after trying it:** one Original / Result / Difference
 switch; two modes, Instant and Selection (a weighted selection, then Apply); a Draw / Erase switch in
 Selection mode (⌘ held flips it); right click = playhead; no Hand tool; the Eraser is renamed **Brush**.
-The sections below are updated; the technical side is `plan_spectral_gain.md` §9. The architect's open
+The sections below are updated; the technical side is `plan_spectral_editor.md` §9. The architect's open
 questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
 others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
@@ -32,7 +32,7 @@ It is made of TWO deliverables, and the split is the point **[decided]**:
    draws: an image with axes, zoom/pan, editing tools that produce an operation history, and
    playback of audio files the script provides. Nothing in it knows about FFTs: a future script
    (an annotated sonagram, a detector's view, a chromagram…) uses it as is.
-2. **The script `tools/scripts/spectral-gain/`** — all the DSP, in Python (numpy/scipy), separate
+2. **The script `tools/scripts/spectral-editor/`** — all the DSP, in Python (numpy/scipy), separate
    process, like every script (a crash costs the script, never the sound).
 
 ## 2. Workflow

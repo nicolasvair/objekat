@@ -2223,13 +2223,13 @@ What has landed since mid-August, in order:
   undo/redo of its own, ONE Original / Result / Difference listening switch (revision 3; it was A/B + a Delta
   toggle); Validate lays the result back like `retouche-externe` (a new row at the same instant,
   "<name> (spectral)", the original MUTED, ONE batch = ONE undo), Cancel touches nothing. Authority:
-  `docs/spec_spectral_editor.md` (confirmed 4 October) and `docs/plan_spectral_gain.md` (revision 2, then
+  `docs/spec_spectral_editor.md` (confirmed 4 October) and `docs/plan_spectral_editor.md` (revision 2, then
   revision 3 on 6 October, section 9 — which wins; see the paragraph at the end of this entry).
   **The split is the point.** The app owns a GENERIC surface, `script.canvas.*` (`command_api.md`, "A
   canvas a script asks for"): gestures (`rect`, `stroke`, `point`, always a Hand), the history and its
   traces, image layers the script supplies, three audio slots with a transport. It knows NOTHING about
   FFTs, dB or a mask: each op records its geometry and a snapshot of the controls its tool declares, and
-  the script reads them. All the gain mathematics lives in ONE file, `tools/scripts/spectral-gain/mask.py`
+  the script reads them. All the gain mathematics lives in ONE file, `tools/scripts/spectral-editor/mask.py`
   (rectangle with a feathered edge, brush (then called the eraser) as dabs deposited by DISTANCE, never by time, so a still hand
   deposits nothing; everything adds up in dB). The rest of the script is numpy only: `dsp.py` (STFT and
   weighted overlap-add, exact to -300 dB with an empty history), `image.py` (the base spectrogram),
@@ -2254,7 +2254,7 @@ What has landed since mid-August, in order:
   AND the venv's 2.5); `tools/test_script_canvas_geometry.swift` 125 and
   `tools/test_script_canvas_image.swift` 46, both compiled standalone (their headers said "not
   compiled" until today); a Debug build, no warning attributed to a file of this branch;
-  `tools/scenario_spectral_gain.py`, 217 assertions in six sections, against a headless `--no-audio` instance: (a) the API
+  `tools/scenario_spectral_editor.py`, 217 assertions in six sections, against a headless `--no-audio` instance: (a) the API
   additions, (b) the canvas contract, (c) END TO END with the REAL script launched as its own process
   (rect at -24 dB measured -24 on the result by Goertzel and on the veil's pixel alpha; undo back within
   0.2 dB; the brush (then the eraser) calibrated, one pass -3, two passes -6 within the tolerances of the plan; an expert
@@ -2278,11 +2278,11 @@ What has landed since mid-August, in order:
   The answers N1 to N3 of the plan stand at their defaults (a blocky veil at strong zoom, the old veil
   showing an undone op for the length of a recompute, traces disappearing once reflected).
   Cost to know: `install.sh` was run on this machine; it made the venv
-  `~/Library/Application Support/Objekat/venvs/spectral-gain` and a symlink in
-  `~/Library/Application Support/Objekat/Plugins/spectral-gain`.
+  `~/Library/Application Support/Objekat/venvs/spectral-editor` and a symlink in
+  `~/Library/Application Support/Objekat/Plugins/spectral-editor`.
 
   **Revision 3 (6 October 2026 asked, 7 October built, same branch, nothing pushed).** The user tried the
-  first version and decided six things; `plan_spectral_gain.md` §9 is the authority. (1) ONE three-state
+  first version and decided six things; `plan_spectral_editor.md` §9 is the authority. (1) ONE three-state
   switch Original / Résultat / Différence. (2) Two MODES, opt-in at `open` (`modes: true`): **Instant** (a
   gesture is a history step at once) and **Sélection** (gestures are DRAFTS building a weighted selection,
   intensity 0–100 %, that the hand tunes live — gain and the two feathers, never a history step — before
@@ -2313,7 +2313,7 @@ What has landed since mid-August, in order:
   `sort_keys` dump (the file round-trips byte for byte).
   Verified with no screen, on this Mac: Python unit tests 184 (`run_tests.sh`, system numpy 1.26 AND the venv's
   2.5.3); `tools/test_script_canvas_geometry.swift` 125, `_image` 46, `_history` 78; a Debug build, no new warning
-  attributed to a canvas file; `tools/scenario_spectral_gain.py` 294 assertions in seven sections (27 s):
+  attributed to a canvas file; `tools/scenario_spectral_editor.py` 294 assertions in seven sections (27 s):
   (b) updated to entries / modes / polarity / commit, (c) END TO END in Instant (rect −24 on the result and the
   veil; brush one pass −3, two steps −6, ONE out-and-back stroke −6; expert change; Validate −6.00 dB on a WAV
   export), (g) END TO END in Sélection (selection layer alpha 0.60, result −12 with `history.rev` UNCHANGED, the
@@ -2343,8 +2343,8 @@ What has landed since mid-August, in order:
   {listen}` (new) so the script opens on Result. (3) A canvas with `remember` now remembers LIVE (values, mode,
   tool: `scriptPanel.<key>` + `scriptPanel.<key>.canvas`; Reset erases only the first). For tests the script reads
   `OBJEKAT_SPECTRAL_REMEMBER`, because one headless process serves every scenario section and the app remembers
-  live. (4) "Fondu en temps" 0..1000 ms. (5) Renamed "Spectral editor", folder and id `spectral-editor` (own commit;
-  the old `scriptPanel.spectral-gain` entry is migrated by `install.sh`). Authority: `plan_spectral_editor.md` §10.
+  live. (4) "Fondu en temps" 0..1000 ms. (5) Renamed "Spectral editor", folder and id `spectral-editor` (own commit; no
+  `scriptPanel.spectral-gain` entry existed on the machine, so no migration of the remember key). Authority: `plan_spectral_editor.md` §10.
   Verified: Python 178 (the veil tests left, `test_editor.py` came), Swift standalone 125 / 46 / 78 / 11
   (`test_script_canvas_memory.swift`), scenario 320 assertions.
   **NOT seen / heard:** the picture refreshing under the hand (flash? how it feels at 30 s), the persisted tool and

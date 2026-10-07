@@ -5,7 +5,7 @@ import Foundation
 // The pure half of the history of a script canvas (`ScriptCanvasStore` holds one per canvas). A unit
 // of its own for the reason `ScriptCanvasGeometry`, `CutSelection` and `SendColumns` are: it has no
 // model, no JSON and no window behind it, so it can be compiled alone and asserted with no screen
-// (@see tools/test_script_canvas_history.swift). The reference is `docs/plan_spectral_gain.md` §9.2
+// (@see tools/test_script_canvas_history.swift). The reference is `docs/plan_spectral_editor.md` §9.2
 // and §9.4 (revision 3).
 //
 // Everything here is `nonisolated`: the project's default isolation is MainActor, and this code has

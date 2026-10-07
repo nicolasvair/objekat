@@ -1,9 +1,9 @@
 # Spectral editor
 
-(Folder and id: `spectral-gain`; they did not change when the script was renamed.)
+(Folder and id: `spectral-editor`; the script was called `spectral-gain` until 7 October 2026, revision 4.)
 
 An OBJEKAT third-party script (spec: `OBJEKAT - claude project/docs/spec_spectral_editor.md`,
-technical plan: `plan_spectral_gain.md`, same folder). Right-click ONE object → **Scripts → "Spectral
+technical plan: `plan_spectral_editor.md`, same folder). Right-click ONE object → **Scripts → "Spectral
 editor…"**.
 
 It opens a floating window with the **spectrogram** of the object (logarithmic frequency axis), lets
@@ -17,12 +17,12 @@ belong to the app (`script.canvas.*`, `command_api.md`). The app knows nothing a
 ## Install
 
 ```
-tools/scripts/spectral-gain/install.sh
+tools/scripts/spectral-editor/install.sh
 ```
 
-Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, installs numpy in it
+Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`, installs numpy in it
 (no model, no download beyond numpy), and symlinks this folder into
-`~/Library/Application Support/Objekat/Plugins/spectral-gain`. Then **reload the scripts** in OBJEKAT
+`~/Library/Application Support/Objekat/Plugins/spectral-editor`. Then **reload the scripts** in OBJEKAT
 (Scripts menu → Reload) or relaunch the app.
 
 ## Use
@@ -90,7 +90,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
 
 | file | role |
 |---|---|
-| `spectral_gain.py` | the script: one connection, one loop (wait → compute → update) |
+| `spectral_editor.py` | the script: one connection, one loop (wait → compute → update) |
 | `run.sh`, `install.sh`, `manifest.json`, `requirements.txt` | packaging |
 | `mask.py` | **the only home of the gain mathematics** (rectangle, brush dabs, the weighted selection, pro rata gain in dB) |
 | `dsp.py` | STFT / ISTFT with a time-frequency gain, streamed in blocks |
@@ -100,12 +100,12 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
 | `make_fixture.py` | writes the two image-format fixtures to `tools/fixtures/spectral/` |
 | `test_*.py`, `run_tests.sh` | the unit tests (`./run_tests.sh [python]`) |
 
-End to end, headless: `tools/scenario_spectral_gain.py` (sections c, d, e, g drive this script through the
+End to end, headless: `tools/scenario_spectral_editor.py` (sections c, d, e, g drive this script through the
 real app).
 
 ## Testing hooks
 
 `--object ID` (instead of `OBJEKAT_OBJECT_IDS`), `OBJEKAT_SPECTRAL_CACHE` (the work folder, default
-`~/Library/Caches/Objekat/spectral-gain/<uuid>`, removed when the script ends),
+`~/Library/Caches/Objekat/spectral-editor/<uuid>`, removed when the script ends),
 `OBJEKAT_SPECTRAL_PYTHON` (the interpreter `run.sh` uses, default the venv's), `OBJEKAT_SPECTRAL_REMEMBER`
-(the key under which the app remembers the controls, default `spectral-gain`; a test gives its own).
+(the key under which the app remembers the controls, default `spectral-editor`; a test gives its own).

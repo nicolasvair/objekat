@@ -3,7 +3,7 @@
 """Spectral editor — a spectrogram of ONE object, edited by hand with gain only (attenuate, or boost).
 
 The script renders the object (exactly as `retouche-externe` does), computes its STFT, opens a canvas
-(`script.canvas.*`, @see docs/plan_spectral_gain.md, section 9) with the spectrogram and the rectangle /
+(`script.canvas.*`, @see docs/plan_spectral_editor.md, section 9) with the spectrogram and the rectangle /
 brush tools, and keeps three things up to date for the app: the SPECTROGRAM ITSELF (recomputed from the
 result of the committed steps, so what is applied is SEEN in the picture, with no overlay), the
 SELECTION layer (the pending selection, in amber) and the audio preview (result and delta) that the
@@ -244,7 +244,7 @@ def canvas_controls():
 
 def remember_key():
     """The key under which the app remembers the controls, the mode and the tool between sessions."""
-    return os.environ.get("OBJEKAT_SPECTRAL_REMEMBER") or "spectral-gain"
+    return os.environ.get("OBJEKAT_SPECTRAL_REMEMBER") or "spectral-editor"
 
 
 def canvas_tools():
@@ -496,7 +496,7 @@ def arg_object_ids():
 
 
 def work_folder():
-    base = os.environ.get("OBJEKAT_SPECTRAL_CACHE") or os.path.expanduser("~/Library/Caches/Objekat/spectral-gain")
+    base = os.environ.get("OBJEKAT_SPECTRAL_CACHE") or os.path.expanduser("~/Library/Caches/Objekat/spectral-editor")
     path = os.path.join(base, uuid.uuid4().hex)
     os.makedirs(path, exist_ok=True)
     return path

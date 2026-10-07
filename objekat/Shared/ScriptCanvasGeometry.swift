@@ -5,7 +5,7 @@ import Foundation
 // The arithmetic alone: no view, no model, no image. A unit of its own for the reason `SendColumns`,
 // `PianoRollFraming` and `VerticalLaneSnap` are — this is the half of the canvas with nothing behind
 // it, so it can be compiled alone and asserted with no screen
-// (@see tools/test_script_canvas_geometry.swift). The reference is `docs/plan_spectral_gain.md`
+// (@see tools/test_script_canvas_geometry.swift). The reference is `docs/plan_spectral_editor.md`
 // §3.2 (axes and viewport) and D6 (warped units).
 //
 // Everything here is `nonisolated`: the project's default isolation is MainActor, and this code

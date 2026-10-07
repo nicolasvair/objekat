@@ -9,7 +9,7 @@ THE SELECTION LAYER - the pending selection (the trailing drafts) as an OBJKRGB1
   undo or when a feather changes (a feather moves the rectangles' edges, so S is not reusable).
 
 Revision 4: there is NO veil any more. The committed steps are shown by the SPECTROGRAM ITSELF,
-recomputed from the result audio (see `spectral_gain.Editor.send_base`); only the pending selection
+recomputed from the result audio (see `spectral_editor.Editor.send_base`); only the pending selection
 keeps a layer, because it is not applied to the audio's picture yet.
 
 Orientation: `grid_axes` and S are ascending in both axes, shaped (columns, rows-from-bottom);

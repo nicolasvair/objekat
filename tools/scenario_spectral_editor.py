@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""The spectral editor, app side — driven headless (@see plan_spectral_gain.md, section 6).
+"""The spectral editor, app side — driven headless (@see plan_spectral_editor.md, section 6).
 
 Standard library only. `SECTIONS=` picks the sections to run (default: every one that exists).
 
@@ -9,14 +9,14 @@ Section (a) — THE API ADDITIONS the editor leans on: `object.get` answers `sou
 a `name`, and a `batch [add, mute]` is ONE undo.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --socket=/tmp/o.sock
-    ./scenario_spectral_gain.py /tmp/o.sock
+    ./scenario_spectral_editor.py /tmp/o.sock
 
 Section (b) — THE CANVAS CONTRACT (`script.canvas.*`): the test client plays the script. Opening
 and its refusals, the base image, the ops the hand draws, the history, the layers and the rule that
 says which traces are still visible, the long poll, the audio and the transport model, `remember`,
 the absence of any trace in the project, and the canvas's life.
 
-Section (c) — END TO END, INSTANT MODE: the real script (`tools/scripts/spectral-gain/run.sh --object ID`,
+Section (c) — END TO END, INSTANT MODE: the real script (`tools/scripts/spectral-editor/run.sh --object ID`,
 its own process and its own connection) is driven through the canvas door like a hand would: a rectangle,
 an undo, two brush strokes, an out-and-back stroke, an expert change, Validate. Checked on the base
 image's pixels (the spectrogram itself shows what is applied: no overlay), on the result's tones
@@ -840,7 +840,7 @@ def section_b(c):
           abs(c.send("script.canvas.get", {"canvas_id": cid})["transport"]["caret"] - 4.5) < 1e-6)
 
     # -- remember (live, revision 4) -------------------------------------------------------
-    key = "spectral-gain.scenario.b"
+    key = "spectral-editor.scenario.b"
     cr = open_canvas(c, remember=key, modes=True)
     g0 = c.send("script.canvas.get", {"canvas_id": cr})
     check("b: a first opening of a remembering canvas shows the declared values, Instant, the first tool",
@@ -946,8 +946,8 @@ def section_b(c):
 # c, d, e. The script, end to end
 # ---------------------------------------------------------------------------------------------
 
-SG_DIR = os.path.join(HERE, "scripts", "spectral-gain")
-VENV_PY = os.path.expanduser("~/Library/Application Support/Objekat/venvs/spectral-gain/bin/python3")
+SG_DIR = os.path.join(HERE, "scripts", "spectral-editor")
+VENV_PY = os.path.expanduser("~/Library/Application Support/Objekat/venvs/spectral-editor/bin/python3")
 
 
 def venv_ok():
@@ -1073,7 +1073,7 @@ class Script:
         self.object_id = object_id
         # A key of its own: the app remembers LIVE, and one headless process serves every section, so a
         # shared key would carry the mode and the values of one section into the next.
-        self.key = key or "spectral-gain.scenario.%s" % os.path.basename(cache.rstrip("/"))
+        self.key = key or "spectral-editor.scenario.%s" % os.path.basename(cache.rstrip("/"))
         env = dict(os.environ)
         env.update({"OBJEKAT_SOCKET": SOCK, "OBJEKAT_SPECTRAL_CACHE": cache, "OBJEKAT_LANGUAGE": "en",
                     "OBJEKAT_SPECTRAL_REMEMBER": self.key})
@@ -1169,7 +1169,7 @@ def fresh_saved_project(c, root, name="p"):
 
 def section_c(c):
     if not venv_ok():
-        print("skip  c: the script's venv is missing (run tools/scripts/spectral-gain/install.sh)")
+        print("skip  c: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
         return
     ROOT = tmproot("c")
     CACHE = os.path.join(ROOT, "cache")
@@ -1388,8 +1388,8 @@ def section_c(c):
 
     # ---- launched by the app itself (script.run: the door the context menu goes through) -------
     listed = {x["name"]: x for x in c.send("script.list")["scripts"]}
-    if "spectral-gain" in listed and listed["spectral-gain"]["available"]:
-        c.send("script.run", {"script": "spectral-gain", "ids": [oid]})
+    if "spectral-editor" in listed and listed["spectral-editor"]["available"]:
+        c.send("script.run", {"script": "spectral-editor", "ids": [oid]})
         cid, end = None, time.time() + 60
         while time.time() < end and cid is None:
             for cv in open_canvases(c):
@@ -1407,13 +1407,13 @@ def section_c(c):
                   [o["id"] for o in c.send("object.list")["objects"]] == [oid]
                   and c.send("object.get", {"id": oid})["muted"] is False)
     else:
-        print("skip  c: script.run: spectral-gain is not installed in the Plugins folder (run install.sh)")
+        print("skip  c: script.run: spectral-editor is not installed in the Plugins folder (run install.sh)")
 
 
 def section_g(c):
     """END TO END, SELECTION MODE (plan 9.5 g): the real script, a weighted selection, live tuning, Apply."""
     if not venv_ok():
-        print("skip  g: the script's venv is missing (run tools/scripts/spectral-gain/install.sh)")
+        print("skip  g: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
         return
     ROOT = tmproot("g")
     CACHE = os.path.join(ROOT, "cache")
@@ -1630,7 +1630,7 @@ def run_to_validate(c, root, tag, wav, name="tone", extra=None):
 
 def section_d(c):
     if not venv_ok():
-        print("skip  d: the script's venv is missing (run tools/scripts/spectral-gain/install.sh)")
+        print("skip  d: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
         return
     ROOT = tmproot("d")
 
@@ -1681,7 +1681,7 @@ def section_d(c):
 
 def section_e(c):
     if not venv_ok():
-        print("skip  e: the script's venv is missing (run tools/scripts/spectral-gain/install.sh)")
+        print("skip  e: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
         return
     ROOT = tmproot("e")
 

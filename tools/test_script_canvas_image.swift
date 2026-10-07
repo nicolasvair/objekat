@@ -1,7 +1,7 @@
 // The script canvas's raw image files — the parser, asserted against the committed fixtures.
 //
 // `ScriptCanvasImageFile` depends on Foundation alone: bytes in, a description out. The fixtures
-// (`tools/fixtures/spectral/`, written by `tools/scripts/spectral-gain/make_fixture.py`) pin the
+// (`tools/fixtures/spectral/`, written by `tools/scripts/spectral-editor/make_fixture.py`) pin the
 // FILE FORMAT only — both are 4 columns × 3 rows and every pixel is distinct and known:
 //
 //   fixture.objkcnv   v0 = -100, v255 = 0, palette = magma,  index(c, r) = (r·4 + c)·21

@@ -1,7 +1,7 @@
 import Foundation
 
 /// The `script.canvas.*` family — a canvas a script declares and the app draws (@see
-/// ScriptCanvasStore, plan_spectral_gain.md §2). Nothing here is an edit: `undo: .none`, no dirty
+/// ScriptCanvasStore, plan_spectral_editor.md §2). Nothing here is an edit: `undo: .none`, no dirty
 /// flag, nothing saved.
 ///
 /// The loop a script runs: `open`, `set_image`, `set_audio`, then `wait(since_rev)` repeatedly — each

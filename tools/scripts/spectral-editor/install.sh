@@ -1,13 +1,13 @@
 #!/bin/bash
-# Sets up the "Spectral editor" script (folder and id: spectral-gain): a dedicated venv under
-# ~/Library/Application Support/Objekat/venvs/spectral-gain (never the system Python's site-packages, never
+# Sets up the "Spectral editor" script (folder and id: spectral-editor): a dedicated venv under
+# ~/Library/Application Support/Objekat/venvs/spectral-editor (never the system Python's site-packages, never
 # the app bundle), numpy installed in it, and a symlink into OBJEKAT's own Plugins folder. No model to
 # download: the script is pure numpy.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUPPORT_DIR="$HOME/Library/Application Support/Objekat"
-VENV_DIR="$SUPPORT_DIR/venvs/spectral-gain"
+VENV_DIR="$SUPPORT_DIR/venvs/spectral-editor"
 PLUGINS_DIR="$SUPPORT_DIR/Plugins"
 
 echo "== Spectral editor — install =="
@@ -40,7 +40,7 @@ fi
 "$VENV_DIR/bin/python3" -c "import numpy; print('numpy', numpy.__version__, 'ready.')"
 
 mkdir -p "$PLUGINS_DIR"
-LINK="$PLUGINS_DIR/spectral-gain"
+LINK="$PLUGINS_DIR/spectral-editor"
 if [ -L "$LINK" ] || [ -e "$LINK" ]; then
   echo "Already linked: $LINK"
 else

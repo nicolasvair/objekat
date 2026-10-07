@@ -1,8 +1,8 @@
-# Spectral editor: technical plan, revision 2 (`script.canvas.*` and `tools/scripts/spectral-gain/`)
+# Spectral editor: technical plan, revision 2 (`script.canvas.*` and `tools/scripts/spectral-editor/`)
 
 > **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Revision 4 (7 October 2026) is another: §10, last. Where they conflict with §1–§8, the later section wins (§10 over §9 over §1–§8).**
 
-This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral_gain.md`. It applies your review:
+This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral_editor.md`. It applies your review:
 - The canvas is now truly generic. All brush, rectangle and gain logic lives only in Python.
 - The rectangle gain slider runs −60…+12 dB and −60 means −60 dB.
 - On stop, the playhead returns to the caret.
@@ -533,14 +533,14 @@ let scriptCanvases: ScriptCanvasStore = {
 
 ---
 
-## 5. Python: `tools/scripts/spectral-gain/` (numpy only)
+## 5. Python: `tools/scripts/spectral-editor/` (numpy only)
 
 **Packaging**
 - `requirements.txt`: `numpy`.
-- `install.sh`: as separateur-voix, without models. The venv lives at `~/Library/Application Support/Objekat/venvs/spectral-gain`, and a symlink is made in `Plugins/`.
+- `install.sh`: as separateur-voix, without models. The venv lives at `~/Library/Application Support/Objekat/venvs/spectral-editor`, and a symlink is made in `Plugins/`.
 - `run.sh`: checks `import numpy`, then runs the script.
 - `manifest.json`:
-  - "Spectral editor" (renamed from "Spectral gain" on 7 October, revision 4; the folder and id stay `spectral-gain`), context `object`, menu "Spectral editor…";
+  - "Spectral editor" (renamed from "Spectral gain" on 7 October, revision 4; the folder and id followed, later the same day, to `spectral-editor`), context `object`, menu "Spectral editor…";
   - `requires`: app.info, object.get, object.list, object.add, object.set_mute, solo.get, solo.set, solo.clear, object.render_isolated, job.wait, batch, script.panel.open / wait / close, script.canvas.open / wait / update / set_image / set_layer / set_audio / close.
 - `README.md`.
 
@@ -572,11 +572,11 @@ let scriptCanvases: ScriptCanvasStore = {
   - `safe_name`, `unique_path`.
 - `make_fixture.py`: writes the two format fixtures to `tools/fixtures/spectral/`.
 
-**`spectral_gain.py`: one connection, one thread**
+**`spectral_editor.py`: one connection, one thread**
 - The client and `Failure` class are copied from retouche.
 - `tr(fr, en, es)` follows `OBJEKAT_LANGUAGE`.
 - `--object ID` exists for tests.
-- `OBJEKAT_SPECTRAL_CACHE` overrides the work folder, which is `~/Library/Caches/Objekat/spectral-gain/<uuid>`, removed in a `finally`.
+- `OBJEKAT_SPECTRAL_CACHE` overrides the work folder, which is `~/Library/Caches/Objekat/spectral-editor/<uuid>`, removed in a `finally`.
 
 1. **Check the object.**
    - Exactly one id.
@@ -589,7 +589,7 @@ let scriptCanvases: ScriptCanvasStore = {
    - tools:
      - `{id: "rect", kind: "rect", label: tr(Rectangle), params: ["gain", "feather_ms", "feather_st"]}`;
      - `{id: "eraser", kind: "stroke", label: tr(Gomme / Eraser / Borrador), icon: "eraser", params: ["amount", "hardness"], size_control: "size_px"}`;
-   - `object`, `remember: "spectral-gain"`, `busy: true`, status "Rendering…".
+   - `object`, `remember: "spectral-editor"`, `busy: true`, status "Rendering…".
 
    | id | kind | range | default |
    |---|---|---|---|
@@ -667,7 +667,7 @@ let scriptCanvases: ScriptCanvasStore = {
   - built against `ScriptCanvasImageFile.swift`;
   - asserts: both fixtures parse with the right header fields and the right pixel at (c, r); a wrong magic, a truncated file or a zero dimension throws.
 
-**Headless scenario: `tools/scenario_spectral_gain.py SOCK`**
+**Headless scenario: `tools/scenario_spectral_editor.py SOCK`**
 - Standard library only.
 - `SECTIONS=` selects sections.
 - Test WAVs are written with `wave` / `struct`; Goertzel and the RGBA reader are pure Python.
@@ -753,7 +753,7 @@ let scriptCanvases: ScriptCanvasStore = {
 | 7 | `ScriptCanvasImage`, `ScriptCanvasStore`, `Commands+ScriptCanvas`, registration, view-model lifetime hooks. Headless-complete; `ScriptCanvasWindows.attach` comes in step 8. Also the `command_api.md` section and scenario section b | **Mac**: build and section b |
 | 8 | Window, plot, traces, cursors, monitor guards, i18n keys, glossary | **Mac**: build, sections b and f, `xcstrings.py check` (which also runs on Linux); then the user's eye |
 | 9 | `ScriptCanvasAudition` and the `ExportAudition` visibility change | **Mac**: build; then the user's ear |
-| 10 | `spectral_gain.py`, `decide.py`, `test_decide.py`, manifest, `run.sh`, `install.sh`, README; scenario sections c, d, e | unit tests on **Linux**; `py_compile` of the scenario on Linux; end to end on the **Mac** after `install.sh` |
+| 10 | `spectral_editor.py`, `decide.py`, `test_decide.py`, manifest, `run.sh`, `install.sh`, README; scenario sections c, d, e | unit tests on **Linux**; `py_compile` of the scenario on Linux; end to end on the **Mac** after `install.sh` |
 | 11 | `command_api.md` "clients provided" rows; a `CLAUDE.md` entry saying what was verified and what was NOT seen or heard | — |
 
 **`command_api.md` section outline** ("A canvas a script asks for: `script.canvas.*`", placed after `script.panel.*`):
@@ -904,7 +904,7 @@ updates are sequential), full recompute on undo or a feather change.
 pending) -> {"selection", "audio"}` subset: empty when `pending == 0`; `feather_*` changed → both; `gain`
 alone → audio only.
 
-**`spectral_gain.py` loop** (`sync`): the key of the result becomes `(history rev, n, k, live)` with `live` =
+**`spectral_editor.py` loop** (`sync`): the key of the result becomes `(history rev, n, k, live)` with `live` =
 the `LIVE_KEYS` values when `pending > 0`, else None. Order on a change: `update busy` → selection layer
 (`set_layer {layer: "selection", z: 2, history_rev}`, or `path: null` when `pending == 0`) → veil (only if the
 committed steps changed) → audio → `busy false`. A live tweak never touches the history. Status: "%d étape(s)"
@@ -984,7 +984,7 @@ with nothing pending is a no-op; ⌘Z peels drafts one by one, then a whole step
 a new entry drops the redo tail, including after an undone commit; `pending`, `active_since` refreshed by
 seal and redo; ids never reused. Geometry and image tests unchanged, re-run.
 
-**Scenario `tools/scenario_spectral_gain.py`**:
+**Scenario `tools/scenario_spectral_editor.py`**:
 - **b** (contract, updated): `entries` shape; Instant gesture = one `step` whose `params` = every value;
   `modes: true` + `mode: "select"`: two gestures → `pending 2`, `commit` → one step of 2 ops, `pending 0`;
   `undo` order (draft, draft, then a whole step; the step's drafts do NOT come back); `redo` whole; `mode`
@@ -1014,7 +1014,7 @@ seal and redo; ids never reused. Geometry and image tests unchanged, re-run.
 | R3-3 | `ScriptCanvasHistory.swift` + `tools/test_script_canvas_history.swift` (not yet used by the store) | standalone test; Debug build |
 | R3-4 | Store + commands: entries, modes, polarity, commit, 3-state listen, no Hand; audition `setAudible`; the window adjusted only enough to compile (Hand toggle and Delta toggle removed, listen picker 3 values); `command_api.md`; scenario **b** updated. The script still runs Instant-only (tool ids renamed in R3-6) — section c is NOT run at this commit | build (no new warning); section b |
 | R3-5 | Window + plot: mode / polarity switches, Appliquer, ⌘ flip, right-click seek, pan state removed, traces and cursors by polarity, busy indicator; i18n keys + glossary | build; sections b, f; `xcstrings.py check` + `orphans`; then the user's eye |
-| R3-6 | `spectral_gain.py` (controls, tools `rect`/`brush`, `modes: true`, the live loop, two layers, Validate = heard), README; scenario **c** adapted, **g** added | `run_tests.sh`; sections c, d, e, g (after `install.sh` if the venv needs it) |
+| R3-6 | `spectral_editor.py` (controls, tools `rect`/`brush`, `modes: true`, the live loop, two layers, Validate = heard), README; scenario **c** adapted, **g** added | `run_tests.sh`; sections c, d, e, g (after `install.sh` if the venv needs it) |
 | R3-7 | Docs: the spec, `command_api.md` rename pass, the dated `CLAUDE.md` line (what was verified, what was not seen or heard) | — |
 | (R3-8) | ONLY if a live tweak measures > 300 ms on a 30 s object: `dsp.process_range` recomputing just the frames the selection's bounding box touches (± N/2) and splicing them (exact under WOLA: outside those frames the mask is unchanged) | test_dsp: splice == full process to −120 dB |
 
@@ -1051,7 +1051,7 @@ Decided by the user after trying revision 3. The canvas stays generic; the gain 
 | first audio | slot heard = Original | **Result** |
 | remembered | the values, at Validate only | values, mode and tool, **live**, per user |
 | "Fondu en temps" | 0…200 ms | **0…1000 ms** |
-| name, folder, id | `spectral-gain` | `spectral-editor` (display name "Spectral editor") |
+| name, folder, id | `spectral-gain` (display name "Spectral editor" since the first revision-4 commit) | `spectral-editor` everywhere: folder, script id, venv, Plugins link, `spectral_editor.py`, `scenario_spectral_editor.py`, `plan_spectral_editor.md`, the remember key |
 
 ### 10.2 `script.canvas.*` additions (command_api.md carries the contract)
 
@@ -1080,7 +1080,7 @@ Decided by the user after trying revision 3. The canvas stays generic; the gain 
 - Order in `sync`: a selection that appears is sent first (cheap), the picture next, a selection that goes away
   (Apply, undo) after the picture that now shows its effect, then the audio.
 - No STFT cache is kept between calls (a 30 s stereo STFT is hundreds of MB): the passes are recomputed.
-- The remember key is `spectral-editor`; `OBJEKAT_SPECTRAL_REMEMBER` overrides it for tests, because the app
+- The remember key is `spectral-editor` (nothing was ever stored under the old `scriptPanel.spectral-gain` on the development machine, so there is NO migration: the feature lives on an unmerged branch and `defaults` showed no such entry); `OBJEKAT_SPECTRAL_REMEMBER` overrides it for tests, because the app
   remembers live and one headless process serves every scenario section.
 
 ### 10.4 Cost (Debug build, 30 s stereo noise at 48 kHz, 2048/4, measured through the real app)

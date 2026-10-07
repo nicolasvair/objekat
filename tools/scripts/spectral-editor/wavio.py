@@ -1,4 +1,4 @@
-"""Minimal WAV reader / writer for the spectral-gain script (numpy and the standard library only).
+"""Minimal WAV reader / writer for the spectral-editor script (numpy and the standard library only).
 
 Reads RIFF and RF64 files, PCM 16 / 24 / 32 bit integer, IEEE float 32 / 64, plain or
 WAVE_FORMAT_EXTENSIBLE headers. Writes pcm16, pcm24 or f32, atomically.

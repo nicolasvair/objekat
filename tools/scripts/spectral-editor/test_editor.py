@@ -8,7 +8,7 @@ import unittest
 
 import numpy as np
 
-import spectral_gain as sg
+import spectral_editor as sg
 
 SR = 8000
 VALUES = {"gain": -12, "feather_ms": 10, "feather_st": 1, "fft_size": "1024", "overlap": 4}

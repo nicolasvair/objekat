@@ -6,7 +6,7 @@ import AVFoundation
 
 // A script that edits a SIGNAL — a spectrogram it computed, a mask it wants painted — needs more than
 // a form: a resizable plot, gestures drawn on it, a history, image layers, a transport. So it
-// declares a CANVAS and the app draws it (@see plan_spectral_gain.md, D1–D3). Like a panel
+// declares a CANVAS and the app draws it (@see plan_spectral_editor.md, D1–D3). Like a panel
 // (@see ScriptPanelStore) it belongs to the CONNECTION that opened it, is never persisted, has no
 // undo and does not dirty the project, and it goes when that connection closes, when its object goes
 // or when another document is shown.

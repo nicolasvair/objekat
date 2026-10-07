@@ -15,7 +15,7 @@ import Foundation
 // API's errors. Compiled alone and asserted against the committed fixtures
 // (@see tools/test_script_canvas_image.swift).
 //
-// The Python writer is `tools/scripts/spectral-gain/canvasfile.py`; the two must agree on the
+// The Python writer is `tools/scripts/spectral-editor/canvasfile.py`; the two must agree on the
 // header, the sizes and the caps.
 nonisolated enum ScriptCanvasImageFile {
 

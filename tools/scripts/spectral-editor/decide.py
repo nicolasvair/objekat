@@ -1,4 +1,4 @@
-"""The small decisions of the spectral-gain script, kept PURE (no socket, no app) so they can be
+"""The small decisions of the spectral-editor script, kept PURE (no socket, no app) so they can be
 tested on their own (plan 5, `decide.py`).
 
 - Which depth the result is written at, which depth the render is made at.

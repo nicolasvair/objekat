@@ -2177,12 +2177,12 @@ A few points of vocabulary that save mistakes:
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
-| `tools/scenario_spectral_gain.py` | the spectral editor, app side: 294 assertions in seven sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`, `set_image.history_rev`, `set_audio.listen`, the live remember of values + mode + tool; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-gain/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the base image's pixels (no veil: the spectrogram shows what is applied), on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone, the picture refreshed), undo, Validate with a selection pending; (c) ends with two more sessions that must find everything remembered. (c), (d), (e), (g) skip when the script's venv is missing. `SECTIONS=` picks sections |
+| `tools/scenario_spectral_editor.py` | the spectral editor, app side: 320 assertions in seven sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`, `set_image.history_rev`, `set_audio.listen`, the live remember of values + mode + tool; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-editor/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the base image's pixels (no veil: the spectrogram shows what is applied), on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone, the picture refreshed), undo, Validate with a selection pending; (c) ends with two more sessions that must find everything remembered. (c), (d), (e), (g) skip when the script's venv is missing. `SECTIONS=` picks sections |
 | `tools/test_script_canvas_geometry.swift` | the canvas's axes, viewport, trace discs, ticks and number formats, compiled standalone: 125 assertions, no app needed |
 | `tools/test_script_canvas_image.swift` | the two raw image files (`OBJKCNV1`, `OBJKRGB1`) against the committed fixtures, compiled standalone: 46 assertions, no app needed |
 | `tools/test_script_canvas_memory.swift` | what a canvas remembers besides its values (mode and tool, the rule of what still fits), compiled standalone: 11 assertions, no app needed |
 | `tools/test_script_canvas_history.swift` | the canvas's history as ENTRIES (drafts, steps, commit, discard, undo / redo peeling one entry, `active_since`), compiled standalone: 78 assertions, no app needed |
-| `tools/scripts/spectral-gain/` | the "Spectral editor" third-party script (folder and id `spectral-gain`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 184 tests: STFT round trip, the whole gain mathematics, the images, the selection layer, the Editor's messages, the WAV reader / writer, the pure decisions) |
+| `tools/scripts/spectral-editor/` | the "Spectral editor" third-party script (folder and id `spectral-editor`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 178 tests: STFT round trip, the whole gain mathematics, the images, the selection layer, the Editor's messages, the WAV reader / writer, the pure decisions) |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
@@ -2374,8 +2374,8 @@ rectangle, a stroke, a click), the **history** of those gestures (undo / redo), 
 the script supplies and **playback**. It knows nothing about what a gesture MEANS: each op records its
 geometry, its polarity and a snapshot of the values of the controls its tool declares, and the script
 interprets them. There is no gain, no dB and no mask anywhere in the app. Reference:
-`docs/plan_spectral_gain.md` §2–§3 and §9 (revision 3: modes, entries, polarity);
-the test client is `tools/scenario_spectral_gain.py` (section b).
+`docs/plan_spectral_editor.md` §2–§3 and §9 (revision 3: modes, entries, polarity);
+the test client is `tools/scenario_spectral_editor.py` (section b).
 
 **Lifetime and headless.** Nothing here is an edit: `undo: none`, no dirty flag, nothing saved, nothing in
 an undo snapshot. The owner is the connection. A canvas ends (state `closed`, its audio stopped, its window
@@ -2416,7 +2416,7 @@ f32 value of index 255, u32 0, a 256 × RGB palette, W·H uint8 indices; size ex
 pointer readout `v0 + idx·(v255 − v0)/255`, index 0 read "≤ v0") and `OBJKRGB1` (`"OBJKRGB1"`, u32 W, u32 H,
 8 zero bytes, W·H premultiplied RGBA; size exactly 24 + 4·W·H). Extensions `.objkcnv` / `.objkrgb`. Any file
 ImageIO can read is also accepted, with no readout. Caps: width ≤ 16384, height ≤ 4096, W × H ≤ 32 M.
-Writers: `tools/scripts/spectral-gain/canvasfile.py`; the committed fixtures are in `tools/fixtures/spectral/`.
+Writers: `tools/scripts/spectral-editor/canvasfile.py`; the committed fixtures are in `tools/fixtures/spectral/`.
 
 **Layers, `history_rev`, traces.** The BASE image (`set_image`) fixes the world. A **layer** always covers
 the world rectangle exactly (the app scales it), is drawn above the base in ascending `z`, and may say which
