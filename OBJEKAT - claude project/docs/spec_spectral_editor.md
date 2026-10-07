@@ -125,7 +125,7 @@ proposed: max of L and R]**.
 
 ### Rectangle **[decided]**
 - Drag a box over time × frequency.
-- Settings: the shared **gain** (dB, −60 … +12, default −12), **feather in time** (ms) and **feather in
+- Settings: the shared **gain** (dB, a row of buttons −60 / −24 / −12 / −6 / −3 / +3, one selected at a time, default −12 — revision 6b, it was a −60 … +12 slider), **feather in time** (ms) and **feather in
   frequency** (semitones) — a soft edge, so a box does not ring. In Instant they are taken at the gesture;
   in Selection, at Apply.
 - Cumulative across steps: two overlapping applied boxes at −6 dB give −12 dB where they overlap.

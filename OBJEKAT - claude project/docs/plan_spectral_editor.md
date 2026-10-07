@@ -1215,3 +1215,34 @@ original step back exactly; anything else the hand does forgets it; the controls
 `test_image.py` (`DisplayRange`), `test_decide.py` (`display_range`), `test_editor.py` (recolour: no transform, no
 audio, same stamps, written once when combined with a step), `tools/test_script_canvas_history.swift` (the undo
 that reveals), scenarios (i) and (j).
+
+### 12.5 Revision 6b (7 October 2026): the gain is a row of buttons
+
+The shared gain (rectangle and brush) is no longer a −60…+12 dB slider: it is **−60 / −24 / −12 / −6 / −3 / +3 dB**,
+one selected at a time (default −12). The display range stays in Expert as it was. Where it lives:
+
+- **App, generic (no gain knowledge).** A `number` control may declare `presets: [numbers]` (command_api.md, "Controls"):
+  the form draws a segmented row of buttons (the number alone on each, a true minus / explicit plus, the label and unit
+  over it), and EVERY door a value comes in by snaps it to the nearest preset (tie → the one listed first): the hand,
+  `input`, `update`, a remembered value, a step's setting put back by the undo that reveals. The value stays a plain
+  number everywhere (`values`, a step's `params`, the memory), so no kind was added (a `choice` has string ids and no
+  numeric snapping) and the script reads the gain exactly as before. Pure rule: `ScriptControlPresets.swift`
+  (standalone `tools/test_script_control_presets.swift`).
+- **Script.** `decide.GAIN_PRESETS = (-60, -24, -12, -6, -3, 3)`, `GAIN_DEFAULT = -12` (one of them, the old default);
+  `canvas_controls()` declares `gain` with these presets and `min`/`max` = the extremes. No gain mathematics changed.
+- **Persistence.** A value remembered by the previous slider (e.g. −7, or +12 outside the new range) comes back snapped
+  to the nearest preset (−6, +3). Reset gives −12.
+- **Undo that reveals.** The step's gain goes back through the same door, so a step made with another value (an older
+  project: −20) puts the NEAREST button in the control (−24); the step's own math is untouched (`mask.step_values` reads
+  the exact value it was sealed with) until the hand re-applies it, which then seals the button's value. Nothing
+  rewrites history.
+- **Live preview, modes, Difference.** Unchanged and inherited: a click is one non-coalesced change of `gain`, which
+  `decide.preview_dirty` already treats as "audio only" in Selection (Instant: it only matters to the next gesture); a
+  gesture drawn while listening to the Difference composes with the button's value (`G' = 1 - (1 - G) g`; +3 dB there is
+  floored at -300 dB for a total null, as before for any boost).
+- **Choices made without asking.** (a) `presets` is on `number`, not a new kind: values stay numeric (old histories,
+  memory and steps keep working). (b) `min`/`max` kept as the declared range (−60…+3 in the script); a declaration whose
+  default or whose presets are out of range / not in the list is refused. (c) Tie → first listed (the lower, here).
+- **Tests.** `test_script_control_presets.swift` (new, 31), `test_editor.py` / `test_decide.py` / `test_difference.py`
+  (the control, the click, every button on the Difference), scenario (b) (the contract, refusals, remember), (c) and (g)
+  (the real script: snapping, every button heard live, remembered value snapped).

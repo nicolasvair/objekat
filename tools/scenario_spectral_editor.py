@@ -1484,6 +1484,8 @@ def section_c(c):
                   (v, st2["tool"], st2["mode"]))
             sc2.hand(mode="select", tool="rect", values={"gain": -7, "feather_ms": 500, "feather_st": 3, "size_px": 90,
                                                          "quantity": 60, "hardness": 70, "fft_size": "4096", "overlap": 6})
+            check("c: the gain is a row of buttons (revision 6b): a value between two (-7) is snapped to the nearest (-6)",
+                  sc2.get()["values"]["gain"] == -6, sc2.get()["values"]["gain"])
             sc2.hand(press="cancel")
         sc2.finish(60)
     finally:
@@ -1495,10 +1497,10 @@ def section_c(c):
         check("c: remember: the third session opens", st3 is not None)
         if st3 is not None:
             v = st3["values"]
-            check("c: remember: ALL the persisted controls come back (even after a Cancel): gain, both feathers "
+            check("c: remember: ALL the persisted controls come back (even after a Cancel): gain (-6, the -7 snapped), both feathers "
                   "(500 ms: the range reaches 1 s), brush size, amount, hardness, FFT size, overlap",
                   (v["gain"], v["feather_ms"], v["feather_st"], v["size_px"], v["quantity"], v["hardness"], v["fft_size"], v["overlap"])
-                  == (-7, 500, 3, 90, 60, 70, "4096", 6), v)
+                  == (-6, 500, 3, 90, 60, 70, "4096", 6), v)
             check("c: remember: the mode (Selection) and the tool (rect) come back", st3["mode"] == "select" and st3["tool"] == "rect",
                   (st3["mode"], st3["tool"]))
             sc3.hand(press="reset")
@@ -1620,6 +1622,19 @@ def section_g(c):
               st is not None and abs(d3 + 12) <= 1.0 and st["history"]["rev"] == hist_rev, d3)
         if st is None:
             return
+        # The other buttons of the row (revision 6b), the ends included: each click is heard at once, the history
+        # does not move, and a value that is not a button (-5) is snapped to the nearest (-6) BEFORE it is heard.
+        for given, want in ((-24, -24), (3, 3), (-5, -6), (-12, -12)):
+            prev = st["transport"]["slots"]["result"]
+            sc.hand(values={"gain": given})
+            st = caught_up(sc, prev)
+            d3 = db(result_of(st), orig, 3000) if st else None
+            check("g: gain button %s (given %s): the control reads %s, 3 kHz at %s dB +-1, history.rev UNCHANGED"
+                  % (want, given, want, want),
+                  st is not None and st["values"]["gain"] == want and abs(d3 - want) <= 1.0
+                  and st["history"]["rev"] == hist_rev, (st["values"]["gain"] if st else None, d3))
+            if st is None:
+                return
         # A feather moves the selection's edges: the selection layer IS redrawn (and the history still not).
         prev, sel_path = st["transport"]["slots"]["result"], layer(st, "selection")["path"]
         sc.hand(values={"feather_ms": 40})

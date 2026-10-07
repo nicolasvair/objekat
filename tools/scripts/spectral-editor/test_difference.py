@@ -68,6 +68,20 @@ class Formula(unittest.TestCase):
             self.assertEqual(mask.linear_gain_at(x, y, steps, AUDIO),
                              10.0 ** (max(mask.gain_at(x, y, steps, AUDIO), -300.0) / 20.0))
 
+    def test_every_gain_button_composes_on_the_difference(self):
+        # revision 6b: the gain buttons -60 / -24 / -12 / -6 / -3 / +3 dB. On the difference, g = lin(button):
+        # G' = 1 - (1 - G) g, floored at -300 dB for a boost beyond what the difference holds (+3 dB on a
+        # difference that holds more than 1/1.41 of the original) — never a negative gain.
+        import decide
+        base = lin(-6)
+        for db in decide.GAIN_PRESETS:
+            steps = [step([rect(2, 6, 300, 3000, "result", oid=1)], -6),
+                     step([rect(2, 6, 300, 3000, "delta", oid=2)], db)]
+            got = mask.linear_gain_at(4.0, 1000.0, steps, AUDIO)
+            want = max(1.0 - (1.0 - base) * lin(db), lin(-300.0))
+            self.assertAlmostEqual(got, want, places=12, msg=db)
+            self.assertGreaterEqual(got, 0.0)
+
     def test_attenuating_the_difference_restores_the_original(self):
         # result -6 dB, then -12 dB on the difference: G' = 1 - (1 - G) * g
         a, b = rect(2, 6, 300, 3000, "result", oid=1), rect(2, 6, 300, 3000, "delta", oid=2)

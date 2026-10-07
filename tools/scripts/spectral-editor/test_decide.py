@@ -130,6 +130,14 @@ class TestPreviewDirty(unittest.TestCase):
         self.assertEqual(self.dirty(1, feather_st=2.5), {"selection", "audio"})
         self.assertEqual(self.dirty(2, feather_ms=50.0, feather_st=0.0), {"selection", "audio"})
 
+    def test_switching_any_gain_button_for_another_is_audio_only(self):
+        # revision 6b: the gain is a row of buttons; a click is a change of the gain alone
+        self.assertIn(decide.GAIN_DEFAULT, decide.GAIN_PRESETS)
+        for a in decide.GAIN_PRESETS:
+            for b in decide.GAIN_PRESETS:
+                want = set() if a == b else {"audio"}
+                self.assertEqual(decide.preview_dirty(dict(self.BASE, gain=a), dict(self.BASE, gain=b), 1), want, (a, b))
+
     def test_a_feather_with_the_gain_is_still_both(self):
         self.assertEqual(self.dirty(1, gain=-3.0, feather_ms=5.0), {"selection", "audio"})
 

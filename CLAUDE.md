@@ -2458,6 +2458,13 @@ What has landed since mid-August, in order:
   clean (the script's strings are in-script `tr()`, no app key added), Debug build with no new warning. **NOT seen /
   heard:** the display-range controls in the Expert section and how fast a drag recolours at 30 s stereo, the amber
   selection reappearing under ⌘Z in the window (and the controls jumping), the Difference gestures by ear.
+  **Revision 6b (7 October 2026, same branch, nothing pushed).** The gain is a row of buttons −60 / −24 / −12 / −6 / −3 / +3 dB
+  (default −12), no longer a slider. GENERIC app side: a `number` control may declare `presets` (a segmented row; every value that
+  comes in — hand, `input`, `update`, remembered, restored by the undo that reveals — is snapped to the nearest preset, tie → first
+  listed; the value stays a plain number: `ScriptControlPresets.swift`, `ScriptControls.fit`, `ScriptPanelMemory.applicable`,
+  `ScriptControlsForm`); the script only declares it (`decide.GAIN_PRESETS`). An old remembered −7 comes back −6; an older step
+  keeps its exact gain in its own math. Authority: `plan_spectral_editor.md` §12.5. **NOT seen:** the row of buttons in the window
+  (width in the 300 pt sidebar, the selected look), the click heard live in Selection.
 
 ### What is owed
 

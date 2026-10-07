@@ -31,7 +31,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
    editor…**. The object is **rendered** exactly as `retouche-externe` renders it: its own plugins,
    gain, pan, fades, window and speed (a group's content included), and nothing around it (no parent
    chain, no master, no sends).
-2. The window shows the spectrogram. One **Gain** (−60…+12 dB, default −12) serves both tools, with the
+2. The window shows the spectrogram. One **Gain** — a row of buttons, −60 / −24 / −12 / −6 / −3 / +3 dB, default −12 — serves both tools, with the
    rectangle's **feathers** (in time, ms; in frequency, semitones). Tools:
    - **Rectangle**: drag a box over time × frequency; a soft edge so the box does not ring.
    - **Brush** (Pinceau): draw over the picture, like a spray can. A pass deposits **Amount per pass**

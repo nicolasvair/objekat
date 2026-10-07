@@ -278,6 +278,16 @@ class EditorProtocol(unittest.TestCase):
         self.assertEqual((ctl["db_ceiling"]["min"], ctl["db_ceiling"]["max"], ctl["db_ceiling"]["value"]), (-60, 0, 0))
         self.assertTrue(ctl["db_floor"]["advanced"] and ctl["db_ceiling"]["advanced"])
 
+    def test_the_gain_is_a_row_of_preset_buttons_not_a_slider(self):
+        ctl = {c["id"]: c for c in sg.canvas_controls()}["gain"]
+        self.assertEqual(ctl["kind"], "number")
+        self.assertEqual(ctl["presets"], [-60, -24, -12, -6, -3, 3])          # exactly these, in this order
+        self.assertEqual(ctl["value"], -12)                                    # the default is one of them
+        self.assertIn(ctl["value"], ctl["presets"])
+        self.assertTrue(all(ctl["min"] <= p <= ctl["max"] for p in ctl["presets"]))   # the app refuses otherwise
+        self.assertEqual(len(set(ctl["presets"])), len(ctl["presets"]))
+        self.assertFalse(ctl.get("advanced", False))                           # not behind Expert
+
     def test_the_feather_range_goes_to_one_second_and_the_defaults_are_unchanged(self):
         ctl = {c["id"]: c for c in sg.canvas_controls()}
         self.assertEqual((ctl["feather_ms"]["min"], ctl["feather_ms"]["max"], ctl["feather_ms"]["value"]), (0, 1000, 10))

@@ -26,6 +26,12 @@ OUTPUT_SUFFIX = " (spectral)"
 LIVE_KEYS = ("gain", "feather_ms", "feather_st")
 FEATHER_KEYS = ("feather_ms", "feather_st")
 
+# The gain is chosen among a few buttons (revision 6b), the same for both tools: the app draws a row of
+# buttons from the control's `presets` and snaps every value to the nearest one. A step's own gain is
+# whatever it was sealed with, read exactly by mask.py (an older step made at another value keeps it).
+GAIN_PRESETS = (-60, -24, -12, -6, -3, 3)   # dB, in the order of the buttons
+GAIN_DEFAULT = -12                          # one of the presets
+
 
 def depth_class(source_format, bit_depth):
     """The class of one source file: pcm_int 16 -> 16, pcm_int 24 -> 24, pcm_float 32 -> "f32",

@@ -225,9 +225,12 @@ def canvas_controls():
         return c
 
     return [
-        # ONE gain serves both tools; with the feathers it is what a pending selection tunes live.
+        # ONE gain serves both tools; with the feathers it is what a pending selection tunes live. It is a
+        # row of buttons (revision 6b: `presets`, one selected at a time), not a slider; the app snaps every
+        # value to the nearest preset, so the script only ever reads one of them back.
         {"id": "sec_gain", "kind": "section", "label": tr("Gain", "Gain", "Ganancia")},
-        num("gain", tr("Gain", "Gain", "Ganancia"), -60, 12, 0.5, -12, "dB"),
+        num("gain", tr("Gain", "Gain", "Ganancia"), min(decide.GAIN_PRESETS), max(decide.GAIN_PRESETS), 1,
+            decide.GAIN_DEFAULT, "dB", presets=list(decide.GAIN_PRESETS)),
         num("feather_ms", tr("Fondu en temps", "Time feather", "Suavizado en tiempo"), 0, 1000, 1, 10, "ms"),
         num("feather_st", tr("Fondu en fréquence", "Frequency feather", "Suavizado en frecuencia"), 0, 12, 0.1, 1, "st"),
         {"id": "sec_brush", "kind": "section", "label": tr("Pinceau", "Brush", "Pincel")},
