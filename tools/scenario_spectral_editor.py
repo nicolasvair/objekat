@@ -567,9 +567,13 @@ def section_b(c):
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo #2 peels the first draft", h["cursor"] == 1 and h["pending"] == 0, h)
+    # (revision 6: in Selection mode an undo of an applied step REVEALS its selection instead — section i; this
+    # part of the history checks the plain undo, so the hand goes back to Instant, which is allowed with nothing pending)
+    cinput(mode="instant")
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo #3 removes the whole applied step", h["cursor"] == 0 and h["pending"] == 0 and h["count"] == 3, h)
+    cinput(mode="select")
     cinput(redo=True)
     cinput(redo=True)
     cinput(redo=True)
@@ -599,6 +603,7 @@ def section_b(c):
     g = cg()
     check("b: a second commit is a no-op (nothing pending): added false, nothing moved",
           r["added"] is False and r["committed"] is False and g["rev"] == rev3 and g["history"]["rev"] == hrev3, r)
+    cinput(mode="instant")                      # revision 6: in Selection mode this undo reveals the step (section i)
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo after a commit removes the WHOLE step; its drafts do not come back",
@@ -607,6 +612,7 @@ def section_b(c):
     h = cg()["history"]
     check("b: redo brings the step back whole", h["cursor"] == 2 and len(h["entries"][1]["ops"]) == 2, h)
     cinput(undo=True)
+    cinput(mode="select")
     r = crect(4, 5)
     h = cg()["history"]
     check("b: a new draft drops the redo tail (the undone commit); entry ids stay monotonic",
@@ -1619,16 +1625,28 @@ def section_g(c):
               st["transport"]["slots"]["result"] == res_path and st["image"]["path"] == img_path
               and abs(db(result_of(st), orig, 3000) + 12) <= 1.0, st["transport"]["slots"]["result"])
 
-        # ---- undo = the whole step; its drafts do not come back --------------------------------------
+        # ---- undo REVEALS the step's selection (revision 6): pending again, settings back --------------
         sc.hand(undo=True)
-        st = sc.wait_for(lambda s: Script.synced(s) and s["history"]["cursor"] == 0)
-        check("g: undo: the step goes whole, pending stays 0",
-              st is not None and st["history"]["pending"] == 0 and st["history"]["count"] == 1, st and st["history"])
+        st = sc.wait_for(lambda s: Script.synced_selection(s) and s["history"]["pending"] > 0)
+        check("g: undo of the applied step brings its 3 gestures back as the PENDING selection (no step left)",
+              st is not None and st["history"]["pending"] == 3 and st["history"]["count"] == 3
+              and all(e["kind"] == "draft" for e in st["history"]["entries"]), st and st["history"])
         if st is None:
             return
-        check("g: undo: 3 kHz back to 0 +-0.2", abs(db(result_of(st), orig, 3000)) <= 0.2, db(result_of(st), orig, 3000))
-        check("g: undo: the spectrogram is the original's again (+-0.7 dB), no layer",
-              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and st["layers"] == [])
+        check("g: undo: the step's gain (-12) is back in the controls (it had been moved to -3 after Apply)",
+              st["values"]["gain"] == -12, st["values"]["gain"])
+        check("g: undo: the spectrogram is the original's again (+-0.7 dB) and the selection layer shows the selection",
+              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and layer(st, "selection") is not None)
+        check("g: undo: the preview carries the revealed selection (3 kHz -12 +-1)",
+              abs(db(result_of(st), orig, 3000) + 12) <= 1.0, db(result_of(st), orig, 3000))
+        sc.hand(discard=True)
+        st = sc.wait_for(lambda s: s["history"]["pending"] == 0 and s["layers"] == [] and not s["busy"]
+                         and s["transport"]["audio_history_rev"] == s["history"]["rev"])
+        check("g: Ignore throws the revealed selection away: nothing pending, 3 kHz back to 0 +-0.2",
+              st is not None and st["history"]["count"] == 0 and abs(db(result_of(st), orig, 3000)) <= 0.2,
+              st and st["history"])
+        if st is None:
+            return
 
         # ---- Validate with a selection still pending writes what is HEARD ------------------------------
         sc.hand(values={"gain": -12})
@@ -2158,7 +2176,7 @@ def section_j(c):
     def lvl(x, ref, hz):
         return goertzel_db(x, RATE, hz, 0.5, 1.5) - goertzel_db(ref, RATE, hz, 0.5, 1.5)
 
-    sc = Script(c, oid, CACHE)
+    sc = Script(c, oid, CACHE, key="spectral-editor.scenario.j")   # its own key: c and g leave Selection mode behind
     try:
         if sc.find_canvas() is None:
             check("j: the script opens a canvas", False, sc.proc.poll())

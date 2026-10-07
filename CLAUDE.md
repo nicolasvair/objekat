@@ -2444,6 +2444,20 @@ What has landed since mid-August, in order:
   UserDefaults. (3) `set_image {slot}`: the picture follows the listening switch (Original / Difference / Result). (4) Overlap
   investigated, NO bug (`test_overlap.py`). Authority: `plan_spectral_editor.md` §11. **NOT seen / heard:** yellow over magma,
   the slider, the level while playing (the EQ wiring was only checked offline), persistence after a real save and reopen.
+  **Revision 6 (7 October 2026, branch `feature/spectral-editor-r6`, nothing pushed, not merged).** (1) DISPLAY RANGE:
+  `db_floor` (−120…−20, −100) / `db_ceiling` (−60…0, 0), `advanced` controls IN THE SCRIPT (`image.build_db` + `quantize`;
+  the Editor keeps the dB of the three pictures and `recolour()` re-sends them with the same slot / history rev, no transform;
+  the file's v0/v255 carry the range). `advanced` on purpose: (2) restores only non-advanced, non-tool hand values.
+  (2) In Selection mode (canvas with `modes`) an undo of an applied step REVEALS it: `ScriptCanvasHistory.undoRevealing`,
+  one draft per op, gain and feathers back in the controls; redo right after restores the same step, anything else forgets
+  it; Instant unchanged. It depends on the mode AT UNDO TIME (a step made in Instant reveals too). (3) `CanvasOp.slot` (the
+  audio slot heard when drawn, recorded only; `op.slot` in the JSON) and `mask.py`: a `delta` op acts on the Difference,
+  `G' = 1 − (1 − G)·g` (`linear_gain_grid`), step target = its first op's, difference boost floored at −300 dB. Authority:
+  `plan_spectral_editor.md` §12. Verified: Python 224 (system AND venv), Swift standalone 128 / 46 / 106 / 27, scenario 418
+  assertions in ten sections (35 s; (b) and (g) changed for the reveal, (i) and (j) new), `xcstrings.py check` / `orphans`
+  clean (the script's strings are in-script `tr()`, no app key added), Debug build with no new warning. **NOT seen /
+  heard:** the display-range controls in the Expert section and how fast a drag recolours at 30 s stereo, the amber
+  selection reappearing under ⌘Z in the window (and the controls jumping), the Difference gestures by ear.
 
 ### What is owed
 
