@@ -2305,6 +2305,140 @@ What has landed since mid-August, in order:
   mouse and a trackpad; ⌥-click during play, pause and a loop; the export sheet with a long path in the
   three languages and in Regions scope.
 
+- **A spectral gain editor: `script.canvas.*` and the script "Spectral gain"** (6 October 2026, ON THE
+  BRANCH `feature/spectral-gain`, NOT merged into `main`, nothing pushed). iZotope-RX-like, GAIN ONLY:
+  right-click ONE object, Scripts, "Spectral edit…" opens a floating window with the object's
+  spectrogram (log frequency), a Rectangle and a Brush (formerly "Eraser", renamed in revision 3), an
+  undo/redo of its own, ONE Original / Result / Difference listening switch (revision 3; it was A/B + a Delta
+  toggle); Validate lays the result back like `retouche-externe` (a new row at the same instant,
+  "<name> (spectral)", the original MUTED, ONE batch = ONE undo), Cancel touches nothing. Authority:
+  `docs/spec_spectral_editor.md` (confirmed 4 October) and `docs/plan_spectral_editor.md` (revision 2, then
+  revision 3 on 6 October, section 9 — which wins; see the paragraph at the end of this entry).
+  **The split is the point.** The app owns a GENERIC surface, `script.canvas.*` (`command_api.md`, "A
+  canvas a script asks for"): gestures (`rect`, `stroke`, `point`, always a Hand), the history and its
+  traces, image layers the script supplies, three audio slots with a transport. It knows NOTHING about
+  FFTs, dB or a mask: each op records its geometry and a snapshot of the controls its tool declares, and
+  the script reads them. All the gain mathematics lives in ONE file, `tools/scripts/spectral-editor/mask.py`
+  (rectangle with a feathered edge, brush (then called the eraser) as dabs deposited by DISTANCE, never by time, so a still hand
+  deposits nothing; everything adds up in dB). The rest of the script is numpy only: `dsp.py` (STFT and
+  weighted overlap-add, exact to -300 dB with an empty history), `image.py` (the base spectrogram),
+  `veil.py` (the mask drawn as a layer), `wavio.py`, `canvasfile.py` (the two raw image formats
+  `OBJKCNV1` / `OBJKRGB1`), `decide.py` (the pure decisions: depth class, rates, 120 s warning and 600 s
+  refusal, mono, names). `object.get` gained `source_sample_rate` / `source_bit_depth` / `source_format`,
+  `object.add` a `name` (so the return path is one `batch`).
+  **What comes back**: the sample rate and the depth CLASS of the source (16 to 16, 24 to 24, 32-bit float
+  to float, anything else to 24; a group takes the highest and asks for a rate if its files disagree), MONO
+  if the render's two channels are identical sample for sample, stereo otherwise. No dither.
+  **Traps worth keeping.** (1) A connection serves its requests one after another, so the script is ONE
+  loop (wait, compute, update) and `script.canvas.wait` carries the sidebar values AND the history in one
+  long poll. (2) The timeline's NSEvent monitors are app-wide and never looked at which window an event
+  came from: with the canvas key, a bare ⌘Z undid the PROJECT; they now check (`TimelineKeyHandler`,
+  `TimeRulerView`) and any future app-wide monitor must too. (3) The app draws only a raw TRACE of an op
+  the script has not yet reflected (`history_rev` on a layer says which ops it covers); a layer is never
+  trusted to be current, and `history.unreflected` makes the rule testable headless. (4) A canvas that
+  has ended stays LISTED, state `closed`, until the document changes: a test that asks "is there a
+  canvas?" must filter on `open` (it cost the first full run two false failures). (5) `script.canvas.get`
+  was added to the manifest's `requires` beyond the plan's list, since the script calls it.
+  Verified with no screen, on this Mac: Python unit tests 133 (`run_tests.sh`, with the system numpy 1.26
+  AND the venv's 2.5); `tools/test_script_canvas_geometry.swift` 125 and
+  `tools/test_script_canvas_image.swift` 46, both compiled standalone (their headers said "not
+  compiled" until today); a Debug build, no warning attributed to a file of this branch;
+  `tools/scenario_spectral_editor.py`, 217 assertions in six sections, against a headless `--no-audio` instance: (a) the API
+  additions, (b) the canvas contract, (c) END TO END with the REAL script launched as its own process
+  (rect at -24 dB measured -24 on the result by Goertzel and on the veil's pixel alpha; undo back within
+  0.2 dB; the brush (then the eraser) calibrated, one pass -3, two passes -6 within the tolerances of the plan; an expert
+  change keeping the ops; Validate; a WAV export of the session compared with the one made before: 3 kHz
+  -6.00 dB, 300 Hz 0.00; one `edit.undo` takes it all back), plus the app's own launch through
+  `script.run`, (d) the formats (44.1 kHz / 16-bit mono, float, stereo L != R, stereo L == R),
+  (e) a 601 s group refused with a message and no canvas, Cancel changing nothing, a SIGKILLed script
+  taking its canvas with it, a missing file refused, (f) no window on the headless pid.
+  Computing cost measured OUTSIDE the app on a synthetic 120 s stereo signal (white noise, one rectangle
+  and one 400-point stroke): base image 0.7 s, veil 0.07 s, result 0.9 s.
+  **NOT seen, NOT heard, NOT felt, and no path to it from here: every pixel and every second.**
+  The window itself: the plot, the rulers and the readout, the zoom and the pan, the tool bar, the cursors
+  over the plot, the trace of a gesture and its hand-over to the veil, the colours of the veil, the
+  "computing" indicator, the Expert button, the window's own ⌘Z and the guards of the two monitors, and
+  the context-menu entry itself (the script is seen as available by `script.list`, a click on it has
+  never been made). THE EAR: A/B, Delta and the position kept across a swap have never been heard
+  (a second `AVAudioEngine`, three player nodes; the plan's risk R4, an aligned swap that might click, is
+  untested), nor whether the preview is fast enough to compare step by step. REAL MATERIAL: everything
+  above ran on synthetic tones, never on a recorded sound; the 120 s warning, the rate-choice panel of a
+  group with mixed rates, a MIDI object and a mixed-depth group have never been run through the app.
+  The answers N1 to N3 of the plan stand at their defaults (a blocky veil at strong zoom, the old veil
+  showing an undone op for the length of a recompute, traces disappearing once reflected).
+  Cost to know: `install.sh` was run on this machine; it made the venv
+  `~/Library/Application Support/Objekat/venvs/spectral-editor` and a symlink in
+  `~/Library/Application Support/Objekat/Plugins/spectral-editor`.
+
+  **Revision 3 (6 October 2026 asked, 7 October built, same branch, nothing pushed).** The user tried the
+  first version and decided six things; `plan_spectral_editor.md` §9 is the authority. (1) ONE three-state
+  switch Original / Résultat / Différence. (2) Two MODES, opt-in at `open` (`modes: true`): **Instant** (a
+  gesture is a history step at once) and **Sélection** (gestures are DRAFTS building a weighted selection,
+  intensity 0–100 %, that the hand tunes live — gain and the two feathers, never a history step — before
+  **Appliquer** seals ONE step; Appliquer is not Valider). (3) **Dessiner / Effacer** in Sélection (⌘ held
+  flips it, read at mouseDown and frozen for the gesture); a rectangle in Effacer clears what it encloses.
+  (4) Right click (or ⌃-click) in the plot only moves the playhead; a left click there only draws; a left
+  click in the time ruler still seeks. (5) No Hand tool (wheel = pan, ⇧-wheel = zoom, pinch, Fit). (6)
+  Gomme / Eraser → **Pinceau / Brush / Pincel** everywhere; ONE shared gain, a pass deposits `quantity`
+  (default 25 %) of it, so −12 dB × 25 % = −3 dB per pass, capped at the gain inside one stroke.
+  **The split still holds**: the canvas owns modes, entries (`draft` | `step` with a snapshot of every hand
+  value), polarity, commit and the shape of undo (⌘Z peels the pending gestures one by one, then whole
+  steps; a step's selection does not come back) — in `Shared/ScriptCanvasHistory.swift`, pure, with its own
+  standalone test; `mask.py` alone knows what a step MEANS (S ← min(1, S + q·D) / max(S, W) …, G = Σ gain·S,
+  pro rata); the script draws two layers, the veil (committed steps only) and an amber `selection` layer
+  (alpha 0.6·S), and a live tweak moves only the audio (and the selection layer for a feather).
+  **The user's answers of 7 October**: switching Sélection → Instant with a selection pending, and Valider
+  with one, show an alert **Appliquer / Ignorer / Annuler** on the window (Annuler stays) — this replaced the
+  plan's default (switch disabled / included as heard); through the API the store still throws
+  `invalid_state` on `mode` while pending, and the script writes what is heard. Q-C, Q-D, Q-E kept.
+  **Traps.** (1) A `NSSegmentedControl` bound to a store value that REFUSES the change keeps showing the
+  clicked segment: the window bumps a counter used as `.id` to rebuild it (mode switch, listen). (2) The
+  ⌘ state for the Draw / Erase label is read from `.flagsChanged` in `ScriptCanvasPanel.sendEvent`, cleared on
+  `resignKey` — and the plot reads `NSEvent.modifierFlags` itself at mouseDown, never that observable. (3) The
+  step's feathers are the STEP's (`params`), not the rectangle's op, so a selection's edges can be retuned
+  live; do not put them back in a tool's `params`. (4) `set_image` with the same world KEEPS the layers; a new
+  world drops them — the script resends both layers after a base image change. (5) `Localizable.xcstrings`
+  cannot get a new key from `xcstrings.py set` (it refuses unknown keys): edit the JSON with the same
+  `sort_keys` dump (the file round-trips byte for byte).
+  Verified with no screen, on this Mac: Python unit tests 184 (`run_tests.sh`, system numpy 1.26 AND the venv's
+  2.5.3); `tools/test_script_canvas_geometry.swift` 125, `_image` 46, `_history` 78; a Debug build, no new warning
+  attributed to a canvas file; `tools/scenario_spectral_editor.py` 294 assertions in seven sections (27 s):
+  (b) updated to entries / modes / polarity / commit, (c) END TO END in Instant (rect −24 on the result and the
+  veil; brush one pass −3, two steps −6, ONE out-and-back stroke −6; expert change; Validate −6.00 dB on a WAV
+  export), (g) END TO END in Sélection (selection layer alpha 0.60, result −12 with `history.rev` UNCHANGED, the
+  gain −6 then −12 and a feather tuned live, a brush pass at 50 % = −6 pro rata, an Erase pass back to 0, Apply =
+  ONE step of 3 ops + the selection layer gone + the veil −12, a gain moved afterwards changes nothing, undo
+  takes the whole step, Validate with a selection pending writes −12.00 dB); `scenario_breath_eval.py` b and c.
+  **Live-tweak cost, measured through the real app on a 30 s stereo noise object** (gain moved while a
+  selection is pending, change of `gain` to the new result path with `busy` off): 248–284 ms with a rectangle
+  and a 500-point stroke, 273–322 ms with eight gestures (default 2048 / overlap 4). Plan §9's condition for
+  `dsp.process_range` (R3-8, recompute only the frames the selection touches) is "> 300 ms": NOT met on the
+  typical case, touched with eight gestures, so R3-8 was NOT built (overlap 8 costs about 1.6 ×; outside the app,
+  a heavy selection without the compiled-primitive cache was 615 ms).
+  **NOT seen, NOT heard, NOT felt (no screen capture permission here: `screencapture` returns the wallpaper
+  only; the window was opened on a UI instance and driven through the API, and survived):** the mode and Draw /
+  Erase switches and the Appliquer button (look, widths in three languages), the alert sheet on the panel
+  (never shown: that it appears on a non-activating utility panel is unverified), the ⌘ flip label and the
+  cursor (the circle with a minus; the cursor only refreshes on the next mouse move), right-click seek,
+  the amber selection over magma, the white Erase traces and the dashed Erase rectangle, how fast a live tweak
+  FEELS and whether a slider drag keeps up, and every sound (the Original / Résultat / Différence swap, still never
+  heard since the first version).
+  **Revision 4 (7 October 2026, same branch, nothing pushed), after the user tried it.** (1) NO MORE VEIL: after
+  an Instant gesture, Apply, undo or redo the script recomputes the SPECTROGRAM from the result audio and sends it
+  with `set_image {history_rev}` (new: the base image counts, with the layers, in `reflectedRev`, so the raw traces
+  go); only the amber selection layer remains. `veil.py` became `selection.py`; the picture and the ear share ONE
+  STFT pass (`Editor.committed_result`) when nothing is pending. Measured through the real app, 30 s stereo, Debug:
+  about 410 ms from a gesture to a settled picture + audio (instant, undo, redo, Apply alike). (2) `set_audio
+  {listen}` (new) so the script opens on Result. (3) A canvas with `remember` now remembers LIVE (values, mode,
+  tool: `scriptPanel.<key>` + `scriptPanel.<key>.canvas`; Reset erases only the first). For tests the script reads
+  `OBJEKAT_SPECTRAL_REMEMBER`, because one headless process serves every scenario section and the app remembers
+  live. (4) "Fondu en temps" 0..1000 ms. (5) Renamed "Spectral editor", folder and id `spectral-editor` (own commit; no
+  `scriptPanel.spectral-gain` entry existed on the machine, so no migration of the remember key). Authority: `plan_spectral_editor.md` §10.
+  Verified: Python 178 (the veil tests left, `test_editor.py` came), Swift standalone 125 / 46 / 78 / 11
+  (`test_script_canvas_memory.swift`), scenario 320 assertions.
+  **NOT seen / heard:** the picture refreshing under the hand (flash? how it feels at 30 s), the persisted tool and
+  mode showing in the window, the 1 s feather slider's feel.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

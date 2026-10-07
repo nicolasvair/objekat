@@ -256,6 +256,7 @@ final class CommandRegistry {
         registerScriptCommands()
         registerOverlayCommands()
         registerScriptPanelCommands()
+        registerScriptCanvasCommands()
     }
 
     private func registerIntrospection() {

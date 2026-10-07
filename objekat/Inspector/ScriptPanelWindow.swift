@@ -109,9 +109,9 @@ struct ScriptPanelView: View {
     var body: some View {
         if let p = store.panels[panelID] {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(rows(of: p), id: \.control.id) { row in
-                    controlRow(row, p)
-                }
+                ScriptControlsForm(controls: p.controls, values: p.values, expert: expert,
+                                   set: { id, v, coalesced in set(id, v, coalesced: coalesced) },
+                                   press: { id in press(id) })
                 Divider()
                 HStack(spacing: 6) {
                     if p.busy { ProgressView().controlSize(.small) }
@@ -142,105 +142,6 @@ struct ScriptPanelView: View {
             .padding(12)
             .frame(width: 460)
         }
-    }
-
-    /// A bool that exactly one number is enabled by is drawn INLINE with that number ("a box and a
-    /// threshold": the box says whether the criterion counts, the slider how much). Any other bool
-    /// is a row of its own.
-    private struct Row { let control: ScriptPanelControl; let gate: ScriptPanelControl? }
-
-    private func rows(of p: ScriptPanel) -> [Row] {
-        var gateUse: [String: Int] = [:]
-        for c in p.controls { if let by = c.enabledBy { gateUse[by, default: 0] += 1 } }
-        let inline = Set(gateUse.filter { $0.value == 1 }.keys)
-        return p.controls.compactMap { c in
-            if c.advanced, !expert { return nil }
-            if c.kind == .bool, inline.contains(c.id) { return nil }
-            let gate = c.enabledBy.flatMap { by in p.controls.first { $0.id == by } }
-            return Row(control: c, gate: gate)
-        }
-    }
-
-    private func isOn(_ id: String, _ p: ScriptPanel) -> Bool { p.values[id]?.boolValue ?? false }
-
-    @ViewBuilder
-    private func controlRow(_ row: Row, _ p: ScriptPanel) -> some View {
-        let c = row.control
-        switch c.kind {
-        case .bool:
-            Toggle(isOn: Binding(get: { isOn(c.id, p) },
-                                 set: { set(c.id, .bool($0)) })) { Text(verbatim: c.label) }
-        case .button:
-            Button { press(c.id) } label: { Text(verbatim: c.label) }
-        case .section:
-            // A heading over the rows that follow it: the script's own text, set apart.
-            VStack(alignment: .leading, spacing: 3) {
-                Divider()
-                Text(verbatim: c.label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-            .padding(.top, 2)
-        case .progress:
-            // A bar the script drives: a number is a fraction, `null` is "working, no idea how far".
-            let fraction = p.values[c.id]?.doubleValue
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(verbatim: c.label).font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 8)
-                    if let fraction {
-                        Text(verbatim: "\(Int((fraction * 100).rounded())) %")
-                            .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
-                    }
-                }
-                if let fraction {
-                    ProgressView(value: fraction).progressViewStyle(.linear)
-                } else {
-                    ProgressView().progressViewStyle(.linear)
-                }
-            }
-        case .choice:
-            // A menu, the script's own labels: a model that is not installed says so in its label.
-            HStack(spacing: 8) {
-                Text(verbatim: c.label).frame(width: 200, alignment: .leading)
-                Picker(selection: Binding(get: { p.values[c.id]?.stringValue ?? c.options.first?.id ?? "" },
-                                          set: { set(c.id, .string($0)) })) {
-                    ForEach(c.options, id: \.id) { o in Text(verbatim: o.label).tag(o.id) }
-                } label: { EmptyView() }
-                .labelsHidden()
-                .pickerStyle(.menu)
-            }
-        case .number:
-            let enabled = row.gate.map { isOn($0.id, p) } ?? true
-            HStack(spacing: 8) {
-                if let gate = row.gate, gate.kind == .bool, inlineGate(gate, p) {
-                    Toggle(isOn: Binding(get: { isOn(gate.id, p) },
-                                         set: { set(gate.id, .bool($0)) })) {
-                        Text(verbatim: gate.label)
-                    }
-                    .frame(width: 200, alignment: .leading)
-                } else {
-                    Text(verbatim: c.label).frame(width: 200, alignment: .leading)
-                }
-                Slider(value: Binding(get: { p.values[c.id]?.doubleValue ?? c.min },
-                                      set: { set(c.id, .number($0), coalesced: true) }),
-                       in: c.min...c.max, step: c.step)
-                    .disabled(!enabled)
-                Text(verbatim: format(p.values[c.id]?.doubleValue ?? c.min, c))
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 64, alignment: .trailing)
-                    .foregroundStyle(enabled ? .primary : .secondary)
-            }
-        }
-    }
-
-    private func inlineGate(_ gate: ScriptPanelControl, _ p: ScriptPanel) -> Bool {
-        p.controls.filter { $0.enabledBy == gate.id }.count == 1
-    }
-
-    private func format(_ v: Double, _ c: ScriptPanelControl) -> String {
-        let digits = c.step >= 1 ? 0 : (c.step >= 0.1 ? 1 : 2)
-        let s = String(format: "%.\(digits)f", v)
-        return c.unit.isEmpty ? s : s + " " + c.unit
     }
 
     private func set(_ id: String, _ v: JSONValue, coalesced: Bool = false) {

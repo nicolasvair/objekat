@@ -71,6 +71,16 @@ source, not a translation.
 | détacher / rattacher (un fx link) | detach / reattach | desvincular / volver a vincular | per host: the host keeps an independent copy, then realigns on the bin |
 | section de sortie (d'un fx link) | output section | sección de salida | volume, pan, mute of the bin, after its plugins |
 | clé (sidechain) | key (sidechain) | clave (sidechain) | the signal of another object or stem that feeds a plugin's sidechain input; the word « sidechain » stays in the three languages for the feature, « clé / key / clave » names the source |
+| toile (d'un script) | script canvas | lienzo | the resizable plot a script asks the app to draw (`script.canvas.*`): an image with axes, gestures, a history, layers, a transport |
+| calque | layer | capa | an image a script lays over a canvas's base image; always covers the whole world |
+| pinceau | brush | pincel | the stroke tool of the spectral editor (formerly « gomme / eraser »): like a spray can, it deposits intensity by DISTANCE, a pass depositing its quantity (%) |
+| mode instantané | instant mode | modo instantáneo | canvas mode: each gesture is applied at once and is one history step |
+| sélection (pondérée) | (weighted) selection | selección (ponderada) | canvas mode: gestures build an intensity 0–100 % over time × frequency, heard live, then applied |
+| appliquer | apply | aplicar | seal the pending selection into ONE history step (≠ Valider, which closes the window and returns the result) |
+| dessiner / effacer | draw / erase | dibujar / borrar | the selection's polarity: add intensity / subtract it (⌘ held flips it) |
+| intensité | intensity | intensidad | how much of the gain a point of the selection receives, 0–100 % |
+| original / résultat / différence | original / result / delta | original / resultado / diferencia | the three things one can listen to in a canvas: the source, what the operations make of it, and what they take away |
+| spectrogramme | spectrogram | espectrograma | time × frequency × level, drawn as an image |
 
 ## What does not get translated
 

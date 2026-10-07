@@ -20,91 +20,6 @@ extension CommandRegistry {
                      "remember": .stringOrNull(p.rememberKey)])
         }
 
-        func bad(_ m: String) -> CommandError { CommandError(code: .bad_params, message: m) }
-
-        func parseControls(_ arr: [JSONValue]) throws -> ([ScriptPanelControl], [String: JSONValue]) {
-            var controls: [ScriptPanelControl] = []
-            var values: [String: JSONValue] = [:]
-            var seen = Set<String>()
-            for e in arr {
-                guard let o = e.objectValue, let id = o["id"]?.stringValue, !id.isEmpty,
-                      let kindName = o["kind"]?.stringValue,
-                      let kind = ScriptPanelControl.Kind(rawValue: kindName),
-                      let label = o["label"]?.stringValue else {
-                    throw bad("a control is {id, kind: bool|number|button|choice|progress|section, label, …}")
-                }
-                guard seen.insert(id).inserted else { throw bad("duplicate control id '\(id)'") }
-                var lo = 0.0, hi = 1.0, step = 1.0
-                var options: [ScriptPanelOption] = []
-                switch kind {
-                case .bool:
-                    values[id] = .bool(o["value"]?.boolValue ?? false)
-                case .number:
-                    guard let mn = o["min"]?.doubleValue, let mx = o["max"]?.doubleValue,
-                          let st = o["step"]?.doubleValue else {
-                        throw bad("number control '\(id)' needs min, max and step")
-                    }
-                    guard mn < mx else { throw bad("control '\(id)': min must be below max") }
-                    guard st > 0 else { throw bad("control '\(id)': step must be > 0") }
-                    lo = mn; hi = mx; step = st
-                    let v = o["value"]?.doubleValue ?? mn
-                    guard v >= mn, v <= mx else { throw bad("control '\(id)': value out of range") }
-                    values[id] = .number(v)
-                case .choice:
-                    guard let raw = o["options"]?.arrayValue, !raw.isEmpty else {
-                        throw bad("choice control '\(id)' needs a non-empty options list")
-                    }
-                    for e in raw {
-                        guard let eo = e.objectValue, let oid = eo["id"]?.stringValue, !oid.isEmpty,
-                              let olabel = eo["label"]?.stringValue else {
-                            throw bad("control '\(id)': an option is {id, label}")
-                        }
-                        guard !options.contains(where: { $0.id == oid }) else {
-                            throw bad("control '\(id)': duplicate option id '\(oid)'")
-                        }
-                        options.append(ScriptPanelOption(id: oid, label: olabel))
-                    }
-                    let v = o["value"]?.stringValue ?? options[0].id
-                    guard options.contains(where: { $0.id == v }) else {
-                        throw bad("control '\(id)': value is not one of its options")
-                    }
-                    values[id] = .string(v)
-                case .progress:
-                    // absent = 0, explicit null = indeterminate
-                    if let raw = o["value"], case .null = raw { values[id] = .null }
-                    else {
-                        let v = o["value"]?.doubleValue ?? 0
-                        guard v >= 0, v <= 1 else { throw bad("control '\(id)': a progress is 0…1 or null") }
-                        values[id] = .number(v)
-                    }
-                case .button, .section: break
-                }
-                var control = ScriptPanelControl(id: id, kind: kind, label: label, min: lo, max: hi,
-                                                 step: step, unit: o["unit"]?.stringValue ?? "",
-                                                 enabledBy: o["enabled_by"]?.stringValue)
-                control.options = options
-                if let adv = o["advanced"] {
-                    guard let b = adv.boolValue else { throw bad("control '\(id)': advanced must be a bool") }
-                    control.advanced = b
-                }
-                controls.append(control)
-            }
-            for c in controls {
-                if let by = c.enabledBy {
-                    guard let target = controls.first(where: { $0.id == by }), target.kind == .bool else {
-                        throw bad("control '\(c.id)': enabled_by must name a bool control")
-                    }
-                }
-            }
-            return (controls, values)
-        }
-
-        func parseValues(_ p: CommandParams) throws -> [String: JSONValue] {
-            guard let v = p.raw["values"] else { return [:] }
-            guard let o = v.objectValue else { throw bad("'values' must be an object") }
-            return o
-        }
-
         register("script.panel.open",
                  summary: "Opens a panel the app draws for the script: checkboxes, sliders, buttons, "
                         + "a status line, Validate / Cancel. One panel per connection (a second "
@@ -123,7 +38,7 @@ extension CommandRegistry {
                                   + "Reset button. `true` = a key derived from the title.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            let (controls, values) = try parseControls(try p.array("controls"))
+            let (controls, values) = try ScriptControls.parse(try p.array("controls"))
             let object = try p.optionalUUID("object")
             if let object, vm.find(id: object) == nil {
                 throw CommandError(code: .not_found, message: "no object \(object.uuidString)")
@@ -132,16 +47,9 @@ extension CommandRegistry {
                                     title: try p.string("title", or: ""), controls: controls,
                                     values: values)
             panel.declared = values
-            if let raw = p.raw["remember"], raw != .null, raw != .bool(false) {
-                var key: String
-                if case .string(let k) = raw { key = k }
-                else if raw == .bool(true) { key = panel.title }
-                else { throw bad("'remember' is a key (string) or true") }
-                key = key.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !key.isEmpty else { throw bad("'remember' needs a non-empty key (or a title)") }
+            if let key = try ScriptControls.rememberKey(p.raw["remember"], title: panel.title) {
                 panel.rememberKey = key
-                let kept = ScriptPanelMemory.applicable(ScriptPanelMemory.load(key), to: controls)
-                for (k, v) in kept { panel.values[k] = v }
+                ScriptControls.applyRemembered(key, controls: controls, into: &panel.values)
             }
             panel.status = try p.string("status", or: "")
             panel.busy = try p.bool("busy", or: false)
@@ -194,17 +102,10 @@ extension CommandRegistry {
                                     "Control id → new label (what a progress bar says it is doing).")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            var labels: [String: String] = [:]
-            if let raw = p.raw["labels"] {
-                guard let o = raw.objectValue else { throw bad("'labels' must be an object") }
-                for (k, v) in o {
-                    guard let t = v.stringValue else { throw bad("'labels.\(k)' must be a string") }
-                    labels[k] = t
-                }
-            }
+            let labels = try ScriptControls.parseLabels(p)
             let busy: Bool? = p.raw["busy"] == nil ? nil : try p.bool("busy")
             try vm.scriptPanels.update(try p.uuid("panel_id"), status: try p.optionalString("status"),
-                                       busy: busy, values: try parseValues(p), labels: labels)
+                                       busy: busy, values: try ScriptControls.parseValues(p), labels: labels)
             return .object(["ok": .bool(true)])
         }
 
@@ -232,7 +133,7 @@ extension CommandRegistry {
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("panel_id")
-            try vm.scriptPanels.input(id, values: try parseValues(p), press: try p.optionalString("press"))
+            try vm.scriptPanels.input(id, values: try ScriptControls.parseValues(p), press: try p.optionalString("press"))
             return .object(["rev": .int(vm.scriptPanels.panels[id]?.rev ?? 0)])
         }
 

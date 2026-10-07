@@ -386,6 +386,9 @@ private struct LoopMarkerDragSurface: NSViewRepresentable {
 
             monitorDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
                 guard let self else { return event }
+                // App-wide monitor: a click in ANOTHER window (a script canvas's) is converted with this
+                // view's own matrix and would land on a loop marker that is not under it.
+                guard event.window === self.window else { return event }
                 let loc = self.convert(event.locationInWindow, from: nil)
                 guard self.bounds.contains(loc), let r = self.loopRegion else { return event }
                 let inX  = CGFloat(r.lowerBound * self.pixelsPerSecond)

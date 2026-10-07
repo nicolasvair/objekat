@@ -254,6 +254,14 @@ final class EditViewModel {
         ScriptPanelWindows.attach(to: s)   // the windows: opened only with an interface
         return s
     }()
+    /// The canvases scripts declare (@see ScriptCanvasStore). Starting one's playback stops the
+    /// PROJECT's transport; the windows (and the audio) come with an interface.
+    let scriptCanvases: ScriptCanvasStore = {
+        let s = ScriptCanvasStore()
+        s.stopProjectTransport = { if let x = CommandContext.shared.session, x.isPlaying { x.stop() } }
+        ScriptCanvasWindows.attach(to: s)   // the windows: opened only with an interface
+        return s
+    }()
     /// The timer reading the engine's render progress while `bakingIDs` or
     /// `recomputingConsolidateIDs` is non-empty. @see updateRenderProgressPolling
     @ObservationIgnored var renderProgressTimer: Timer? = nil

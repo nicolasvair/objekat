@@ -212,7 +212,7 @@ final class ExportAudition {
         return status == noErr && id != 0 ? id : nil
     }
 
-    private static func defaultOutputDeviceID() -> AudioDeviceID? {
+    static func defaultOutputDeviceID() -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -225,7 +225,7 @@ final class ExportAudition {
 
     /// Every device that has at least one OUTPUT stream (an input-only interface is not a place
     /// to send sound to, even if a name matches).
-    private static func outputDeviceIDs() -> [AudioDeviceID] {
+    static func outputDeviceIDs() -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -244,7 +244,7 @@ final class ExportAudition {
         }
     }
 
-    fileprivate static func deviceName(_ id: AudioDeviceID) -> String? {
+    static func deviceName(_ id: AudioDeviceID) -> String? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
@@ -256,7 +256,7 @@ final class ExportAudition {
     }
 
     /// The exact name first; a name that differs only by case or by surrounding blanks second.
-    private static func outputDeviceID(named wanted: String) -> AudioDeviceID? {
+    static func outputDeviceID(named wanted: String) -> AudioDeviceID? {
         let candidates = outputDeviceIDs().compactMap { id in deviceName(id).map { (id, $0) } }
         if let hit = candidates.first(where: { $0.1 == wanted }) { return hit.0 }
         let plain = wanted.trimmingCharacters(in: .whitespacesAndNewlines)
