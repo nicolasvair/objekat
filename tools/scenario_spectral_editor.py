@@ -1998,14 +1998,141 @@ def section_h(c):
     c.send("project.new")
 
 
+def section_i(c):
+    """REVISION 6, CANVAS SIDE (no script): an op records the audio slot heard when it was drawn (`slot`), and
+    in Selection mode an undo of an APPLIED step brings its selection back as the pending one with its
+    settings restored (a redo puts the step back); Instant mode undoes as before."""
+    ROOT = tmproot("i")
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 3.0, 48000, 24)
+    CNV = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
+    c.send("project.new")
+    obj = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
+    tools = [{"id": "rect", "kind": "rect", "label": "Rectangle", "params": []},
+             {"id": "brush", "kind": "stroke", "label": "Brush", "params": ["quantity", "hardness"], "size_control": "size_px"}]
+    controls = CANVAS_CONTROLS + [{"id": "view", "kind": "number", "label": "View", "value": 5, "min": 0, "max": 10,
+                                   "step": 1, "advanced": True}]
+    cid = c.send("script.canvas.open", {"title": "R6", "controls": controls, "tools": tools, "object": obj,
+                                        "modes": True})["canvas_id"]
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV, "result": WAV, "delta": WAV, "history_rev": 0})
+
+    def get():
+        return c.send("script.canvas.get", {"canvas_id": cid})
+
+    def hist():
+        return get()["history"]
+
+    def inp(**kw):
+        kw["canvas_id"] = cid
+        return c.send("script.canvas.input", kw)
+
+    def rect(x0, x1, y0=100, y1=200):
+        return inp(op={"kind": "rect", "x0": x0, "x1": x1, "y0": y0, "y1": y1})
+
+    # -- the slot of an op --------------------------------------------------------------------
+    slots = []
+    for listen in ("original", "result", "delta"):
+        inp(listen=listen)
+        rect(len(slots), len(slots) + 1)
+        slots.append(listen)
+    h = hist()
+    check("i: an op carries the audio slot heard when it was drawn (original, result, delta)",
+          [e["ops"][0]["slot"] for e in h["entries"]] == slots and h["count"] == 3, h["entries"])
+    inp(undo=True)
+    inp(undo=True)
+    inp(undo=True)
+    h = hist()
+    check("i: Instant mode: undo is the plain one (the steps stay listed, cursor 0, nothing pending)",
+          h["cursor"] == 0 and h["count"] == 3 and h["pending"] == 0, h)
+    for _ in range(3):
+        inp(redo=True)
+    h = hist()
+    check("i: ... and redo brings them back", h["cursor"] == 3 and h["count"] == 3 and h["pending"] == 0, h)
+    base_count = 3
+
+    # -- Selection mode: undo reveals the applied step's selection ---------------------------------
+    inp(mode="select")
+    inp(listen="delta")
+    inp(values={"gain": -6, "feather_ms": 25, "feather_st": 2, "quantity": 60, "view": 7})
+    rect(1.0, 2.0, 100, 1000)
+    rect(2.0, 2.5, 500, 4000)
+    inp(commit=True)
+    h = hist()
+    st = h["entries"][-1]
+    check("i: Selection: two gestures sealed into ONE step (params gain -6, feather 25 ms / 2 st)",
+          h["pending"] == 0 and st["kind"] == "step" and len(st["ops"]) == 2 and st["params"]["gain"] == -6
+          and st["params"]["feather_ms"] == 25 and st["params"]["feather_st"] == 2, st)
+    step_id, op_ids = st["id"], [o["id"] for o in st["ops"]]
+    geom = [(o["x0"], o["x1"], o["y0"], o["y1"], o["slot"]) for o in st["ops"]]
+    inp(values={"gain": -20, "feather_ms": 100, "feather_st": 5, "quantity": 30, "view": 2})
+    rev = hist()["rev"]
+    inp(undo=True)
+    g = get()
+    h = g["history"]
+    drafts = [e for e in h["entries"] if e["kind"] == "draft"]
+    check("i: undo of an applied step in Selection mode: its selection is PENDING (2 drafts), the step is gone",
+          h["pending"] == 2 and len(drafts) == 2 and h["count"] == base_count + 2 and h["cursor"] == h["count"]
+          and h["rev"] > rev and not any(e["id"] == step_id for e in h["entries"]), h)
+    check("i: ... the drafts are the very gestures (geometry and the slot they were drawn in), in order",
+          [(o["x0"], o["x1"], o["y0"], o["y1"], o["slot"]) for e in drafts for o in e["ops"]] == geom, drafts)
+    v = g["values"]
+    check("i: ... the step's gain and feathers are back in the controls (-6, 25, 2)",
+          v["gain"] == -6 and v["feather_ms"] == 25 and v["feather_st"] == 2, v)
+    check("i: ... the brush's values, the size and an advanced setting are NOT restored (30, 2)",
+          v["quantity"] == 30 and v["view"] == 2 and v["size_px"] == 32, v)
+    check("i: ... the app stays in Selection mode, the polarity toggle untouched", g["mode"] == "select" and g["polarity"] == "add")
+    # redo puts the step back, exactly
+    inp(redo=True)
+    h = hist()
+    st2 = h["entries"][-1]
+    check("i: redo right after: the SAME step comes back (id, ops, params), no draft left",
+          h["pending"] == 0 and st2["kind"] == "step" and st2["id"] == step_id and [o["id"] for o in st2["ops"]] == op_ids
+          and st2["params"]["gain"] == -6 and h["count"] == base_count + 1, h)
+    check("i: ... redo does not revert the controls (gain still -6 from the reveal)", get()["values"]["gain"] == -6)
+    # reveal again, tweak, re-apply: a NEW step with the new gain; the old one is gone
+    inp(undo=True)
+    inp(values={"gain": -3})
+    inp(commit=True)
+    h = hist()
+    st3 = h["entries"][-1]
+    check("i: reveal, tweak the gain, Apply again: ONE new step (gain -3, 2 ops), the old step is gone",
+          h["pending"] == 0 and st3["kind"] == "step" and st3["id"] != step_id and st3["params"]["gain"] == -3
+          and len(st3["ops"]) == 2 and h["count"] == base_count + 1, h)
+    check("i: ... its ops kept the slot they were drawn in (delta)", [o["slot"] for o in st3["ops"]] == ["delta", "delta"], st3["ops"])
+    # a revealed selection obeys the usual pending rules: undo peels ONE gesture
+    inp(undo=True)
+    inp(undo=True)
+    h = hist()
+    check("i: with a selection pending, undo removes the last gesture (not a whole step): 1 draft left",
+          h["pending"] == 1 and h["cursor"] == base_count + 1 and h["count"] == base_count + 2, h)
+    inp(redo=True)
+    check("i: ... and redo gives it back", hist()["pending"] == 2)
+    inp(commit=True)
+    inp(undo=True)                                    # reveal
+    n = hist()["pending"]
+    rect(0.2, 0.4)
+    h0 = hist()
+    r = inp(redo=True)
+    check("i: a new gesture after a reveal forgets its redo (redo is a no-op)",
+          r["added"] is False and hist()["rev"] == h0["rev"] and hist()["pending"] == n + 1, (r, h0))
+    inp(discard=True)
+    h = hist()
+    check("i: Ignore throws the revealed selection away, nothing to redo", h["pending"] == 0)
+    r = inp(redo=True)
+    check("i: ... redo after Ignore is a no-op", r["added"] is False and hist()["pending"] == 0, r)
+    inp(mode="instant")
+    check("i: Instant again once nothing is pending", get()["mode"] == "instant")
+    c.send("script.canvas.close", {"canvas_id": cid})
+
+
 # ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdefgh")
+        only = os.environ.get("SECTIONS", "abcdefghij")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g), ("h", section_h)):
+                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i)):
             if name in only:
                 fn(c)
 finally:
