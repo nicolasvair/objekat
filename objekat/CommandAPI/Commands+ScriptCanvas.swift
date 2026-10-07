@@ -32,6 +32,7 @@ extension CommandRegistry {
             var o: [String: JSONValue] = [
                 "id": .int(op.id), "kind": .string(op.kind.rawValue), "tool": .string(op.tool),
                 "params": .object(op.params), "polarity": .string(op.polarity.rawValue),
+                "slot": .string(op.slot.rawValue),
             ]
             switch op.shape {
             case .rect(let x0, let x1, let y0, let y1):
