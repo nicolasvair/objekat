@@ -28,6 +28,13 @@ import CoreAudio
 /// model's clock will reach at that instant — the playhead and the sound agree, instead of the
 /// playhead leading by the lead.
 ///
+/// THE MONITORING LEVEL (revision 5) is applied HERE, at the output, and nowhere else: an
+/// `AVAudioUnitEQ` between the main mixer and the output node, its `globalGain` (dB, −96…+24, so the
+/// ±20 dB of the hand's slider fits) set from `ScriptCanvasTransport.monitorDB`. It is a gain on what is
+/// HEARD — Original, Result and Difference alike, instantly, no file re-rendered — and never reaches a
+/// file the script wrote or what Validate lays back. (A player node's `volume` stops at 1, so it cannot
+/// amplify; the EQ unit's global gain was checked offline: exact at ±6 and ±20 dB.)
+///
 /// WHICH DEVICE: the card OBJEKAT itself opened (`AudioDeviceStatus`), resolved through
 /// `ExportAudition`'s helpers and set on the output node before the engine starts. Created only by
 /// the window layer, and never under `--headless` or `--no-audio`.
@@ -40,6 +47,13 @@ final class ScriptCanvasAudition {
     static let swapLead = 0.1
 
     private let engine = AVAudioEngine()
+    /// The monitoring level's stage (no band enabled: only its global gain acts).
+    private let monitor: AVAudioUnitEQ = {
+        let unit = AVAudioUnitEQ(numberOfBands: 1)
+        unit.bands[0].bypass = true
+        unit.globalGain = 0
+        return unit
+    }()
     private var players: [CanvasSlot: AVAudioPlayerNode] = [:]
     /// The file each node is playing, and its path.
     private var files: [CanvasSlot: AVAudioFile] = [:]
@@ -56,6 +70,7 @@ final class ScriptCanvasAudition {
     private var configObserver: NSObjectProtocol?
 
     init() {
+        engine.attach(monitor)
         configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
@@ -149,7 +164,8 @@ final class ScriptCanvasAudition {
         }
         let out = engine.outputNode.inputFormat(forBus: 0)
         if out.sampleRate > 0, out.channelCount > 0 {
-            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: out)
+            engine.connect(engine.mainMixerNode, to: monitor, format: out)
+            engine.connect(monitor, to: engine.outputNode, format: out)
         }
         do { try engine.start() } catch {
             NSLog("[CANVAS-AUDITION] engine.start failed: %@", String(describing: error))
@@ -193,6 +209,7 @@ final class ScriptCanvasAudition {
     /// The three-state switch (Original / Result / Delta): the slot that is heard has its node at 1,
     /// the others at 0. `listen` alone says which (an empty slot falls back to the original).
     private func setAudible(_ t: ScriptCanvasTransport) {
+        monitor.globalGain = Float(t.monitorDB)   // listening only: the files are untouched
         let named = CanvasSlot(rawValue: t.listen.rawValue) ?? .original
         let heard: CanvasSlot = t.slots[named] != nil ? named : .original
         for slot in CanvasSlot.allCases { players[slot]?.volume = slot == heard ? 1 : 0 }

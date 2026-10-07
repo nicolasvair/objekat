@@ -2438,6 +2438,12 @@ What has landed since mid-August, in order:
   (`test_script_canvas_memory.swift`), scenario 320 assertions.
   **NOT seen / heard:** the picture refreshing under the hand (flash? how it feels at 30 s), the persisted tool and
   mode showing in the window, the 1 s feather slider's feel.
+  **Revision 5 (7 October 2026, branch `feature/spectral-editor-r5`, nothing pushed).** (1) The in-progress Draw trace
+  is YELLOW. (2) A LISTENING LEVEL −20…+20 dB (`input.monitor_db`, `transport.monitor_db`): an `AVAudioUnitEQ` gain in
+  `ScriptCanvasAudition`, remembered in the PROJECT (`ProjectDocument.canvasSettings`, optional key, version stays 19), not in
+  UserDefaults. (3) `set_image {slot}`: the picture follows the listening switch (Original / Difference / Result). (4) Overlap
+  investigated, NO bug (`test_overlap.py`). Authority: `plan_spectral_editor.md` §11. **NOT seen / heard:** yellow over magma,
+  the slider, the level while playing (the EQ wiring was only checked offline), persistence after a real save and reopen.
 
 ### What is owed
 

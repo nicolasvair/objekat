@@ -85,6 +85,7 @@ extension CommandRegistry {
             var transport: [String: JSONValue] = [
                 "playing": .bool(c.transport.playing), "position": num(position),
                 "caret": num(c.transport.caret), "listen": .string(c.transport.listen.rawValue),
+                "monitor_db": num(c.transport.monitorDB),
                 "audio_history_rev": c.transport.audioHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null,
             ]
             if let both = slotsPayload(c.transport).objectValue { transport.merge(both) { a, _ in a } }
@@ -105,9 +106,17 @@ extension CommandRegistry {
                 "polarity": .string(c.polarity.rawValue),
                 "history": .object(history),
                 "image": c.image.map { img in
-                    .object(["path": .string(img.path), "width": .int(img.width),
-                             "height": .int(img.height), "has_values": .bool(img.hasValues),
-                             "history_rev": c.imageHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null])
+                    var slots: [String: JSONValue] = [:]
+                    for (slot, si) in c.slotImages {
+                        slots[slot.rawValue] = .object(["path": .string(si.image.path), "width": .int(si.image.width),
+                                                        "height": .int(si.image.height),
+                                                        "history_rev": si.historyRev.map { JSONValue.int($0) } ?? JSONValue.null])
+                    }
+                    return .object(["path": .string(img.path), "width": .int(img.width),
+                                    "height": .int(img.height), "has_values": .bool(img.hasValues),
+                                    "history_rev": c.imageHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null,
+                                    "slots": .object(slots),
+                                    "shown": .string(c.displayedImage?.path ?? img.path)])
                 } ?? .null,
                 "layers": .array(ScriptCanvasStore.layersInDrawOrder(c.layers).map(layerPayload)),
                 "world": c.world.map { .object(["x": axisPayload($0.x), "y": axisPayload($0.y)]) } ?? .null,
@@ -244,6 +253,8 @@ extension CommandRegistry {
                 canvas.rememberKey = key
                 ScriptControls.applyRemembered(key, controls: controls, into: &canvas.values)
                 ScriptCanvasStore.applyRememberedState(to: &canvas)
+                // The monitoring level is the PROJECT's, not the user's: another project opens at 0 dB.
+                canvas.transport.monitorDB = CanvasProjectSettings.monitor(of: vm.canvasSettings[key])
             }
             canvas.status = try p.string("status", or: "")
             canvas.busy = try p.bool("busy", or: false)
@@ -252,17 +263,25 @@ extension CommandRegistry {
         }
 
         register("script.canvas.set_image",
-                 summary: "Sets the BASE image and the world it covers. `x` / `y` are {min, max, unit?, mapping?} "
+                 summary: "Sets the BASE image and the world it covers — or, with `slot`, the picture of one audio slot. "
+                        + "`x` / `y` are {min, max, unit?, mapping?} "
                         + "(unit \"s\" gives time rulers, \"Hz\" Hz / kHz rulers; mapping \"lin\" or \"log\", the "
                         + "latter needing min > 0). The file is an OBJKCNV1 (indexed, with values), an OBJKRGB1 "
                         + "or any image ImageIO reads (no values). Same axes as before: the view and the layers "
                         + "are kept; otherwise the view is refitted and every layer dropped. `history_rev` = the "
                         + "history revision the image reflects (counted with the layers' to hide traces). "
-                        + "Never moves rev.",
+                        + "With `slot` (original | result | delta) the file is that slot's picture instead: it covers "
+                        + "the SAME world as the base image (no `x` / `y`, which are ignored; a base image must exist), "
+                        + "and the plot draws the picture of the slot being HEARD, the base image when that slot has "
+                        + "none — so switching what is heard switches the picture with no round trip. `path: null` "
+                        + "with `slot` removes it. Never moves rev.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
-                          ParamSpec("path", "string", "The image file."),
-                          ParamSpec("x", "object", "{min, max, unit?, mapping?}"),
-                          ParamSpec("y", "object", "{min, max, unit?, mapping?}"),
+                          ParamSpec("path", "string|null", required: false,
+                                    "The image file (required; null only with `slot`: removes that picture)."),
+                          ParamSpec("slot", "string", required: false,
+                                    "original | result | delta: the picture of that audio slot instead of the base image."),
+                          ParamSpec("x", "object", required: false, "{min, max, unit?, mapping?} (base image only)."),
+                          ParamSpec("y", "object", required: false, "{min, max, unit?, mapping?} (base image only)."),
                           ParamSpec("value_unit", "string", required: false,
                                     "The unit of the image's values, for the pointer readout."),
                           ParamSpec("history_rev", "int", required: false,
@@ -271,16 +290,33 @@ extension CommandRegistry {
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("canvas_id")
-            let x = try parseAxis(p.raw["x"], "x")
-            let y = try parseAxis(p.raw["y"], "y")
-            let valueUnit = try p.string("value_unit", or: "")
             let historyRev = try p.optionalInt("history_rev")
+            var slot: CanvasSlot? = nil
+            if let s = try p.optionalString("slot") {
+                guard let parsed = CanvasSlot(rawValue: s) else { throw bad("'slot' is \"original\", \"result\" or \"delta\"") }
+                slot = parsed
+            }
             guard let c = vm.scriptCanvases.canvases[id] else {
                 throw CommandError(code: .not_found, message: "no canvas \(id.uuidString)")
             }
             guard c.state == .open else {
                 throw CommandError(code: .invalid_state, message: "canvas is \(c.state.rawValue)")
             }
+            if let slot {
+                // A slot's picture covers the base image's world: no axes of its own.
+                var picture: ScriptCanvasImage? = nil
+                if p.raw["path"] == .null {
+                    // removes the slot's picture
+                } else {
+                    picture = try ScriptCanvasImage.load(path: try p.string("path"))
+                }
+                try vm.scriptCanvases.setSlotImage(id, slot: slot, image: picture, historyRev: historyRev)
+                return .object(["width": .int(picture?.width ?? 0), "height": .int(picture?.height ?? 0),
+                                "has_values": .bool(picture?.hasValues ?? false)])
+            }
+            let x = try parseAxis(p.raw["x"], "x")
+            let y = try parseAxis(p.raw["y"], "y")
+            let valueUnit = try p.string("value_unit", or: "")
             let image = try ScriptCanvasImage.load(path: try p.string("path"))
             try vm.scriptCanvases.setImage(id, image: image, world: CanvasWorld(x: x, y: y), valueUnit: valueUnit,
                                            historyRev: historyRev)
@@ -447,7 +483,7 @@ extension CommandRegistry {
         register("script.canvas.input",
                  summary: "The HAND's door, for a headless test — the window goes through the same store "
                         + "functions. Applied in this order: values, tool, mode, polarity, view, op, commit, "
-                        + "discard, undo, redo, seek, listen, play, press. `op` is {kind: rect, x0, x1, y0, y1, "
+                        + "discard, undo, redo, seek, listen, monitor_db, play, press. `op` is {kind: rect, x0, x1, y0, y1, "
                         + "polarity?} (sorted and clamped to the world; zero area adds nothing), {kind: stroke, "
                         + "points: [[x, y], …] (2…20000, kept as given), view_scale?: {x, y} (points per warped "
                         + "unit; default the current view), polarity?} or {kind: point, x, y, polarity?}; it uses "
@@ -479,6 +515,10 @@ extension CommandRegistry {
                           ParamSpec("seek", "number", required: false, "Caret (and playhead if playing), clamped to [0, end]."),
                           ParamSpec("listen", "string", required: false,
                                     "original | result | delta (`invalid_state` when that slot is empty)."),
+                          ParamSpec("monitor_db", "number", required: false,
+                                    "The monitoring level, dB (-20…+20, clamped; 0 = unity): what is HEARD in the "
+                                  + "window, never a file the script wrote. App-owned; a remembering canvas keeps it "
+                                  + "in the PROJECT. Does not move rev."),
                           ParamSpec("play", "bool", required: false, "true starts at the caret, false stops.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -540,6 +580,7 @@ extension CommandRegistry {
             let wantUndo = try p.bool("undo", or: false)
             let wantRedo = try p.bool("redo", or: false)
             let seek = try p.optionalDouble("seek")
+            let monitor = try p.optionalDouble("monitor_db")
             let play: Bool? = p.raw["play"] == nil ? nil : try p.bool("play")
 
             let number = { (o: [String: JSONValue], key: String) throws -> Double in
@@ -598,6 +639,7 @@ extension CommandRegistry {
             if wantRedo { try store.redo(id) }
             if let seek { try store.seek(id, to: seek) }
             if let listen { try store.setListen(id, listen) }
+            if let monitor { try store.setMonitor(id, db: monitor) }
             if let play { if play { try store.play(id) } else { try store.stop(id) } }
             if let press { try store.input(id, values: [:], press: press) }
             let c = store.canvases[id]

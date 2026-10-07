@@ -293,6 +293,8 @@ class Editor:
         self.selection = selection.SelectionCache()
         self.mask_cache = {}
         self.fft = None            # (n, k) of the base image and of the result
+        self.original_fft = None   # (n, k) the Original's picture (the `original` slot's) was drawn for
+        self.delta_key = None      # (committed steps, n, k) the Difference's picture was drawn for
         self.hist = None           # the last history WITH entries (the app omits them while the rev holds)
         self.prev_values = None    # the side bar's values at the last sync (None = not seen yet)
         self.image_steps = None    # the committed steps the base image shows (None = not drawn yet)
@@ -331,8 +333,12 @@ class Editor:
 
     def send_base(self, y, n, k, steps, rev):
         """The spectrogram of `y` (the result of the COMMITTED steps; the original when there are none)
-        as the base image, stamped with the history rev so the app lets the raw traces of the gestures
-        go: what is applied is seen in the picture itself, not under an overlay."""
+        as the base image — the RESULT's picture — stamped with the history rev so the app lets the raw
+        traces of the gestures go: what is applied is seen in the picture itself, not under an overlay.
+
+        The ORIGINAL's picture goes with it as the `original` slot's (the app draws the picture of the slot
+        being heard): it never changes, so it is made once per (n, k) — and, with no step, it IS the base
+        image, which is sent twice (the second time as a copy: the retention of base pictures must not take it)."""
         self.seq += 1
         path = os.path.join(self.work, "base-%d.objkcnv" % self.seq)
         image.write_base_image(path, y, self.sr, n, k)
@@ -340,9 +346,39 @@ class Editor:
             "canvas_id": self.cid, "path": path, "x": self.world["x"], "y": self.world["y"],
             "value_unit": "dB", "history_rev": rev})
         self.remember_file("base", path)
+        if self.original_fft != (n, k):
+            self.seq += 1
+            opath = os.path.join(self.work, "original-%d.objkcnv" % self.seq)
+            if steps:
+                image.write_base_image(opath, self.x, self.sr, n, k)
+            else:
+                shutil.copyfile(path, opath)   # the base image IS the original's: a file of its own, though
+            self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "original", "path": opath})
+            self.remember_file("original", opath)
+            self.original_fft = (n, k)
         self.fft = (n, k)
         self.image_steps = steps
         # The world is constant for a session, so the app keeps the layers (the selection layer stays).
+
+    def send_delta_image(self, steps, n, k, rev):
+        """The picture of the DIFFERENCE (original - committed result) as the `delta` slot's, so that the
+        spectrogram follows the ear when it listens to what the operations take away. Sent AFTER the
+        picture and the audio have settled (it is the one the hand needs last), and only when the
+        committed steps or the analysis changed: a live tweak of a pending selection never redraws it.
+        With no step it is silence, a blank picture that costs no transform."""
+        key = (steps, n, k)
+        if self.delta_key == key:
+            return
+        self.seq += 1
+        path = os.path.join(self.work, "delta-%d.objkcnv" % self.seq)
+        if steps:
+            image.write_base_image(path, self.x - self.committed_result(steps, n, k), self.sr, n, k)
+        else:
+            image.write_index_image(path, image.blank_image(self.x.shape[0], n, k))
+        self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "delta", "path": path,
+                                                  "history_rev": rev})
+        self.remember_file("delta-image", path)
+        self.delta_key = key
 
     # -- the selection, the committed result and the audio -----------------------------------------------
 
@@ -436,7 +472,10 @@ class Editor:
         key = self.audio_key_for(hist, pending, n, k, values)
         audio_stale = analysis_changed or key != self.audio_key
         self.prev_values = values
+        delta_stale = self.delta_key != (steps, n, k)
         if not (sel_stale or image_stale or audio_stale):
+            if delta_stale:
+                self.send_delta_image(steps, n, k, hist["rev"])
             return
         self.update(busy=True, status=tr("Calcul…", "Computing…", "Calculando…"))
         # A trace is never hidden before what replaces it is there: a selection that appears goes first
@@ -450,6 +489,8 @@ class Editor:
         if audio_stale:
             self.send_audio(hist, steps, drafts, values, n, k, key)
         self.update(busy=False, status=self.status(steps, pending))
+        if delta_stale:
+            self.send_delta_image(steps, n, k, hist["rev"])
 
     def run(self, original_path):
         """First display, then waits for the hand. Returns the last answer, whose state says how it ended."""
@@ -465,6 +506,7 @@ class Editor:
             "listen": "result"})
         self.result_key = self.audio_key = (0, n, k, None)
         self.update(busy=False, status=self.status([], 0))
+        self.send_delta_image([], n, k, 0)
         while True:
             if st.get("state") != "open":
                 return st

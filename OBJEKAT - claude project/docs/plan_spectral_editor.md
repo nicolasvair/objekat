@@ -1,6 +1,6 @@
 # Spectral editor: technical plan, revision 2 (`script.canvas.*` and `tools/scripts/spectral-editor/`)
 
-> **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Revision 4 (7 October 2026) is another: §10, last. Where they conflict with §1–§8, the later section wins (§10 over §9 over §1–§8).**
+> **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Revision 4 (7 October 2026) is another: §10. Revision 5 (7 October 2026) is the last: §11. Where they conflict with §1–§8, the later section wins (§11 over §10 over §9 over §1–§8).**
 
 This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral_editor.md`. It applies your review:
 - The canvas is now truly generic. All brush, rectangle and gain logic lives only in Python.
@@ -1104,3 +1104,60 @@ shows −24 / −12 dB at 3 kHz, no layer, a second and a third session remember
 - The time feather stays in ms (0…1000), the step is 1 ms.
 - The listened slot is not remembered: it opens on Result every time.
 
+## 11. Revision 5 (7 October 2026): yellow trace, listening level, a picture per listening state, overlap checked
+
+Branch `feature/spectral-editor-r5`. The canvas stays generic (gestures, layers, audio slots); the gain DSP stays in Python.
+
+### 11.1 Yellow trace
+
+The in-progress trace of a Draw gesture (brush discs, rectangle band and outline, point circle) is yellow
+(`ScriptCanvasPlotView.addTraceColor`); Erase keeps white and dashes. The amber pending-selection layer is unchanged.
+The same colours apply to the raw traces of ops the script has not reflected yet (they are the same drawing path).
+
+### 11.2 Listening level
+
+- **Where the gain is applied: in the app**, `ScriptCanvasAudition`: an `AVAudioUnitEQ` (`globalGain`, −96…+24 dB)
+  between the main mixer and the output. Instant, no re-render, never in a file. (A player node's volume cannot
+  exceed 1, so it cannot give +20 dB.)
+- **API**: `script.canvas.input {monitor_db}` (the window's slider goes through the same store function) and
+  `get.transport.monitor_db`. Range −20…+20, rounded to 0.1 dB, 0 by default.
+- **Persistence: the project document.** A new OPTIONAL key `ProjectDocument.canvasSettings`
+  (`[remember key: {monitorDB}]`, `CanvasProjectSettings` in `ScriptCanvasMemory.swift`, decoded tolerantly: a
+  malformed value gives 0 dB, it never refuses a project). Written by `projectDocument(...)`, read by the
+  loader, carried through parked tabs, reset by "new project". Not in `UserDefaults`, so another project opens
+  at 0 dB. The format version stays 19 (additive optional key, the `snapEnabled` / `viewport` precedent). Changing
+  the level does NOT mark the project dirty (the viewport precedent).
+- **UI**: a mini slider in the readout strip (signed dB, double-click = 0 dB).
+
+### 11.3 A picture per listening state
+
+`script.canvas.set_image {slot, path|null, history_rev?}` (command_api.md). The store keeps up to three slot
+pictures on the base image's world; the plot draws the one of the slot HEARD (the base image when absent).
+The script sends: the Original's once per analysis (a copied file, never the retained base), the Difference's
+(from the committed steps only) after everything else has settled (`send_delta_image`, +190 ms of script time on
+30 s stereo; a blank image when there is no step); the Result's is the base image itself. Switching is
+instant: no round trip.
+
+### 11.4 Overlap ("Recouvrement") investigation: nothing wrong
+
+- It sets the hop for BOTH the image and the processing: `dsp.hop_for(n, k) = floor(n/k + 0.5)`; image columns =
+  `min(L // hop + 1, 8192)`. `mask.stft_gain_block_fn` now takes the hop from `dsp.hop_for` (it had its own copy
+  of the same formula).
+- The image changes visibly (width, so time resolution); a change redraws immediately with the audio
+  (`test_editor.py`, scenario (c)).
+- Resynthesis: the weighted OLA (analysis × synthesis window / sum of squared windows) is exact for every FFT size
+  × overlap 2…10 tested, including the edges. `test_overlap.py`: null test (no op → result equals original below
+  −90 dB), a −24 dB gain test, edge placement, one hop for picture and mask.
+
+### 11.5 Tests
+
+`test_overlap.py` (new), `test_editor.py` (overlap redraw; one picture per listening state; the original sent once
+per analysis), `test_image.py` (blank), `tools/test_script_canvas_memory.swift` (project settings),
+`test_script_canvas_geometry.swift` (`signedDB`), scenario (c) (yellow, overlap width) and (h) (slot pictures,
+listening level, persistence in the project).
+
+### 11.6 Choices made without asking
+
+- The slider is in the readout strip, not the toolbar (width). Step 0.5 dB, double-click resets.
+- Format version not bumped; no dirty flag on a level change.
+- The Difference picture reflects committed steps only (a live pending selection is not in it).

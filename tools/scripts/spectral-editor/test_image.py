@@ -211,5 +211,18 @@ class Content(unittest.TestCase):
         self.assertEqual(first, 1)  # bin 1 is 23.4 Hz, the first at or above 20 Hz
 
 
+class Blank(unittest.TestCase):
+    def test_the_picture_of_silence_has_the_shape_of_a_real_one_and_is_black(self):
+        """The Difference's picture before any step (revision 5): same size as a built image, every cell at the
+        floor — and a built image of real silence agrees."""
+        for n, k, length in ((1024, 4, 9000), (2048, 7, 30001), (4096, 2, 100)):
+            blank = image.blank_image(length, n, k)
+            built = image.build_image(np.zeros(length, dtype=np.float32), 48000, n, k)
+            self.assertEqual(blank.shape, built.shape)
+            self.assertEqual(blank.dtype, np.uint8)
+            self.assertEqual(int(blank.max()), 0)
+            self.assertEqual(int(built.max()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

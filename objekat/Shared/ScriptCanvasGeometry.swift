@@ -420,6 +420,13 @@ nonisolated enum CanvasFormat {
         return trimmed(hz, decimals: 1) + " Hz"
     }
 
+    /// A level for the monitoring slider, with its sign: "+6 dB", "-3.5 dB", "0 dB".
+    static func signedDB(_ db: Double) -> String {
+        guard db.isFinite else { return "–" }
+        let t = trimmed(db, decimals: 1)
+        return (db > 0 && t != "0" ? "+" : "") + t + " dB"
+    }
+
     /// A number plus its unit ("-12.5 dB"); no unit, no space.
     static func number(_ v: Double, unit: String) -> String {
         let n = trimmed(v, decimals: 2)

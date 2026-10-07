@@ -259,6 +259,11 @@ final class EditViewModel {
     let scriptCanvases: ScriptCanvasStore = {
         let s = ScriptCanvasStore()
         s.stopProjectTransport = { if let x = CommandContext.shared.session, x.isPlaying { x.stop() } }
+        // A remembering canvas's monitoring level belongs to the PROJECT (@see CanvasProjectSettings).
+        s.monitorChanged = { key, db in
+            guard let vm = CommandContext.shared.viewModel else { return }
+            vm.canvasSettings = CanvasProjectSettings.updating(vm.canvasSettings, key: key, monitorDB: db)
+        }
         ScriptCanvasWindows.attach(to: s)   // the windows: opened only with an interface
         return s
     }()
@@ -1157,6 +1162,9 @@ final class EditViewModel {
     }
 
     var snapEnabled: Bool = true
+    /// What the script canvases keep in THIS project, by `remember` key (the spectral editor's monitoring
+    /// level). Written into the project document, replaced on every load, emptied by a new project.
+    var canvasSettings: [String: CanvasProjectSettings] = [:]
     var cmdKeyHeld: Bool = false
     var effectiveSnapEnabled: Bool { snapEnabled != cmdKeyHeld }
     /// ⌥ held at this instant. The counterpart of `cmdKeyHeld` above, and for the same reason:

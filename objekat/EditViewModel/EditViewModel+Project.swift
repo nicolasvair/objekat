@@ -265,7 +265,8 @@ extension EditViewModel {
                         viewport: currentViewport,
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                         comments: comments.isEmpty ? nil : comments,
-                        fxLinks: fxLinksDoc(for: items, stems: capturedStems))
+                        fxLinks: fxLinksDoc(for: items, stems: capturedStems),
+                        canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings)
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
@@ -362,6 +363,7 @@ extension EditViewModel {
         clearPendingFXSources()
         markerLanes = []
         comments = []
+        canvasSettings = [:]        // another project starts the editors at their defaults
         consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil

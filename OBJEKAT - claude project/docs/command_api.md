@@ -2524,6 +2524,12 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
   reflects — a script that redraws the spectrogram to show the RESULT says so, and the app counts it with the
   layers' when it decides which raw traces to hide; absent = it reflects nothing (`image.history_rev` in `get`). `not_found` (file), `bad_params` (format, size, caps, `min >= max`, a log
   axis with `min <= 0`, an unknown mapping), `invalid_state` (the canvas is not open). Never moves `rev`.
+  **`slot`** (revision 5, `original | result | delta`): the file is then that audio slot's PICTURE, covering the
+  SAME world as the base image (a base image must exist; `x` / `y` are ignored; `bad_params` for an unknown slot).
+  The plot draws the picture of the slot being HEARD and the base image when that slot has none, so switching
+  `listen` switches the picture with no round trip. `path: null` with `slot` removes it. `history_rev` is stored
+  per slot picture and counts, with the base image's and the layers', in `reflected_rev`. A new world (new axes)
+  drops every slot picture. Never moves `rev`.
 - **`script.canvas.set_layer {canvas_id, layer, path?, history_rev?, opacity?, z?}`** → `{layers: [{layer,
   width, height, path, z, opacity, history_rev}]}` in draw order. `path: null` removes. An existing id is
   replaced: same `z` / `opacity` unless given, `history_rev` as given (none = reflects nothing). `opacity`
@@ -2547,11 +2553,12 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
 {"canvas_id","rev","state":"open|validated|cancelled|closed","values":{},"events":[{"button":"id"}],
  "status","busy","remember":null,"tool":"rect"|null,"modes":false,"mode":"instant|select","polarity":"add|subtract",
  "history":{"rev":3,"cursor":2,"count":3,"pending":0,"unreflected":[8],"entries":[…]},
- "image":{"path","width","height","has_values","history_rev"}|null,
+ "image":{"path","width","height","has_values","history_rev",
+         "slots":{"original"?:{"path","width","height","history_rev"},…},"shown":"<path drawn now>"}|null,
  "layers":[{"layer","path","width","height","z","opacity","history_rev"}],
  "world":{"x":{"min","max","unit","mapping"},"y":{…}}|null,
  "view":{"x0","x1","y0","y1","width","height"}|null,
- "transport":{"playing","position","caret","listen":"original|result|delta",
+ "transport":{"playing","position","caret","listen":"original|result|delta","monitor_db":0.0,
               "slots":{"original":null,"result":null,"delta":null},"durations":{},"audio_history_rev":null}}
 ```
 
@@ -2560,9 +2567,9 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
   the gesture being drawn). `tool` is `null` when no tool was declared. `view` is in data units, `null` until
   there is a world.
 - **`script.canvas.input {canvas_id, values?, press?, tool?, mode?, polarity?, view?, op?, commit?, discard?,
-  undo?, redo?, seek?, listen?, play?}`** → `{rev, history_rev, cursor, pending, added, committed, discarded}` —
+  undo?, redo?, seek?, listen?, monitor_db?, play?}`** → `{rev, history_rev, cursor, pending, added, committed, discarded}` —
   the HAND's door (the window goes through the same store functions). Applied in this order: values, tool, mode,
-  polarity, view, op, commit, discard, undo, redo, seek, listen, play, press.
+  polarity, view, op, commit, discard, undo, redo, seek, listen, monitor_db, play, press.
   - `op` is `{kind: "rect", x0, x1, y0, y1, polarity?}` (sorted and clamped to the world; zero area gives
     `added: false`), `{kind: "stroke", points: [[x, y], …], view_scale?: {x, y}, polarity?}` (2…20000 points,
     kept as given — not clamped; `view_scale` is points per WARPED unit, default the current viewport; a path
@@ -2581,6 +2588,11 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
     `"select"`: `invalid_state` without `modes` and while a selection is pending (commit or discard it first —
     the window asks); going to Instant puts the polarity toggle back to `add`. `polarity` is the toggle: `"subtract"`
     is `invalid_state` in Instant.
+  - `monitor_db` (revision 5) is the LISTENING level in dB, clamped to -20…+20 (0 = unity). It is applied by the
+    app on the output of the window's audition (an output gain), so it never touches a file the script wrote, is
+    instant, and does not move `rev`. It is the PROJECT's, not the user's: a canvas that declares `remember` keeps
+    it in the project document (`canvasSettings[<remember key>].monitorDB`, optional additive key, format version
+    unchanged) and `script.canvas.open` restores it; another project opens at 0 dB.
   - `view` is `{x0, x1, y0, y1}` in data units, clamped to the world. `seek` is clamped to [0, end]. `listen` is
     `"original"`, `"result"` or `"delta"` (`invalid_state` if that slot is empty; there is no separate `delta`
     field any more); `play` true is `invalid_state` without an `original`, and stops the PROJECT's transport;
