@@ -1,3 +1,9 @@
 [submodule "tracktion_engine"]
 	path = tracktion_engine
 	url = https://github.com/nicolasvair/tracktion_engine_for_objekat.git
+[submodule "ARA_SDK/ARA_API"]
+	path = ARA_SDK/ARA_API
+	url = https://github.com/Celemony/ARA_API.git
+[submodule "ARA_SDK/ARA_Library"]
+	path = ARA_SDK/ARA_Library
+	url = https://github.com/Celemony/ARA_Library.git

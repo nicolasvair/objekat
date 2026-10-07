@@ -60,5 +60,13 @@ LAME 3.100
     lame-3.100/OBJEKAT-INTEGRATION.md for what departs from the original and why,
     and lame-3.100/COPYING for the licence itself.
 
+ARA SDK 2.3.0 (ARA_API and ARA_Library)
+    https://github.com/Celemony/ARA_API  https://github.com/Celemony/ARA_Library
+    Copyright (c) Celemony Software GmbH
+    Apache License, version 2.0, which is compatible with the AGPLv3 in this
+    direction (Apache-2.0 code may be included in an AGPLv3 work). Submodules in
+    ARA_SDK/ — not redistributed in this repository. "ARA" and "Audio Random
+    Access" are trademarks of Celemony Software GmbH.
+
 The complete text of the licence covering OBJEKAT is in LICENSE, at the root of
 this repository.

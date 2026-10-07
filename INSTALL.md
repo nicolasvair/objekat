@@ -86,6 +86,19 @@ checked upstream is that both pinned bases are still there.
 - **Never run `git submodule update` afterwards.** It would try to go back to the original
   commit — unfindable on any server — and would lose the rebuilt branch.
 
+## The ARA SDK (Melodyne and other ARA plugins)
+
+`ARA_SDK/ARA_API` and `ARA_SDK/ARA_Library` are two small submodules (Celemony's official
+repositories, tag `releases/2.3.0`, Apache-2.0). Path A brings them down with everything else. On
+path B (a clone WITHOUT `--recurse-submodules`), fetch them by name, and only them:
+
+```sh
+git submodule update --init ARA_SDK/ARA_API ARA_SDK/ARA_Library
+```
+
+Never `git submodule update --init --recursive` without paths here: it would also reset
+`tracktion_engine` (see the trap above).
+
 ## Building
 
 ```sh
