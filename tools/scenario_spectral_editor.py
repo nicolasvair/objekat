@@ -35,6 +35,11 @@ PROJECT under the canvas's `remember` key: saved, restored on reopening, 0 dB in
 UserDefaults). The real script's pictures (Original, Difference) and the overlap's effect on the picture are checked
 in (c).
 
+Section (i) — REVISION 6, CANVAS SIDE: an op's `slot` (the audio heard when it was drawn), and in Selection mode
+the undo that REVEALS an applied step's selection (pending again, settings restored; redo; Instant unchanged).
+Section (j) — REVISION 6, END TO END: working on the Difference (G' = 1 - (1 - G) g; Result + Difference = Original,
+pending selection included) and the spectrogram's display range (recoloured in place, remembered, Reset).
+
 Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
 an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
 window is the window layer's only side effect, and `--headless` forbids it).
@@ -2246,6 +2251,17 @@ def section_j(c):
         sc.hand(values={"db_floor": -90, "db_ceiling": -5})
         st = sc.wait_for(lambda s: cnv_range(s["image"]["path"]) == (-90.0, -5.0) and not s["busy"])
         check("j: the range is set again", st is not None)
+        # ---- Selection mode on the Difference: the PENDING selection is previewed on the difference too -----------
+        sc.hand(mode="select", listen="delta", values={"gain": -6})
+        sc.hand(op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: s["history"]["pending"] == 1 and Script.synced_selection(s))
+        check("j: Selection on the Difference: one pending gesture, the selection layer arrives", st is not None)
+        if st is not None:
+            res = audio(st, "result")
+            gpp = 1 - (1 - gp) * 10 ** (-6 / 20.0)
+            check("j: ... the preview is G'' = 1 - (1 - G') g: 3 kHz at %.2f dB (+-1)" % (20 * math.log10(gpp)),
+                  abs(lvl(res, orig, 3000) - 20 * math.log10(gpp)) <= 1.0, lvl(res, orig, 3000))
+            sc.hand(discard=True)
         sc.hand(press="cancel")
         sc.finish(60)
     finally:
