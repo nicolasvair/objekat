@@ -245,7 +245,7 @@ nonisolated struct CanvasViewport: Equatable {
 
 /// The discs the app draws for a stroke it has recorded and the script has not yet reflected:
 /// one every ¼ diameter along the path. Purely visual — the app has no notion of hardness, and the
-/// script's veil replaces the trace as soon as it arrives.
+/// script's refreshed picture replaces the trace as soon as it arrives.
 nonisolated enum CanvasStrokeTrace {
 
     /// The spacing between two discs, in diameters. Fixed.

@@ -42,7 +42,7 @@ final class ScriptCanvasPlotNSView: NSView {
 
     static let leftRuler: CGFloat = 56
     static let topRuler: CGFloat = 22
-    /// The alpha of one disc of a stroke's raw trace. Purely visual (the script's veil replaces the
+    /// The alpha of one disc of a stroke's raw trace. Purely visual (the script's refreshed picture replaces the
     /// trace as soon as it arrives), and cumulative: passing again darkens more. A SUBTRACT stroke
     /// (Erase) is traced in white, a little stronger, so that it reads on the dark traces it undoes.
     static let traceDiscAlpha: CGFloat = 0.15
@@ -262,7 +262,7 @@ final class ScriptCanvasPlotNSView: NSView {
     }
 
     /// The raw trace of every active op the script has not yet reflected (@see
-    /// ScriptCanvas.unreflectedOpIDs): the veil the script sends replaces it.
+    /// ScriptCanvas.unreflectedOpIDs): the picture the script sends (a refreshed base image, a layer) replaces it.
     private func drawTraces(_ c: ScriptCanvas, in ctx: CGContext, world: CanvasWorld, vp: CanvasViewport) {
         let unreflected = c.unreflectedOps
         guard !unreflected.isEmpty else { return }

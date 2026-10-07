@@ -321,7 +321,7 @@ def section_b(c):
           r == {"width": 4, "height": 2, "has_values": True}, r)
     g = c.send("script.canvas.get", {"canvas_id": cid})
     check("b: get: image, world and a fitted view",
-          g["image"] == {"path": CNV, "width": 4, "height": 2, "has_values": True}
+          g["image"] == {"path": CNV, "width": 4, "height": 2, "has_values": True, "history_rev": None}
           and g["world"]["x"] == {"min": 0, "max": 10, "unit": "s", "mapping": "lin"}
           and g["world"]["y"] == {"min": 20, "max": 24000, "unit": "Hz", "mapping": "log"}
           and g["view"]["x0"] == 0 and g["view"]["x1"] == 10
@@ -640,6 +640,19 @@ def section_b(c):
     check("b: replacing a layer keeps its z, takes the opacity, history_rev as given (none)",
           r["layers"] == [{"layer": "veil", "path": RGB2, "width": 2, "height": 2, "z": 1, "opacity": 0.5, "history_rev": None}], r)
     check("b: a layer with no history_rev reflects nothing", hist()["unreflected"] == [1, 2], hist())
+    # revision 4: the BASE image itself can reflect the history (the script redraws the spectrogram)
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS, "history_rev": a})
+    g = c.send("script.canvas.get", {"canvas_id": cid})
+    check("b: set_image history_rev: the base image reflecting op 1 hides its trace; get shows image.history_rev",
+          hist()["unreflected"] == [2] and g["image"]["history_rev"] == a, (hist(), g["image"]))
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS, "history_rev": hist()["rev"]})
+    check("b: ... at the current rev every trace is hidden", hist()["unreflected"] == [], hist())
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+    g = c.send("script.canvas.get", {"canvas_id": cid})
+    check("b: a set_image with no history_rev reflects nothing again (image.history_rev null)",
+          hist()["unreflected"] == [1, 2] and g["image"]["history_rev"] is None, (hist(), g["image"]))
+    expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS, "history_rev": "x"}),
+                 "bad_params", "b: set_image: a non-integer history_rev -> bad_params")
     c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "a", "path": RGB, "z": 5})
     r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "b", "path": RGB, "z": 0})
     check("b: layers are listed in ascending z", [l["layer"] for l in r["layers"]] == ["b", "veil", "a"], r)
@@ -741,6 +754,19 @@ def section_b(c):
           and abs(r["durations"]["original"] - 3.0) < 1e-6 and r["playing"] is False and r["caret"] == 0, r)
     check("b: audio_history_rev is stored",
           c.send("script.canvas.get", {"canvas_id": cid})["transport"]["audio_history_rev"] == 0)
+    # revision 4: set_audio {listen} chooses the slot heard, with the files it brings
+    expect_error(lambda: c.send("script.canvas.set_audio", {"canvas_id": cid, "listen": "result"}),
+                 "invalid_state", "b: set_audio listen on an empty slot -> invalid_state")
+    expect_error(lambda: c.send("script.canvas.set_audio", {"canvas_id": cid, "result": WAV3, "listen": "sideways"}),
+                 "bad_params", "b: set_audio: an unknown listen -> bad_params")
+    check("b: ... and a refused call stored nothing",
+          c.send("script.canvas.get", {"canvas_id": cid})["transport"]["slots"]["result"] is None)
+    r = c.send("script.canvas.set_audio", {"canvas_id": cid, "result": WAV3, "listen": "result"})
+    t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
+    check("b: set_audio listen result with the file: the slot is heard at once", t["listen"] == "result" and t["slots"]["result"] == WAV3, t)
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "result": None})
+    t = c.send("script.canvas.get", {"canvas_id": cid})["transport"]
+    check("b: clearing the heard result still falls back to the original", t["listen"] == "original", t)
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "listen": "result"}),
                  "invalid_state", "b: listen on an empty slot -> invalid_state")
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "listen": "delta"}),
@@ -812,32 +838,56 @@ def section_b(c):
     check("b: the end of the transport follows the offset (offset + duration)",
           abs(c.send("script.canvas.get", {"canvas_id": cid})["transport"]["caret"] - 4.5) < 1e-6)
 
-    # -- remember --------------------------------------------------------------------------
-    key = "spectral-gain.scenario"
-    cr = open_canvas(c, remember=key)
+    # -- remember (live, revision 4) -------------------------------------------------------
+    key = "spectral-gain.scenario.b"
+    cr = open_canvas(c, remember=key, modes=True)
+    g0 = c.send("script.canvas.get", {"canvas_id": cr})
+    check("b: a first opening of a remembering canvas shows the declared values, Instant, the first tool",
+          g0["values"]["gain"] == -12 and g0["remember"] == key and g0["mode"] == "instant" and g0["tool"] == "rect", g0["values"])
     c.send("script.canvas.input", {"canvas_id": cr, "values": {"gain": -33, "hardness": 80}})
+    c.send("script.canvas.input", {"canvas_id": cr, "tool": "brush"})
+    c.send("script.canvas.input", {"canvas_id": cr, "mode": "select"})
     c.send("script.canvas.input", {"canvas_id": cr, "press": "cancel"})
-    cr = open_canvas(c, remember=key)
+    cr = open_canvas(c, remember=key, modes=True)
     v = c.send("script.canvas.get", {"canvas_id": cr})
-    check("b: Cancel remembers nothing", v["values"]["gain"] == -12 and v["remember"] == key, v["values"])
-    c.send("script.canvas.input", {"canvas_id": cr, "values": {"gain": -33, "hardness": 80}})
+    check("b: values, tool and mode are remembered LIVE: even a Cancel keeps them",
+          v["values"]["gain"] == -33 and v["values"]["hardness"] == 80 and v["tool"] == "brush" and v["mode"] == "select",
+          (v["values"], v["tool"], v["mode"]))
+    check("b: the history is not remembered (a fresh one)", v["history"]["count"] == 0 and v["history"]["pending"] == 0)
+    c.send("script.canvas.input", {"canvas_id": cr, "values": {"gain": -7}})
     c.send("script.canvas.input", {"canvas_id": cr, "press": "validate"})
     check("b: Validate ends the canvas", c.send("script.canvas.get", {"canvas_id": cr})["state"] == "validated")
     expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cr, "values": {"gain": 1}}),
                  "invalid_state", "b: input on a validated canvas -> invalid_state")
     expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cr, "path": CNV, "x": X_AXIS, "y": Y_AXIS}),
                  "invalid_state", "b: set_image on a canvas that is not open -> invalid_state")
-    cr = open_canvas(c, remember=key)
-    v = c.send("script.canvas.get", {"canvas_id": cr})["values"]
-    check("b: a re-open shows the values last validated", v["gain"] == -33 and v["hardness"] == 80, v)
+    cr = open_canvas(c, remember=key, modes=True)
+    g = c.send("script.canvas.get", {"canvas_id": cr})
+    check("b: a re-open shows the last values, tool and mode", g["values"]["gain"] == -7 and g["values"]["hardness"] == 80
+          and g["tool"] == "brush" and g["mode"] == "select", (g["values"], g["tool"], g["mode"]))
+    cr2 = open_canvas(c, remember=key)
+    g = c.send("script.canvas.get", {"canvas_id": cr2})
+    check("b: a canvas WITHOUT modes does not take a remembered mode",
+          g["mode"] == "instant" and g["tool"] == "brush" and g["values"]["gain"] == -7, (g["mode"], g["tool"]))
+    cr3 = open_canvas(c, remember=key, modes=True, tools=[TOOLS[0]])
+    g = c.send("script.canvas.get", {"canvas_id": cr3})
+    check("b: a remembered tool the canvas no longer declares is ignored (the first tool stays)", g["tool"] == "rect", g["tool"])
+    cr = open_canvas(c, remember=key, modes=True)
     rv = c.send("script.canvas.get", {"canvas_id": cr})["rev"]
     c.send("script.canvas.input", {"canvas_id": cr, "press": "reset"})
     g = c.send("script.canvas.get", {"canvas_id": cr})
     check("b: reset restores the declared values and moves rev", g["values"]["gain"] == -12 and g["values"]["hardness"] == 50
           and g["rev"] > rv, g["values"])
+    check("b: reset leaves the tool and the mode where they are", g["tool"] == "brush" and g["mode"] == "select", (g["tool"], g["mode"]))
     c.send("script.canvas.input", {"canvas_id": cr, "press": "cancel"})
-    cr = open_canvas(c, remember=key)
-    check("b: reset erased the memory", c.send("script.canvas.get", {"canvas_id": cr})["values"]["gain"] == -12)
+    cr = open_canvas(c, remember=key, modes=True)
+    g = c.send("script.canvas.get", {"canvas_id": cr})
+    check("b: reset erased the values' memory (not the tool/mode's)",
+          g["values"]["gain"] == -12 and g["tool"] == "brush" and g["mode"] == "select")
+    c.send("script.canvas.close", {"canvas_id": cr})
+    cr = open_canvas(c, remember=key + ".other", modes=True)
+    g = c.send("script.canvas.get", {"canvas_id": cr})
+    check("b: another key remembers nothing of it", g["tool"] == "rect" and g["mode"] == "instant" and g["values"]["gain"] == -12)
     c.send("script.canvas.close", {"canvas_id": cr})
 
     # -- no trace in the project -----------------------------------------------------------

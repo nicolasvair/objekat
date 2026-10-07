@@ -106,7 +106,8 @@ extension CommandRegistry {
                 "history": .object(history),
                 "image": c.image.map { img in
                     .object(["path": .string(img.path), "width": .int(img.width),
-                             "height": .int(img.height), "has_values": .bool(img.hasValues)])
+                             "height": .int(img.height), "has_values": .bool(img.hasValues),
+                             "history_rev": c.imageHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null])
                 } ?? .null,
                 "layers": .array(ScriptCanvasStore.layersInDrawOrder(c.layers).map(layerPayload)),
                 "world": c.world.map { .object(["x": axisPayload($0.x), "y": axisPayload($0.y)]) } ?? .null,
@@ -242,6 +243,7 @@ extension CommandRegistry {
             if let key = try ScriptControls.rememberKey(p.raw["remember"], title: canvas.title) {
                 canvas.rememberKey = key
                 ScriptControls.applyRemembered(key, controls: controls, into: &canvas.values)
+                ScriptCanvasStore.applyRememberedState(to: &canvas)
             }
             canvas.status = try p.string("status", or: "")
             canvas.busy = try p.bool("busy", or: false)
@@ -254,19 +256,25 @@ extension CommandRegistry {
                         + "(unit \"s\" gives time rulers, \"Hz\" Hz / kHz rulers; mapping \"lin\" or \"log\", the "
                         + "latter needing min > 0). The file is an OBJKCNV1 (indexed, with values), an OBJKRGB1 "
                         + "or any image ImageIO reads (no values). Same axes as before: the view and the layers "
-                        + "are kept; otherwise the view is refitted and every layer dropped. Never moves rev.",
+                        + "are kept; otherwise the view is refitted and every layer dropped. `history_rev` = the "
+                        + "history revision the image reflects (counted with the layers' to hide traces). "
+                        + "Never moves rev.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
                           ParamSpec("path", "string", "The image file."),
                           ParamSpec("x", "object", "{min, max, unit?, mapping?}"),
                           ParamSpec("y", "object", "{min, max, unit?, mapping?}"),
                           ParamSpec("value_unit", "string", required: false,
-                                    "The unit of the image's values, for the pointer readout.")],
+                                    "The unit of the image's values, for the pointer readout."),
+                          ParamSpec("history_rev", "int", required: false,
+                                    "The history revision this image reflects (a script that redraws the "
+                                  + "spectrogram to show the result): the app hides the trace of every op it covers.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("canvas_id")
             let x = try parseAxis(p.raw["x"], "x")
             let y = try parseAxis(p.raw["y"], "y")
             let valueUnit = try p.string("value_unit", or: "")
+            let historyRev = try p.optionalInt("history_rev")
             guard let c = vm.scriptCanvases.canvases[id] else {
                 throw CommandError(code: .not_found, message: "no canvas \(id.uuidString)")
             }
@@ -274,7 +282,8 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state, message: "canvas is \(c.state.rawValue)")
             }
             let image = try ScriptCanvasImage.load(path: try p.string("path"))
-            try vm.scriptCanvases.setImage(id, image: image, world: CanvasWorld(x: x, y: y), valueUnit: valueUnit)
+            try vm.scriptCanvases.setImage(id, image: image, world: CanvasWorld(x: x, y: y), valueUnit: valueUnit,
+                                           historyRev: historyRev)
             return .object(["width": .int(image.width), "height": .int(image.height),
                             "has_values": .bool(image.hasValues)])
         }
@@ -325,13 +334,17 @@ extension CommandRegistry {
                         + "plays (default 0, kept when absent). `history_rev` = the history revision the files "
                         + "reflect: while history.rev is ahead of it the window shows \"computing\". Clearing the "
                         + "slot being heard (`listen`) falls back to the original; clearing the original stops "
-                        + "playback. Never moves rev.",
+                        + "playback. `listen` chooses the slot heard. Never moves rev.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
                           ParamSpec("original", "string|null", required: false, "Path, or null."),
                           ParamSpec("result", "string|null", required: false, "Path, or null."),
                           ParamSpec("delta", "string|null", required: false, "Path, or null."),
                           ParamSpec("offset", "number", required: false, "x of the files' sample 0."),
-                          ParamSpec("history_rev", "int", required: false, "The history revision the files reflect.")],
+                          ParamSpec("history_rev", "int", required: false, "The history revision the files reflect."),
+                          ParamSpec("listen", "string", required: false,
+                                    "original | result | delta: the slot to hear, as the window's switch (it must "
+                                  + "hold a file once this call is applied, else `invalid_state` and nothing is stored). "
+                                  + "A script says it once, with its first files.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("canvas_id")
@@ -343,7 +356,12 @@ extension CommandRegistry {
             }
             let offset = try p.optionalDouble("offset")
             let historyRev = try p.optionalInt("history_rev")
-            try vm.scriptCanvases.setAudio(id, slots: slots, offset: offset, historyRev: historyRev)
+            var listen: CanvasListen? = nil
+            if let s = try p.optionalString("listen") {
+                guard let l = CanvasListen(rawValue: s) else { throw bad("'listen' is \"original\", \"result\" or \"delta\"") }
+                listen = l
+            }
+            try vm.scriptCanvases.setAudio(id, slots: slots, offset: offset, historyRev: historyRev, listen: listen)
             let c = try vm.scriptCanvases.read(id)
             var out: [String: JSONValue] = [
                 "playing": .bool(c.transport.playing),

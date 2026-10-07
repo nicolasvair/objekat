@@ -26,9 +26,11 @@ import AVFoundation
 // TWO REVISIONS. `rev` is the canvas's (the long poll's); `historyRev` is the history's — it moves
 // each time the active list of ENTRIES changes (an entry added, sealed, discarded, an undo, a redo),
 // and a script stamps what it computed from it (`set_layer {history_rev}`, `set_audio
-// {history_rev}`). The app hides the trace of an op once a layer reflecting it has arrived (§2.4):
-// `reflectedRev` is the largest `history_rev` any layer carries, and an active op shows its raw trace
-// iff its ENTRY's `activeSince > reflectedRev`.
+// {history_rev}`). The app hides the trace of an op once a picture reflecting it has arrived (§2.4):
+// `reflectedRev` is the largest `history_rev` the BASE image or any layer carries (revision 4: the
+// base image itself can reflect the history — a script that refreshes the spectrogram to show the
+// result says so with `set_image {history_rev}`), and an active op shows its raw trace iff its
+// ENTRY's `activeSince > reflectedRev`.
 //
 // THE HISTORY IS ENTRIES (plan §9, revision 3): a `draft` (one gesture of a pending selection) or a
 // `step` (a committed step: its ops and a snapshot of every hand value at the moment it was sealed).
@@ -203,6 +205,8 @@ struct ScriptCanvas {
 
     // What is drawn
     var image: ScriptCanvasImage? = nil
+    /// The history revision the BASE image reflects (`set_image`'s `history_rev`); nil = none claimed.
+    var imageHistoryRev: Int? = nil
     /// The unit of the base image's values, for the pointer readout.
     var valueUnit = ""
     var world: CanvasWorld? = nil
@@ -210,8 +214,8 @@ struct ScriptCanvas {
 
     var transport = ScriptCanvasTransport()
 
-    /// The largest `history_rev` any layer carries, −1 when none does.
-    var reflectedRev: Int { layers.compactMap(\.historyRev).max() ?? -1 }
+    /// The largest `history_rev` the base image or any layer carries, −1 when none does.
+    var reflectedRev: Int { (layers.compactMap(\.historyRev) + [imageHistoryRev].compactMap { $0 }).max() ?? -1 }
 
     /// The history's revision: moves each time the active list of entries changes.
     var historyRev: Int { history.rev }
@@ -280,6 +284,32 @@ struct ScriptCanvas {
 
     private static func bad(_ m: String) -> CommandError { CommandError(code: .bad_params, message: m) }
     private static func invalid(_ m: String) -> CommandError { CommandError(code: .invalid_state, message: m) }
+
+    // MARK: What a canvas remembers besides its values — the mode and the tool (plan §10)
+
+    /// The ONE place that names the storage of a canvas's own state (a panel has none): the panel
+    /// memory's, under `<key>.canvas`, so the hand's Reset (which erases `<key>`) leaves it alone.
+    static func stateMemoryKey(_ key: String) -> String { key + ".canvas" }
+
+    /// Keeps the mode (only when the canvas has modes) and the active tool of a remembering canvas.
+    private func rememberState(_ c: ScriptCanvas) {
+        guard let key = c.rememberKey else { return }
+        var raw: [String: JSONValue] = [:]
+        if c.modes { raw["mode"] = .string(c.mode.rawValue) }
+        if let tool = c.activeTool { raw["tool"] = .string(tool) }
+        ScriptPanelMemory.save(Self.stateMemoryKey(key), raw)
+    }
+
+    /// Puts onto a canvas about to open the mode and tool it was left on, when they still fit.
+    static func applyRememberedState(to canvas: inout ScriptCanvas) {
+        guard let key = canvas.rememberKey else { return }
+        let stored = ScriptPanelMemory.load(stateMemoryKey(key))
+        let fit = CanvasRememberedState.restored(
+            CanvasRememberedState(mode: stored["mode"]?.stringValue, tool: stored["tool"]?.stringValue),
+            modesEnabled: canvas.modes, toolIDs: canvas.tools.map(\.id))
+        if let m = fit.mode, let mode = CanvasMode(rawValue: m) { canvas.mode = mode }
+        if let t = fit.tool { canvas.activeTool = t }
+    }
 
     // MARK: Open / close
 
@@ -353,14 +383,17 @@ struct ScriptCanvas {
         }
         guard c.state == .open else { throw Self.invalid("canvas is \(c.state.rawValue)") }
         try ScriptControls.applyHand(values, controls: c.controls, into: &c.values)
+        // A canvas remembers LIVE (plan §10): every change of a hand value is kept for the next
+        // opening, whatever way the window ends. A Reset press below erases it again.
+        if let key = c.rememberKey, !values.isEmpty, press != "reset" {
+            ScriptControls.remember(key, controls: c.controls, values: c.values)
+        }
         var immediate = !coalesced
         var ended = false
         if let press {
             switch press {
             case "validate":
                 c.state = .validated; immediate = true; ended = true
-                // Validate is the ONLY thing that remembers: not Cancel, not the window closing.
-                if let key = c.rememberKey { ScriptControls.remember(key, controls: c.controls, values: c.values) }
             case "cancel":
                 c.state = .cancelled; immediate = true; ended = true
             case "reset" where c.rememberKey != nil:
@@ -432,10 +465,14 @@ struct ScriptCanvas {
 
     /// Sets the BASE image and the world. If the axes are unchanged the view and the layers are
     /// kept; otherwise the view is refitted and every layer is dropped.
-    func setImage(_ id: UUID, image: ScriptCanvasImage, world: CanvasWorld, valueUnit: String) throws {
+    /// `historyRev`: the history revision the new image reflects (a script that redraws the spectrogram
+    /// to show the RESULT), counted with the layers' when the app decides which traces to hide; nil = none.
+    func setImage(_ id: UUID, image: ScriptCanvasImage, world: CanvasWorld, valueUnit: String,
+                  historyRev: Int? = nil) throws {
         var c = try openCanvas(id)
         let sameWorld = c.world?.isSame(as: world) ?? false
         c.image = image
+        c.imageHistoryRev = historyRev
         c.valueUnit = valueUnit
         c.world = world
         if !sameWorld { c.layers = [] }
@@ -490,13 +527,22 @@ struct ScriptCanvas {
 
     /// Sets the three files. A key present with nil CLEARS the slot, an absent key keeps it. Every
     /// file is opened (header only) before anything is stored, so a refused call changes nothing.
-    func setAudio(_ id: UUID, slots: [CanvasSlot: String?], offset: Double?, historyRev: Int?) throws {
+    /// `listen` (optional) chooses the slot heard, like the hand's switch: it must hold a file once the
+    /// call is applied (`invalid_state` otherwise, nothing stored). A script says it once, with its first
+    /// files, to open on the slot it wants heard.
+    func setAudio(_ id: UUID, slots: [CanvasSlot: String?], offset: Double?, historyRev: Int?,
+                  listen: CanvasListen? = nil) throws {
         var c = try openCanvas(id)
         var lengths: [CanvasSlot: Double] = [:]
         for (slot, path) in slots {
             if let path { lengths[slot] = try Self.audioDuration(path: path) }
         }
         if let offset, !offset.isFinite { throw Self.bad("offset must be a finite number") }
+        if let listen {
+            let target = CanvasSlot(rawValue: listen.rawValue)!
+            let filled = slots[target].map { $0 != nil } ?? (c.transport.slots[target] != nil)
+            guard filled else { throw Self.invalid("the \(listen.rawValue) slot would be empty") }
+        }
         for (slot, path) in slots {
             if let path {
                 c.transport.slots[slot] = path
@@ -508,6 +554,7 @@ struct ScriptCanvas {
         }
         if let offset { c.transport.offset = offset }
         if let historyRev { c.transport.audioHistoryRev = historyRev }
+        if let listen { c.transport.listen = listen }
         // What can no longer be heard falls back: a cleared `result` or `delta` being heard to the
         // original, a cleared original to silence.
         if c.transport.listen != .original, c.transport.slots[CanvasSlot(rawValue: c.transport.listen.rawValue)!] == nil {
@@ -538,6 +585,7 @@ struct ScriptCanvas {
         }
         c.activeTool = tool
         canvases[id] = c
+        rememberState(c)
     }
 
     /// The visible window, in a plot of the size the window gave it (nominal when headless). nil
@@ -589,6 +637,7 @@ struct ScriptCanvas {
         }
         canvases[id]!.mode = mode
         if mode == .instant { canvases[id]!.polarity = .add }
+        rememberState(canvases[id]!)
     }
 
     /// The Draw / Erase toggle. `subtract` is refused in Instant mode.
