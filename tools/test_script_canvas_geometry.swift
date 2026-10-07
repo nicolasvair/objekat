@@ -260,6 +260,10 @@ enum ScriptCanvasGeometryTest {
 
     // MARK: - Strings
 
+    check("signed dB: positive, negative, zero", CanvasFormat.signedDB(6) == "+6 dB" && CanvasFormat.signedDB(-3.5) == "-3.5 dB"
+          && CanvasFormat.signedDB(0) == "0 dB")
+    check("signed dB: -0.04 reads 0 dB (no '+', no '-0')", CanvasFormat.signedDB(-0.04) == "0 dB" && CanvasFormat.signedDB(0.04) == "0 dB")
+    check("signed dB: the ends of the range", CanvasFormat.signedDB(20) == "+20 dB" && CanvasFormat.signedDB(-20) == "-20 dB")
     check("time 0", CanvasFormat.time(0) == "0:00.000")
     check("time 1.5", CanvasFormat.time(1.5) == "0:01.500")
     check("time 65.25", CanvasFormat.time(65.25) == "1:05.250")

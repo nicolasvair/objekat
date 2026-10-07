@@ -645,6 +645,29 @@
         }
       }
     },
+    "canvas.monitor.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening level: changes what you hear here, never the validated result (double-click the value: 0 dB)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volumen de escucha: cambia lo que oyes aquí, nunca el resultado validado (doble clic en el valor: 0 dB)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volume d'écoute : change ce que vous entendez ici, jamais le résultat validé (double-clic sur la valeur : 0 dB)"
+          }
+        }
+      }
+    },
     "canvas.pending.ignore": {
       "extractionState": "manual",
       "localizations": {

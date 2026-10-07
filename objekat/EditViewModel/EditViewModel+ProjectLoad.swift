@@ -215,6 +215,7 @@ extension EditViewModel {
         clearPendingFXSources()
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
+        canvasSettings = doc.canvasSettings ?? [:]
         consolidateEditStack.removeAll()
         resetTransientSessionState(preservingClipboard: preservingClipboard)
 

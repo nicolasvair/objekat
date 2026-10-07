@@ -85,6 +85,7 @@ extension CommandRegistry {
             var transport: [String: JSONValue] = [
                 "playing": .bool(c.transport.playing), "position": num(position),
                 "caret": num(c.transport.caret), "listen": .string(c.transport.listen.rawValue),
+                "monitor_db": num(c.transport.monitorDB),
                 "audio_history_rev": c.transport.audioHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null,
             ]
             if let both = slotsPayload(c.transport).objectValue { transport.merge(both) { a, _ in a } }
@@ -252,6 +253,8 @@ extension CommandRegistry {
                 canvas.rememberKey = key
                 ScriptControls.applyRemembered(key, controls: controls, into: &canvas.values)
                 ScriptCanvasStore.applyRememberedState(to: &canvas)
+                // The monitoring level is the PROJECT's, not the user's: another project opens at 0 dB.
+                canvas.transport.monitorDB = CanvasProjectSettings.monitor(of: vm.canvasSettings[key])
             }
             canvas.status = try p.string("status", or: "")
             canvas.busy = try p.bool("busy", or: false)
@@ -480,7 +483,7 @@ extension CommandRegistry {
         register("script.canvas.input",
                  summary: "The HAND's door, for a headless test — the window goes through the same store "
                         + "functions. Applied in this order: values, tool, mode, polarity, view, op, commit, "
-                        + "discard, undo, redo, seek, listen, play, press. `op` is {kind: rect, x0, x1, y0, y1, "
+                        + "discard, undo, redo, seek, listen, monitor_db, play, press. `op` is {kind: rect, x0, x1, y0, y1, "
                         + "polarity?} (sorted and clamped to the world; zero area adds nothing), {kind: stroke, "
                         + "points: [[x, y], …] (2…20000, kept as given), view_scale?: {x, y} (points per warped "
                         + "unit; default the current view), polarity?} or {kind: point, x, y, polarity?}; it uses "
@@ -512,6 +515,10 @@ extension CommandRegistry {
                           ParamSpec("seek", "number", required: false, "Caret (and playhead if playing), clamped to [0, end]."),
                           ParamSpec("listen", "string", required: false,
                                     "original | result | delta (`invalid_state` when that slot is empty)."),
+                          ParamSpec("monitor_db", "number", required: false,
+                                    "The monitoring level, dB (-20…+20, clamped; 0 = unity): what is HEARD in the "
+                                  + "window, never a file the script wrote. App-owned; a remembering canvas keeps it "
+                                  + "in the PROJECT. Does not move rev."),
                           ParamSpec("play", "bool", required: false, "true starts at the caret, false stops.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -573,6 +580,7 @@ extension CommandRegistry {
             let wantUndo = try p.bool("undo", or: false)
             let wantRedo = try p.bool("redo", or: false)
             let seek = try p.optionalDouble("seek")
+            let monitor = try p.optionalDouble("monitor_db")
             let play: Bool? = p.raw["play"] == nil ? nil : try p.bool("play")
 
             let number = { (o: [String: JSONValue], key: String) throws -> Double in
@@ -631,6 +639,7 @@ extension CommandRegistry {
             if wantRedo { try store.redo(id) }
             if let seek { try store.seek(id, to: seek) }
             if let listen { try store.setListen(id, listen) }
+            if let monitor { try store.setMonitor(id, db: monitor) }
             if let play { if play { try store.play(id) } else { try store.stop(id) } }
             if let press { try store.input(id, values: [:], press: press) }
             let c = store.canvases[id]

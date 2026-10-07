@@ -164,6 +164,10 @@ struct ScriptCanvasTransport {
     var offset = 0.0
     /// The history revision the files reflect; nil until the script says.
     var audioHistoryRev: Int? = nil
+    /// The monitoring level (dB), APP-OWNED, applied by the audition at the output: it changes what is
+    /// heard in the window (Original, Result and Difference alike), never a file the script wrote nor
+    /// what Validate lays back. -20…+20, 0 by default; a remembering canvas has it from the project.
+    var monitorDB = CanvasProjectSettings.defaultMonitorDB
 
     /// Where playback ends: the longest file, placed at `offset`.
     var end: Double {
@@ -282,6 +286,9 @@ struct ScriptCanvas {
     @ObservationIgnored var transportChanged: ((UUID) -> Void)?
     /// Starting a canvas's playback stops the PROJECT's (set by the view-model).
     @ObservationIgnored var stopProjectTransport: (() -> Void)?
+    /// A REMEMBERING canvas's monitoring level moved: (its `remember` key, the level, dB). The
+    /// view-model keeps it in the project (@see CanvasProjectSettings).
+    @ObservationIgnored var monitorChanged: ((String, Double) -> Void)?
 
     /// A headless canvas has no window to measure: this is the plot it nominally has.
     static let nominalWidth = 1000.0
@@ -896,6 +903,19 @@ struct ScriptCanvas {
             throw Self.invalid("the \(listen.rawValue) slot is empty")
         }
         canvases[id]!.transport.listen = listen
+        transportChanged?(id)
+    }
+
+    /// The monitoring level, dB: clamped to -20…+20 (a number control's rule), rounded to 0.1 dB. Never
+    /// moves `rev` (it is the hand's listening, not the script's business) and never reaches a file. A
+    /// REMEMBERING canvas reports it (`monitorChanged`) so the project keeps it.
+    func setMonitor(_ id: UUID, db: Double) throws {
+        let c = try openCanvas(id)
+        guard db.isFinite else { throw Self.bad("monitor_db must be a finite number") }
+        let v = CanvasProjectSettings.clampedMonitor(db)
+        guard v != c.transport.monitorDB else { return }
+        canvases[id]!.transport.monitorDB = v
+        if let key = c.rememberKey { monitorChanged?(key, v) }
         transportChanged?(id)
     }
 }

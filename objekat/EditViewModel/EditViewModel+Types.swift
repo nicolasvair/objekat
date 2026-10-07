@@ -39,11 +39,16 @@ struct ProjectDocument: Codable {
     /// The free texts laid on the timeline. Beside `items` and not inside it: a comment carries no
     /// sound and has no engine object. nil/absent ⇒ none. See `TimelineComment`.
     var comments: [TimelineComment]?
+    /// Settings a script canvas keeps IN THE PROJECT, keyed by the canvas's `remember` key: today the
+    /// monitoring level of the spectral editor. A listening preference, so purely visual like the
+    /// viewport (changing it never marks the project modified). nil/absent ⇒ none. See
+    /// `CanvasProjectSettings`.
+    var canvasSettings: [String: CanvasProjectSettings]?
 
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks
+        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -60,7 +65,8 @@ struct ProjectDocument: Codable {
          viewport: ViewportState? = nil,
          markerLanes: [MarkerLane]? = nil,
          comments: [TimelineComment]? = nil,
-         fxLinks: [FXLink]? = nil) {
+         fxLinks: [FXLink]? = nil,
+         canvasSettings: [String: CanvasProjectSettings]? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -74,6 +80,7 @@ struct ProjectDocument: Codable {
         self.markerLanes = markerLanes
         self.comments = comments
         self.fxLinks = fxLinks
+        self.canvasSettings = canvasSettings
     }
 }
 

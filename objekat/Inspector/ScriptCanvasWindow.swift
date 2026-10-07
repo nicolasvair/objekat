@@ -357,6 +357,28 @@ struct ScriptCanvasView: View {
         .padding(.vertical, 6)
     }
 
+    /// The monitoring level ("Volume d'écoute"): what is HEARD in this window, -20…+20 dB, never the result
+    /// that Validate lays back. App-side (@see ScriptCanvasAudition), so it follows the hand at once, with
+    /// no recompute. A double-click on the value puts it back to 0 dB. A remembering canvas keeps it in the
+    /// PROJECT (@see CanvasProjectSettings). It sits at the right of the readout strip: the toolbar is
+    /// already as wide as the window's default width.
+    private func monitorControl(_ c: ScriptCanvas) -> some View {
+        let db = c.transport.monitorDB
+        return HStack(spacing: 4) {
+            Image(systemName: "speaker.wave.2").foregroundStyle(.secondary)
+            Slider(value: Binding(get: { db }, set: { try? store.setMonitor(canvasID, db: $0) }),
+                   in: CanvasProjectSettings.monitorRange, step: 0.5)
+                .controlSize(.mini)
+                .frame(width: 110)
+            Text(verbatim: CanvasFormat.signedDB(db))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(db == 0 ? .secondary : .primary)
+                .frame(width: 52, alignment: .trailing)
+                .onTapGesture(count: 2) { try? store.setMonitor(canvasID, db: 0) }
+        }
+        .help(L("canvas.monitor.help"))
+    }
+
     /// Instantané | Sélection. Going BACK to Instant with a selection pending asks first (Apply / Ignore
     /// / Cancel); Cancel leaves the canvas in Sélection. The store refuses the switch while pending, so
     /// the answer is always applied (or discarded) BEFORE the switch.
@@ -506,6 +528,7 @@ struct ScriptCanvasView: View {
             Text(verbatim: pointer.yText)
             Text(verbatim: pointer.valueText)
             Spacer(minLength: 0)
+            if let c = store.canvases[canvasID] { monitorControl(c) }
         }
         .font(.system(.caption, design: .monospaced))
         .foregroundStyle(.secondary)
