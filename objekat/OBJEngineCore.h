@@ -320,6 +320,15 @@
 // availablePlugins : liste des plugins connus (scan préalable ou cache)
 // Chaque dict : @{@"name":…, @"manufacturer":…, @"identifier":…, @"format":…}
 - (NSArray<NSDictionary*>*)availablePlugins;
+// ARA (docs/ara_melodyne_plan.md, étape 1) : chaque entrée de availablePlugins porte `isARA` (VST3 seulement :
+// moduleinfo.json, ou chaîne « ARA Main Factory » de l'exécutable — aucun binaire chargé). Un AU n'est
+// JAMAIS une source ARA (Q2). Pour POSER une source ARA, la description doit être résolue : le module VST3
+// est chargé pour lire le vrai hasARAExtension. Renvoie {identifier, format:"VST3", name, manufacturer},
+// ou nil (pas un VST3 ARA).
+- (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary* _Nonnull)pluginInfo;
+// DEBUG (debug.ara_probe) : {has_ara, resolved_identifier, resolved_format, resolved_name,
+// factory_archive_id, factory_plugin_name, api_generation_lowest/highest, supports_timestretch}.
+- (NSDictionary<NSString*, id>* _Nonnull)debugARAProbe:(NSDictionary* _Nonnull)pluginInfo;
 
 // hasCachedPlugins : YES si un cache UserDefaults existe (evite un scan au démarrage)
 - (BOOL)hasCachedPlugins;

@@ -5363,10 +5363,52 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
     ];
 }
 
+// MARK: ARA — qui sait en faire ? (jamais un binaire chargé pour répondre à l'affichage du « + »)
+//
+// Seul un VST3 sert de source ARA (décision Q2 : pas de jumelage AU → VST3, un AU reste un plugin
+// normal, non-ARA). Le scan d'OBJEKAT fabrique des PluginDescription sans charger les binaires :
+// `hasARAExtension` y est toujours faux, la VRAIE valeur ne vient que de findAllTypesForFile
+// (resolveARAPluginInfo). Pour l'affichage, un VST3 est « ARA » si son moduleinfo.json déclare une
+// classe « ARA Main Factory Class » ; sans moduleinfo.json (Melodyne), on cherche la chaîne
+// « ARA Main Factory » dans l'exécutable (nom de classe de la fabrique VST3, en clair), par
+// lecture mappée — le module n'est pas chargé. Résultat mémorisé par bundle.
+
+static bool objVST3DeclaresARA(NSString* bundlePath) {
+    static NSMutableDictionary<NSString*, NSNumber*>* memo = [NSMutableDictionary new];   // thread principal seulement
+    NSNumber* known = memo[bundlePath];
+    if (known) return known.boolValue;
+
+    bool has = false;
+    NSString* info = [bundlePath stringByAppendingPathComponent:@"Contents/Resources/moduleinfo.json"];
+    NSString* text = [NSString stringWithContentsOfFile:info encoding:NSUTF8StringEncoding error:nil];
+    if (text.length > 0) {
+        has = [text rangeOfString:@"ARA Main Factory Class"].location != NSNotFound;
+    } else {
+        NSString* macOSDir = [bundlePath stringByAppendingPathComponent:@"Contents/MacOS"];
+        NSString* exe = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:macOSDir error:nil].firstObject;
+        if (exe) {
+            NSData* data = [NSData dataWithContentsOfFile:[macOSDir stringByAppendingPathComponent:exe]
+                                                  options:NSDataReadingMappedIfSafe error:nil];
+            static const char needle[] = "ARA Main Factory";
+            has = data.length > 0 && memmem(data.bytes, data.length, needle, sizeof(needle) - 1) != nullptr;
+        }
+    }
+    memo[bundlePath] = @(has);
+    return has;
+}
+
+// Les descriptions ARA RÉSOLUES (hasARAExtension vrai), par identifiant de fichier. Elles servent à
+// la pose d'une source ARA sur un objet, qui a besoin de la description EXACTE du module.
+static std::map<std::string, juce::PluginDescription>& objResolvedARADescriptions() {
+    static std::map<std::string, juce::PluginDescription> m;
+    return m;
+}
+
 - (NSArray<NSDictionary*>*)availablePlugins {
     NSMutableArray* result = [NSMutableArray arrayWithArray:tracktionBuiltInPluginList()];
     // Ajoute les plugins externes scannés
     auto& kl = _engine->getPluginManager().knownPluginList;
+
     for (int i = 0; i < kl.getNumTypes(); i++) {
         auto* d = kl.getType(i);
         if (!d) continue;
@@ -5374,15 +5416,105 @@ static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
         juce::String mfStr   = d->manufacturerName;
         juce::String idStr   = d->fileOrIdentifier;
         juce::String fmtStr  = d->pluginFormatName;
+        NSString* idNS = [NSString stringWithUTF8String:idStr.toRawUTF8()];
+        bool isARA = false;
+        if (d->pluginFormatName == "VST3")
+            isARA = d->hasARAExtension || objVST3DeclaresARA(idNS);
         [result addObject:@{
             @"name":         [NSString stringWithUTF8String:nameStr.toRawUTF8()],
             @"manufacturer": [NSString stringWithUTF8String:mfStr.toRawUTF8()],
-            @"identifier":   [NSString stringWithUTF8String:idStr.toRawUTF8()],
+            @"identifier":   idNS,
             @"format":       [NSString stringWithUTF8String:fmtStr.toRawUTF8()],
-            @"isInstrument": @(d->isInstrument)
+            @"isInstrument": @(d->isInstrument),
+            @"isARA":        @(isARA)
         }];
     }
     return result;
+}
+
+// Résout un plugin du catalogue vers sa description VST3 ARA (l'hôte ARA de Tracktion ne sait
+// charger que du VST3 : tracktion_ARAPluginFactory.h, getFactoryForPlugin). Seul un VST3 est
+// accepté (Q2 : un AU, même jumeau de Melodyne, n'est PAS une source ARA). Le module est chargé
+// (findAllTypesForFile) pour lire le vrai `hasARAExtension` : JAMAIS sur un AU.
+// nil = pas un VST3 ARA.
+- (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary*)pluginInfo {
+    if (!_engine) return nil;
+    NSString* format     = pluginInfo[@"format"];
+    NSString* identifier = pluginInfo[@"identifier"];
+    NSString* name       = pluginInfo[@"name"];
+    if (!format || !identifier || ![format isEqualToString:@"VST3"]) return nil;
+
+    juce::String wantedName = juce::String::fromUTF8([(name ?: @"") UTF8String]);
+    NSString* bundlePath = identifier;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:bundlePath]) return nil;
+
+    std::string cacheKey([bundlePath UTF8String]);
+    auto& resolved = objResolvedARADescriptions();
+    auto hit = resolved.find(cacheKey);
+    if (hit == resolved.end()) {
+        auto& fmgr = _engine->getPluginManager().pluginFormatManager;
+        juce::OwnedArray<juce::PluginDescription> types;
+        for (int fi = 0; fi < fmgr.getNumFormats(); fi++) {
+            auto* fmt = fmgr.getFormat(fi);
+            if (!fmt || fmt->getName() != "VST3") continue;
+            fmt->findAllTypesForFile(types, juce::String::fromUTF8([bundlePath UTF8String]));
+            break;
+        }
+        const juce::PluginDescription* best = nullptr;
+        for (auto* t : types) {
+            if (!t->hasARAExtension) continue;
+            if (!best || t->name.equalsIgnoreCase(wantedName)) best = t;
+        }
+        if (!best) return nil;
+        hit = resolved.emplace(cacheKey, *best).first;
+    }
+
+    const auto& desc = hit->second;
+    juce::String descName = desc.name, descMaker = desc.manufacturerName;
+    return @{
+        @"identifier":   bundlePath,
+        @"format":       @"VST3",
+        @"name":         [NSString stringWithUTF8String:descName.toRawUTF8()],
+        @"manufacturer": [NSString stringWithUTF8String:descMaker.toRawUTF8()],
+    };
+}
+
+// DEBUG (debug.ara_probe) : le module est chargé et sa fabrique ARA lue — c'est ce qui donne l'ID
+// d'archive de document. La fabrique est GARDÉE pour la session, exprès et sans jamais être
+// libérée : la rendre ferait uninitializeARA puis bundleExit en cours de route (Tracktion garde la
+// sienne pour la même raison), et JUCE la partage tant qu'une référence vit.
+- (NSDictionary<NSString*, id>*)debugARAProbe:(NSDictionary*)pluginInfo {
+    NSMutableDictionary* out = [NSMutableDictionary dictionary];
+    NSDictionary* resolved = [self resolveARAPluginInfo:pluginInfo];
+    out[@"has_ara"] = @(resolved != nil);
+    if (!resolved) return out;
+    out[@"resolved_identifier"] = resolved[@"identifier"];
+    out[@"resolved_format"]     = resolved[@"format"];
+    out[@"resolved_name"]       = resolved[@"name"];
+
+    auto& resolvedDescs = objResolvedARADescriptions();
+    auto hit = resolvedDescs.find(std::string([resolved[@"identifier"] UTF8String]));
+    if (hit == resolvedDescs.end()) return out;
+
+    static auto* sessionFactories = new std::map<std::string, juce::ARAFactoryResult>();   // volontairement jamais détruit
+    auto cached = sessionFactories->find(hit->first);
+    if (cached == sessionFactories->end()) {
+        juce::ARAFactoryResult result;
+        _engine->getPluginManager().pluginFormatManager
+            .createARAFactoryAsync(hit->second, [&result](juce::ARAFactoryResult r) { result = std::move(r); });
+        cached = sessionFactories->emplace(hit->first, std::move(result)).first;
+    }
+    if (const auto* f = cached->second.araFactory.get()) {
+        out[@"factory_archive_id"] = f->documentArchiveID ? [NSString stringWithUTF8String:f->documentArchiveID] : @"";
+        out[@"factory_plugin_name"] = f->plugInName ? [NSString stringWithUTF8String:f->plugInName] : @"";
+        out[@"api_generation_lowest"]  = @((int)f->lowestSupportedApiGeneration);
+        out[@"api_generation_highest"] = @((int)f->highestSupportedApiGeneration);
+        out[@"supports_timestretch"]   = @((f->supportedPlaybackTransformationFlags & ARA::kARAPlaybackTransformationTimestretch) != 0);
+    } else {
+        juce::String err = cached->second.errorMessage;
+        out[@"factory_error"] = err.isEmpty() ? @"no ARA factory" : [NSString stringWithUTF8String:err.toRawUTF8()];
+    }
+    return out;
 }
 
 // Détecte si un bundle VST3 est un instrument (VSTi), SANS charger son binaire : lit

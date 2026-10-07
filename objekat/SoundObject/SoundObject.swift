@@ -13,6 +13,11 @@ struct AvailablePlugin: Identifiable {
     /// instruments' area of MIDI clips. NB: VST3s are currently all reported `false` (detecting the
     /// VSTi category is a later step).
     var isInstrument: Bool = false
+    /// True if the plugin can act as an ARA source (Melodyne): its AU carries the "ARA" tag, or its
+    /// VST3 declares an ARA main factory class (or has an AU twin that does). Read WITHOUT loading
+    /// any binary; the real `hasARAExtension` is only known once the plugin is resolved
+    /// (`OBJEngineCore.resolveARAPluginInfo`).
+    var isARA: Bool = false
 
     var displayName: String { name }
     var isBuiltIn: Bool { formatName == "TracktionInternal" }

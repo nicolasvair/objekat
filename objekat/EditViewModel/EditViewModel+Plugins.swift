@@ -125,9 +125,10 @@ extension EditViewModel {
               let identifier = d["identifier"] as? String, let format = d["format"] as? String
         else { return nil }
         let isInstrument = (d["isInstrument"] as? NSNumber)?.boolValue ?? false
+        let isARA = (d["isARA"] as? NSNumber)?.boolValue ?? false
         return AvailablePlugin(name: name, manufacturer: manufacturer,
                                identifier: identifier, formatName: format,
-                               isInstrument: isInstrument)
+                               isInstrument: isInstrument, isARA: isARA)
     }
 
     func rescanPlugins() {

@@ -38,7 +38,9 @@ extension CommandRegistry {
                              // name).
                              "identifier": .string(plugin.identifier),
                              "format": .string(plugin.formatName),
-                             "is_instrument": .bool(plugin.isInstrument)])
+                             "is_instrument": .bool(plugin.isInstrument),
+                             // Can act as an ARA source (Melodyne VST3 only): known without loading any module.
+                             "ara": .bool(plugin.isARA)])
                 }),
                 "count": .int(plugins.count),
                 "scanning": .bool(vm.isScanning),
@@ -779,6 +781,32 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "no live instance for plugin \(pluginID.uuidString)")
             }
             return .object(["plugin": .string(pluginID.uuidString)])
+        }
+
+        register("debug.ara_probe",
+                 summary: """
+                 DEBUG. ARA probe: does this plugin act as an ARA source. Only a VST3 can (Tracktion's \
+                 ARA host only loads VST3; an AudioUnit never is). The module is loaded to read the real \
+                 `hasARAExtension`. Answers `has_ara`, \
+                 `resolved_identifier` / `resolved_format` / `resolved_name` and, from the module's ARA \
+                 factory, `factory_archive_id`, `factory_plugin_name`, `api_generation_lowest` / \
+                 `_highest`, `supports_timestretch`. The factory is kept for the session (never \
+                 released: ARA must not be initialised twice). Opens no window.
+                 """,
+                 params: [ParamSpec("identifier", "string", "Exact identifier (see plugin.list_available)."),
+                          ParamSpec("format", "string", "'VST3' (an 'AudioUnit' always answers has_ara false)."),
+                          ParamSpec("name", "string", required: false,
+                                    "Plugin name (defaults to the catalogue's).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let identifier = try p.string("identifier")
+            let format = try p.string("format")
+            let name = try p.optionalString("name")
+                ?? vm.availablePlugins.first(where: { $0.identifier == identifier && $0.formatName == format })?.name
+                ?? ""
+            let info: [String: Any] = ["identifier": identifier, "format": format, "name": name]
+            return JSONValue.fromFoundation(engine.debugARAProbe(info))
         }
 
         register("debug.plugin_buses",
