@@ -910,6 +910,73 @@ def section_b(c):
     check("b: another key remembers nothing of it", g["tool"] == "rect" and g["mode"] == "instant" and g["values"]["gain"] == -12)
     c.send("script.canvas.close", {"canvas_id": cr})
 
+    # -- a number with `presets` (revision 6b): a row of buttons, every value snapped to the nearest ---------
+    PRESETS = [-60, -24, -12, -6, -3, 3]
+
+    def gain_control(**kw):
+        ctl = {"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5, "unit": "dB",
+               "presets": PRESETS}
+        ctl.update(kw)
+        return ctl
+
+    def with_ctl(*ctls, **kw):
+        return c.send("script.canvas.open", dict({"title": "Presets", "controls": list(ctls), "tools": []}, **kw))["canvas_id"]
+
+    def val(cp):
+        return c.send("script.canvas.get", {"canvas_id": cp})["values"]
+
+    cp = with_ctl(gain_control(value=-12))
+    check("b: presets: the declared value (a preset) is the default", val(cp)["g"] == -12, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    cp = with_ctl(gain_control())
+    check("b: presets: with no value the first preset is the default", val(cp)["g"] == -60, val(cp))
+    for given, want in ((-7, -6), (-6, -6), (99, 3), (-99, -60), (-9, -12), (-43, -60), (0, -3), (3, 3)):
+        c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": given}})
+        check("b: presets: input %s is snapped to %s (nearest; a tie goes to the first listed)" % (given, want),
+              val(cp)["g"] == want, val(cp))
+    c.send("script.canvas.update", {"canvas_id": cp, "values": {"g": -33}})
+    check("b: presets: update snaps too (-33 -> -24)", val(cp)["g"] == -24, val(cp))
+    rv = c.send("script.canvas.get", {"canvas_id": cp})["rev"]
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -3}})
+    check("b: presets: a click moves rev once", c.send("script.canvas.get", {"canvas_id": cp})["rev"] > rv)
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": "loud"}}),
+                 "bad_params", "b: presets: a non-number is refused")
+    c.send("script.canvas.close", {"canvas_id": cp})
+    for label, ctl in (("an empty list", gain_control(presets=[])),
+                       ("a preset out of min…max", gain_control(presets=[-60, 13])),
+                       ("a duplicate", gain_control(presets=[-6, -6])),
+                       ("a list that is not numbers", gain_control(presets=["a"])),
+                       ("presets that are not a list", gain_control(presets=-6)),
+                       ("a value that is not a preset", gain_control(value=-7)),
+                       ("presets on a bool", {"id": "b", "kind": "bool", "label": "B", "presets": [1]})):
+        expect_error(lambda: with_ctl(ctl), "bad_params", "b: presets: open refuses " + label)
+    kp = "spectral-editor.scenario.b.presets"
+    cp = with_ctl(gain_control(value=-12), remember=kp)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -24}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12), remember=kp)
+    check("b: presets: a remembered preset comes back", val(cp)["g"] == -24, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    ks = kp + ".slider"
+    cp = with_ctl({"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5,
+                   "value": -12, "unit": "dB"}, remember=ks)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -7}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12, max=3), remember=ks)
+    check("b: presets: a value remembered as a slider's (-7) is snapped to the nearest preset (-6)",
+          val(cp)["g"] == -6, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    cp = with_ctl({"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5,
+                   "value": -12, "unit": "dB"}, remember=ks)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": 11.5}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12, max=3), remember=ks)
+    check("b: presets: a remembered value outside the new range (+11.5) is snapped too (+3)",
+          val(cp)["g"] == 3, val(cp))
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "reset"})
+    check("b: presets: reset gives back the declared preset", val(cp)["g"] == -12, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+
     # -- no trace in the project -----------------------------------------------------------
     cid = open_canvas(c, object=obj)
     c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})

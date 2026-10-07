@@ -2357,12 +2357,20 @@ panel exists and no window opens**). One panel per connection (a second `open` r
 Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
 
 Controls: `{id, kind: "bool"|"number"|"button"|"choice"|"progress"|"section", label, value?, min?, max?, step?, unit?,
-enabled_by?, options?, advanced?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
+enabled_by?, options?, presets?, advanced?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
 `min`); a `choice` (drawn as a pop-up menu) needs a non-empty `options: [{id, label}]` (unique ids),
 its `value` is an option **id** (default: the first option) and `values[id]` reads back that id as a
 string — `input` / `update` refuse an id that is not one of the options (`bad_params`), and the
 option labels, like every label, are the script's own data; a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
-one ("a box and a threshold" — the window draws that pair inline). `advanced: true` hides a control until the hand presses the window's **Expert** button (presentation only: the value is still read back, remembered and settable through `input`). The labels are the SCRIPT's own
+one ("a box and a threshold" — the window draws that pair inline). A `number` may declare **`presets`** (revision 6b): an
+ordered list of the only values it can hold (at least one, finite, inside `min…max`, no duplicate; refused on any other
+kind; a declared `value` must be one of them, default = the first). The window then draws a row of buttons — the number
+alone on each (a true minus, an explicit plus: "−60", "+3"), one selected at a time, the `label` and `unit` over it —
+instead of a slider, and EVERY door a value comes in by snaps it to the NEAREST preset (a tie goes to the one listed
+first): the hand, `input`, `update`, a value remembered under `remember` (even one outside `min…max`, e.g. the value of
+an older slider), a step's setting put back by the undo that reveals. The value stays a plain number everywhere
+(`values`, a step's `params`, the memory); a step that already holds another number keeps it as it is (only the
+control snaps, never history). `advanced: true` hides a control until the hand presses the window's **Expert** button (presentation only: the value is still read back, remembered and settable through `input`). The labels are the SCRIPT's own
 data; the app's only texts are Validate / Cancel / Reset / Expert and the default title.
 
 Two kinds are the script's own drawing and hold nothing a hand can set (`input` refuses them):

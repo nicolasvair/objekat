@@ -31,6 +31,15 @@ enum ScriptControls {
             guard seen.insert(id).inserted else { throw bad("duplicate control id '\(id)'") }
             var lo = 0.0, hi = 1.0, step = 1.0
             var options: [ScriptPanelOption] = []
+            var presets: [Double] = []
+            if let raw = o["presets"] {
+                guard kind == .number else { throw bad("control '\(id)': presets belong to a number") }
+                guard let arr = raw.arrayValue else { throw bad("control '\(id)': presets is a list of numbers") }
+                for e in arr {
+                    guard let d = e.doubleValue else { throw bad("control '\(id)': presets is a list of numbers") }
+                    presets.append(d)
+                }
+            }
             switch kind {
             case .bool:
                 values[id] = .bool(o["value"]?.boolValue ?? false)
@@ -42,8 +51,15 @@ enum ScriptControls {
                 guard mn < mx else { throw bad("control '\(id)': min must be below max") }
                 guard st > 0 else { throw bad("control '\(id)': step must be > 0") }
                 lo = mn; hi = mx; step = st
-                let v = o["value"]?.doubleValue ?? mn
+                if o["presets"] != nil, let why = ScriptControlPresets.problem(presets, min: mn, max: mx) {
+                    throw bad("control '\(id)': \(why)")
+                }
+                // With presets, the default is the first one unless the script names one of them.
+                let v = o["value"]?.doubleValue ?? (presets.first ?? mn)
                 guard v >= mn, v <= mx else { throw bad("control '\(id)': value out of range") }
+                guard presets.isEmpty || presets.contains(v) else {
+                    throw bad("control '\(id)': value is not one of its presets")
+                }
                 values[id] = .number(v)
             case .choice:
                 guard let raw = o["options"]?.arrayValue, !raw.isEmpty else {
@@ -78,6 +94,7 @@ enum ScriptControls {
                                              step: step, unit: o["unit"]?.stringValue ?? "",
                                              enabledBy: o["enabled_by"]?.stringValue)
             control.options = options
+            control.presets = presets
             if let adv = o["advanced"] {
                 guard let b = adv.boolValue else { throw bad("control '\(id)': advanced must be a bool") }
                 control.advanced = b
@@ -135,7 +152,7 @@ enum ScriptControls {
                 guard let d = v.doubleValue else {
                     throw CommandError(code: .bad_params, message: "'\(key)' is a number")
                 }
-                values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
+                values[key] = .number(fit(d, to: c))
             case .choice:
                 guard let s = v.stringValue, c.options.contains(where: { $0.id == s }) else {
                     throw CommandError(code: .bad_params,
@@ -145,6 +162,14 @@ enum ScriptControls {
             case .button, .progress, .section: break
             }
         }
+    }
+
+    /// What a number control holds for `d`: clamped to its range, then — when it has `presets` — snapped to
+    /// the nearest preset (a slider keeps whatever it is given within the range).
+    static func fit(_ d: Double, to c: ScriptPanelControl) -> Double {
+        let clamped = Swift.min(c.max, Swift.max(c.min, d))
+        guard !c.presets.isEmpty else { return clamped }
+        return ScriptControlPresets.nearest(clamped, in: c.presets) ?? clamped
     }
 
     /// The values a hand can set (never a progress bar, a button or a section).
@@ -180,7 +205,7 @@ enum ScriptControls {
                 else { throw CommandError(code: .bad_params, message: "'\(key)': a progress is 0…1 or null") }
             } else if c.kind == .bool, let b = v.boolValue { values[key] = .bool(b) }
             else if c.kind == .number, let d = v.doubleValue {
-                values[key] = .number(Swift.min(c.max, Swift.max(c.min, d)))
+                values[key] = .number(fit(d, to: c))
             } else if c.kind == .choice, let s = v.stringValue, c.options.contains(where: { $0.id == s }) {
                 values[key] = .string(s)
             } else {

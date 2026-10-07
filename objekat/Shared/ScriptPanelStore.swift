@@ -40,6 +40,9 @@ struct ScriptPanelControl: Equatable, Sendable {
     let enabledBy: String?
     /// A `choice`'s options, in the order the script gave them. Empty for every other kind.
     var options: [ScriptPanelOption] = []
+    /// A `number`'s only possible values, in the order the script gave them (@see ScriptControlPresets):
+    /// drawn as a row of buttons, and every value that comes in is snapped to the nearest. Empty = a slider.
+    var presets: [Double] = []
     /// Drawn only once the hand has pressed the window's "Expert" button — the settings a first
     /// use never needs. Purely presentational: the value is still there, still read back in
     /// `values`, still remembered; a hidden control simply keeps whatever it holds.

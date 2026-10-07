@@ -55,7 +55,7 @@ enum ScriptPanelMemory {
     }
 
     /// The remembered values that still fit `controls`: same id, same kind of value, inside min/max
-    /// or among the options. Anything else is ignored (a script that changed its panel between two
+    /// or among the options (a number with `presets`: snapped to the nearest). Anything else is ignored (a script that changed its panel between two
     /// versions must not have a stale entry rejected — or worse, applied).
     static func applicable(_ stored: [String: JSONValue], to controls: [ScriptPanelControl]) -> [String: JSONValue] {
         var out: [String: JSONValue] = [:]
@@ -65,7 +65,12 @@ enum ScriptPanelMemory {
             case .bool:
                 if case .bool = v { out[c.id] = v }
             case .number:
-                if case .number(let d) = v, d.isFinite, d >= c.min, d <= c.max { out[c.id] = v }
+                guard case .number(let d) = v, d.isFinite else { break }
+                if !c.presets.isEmpty {
+                    // A control that has become a row of presets keeps what was remembered as a slider's
+                    // value, snapped to the nearest preset (whatever the old range).
+                    if let p = ScriptControlPresets.nearest(d, in: c.presets) { out[c.id] = .number(p) }
+                } else if d >= c.min, d <= c.max { out[c.id] = v }
             case .choice:
                 if case .string(let s) = v, c.options.contains(where: { $0.id == s }) { out[c.id] = v }
             default: break
