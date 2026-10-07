@@ -10,7 +10,10 @@
   frame that is nearest to a given time always feeds the column containing that time (an event
   never shows up half a frame late), no column is ever empty, and a click survives the pooling.
 - Levels: dB = 20 log10(max(m, 1e-12) / (N / 4)) (0 dB = a full-scale sine on a bin), mapped to
-  idx = clip(rint((dB + 100) / 100 * 255), 0, 255), value range -100 .. 0 dB, magma palette.
+  idx = clip(rint((dB - floor) / (ceil - floor) * 255), 0, 255), magma palette. By default the value
+  range is -100 .. 0 dB; revision 6: the display range (floor, ceil) is the hand's, DISPLAY ONLY — the
+  levels themselves ("build_db") are computed once and re-quantised (`quantize`) when the range moves,
+  with no new transform. The file carries its range (v0 = floor, v255 = ceil) so the readout stays true.
 """
 import math
 
@@ -26,6 +29,7 @@ F_MIN = 20.0
 V0 = -100.0
 V255 = 0.0
 FLOOR = 1e-12
+BLANK_DB = -200.0   # the level of silence: below any display floor
 
 
 def row_bands(sr, n, rows=ROWS, fmin=F_MIN):
@@ -83,8 +87,8 @@ def column_of_time(t, sr, length, width):
     return int(min(width - 1, max(0, math.floor(t * sr * width / float(length)))))
 
 
-def build_image(x, sr, n, k, rows=ROWS, max_cols=MAX_COLS, block=256):
-    """uint8 index image shaped (rows, W), row 0 = the top (highest frequency)."""
+def build_db(x, sr, n, k, rows=ROWS, max_cols=MAX_COLS, block=256):
+    """The levels in dB, float64 shaped (rows, W), row 0 = the top (highest frequency)."""
     h = dsp.hop_for(n, k)
     length = np.asarray(x).shape[0]
     if length < 1:
@@ -111,19 +115,36 @@ def build_image(x, sr, n, k, rows=ROWS, max_cols=MAX_COLS, block=256):
             ucols = cols[seg]
             colmax[ucols] = np.maximum(colmax[ucols], red)
     db = 20.0 * np.log10(np.maximum(colmax, FLOOR) / (n / 4.0))
-    idx = np.clip(np.rint((db - V0) / (V255 - V0) * 255.0), 0, 255).astype(np.uint8)
-    return np.ascontiguousarray(idx[:, ::-1].T)
+    return np.ascontiguousarray(db[:, ::-1].T)
 
 
-def write_index_image(path, idx):
-    """Writes a uint8 index image (rows, W) as OBJKCNV1 (magma, -100 .. 0 dB). Returns (W, H)."""
-    canvasfile.write_cnv(path, idx, V0, V255, colormap.MAGMA)
+def quantize(db, floor=V0, ceil=V255):
+    """uint8 indices of levels `db` for the display range [floor, ceil] dB (floor -> 0, ceil -> 255)."""
+    if not ceil > floor:
+        raise ValueError("empty display range")
+    scaled = (np.asarray(db) - floor) / (ceil - floor) * 255.0
+    return np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
+
+
+def build_image(x, sr, n, k, rows=ROWS, max_cols=MAX_COLS, block=256, floor=V0, ceil=V255):
+    """uint8 index image shaped (rows, W), row 0 = the top (highest frequency)."""
+    return quantize(build_db(x, sr, n, k, rows, max_cols, block), floor, ceil)
+
+
+def write_index_image(path, idx, floor=V0, ceil=V255):
+    """Writes a uint8 index image (rows, W) as OBJKCNV1 (magma, value range floor .. ceil dB). Returns (W, H)."""
+    canvasfile.write_cnv(path, idx, floor, ceil, colormap.MAGMA)
     return idx.shape[1], idx.shape[0]
 
 
-def write_base_image(path, x, sr, n, k):
-    """Build the base image and write it as OBJKCNV1 (magma, -100 .. 0 dB). Returns (W, H)."""
-    return write_index_image(path, build_image(x, sr, n, k))
+def write_db_image(path, db, floor=V0, ceil=V255):
+    """Quantises levels for the range and writes them as OBJKCNV1. Returns (W, H)."""
+    return write_index_image(path, quantize(db, floor, ceil), floor, ceil)
+
+
+def write_base_image(path, x, sr, n, k, floor=V0, ceil=V255):
+    """Build the base image and write it as OBJKCNV1 (magma, floor .. ceil dB). Returns (W, H)."""
+    return write_index_image(path, build_image(x, sr, n, k, floor=floor, ceil=ceil), floor, ceil)
 
 
 def blank_image(length, n, k, rows=ROWS, max_cols=MAX_COLS):
@@ -131,6 +152,11 @@ def blank_image(length, n, k, rows=ROWS, max_cols=MAX_COLS):
     for a signal of `length` samples: the difference spectrogram when nothing has been done yet, with no
     transform to compute."""
     return np.zeros((rows, column_count(int(length), dsp.hop_for(n, k), max_cols)), dtype=np.uint8)
+
+
+def blank_db(length, n, k, rows=ROWS, max_cols=MAX_COLS):
+    """The levels of silence (`BLANK_DB`, black at any display range), shaped like `build_db`'s."""
+    return np.full((rows, column_count(int(length), dsp.hop_for(n, k), max_cols)), BLANK_DB, dtype=np.float32)
 
 
 def row_of_frequency(freq, sr, rows=ROWS, fmin=F_MIN):

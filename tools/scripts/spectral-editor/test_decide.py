@@ -149,5 +149,29 @@ class TestPreviewDirty(unittest.TestCase):
         self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -6}, 1), {"audio"})
 
 
+class TestDisplayRange(unittest.TestCase):
+    def test_defaults(self):
+        self.assertEqual(decide.display_range({}), (-100.0, 0.0))
+        self.assertEqual(decide.display_range(None), (-100.0, 0.0))
+        self.assertEqual(decide.display_range({"db_floor": "x", "db_ceiling": None}), (-100.0, 0.0))
+
+    def test_the_hand_s_values(self):
+        self.assertEqual(decide.display_range({"db_floor": -80, "db_ceiling": -10}), (-80.0, -10.0))
+
+    def test_each_value_is_clamped_to_its_control(self):
+        self.assertEqual(decide.display_range({"db_floor": -500, "db_ceiling": 40}), (-120.0, 0.0))
+        self.assertEqual(decide.display_range({"db_floor": 5, "db_ceiling": -500}), (-20.0, -14.0))
+
+    def test_crossed_values_keep_the_floor_and_carry_the_ceiling(self):
+        floor, ceil = decide.display_range({"db_floor": -30, "db_ceiling": -40})
+        self.assertEqual((floor, ceil), (-30.0, -30.0 + decide.DB_MIN_GAP))
+
+    def test_the_range_is_never_empty(self):
+        for f in range(-120, -19, 7):
+            for c in range(-60, 1, 9):
+                floor, ceil = decide.display_range({"db_floor": f, "db_ceiling": c})
+                self.assertGreaterEqual(ceil - floor, decide.DB_MIN_GAP)
+
+
 if __name__ == "__main__":
     unittest.main()

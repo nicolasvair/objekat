@@ -199,6 +199,85 @@ class EditorProtocol(unittest.TestCase):
         self.ed.send_base(self.ed.x, 1024, 6, [], 0)
         self.assertEqual(len(self.app.slots("original")), 2)       # a new overlap: redrawn
 
+    # -- revision 6: the display range ---------------------------------------------------------
+
+    def header(self, path):
+        import struct
+        with open(path, "rb") as f:
+            return struct.unpack("<ff", f.read(28)[16:24])
+
+    def pixels(self, path):
+        import struct
+        with open(path, "rb") as f:
+            head = f.read(796)
+            w, h = struct.unpack("<II", head[8:16])
+            return np.frombuffer(f.read(w * h), dtype=np.uint8)
+
+    def test_a_new_range_recolours_the_three_pictures_from_memory_with_no_transform(self):
+        self.start()
+        self.ed.sync(answer([step(1)], rev=1))
+        calls = []
+        real = sg.dsp.process
+        sg.dsp.process = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+        self.addCleanup(setattr, sg.dsp, "process", real)
+        real_stft = sg.dsp.analysis_blocks
+        sg.dsp.analysis_blocks = lambda *a, **k: (calls.append(2), real_stft(*a, **k))[1]
+        self.addCleanup(setattr, sg.dsp, "analysis_blocks", real_stft)
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=dict(VALUES, db_floor=-60, db_ceiling=-10), rev=1))
+        self.assertEqual(calls, [])                               # no new transform, no audio recomputed
+        self.assertEqual(self.app.named("script.canvas.set_audio"), [])
+        self.assertEqual(self.app.named("script.canvas.set_layer"), [])
+        base, orig, delta = self.app.bases(), self.app.slots("original"), self.app.slots("delta")
+        self.assertEqual((len(base), len(orig), len(delta)), (1, 1, 1))
+        for p in (base[0], orig[0], delta[0]):
+            self.assertEqual(self.header(p["path"]), (-60.0, -10.0))
+        self.assertEqual(base[0]["history_rev"], 1)               # the same stamp: what the app does with traces is unchanged
+        self.assertEqual(delta[0]["history_rev"], 1)
+        self.assertEqual(base[0]["value_unit"], "dB")
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=dict(VALUES, db_floor=-60, db_ceiling=-10), rev=1))
+        self.assertEqual(self.app.calls, [])                      # the same range again: nothing sent
+
+    def test_the_recoloured_picture_is_the_one_a_fresh_build_would_give(self):
+        import image
+        self.start()
+        self.ed.sync(answer([step(1)], rev=1))
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=dict(VALUES, db_floor=-80, db_ceiling=-20), rev=1))
+        want = image.build_image(self.ed.committed[3], SR, 1024, 4, floor=-80.0, ceil=-20.0)
+        got = self.pixels(self.app.bases()[0]["path"])
+        self.assertLessEqual(int(np.abs(got.astype(int) - want.ravel(order="C").astype(int)).max()), 1)
+        orig = self.pixels(self.app.slots("original")[0]["path"])
+        want_o = image.build_image(self.ed.x, SR, 1024, 4, floor=-80.0, ceil=-20.0)
+        self.assertLessEqual(int(np.abs(orig.astype(int) - want_o.ravel().astype(int)).max()), 1)
+
+    def test_a_new_picture_is_written_for_the_current_range_and_only_the_others_are_recoloured(self):
+        self.start()
+        vals = dict(VALUES, db_floor=-90, db_ceiling=-5)
+        self.ed.sync(answer([step(1)], values=vals, rev=1))      # range changed AND a step committed together
+        base, orig, delta = self.app.bases(), self.app.slots("original"), self.app.slots("delta")
+        self.assertEqual((len(base), len(orig), len(delta)), (1, 1, 1))   # each sent once, not twice
+        self.assertEqual(self.header(base[0]["path"]), (-90.0, -5.0))
+        self.assertEqual(self.header(orig[0]["path"]), (-90.0, -5.0))
+        self.assertEqual(self.header(delta[0]["path"]), (-90.0, -5.0))
+
+    def test_the_range_leaves_the_audio_and_the_selection_alone(self):
+        self.start()
+        self.ed.sync(answer([draft(1)], rev=1))
+        self.app.calls.clear()
+        self.ed.sync(answer([draft(1)], values=dict(VALUES, db_floor=-70), rev=1))
+        self.assertEqual(self.app.named("script.canvas.set_audio"), [])
+        self.assertEqual(self.app.named("script.canvas.set_layer"), [])
+        self.assertEqual(self.app.named("script.canvas.update"), [])      # not even a busy flash
+        self.assertGreaterEqual(len(self.app.named("script.canvas.set_image")), 1)
+
+    def test_the_range_controls_are_view_settings_with_their_limits(self):
+        ctl = {c["id"]: c for c in sg.canvas_controls()}
+        self.assertEqual((ctl["db_floor"]["min"], ctl["db_floor"]["max"], ctl["db_floor"]["value"]), (-120, -20, -100))
+        self.assertEqual((ctl["db_ceiling"]["min"], ctl["db_ceiling"]["max"], ctl["db_ceiling"]["value"]), (-60, 0, 0))
+        self.assertTrue(ctl["db_floor"]["advanced"] and ctl["db_ceiling"]["advanced"])
+
     def test_the_feather_range_goes_to_one_second_and_the_defaults_are_unchanged(self):
         ctl = {c["id"]: c for c in sg.canvas_controls()}
         self.assertEqual((ctl["feather_ms"]["min"], ctl["feather_ms"]["max"], ctl["feather_ms"]["value"]), (0, 1000, 10))

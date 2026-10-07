@@ -125,3 +125,30 @@ def preview_dirty(prev_values, values, pending):
     if "gain" in changed:
         return {"audio"}
     return set()
+
+
+# --- the spectrogram's display range (revision 6) -------------------------------------------------
+# DISPLAY ONLY: the hand's floor (the level drawn black) and ceiling (drawn white) of the pictures.
+# Nothing here reaches the audio or the history.
+DB_FLOOR = (-120.0, -20.0, -100.0)   # (min, max, default)
+DB_CEIL = (-60.0, 0.0, 0.0)
+DB_MIN_GAP = 6.0                     # the ceiling is kept at least this far above the floor
+
+
+def display_range(values):
+    """(floor, ceiling) in dB from the side bar's `db_floor` / `db_ceiling`: each clamped to its control's
+    range (an unreadable value falls back to the default), then the ceiling lifted to floor + DB_MIN_GAP
+    when the hand crossed them — the floor never moves, so dragging the floor up carries the ceiling."""
+    def read(key, spec):
+        lo, hi, default = spec
+        try:
+            v = float((values or {}).get(key))
+        except (TypeError, ValueError):
+            v = default
+        if v != v:
+            v = default
+        return min(hi, max(lo, v))
+
+    floor = read("db_floor", DB_FLOOR)
+    ceil = read("db_ceiling", DB_CEIL)
+    return floor, max(ceil, floor + DB_MIN_GAP)
