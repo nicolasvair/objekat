@@ -2125,6 +2125,155 @@ def section_i(c):
     c.send("script.canvas.close", {"canvas_id": cid})
 
 
+def cnv_range(path):
+    """(v0, v255) of an OBJKCNV1 file: the value range its readout uses."""
+    with open(path, "rb") as f:
+        head = f.read(28)
+    assert head[:8] == b"OBJKCNV1", head[:8]
+    return struct.unpack("<ff", head[16:24])
+
+
+def section_j(c):
+    """REVISION 6, END TO END (the real script): working on the DIFFERENCE (Result + Difference = Original, the
+    levels follow G' = 1 - (1 - G) g) and the spectrogram's DISPLAY RANGE (re-coloured, remembered)."""
+    if not venv_ok():
+        print("skip  j: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
+        return
+    ROOT = tmproot("j")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    TONES = {300.0: 0.2, 3000.0: 0.2}
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tone.wav"), T, RATE, TONES, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tone"})["id"]
+
+    def audio(st, slot):
+        return read_wav_any(st["transport"]["slots"][slot])[3][0]
+
+    def lvl(x, ref, hz):
+        return goertzel_db(x, RATE, hz, 0.5, 1.5) - goertzel_db(ref, RATE, hz, 0.5, 1.5)
+
+    sc = Script(c, oid, CACHE)
+    try:
+        if sc.find_canvas() is None:
+            check("j: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("j: the canvas is ready", st is not None)
+        if st is None:
+            return
+        orig = audio(st, "original")
+        world = st["world"]
+
+        # ---- step 1 on the Result: -24 dB over 2-4.5 kHz ------------------------------------------
+        sc.hand(values={"gain": -24})
+        sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(Script.pictures_synced)
+        if st is None:
+            check("j: step 1 settles", False)
+            return
+        e = st["history"]["entries"][0]
+        check("j: an op drawn while listening to the Result carries slot result", e["ops"][0]["slot"] == "result", e["ops"])
+        res, dlt = audio(st, "result"), audio(st, "delta")
+        check("j: step 1: the result is 3 kHz at -24 dB (+-1), 300 Hz untouched",
+              abs(lvl(res, orig, 3000) + 24) <= 1.0 and abs(lvl(res, orig, 300)) <= 0.2, (lvl(res, orig, 3000), lvl(res, orig, 300)))
+        diff1 = 20 * math.log10(1 - 10 ** (-24 / 20.0))
+        check("j: step 1: the difference is original - result: 3 kHz at %.2f dB (+-1)" % diff1,
+              abs(lvl(dlt, orig, 3000) - diff1) <= 1.0, lvl(dlt, orig, 3000))
+
+        # ---- step 2 on the Difference: -12 dB over the same band ---------------------------------
+        sc.hand(listen="delta", values={"gain": -12})
+        sc.hand(op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 2 and Script.pictures_synced(s))
+        if st is None:
+            check("j: step 2 settles", False)
+            return
+        e = st["history"]["entries"][1]
+        check("j: an op drawn while listening to the Difference carries slot delta", e["ops"][0]["slot"] == "delta", e["ops"])
+        res, dlt = audio(st, "result"), audio(st, "delta")
+        g1, g2 = 10 ** (-24 / 20.0), 10 ** (-12 / 20.0)
+        gp = 1 - (1 - g1) * g2                       # G' = 1 - (1 - G) g
+        want_res, want_dlt = 20 * math.log10(gp), 20 * math.log10((1 - g1) * g2)
+        check("j: step 2: the RESULT follows G' = 1 - (1 - G) g: 3 kHz at %.2f dB (+-1), not -36" % want_res,
+              abs(lvl(res, orig, 3000) - want_res) <= 1.0, lvl(res, orig, 3000))
+        check("j: step 2: the DIFFERENCE is 12 dB lower than before: 3 kHz at %.2f dB (+-1)" % want_dlt,
+              abs(lvl(dlt, orig, 3000) - want_dlt) <= 1.0, lvl(dlt, orig, 3000))
+        check("j: step 2: 300 Hz untouched in the result, absent from the difference",
+              abs(lvl(res, orig, 300)) <= 0.2 and lvl(dlt, orig, 300) <= -60, (lvl(res, orig, 300), lvl(dlt, orig, 300)))
+        n = min(len(orig), len(res), len(dlt))
+        worst = max(abs(orig[i] - res[i] - dlt[i]) for i in range(0, n, 7))
+        check("j: Result + Difference = Original, sample for sample (worst %.2e)" % worst, worst < 1e-5, worst)
+        # the pictures follow: the Difference's picture is 12 dB lower, the Result's lost only a little more
+        slots = st["image"]["slots"]
+        d_img = image_db(slots["delta"]["path"], world, 1.0, 3000)
+        o_img = image_db(slots["original"]["path"], world, 1.0, 3000)
+        r_img = image_db(st["image"]["path"], world, 1.0, 3000)
+        check("j: the Difference's picture shows 3 kHz %.1f dB under the Original's (+-3)" % want_dlt,
+              abs((d_img - o_img) - want_dlt) <= 3.0, (d_img, o_img))
+        check("j: the Result's picture shows 3 kHz %.1f dB under the Original's (+-3)" % want_res,
+              abs((r_img - o_img) - want_res) <= 3.0, (r_img, o_img))
+
+        # ---- the display range ------------------------------------------------------------------
+        before = sc.get()
+        paths = (before["image"]["path"], slots["original"]["path"], slots["delta"]["path"])
+        check("j: the default display range is -100 .. 0 dB on every picture", all(cnv_range(p) == (-100.0, 0.0) for p in paths),
+              [cnv_range(p) for p in paths])
+        hrev, audio_paths = before["history"]["rev"], (before["transport"]["slots"]["result"], before["transport"]["slots"]["delta"])
+        sc.hand(values={"db_floor": -60, "db_ceiling": -10})
+        st = sc.wait_for(lambda s: s["image"]["path"] != paths[0] and s["image"]["slots"]["original"]["path"] != paths[1]
+                         and s["image"]["slots"]["delta"]["path"] != paths[2] and not s["busy"])
+        check("j: a new range recolours the Result, the Original and the Difference pictures", st is not None)
+        if st is None:
+            return
+        slots2 = st["image"]["slots"]
+        new = (st["image"]["path"], slots2["original"]["path"], slots2["delta"]["path"])
+        check("j: ... each one now carries the range (-60 .. -10 dB) for its readout",
+              all(cnv_range(p) == (-60.0, -10.0) for p in new), [cnv_range(p) for p in new])
+        check("j: ... the readout still tells the truth (the Original's 3 kHz within 1 dB of before)",
+              abs(image_db(slots2["original"]["path"], world, 1.0, 3000) - o_img) <= 1.0,
+              (image_db(slots2["original"]["path"], world, 1.0, 3000), o_img))
+        check("j: ... display only: the history rev, the audio files and the steps are untouched",
+              st["history"]["rev"] == hrev and (st["transport"]["slots"]["result"], st["transport"]["slots"]["delta"]) == audio_paths
+              and len(st["history"]["entries"]) == 2, st["history"]["rev"])
+        check("j: ... the pictures keep their history stamp (what the app does with the traces does not move)",
+              st["image"]["history_rev"] == before["image"]["history_rev"]
+              and st["image"]["slots"]["delta"]["history_rev"] == before["image"]["slots"]["delta"]["history_rev"], st["image"])
+        # a floor above the ceiling carries the ceiling (never an empty range)
+        sc.hand(values={"db_floor": -20, "db_ceiling": -40})
+        st = sc.wait_for(lambda s: s["image"]["path"] != new[0] and not s["busy"])
+        check("j: a floor above the ceiling lifts the ceiling by 6 dB (-20 .. -14), never an empty range",
+              st is not None and cnv_range(st["image"]["path"]) == (-20.0, -14.0), st and cnv_range(st["image"]["path"]))
+        sc.hand(values={"db_floor": -90, "db_ceiling": -5})
+        st = sc.wait_for(lambda s: cnv_range(s["image"]["path"]) == (-90.0, -5.0) and not s["busy"])
+        check("j: the range is set again", st is not None)
+        sc.hand(press="cancel")
+        sc.finish(60)
+    finally:
+        sc.abort()
+
+    # ---- remembered by the next session ---------------------------------------------------------------
+    sc2 = Script(c, oid, CACHE, key=sc.key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        check("j: the next session opens", st2 is not None)
+        if st2 is not None:
+            v = st2["values"]
+            check("j: the display range is remembered (-90 .. -5) and drawn so from the first picture",
+                  (v["db_floor"], v["db_ceiling"]) == (-90, -5) and cnv_range(st2["image"]["path"]) == (-90.0, -5.0)
+                  and cnv_range(st2["image"]["slots"]["original"]["path"]) == (-90.0, -5.0), (v, cnv_range(st2["image"]["path"])))
+            check("j: ... and the Difference's (blank) picture too",
+                  cnv_range(st2["image"]["slots"]["delta"]["path"]) == (-90.0, -5.0)
+                  if "delta" in st2["image"]["slots"] else False, st2["image"]["slots"])
+            sc2.hand(press="reset")
+            v = sc2.get()["values"]
+            check("j: Reset gives back the declared range (-100 .. 0)", (v["db_floor"], v["db_ceiling"]) == (-100, 0), v)
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+
+
 # ---------------------------------------------------------------------------------------------
 
 try:
@@ -2132,7 +2281,7 @@ try:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
         only = os.environ.get("SECTIONS", "abcdefghij")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i)):
+                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j)):
             if name in only:
                 fn(c)
 finally:
