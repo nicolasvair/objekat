@@ -224,5 +224,58 @@ class Blank(unittest.TestCase):
             self.assertEqual(int(built.max()), 0)
 
 
+class DisplayRange(unittest.TestCase):
+    """Revision 6: the display range is the hand's, display only — the same levels, quantised again."""
+
+    def test_the_default_range_is_the_old_picture(self):
+        x = tone(1500, 48000, 1.0, 0.1)
+        db = image.build_db(x, 48000, 2048, 4)
+        self.assertTrue(np.array_equal(image.quantize(db), image.build_image(x, 48000, 2048, 4)))
+        self.assertTrue(np.array_equal(image.quantize(db, -100.0, 0.0), image.quantize(db)))
+
+    def test_a_narrower_range_spreads_the_same_levels(self):
+        sr = 48000
+        for amp_db in (-20.0, -40.0):
+            x = tone(1500, sr, 1.0, 10 ** (amp_db / 20.0))
+            db = image.build_db(x, sr, 2048, 4)
+            self.assertAlmostEqual(float(db.max()), amp_db, delta=0.2)
+            idx = image.quantize(db, -60.0, -20.0)
+            self.assertAlmostEqual(float(idx.max()), (amp_db + 60.0) / 40.0 * 255.0, delta=1.5)
+
+    def test_levels_outside_the_range_are_clipped_to_its_ends(self):
+        # -50 dB is 3/4 of the way from -80 to -40
+        idx = image.quantize(np.array([[-200.0, -90.0, -50.0, -30.0, 10.0]]), -80.0, -40.0)
+        self.assertEqual(idx.tolist(), [[0, 0, 191, 255, 255]])
+        self.assertEqual(idx.dtype, np.uint8)
+
+    def test_requantising_equals_building_with_the_range(self):
+        x = tone(800, 48000, 1.0, 0.3) + tone(5000, 48000, 1.0, 0.003)
+        db = image.build_db(x, 48000, 2048, 4)
+        for floor, ceil in ((-120.0, 0.0), (-60.0, -10.0), (-80.0, -20.0)):
+            self.assertTrue(np.array_equal(image.quantize(db, floor, ceil),
+                                           image.build_image(x, 48000, 2048, 4, floor=floor, ceil=ceil)))
+
+    def test_the_file_carries_its_range_so_the_readout_stays_true(self):
+        p = os.path.join(tempfile.mkdtemp(), "r.objkcnv")
+        db = image.build_db(tone(1000, 48000, 0.5, 0.1), 48000, 2048, 4)
+        image.write_db_image(p, db, -70.0, -10.0)
+        idx, v0, v255, _pal = canvasfile.read_cnv(p)
+        self.assertEqual((v0, v255), (-70.0, -10.0))
+        # index i reads (v0 + i/255 (v255 - v0)) dB: the brightest cell is within half a step of the peak
+        peak = float(db.max())
+        read = v0 + float(idx.max()) / 255.0 * (v255 - v0)
+        self.assertAlmostEqual(read, peak, delta=(v255 - v0) / 255.0)
+
+    def test_an_empty_range_is_refused(self):
+        with self.assertRaises(ValueError):
+            image.quantize(np.zeros((2, 2)), -10.0, -10.0)
+
+    def test_the_picture_of_silence_stays_black_at_any_range(self):
+        blank = image.blank_db(9000, 1024, 4)
+        self.assertEqual(blank.shape, image.blank_image(9000, 1024, 4).shape)
+        for floor, ceil in ((-100.0, 0.0), (-120.0, -60.0), (-20.0, 0.0)):
+            self.assertEqual(int(image.quantize(blank, floor, ceil).max()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

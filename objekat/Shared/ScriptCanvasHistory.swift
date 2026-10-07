@@ -33,6 +33,17 @@ import Foundation
 // 6 October 2026): the trailing active drafts are REMOVED, not undone — nothing of them stays to be
 // redone — and so is whatever lay in the redo tail. The same alerts' "Apply" answer is `commit`.
 // The history never decides which of the two a hand wants; the canvas asks.
+//
+// A THIRD SHAPE OF UNDO, `undoRevealing` (revision 6, Selection mode only — the canvas chooses which undo
+// to call, the history has no mode): undoing an applied STEP does not just remove it, it brings its
+// SELECTION back as a pending one. The step is REPLACED by one draft per op (same ops, same ids, in
+// order; `activeSince` = the new revision), and the step's `params` are handed back so the canvas can put
+// its settings (gain, feathers…) back into the controls. From there everything is the ordinary draft
+// machinery: ⌘Z peels a gesture, `commit` seals what is left as a NEW step. REDO, minimally: right after
+// a reveal, with nothing touched since, ⇧⌘Z puts the step back EXACTLY as it was (same id, same ops, same
+// `params`), removing the drafts. That is all it does: the first thing done to the history after a reveal
+// (a gesture, a commit, an Ignore, any undo or redo) forgets it, since the drafts are then no longer the
+// step. A reveal drops the redo tail, as any new entry does.
 
 nonisolated enum CanvasEntryKind: String, Equatable, Sendable {
     case draft, step
@@ -52,6 +63,16 @@ nonisolated struct CanvasEntry<Op, Params> {
 
 extension CanvasEntry: Equatable where Op: Equatable, Params: Equatable {}
 
+/// What `undoRevealing` did.
+nonisolated enum CanvasUndoOutcome<Params> {
+    /// At the start of the history: nothing changed.
+    case nothing
+    /// An entry went away (a pending gesture, or a step in a history that was not asked to reveal it).
+    case removed
+    /// An applied step went away and its selection is pending again; these are the step's `params`.
+    case revealed(Params)
+}
+
 nonisolated struct CanvasHistory<Op, Params> {
     typealias Entry = CanvasEntry<Op, Params>
 
@@ -61,6 +82,9 @@ nonisolated struct CanvasHistory<Op, Params> {
     /// Moves each time the ACTIVE list changes (an entry added, sealed, discarded, an undo, a redo).
     private(set) var rev = 0
     private(set) var nextEntryID = 1
+    /// The step a reveal replaced by drafts, kept for ONE redo: `index` is where the drafts start. Nil as
+    /// soon as anything else happens to the history.
+    private var revealed: (step: Entry, index: Int)? = nil
 
     init() {}
 
@@ -68,7 +92,7 @@ nonisolated struct CanvasHistory<Op, Params> {
 
     var count: Int { entries.count }
     var canUndo: Bool { cursor > 0 }
-    var canRedo: Bool { cursor < entries.count }
+    var canRedo: Bool { cursor < entries.count || revealed != nil }
 
     var activeEntries: ArraySlice<Entry> { entries[..<cursor] }
 
@@ -97,6 +121,7 @@ nonisolated struct CanvasHistory<Op, Params> {
 
     /// Drops the undone tail; bumps the revision; returns it.
     private mutating func openNewEntry() -> Int {
+        revealed = nil
         if cursor < entries.count { entries.removeSubrange(cursor...) }
         rev += 1
         return rev
@@ -131,6 +156,7 @@ nonisolated struct CanvasHistory<Op, Params> {
     mutating func commit(params: Params) -> Bool {
         let p = pending
         guard p > 0 else { return false }
+        revealed = nil
         let sealed = entries[(cursor - p)..<cursor].flatMap(\.ops)
         entries.removeSubrange((cursor - p)...)   // the drafts AND the redo tail
         rev += 1
@@ -144,6 +170,7 @@ nonisolated struct CanvasHistory<Op, Params> {
     mutating func discardPending() -> Bool {
         let p = pending
         guard p > 0 else { return false }
+        revealed = nil
         entries.removeSubrange((cursor - p)...)
         cursor = entries.count
         rev += 1
@@ -154,6 +181,7 @@ nonisolated struct CanvasHistory<Op, Params> {
     @discardableResult
     mutating func undo() -> Bool {
         guard cursor > 0 else { return false }
+        revealed = nil
         cursor -= 1
         rev += 1
         return true
@@ -163,10 +191,43 @@ nonisolated struct CanvasHistory<Op, Params> {
     /// history it is a no-op.
     @discardableResult
     mutating func redo() -> Bool {
+        if let r = revealed {
+            // The drafts a reveal left are still the last thing done: the step comes back whole.
+            revealed = nil
+            entries.removeSubrange(r.index...)
+            rev += 1
+            var step = r.step
+            step.activeSince = rev
+            entries.append(step)
+            cursor = entries.count
+            return true
+        }
         guard cursor < entries.count else { return false }
         rev += 1
         entries[cursor].activeSince = rev
         cursor += 1
         return true
+    }
+
+    /// Selection mode's undo. A pending gesture goes away exactly as in `undo()`. An applied STEP at the top
+    /// is replaced by its selection (see the header) and its `params` handed back. The redo tail goes.
+    @discardableResult
+    mutating func undoRevealing() -> CanvasUndoOutcome<Params> {
+        guard cursor > 0 else { return .nothing }
+        let top = entries[cursor - 1]
+        guard top.kind == .step, let params = top.params else {
+            undo()
+            return .removed
+        }
+        let index = cursor - 1
+        entries.removeSubrange(index...)      // the step AND the redo tail
+        rev += 1
+        for op in top.ops {
+            entries.append(Entry(id: nextEntryID, kind: .draft, activeSince: rev, params: nil, ops: [op]))
+            nextEntryID += 1
+        }
+        cursor = entries.count
+        revealed = (top, index)
+        return .revealed(params)
     }
 }

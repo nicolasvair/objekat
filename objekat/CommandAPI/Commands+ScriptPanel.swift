@@ -25,8 +25,8 @@ extension CommandRegistry {
                         + "a status line, Validate / Cancel. One panel per connection (a second "
                         + "replaces the first). Headless: the panel exists, no window opens.",
                  params: [ParamSpec("title", "string", required: false, "Window title."),
-                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?,advanced?}>",
-                                    "kind: bool | number | button | choice | progress | section. A progress is a bar the script drives (value 0…1, null = indeterminate); a section is a heading. A number needs min, max, step; a choice needs options [{id,label}] and its value is an option id. "
+                          ParamSpec("controls", "array<{id,kind,label,value?,min?,max?,step?,unit?,enabled_by?,options?,presets?,advanced?}>",
+                                    "kind: bool | number | button | choice | progress | section. A progress is a bar the script drives (value 0…1, null = indeterminate); a section is a heading. A number needs min, max, step; with presets [numbers] it is a row of buttons (one selected, any value is snapped to the nearest preset); a choice needs options [{id,label}] and its value is an option id. "
                                   + "enabled_by = the id of a bool control that greys this one. advanced = true hides the control until the hand presses the window's Expert button."),
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the panel closes if it disappears."),

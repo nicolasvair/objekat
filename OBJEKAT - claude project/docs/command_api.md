@@ -2220,11 +2220,11 @@ A few points of vocabulary that save mistakes:
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
-| `tools/scenario_spectral_editor.py` | the spectral editor, app side: 320 assertions in seven sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`, `set_image.history_rev`, `set_audio.listen`, the live remember of values + mode + tool; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-editor/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the base image's pixels (no veil: the spectrogram shows what is applied), on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone, the picture refreshed), undo, Validate with a selection pending; (c) ends with two more sessions that must find everything remembered. (c), (d), (e), (g) skip when the script's venv is missing. `SECTIONS=` picks sections |
+| `tools/scenario_spectral_editor.py` | the spectral editor, app side: 418 assertions in ten sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`, `set_image.history_rev`, `set_audio.listen`, the live remember of values + mode + tool; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-editor/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the base image's pixels (no veil: the spectrogram shows what is applied), on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone, the picture refreshed), undo, Validate with a selection pending; (c) ends with two more sessions that must find everything remembered; (i) REVISION 6, canvas side: the op's `slot`, the undo that reveals a step's selection (settings restored, redo, Instant unchanged); (j) REVISION 6, end to end: working on the Difference (G' = 1 - (1 - G) g, Result + Difference = Original, pending selection included) and the display range (recoloured in place, remembered). (c), (d), (e), (g), (j) skip when the script's venv is missing. `SECTIONS=` picks sections |
 | `tools/test_script_canvas_geometry.swift` | the canvas's axes, viewport, trace discs, ticks and number formats, compiled standalone: 125 assertions, no app needed |
 | `tools/test_script_canvas_image.swift` | the two raw image files (`OBJKCNV1`, `OBJKRGB1`) against the committed fixtures, compiled standalone: 46 assertions, no app needed |
 | `tools/test_script_canvas_memory.swift` | what a canvas remembers besides its values (mode and tool, the rule of what still fits), compiled standalone: 11 assertions, no app needed |
-| `tools/test_script_canvas_history.swift` | the canvas's history as ENTRIES (drafts, steps, commit, discard, undo / redo peeling one entry, `active_since`), compiled standalone: 78 assertions, no app needed |
+| `tools/test_script_canvas_history.swift` | the canvas's history as ENTRIES (drafts, steps, commit, discard, undo / redo peeling one entry, `active_since`), compiled standalone (incl. the undo that reveals): 106 assertions, no app needed |
 | `tools/scripts/spectral-editor/` | the "Spectral editor" third-party script (folder and id `spectral-editor`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 178 tests: STFT round trip, the whole gain mathematics, the images, the selection layer, the Editor's messages, the WAV reader / writer, the pure decisions) |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
@@ -2357,12 +2357,20 @@ panel exists and no window opens**). One panel per connection (a second `open` r
 Nothing here is an edit. Same lifetime as the overlays; also closed when its `object` disappears.
 
 Controls: `{id, kind: "bool"|"number"|"button"|"choice"|"progress"|"section", label, value?, min?, max?, step?, unit?,
-enabled_by?, options?, advanced?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
+enabled_by?, options?, presets?, advanced?}`. A `number` needs `min < max` and `step > 0` and a `value` in range (default
 `min`); a `choice` (drawn as a pop-up menu) needs a non-empty `options: [{id, label}]` (unique ids),
 its `value` is an option **id** (default: the first option) and `values[id]` reads back that id as a
 string — `input` / `update` refuse an id that is not one of the options (`bad_params`), and the
 option labels, like every label, are the script's own data; a `bool` defaults to false; `enabled_by` names a `bool` control whose being unchecked greys this
-one ("a box and a threshold" — the window draws that pair inline). `advanced: true` hides a control until the hand presses the window's **Expert** button (presentation only: the value is still read back, remembered and settable through `input`). The labels are the SCRIPT's own
+one ("a box and a threshold" — the window draws that pair inline). A `number` may declare **`presets`** (revision 6b): an
+ordered list of the only values it can hold (at least one, finite, inside `min…max`, no duplicate; refused on any other
+kind; a declared `value` must be one of them, default = the first). The window then draws a row of buttons — the number
+alone on each (a true minus, an explicit plus: "−60", "+3"), one selected at a time, the `label` and `unit` over it —
+instead of a slider, and EVERY door a value comes in by snaps it to the NEAREST preset (a tie goes to the one listed
+first): the hand, `input`, `update`, a value remembered under `remember` (even one outside `min…max`, e.g. the value of
+an older slider), a step's setting put back by the undo that reveals. The value stays a plain number everywhere
+(`values`, a step's `params`, the memory); a step that already holds another number keeps it as it is (only the
+control snaps, never history). `advanced: true` hides a control until the hand presses the window's **Expert** button (presentation only: the value is still read back, remembered and settable through `input`). The labels are the SCRIPT's own
 data; the app's only texts are Validate / Cancel / Reset / Expert and the default title.
 
 Two kinds are the script's own drawing and hold nothing a hand can set (`input` refuses them):
@@ -2494,9 +2502,24 @@ step coming back whole. Entry ids are monotonic and never reused. `history.pendi
 active drafts. (The pure rules are `objekat/Shared/ScriptCanvasHistory.swift`, asserted standalone by
 `tools/test_script_canvas_history.swift`.)
 
+**An undo that REVEALS (revision 6, Selection mode only).** In a canvas with `modes`, in Selection mode, when the top
+of the history is an applied STEP (no draft pending), `undo` removes that step AND brings its selection back as
+PENDING: one draft per op, in order (fresh entry ids, same op content and `slot`), and the controls the step had
+snapshotted are put back — only the hand values that are not `advanced` and not owned by a tool (a tool's
+`params`, its `size_control`): in the spectral editor the gain and the two feathers, not the brush's amount /
+hardness / size nor the analysis and display settings. The hand can then tweak and Apply again (a NEW step). With a
+selection pending, `undo` is the usual one (the last gesture alone). Instant mode, and a canvas with no `modes`,
+undo as before (the whole step is simply removed). **`redo` right after a reveal** puts the original step back
+exactly (same ids, same `params`; the pending drafts it came from are removed; the controls are NOT reverted); any
+other change of the history (a new gesture, Apply, Ignore, an undo) forgets that redo. The top-level answer of
+`input` is unchanged; the revealed selection shows in `history` (`pending`, `entries`) and `values`.
+
 **Op JSON.** `id` is a monotonic integer per canvas, from 1 (also across entries). `params` is the snapshot of
 the tool's declared controls AT THE MOMENT of the gesture; later changes of a control never touch an earlier
-op. `polarity` is `"add"` or `"subtract"` (always `add` in Instant). `active_since` is on the ENTRY, not the op.
+op. `polarity` is `"add"` or `"subtract"` (always `add` in Instant). `slot` (revision 6, `original | result | delta`) is
+the audio slot HEARD when the gesture was drawn: the app only records it (the script reads it: it is how a gesture
+made while listening to the Difference acts on the difference); it is kept when a selection is brought back by the
+undo below. `active_since` is on the ENTRY, not the op.
 
 ```json
 {"id":7,"kind":"rect","tool":"rect","x0":…,"x1":…,"y0":…,"y1":…,"params":{"gain":-12},"polarity":"add"}
@@ -2581,7 +2604,8 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
   - In **Instant** an added op is a history STEP at once (`params` = every hand value then); in **Selection** it
     is a DRAFT (`pending` grows). `commit: true` seals the pending drafts into ONE step (see *History = entries*):
     `committed: true`, and `added: true` too; with nothing pending it is a no-op (`added: false`, `rev`
-    unmoved). `discard: true` throws the pending selection away (`discarded`). `undo` / `redo` move ONE entry and,
+    unmoved). `discard: true` throws the pending selection away (`discarded`). `undo` / `redo` move ONE entry (in
+    Selection mode an undo of an applied step reveals its selection: see *An undo that REVEALS*) and,
     at either end of the history, are no-ops (`rev` unmoved). `added` is true when an op was added or a commit
     sealed something.
   - `tool` takes a declared tool id (`"hand"` is `bad_params`: unknown tool). `mode` is `"instant"` or

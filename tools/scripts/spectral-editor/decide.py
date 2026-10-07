@@ -26,6 +26,12 @@ OUTPUT_SUFFIX = " (spectral)"
 LIVE_KEYS = ("gain", "feather_ms", "feather_st")
 FEATHER_KEYS = ("feather_ms", "feather_st")
 
+# The gain is chosen among a few buttons (revision 6b), the same for both tools: the app draws a row of
+# buttons from the control's `presets` and snaps every value to the nearest one. A step's own gain is
+# whatever it was sealed with, read exactly by mask.py (an older step made at another value keeps it).
+GAIN_PRESETS = (-60, -24, -12, -6, -3, 3)   # dB, in the order of the buttons
+GAIN_DEFAULT = -12                          # one of the presets
+
 
 def depth_class(source_format, bit_depth):
     """The class of one source file: pcm_int 16 -> 16, pcm_int 24 -> 24, pcm_float 32 -> "f32",
@@ -125,3 +131,30 @@ def preview_dirty(prev_values, values, pending):
     if "gain" in changed:
         return {"audio"}
     return set()
+
+
+# --- the spectrogram's display range (revision 6) -------------------------------------------------
+# DISPLAY ONLY: the hand's floor (the level drawn black) and ceiling (drawn white) of the pictures.
+# Nothing here reaches the audio or the history.
+DB_FLOOR = (-120.0, -20.0, -100.0)   # (min, max, default)
+DB_CEIL = (-60.0, 0.0, 0.0)
+DB_MIN_GAP = 6.0                     # the ceiling is kept at least this far above the floor
+
+
+def display_range(values):
+    """(floor, ceiling) in dB from the side bar's `db_floor` / `db_ceiling`: each clamped to its control's
+    range (an unreadable value falls back to the default), then the ceiling lifted to floor + DB_MIN_GAP
+    when the hand crossed them — the floor never moves, so dragging the floor up carries the ceiling."""
+    def read(key, spec):
+        lo, hi, default = spec
+        try:
+            v = float((values or {}).get(key))
+        except (TypeError, ValueError):
+            v = default
+        if v != v:
+            v = default
+        return min(hi, max(lo, v))
+
+    floor = read("db_floor", DB_FLOOR)
+    ceil = read("db_ceiling", DB_CEIL)
+    return floor, max(ceil, floor + DB_MIN_GAP)

@@ -31,7 +31,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
    editor…**. The object is **rendered** exactly as `retouche-externe` renders it: its own plugins,
    gain, pan, fades, window and speed (a group's content included), and nothing around it (no parent
    chain, no master, no sends).
-2. The window shows the spectrogram. One **Gain** (−60…+12 dB, default −12) serves both tools, with the
+2. The window shows the spectrogram. One **Gain** — a row of buttons, −60 / −24 / −12 / −6 / −3 / +3 dB, default −12 — serves both tools, with the
    rectangle's **feathers** (in time, ms; in frequency, semitones). Tools:
    - **Rectangle**: drag a box over time × frequency; a soft edge so the box does not ring.
    - **Brush** (Pinceau): draw over the picture, like a spray can. A pass deposits **Amount per pass**
@@ -56,10 +56,23 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
    the time ruler), and ONE switch **Original / Result / Difference** (it opens on **Result**) — instantly, at the same position —
    the last being only what the operations take away. ⌘Z / ⇧⌘Z walk the history one entry back (the
    last selection gesture, then whole applied steps; the window's own, nothing reaches the project's undo
-   stack before Validate).
+   stack before Validate). **In Selection mode, ⌘Z on an applied step brings its selection back** as the
+   pending (amber) one, with its gain and feathers back in the controls: tweak it and Apply again (⇧⌘Z right
+   after puts the step back as it was; with a selection pending, ⌘Z still removes the last gesture; Instant
+   mode is unchanged).
+   - **Working on the Difference.** The Difference is exactly Original − Result (Result + Difference =
+     Original). With the switch on **Difference**, a gesture acts on it: a gesture of gain *g* leaves
+     *g* × what the Difference held, so the Result gets back the rest — `G' = 1 − (1 − G)·g` (−12 dB
+     on the Difference's content is the same as taking 12 dB off what you had removed). A step drawn on
+     the Difference then on the Result (or the reverse) composes in the order drawn. A Selection step takes the view of its first gesture.
+     Boosting the Difference beyond what it holds cannot go below silence for the Result (floor −300 dB).
 4. **Expert** (side bar): FFT size (1024…32768, default 2048) and overlap (2…10, default 4). Changing
    them recomputes the picture and the preview; the operations made are kept (they are stored in
-   seconds and Hz, not in bins).
+   seconds and Hz, not in bins). Also **Display**: the spectrogram's **floor** (−120…−20 dB, default −100)
+   and **ceiling** (−60…0 dB, default 0) — the levels drawn black and white, for the Original, the
+   Result and the Difference alike. Display only (no effect on the sound), instant (the pictures are
+   re-coloured from memory, no new analysis), remembered with the other settings; the ceiling is kept at
+   least 6 dB above the floor.
 5. **Validate** writes what you HEAR (a selection still pending asks first: Apply, Ignore or Cancel) as a wav, lays it on a **new row at the same instant** (inside the
    same group if there is one), named **"<name> (spectral)"**, and **mutes the original** (it is not
    deleted). ONE project undo step takes it all back. **Cancel** (or closing the window) leaves the
@@ -100,7 +113,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
 | `make_fixture.py` | writes the two image-format fixtures to `tools/fixtures/spectral/` |
 | `test_*.py`, `run_tests.sh` | the unit tests (`./run_tests.sh [python]`) |
 
-End to end, headless: `tools/scenario_spectral_editor.py` (sections c, d, e, g drive this script through the
+End to end, headless: `tools/scenario_spectral_editor.py` (sections c, d, e, g, j drive this script through the
 real app).
 
 ## Testing hooks

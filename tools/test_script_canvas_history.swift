@@ -337,6 +337,115 @@ enum ScriptCanvasHistoryTest {
         check("every change moves the revision by exactly one, a no-op not at all", revs == [0, 1, 1, 2, 3, 4, 4], "\(revs)")
     }
 
+    // MARK: - Undo that REVEALS (Selection mode, revision 6)
+
+    func outcome(_ o: CanvasUndoOutcome<String>) -> String {
+        switch o {
+        case .nothing: return "nothing"
+        case .removed: return "removed"
+        case .revealed(let p): return "revealed(" + p + ")"
+        }
+    }
+
+    do {
+        // A step comes back as pending drafts, with its params.
+        var h = H()
+        h.appendStep(ops: [1], params: "A")
+        h.appendDraft(2); h.appendDraft(3)
+        h.commit(params: "B")                                    // S[1] S[2,3]
+        let rev = h.rev
+        let o = h.undoRevealing()
+        check("reveal: the top step comes back as its params", outcome(o) == "revealed(B)", outcome(o))
+        check("reveal: ... as one pending draft per op, in order, below the steps",
+              shape(h) == "S[1]d[2]d[3]" && h.pending == 2 && h.cursor == h.count)
+        check("reveal: the revision moved once and the drafts are active from it",
+              h.rev == rev + 1 && h.activeEntries.last!.activeSince == h.rev && h.entries[1].activeSince == h.rev)
+        check("reveal: the drafts have fresh ids, the step below keeps its own",
+              h.entries[0].id == 1 && h.entries[1].id > 2 && h.entries[2].id > h.entries[1].id && h.entries[1].params == nil)
+        check("reveal: the ops are the step's", h.activeOps == [1, 2, 3])
+        check("reveal: a redo is available", h.canRedo)
+    }
+
+    do {
+        // ... and sealing them again makes a NEW step with the params of NOW.
+        var h = H()
+        h.appendDraft(1); h.appendDraft(2); h.commit(params: "A")
+        h.undoRevealing()
+        check("reveal: commit re-seals the selection as a new step with the new params",
+              h.commit(params: "TWEAKED") && shape(h) == "S[1,2]" && h.entries[0].params == "TWEAKED")
+        check("reveal: after that there is nothing left to redo", !h.canRedo && !h.redo())
+    }
+
+    do {
+        // Redo, right after a reveal: the step comes back exactly as it was.
+        var h = H()
+        h.appendStep(ops: [1], params: "A")
+        h.appendStep(ops: [2, 3], params: "B")
+        let original = h.entries[1]
+        h.undoRevealing()
+        let rev = h.rev
+        check("reveal+redo: redo puts the step back", h.redo() && shape(h) == "S[1]S[2,3]" && h.pending == 0)
+        check("reveal+redo: it is the SAME step (id, ops, params)",
+              h.entries[1].id == original.id && h.entries[1].ops == original.ops && h.entries[1].params == "B")
+        check("reveal+redo: the revision moved and the step is active from it", h.rev == rev + 1 && h.entries[1].activeSince == h.rev)
+        check("reveal+redo: the cursor is at the top, no drafts left", h.cursor == h.count && h.count == 2)
+        check("reveal+redo: a second redo does nothing", !h.redo() && !h.canRedo)
+        // and the cycle can be repeated
+        check("reveal+redo: ⌘Z reveals it again", outcome(h.undoRevealing()) == "revealed(B)" && shape(h) == "S[1]d[2]d[3]")
+        check("reveal+redo: ... and redo restores it again", h.redo() && shape(h) == "S[1]S[2,3]")
+    }
+
+    do {
+        // Anything done after a reveal forgets the step: the drafts are then no longer it.
+        func fresh() -> H {
+            var h = H()
+            h.appendStep(ops: [1], params: "A")
+            h.appendStep(ops: [2, 3], params: "B")
+            h.undoRevealing()
+            return h
+        }
+        var h = fresh()
+        h.appendDraft(9)
+        check("forgotten by a new gesture", !h.redo() && shape(h) == "S[1]d[2]d[3]d[9]" && !h.canRedo)
+        h = fresh()
+        h.undo()                                                  // peels the draft 3
+        check("forgotten by peeling a gesture: redo brings the DRAFT back, not the step",
+              h.redo() && shape(h) == "S[1]d[2]d[3]" && h.pending == 2 && h.entries.count == 3)
+        check("... and then there is no step to redo", !h.redo())
+        h = fresh()
+        h.discardPending()
+        check("forgotten by Ignore", !h.canRedo && shape(h) == "S[1]")
+        h = fresh()
+        h.commit(params: "C")
+        check("forgotten by Apply", !h.canRedo && !h.redo())
+    }
+
+    do {
+        // On pending drafts, or with Instant's plain undo, nothing is revealed.
+        var h = H()
+        h.appendDraft(1); h.appendDraft(2)
+        check("a pending gesture is just peeled, as before", outcome(h.undoRevealing()) == "removed" && shape(h) == "d[1]" && h.pending == 1)
+        check("... and redo brings it back", h.redo() && shape(h) == "d[1]d[2]")
+        var g = H()
+        check("at the start of the history there is nothing to reveal", outcome(g.undoRevealing()) == "nothing" && g.rev == 0)
+        g.appendStep(ops: [1], params: "A")
+        check("plain undo still removes a step WITHOUT revealing it", g.undo() && shape(g) == "" && g.pending == 0 && g.canRedo)
+        check("... and plain redo brings it back whole", g.redo() && shape(g) == "S[1]")
+    }
+
+    do {
+        // A reveal is a new entry: the redo tail goes, like any other.
+        var h = H()
+        h.appendStep(ops: [1], params: "A")
+        h.appendStep(ops: [2], params: "B")
+        h.undo()                                                  // plain: B in the tail
+        check("tail before: B", tail(h) == "S[2]")
+        check("reveal of A drops the tail", outcome(h.undoRevealing()) == "revealed(A)" && tail(h) == "" && shape(h) == "d[1]")
+        // the ids stay unique
+        let ids = h.entries.map(\.id)
+        check("ids never reused through a reveal", Set(ids).count == ids.count && h.nextEntryID > (ids.max() ?? 0))
+    }
+
     // MARK: - Equatable entries
 
     do {

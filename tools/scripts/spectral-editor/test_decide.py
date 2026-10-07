@@ -130,6 +130,14 @@ class TestPreviewDirty(unittest.TestCase):
         self.assertEqual(self.dirty(1, feather_st=2.5), {"selection", "audio"})
         self.assertEqual(self.dirty(2, feather_ms=50.0, feather_st=0.0), {"selection", "audio"})
 
+    def test_switching_any_gain_button_for_another_is_audio_only(self):
+        # revision 6b: the gain is a row of buttons; a click is a change of the gain alone
+        self.assertIn(decide.GAIN_DEFAULT, decide.GAIN_PRESETS)
+        for a in decide.GAIN_PRESETS:
+            for b in decide.GAIN_PRESETS:
+                want = set() if a == b else {"audio"}
+                self.assertEqual(decide.preview_dirty(dict(self.BASE, gain=a), dict(self.BASE, gain=b), 1), want, (a, b))
+
     def test_a_feather_with_the_gain_is_still_both(self):
         self.assertEqual(self.dirty(1, gain=-3.0, feather_ms=5.0), {"selection", "audio"})
 
@@ -147,6 +155,30 @@ class TestPreviewDirty(unittest.TestCase):
     def test_a_key_absent_from_both_is_not_a_change(self):
         self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -12}, 1), set())
         self.assertEqual(decide.preview_dirty({"gain": -12}, {"gain": -6}, 1), {"audio"})
+
+
+class TestDisplayRange(unittest.TestCase):
+    def test_defaults(self):
+        self.assertEqual(decide.display_range({}), (-100.0, 0.0))
+        self.assertEqual(decide.display_range(None), (-100.0, 0.0))
+        self.assertEqual(decide.display_range({"db_floor": "x", "db_ceiling": None}), (-100.0, 0.0))
+
+    def test_the_hand_s_values(self):
+        self.assertEqual(decide.display_range({"db_floor": -80, "db_ceiling": -10}), (-80.0, -10.0))
+
+    def test_each_value_is_clamped_to_its_control(self):
+        self.assertEqual(decide.display_range({"db_floor": -500, "db_ceiling": 40}), (-120.0, 0.0))
+        self.assertEqual(decide.display_range({"db_floor": 5, "db_ceiling": -500}), (-20.0, -14.0))
+
+    def test_crossed_values_keep_the_floor_and_carry_the_ceiling(self):
+        floor, ceil = decide.display_range({"db_floor": -30, "db_ceiling": -40})
+        self.assertEqual((floor, ceil), (-30.0, -30.0 + decide.DB_MIN_GAP))
+
+    def test_the_range_is_never_empty(self):
+        for f in range(-120, -19, 7):
+            for c in range(-60, 1, 9):
+                floor, ceil = decide.display_range({"db_floor": f, "db_ceiling": c})
+                self.assertGreaterEqual(ceil - floor, decide.DB_MIN_GAP)
 
 
 if __name__ == "__main__":

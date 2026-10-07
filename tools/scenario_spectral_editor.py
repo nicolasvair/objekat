@@ -35,6 +35,11 @@ PROJECT under the canvas's `remember` key: saved, restored on reopening, 0 dB in
 UserDefaults). The real script's pictures (Original, Difference) and the overlap's effect on the picture are checked
 in (c).
 
+Section (i) — REVISION 6, CANVAS SIDE: an op's `slot` (the audio heard when it was drawn), and in Selection mode
+the undo that REVEALS an applied step's selection (pending again, settings restored; redo; Instant unchanged).
+Section (j) — REVISION 6, END TO END: working on the Difference (G' = 1 - (1 - G) g; Result + Difference = Original,
+pending selection included) and the spectrogram's display range (recoloured in place, remembered, Reset).
+
 Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
 an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
 window is the window layer's only side effect, and `--headless` forbids it).
@@ -562,9 +567,13 @@ def section_b(c):
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo #2 peels the first draft", h["cursor"] == 1 and h["pending"] == 0, h)
+    # (revision 6: in Selection mode an undo of an applied step REVEALS its selection instead — section i; this
+    # part of the history checks the plain undo, so the hand goes back to Instant, which is allowed with nothing pending)
+    cinput(mode="instant")
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo #3 removes the whole applied step", h["cursor"] == 0 and h["pending"] == 0 and h["count"] == 3, h)
+    cinput(mode="select")
     cinput(redo=True)
     cinput(redo=True)
     cinput(redo=True)
@@ -594,6 +603,7 @@ def section_b(c):
     g = cg()
     check("b: a second commit is a no-op (nothing pending): added false, nothing moved",
           r["added"] is False and r["committed"] is False and g["rev"] == rev3 and g["history"]["rev"] == hrev3, r)
+    cinput(mode="instant")                      # revision 6: in Selection mode this undo reveals the step (section i)
     cinput(undo=True)
     h = cg()["history"]
     check("b: undo after a commit removes the WHOLE step; its drafts do not come back",
@@ -602,6 +612,7 @@ def section_b(c):
     h = cg()["history"]
     check("b: redo brings the step back whole", h["cursor"] == 2 and len(h["entries"][1]["ops"]) == 2, h)
     cinput(undo=True)
+    cinput(mode="select")
     r = crect(4, 5)
     h = cg()["history"]
     check("b: a new draft drops the redo tail (the undone commit); entry ids stay monotonic",
@@ -898,6 +909,73 @@ def section_b(c):
     g = c.send("script.canvas.get", {"canvas_id": cr})
     check("b: another key remembers nothing of it", g["tool"] == "rect" and g["mode"] == "instant" and g["values"]["gain"] == -12)
     c.send("script.canvas.close", {"canvas_id": cr})
+
+    # -- a number with `presets` (revision 6b): a row of buttons, every value snapped to the nearest ---------
+    PRESETS = [-60, -24, -12, -6, -3, 3]
+
+    def gain_control(**kw):
+        ctl = {"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5, "unit": "dB",
+               "presets": PRESETS}
+        ctl.update(kw)
+        return ctl
+
+    def with_ctl(*ctls, **kw):
+        return c.send("script.canvas.open", dict({"title": "Presets", "controls": list(ctls), "tools": []}, **kw))["canvas_id"]
+
+    def val(cp):
+        return c.send("script.canvas.get", {"canvas_id": cp})["values"]
+
+    cp = with_ctl(gain_control(value=-12))
+    check("b: presets: the declared value (a preset) is the default", val(cp)["g"] == -12, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    cp = with_ctl(gain_control())
+    check("b: presets: with no value the first preset is the default", val(cp)["g"] == -60, val(cp))
+    for given, want in ((-7, -6), (-6, -6), (99, 3), (-99, -60), (-9, -12), (-43, -60), (0, -3), (3, 3)):
+        c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": given}})
+        check("b: presets: input %s is snapped to %s (nearest; a tie goes to the first listed)" % (given, want),
+              val(cp)["g"] == want, val(cp))
+    c.send("script.canvas.update", {"canvas_id": cp, "values": {"g": -33}})
+    check("b: presets: update snaps too (-33 -> -24)", val(cp)["g"] == -24, val(cp))
+    rv = c.send("script.canvas.get", {"canvas_id": cp})["rev"]
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -3}})
+    check("b: presets: a click moves rev once", c.send("script.canvas.get", {"canvas_id": cp})["rev"] > rv)
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": "loud"}}),
+                 "bad_params", "b: presets: a non-number is refused")
+    c.send("script.canvas.close", {"canvas_id": cp})
+    for label, ctl in (("an empty list", gain_control(presets=[])),
+                       ("a preset out of min…max", gain_control(presets=[-60, 13])),
+                       ("a duplicate", gain_control(presets=[-6, -6])),
+                       ("a list that is not numbers", gain_control(presets=["a"])),
+                       ("presets that are not a list", gain_control(presets=-6)),
+                       ("a value that is not a preset", gain_control(value=-7)),
+                       ("presets on a bool", {"id": "b", "kind": "bool", "label": "B", "presets": [1]})):
+        expect_error(lambda: with_ctl(ctl), "bad_params", "b: presets: open refuses " + label)
+    kp = "spectral-editor.scenario.b.presets"
+    cp = with_ctl(gain_control(value=-12), remember=kp)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -24}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12), remember=kp)
+    check("b: presets: a remembered preset comes back", val(cp)["g"] == -24, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    ks = kp + ".slider"
+    cp = with_ctl({"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5,
+                   "value": -12, "unit": "dB"}, remember=ks)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": -7}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12, max=3), remember=ks)
+    check("b: presets: a value remembered as a slider's (-7) is snapped to the nearest preset (-6)",
+          val(cp)["g"] == -6, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
+    cp = with_ctl({"id": "g", "kind": "number", "label": "Gain", "min": -60, "max": 12, "step": 0.5,
+                   "value": -12, "unit": "dB"}, remember=ks)
+    c.send("script.canvas.input", {"canvas_id": cp, "values": {"g": 11.5}})
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "cancel"})
+    cp = with_ctl(gain_control(value=-12, max=3), remember=ks)
+    check("b: presets: a remembered value outside the new range (+11.5) is snapped too (+3)",
+          val(cp)["g"] == 3, val(cp))
+    c.send("script.canvas.input", {"canvas_id": cp, "press": "reset"})
+    check("b: presets: reset gives back the declared preset", val(cp)["g"] == -12, val(cp))
+    c.send("script.canvas.close", {"canvas_id": cp})
 
     # -- no trace in the project -----------------------------------------------------------
     cid = open_canvas(c, object=obj)
@@ -1406,6 +1484,8 @@ def section_c(c):
                   (v, st2["tool"], st2["mode"]))
             sc2.hand(mode="select", tool="rect", values={"gain": -7, "feather_ms": 500, "feather_st": 3, "size_px": 90,
                                                          "quantity": 60, "hardness": 70, "fft_size": "4096", "overlap": 6})
+            check("c: the gain is a row of buttons (revision 6b): a value between two (-7) is snapped to the nearest (-6)",
+                  sc2.get()["values"]["gain"] == -6, sc2.get()["values"]["gain"])
             sc2.hand(press="cancel")
         sc2.finish(60)
     finally:
@@ -1417,10 +1497,10 @@ def section_c(c):
         check("c: remember: the third session opens", st3 is not None)
         if st3 is not None:
             v = st3["values"]
-            check("c: remember: ALL the persisted controls come back (even after a Cancel): gain, both feathers "
+            check("c: remember: ALL the persisted controls come back (even after a Cancel): gain (-6, the -7 snapped), both feathers "
                   "(500 ms: the range reaches 1 s), brush size, amount, hardness, FFT size, overlap",
                   (v["gain"], v["feather_ms"], v["feather_st"], v["size_px"], v["quantity"], v["hardness"], v["fft_size"], v["overlap"])
-                  == (-7, 500, 3, 90, 60, 70, "4096", 6), v)
+                  == (-6, 500, 3, 90, 60, 70, "4096", 6), v)
             check("c: remember: the mode (Selection) and the tool (rect) come back", st3["mode"] == "select" and st3["tool"] == "rect",
                   (st3["mode"], st3["tool"]))
             sc3.hand(press="reset")
@@ -1542,6 +1622,19 @@ def section_g(c):
               st is not None and abs(d3 + 12) <= 1.0 and st["history"]["rev"] == hist_rev, d3)
         if st is None:
             return
+        # The other buttons of the row (revision 6b), the ends included: each click is heard at once, the history
+        # does not move, and a value that is not a button (-5) is snapped to the nearest (-6) BEFORE it is heard.
+        for given, want in ((-24, -24), (3, 3), (-5, -6), (-12, -12)):
+            prev = st["transport"]["slots"]["result"]
+            sc.hand(values={"gain": given})
+            st = caught_up(sc, prev)
+            d3 = db(result_of(st), orig, 3000) if st else None
+            check("g: gain button %s (given %s): the control reads %s, 3 kHz at %s dB +-1, history.rev UNCHANGED"
+                  % (want, given, want, want),
+                  st is not None and st["values"]["gain"] == want and abs(d3 - want) <= 1.0
+                  and st["history"]["rev"] == hist_rev, (st["values"]["gain"] if st else None, d3))
+            if st is None:
+                return
         # A feather moves the selection's edges: the selection layer IS redrawn (and the history still not).
         prev, sel_path = st["transport"]["slots"]["result"], layer(st, "selection")["path"]
         sc.hand(values={"feather_ms": 40})
@@ -1614,16 +1707,28 @@ def section_g(c):
               st["transport"]["slots"]["result"] == res_path and st["image"]["path"] == img_path
               and abs(db(result_of(st), orig, 3000) + 12) <= 1.0, st["transport"]["slots"]["result"])
 
-        # ---- undo = the whole step; its drafts do not come back --------------------------------------
+        # ---- undo REVEALS the step's selection (revision 6): pending again, settings back --------------
         sc.hand(undo=True)
-        st = sc.wait_for(lambda s: Script.synced(s) and s["history"]["cursor"] == 0)
-        check("g: undo: the step goes whole, pending stays 0",
-              st is not None and st["history"]["pending"] == 0 and st["history"]["count"] == 1, st and st["history"])
+        st = sc.wait_for(lambda s: Script.synced_selection(s) and s["history"]["pending"] > 0)
+        check("g: undo of the applied step brings its 3 gestures back as the PENDING selection (no step left)",
+              st is not None and st["history"]["pending"] == 3 and st["history"]["count"] == 3
+              and all(e["kind"] == "draft" for e in st["history"]["entries"]), st and st["history"])
         if st is None:
             return
-        check("g: undo: 3 kHz back to 0 +-0.2", abs(db(result_of(st), orig, 3000)) <= 0.2, db(result_of(st), orig, 3000))
-        check("g: undo: the spectrogram is the original's again (+-0.7 dB), no layer",
-              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and st["layers"] == [])
+        check("g: undo: the step's gain (-12) is back in the controls (it had been moved to -3 after Apply)",
+              st["values"]["gain"] == -12, st["values"]["gain"])
+        check("g: undo: the spectrogram is the original's again (+-0.7 dB) and the selection layer shows the selection",
+              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and layer(st, "selection") is not None)
+        check("g: undo: the preview carries the revealed selection (3 kHz -12 +-1)",
+              abs(db(result_of(st), orig, 3000) + 12) <= 1.0, db(result_of(st), orig, 3000))
+        sc.hand(discard=True)
+        st = sc.wait_for(lambda s: s["history"]["pending"] == 0 and s["layers"] == [] and not s["busy"]
+                         and s["transport"]["audio_history_rev"] == s["history"]["rev"])
+        check("g: Ignore throws the revealed selection away: nothing pending, 3 kHz back to 0 +-0.2",
+              st is not None and st["history"]["count"] == 0 and abs(db(result_of(st), orig, 3000)) <= 0.2,
+              st and st["history"])
+        if st is None:
+            return
 
         # ---- Validate with a selection still pending writes what is HEARD ------------------------------
         sc.hand(values={"gain": -12})
@@ -1998,14 +2103,301 @@ def section_h(c):
     c.send("project.new")
 
 
+def section_i(c):
+    """REVISION 6, CANVAS SIDE (no script): an op records the audio slot heard when it was drawn (`slot`), and
+    in Selection mode an undo of an APPLIED step brings its selection back as the pending one with its
+    settings restored (a redo puts the step back); Instant mode undoes as before."""
+    ROOT = tmproot("i")
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 3.0, 48000, 24)
+    CNV = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
+    c.send("project.new")
+    obj = c.send("object.add", {"path": WAV, "lane": 0, "start": 0.0})["id"]
+    tools = [{"id": "rect", "kind": "rect", "label": "Rectangle", "params": []},
+             {"id": "brush", "kind": "stroke", "label": "Brush", "params": ["quantity", "hardness"], "size_control": "size_px"}]
+    controls = CANVAS_CONTROLS + [{"id": "view", "kind": "number", "label": "View", "value": 5, "min": 0, "max": 10,
+                                   "step": 1, "advanced": True}]
+    cid = c.send("script.canvas.open", {"title": "R6", "controls": controls, "tools": tools, "object": obj,
+                                        "modes": True})["canvas_id"]
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV, "result": WAV, "delta": WAV, "history_rev": 0})
+
+    def get():
+        return c.send("script.canvas.get", {"canvas_id": cid})
+
+    def hist():
+        return get()["history"]
+
+    def inp(**kw):
+        kw["canvas_id"] = cid
+        return c.send("script.canvas.input", kw)
+
+    def rect(x0, x1, y0=100, y1=200):
+        return inp(op={"kind": "rect", "x0": x0, "x1": x1, "y0": y0, "y1": y1})
+
+    # -- the slot of an op --------------------------------------------------------------------
+    slots = []
+    for listen in ("original", "result", "delta"):
+        inp(listen=listen)
+        rect(len(slots), len(slots) + 1)
+        slots.append(listen)
+    h = hist()
+    check("i: an op carries the audio slot heard when it was drawn (original, result, delta)",
+          [e["ops"][0]["slot"] for e in h["entries"]] == slots and h["count"] == 3, h["entries"])
+    inp(undo=True)
+    inp(undo=True)
+    inp(undo=True)
+    h = hist()
+    check("i: Instant mode: undo is the plain one (the steps stay listed, cursor 0, nothing pending)",
+          h["cursor"] == 0 and h["count"] == 3 and h["pending"] == 0, h)
+    for _ in range(3):
+        inp(redo=True)
+    h = hist()
+    check("i: ... and redo brings them back", h["cursor"] == 3 and h["count"] == 3 and h["pending"] == 0, h)
+    base_count = 3
+
+    # -- Selection mode: undo reveals the applied step's selection ---------------------------------
+    inp(mode="select")
+    inp(listen="delta")
+    inp(values={"gain": -6, "feather_ms": 25, "feather_st": 2, "quantity": 60, "view": 7})
+    rect(1.0, 2.0, 100, 1000)
+    rect(2.0, 2.5, 500, 4000)
+    inp(commit=True)
+    h = hist()
+    st = h["entries"][-1]
+    check("i: Selection: two gestures sealed into ONE step (params gain -6, feather 25 ms / 2 st)",
+          h["pending"] == 0 and st["kind"] == "step" and len(st["ops"]) == 2 and st["params"]["gain"] == -6
+          and st["params"]["feather_ms"] == 25 and st["params"]["feather_st"] == 2, st)
+    step_id, op_ids = st["id"], [o["id"] for o in st["ops"]]
+    geom = [(o["x0"], o["x1"], o["y0"], o["y1"], o["slot"]) for o in st["ops"]]
+    inp(values={"gain": -20, "feather_ms": 100, "feather_st": 5, "quantity": 30, "view": 2})
+    rev = hist()["rev"]
+    inp(undo=True)
+    g = get()
+    h = g["history"]
+    drafts = [e for e in h["entries"] if e["kind"] == "draft"]
+    check("i: undo of an applied step in Selection mode: its selection is PENDING (2 drafts), the step is gone",
+          h["pending"] == 2 and len(drafts) == 2 and h["count"] == base_count + 2 and h["cursor"] == h["count"]
+          and h["rev"] > rev and not any(e["id"] == step_id for e in h["entries"]), h)
+    check("i: ... the drafts are the very gestures (geometry and the slot they were drawn in), in order",
+          [(o["x0"], o["x1"], o["y0"], o["y1"], o["slot"]) for e in drafts for o in e["ops"]] == geom, drafts)
+    v = g["values"]
+    check("i: ... the step's gain and feathers are back in the controls (-6, 25, 2)",
+          v["gain"] == -6 and v["feather_ms"] == 25 and v["feather_st"] == 2, v)
+    check("i: ... the brush's values, the size and an advanced setting are NOT restored (30, 2)",
+          v["quantity"] == 30 and v["view"] == 2 and v["size_px"] == 32, v)
+    check("i: ... the app stays in Selection mode, the polarity toggle untouched", g["mode"] == "select" and g["polarity"] == "add")
+    # redo puts the step back, exactly
+    inp(redo=True)
+    h = hist()
+    st2 = h["entries"][-1]
+    check("i: redo right after: the SAME step comes back (id, ops, params), no draft left",
+          h["pending"] == 0 and st2["kind"] == "step" and st2["id"] == step_id and [o["id"] for o in st2["ops"]] == op_ids
+          and st2["params"]["gain"] == -6 and h["count"] == base_count + 1, h)
+    check("i: ... redo does not revert the controls (gain still -6 from the reveal)", get()["values"]["gain"] == -6)
+    # reveal again, tweak, re-apply: a NEW step with the new gain; the old one is gone
+    inp(undo=True)
+    inp(values={"gain": -3})
+    inp(commit=True)
+    h = hist()
+    st3 = h["entries"][-1]
+    check("i: reveal, tweak the gain, Apply again: ONE new step (gain -3, 2 ops), the old step is gone",
+          h["pending"] == 0 and st3["kind"] == "step" and st3["id"] != step_id and st3["params"]["gain"] == -3
+          and len(st3["ops"]) == 2 and h["count"] == base_count + 1, h)
+    check("i: ... its ops kept the slot they were drawn in (delta)", [o["slot"] for o in st3["ops"]] == ["delta", "delta"], st3["ops"])
+    # a revealed selection obeys the usual pending rules: undo peels ONE gesture
+    inp(undo=True)
+    inp(undo=True)
+    h = hist()
+    check("i: with a selection pending, undo removes the last gesture (not a whole step): 1 draft left",
+          h["pending"] == 1 and h["cursor"] == base_count + 1 and h["count"] == base_count + 2, h)
+    inp(redo=True)
+    check("i: ... and redo gives it back", hist()["pending"] == 2)
+    inp(commit=True)
+    inp(undo=True)                                    # reveal
+    n = hist()["pending"]
+    rect(0.2, 0.4)
+    h0 = hist()
+    r = inp(redo=True)
+    check("i: a new gesture after a reveal forgets its redo (redo is a no-op)",
+          r["added"] is False and hist()["rev"] == h0["rev"] and hist()["pending"] == n + 1, (r, h0))
+    inp(discard=True)
+    h = hist()
+    check("i: Ignore throws the revealed selection away, nothing to redo", h["pending"] == 0)
+    r = inp(redo=True)
+    check("i: ... redo after Ignore is a no-op", r["added"] is False and hist()["pending"] == 0, r)
+    inp(mode="instant")
+    check("i: Instant again once nothing is pending", get()["mode"] == "instant")
+    c.send("script.canvas.close", {"canvas_id": cid})
+
+
+def cnv_range(path):
+    """(v0, v255) of an OBJKCNV1 file: the value range its readout uses."""
+    with open(path, "rb") as f:
+        head = f.read(28)
+    assert head[:8] == b"OBJKCNV1", head[:8]
+    return struct.unpack("<ff", head[16:24])
+
+
+def section_j(c):
+    """REVISION 6, END TO END (the real script): working on the DIFFERENCE (Result + Difference = Original, the
+    levels follow G' = 1 - (1 - G) g) and the spectrogram's DISPLAY RANGE (re-coloured, remembered)."""
+    if not venv_ok():
+        print("skip  j: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
+        return
+    ROOT = tmproot("j")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    TONES = {300.0: 0.2, 3000.0: 0.2}
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tone.wav"), T, RATE, TONES, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tone"})["id"]
+
+    def audio(st, slot):
+        return read_wav_any(st["transport"]["slots"][slot])[3][0]
+
+    def lvl(x, ref, hz):
+        return goertzel_db(x, RATE, hz, 0.5, 1.5) - goertzel_db(ref, RATE, hz, 0.5, 1.5)
+
+    sc = Script(c, oid, CACHE, key="spectral-editor.scenario.j")   # its own key: c and g leave Selection mode behind
+    try:
+        if sc.find_canvas() is None:
+            check("j: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("j: the canvas is ready", st is not None)
+        if st is None:
+            return
+        orig = audio(st, "original")
+        world = st["world"]
+
+        # ---- step 1 on the Result: -24 dB over 2-4.5 kHz ------------------------------------------
+        sc.hand(values={"gain": -24})
+        sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(Script.pictures_synced)
+        if st is None:
+            check("j: step 1 settles", False)
+            return
+        e = st["history"]["entries"][0]
+        check("j: an op drawn while listening to the Result carries slot result", e["ops"][0]["slot"] == "result", e["ops"])
+        res, dlt = audio(st, "result"), audio(st, "delta")
+        check("j: step 1: the result is 3 kHz at -24 dB (+-1), 300 Hz untouched",
+              abs(lvl(res, orig, 3000) + 24) <= 1.0 and abs(lvl(res, orig, 300)) <= 0.2, (lvl(res, orig, 3000), lvl(res, orig, 300)))
+        diff1 = 20 * math.log10(1 - 10 ** (-24 / 20.0))
+        check("j: step 1: the difference is original - result: 3 kHz at %.2f dB (+-1)" % diff1,
+              abs(lvl(dlt, orig, 3000) - diff1) <= 1.0, lvl(dlt, orig, 3000))
+
+        # ---- step 2 on the Difference: -12 dB over the same band ---------------------------------
+        sc.hand(listen="delta", values={"gain": -12})
+        sc.hand(op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 2 and Script.pictures_synced(s))
+        if st is None:
+            check("j: step 2 settles", False)
+            return
+        e = st["history"]["entries"][1]
+        check("j: an op drawn while listening to the Difference carries slot delta", e["ops"][0]["slot"] == "delta", e["ops"])
+        res, dlt = audio(st, "result"), audio(st, "delta")
+        g1, g2 = 10 ** (-24 / 20.0), 10 ** (-12 / 20.0)
+        gp = 1 - (1 - g1) * g2                       # G' = 1 - (1 - G) g
+        want_res, want_dlt = 20 * math.log10(gp), 20 * math.log10((1 - g1) * g2)
+        check("j: step 2: the RESULT follows G' = 1 - (1 - G) g: 3 kHz at %.2f dB (+-1), not -36" % want_res,
+              abs(lvl(res, orig, 3000) - want_res) <= 1.0, lvl(res, orig, 3000))
+        check("j: step 2: the DIFFERENCE is 12 dB lower than before: 3 kHz at %.2f dB (+-1)" % want_dlt,
+              abs(lvl(dlt, orig, 3000) - want_dlt) <= 1.0, lvl(dlt, orig, 3000))
+        check("j: step 2: 300 Hz untouched in the result, absent from the difference",
+              abs(lvl(res, orig, 300)) <= 0.2 and lvl(dlt, orig, 300) <= -60, (lvl(res, orig, 300), lvl(dlt, orig, 300)))
+        n = min(len(orig), len(res), len(dlt))
+        worst = max(abs(orig[i] - res[i] - dlt[i]) for i in range(0, n, 7))
+        check("j: Result + Difference = Original, sample for sample (worst %.2e)" % worst, worst < 1e-5, worst)
+        # the pictures follow: the Difference's picture is 12 dB lower, the Result's lost only a little more
+        slots = st["image"]["slots"]
+        d_img = image_db(slots["delta"]["path"], world, 1.0, 3000)
+        o_img = image_db(slots["original"]["path"], world, 1.0, 3000)
+        r_img = image_db(st["image"]["path"], world, 1.0, 3000)
+        check("j: the Difference's picture shows 3 kHz %.1f dB under the Original's (+-3)" % want_dlt,
+              abs((d_img - o_img) - want_dlt) <= 3.0, (d_img, o_img))
+        check("j: the Result's picture shows 3 kHz %.1f dB under the Original's (+-3)" % want_res,
+              abs((r_img - o_img) - want_res) <= 3.0, (r_img, o_img))
+
+        # ---- the display range ------------------------------------------------------------------
+        before = sc.get()
+        paths = (before["image"]["path"], slots["original"]["path"], slots["delta"]["path"])
+        check("j: the default display range is -100 .. 0 dB on every picture", all(cnv_range(p) == (-100.0, 0.0) for p in paths),
+              [cnv_range(p) for p in paths])
+        hrev, audio_paths = before["history"]["rev"], (before["transport"]["slots"]["result"], before["transport"]["slots"]["delta"])
+        sc.hand(values={"db_floor": -60, "db_ceiling": -10})
+        st = sc.wait_for(lambda s: s["image"]["path"] != paths[0] and s["image"]["slots"]["original"]["path"] != paths[1]
+                         and s["image"]["slots"]["delta"]["path"] != paths[2] and not s["busy"])
+        check("j: a new range recolours the Result, the Original and the Difference pictures", st is not None)
+        if st is None:
+            return
+        slots2 = st["image"]["slots"]
+        new = (st["image"]["path"], slots2["original"]["path"], slots2["delta"]["path"])
+        check("j: ... each one now carries the range (-60 .. -10 dB) for its readout",
+              all(cnv_range(p) == (-60.0, -10.0) for p in new), [cnv_range(p) for p in new])
+        check("j: ... the readout still tells the truth (the Original's 3 kHz within 1 dB of before)",
+              abs(image_db(slots2["original"]["path"], world, 1.0, 3000) - o_img) <= 1.0,
+              (image_db(slots2["original"]["path"], world, 1.0, 3000), o_img))
+        check("j: ... display only: the history rev, the audio files and the steps are untouched",
+              st["history"]["rev"] == hrev and (st["transport"]["slots"]["result"], st["transport"]["slots"]["delta"]) == audio_paths
+              and len(st["history"]["entries"]) == 2, st["history"]["rev"])
+        check("j: ... the pictures keep their history stamp (what the app does with the traces does not move)",
+              st["image"]["history_rev"] == before["image"]["history_rev"]
+              and st["image"]["slots"]["delta"]["history_rev"] == before["image"]["slots"]["delta"]["history_rev"], st["image"])
+        # a floor above the ceiling carries the ceiling (never an empty range)
+        sc.hand(values={"db_floor": -20, "db_ceiling": -40})
+        st = sc.wait_for(lambda s: s["image"]["path"] != new[0] and not s["busy"])
+        check("j: a floor above the ceiling lifts the ceiling by 6 dB (-20 .. -14), never an empty range",
+              st is not None and cnv_range(st["image"]["path"]) == (-20.0, -14.0), st and cnv_range(st["image"]["path"]))
+        sc.hand(values={"db_floor": -90, "db_ceiling": -5})
+        st = sc.wait_for(lambda s: cnv_range(s["image"]["path"]) == (-90.0, -5.0) and not s["busy"])
+        check("j: the range is set again", st is not None)
+        # ---- Selection mode on the Difference: the PENDING selection is previewed on the difference too -----------
+        sc.hand(mode="select", listen="delta", values={"gain": -6})
+        sc.hand(op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: s["history"]["pending"] == 1 and Script.synced_selection(s))
+        check("j: Selection on the Difference: one pending gesture, the selection layer arrives", st is not None)
+        if st is not None:
+            res = audio(st, "result")
+            gpp = 1 - (1 - gp) * 10 ** (-6 / 20.0)
+            check("j: ... the preview is G'' = 1 - (1 - G') g: 3 kHz at %.2f dB (+-1)" % (20 * math.log10(gpp)),
+                  abs(lvl(res, orig, 3000) - 20 * math.log10(gpp)) <= 1.0, lvl(res, orig, 3000))
+            sc.hand(discard=True)
+        sc.hand(press="cancel")
+        sc.finish(60)
+    finally:
+        sc.abort()
+
+    # ---- remembered by the next session ---------------------------------------------------------------
+    sc2 = Script(c, oid, CACHE, key=sc.key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        check("j: the next session opens", st2 is not None)
+        if st2 is not None:
+            v = st2["values"]
+            check("j: the display range is remembered (-90 .. -5) and drawn so from the first picture",
+                  (v["db_floor"], v["db_ceiling"]) == (-90, -5) and cnv_range(st2["image"]["path"]) == (-90.0, -5.0)
+                  and cnv_range(st2["image"]["slots"]["original"]["path"]) == (-90.0, -5.0), (v, cnv_range(st2["image"]["path"])))
+            check("j: ... and the Difference's (blank) picture too",
+                  cnv_range(st2["image"]["slots"]["delta"]["path"]) == (-90.0, -5.0)
+                  if "delta" in st2["image"]["slots"] else False, st2["image"]["slots"])
+            sc2.hand(press="reset")
+            v = sc2.get()["values"]
+            check("j: Reset gives back the declared range (-100 .. 0)", (v["db_floor"], v["db_ceiling"]) == (-100, 0), v)
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+
+
 # ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdefgh")
+        only = os.environ.get("SECTIONS", "abcdefghij")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g), ("h", section_h)):
+                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j)):
             if name in only:
                 fn(c)
 finally:

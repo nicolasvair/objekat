@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The SwiftUI rows of a script's declared controls (@see ScriptControls), shared by the panel
 /// window (`ScriptPanelView`) and the canvas's sidebar. Moved out of `ScriptPanelView` with no change
-/// in what is drawn: a bool is a toggle, a number a slider with its value, a choice a menu, a button
+/// in what is drawn: a bool is a toggle, a number a slider with its value (or, with `presets`, a row of buttons), a choice a menu, a button
 /// a button, a section a heading, a progress a bar.
 ///
 /// The form holds no state of its own except what it is given: the controls, their current values,
@@ -91,6 +91,34 @@ struct ScriptControlsForm: View {
                 } label: { EmptyView() }
                 .labelsHidden()
                 .pickerStyle(.menu)
+            }
+        case .number where !c.presets.isEmpty:
+            // A number that is chosen among a few values: a row of buttons, one selected at a time, the
+            // label (and the unit) over it. A click is one change (never coalesced like a drag).
+            let enabled = row.gate.map { isOn($0.id) } ?? true
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if let gate = row.gate, gate.kind == .bool, inlineGate(gate) {
+                        Toggle(isOn: Binding(get: { isOn(gate.id) },
+                                             set: { set(gate.id, .bool($0), false) })) {
+                            Text(verbatim: gate.label)
+                        }
+                    } else {
+                        Text(verbatim: c.label)
+                    }
+                    if !c.unit.isEmpty {
+                        Text(verbatim: c.unit).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Picker(selection: Binding(get: { values[c.id]?.doubleValue ?? c.presets[0] },
+                                          set: { set(c.id, .number($0), false) })) {
+                    ForEach(c.presets, id: \.self) { p in
+                        Text(verbatim: ScriptControlPresets.label(p)).tag(p)
+                    }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .disabled(!enabled)
             }
         case .number:
             let enabled = row.gate.map { isOn($0.id) } ?? true

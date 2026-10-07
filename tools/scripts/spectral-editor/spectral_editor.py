@@ -225,9 +225,12 @@ def canvas_controls():
         return c
 
     return [
-        # ONE gain serves both tools; with the feathers it is what a pending selection tunes live.
+        # ONE gain serves both tools; with the feathers it is what a pending selection tunes live. It is a
+        # row of buttons (revision 6b: `presets`, one selected at a time), not a slider; the app snaps every
+        # value to the nearest preset, so the script only ever reads one of them back.
         {"id": "sec_gain", "kind": "section", "label": tr("Gain", "Gain", "Ganancia")},
-        num("gain", tr("Gain", "Gain", "Ganancia"), -60, 12, 0.5, -12, "dB"),
+        num("gain", tr("Gain", "Gain", "Ganancia"), min(decide.GAIN_PRESETS), max(decide.GAIN_PRESETS), 1,
+            decide.GAIN_DEFAULT, "dB", presets=list(decide.GAIN_PRESETS)),
         num("feather_ms", tr("Fondu en temps", "Time feather", "Suavizado en tiempo"), 0, 1000, 1, 10, "ms"),
         num("feather_st", tr("Fondu en fréquence", "Frequency feather", "Suavizado en frecuencia"), 0, 12, 0.1, 1, "st"),
         {"id": "sec_brush", "kind": "section", "label": tr("Pinceau", "Brush", "Pincel")},
@@ -239,6 +242,13 @@ def canvas_controls():
         {"id": "fft_size", "kind": "choice", "label": tr("Taille de FFT", "FFT size", "Tamaño de FFT"),
          "value": str(DEFAULT_FFT), "options": [{"id": str(n), "label": str(n)} for n in FFT_SIZES], "advanced": True},
         num("overlap", tr("Recouvrement", "Overlap", "Solapamiento"), 2, 10, 1, DEFAULT_OVERLAP, "", advanced=True),
+        # Display only (revision 6): the range of levels the pictures span. It is a view setting, not a
+        # gesture parameter, so it sits with the other settings that a step does not own (`advanced`).
+        {"id": "sec_display", "kind": "section", "label": tr("Affichage", "Display", "Visualización"), "advanced": True},
+        num("db_floor", tr("Plancher du spectrogramme", "Spectrogram floor", "Suelo del espectrograma"),
+            decide.DB_FLOOR[0], decide.DB_FLOOR[1], 1, decide.DB_FLOOR[2], "dB", advanced=True),
+        num("db_ceiling", tr("Plafond du spectrogramme", "Spectrogram ceiling", "Techo del espectrograma"),
+            decide.DB_CEIL[0], decide.DB_CEIL[1], 1, decide.DB_CEIL[2], "dB", advanced=True),
     ]
 
 
@@ -304,6 +314,13 @@ class Editor:
         self.result = x            # the result in memory (float32); the original until the first op
         self.result_key = None     # the key `result` was computed for
         self.files = {}            # kind -> [(seq, path)]
+        # Revision 6: the display range (dB floor, ceiling) and the levels the three pictures were drawn
+        # from, kept as dB so that a new range only re-quantises them (no transform). `shown` is the range
+        # each picture on screen was written for; `pic_rev` the history rev its set_image carried.
+        self.range = decide.display_range({})
+        self.db = {"base": None, "original": None, "delta": None}
+        self.shown = {"base": None, "original": None, "delta": None}
+        self.pic_rev = {"base": 0, "delta": 0}
 
     # -- the app ---------------------------------------------------------------------------
 
@@ -341,20 +358,26 @@ class Editor:
         image, which is sent twice (the second time as a copy: the retention of base pictures must not take it)."""
         self.seq += 1
         path = os.path.join(self.work, "base-%d.objkcnv" % self.seq)
-        image.write_base_image(path, y, self.sr, n, k)
+        floor, ceil = self.range
+        base_db = image.build_db(y, self.sr, n, k).astype(np.float32)
+        image.write_db_image(path, base_db, floor, ceil)
         self.app.send("script.canvas.set_image", {
             "canvas_id": self.cid, "path": path, "x": self.world["x"], "y": self.world["y"],
             "value_unit": "dB", "history_rev": rev})
         self.remember_file("base", path)
+        self.db["base"], self.shown["base"], self.pic_rev["base"] = base_db, self.range, rev
         if self.original_fft != (n, k):
             self.seq += 1
             opath = os.path.join(self.work, "original-%d.objkcnv" % self.seq)
             if steps:
-                image.write_base_image(opath, self.x, self.sr, n, k)
+                orig_db = image.build_db(self.x, self.sr, n, k).astype(np.float32)
+                image.write_db_image(opath, orig_db, floor, ceil)
             else:
+                orig_db = base_db
                 shutil.copyfile(path, opath)   # the base image IS the original's: a file of its own, though
             self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "original", "path": opath})
             self.remember_file("original", opath)
+            self.db["original"], self.shown["original"] = orig_db, self.range
             self.original_fft = (n, k)
         self.fft = (n, k)
         self.image_steps = steps
@@ -372,13 +395,39 @@ class Editor:
         self.seq += 1
         path = os.path.join(self.work, "delta-%d.objkcnv" % self.seq)
         if steps:
-            image.write_base_image(path, self.x - self.committed_result(steps, n, k), self.sr, n, k)
+            delta_db = image.build_db(self.x - self.committed_result(steps, n, k), self.sr, n, k).astype(np.float32)
         else:
-            image.write_index_image(path, image.blank_image(self.x.shape[0], n, k))
+            delta_db = image.blank_db(self.x.shape[0], n, k)
+        image.write_db_image(path, delta_db, *self.range)
         self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "delta", "path": path,
                                                   "history_rev": rev})
         self.remember_file("delta-image", path)
+        self.db["delta"], self.shown["delta"], self.pic_rev["delta"] = delta_db, self.range, rev
         self.delta_key = key
+
+    def recolour(self):
+        """The pictures on screen whose display range is not the hand's any more are written again from the
+        levels kept in memory (a quantisation, no transform) and sent as they were — same slot, same history
+        rev, so what the app does with traces and layers does not move. Display only: no audio, no history."""
+        floor, ceil = self.range
+        for slot in ("base", "original", "delta"):
+            db = self.db[slot]
+            if db is None or self.shown[slot] == self.range:
+                continue
+            self.seq += 1
+            path = os.path.join(self.work, "%s-%d.objkcnv" % (slot, self.seq))
+            image.write_db_image(path, db, floor, ceil)
+            params = {"canvas_id": self.cid, "path": path}
+            if slot == "base":
+                params.update({"x": self.world["x"], "y": self.world["y"], "value_unit": "dB",
+                               "history_rev": self.pic_rev["base"]})
+            else:
+                params["slot"] = slot
+                if slot == "delta":
+                    params["history_rev"] = self.pic_rev["delta"]
+            self.app.send("script.canvas.set_image", params)
+            self.remember_file({"base": "base", "original": "original", "delta": "delta-image"}[slot], path)
+            self.shown[slot] = self.range
 
     # -- the selection, the committed result and the audio -----------------------------------------------
 
@@ -460,6 +509,7 @@ class Editor:
         values = st.get("values") or {}
         n, k = analysis_settings(values)
         analysis_changed = (n, k) != self.fft
+        self.range = decide.display_range(values)   # the pictures written from here on use it; `recolour` catches up the others
         # What a change of the side bar's values makes stale while a selection is pending.
         dirty = decide.preview_dirty(self.prev_values, values, pending)
         if "selection" in dirty:
@@ -476,6 +526,7 @@ class Editor:
         if not (sel_stale or image_stale or audio_stale):
             if delta_stale:
                 self.send_delta_image(steps, n, k, hist["rev"])
+            self.recolour()
             return
         self.update(busy=True, status=tr("Calcul…", "Computing…", "Calculando…"))
         # A trace is never hidden before what replaces it is there: a selection that appears goes first
@@ -491,11 +542,13 @@ class Editor:
         self.update(busy=False, status=self.status(steps, pending))
         if delta_stale:
             self.send_delta_image(steps, n, k, hist["rev"])
+        self.recolour()
 
     def run(self, original_path):
         """First display, then waits for the hand. Returns the last answer, whose state says how it ended."""
         st = self.app.send("script.canvas.get", {"canvas_id": self.cid})
         n, k = analysis_settings(st.get("values") or {})
+        self.range = decide.display_range(st.get("values"))   # the remembered range, from the first picture
         self.send_base(self.x, n, k, [], 0)
         self.result = self.x
         # The preview opens on the RESULT (`listen`), the slot the hand is here to judge. No gesture

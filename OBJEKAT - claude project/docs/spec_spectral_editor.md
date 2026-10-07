@@ -10,6 +10,15 @@ The sections below are updated; the technical side is `plan_spectral_editor.md` 
 questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
 others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
+**Revision 6 (7 October 2026), decided by the user:** (1) the spectrogram's **dynamic range** (floor and ceiling in
+dB, e.g. −120…0) is settable, for display only, remembered with the other settings, and applies to the Original,
+the Result and the Difference alike; (2) in Selection mode **undo shows the selection**: undoing an applied step
+brings its selection back as the pending (amber) one, with its gain and feathers back in the controls, to be
+tweaked and applied again (with a selection pending, undo still removes the last gesture; Instant mode is
+unchanged); (3) you can **work on the Difference**: Difference is exactly Original − Result, and while listening to it
+a gesture acts on it (a −12 dB gesture takes 12 dB off what the Difference holds, so the Result gets that much back
+— `G' = 1 − (1 − G)·g`). Technical side: `plan_spectral_editor.md` §12.
+
 **Revision 5 (7 October 2026), decided by the user:** (1) the trace of a Draw gesture is **yellow** (it was black);
 Erase keeps white and dashes; (2) a **listening level** −20…+20 dB (default 0), for listening only, never in the
 validated result, remembered **per Objekat project**; (3) the spectrogram **follows the listening switch**:
@@ -116,7 +125,7 @@ proposed: max of L and R]**.
 
 ### Rectangle **[decided]**
 - Drag a box over time × frequency.
-- Settings: the shared **gain** (dB, −60 … +12, default −12), **feather in time** (ms) and **feather in
+- Settings: the shared **gain** (dB, a row of buttons −60 / −24 / −12 / −6 / −3 / +3, one selected at a time, default −12 — revision 6b, it was a −60 … +12 slider), **feather in time** (ms) and **feather in
   frequency** (semitones) — a soft edge, so a box does not ring. In Instant they are taken at the gesture;
   in Selection, at Apply.
 - Cumulative across steps: two overlapping applied boxes at −6 dB give −12 dB where they overlap.

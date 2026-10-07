@@ -1161,3 +1161,88 @@ listening level, persistence in the project).
 - The slider is in the readout strip, not the toolbar (width). Step 0.5 dB, double-click resets.
 - Format version not bumped; no dirty flag on a level change.
 - The Difference picture reflects committed steps only (a live pending selection is not in it).
+
+## 12. Revision 6 (7 October 2026): display range, undo shows the selection, working on the Difference
+
+Branch `feature/spectral-editor-r6`. The canvas stays generic; every gain computation stays in Python.
+
+### 12.1 Spectrogram display range
+
+- **Where it lives: in the script**, not in the app. Two numeric controls `db_floor` (−120…−20, default −100) and
+  `db_ceiling` (−60…0, default 0), in the `advanced` "Display" section (so they are remembered like the other
+  settings, and Reset gives −100 / 0 back). `decide.display_range` clamps them and keeps the ceiling at least 6 dB
+  above the floor (a floor dragged above the ceiling carries it; the floor never moves).
+- **Mechanics.** `image.build_db` computes the levels once (float, dB); `image.quantize(db, floor, ceil)` makes the
+  uint8 indices; the OBJKCNV1 header carries v0 = floor, v255 = ceil, so the readout stays true. The Editor keeps the
+  levels of the three pictures (Result / Original / Difference, float32, ≤ 32 MB each) and, when the range moves,
+  `recolour()` rewrites the pictures from memory and re-sends them with the same slot and the same `history_rev`
+  (no transform, no audio, no history: a drag of the control is a quantisation + a file per picture). A picture
+  that is rebuilt anyway (a step, a new analysis) is written for the current range directly.
+- **Choice.** It is `advanced` (behind "Expert") for two reasons: a view setting is not a gesture parameter, and the
+  app's "undo reveals the selection" restores only non-advanced, non-tool hand values — a display setting must not
+  be reverted by an undo. Cost: one more click to reach it. Moving them to a non-advanced section would need a
+  generic "not restored" flag on a control (a contract change we did not make).
+
+### 12.2 Undo shows the selection (Selection mode)
+
+`ScriptCanvasHistory.undoRevealing()` (pure, tested standalone) and `ScriptCanvasStore.undo` (Selection mode of a
+canvas with `modes` only; Instant and mode-less canvases keep the plain undo). The details, and the redo, are in
+command_api.md ("An undo that REVEALS"). **Redo semantics (minimal choice):** a redo right after the reveal puts the
+original step back exactly; anything else the hand does forgets it; the controls are never reverted by a redo.
+**Restored settings (generic rule, no new contract flag):** the hand values of the step's snapshot that are not
+`advanced` and not owned by a tool (`params` / `size_control`) — here the gain and both feathers.
+
+### 12.3 Working on the Difference
+
+- The app only records, in each op, the audio slot HEARD when it was drawn (`CanvasOp.slot`, `op.slot` in the JSON).
+  It does not interpret it.
+- `mask.py`: an op whose `slot` is `delta` acts on the DIFFERENCE. The audio is `y = x·G`, the difference is
+  `x·(1 − G)` (the STFT is linear: `process(x, 1 − G) = x − process(x, G)`), so an op of gain `g` on the difference
+  gives `diff' = diff·g`, i.e. `G' = 1 − (1 − G)·g`. A step is composed in order (`mask.linear_gain_grid`: dB sum
+  while only result ops are met — bit for bit the old path — then, from the first difference op, the linear
+  recurrence). Result + Difference = Original is exact by construction (tested to 1e-6 numerically, and on the
+  files at scale in scenario (j)).
+- **Choices.** (a) The target of a Selection STEP is that of its FIRST op (a step is sealed from drafts that may
+  have been drawn under different slots; one step = one target; the minimal rule). (b) A boost of the difference
+  (`g > 1`) beyond what the difference holds would make G' negative: it is floored at −300 dB (a total null of the
+  result, never a phase flip). (c) `original` and `result` both mean "act on the result", as before.
+- The pending selection is previewed with the same math (drafts carry their slot), the amber layer and the traces
+  are unchanged; the Difference's picture follows (it is original − committed result).
+
+### 12.4 Tests
+
+`test_difference.py` (new: target rule, the formula, the grid vs the scalar, numerical complementarity),
+`test_image.py` (`DisplayRange`), `test_decide.py` (`display_range`), `test_editor.py` (recolour: no transform, no
+audio, same stamps, written once when combined with a step), `tools/test_script_canvas_history.swift` (the undo
+that reveals), scenarios (i) and (j).
+
+### 12.5 Revision 6b (7 October 2026): the gain is a row of buttons
+
+The shared gain (rectangle and brush) is no longer a −60…+12 dB slider: it is **−60 / −24 / −12 / −6 / −3 / +3 dB**,
+one selected at a time (default −12). The display range stays in Expert as it was. Where it lives:
+
+- **App, generic (no gain knowledge).** A `number` control may declare `presets: [numbers]` (command_api.md, "Controls"):
+  the form draws a segmented row of buttons (the number alone on each, a true minus / explicit plus, the label and unit
+  over it), and EVERY door a value comes in by snaps it to the nearest preset (tie → the one listed first): the hand,
+  `input`, `update`, a remembered value, a step's setting put back by the undo that reveals. The value stays a plain
+  number everywhere (`values`, a step's `params`, the memory), so no kind was added (a `choice` has string ids and no
+  numeric snapping) and the script reads the gain exactly as before. Pure rule: `ScriptControlPresets.swift`
+  (standalone `tools/test_script_control_presets.swift`).
+- **Script.** `decide.GAIN_PRESETS = (-60, -24, -12, -6, -3, 3)`, `GAIN_DEFAULT = -12` (one of them, the old default);
+  `canvas_controls()` declares `gain` with these presets and `min`/`max` = the extremes. No gain mathematics changed.
+- **Persistence.** A value remembered by the previous slider (e.g. −7, or +12 outside the new range) comes back snapped
+  to the nearest preset (−6, +3). Reset gives −12.
+- **Undo that reveals.** The step's gain goes back through the same door, so a step made with another value (an older
+  project: −20) puts the NEAREST button in the control (−24); the step's own math is untouched (`mask.step_values` reads
+  the exact value it was sealed with) until the hand re-applies it, which then seals the button's value. Nothing
+  rewrites history.
+- **Live preview, modes, Difference.** Unchanged and inherited: a click is one non-coalesced change of `gain`, which
+  `decide.preview_dirty` already treats as "audio only" in Selection (Instant: it only matters to the next gesture); a
+  gesture drawn while listening to the Difference composes with the button's value (`G' = 1 - (1 - G) g`; +3 dB there is
+  floored at -300 dB for a total null, as before for any boost).
+- **Choices made without asking.** (a) `presets` is on `number`, not a new kind: values stay numeric (old histories,
+  memory and steps keep working). (b) `min`/`max` kept as the declared range (−60…+3 in the script); a declaration whose
+  default or whose presets are out of range / not in the list is refused. (c) Tie → first listed (the lower, here).
+- **Tests.** `test_script_control_presets.swift` (new, 31), `test_editor.py` / `test_decide.py` / `test_difference.py`
+  (the control, the click, every button on the Difference), scenario (b) (the contract, refusals, remember), (c) and (g)
+  (the real script: snapping, every button heard live, remembered value snapped).

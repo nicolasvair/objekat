@@ -32,6 +32,7 @@ extension CommandRegistry {
             var o: [String: JSONValue] = [
                 "id": .int(op.id), "kind": .string(op.kind.rawValue), "tool": .string(op.tool),
                 "params": .object(op.params), "polarity": .string(op.polarity.rawValue),
+                "slot": .string(op.slot.rawValue),
             ]
             switch op.shape {
             case .rect(let x0, let x1, let y0, let y1):
@@ -219,7 +220,7 @@ extension CommandRegistry {
                           ParamSpec("object", "uuid", required: false,
                                     "The object it is about: the canvas closes if it disappears."),
                           ParamSpec("controls", "array<control>", required: false,
-                                    "The script.panel.open vocabulary: bool | number | button | choice | progress | section."),
+                                    "The script.panel.open vocabulary: bool | number (optionally with presets) | button | choice | progress | section."),
                           ParamSpec("tools", "array<{id,kind,label,icon?,params?,size_control?}>",
                                     "kind: rect | stroke | point. `params` lists the bool / number / choice controls "
                                   + "snapshotted into each op. A stroke tool needs `size_control`, a number "

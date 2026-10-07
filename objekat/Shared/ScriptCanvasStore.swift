@@ -109,6 +109,11 @@ struct CanvasOp: Equatable {
     /// meaning to them.
     let params: [String: JSONValue]
     let polarity: CanvasPolarity
+    /// The audio slot the hand was LISTENING TO when the gesture was drawn (the window's
+    /// Original / Result / Difference switch), frozen with it. The app records it and never
+    /// interprets it: a script that offers a Difference view reads it to know which picture the
+    /// gesture was aimed at.
+    let slot: CanvasSlot
 
     var kind: CanvasToolKind {
         switch shape {
@@ -715,7 +720,7 @@ struct ScriptCanvas {
     private func append(_ id: UUID, shape: CanvasOpShape, tool: CanvasTool, polarity: CanvasPolarity) {
         var c = canvases[id]!
         let op = CanvasOp(id: c.nextOpID, tool: tool.id, shape: shape, params: snapshot(of: tool, in: c),
-                          polarity: polarity)
+                          polarity: polarity, slot: CanvasSlot(rawValue: c.transport.listen.rawValue) ?? .result)
         switch c.mode {
         case .instant:
             // Cannot be refused: Instant never holds a pending selection (a mode switch needs none).
@@ -820,12 +825,47 @@ struct ScriptCanvas {
     }
 
     /// One entry back. At the start of the history it is a no-op (false, `rev` unmoved).
+    ///
+    /// In SELECTION mode an applied step is not merely removed: its selection comes back as the PENDING
+    /// one and its settings go back into the controls, so the hand can tweak them and Apply again
+    /// (revision 6; @see `CanvasHistory.undoRevealing`). Undoing a pending gesture, and every undo in
+    /// Instant mode, are what they always were.
     @discardableResult
     func undo(_ id: UUID) throws -> Bool {
-        _ = try openCanvas(id)
+        let c = try openCanvas(id)
+        if c.modes && c.mode == .select {
+            switch canvases[id]!.history.undoRevealing() {
+            case .nothing:
+                return false
+            case .removed:
+                break
+            case .revealed(let params):
+                restoreStepSettings(id, params)
+            }
+            bump(id)
+            return true
+        }
         guard canvases[id]!.history.undo() else { return false }
         bump(id)
         return true
+    }
+
+    /// Puts a revealed step's settings back into the controls: the hand values that no tool freezes into its
+    /// gestures (a tool's own `params` and its size control belong to the GESTURE, not to the step) and
+    /// that are not `advanced` (the analysis settings are the script's business, and changing them would
+    /// redraw everything). The app does not know which these are for the script — only that.
+    private func restoreStepSettings(_ id: UUID, _ params: [String: JSONValue]) {
+        guard var c = canvases[id] else { return }
+        let frozenByTools = Set(c.tools.flatMap { $0.params + [$0.sizeControl].compactMap { $0 } })
+        var restore: [String: JSONValue] = [:]
+        for control in c.controls where control.kind.holdsHandValue && !control.advanced
+            && !frozenByTools.contains(control.id) {
+            if let v = params[control.id] { restore[control.id] = v }
+        }
+        guard !restore.isEmpty, (try? ScriptControls.applyHand(restore, controls: c.controls, into: &c.values)) != nil
+        else { return }
+        canvases[id] = c
+        if let key = c.rememberKey { ScriptControls.remember(key, controls: c.controls, values: c.values) }
     }
 
     /// One entry forward: it becomes active AGAIN, so its trace shows until the script reflects it.
