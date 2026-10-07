@@ -17,12 +17,25 @@ The model (plan 9, revision 3)
   hardness are fixed by the gesture.
 - G is clamped to >= -300 dB when it becomes a linear gain (`to_linear`); there is no ceiling on boosts.
 
+The TARGET of a step (plan 12, revision 6). Every op carries the audio slot the hand was LISTENING TO when
+it was drawn (`op["slot"]`: "original" | "result" | "delta", which the app records and never interprets).
+Drawn on the "delta" slot an op acts on the DIFFERENCE (D = original - result = original * (1 - G)), not on
+the result: a step of gain g (linear, pro rata) there turns D into D * g, i.e. G <- 1 - (1 - G) * g, so the
+result and the difference stay complementary (result + difference = original, always). Drawn on any other
+slot (Original and Result alike) it acts on the result: G <- G * g, which is the sum in dB of the steps. The
+steps are composed IN ORDER; while only result steps have been met the total stays the plain dB sum (as
+before revision 6), and the first difference step turns it into a linear gain. A step has ONE target, that of
+its FIRST op (a pending selection is built over several gestures, possibly while the hand switched views to
+listen: the view it was STARTED in decides). A difference step can ask for more than the result has
+(g > 1 on a zone that is already attenuated more than that): the gain is floored at -300 dB, never negative.
+
 Layout of the module
 - Pure Python (no numpy import): SPACING_MAX / SPACING_MIN, spacing_for, R, warp, profile, per_dab_weight,
-  dab_centres, ramp, rect_weight_1d, is_open, split_history, rect_from_op, brush_from_op,
-  selection_at(_warped), gain_at(_warped).
-- numpy, imported lazily: compile_ops, add_op_to_selection, selection_grid, step_gain_grid, gain_grid,
-  to_linear, stft_gain_block_fn. A grid is shaped (len(xw), len(yw)): columns first, which is the
+  dab_centres, ramp, rect_weight_1d, is_open, split_history, op_target, step_target, rect_from_op,
+  brush_from_op, selection_at(_warped), gain_at(_warped) (dB, result steps), linear_gain_at(_warped)
+  (any target).
+- numpy, imported lazily: compile_ops, add_op_to_selection, selection_grid, step_gain_grid, gain_grid (dB,
+  result steps), linear_gain_grid (any target), to_linear, stft_gain_block_fn. A grid is shaped (len(xw), len(yw)): columns first, which is the
   (frames, bins) layout `dsp.process` wants. Patches are located with `searchsorted`, so an op only
   touches the cells it can reach.
 
@@ -49,6 +62,10 @@ SPACING = SPACING_MAX     # historical name: the spacing of a soft brush
 R = 0.5                   # dab radius, in diameters
 OPEN_TOLERANCE = 1e-9
 MIN_DB = -300.0
+LINEAR_FLOOR = 10.0 ** (MIN_DB / 20.0)   # the -300 dB floor, as a linear gain
+
+TARGET_RESULT = "result"
+TARGET_DIFFERENCE = "difference"
 
 
 # ---------------------------------------------------------------- pure Python
@@ -195,6 +212,19 @@ def _sign(op):
     raise ValueError("op %s: unknown polarity %r" % (op.get("id"), polarity))
 
 
+def op_target(op):
+    """The view an op acts on: "difference" when it was drawn while the DELTA slot was heard,
+    "result" otherwise (Original and Result alike, and an op that says nothing)."""
+    return TARGET_DIFFERENCE if op.get("slot") == "delta" else TARGET_RESULT
+
+
+def step_target(ops):
+    """The target of a step (or of the pending selection): that of its FIRST op. Result for no op."""
+    for op in ops:
+        return op_target(op)
+    return TARGET_RESULT
+
+
 def step_values(params):
     """(gain dB, feather_ms, feather_st) of a step's params (or of the live values): the three keys
     that are tunable while a selection is pending. Feathers are clamped to >= 0."""
@@ -321,6 +351,41 @@ def gain_at_warped(xw, yw, steps, world, draft_ops=None, live=None):
         gain, fms, fst = step_values(live)
         total += gain * selection_at_warped(xw, yw, draft_ops, world, fms, fst)
     return total
+
+
+def _compose(acc_db, g, d_db, target):
+    """One step of the composition (scalar). The state is (acc_db, None) while only result steps have been
+    met (the plain dB sum) and (None, g) once a difference step turned it into a LINEAR gain. `d_db` is the
+    step's contribution gain * S in dB."""
+    if target == TARGET_RESULT:
+        if g is None:
+            return acc_db + d_db, None
+        return None, max(g * 10.0 ** (d_db / 20.0), LINEAR_FLOOR)
+    if g is None:
+        g = 10.0 ** (max(acc_db, MIN_DB) / 20.0)
+    return None, max(1.0 - (1.0 - g) * 10.0 ** (d_db / 20.0), LINEAR_FLOOR)
+
+
+def linear_gain_at_warped(xw, yw, steps, world, draft_ops=None, live=None):
+    """The total LINEAR gain G at a point given in WARPED units, the steps (and then the pending selection at
+    the `live` values) composed in order, each on its own target (the module doc). The reference the grid is
+    checked against; equal to 10 ** (gain_at_warped / 20) when no step targets the difference."""
+    acc, g = 0.0, None
+    layers = [(ops, params) for ops, params in steps]
+    if draft_ops:
+        layers.append((draft_ops, live))
+    for ops, params in layers:
+        gain, fms, fst = step_values(params)
+        d = gain * selection_at_warped(xw, yw, ops, world, fms, fst)
+        acc, g = _compose(acc, g, d, step_target(ops))
+    return g if g is not None else 10.0 ** (max(acc, MIN_DB) / 20.0)
+
+
+def linear_gain_at(x, y, steps, world, draft_ops=None, live=None):
+    """`linear_gain_at_warped` for a point in DATA units."""
+    _, _, xmap = _axis(world, "x")
+    _, _, ymap = _axis(world, "y")
+    return linear_gain_at_warped(warp(x, xmap), warp(y, ymap), steps, world, draft_ops, live)
 
 
 # ---------------------------------------------------------------- numpy part
@@ -470,6 +535,32 @@ def gain_grid(steps, xw, yw, world, draft_ops=None, live=None, cache=None):
     return grid
 
 
+def linear_gain_grid(steps, xw, yw, world, draft_ops=None, live=None, cache=None):
+    """The LINEAR gain G on the grid xw x yw (warped, ascending), shaped (len(xw), len(yw)): the steps, then
+    the pending selection at the `live` values, composed IN ORDER on their own targets (the module doc).
+    While no step targets the difference this is `to_linear(gain_grid(...))`, bit for bit."""
+    np = _np()
+    xw = np.asarray(xw, dtype=np.float64)
+    yw = np.asarray(yw, dtype=np.float64)
+    layers = [(ops, params) for ops, params in steps]
+    if draft_ops:
+        layers.append((draft_ops, live))
+    acc = np.zeros((len(xw), len(yw)))
+    g = None
+    for ops, params in layers:
+        d = step_gain_grid(ops, params, xw, yw, world, cache)
+        if step_target(ops) == TARGET_RESULT:
+            if g is None:
+                acc += d
+            else:
+                g = np.maximum(g * 10.0 ** (d / 20.0), LINEAR_FLOOR)
+        else:
+            if g is None:
+                g = to_linear(acc)
+            g = np.maximum(1.0 - (1.0 - g) * 10.0 ** (d / 20.0), LINEAR_FLOOR)
+    return g if g is not None else to_linear(acc)
+
+
 def to_linear(g_db):
     """dB -> linear amplitude, with G clamped to >= -300 dB first."""
     np = _np()
@@ -499,10 +590,10 @@ def stft_gain_block_fn(steps, draft_ops, live, world, sr, n, k, cache=None):
 
     def fn(j0, j1):
         xw, yw = stft_grid_axes(world, sr, n, h, j0, j1)
-        g = gain_grid(steps, xw, yw, world, draft_ops, live, cache)
+        g = linear_gain_grid(steps, xw, yw, world, draft_ops, live, cache)
         full = np.empty((j1 - j0, n // 2 + 1))
         full[:, 1:] = g
         full[:, 0] = g[:, 0]
-        return to_linear(full)
+        return full
 
     return fn
