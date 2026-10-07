@@ -329,7 +329,8 @@ def section_b(c):
           r == {"width": 4, "height": 2, "has_values": True}, r)
     g = c.send("script.canvas.get", {"canvas_id": cid})
     check("b: get: image, world and a fitted view",
-          g["image"] == {"path": CNV, "width": 4, "height": 2, "has_values": True, "history_rev": None}
+          g["image"] == {"path": CNV, "width": 4, "height": 2, "has_values": True, "history_rev": None,
+                         "slots": {}, "shown": CNV}
           and g["world"]["x"] == {"min": 0, "max": 10, "unit": "s", "mapping": "lin"}
           and g["world"]["y"] == {"min": 20, "max": 24000, "unit": "Hz", "mapping": "log"}
           and g["view"]["x0"] == 0 and g["view"]["x1"] == 10
