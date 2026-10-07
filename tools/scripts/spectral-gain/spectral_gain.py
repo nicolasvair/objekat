@@ -4,9 +4,10 @@
 
 The script renders the object (exactly as `retouche-externe` does), computes its STFT, opens a canvas
 (`script.canvas.*`, @see docs/plan_spectral_gain.md, section 9) with the spectrogram and the rectangle /
-brush tools, and keeps three things up to date for the app: the VEIL (the picture of the committed
-steps), the SELECTION layer (the pending selection, in amber) and the audio preview (result and delta)
-that the ear compares. The canvas has two modes (`modes: true`): Instant, where each gesture is a step,
+brush tools, and keeps three things up to date for the app: the SPECTROGRAM ITSELF (recomputed from the
+result of the committed steps, so what is applied is SEEN in the picture, with no overlay), the
+SELECTION layer (the pending selection, in amber) and the audio preview (result and delta) that the
+ear compares. The preview opens on the result; the controls, the mode and the tool are remembered. The canvas has two modes (`modes: true`): Instant, where each gesture is a step,
 and Selection, where gestures build a weighted selection that the hand tunes live (gain, feathers)
 before the app's Apply seals it into ONE step. A live tweak never touches the history: only the
 selection layer (a feather) and the audio are recomputed. Validate writes what is HEARD — the committed
@@ -26,7 +27,9 @@ Format of the file laid back (spec 2): same sample rate and bit depth class as t
 of the render are identical sample for sample, stereo otherwise. Over 120 s the script warns (the
 resolution degrades), over 600 s it refuses.
 
-Testing hooks: `--object ID` (instead of OBJEKAT_OBJECT_IDS), OBJEKAT_SPECTRAL_CACHE (the work folder).
+Testing hooks: `--object ID` (instead of OBJEKAT_OBJECT_IDS), OBJEKAT_SPECTRAL_CACHE (the work folder),
+OBJEKAT_SPECTRAL_REMEMBER (the key under which the app remembers the controls: a test gives its own, so
+that it neither reads nor writes what the user left).
 """
 
 import json
@@ -46,7 +49,7 @@ import decide  # noqa: E402
 import dsp  # noqa: E402
 import image  # noqa: E402
 import mask  # noqa: E402
-import veil  # noqa: E402
+import selection  # noqa: E402
 import wavio  # noqa: E402
 
 SOCK = os.environ.get("OBJEKAT_SOCKET")
@@ -225,7 +228,7 @@ def canvas_controls():
         # ONE gain serves both tools; with the feathers it is what a pending selection tunes live.
         {"id": "sec_gain", "kind": "section", "label": tr("Gain", "Gain", "Ganancia")},
         num("gain", tr("Gain", "Gain", "Ganancia"), -60, 12, 0.5, -12, "dB"),
-        num("feather_ms", tr("Fondu en temps", "Time feather", "Suavizado en tiempo"), 0, 200, 1, 10, "ms"),
+        num("feather_ms", tr("Fondu en temps", "Time feather", "Suavizado en tiempo"), 0, 1000, 1, 10, "ms"),
         num("feather_st", tr("Fondu en fréquence", "Frequency feather", "Suavizado en frecuencia"), 0, 12, 0.1, 1, "st"),
         {"id": "sec_brush", "kind": "section", "label": tr("Pinceau", "Brush", "Pincel")},
         num("size_px", tr("Taille", "Size", "Tamaño"), 4, 200, 1, 32, "px"),
@@ -237,6 +240,11 @@ def canvas_controls():
          "value": str(DEFAULT_FFT), "options": [{"id": str(n), "label": str(n)} for n in FFT_SIZES], "advanced": True},
         num("overlap", tr("Recouvrement", "Overlap", "Solapamiento"), 2, 10, 1, DEFAULT_OVERLAP, "", advanced=True),
     ]
+
+
+def remember_key():
+    """The key under which the app remembers the controls, the mode and the tool between sessions."""
+    return os.environ.get("OBJEKAT_SPECTRAL_REMEMBER") or "spectral-gain"
 
 
 def canvas_tools():
@@ -282,13 +290,13 @@ class Editor:
         self.seq = 0
         self.world = {"x": {"min": 0.0, "max": x.shape[0] / float(sr), "unit": "s", "mapping": "lin"},
                       "y": {"min": F_MIN, "max": sr / 2.0, "unit": "Hz", "mapping": "log"}}
-        self.veil = veil.VeilCache()
-        self.selection = veil.SelectionCache()
+        self.selection = selection.SelectionCache()
         self.mask_cache = {}
         self.fft = None            # (n, k) of the base image and of the result
         self.hist = None           # the last history WITH entries (the app omits them while the rev holds)
         self.prev_values = None    # the side bar's values at the last sync (None = not seen yet)
-        self.veil_steps = None     # the committed steps the veil layer shows (None = no layer)
+        self.image_steps = None    # the committed steps the base image shows (None = not drawn yet)
+        self.committed = None      # (steps, n, k, y): the audio through the committed steps only
         self.sel_key = None        # (history rev, feathers) of the selection layer on screen (None = none)
         self.audio_key = None      # (history rev, n, k, live) the app's audio preview was computed for
         self.result = x            # the result in memory (float32); the original until the first op
@@ -321,20 +329,22 @@ class Editor:
 
     # -- the base image -------------------------------------------------------------------
 
-    def set_base(self, n, k):
+    def send_base(self, y, n, k, steps, rev):
+        """The spectrogram of `y` (the result of the COMMITTED steps; the original when there are none)
+        as the base image, stamped with the history rev so the app lets the raw traces of the gestures
+        go: what is applied is seen in the picture itself, not under an overlay."""
         self.seq += 1
         path = os.path.join(self.work, "base-%d.objkcnv" % self.seq)
-        image.write_base_image(path, self.x, self.sr, n, k)
+        image.write_base_image(path, y, self.sr, n, k)
         self.app.send("script.canvas.set_image", {
             "canvas_id": self.cid, "path": path, "x": self.world["x"], "y": self.world["y"],
-            "value_unit": "dB"})
+            "value_unit": "dB", "history_rev": rev})
         self.remember_file("base", path)
         self.fft = (n, k)
-        # A new world drops every layer in the app (a same world keeps them): resend them all.
-        self.veil_steps = None
-        self.sel_key = None
+        self.image_steps = steps
+        # The world is constant for a session, so the app keeps the layers (the selection layer stays).
 
-    # -- the veil, the selection and the audio -----------------------------------------------
+    # -- the selection, the committed result and the audio -----------------------------------------------
 
     def read_history(self, st):
         """The history of an answer. Its entries are cached while the rev does not move (the app omits
@@ -346,19 +356,8 @@ class Editor:
         steps, drafts = mask.split_history(hist)
         return hist, steps, drafts, hist["pending"]
 
-    def send_veil(self, hist, steps):
-        """The veil = the COMMITTED steps only (a pending selection has its own layer)."""
-        g = self.veil.update(steps, self.world)
-        self.seq += 1
-        path = os.path.join(self.work, "veil-%d.objkrgb" % self.seq)
-        veil.write_veil(path, g)
-        self.app.send("script.canvas.set_layer", {
-            "canvas_id": self.cid, "layer": "veil", "path": path, "z": 1, "history_rev": hist["rev"]})
-        self.remember_file("veil", path)
-        self.veil_steps = steps
-
     def send_selection(self, hist, drafts, values):
-        """The pending selection as an amber layer over the veil, or no layer when nothing is pending.
+        """The pending selection as an amber layer over the spectrogram, or no layer when nothing is pending.
         Stamped with the history rev, so the app lets the raw traces of the drafts go."""
         if not drafts:
             self.app.send("script.canvas.set_layer", {"canvas_id": self.cid, "layer": "selection", "path": None})
@@ -368,7 +367,7 @@ class Editor:
         s = self.selection.update(drafts, self.world, fms, fst)
         self.seq += 1
         path = os.path.join(self.work, "selection-%d.objkrgb" % self.seq)
-        veil.write_selection(path, s)
+        selection.write_selection(path, s)
         self.app.send("script.canvas.set_layer", {
             "canvas_id": self.cid, "layer": "selection", "path": path, "z": 2, "history_rev": hist["rev"]})
         self.remember_file("selection", path)
@@ -378,13 +377,27 @@ class Editor:
         live = tuple(live_values(values)[key] for key in decide.LIVE_KEYS) if pending else None
         return (hist["rev"], n, k, live)
 
+    def committed_result(self, steps, n, k):
+        """The audio through the COMMITTED steps only (what the picture shows); the original when there
+        are none. Cached: an Apply, an undo or a redo computes it once for the picture AND the ear."""
+        if not steps:
+            return self.x
+        if self.committed is None or self.committed[:3] != (steps, n, k):
+            fn = mask.stft_gain_block_fn(steps, [], None, self.world, self.sr, n, k, self.mask_cache)
+            self.committed = (steps, n, k, dsp.process(self.x, self.sr, n, k, fn, np.float32))
+        return self.committed[3]
+
     def compute_result(self, steps, drafts, values, n, k, key):
         """The audio through the mask of the committed steps and, when something is pending, of the
-        pending selection at the CURRENT values. Cached per key."""
+        pending selection at the CURRENT values. Cached per key; with nothing pending it IS the
+        committed result (shared with the picture)."""
         if self.result_key != key:
-            live = live_values(values) if drafts else None
-            fn = mask.stft_gain_block_fn(steps, drafts, live, self.world, self.sr, n, k, self.mask_cache)
-            self.result = dsp.process(self.x, self.sr, n, k, fn, np.float32)
+            if drafts:
+                fn = mask.stft_gain_block_fn(steps, drafts, live_values(values), self.world, self.sr, n, k,
+                                             self.mask_cache)
+                self.result = dsp.process(self.x, self.sr, n, k, fn, np.float32)
+            else:
+                self.result = self.committed_result(steps, n, k)
             self.result_key = key
         return self.result
 
@@ -405,7 +418,7 @@ class Editor:
 
     def sync(self, st):
         """Brings the app up to date with an answer, in this order: `busy`, the selection layer, the
-        veil (only when the COMMITTED steps changed), the audio, `busy` off. A live tweak (the gain, a
+        spectrogram (only when the COMMITTED steps changed), the audio, `busy` off. A live tweak (the gain, a
         feather) never touches the history: it moves the audio, and the selection layer for a feather."""
         hist, steps, drafts, pending = self.read_history(st)
         values = st.get("values") or {}
@@ -419,21 +432,21 @@ class Editor:
             self.audio_key = None
         fms, fst = mask.step_values(live_values(values))[1:] if pending else (None, None)
         sel_stale = (self.sel_key != (hist["rev"], fms, fst)) if drafts else (self.sel_key is not None)
-        veil_stale = analysis_changed or self.veil_steps is None or steps != self.veil_steps
+        image_stale = analysis_changed or self.image_steps is None or steps != self.image_steps
         key = self.audio_key_for(hist, pending, n, k, values)
         audio_stale = analysis_changed or key != self.audio_key
         self.prev_values = values
-        if not (sel_stale or veil_stale or audio_stale):
+        if not (sel_stale or image_stale or audio_stale):
             return
         self.update(busy=True, status=tr("Calcul…", "Computing…", "Calculando…"))
-        if analysis_changed:
-            self.set_base(n, k)
-            sel_stale = bool(drafts)
-            veil_stale = True
-        if sel_stale:
+        # A trace is never hidden before what replaces it is there: a selection that appears goes first
+        # (cheap), one that goes away (Apply, undo) goes after the picture that now shows its effect.
+        if sel_stale and drafts:
             self.send_selection(hist, drafts, values)
-        if veil_stale:
-            self.send_veil(hist, steps)
+        if image_stale:
+            self.send_base(self.committed_result(steps, n, k), n, k, steps, hist["rev"])
+        if sel_stale and not drafts:
+            self.send_selection(hist, drafts, values)
         if audio_stale:
             self.send_audio(hist, steps, drafts, values, n, k, key)
         self.update(busy=False, status=self.status(steps, pending))
@@ -442,14 +455,15 @@ class Editor:
         """First display, then waits for the hand. Returns the last answer, whose state says how it ended."""
         st = self.app.send("script.canvas.get", {"canvas_id": self.cid})
         n, k = analysis_settings(st.get("values") or {})
-        self.set_base(n, k)
+        self.send_base(self.x, n, k, [], 0)
         self.result = self.x
+        # The preview opens on the RESULT (`listen`), the slot the hand is here to judge. No gesture
+        # yet: the result IS the original (history rev 0). The first sync sees the history as it is (the
+        # hand may have drawn while the render was under way).
         self.app.send("script.canvas.set_audio", {
-            "canvas_id": self.cid, "original": original_path, "result": original_path, "history_rev": 0})
-        # No gesture yet: the result IS the original (history rev 0), and there is no veil to show. The
-        # first sync sees the history as it is (the hand may have drawn while the render was under way).
+            "canvas_id": self.cid, "original": original_path, "result": original_path, "history_rev": 0,
+            "listen": "result"})
         self.result_key = self.audio_key = (0, n, k, None)
-        self.veil_steps = []
         self.update(busy=False, status=self.status([], 0))
         while True:
             if st.get("state") != "open":
@@ -537,7 +551,7 @@ def run():
         opened = app.send("script.canvas.open", {
             "title": tr("Éditeur spectral — %s", "Spectral editor — %s", "Editor espectral — %s") % (obj.get("name") or ""),
             "object": obj["id"], "controls": canvas_controls(), "tools": canvas_tools(),
-            "modes": True, "remember": "spectral-gain", "busy": True,
+            "modes": True, "remember": remember_key(), "busy": True,
             "status": tr("Rendu…", "Rendering…", "Renderizando…")})
         canvas_id = opened["canvas_id"]
 

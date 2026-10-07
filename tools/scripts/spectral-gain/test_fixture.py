@@ -140,7 +140,7 @@ class FileFormat(unittest.TestCase):
         with self.assertRaises(canvasfile.CanvasFileError):
             canvasfile.write_rgb(_tmp("g.objkrgb"), np.zeros((4096, 8193, 4), dtype=np.uint8))
 
-    def test_veil_at_the_cap_is_small(self):
+    def test_a_selection_layer_at_the_cap_is_small(self):
         # the plan's "about 8 MB at most": 4096 x 512 x 4 bytes
         self.assertEqual(4096 * 512 * 4, 8 * 1024 * 1024)
 

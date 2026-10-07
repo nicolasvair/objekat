@@ -18,11 +18,12 @@ the absence of any trace in the project, and the canvas's life.
 
 Section (c) — END TO END, INSTANT MODE: the real script (`tools/scripts/spectral-gain/run.sh --object ID`,
 its own process and its own connection) is driven through the canvas door like a hand would: a rectangle,
-an undo, two brush strokes, an out-and-back stroke, an expert change, Validate. Checked on the veil's
-pixels, on the result's tones (Goertzel) and on a WAV export of the session before / after.
+an undo, two brush strokes, an out-and-back stroke, an expert change, Validate. Checked on the base
+image's pixels (the spectrogram itself shows what is applied: no overlay), on the result's tones
+(Goertzel), on a WAV export of the session before / after, and on what a second session remembers.
 Section (g) — END TO END, SELECTION MODE: a weighted selection built with a rectangle, a brush pass and
 an Erase pass, the gain tuned LIVE (the history does not move, the preview does), Apply (one step, the
-selection layer gone, the veil shows it), undo, and Validate with a selection still pending (what is
+selection layer gone, the spectrogram shows it), undo, and Validate with a selection still pending (what is
 heard is written). Section (d) — THE FORMATS the file
 comes back in (44.1 kHz / 16-bit mono, float, stereo with L != R, stereo with L == R). Section (e) —
 REFUSALS AND ENDINGS: a group of 601 s, Cancel, a SIGKILLed script, a clip whose file has gone. (c), (d)
@@ -250,8 +251,8 @@ def section_b(c):
     WAV3 = make_wav(os.path.join(ROOT, "tone3.wav"), 3.0, 48000, 24)
     WAV1 = make_wav(os.path.join(ROOT, "tone1.wav"), 1.0, 48000, 24)
     CNV = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
-    RGB = write_rgb(os.path.join(ROOT, "veil.objkrgb"), 8, 4)
-    RGB2 = write_rgb(os.path.join(ROOT, "veil2.objkrgb"), 2, 2)
+    RGB = write_rgb(os.path.join(ROOT, "tint.objkrgb"), 8, 4)
+    RGB2 = write_rgb(os.path.join(ROOT, "tint2.objkrgb"), 2, 2)
     c.send("project.new")
     obj = c.send("object.add", {"path": WAV3, "lane": 0, "start": 0.0})["id"]
 
@@ -314,7 +315,7 @@ def section_b(c):
     cid = open_canvas(c, object=obj)
 
     # -- set_image -------------------------------------------------------------------------
-    expect_error(lambda: c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB}),
+    expect_error(lambda: c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB}),
                  "invalid_state", "b: set_layer without a base image -> invalid_state")
     r = c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS, "value_unit": "dB"})
     check("b: a 4x2 OBJKCNV1 echoes its size and has values",
@@ -624,21 +625,21 @@ def section_b(c):
     a = rect(0, 1)["history_rev"]
     b2 = rect(1, 2)["history_rev"]
     check("b: after ops 1 and 2: both traces are visible", hist()["unreflected"] == [1, 2], hist())
-    r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB, "z": 1, "history_rev": a})
+    r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB, "z": 1, "history_rev": a})
     check("b: an RGB1 layer is listed (size, z, opacity, history_rev)",
-          r["layers"] == [{"layer": "veil", "path": RGB, "width": 8, "height": 4, "z": 1, "opacity": 1, "history_rev": a}], r)
+          r["layers"] == [{"layer": "tint", "path": RGB, "width": 8, "height": 4, "z": 1, "opacity": 1, "history_rev": a}], r)
     check("b: a layer reflecting op 1 hides its trace -> unreflected = [2]", hist()["unreflected"] == [2], hist())
-    check("b: get lists the layer", [l["layer"] for l in c.send("script.canvas.get", {"canvas_id": cid})["layers"]] == ["veil"])
-    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB, "history_rev": b2})
+    check("b: get lists the layer", [l["layer"] for l in c.send("script.canvas.get", {"canvas_id": cid})["layers"]] == ["tint"])
+    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB, "history_rev": b2})
     check("b: a layer at the current rev -> unreflected = []", hist()["unreflected"] == [], hist())
     c.send("script.canvas.input", {"canvas_id": cid, "undo": True})
-    check("b: undo: the undone op has no trace; the veil still shows it until the script answers",
+    check("b: undo: the undone op has no trace; the layer still shows it until the script answers",
           hist()["unreflected"] == [], hist())
     c.send("script.canvas.input", {"canvas_id": cid, "redo": True})
     check("b: redo of op 2 -> its trace is back (the entry's active_since refreshed)", hist()["unreflected"] == [2], hist())
-    r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB2, "opacity": 0.5})
+    r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB2, "opacity": 0.5})
     check("b: replacing a layer keeps its z, takes the opacity, history_rev as given (none)",
-          r["layers"] == [{"layer": "veil", "path": RGB2, "width": 2, "height": 2, "z": 1, "opacity": 0.5, "history_rev": None}], r)
+          r["layers"] == [{"layer": "tint", "path": RGB2, "width": 2, "height": 2, "z": 1, "opacity": 0.5, "history_rev": None}], r)
     check("b: a layer with no history_rev reflects nothing", hist()["unreflected"] == [1, 2], hist())
     # revision 4: the BASE image itself can reflect the history (the script redraws the spectrogram)
     c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS, "history_rev": a})
@@ -655,7 +656,7 @@ def section_b(c):
                  "bad_params", "b: set_image: a non-integer history_rev -> bad_params")
     c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "a", "path": RGB, "z": 5})
     r = c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "b", "path": RGB, "z": 0})
-    check("b: layers are listed in ascending z", [l["layer"] for l in r["layers"]] == ["b", "veil", "a"], r)
+    check("b: layers are listed in ascending z", [l["layer"] for l in r["layers"]] == ["b", "tint", "a"], r)
     expect_error(lambda: c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "x", "path": RGB, "opacity": 2}),
                  "bad_params", "b: opacity above 1 -> bad_params")
     expect_error(lambda: c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "x", "path": os.path.join(ROOT, "no.objkrgb")}),
@@ -900,7 +901,7 @@ def section_b(c):
     c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
     c.send("script.canvas.input", {"canvas_id": cid, "values": {"gain": -1},
                                    "op": {"kind": "rect", "x0": 0, "x1": 1, "y0": 100, "y1": 200}})
-    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB})
+    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB})
     c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV1})
     check("b: the project is not dirtied by a canvas", c.send("app.info").get("is_dirty") == dirty0)
     c.send("object.set_fade", {"id": obj, "in": 0.05, "out": 0.05})
@@ -1038,22 +1039,44 @@ def read_rgb_pixel(path, col, row):
         return tuple(f.read(4))
 
 
-def veil_alpha(layer, world, t, hz):
-    """The veil's alpha (0...1) at time t s and frequency hz, from a `layers` entry and the `world`."""
+def layer_alpha(layer, world, t, hz):
+    """The alpha (0...1) of an RGB layer at time t s and frequency hz, from a `layers` entry and the `world`."""
     x, y = world["x"], world["y"]
     col = int((t - x["min"]) / (x["max"] - x["min"]) * layer["width"])
     row = int((math.log2(y["max"]) - math.log2(hz)) / (math.log2(y["max"]) - math.log2(y["min"])) * layer["height"])
     return read_rgb_pixel(layer["path"], col, row)[3] / 255.0
 
 
+def image_db(path, world, t, hz):
+    """The level (dB) of the BASE image (an OBJKCNV1) at time t s and frequency hz: the best of the
+    3 x 3 cells around it (a tone is a mainlobe, a few cells wide)."""
+    with open(path, "rb") as f:
+        head = f.read(796)
+        assert head[:8] == b"OBJKCNV1", head[:8]
+        w, h, v0, v255, _ = struct.unpack("<IIffI", head[8:28])
+        body = f.read(w * h)
+    x, y = world["x"], world["y"]
+    col = int((t - x["min"]) / (x["max"] - x["min"]) * w)
+    row = int((math.log2(y["max"]) - math.log2(hz)) / (math.log2(y["max"]) - math.log2(y["min"])) * h)
+    best = 0
+    for r in range(max(0, row - 1), min(h, row + 2)):
+        for cc in range(max(0, col - 1), min(w, col + 2)):
+            best = max(best, body[r * w + cc])
+    return v0 + best / 255.0 * (v255 - v0)
+
+
 class Script:
     """The real script, launched like the app launches it (run.sh, OBJEKAT_SOCKET), on its own connection."""
 
-    def __init__(self, c, object_id, cache, extra_args=()):
+    def __init__(self, c, object_id, cache, extra_args=(), key=None):
         self.c = c
         self.object_id = object_id
+        # A key of its own: the app remembers LIVE, and one headless process serves every section, so a
+        # shared key would carry the mode and the values of one section into the next.
+        self.key = key or "spectral-gain.scenario.%s" % os.path.basename(cache.rstrip("/"))
         env = dict(os.environ)
-        env.update({"OBJEKAT_SOCKET": SOCK, "OBJEKAT_SPECTRAL_CACHE": cache, "OBJEKAT_LANGUAGE": "en"})
+        env.update({"OBJEKAT_SOCKET": SOCK, "OBJEKAT_SPECTRAL_CACHE": cache, "OBJEKAT_LANGUAGE": "en",
+                    "OBJEKAT_SPECTRAL_REMEMBER": self.key})
         self.cache = cache
         self.proc = subprocess.Popen([os.path.join(SG_DIR, "run.sh"), "--object", object_id] + list(extra_args),
                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1091,16 +1114,15 @@ class Script:
 
     @staticmethod
     def synced(s):
-        """Instant mode: the veil and the audio reflect the history at hand, and no trace is left."""
-        veil_l = [l for l in s["layers"] if l["layer"] == "veil"]
+        """Instant mode: the spectrogram and the audio reflect the history at hand, and no trace is left."""
         rev = s["history"]["rev"]
-        return (bool(veil_l) and veil_l[0]["history_rev"] == rev and s["history"]["unreflected"] == []
+        return (s["image"]["history_rev"] == rev and s["history"]["unreflected"] == []
                 and s["transport"]["audio_history_rev"] == rev and not s["busy"])
 
     @staticmethod
     def synced_selection(s):
         """Selection mode with something pending: the selection layer and the audio reflect the history at
-        hand, and no trace is left. (The veil is NOT restamped by a draft: it shows committed steps only.)"""
+        hand, and no trace is left. (The picture is NOT redrawn by a draft: it shows committed steps only.)"""
         sel = [l for l in s["layers"] if l["layer"] == "selection"]
         rev = s["history"]["rev"]
         return (bool(sel) and sel[0]["history_rev"] == rev and s["history"]["unreflected"] == []
@@ -1182,27 +1204,33 @@ def section_c(c):
               and w["y"]["mapping"] == "log" and w["y"]["unit"] == "Hz", w["y"])
         check("c: defaults 2048 / 4", st["values"].get("fft_size") == "2048" and st["values"].get("overlap") == 4, st["values"])
         check("c: the base image is an indexed picture with a readout", st["image"]["has_values"] is True, st["image"])
-        check("c: the canvas remembers (spectral-gain)", st["remember"] == "spectral-gain", st["remember"])
+        check("c: the canvas remembers (under the key the test gave)", st["remember"] == sc.key, st["remember"])
+        check("c: the preview opens on the RESULT", st["transport"]["listen"] == "result", st["transport"]["listen"])
+        check("c: no layer at all at the start (no veil)", st["layers"] == [], st["layers"])
         check("c: tools are rect + brush (stroke); the canvas has modes, opens in Instant",
               st["tool"] == "rect" and st["modes"] is True and st["mode"] == "instant", (st["tool"], st["modes"], st["mode"]))
         orig_path = st["transport"]["slots"]["original"]
         orig = read_wav_any(orig_path)[3][0]
+        # the level of the ORIGINAL spectrogram, read now (the script keeps only its last two pictures)
+        i3k0, i300 = image_db(st["image"]["path"], st["world"], 1.0, 3000), image_db(st["image"]["path"], st["world"], 1.0, 300)
         check("c: the project is untouched while the canvas is open (not dirty)",
               c.send("app.info").get("dirty") == dirty0)
 
         # ---- rectangle ------------------------------------------------------------------
         sc.hand(values={"gain": -24})
+        t_op = time.time()
         sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
         st = sc.settle()
-        check("c: rect: the veil and the audio catch up with the history", st is not None)
+        print("info  c: the picture and the audio caught up %.2f s after the gesture (2 s object)" % (time.time() - t_op))
+        check("c: rect: the spectrogram and the audio catch up with the history", st is not None)
         if st is None:
             return
-        veil_l = [l for l in st["layers"] if l["layer"] == "veil"][0]
-        a3k = veil_alpha(veil_l, st["world"], 1.0, 3000)
-        a300 = veil_alpha(veil_l, st["world"], 1.0, 300)
-        expect = 0.75 * (1 - 10 ** (-24 / 20))
-        check("c: rect: veil alpha at (1 s, 3 kHz) is about %.2f" % expect, abs(a3k - expect) <= 0.05, a3k)
-        check("c: rect: veil alpha at (1 s, 300 Hz) is 0", a300 == 0.0, a300)
+        check("c: rect: NO overlay (an applied step is in the picture itself): no layer, no trace left",
+              st["layers"] == [] and st["history"]["unreflected"] == [], (st["layers"], st["history"]["unreflected"]))
+        i3k, i300b = image_db(st["image"]["path"], st["world"], 1.0, 3000), image_db(st["image"]["path"], st["world"], 1.0, 300)
+        check("c: rect: the spectrogram shows 3 kHz down by 24 dB +-3 (%.1f -> %.1f dB)" % (i3k0, i3k),
+              abs((i3k - i3k0) + 24) <= 3.0, (i3k0, i3k))
+        check("c: rect: ... and 300 Hz where it was (+-0.7 dB)", abs(i300b - i300) <= 0.7, (i300, i300b))
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d3 = goertzel_db(res, RATE, 3000) - goertzel_db(orig, RATE, 3000)
         d300 = goertzel_db(res, RATE, 300) - goertzel_db(orig, RATE, 300)
@@ -1229,8 +1257,8 @@ def section_c(c):
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d3 = goertzel_db(res, RATE, 3000) - goertzel_db(orig, RATE, 3000)
         check("c: undo: 3 kHz is back within +-0.2 dB", abs(d3) <= 0.2, d3)
-        veil_l = [l for l in st["layers"] if l["layer"] == "veil"][0]
-        check("c: undo: the veil is empty again at (1 s, 3 kHz)", veil_alpha(veil_l, st["world"], 1.0, 3000) == 0.0)
+        check("c: undo: the spectrogram is the original again at (1 s, 3 kHz) (+-0.7 dB), still no layer",
+              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and st["layers"] == [])
 
         # ---- brush, calibrated (gain -12, quantity 25: one pass = -3 dB) ---------------------
         sc.hand(values={"gain": -12})
@@ -1319,6 +1347,45 @@ def section_c(c):
     check("c: the canvas is gone", not open_canvases(c))
     check("c: the work folder is removed", not os.path.isdir(CACHE) or os.listdir(CACHE) == [], os.listdir(CACHE) if os.path.isdir(CACHE) else None)
 
+    # ---- what a NEXT session remembers (same key): the controls, the tool, the mode ---------------------
+    sc2 = Script(c, oid, CACHE, key=sc.key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        check("c: remember: the second session opens", st2 is not None)
+        if st2 is not None:
+            v = st2["values"]
+            check("c: remember: last session's gain (-12), overlap (8) and tool (brush) are back; the mode is Instant",
+                  v["gain"] == -12 and v["overlap"] == 8 and st2["tool"] == "brush" and st2["mode"] == "instant",
+                  (v, st2["tool"], st2["mode"]))
+            sc2.hand(mode="select", tool="rect", values={"gain": -7, "feather_ms": 500, "feather_st": 3, "size_px": 90,
+                                                         "quantity": 60, "hardness": 70, "fft_size": "4096", "overlap": 6})
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+    sc3 = Script(c, oid, CACHE, key=sc.key)
+    try:
+        sc3.find_canvas()
+        st3 = sc3.ready()
+        check("c: remember: the third session opens", st3 is not None)
+        if st3 is not None:
+            v = st3["values"]
+            check("c: remember: ALL the persisted controls come back (even after a Cancel): gain, both feathers "
+                  "(500 ms: the range reaches 1 s), brush size, amount, hardness, FFT size, overlap",
+                  (v["gain"], v["feather_ms"], v["feather_st"], v["size_px"], v["quantity"], v["hardness"], v["fft_size"], v["overlap"])
+                  == (-7, 500, 3, 90, 60, 70, "4096", 6), v)
+            check("c: remember: the mode (Selection) and the tool (rect) come back", st3["mode"] == "select" and st3["tool"] == "rect",
+                  (st3["mode"], st3["tool"]))
+            sc3.hand(press="reset")
+            v = sc3.get()["values"]
+            check("c: remember: Reset gives back the DECLARED defaults (gain -12, feather 10 ms, FFT 2048, overlap 4)",
+                  (v["gain"], v["feather_ms"], v["fft_size"], v["overlap"]) == (-12, 10, "2048", 4), v)
+            sc3.hand(press="cancel")
+        sc3.finish(60)
+    finally:
+        sc3.abort()
+
     # ---- launched by the app itself (script.run: the door the context menu goes through) -------
     listed = {x["name"]: x for x in c.send("script.list")["scripts"]}
     if "spectral-gain" in listed and listed["spectral-gain"]["available"]:
@@ -1381,11 +1448,13 @@ def section_g(c):
         if st is None:
             return
         orig = read_wav_any(st["transport"]["slots"]["original"])[3][0]
+        i3k0 = image_db(st["image"]["path"], st["world"], 1.0, 3000)
+        base_img = st["image"]["path"]
         sc.hand(mode="select")
         st = sc.get()
         check("g: mode select accepted (modes were declared at open)", st["mode"] == "select" and st["modes"] is True, st["mode"])
 
-        # ---- a rectangle over 2-4.5 kHz: a pending selection, no step, no veil ---------------
+        # ---- a rectangle over 2-4.5 kHz: a pending selection, no step, no overlay ---------------
         rev0 = st["history"]["rev"]
         sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
         st = sc.wait_for(Script.synced_selection)
@@ -1396,10 +1465,12 @@ def section_g(c):
         check("g: rect: ONE draft pending, no step, history.rev moved once",
               h["pending"] == 1 and h["cursor"] == 1 and h["entries"][0]["kind"] == "draft" and h["rev"] == rev0 + 1, h)
         sel = layer(st, "selection")
-        a3k, a300 = veil_alpha(sel, st["world"], 1.0, 3000), veil_alpha(sel, st["world"], 1.0, 300)
+        a3k, a300 = layer_alpha(sel, st["world"], 1.0, 3000), layer_alpha(sel, st["world"], 1.0, 300)
         check("g: rect: the selection layer is amber-opaque 0.6 at (1 s, 3 kHz), 0 at 300 Hz",
               abs(a3k - 0.6) <= 0.03 and a300 == 0.0, (a3k, a300))
-        check("g: rect: no veil (nothing is committed)", layer(st, "veil") is None, [l["layer"] for l in st["layers"]])
+        check("g: rect: the only layer is the selection's, and the picture is untouched (nothing is committed)",
+              [l["layer"] for l in st["layers"]] == ["selection"] and st["image"]["path"] == base_img,
+              [l["layer"] for l in st["layers"]])
         res = result_of(st)
         d3 = db(res, orig, 3000)
         check("g: rect: the result already carries the pending selection (3 kHz at -12 +-1, 300 Hz untouched)",
@@ -1452,7 +1523,7 @@ def section_g(c):
         d8 = db(res, orig, 8000)
         check("g: brush at quantity 50: the 8 kHz band is at -6 dB +-0.6 (pro rata: 50 % of -12)", abs(d8 + 6) <= 0.6, d8)
         check("g: brush: the rectangle's band is still at -12 +-1", abs(db(res, orig, 3000) + 12) <= 1.0, db(res, orig, 3000))
-        a8 = veil_alpha(layer(st, "selection"), st["world"], 1.0, 8000)
+        a8 = layer_alpha(layer(st, "selection"), st["world"], 1.0, 8000)
         check("g: brush: the selection layer's alpha at 8 kHz is 0.6 * 0.5", abs(a8 - 0.3) <= 0.03, a8)
 
         # ---- an Erase pass at 50 over it: back to 0 ----------------------------------------------------
@@ -1469,10 +1540,10 @@ def section_g(c):
         check("g: erase: 3 kHz still at -12 +-1", abs(db(res, orig, 3000) + 12) <= 1.0)
         sc.hand(polarity="add")
 
-        # ---- Apply: ONE step, the selection layer gone, the veil shows it -----------------------------
+        # ---- Apply: ONE step, the selection layer gone, the spectrogram shows it -----------------------------
         sc.hand(commit=True)
         st = sc.wait_for(lambda s: Script.synced(s) and layer(s, "selection") is None)
-        check("g: commit: the veil catches up and the selection layer is gone", st is not None)
+        check("g: commit: the spectrogram catches up and the selection layer is gone", st is not None)
         if st is None:
             return
         h = st["history"]
@@ -1480,19 +1551,21 @@ def section_g(c):
               h["pending"] == 0 and h["count"] == 1 and h["entries"][0]["kind"] == "step"
               and len(h["entries"][0]["ops"]) == 3 and h["entries"][0]["params"]["gain"] == -12
               and h["entries"][0]["params"]["quantity"] == 50, h)
-        av = veil_alpha(layer(st, "veil"), st["world"], 1.0, 3000)
-        expect = 0.75 * (1 - 10 ** (-12 / 20))
-        check("g: commit: the veil shows -12 at 3 kHz (alpha about %.2f)" % expect, abs(av - expect) <= 0.05, av)
+        check("g: commit: NO layer at all (no blue veil, no amber), the picture is a new one",
+              st["layers"] == [] and st["image"]["path"] != base_img, ([l["layer"] for l in st["layers"]], st["image"]["path"]))
+        i3k = image_db(st["image"]["path"], st["world"], 1.0, 3000)
+        check("g: commit: the spectrogram shows 3 kHz down by 12 dB +-2.5 (%.1f -> %.1f dB)" % (i3k0, i3k),
+              abs((i3k - i3k0) + 12) <= 2.5, (i3k0, i3k))
         d3 = db(result_of(st), orig, 3000)
         check("g: commit: the result keeps 3 kHz at -12 +-1", abs(d3 + 12) <= 1.0, d3)
 
         # ---- the gain moved AFTER Apply changes nothing (the step carries its own) --------------------
-        res_path, veil_path = st["transport"]["slots"]["result"], layer(st, "veil")["path"]
+        res_path, img_path = st["transport"]["slots"]["result"], st["image"]["path"]
         sc.hand(values={"gain": -3})
         time.sleep(2.5)
         st = sc.get()
-        check("g: the gain moved after Apply changes neither the result nor the veil",
-              st["transport"]["slots"]["result"] == res_path and layer(st, "veil")["path"] == veil_path
+        check("g: the gain moved after Apply changes neither the result nor the picture",
+              st["transport"]["slots"]["result"] == res_path and st["image"]["path"] == img_path
               and abs(db(result_of(st), orig, 3000) + 12) <= 1.0, st["transport"]["slots"]["result"])
 
         # ---- undo = the whole step; its drafts do not come back --------------------------------------
@@ -1503,6 +1576,8 @@ def section_g(c):
         if st is None:
             return
         check("g: undo: 3 kHz back to 0 +-0.2", abs(db(result_of(st), orig, 3000)) <= 0.2, db(result_of(st), orig, 3000))
+        check("g: undo: the spectrogram is the original's again (+-0.7 dB), no layer",
+              abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and st["layers"] == [])
 
         # ---- Validate with a selection still pending writes what is HEARD ------------------------------
         sc.hand(values={"gain": -12})
@@ -1719,11 +1794,11 @@ def section_f(c):
     ROOT = tmproot("f")
     WAV1 = make_wav(os.path.join(ROOT, "tone1.wav"), 1.0, 48000, 24)
     CNV = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
-    RGB = write_rgb(os.path.join(ROOT, "veil.objkrgb"), 8, 4)
+    RGB = write_rgb(os.path.join(ROOT, "tint.objkrgb"), 8, 4)
     c.send("project.new")
     cid = open_canvas(c)
     c.send("script.canvas.set_image", {"canvas_id": cid, "path": CNV, "x": X_AXIS, "y": Y_AXIS})
-    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "veil", "path": RGB, "history_rev": 0})
+    c.send("script.canvas.set_layer", {"canvas_id": cid, "layer": "tint", "path": RGB, "history_rev": 0})
     c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV1, "result": WAV1})
     c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 1, "x1": 3, "y0": 100, "y1": 1000}})
     c.send("script.canvas.input", {"canvas_id": cid, "play": True})

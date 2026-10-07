@@ -44,10 +44,16 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
      flips it) adds or removes; **move the Gain or a feather and the sound follows live**, no history step.
      **Apply** then makes ONE history step at the current values and clears the selection. The gain applies
      pro rata: at −12 dB a 50 % zone gets −6 dB. Apply is not Validate.
-   - Steps are cumulative (gains in dB add up). A cyan veil shows where the committed steps attenuate, a
-     green one where they boost.
+   - Steps are cumulative (gains in dB add up). **What is applied is IN the spectrogram**: after each step
+     (Instant gesture, Apply, undo, redo) the picture is recomputed from the result, so an attenuated
+     region simply gets darker; there is no overlay on committed steps. Only a pending selection keeps its
+     amber layer. Refreshing costs a fraction of a second on a short object (about 0.2 s more per step
+     on 30 s of stereo).
+   - **Remembered between sessions** (per user): FFT size, overlap, mode (Instant / Selection), tool
+     (Rectangle / Brush), gain, both feathers, brush size, amount per pass and hardness. They are kept as you
+     change them (Cancel included); **Reset** gives the defaults back. The time feather goes from 0 to 1 s.
 3. Listen, independently of the project transport: **play/stop** from the point you right-click (or click in
-   the time ruler), and ONE switch **Original / Result / Difference** — instantly, at the same position —
+   the time ruler), and ONE switch **Original / Result / Difference** (it opens on **Result**) — instantly, at the same position —
    the last being only what the operations take away. ⌘Z / ⇧⌘Z walk the history one entry back (the
    last selection gesture, then whole applied steps; the window's own, nothing reaches the project's undo
    stack before Validate).
@@ -76,8 +82,8 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
   single picture degrades, the computing is slower); above **10 minutes** it **refuses**.
 - A bus (aux, infinite group), an object whose file is missing and an empty object are refused. One
   object at a time.
-- The veil is a fixed grid (at most 4096 × 512 cells): a very small brush stroke looks blocky at a
-  strong zoom. The result does not: the audio is computed on the STFT grid.
+- The amber selection layer is a fixed grid (at most 4096 × 512 cells): a very small brush stroke looks
+  blocky at a strong zoom. The result does not: the audio is computed on the STFT grid.
 - Memory: about 0.5 GB of float32 at the 10-minute ceiling at 96 kHz stereo.
 
 ## Files
@@ -88,7 +94,7 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-gain`, i
 | `run.sh`, `install.sh`, `manifest.json`, `requirements.txt` | packaging |
 | `mask.py` | **the only home of the gain mathematics** (rectangle, brush dabs, the weighted selection, pro rata gain in dB) |
 | `dsp.py` | STFT / ISTFT with a time-frequency gain, streamed in blocks |
-| `image.py`, `veil.py`, `canvasfile.py`, `colormap.py` | the base spectrogram, the veil and selection layers, the two raw image formats |
+| `image.py`, `selection.py`, `canvasfile.py`, `colormap.py` | the base spectrogram (of the result), the selection layer, the two raw image formats |
 | `wavio.py` | WAV reader / writer (RIFF / RF64, PCM 16 / 24 / 32, float) |
 | `decide.py` | the small pure decisions: depth class, rates, durations, mono, names |
 | `make_fixture.py` | writes the two image-format fixtures to `tools/fixtures/spectral/` |
@@ -101,4 +107,5 @@ real app).
 
 `--object ID` (instead of `OBJEKAT_OBJECT_IDS`), `OBJEKAT_SPECTRAL_CACHE` (the work folder, default
 `~/Library/Caches/Objekat/spectral-gain/<uuid>`, removed when the script ends),
-`OBJEKAT_SPECTRAL_PYTHON` (the interpreter `run.sh` uses, default the venv's).
+`OBJEKAT_SPECTRAL_PYTHON` (the interpreter `run.sh` uses, default the venv's), `OBJEKAT_SPECTRAL_REMEMBER`
+(the key under which the app remembers the controls, default `spectral-gain`; a test gives its own).
