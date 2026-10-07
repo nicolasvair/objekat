@@ -2334,6 +2334,21 @@ What has landed since mid-August, in order:
   the amber selection over magma, the white Erase traces and the dashed Erase rectangle, how fast a live tweak
   FEELS and whether a slider drag keeps up, and every sound (the Original / Résultat / Différence swap, still never
   heard since the first version).
+  **Revision 4 (7 October 2026, same branch, nothing pushed), after the user tried it.** (1) NO MORE VEIL: after
+  an Instant gesture, Apply, undo or redo the script recomputes the SPECTROGRAM from the result audio and sends it
+  with `set_image {history_rev}` (new: the base image counts, with the layers, in `reflectedRev`, so the raw traces
+  go); only the amber selection layer remains. `veil.py` became `selection.py`; the picture and the ear share ONE
+  STFT pass (`Editor.committed_result`) when nothing is pending. Measured through the real app, 30 s stereo, Debug:
+  about 410 ms from a gesture to a settled picture + audio (instant, undo, redo, Apply alike). (2) `set_audio
+  {listen}` (new) so the script opens on Result. (3) A canvas with `remember` now remembers LIVE (values, mode,
+  tool: `scriptPanel.<key>` + `scriptPanel.<key>.canvas`; Reset erases only the first). For tests the script reads
+  `OBJEKAT_SPECTRAL_REMEMBER`, because one headless process serves every scenario section and the app remembers
+  live. (4) "Fondu en temps" 0..1000 ms. (5) Renamed "Spectral editor", folder and id `spectral-editor` (own commit;
+  the old `scriptPanel.spectral-gain` entry is migrated by `install.sh`). Authority: `plan_spectral_editor.md` §10.
+  Verified: Python 178 (the veil tests left, `test_editor.py` came), Swift standalone 125 / 46 / 78 / 11
+  (`test_script_canvas_memory.swift`), scenario 320 assertions.
+  **NOT seen / heard:** the picture refreshing under the hand (flash? how it feels at 30 s), the persisted tool and
+  mode showing in the window, the 1 s feather slider's feel.
 
 ### What is owed
 

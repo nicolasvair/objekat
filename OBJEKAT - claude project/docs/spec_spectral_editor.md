@@ -10,9 +10,17 @@ The sections below are updated; the technical side is `plan_spectral_gain.md` §
 questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
 others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
+**Revision 4 (7 October 2026), decided by the user after trying it:** (1) **no blue veil**: once a step is
+applied (an Instant gesture, Apply, undo, redo) the SPECTROGRAM ITSELF is recomputed from the result, so the
+picture shows what is done; only the amber pending selection keeps an overlay; (2) the listening switch opens on
+**Result**; (3) the settings are **remembered between sessions** (FFT size, overlap, mode, tool, gain, both
+feathers, brush size, amount, hardness; Reset gives the defaults back); (4) the time feather goes from 0 to 1 s;
+(5) the script's name, folder and id become **Spectral editor / `spectral-editor`**. Technical side:
+`plan_spectral_editor.md` §10.
+
 ## 1. What it is
 
-A third-party script, **"Spectral editor"** (folder and id `spectral-gain`), reached from an object's right click
+A third-party script, **"Spectral editor"** (folder and id `spectral-editor`), reached from an object's right click
 (Scripts ▸ "Spectral editor…"), that opens a spectrogram of the object in a floating window, lets the
 hand attenuate (or boost) regions of time × frequency, lets the ear compare, and brings the result
 back into the session. In the spirit of iZotope RX, restricted to **gain**: no spectral repair, no
@@ -77,12 +85,12 @@ proposed: max of L and R]**.
 
 ### Two modes **[r3, decided]**
 - **Instant**: each gesture is applied at once with the current settings and becomes one history step;
-  its trace gives way to the veil. There is no Erase in Instant: ⌘Z corrects.
+  its trace gives way to the refreshed spectrogram **[r4]**. There is no Erase in Instant: ⌘Z corrects.
 - **Selection**: gestures build a **weighted selection** that stays on screen, over as many gestures as
   wanted. The hand changes the settings while listening (try −6, then −12 dB): the preview follows live and
   no history step is added. **Apply** makes ONE history step from the selection at the current settings and
   clears it. Apply is not Validate (which closes the window).
-- Mode at opening: Instant (not remembered).
+- Mode at opening: the one you left (Instant the first time) **[r4: remembered, like the tool and the settings]**.
 - **Switching from Selection to Instant while a selection is pending** asks, in an alert on the window:
   **Apply** (seal it, then switch) / **Ignore** (throw it away, then switch) / **Cancel** (stay in Selection)
   **[Q-A, decided 7 October]**. Switching to Selection never asks (Instant holds nothing pending).
@@ -117,7 +125,8 @@ proposed: max of L and R]**.
   gain for that stroke. **Distance, not time** **[decided]**: a hand held still deposits nothing. One straight
   crossing deposits exactly the quantity at the tip's centre, whatever the spacing.
 - In Instant, successive strokes still add up in dB (−3, −6, −9 … across strokes).
-- The app draws the applied attenuation as a veil, and the pending selection as its own overlay.
+- The applied attenuation is IN the spectrogram, which is recomputed from the result after every history change
+  **[r4]** (no veil); the pending selection has its own amber overlay.
 
 ### Not in v1
 Lasso / free shapes, magic wand, harmonic selection **[proposed]**; editing an existing operation's
@@ -127,7 +136,7 @@ parameters after the fact — the history is undo/redo only **[decided]**.
 
 Inside the window, independently of the project's transport (which is stopped on play **[proposed]**):
 - **Play / stop** from the caret (set by a right click in the view, or a click in the time ruler), with a playhead.
-- **ONE switch Original / Result / Difference** **[r3]**: switch instantly, same position, between the
+- **ONE switch Original / Result / Difference** **[r3]**, opening on Result **[r4]**: switch instantly, same position, between the
   original, the result, and only what the operations take away (original − result), to check one is not
   damaging the sound.
 - The result follows the history: after an operation (or an undo/redo), the script recomputes and
@@ -170,7 +179,7 @@ undo stack until Validate (which is ONE project undo step, as in `retouche-exter
   gestures into one step — the app knows the shape of the history, never what a step means **[r3]**.
 - Report the operation history (ordered list, with the undo cursor) by long poll; never an edit of
   the project, never dirty, never in the project's undo stack.
-- Draw a raw trace of each operation until the script's layers (the veil, the selection) reflect it.
+- Draw a raw trace of each operation until the script's layers (the refreshed spectrogram, the selection) reflect it.
 - Play audio files the script provides, with original / result / delta slots heard through ONE
   three-state switch, a playhead, seek (right click), and a swap that keeps the position.
 - Headless: the canvas exists, no window opens; an `input`-style door lets a test inject gestures.

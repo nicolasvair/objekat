@@ -2177,11 +2177,12 @@ A few points of vocabulary that save mistakes:
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
-| `tools/scenario_spectral_gain.py` | the spectral editor, app side: 294 assertions in seven sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-gain/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the veil's pixels, on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone), undo, Validate with a selection pending. (c), (d), (e), (g) skip when the script's venv is missing. `SECTIONS=` picks sections |
+| `tools/scenario_spectral_gain.py` | the spectral editor, app side: 294 assertions in seven sections, standard library only. (a) the API additions — `object.get` `source_*`, `object.add` `name`, a `batch [add, mute]` undone in ONE `edit.undo`; (b) the `script.canvas.*` contract (the test client plays the script): entries, modes, polarity, `commit`, the 3-state `listen`, `set_image.history_rev`, `set_audio.listen`, the live remember of values + mode + tool; (c) END TO END, Instant mode, with the real script (`tools/scripts/spectral-gain/run.sh --object ID`): a rectangle, an undo, calibrated brush strokes (one pass −3 dB, two steps −6, one out-and-back stroke −6), an expert change, Validate, checked on the base image's pixels (no veil: the spectrogram shows what is applied), on the result's tones (Goertzel) and on a WAV export of the session before / after; (d) the formats the file comes back in; (e) the 601 s refusal, Cancel, a SIGKILLed script, a missing file; also the app's own launch through `script.run`; (f) no window on the headless pid; (g) END TO END, Selection mode: a weighted selection (rectangle, brush pass at 50 %, Erase pass), the gain and a feather tuned LIVE with the history not moving, Apply (one step, the selection layer gone, the picture refreshed), undo, Validate with a selection pending; (c) ends with two more sessions that must find everything remembered. (c), (d), (e), (g) skip when the script's venv is missing. `SECTIONS=` picks sections |
 | `tools/test_script_canvas_geometry.swift` | the canvas's axes, viewport, trace discs, ticks and number formats, compiled standalone: 125 assertions, no app needed |
 | `tools/test_script_canvas_image.swift` | the two raw image files (`OBJKCNV1`, `OBJKRGB1`) against the committed fixtures, compiled standalone: 46 assertions, no app needed |
+| `tools/test_script_canvas_memory.swift` | what a canvas remembers besides its values (mode and tool, the rule of what still fits), compiled standalone: 11 assertions, no app needed |
 | `tools/test_script_canvas_history.swift` | the canvas's history as ENTRIES (drafts, steps, commit, discard, undo / redo peeling one entry, `active_since`), compiled standalone: 78 assertions, no app needed |
-| `tools/scripts/spectral-gain/` | the "Spectral editor" third-party script (folder and id `spectral-gain`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 184 tests: STFT round trip, the whole gain mathematics, the images, the veil, the WAV reader / writer, the pure decisions) |
+| `tools/scripts/spectral-gain/` | the "Spectral editor" third-party script (folder and id `spectral-gain`) (`install.sh`, `run.sh`, `manifest.json`, README) and its Python unit tests (`run_tests.sh [python]`, 184 tests: STFT round trip, the whole gain mathematics, the images, the selection layer, the Editor's messages, the WAV reader / writer, the pure decisions) |
 | `tools/example-script/` | an example third-party script, to be copied into the scripts folder |
 
 The MCP is declared like this on the client side:
@@ -2385,7 +2386,11 @@ canvas at once. Headless, the canvas exists but no window opens and no audio dev
 viewport is a nominal plot of 1000 × 500 points fitted to the world, and the transport is a wall-clock model.
 
 **Controls** are exactly the `script.panel.open` vocabulary (the same parser, the same messages), `remember`
-included: Validate stores the values, `press: "reset"` restores the declared ones, the key is
+included — but a canvas remembers **live** (revision 4): every change of a hand value is kept for the next
+opening, whatever way the window ends (Validate, Cancel, close), and so are its **mode** (when it has `modes`)
+and its **tool**, under a second entry `scriptPanel.<key>.canvas` that `press: "reset"` leaves alone (Reset
+restores the declared values and erases `<key>`). A remembered tool the canvas no longer declares, or a mode on
+a canvas without `modes`, is ignored. The polarity and the listened slot are not remembered. The key is
 `scriptPanel.<key>`, and it is ephemeral under `--no-recent` or `--headless`.
 
 **Tools** are gesture kinds: `rect` (a box in data units), `stroke` (a polyline in data units with a diameter
@@ -2426,7 +2431,7 @@ once: one history step, as before) and **Selection** (gestures build a pending s
 listening, then `commit` makes ONE step). Each gesture carries a **polarity**, `"add"` or `"subtract"`
 (Draw / Erase): a property of the gesture, frozen when it starts; the app records it and does not know what
 "subtract" does. Without `modes` the canvas is Instant only and no op is ever `subtract`. The mode at opening
-is `instant` (not remembered). The window, not the script, owns the question "a selection is pending: apply
+is `instant`, or the one remembered when the canvas has a `remember` key (see above). The window, not the script, owns the question "a selection is pending: apply
 or ignore?" (a mode switch or Validate); headless, `commit` is "Apply" and `discard` "Ignore".
 
 **History = entries.** ONE linear stack of ENTRIES, a `cursor` over it (the active entries are
@@ -2470,21 +2475,25 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
   label, a duplicate tool id, an unknown kind, an unknown or non-hand-value control in
   `params`, a missing, unknown, non-number or (on a non-stroke tool) present `size_control`. `not_found`:
   unknown `object`.
-- **`script.canvas.set_image {canvas_id, path, x, y, value_unit?}`** → `{width, height, has_values}`. Sets the
+- **`script.canvas.set_image {canvas_id, path, x, y, value_unit?, history_rev?}`** → `{width, height, has_values}`. Sets the
   BASE image and the world. Same axes as before: the view and the layers are kept; otherwise the view is
-  refitted and every layer dropped. `not_found` (file), `bad_params` (format, size, caps, `min >= max`, a log
+  refitted and every layer dropped. `history_rev` (revision 4) is the history revision the new picture
+  reflects — a script that redraws the spectrogram to show the RESULT says so, and the app counts it with the
+  layers' when it decides which raw traces to hide; absent = it reflects nothing (`image.history_rev` in `get`). `not_found` (file), `bad_params` (format, size, caps, `min >= max`, a log
   axis with `min <= 0`, an unknown mapping), `invalid_state` (the canvas is not open). Never moves `rev`.
 - **`script.canvas.set_layer {canvas_id, layer, path?, history_rev?, opacity?, z?}`** → `{layers: [{layer,
   width, height, path, z, opacity, history_rev}]}` in draw order. `path: null` removes. An existing id is
   replaced: same `z` / `opacity` unless given, `history_rev` as given (none = reflects nothing). `opacity`
   0…1 (default 1), `z` an integer (default 0), at most 8 layers. `invalid_state`: no base image yet.
   `bad_params` / `not_found` as for `set_image`; an empty layer id and a ninth layer are `bad_params`.
-- **`script.canvas.set_audio {canvas_id, original?, result?, delta?, offset?, history_rev?}`** → `{slots,
+- **`script.canvas.set_audio {canvas_id, original?, result?, delta?, offset?, history_rev?, listen?}`** → `{slots,
   durations, playing, position, caret}`. A slot is a path, `null` to clear it, absent to keep it; every file
   is opened first (`not_found`, `bad_params` if unreadable) so a refused call changes nothing. `history_rev`
   is the revision the files reflect: while `history.rev` is ahead of it the window shows "computing". A
   cleared `result` or `delta` that is being heard (`listen`) falls back to `original`, a cleared `original`
-  stops playback. If a playing slot's path changes it is swapped at the same position.
+  stops playback. If a playing slot's path changes it is swapped at the same position. `listen`
+  (`original | result | delta`, revision 4) chooses the slot heard, applied with the files of the same call:
+  `invalid_state` if that slot would be empty (nothing stored), `bad_params` if unknown.
 - **`script.canvas.get {canvas_id, known_history_rev?}`** and **`script.canvas.wait {canvas_id, since_rev,
   timeout_ms?, known_history_rev?}`** — the panel's long poll (the answer comes as soon as `rev > since_rev`
   or the state is no longer `open`; at the timeout, ≤ 5000 ms, default 1000, it answers the CURRENT state
@@ -2495,7 +2504,7 @@ while playing jumps there and moves the caret, clamped to [0, end]; a `listen` c
 {"canvas_id","rev","state":"open|validated|cancelled|closed","values":{},"events":[{"button":"id"}],
  "status","busy","remember":null,"tool":"rect"|null,"modes":false,"mode":"instant|select","polarity":"add|subtract",
  "history":{"rev":3,"cursor":2,"count":3,"pending":0,"unreflected":[8],"entries":[…]},
- "image":{"path","width","height","has_values"}|null,
+ "image":{"path","width","height","has_values","history_rev"}|null,
  "layers":[{"layer","path","width","height","z","opacity","history_rev"}],
  "world":{"x":{"min","max","unit","mapping"},"y":{…}}|null,
  "view":{"x0","x1","y0","y1","width","height"}|null,

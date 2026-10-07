@@ -1,6 +1,6 @@
 # Spectral editor: technical plan, revision 2 (`script.canvas.*` and `tools/scripts/spectral-gain/`)
 
-> **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Where it conflicts with §1–§8, §9 wins.**
+> **Revision 3 (6 October 2026) is an ADDENDUM: §9 at the end. Revision 4 (7 October 2026) is another: §10, last. Where they conflict with §1–§8, the later section wins (§10 over §9 over §1–§8).**
 
 This revision replaces the whole of `OBJEKAT - claude project/docs/plan_spectral_gain.md`. It applies your review:
 - The canvas is now truly generic. All brush, rectangle and gain logic lives only in Python.
@@ -1036,3 +1036,71 @@ window to ask, still writes what is heard (§9.3). Q-C, Q-D, Q-E and the smaller
 - **Q-D. A rectangle in Effacer.** Default: it clears the selection inside it (feathered), `min(S, 1 − W)`.
 - **Q-E. What the veil shows while a selection is pending.** Default: applied steps only; the pending selection
   has its own amber overlay (opacity = intensity) and is only heard, not shown as attenuation.
+
+## 10. Revision 4 (7 October 2026): no veil, the spectrogram is refreshed; opens on Result; persistence
+
+Decided by the user after trying revision 3. The canvas stays generic; the gain logic stays in Python.
+
+### 10.1 What changes, in one table
+
+| | before (§3.5, §9.3) | revision 4 |
+|---|---|---|
+| committed steps on screen | a blue/green `veil` layer | **no layer**: the base image is recomputed from the result audio and sent again |
+| pending selection | amber `selection` layer | unchanged |
+| which traces are hidden | the largest `history_rev` among the layers | the largest `history_rev` among the layers **and the base image** |
+| first audio | slot heard = Original | **Result** |
+| remembered | the values, at Validate only | values, mode and tool, **live**, per user |
+| "Fondu en temps" | 0…200 ms | **0…1000 ms** |
+| name, folder, id | `spectral-gain` | `spectral-editor` (display name "Spectral editor") |
+
+### 10.2 `script.canvas.*` additions (command_api.md carries the contract)
+
+- `set_image {history_rev?}`: the history revision the new image reflects. Counted with the layers' by the
+  rule of §2.4 (an op's raw trace shows iff its entry's `active_since` > the largest reflected rev); `get`
+  answers `image.history_rev` (null when none). A `set_image` without it reflects nothing again.
+- `set_audio {listen?}`: `original | result | delta`, applied with the files of the same call; refused with
+  `invalid_state` if that slot would be empty (nothing stored), `bad_params` if unknown. The script says it once,
+  with its first files, to open on Result.
+- **Live remember.** A canvas opened with `remember` keeps every change of a hand value (until now: only
+  Validate did), plus its **mode** (only if it has `modes`) and its **tool**, in a separate entry
+  `<key>.canvas` so that Reset (which erases `<key>`) leaves the mode and the tool alone. An unknown tool, or a
+  mode on a canvas without modes, is ignored at the next opening. Neither the polarity nor the listened slot is
+  remembered. Storage: `ScriptPanelMemory` (UserDefaults, `scriptPanel.<key>`), in-process dictionary under
+  `--no-recent` / `--headless`. Pure rule: `CanvasRememberedState.restored` (`test_script_canvas_memory.swift`).
+
+### 10.3 The script
+
+- `veil.py` becomes `selection.py` (grid + `SelectionCache` + render of the amber layer); `VeilCache`,
+  `render_veil` and the cyan/green colours are deleted.
+- `Editor.send_base(y, n, k, steps, rev)` writes the spectrogram of `y` (the result of the COMMITTED steps; the
+  original when there are none) and sends `set_image {history_rev: rev}`. `Editor.committed_result` caches the
+  audio through the committed steps only; the audio preview REUSES it when nothing is pending, so an Apply, an
+  undo or a redo costs one STFT pass for the picture and the ear together. With a selection pending the ear
+  needs a second pass (steps + drafts at the live values) and the picture stays untouched until Apply.
+- Order in `sync`: a selection that appears is sent first (cheap), the picture next, a selection that goes away
+  (Apply, undo) after the picture that now shows its effect, then the audio.
+- No STFT cache is kept between calls (a 30 s stereo STFT is hundreds of MB): the passes are recomputed.
+- The remember key is `spectral-editor`; `OBJEKAT_SPECTRAL_REMEMBER` overrides it for tests, because the app
+  remembers live and one headless process serves every scenario section.
+
+### 10.4 Cost (Debug build, 30 s stereo noise at 48 kHz, 2048/4, measured through the real app)
+
+About **410 ms** from a gesture to a settled picture + audio, whatever the number of steps (Instant gesture,
+undo, redo, Apply). Offline: processing ≈ 260 ms, building the image ≈ 190 ms, writing it ≈ 5 ms (the audio
+write is the rest); so the picture adds about 190 ms to what the audio already cost.
+
+### 10.5 Tests
+
+`test_editor.py` (a fake app: which messages, in which order, `history_rev` stamped, no layer, one STFT pass),
+`test_selection.py` (ex-`test_veil.py`, veil tests removed), `tools/test_script_canvas_memory.swift`, scenario
+(b) (`set_image.history_rev`, `set_audio.listen`, live remember incl. mode and tool), (c) and (g) (the spectrogram
+shows −24 / −12 dB at 3 kHz, no layer, a second and a third session remember everything).
+
+### 10.6 Choices made without asking (the smallest option each time)
+
+- Live remember for ALL canvases that declare `remember`, not only this script (it is the generic rule; Validate
+  no longer being the only writer).
+- The mode and the tool live under `<key>.canvas`, not in the values entry.
+- The time feather stays in ms (0…1000), the step is 1 ms.
+- The listened slot is not remembered: it opens on Result every time.
+
