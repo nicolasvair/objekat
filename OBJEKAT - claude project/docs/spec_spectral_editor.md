@@ -10,6 +10,12 @@ The sections below are updated; the technical side is `plan_spectral_editor.md` 
 questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
 others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
+**Revision 5 (7 October 2026), decided by the user:** (1) the trace of a Draw gesture is **yellow** (it was black);
+Erase keeps white and dashes; (2) a **listening level** −20…+20 dB (default 0), for listening only, never in the
+validated result, remembered **per Objekat project**; (3) the spectrogram **follows the listening switch**:
+Original shows the original's, Difference the difference's, Result the result's. Technical side:
+`plan_spectral_editor.md` §11. Overlap was investigated: no bug (§11.4).
+
 **Revision 4 (7 October 2026), decided by the user after trying it:** (1) **no blue veil**: once a step is
 applied (an Instant gesture, Apply, undo, redo) the SPECTROGRAM ITSELF is recomputed from the result, so the
 picture shows what is done; only the amber pending selection keeps an overlay; (2) the listening switch opens on
