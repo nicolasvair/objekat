@@ -130,6 +130,12 @@ struct CanvasLayer {
     var historyRev: Int?
 }
 
+/// An image tied to an audio slot, with the history revision it reflects (nil = none claimed).
+struct CanvasSlotImage {
+    var image: ScriptCanvasImage
+    var historyRev: Int?
+}
+
 // MARK: - Transport
 
 enum CanvasSlot: String, CaseIterable, Sendable {
@@ -207,6 +213,9 @@ struct ScriptCanvas {
     var image: ScriptCanvasImage? = nil
     /// The history revision the BASE image reflects (`set_image`'s `history_rev`); nil = none claimed.
     var imageHistoryRev: Int? = nil
+    /// An image per audio slot (`set_image {slot}`): the picture that goes with what is HEARD. The base
+    /// image above is the fallback for a slot with none (and the result's, for the spectral editor).
+    var slotImages: [CanvasSlot: CanvasSlotImage] = [:]
     /// The unit of the base image's values, for the pointer readout.
     var valueUnit = ""
     var world: CanvasWorld? = nil
@@ -214,8 +223,16 @@ struct ScriptCanvas {
 
     var transport = ScriptCanvasTransport()
 
-    /// The largest `history_rev` the base image or any layer carries, −1 when none does.
-    var reflectedRev: Int { (layers.compactMap(\.historyRev) + [imageHistoryRev].compactMap { $0 }).max() ?? -1 }
+    /// The largest `history_rev` the base image, a slot image or any layer carries, −1 when none does.
+    var reflectedRev: Int {
+        (layers.compactMap(\.historyRev) + slotImages.values.compactMap(\.historyRev)
+            + [imageHistoryRev].compactMap { $0 }).max() ?? -1
+    }
+
+    /// The image the plot draws: the one of the slot being HEARD when the script gave one, else the base.
+    var displayedImage: ScriptCanvasImage? {
+        slotImages[CanvasSlot(rawValue: transport.listen.rawValue)!]?.image ?? image
+    }
 
     /// The history's revision: moves each time the active list of entries changes.
     var historyRev: Int { history.rev }
@@ -475,7 +492,7 @@ struct ScriptCanvas {
         c.imageHistoryRev = historyRev
         c.valueUnit = valueUnit
         c.world = world
-        if !sameWorld { c.layers = [] }
+        if !sameWorld { c.layers = []; c.slotImages = [:] }
         canvases[id] = c
         if !sameWorld {
             let old = viewports[id]
@@ -483,6 +500,17 @@ struct ScriptCanvas {
                                                height: old?.height ?? Self.nominalHeight)
             viewportChanged?(id)
         }
+    }
+
+    /// Sets, replaces or removes (`image` nil) the picture of an audio slot. It covers the SAME world as
+    /// the base image (no axes of its own), so a base image must exist. What the plot draws follows the
+    /// slot being heard (@see ScriptCanvas.displayedImage): switching is a redraw, no round trip.
+    func setSlotImage(_ id: UUID, slot: CanvasSlot, image: ScriptCanvasImage?, historyRev: Int?) throws {
+        var c = try openCanvas(id)
+        guard c.image != nil else { throw Self.invalid("no base image yet (script.canvas.set_image first)") }
+        if let image { c.slotImages[slot] = CanvasSlotImage(image: image, historyRev: historyRev) }
+        else { c.slotImages.removeValue(forKey: slot) }
+        canvases[id] = c   // like `setImage`: the observing view redraws
     }
 
     /// Adds or replaces a layer, or removes it (`image` nil). An existing id keeps its z and

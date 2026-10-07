@@ -25,6 +25,14 @@ class FakeApp:
     def named(self, cmd):
         return [p for c, p in self.calls if c == cmd]
 
+    def bases(self):
+        """The set_image calls that carry the BASE image (the result's picture)."""
+        return [p for p in self.named("script.canvas.set_image") if "slot" not in p]
+
+    def slots(self, slot):
+        """The set_image calls that carry the picture of an audio slot."""
+        return [p for p in self.named("script.canvas.set_image") if p.get("slot") == slot]
+
 
 def op(oid, kind="rect"):
     return {"id": oid, "kind": kind, "tool": "rect", "polarity": "add", "x0": 0.2, "x1": 0.6, "y0": 200.0,
@@ -60,12 +68,14 @@ class EditorProtocol(unittest.TestCase):
         self.ed.app.send("script.canvas.set_audio", {"listen": "result"})
         self.ed.result_key = self.ed.audio_key = (0, 1024, 4, None)
         self.ed.fft = (1024, 4)
+        self.ed.original_fft = (1024, 4)             # the pictures of a first display: Original, and silence
+        self.ed.delta_key = ([], 1024, 4)
         self.app.calls.clear()
 
     def test_a_committed_step_refreshes_the_picture_with_the_rev_and_sends_no_layer(self):
         self.start()
         self.ed.sync(answer([step(1)], rev=1))
-        images = self.app.named("script.canvas.set_image")
+        images = self.app.bases()
         self.assertEqual(len(images), 1)
         self.assertEqual(images[0]["history_rev"], 1)
         self.assertEqual(self.app.named("script.canvas.set_layer"), [])  # no veil, no selection
@@ -97,8 +107,8 @@ class EditorProtocol(unittest.TestCase):
         self.ed.sync(answer(entries, rev=1))
         self.app.calls.clear()
         self.ed.sync(answer(entries, cursor=0, rev=2))
-        self.assertEqual(len(self.app.named("script.canvas.set_image")), 1)
-        self.assertEqual(self.app.named("script.canvas.set_image")[0]["history_rev"], 2)
+        self.assertEqual(len(self.app.bases()), 1)
+        self.assertEqual(self.app.bases()[0]["history_rev"], 2)
         self.assertEqual(self.ed.image_steps, [])
 
     def test_a_live_tweak_with_a_pending_selection_redraws_no_picture(self):
@@ -106,7 +116,7 @@ class EditorProtocol(unittest.TestCase):
         entries = [draft(1)]
         self.ed.sync(answer(entries, rev=1))
         images = len(self.app.named("script.canvas.set_image"))
-        self.assertEqual(images, 0)  # a draft is not applied: the picture is the original's, unchanged
+        self.assertEqual(images, 0)  # a draft is not applied: no picture at all is redrawn (Original, Difference, Result)
         self.assertEqual(len(self.app.named("script.canvas.set_layer")), 1)
         self.app.calls.clear()
         self.ed.sync(answer(entries, values=dict(VALUES, gain=-20), rev=2))
@@ -130,8 +140,10 @@ class EditorProtocol(unittest.TestCase):
         self.ed.sync(answer(entries, rev=1))
         self.app.calls.clear()
         self.ed.sync(answer(entries, values=dict(VALUES, overlap=8), rev=2))   # the hand moved the slider
-        images, audios = self.app.named("script.canvas.set_image"), self.app.named("script.canvas.set_audio")
+        images, audios = self.app.bases(), self.app.named("script.canvas.set_audio")
         self.assertEqual((len(images), len(audios)), (1, 1))
+        # a new analysis redraws the Original's picture and the Difference's too (they follow the ear)
+        self.assertEqual((len(self.app.slots("original")), len(self.app.slots("delta"))), (1, 1))
         self.assertEqual(self.ed.fft, (1024, 8))
         with open(images[0]["path"], "rb") as f:
             width = struct.unpack("<I", f.read(12)[8:12])[0]
@@ -143,6 +155,49 @@ class EditorProtocol(unittest.TestCase):
         self.app.calls.clear()
         self.ed.sync(answer(entries, values=dict(VALUES, overlap=8), rev=2))      # nothing changed: nothing sent
         self.assertEqual(self.app.calls, [])
+
+    def test_each_listening_state_has_its_own_picture(self):
+        """Revision 5: the Original's picture is made once per analysis (and never redrawn by a step), the
+        Result's is the base image, the Difference's is the original minus the committed result."""
+        import struct
+        self.start()
+        self.ed.sync(answer([step(1)], rev=1))
+        self.assertEqual(len(self.app.bases()), 1)
+        self.assertEqual(self.app.slots("original"), [])           # unchanged by a step: sent once, at the start
+        deltas = self.app.slots("delta")
+        self.assertEqual(len(deltas), 1)
+        self.assertEqual(deltas[0]["history_rev"], 1)
+        self.assertNotIn("x", deltas[0])                           # a slot's picture covers the base image's world
+        self.assertEqual(self.app.calls[-1][0], "script.canvas.set_image")   # the difference comes last: busy is off
+        busy = [p.get("busy") for c, p in self.app.calls if c == "script.canvas.update"]
+        self.assertEqual(busy[-1], False)
+        import image
+        # the delta image is NOT black once a step removed something, and IS black with no step
+        def body(path):
+            with open(path, "rb") as f:
+                head = f.read(796)
+                w, h = struct.unpack("<II", head[8:16])
+                return w, h, np.frombuffer(f.read(w * h), dtype=np.uint8)
+        w, h, px = body(deltas[0]["path"])
+        self.assertGreater(int(px.max()), 0)
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], cursor=0, rev=2))           # undone: silence
+        w, h, px = body(self.app.slots("delta")[0]["path"])
+        self.assertEqual(int(px.max()), 0)
+        self.assertEqual(w, SR // sg.dsp.hop_for(1024, 4) + 1)
+
+    def test_the_original_picture_is_sent_with_the_first_display_and_follows_the_analysis(self):
+        self.ed.app.calls.clear()
+        self.ed.send_base(self.ed.x, 1024, 4, [], 0)               # the first display
+        base, orig = self.app.bases(), self.app.slots("original")
+        self.assertEqual((len(base), len(orig)), (1, 1))
+        self.assertNotEqual(base[0]["path"], orig[0]["path"])      # a file of its own (the base ones are recycled)
+        with open(base[0]["path"], "rb") as a, open(orig[0]["path"], "rb") as b:
+            self.assertEqual(a.read(), b.read())                   # ... with no step it is the same picture
+        self.ed.send_base(self.ed.x, 1024, 4, [], 0)
+        self.assertEqual(len(self.app.slots("original")), 1)       # same analysis: not sent again
+        self.ed.send_base(self.ed.x, 1024, 6, [], 0)
+        self.assertEqual(len(self.app.slots("original")), 2)       # a new overlap: redrawn
 
     def test_the_feather_range_goes_to_one_second_and_the_defaults_are_unchanged(self):
         ctl = {c["id"]: c for c in sg.canvas_controls()}

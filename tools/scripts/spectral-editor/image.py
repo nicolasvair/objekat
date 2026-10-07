@@ -115,11 +115,22 @@ def build_image(x, sr, n, k, rows=ROWS, max_cols=MAX_COLS, block=256):
     return np.ascontiguousarray(idx[:, ::-1].T)
 
 
-def write_base_image(path, x, sr, n, k):
-    """Build the base image and write it as OBJKCNV1 (magma, -100 .. 0 dB). Returns (W, H)."""
-    idx = build_image(x, sr, n, k)
+def write_index_image(path, idx):
+    """Writes a uint8 index image (rows, W) as OBJKCNV1 (magma, -100 .. 0 dB). Returns (W, H)."""
     canvasfile.write_cnv(path, idx, V0, V255, colormap.MAGMA)
     return idx.shape[1], idx.shape[0]
+
+
+def write_base_image(path, x, sr, n, k):
+    """Build the base image and write it as OBJKCNV1 (magma, -100 .. 0 dB). Returns (W, H)."""
+    return write_index_image(path, build_image(x, sr, n, k))
+
+
+def blank_image(length, n, k, rows=ROWS, max_cols=MAX_COLS):
+    """The picture of silence (every cell at the floor, -100 dB = black), shaped like `build_image`'s
+    for a signal of `length` samples: the difference spectrogram when nothing has been done yet, with no
+    transform to compute."""
+    return np.zeros((rows, column_count(int(length), dsp.hop_for(n, k), max_cols)), dtype=np.uint8)
 
 
 def row_of_frequency(freq, sr, rows=ROWS, fmin=F_MIN):

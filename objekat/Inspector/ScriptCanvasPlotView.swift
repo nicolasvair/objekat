@@ -208,7 +208,8 @@ final class ScriptCanvasPlotNSView: NSView {
         plot.fill()
         if let world = c.world, let vp = viewport() {
             ctx.interpolationQuality = .low
-            if let base = c.image { drawImage(base, alpha: 1, in: ctx, world: world, vp: vp) }
+            // The picture of what is HEARD (the original's, the result's, the difference's), else the base image.
+            if let base = c.displayedImage { drawImage(base, alpha: 1, in: ctx, world: world, vp: vp) }
             for layer in ScriptCanvasStore.layersInDrawOrder(c.layers) {
                 drawImage(layer.image, alpha: CGFloat(layer.opacity), in: ctx, world: world, vp: vp)
             }
@@ -487,7 +488,7 @@ final class ScriptCanvasPlotNSView: NSView {
         let wy = vp.warpedY(forScreen: Double(p.y - r.minY))
         let x = world.x.unwarp(wx), y = world.y.unwarp(wy)
         var value = ""
-        if let img = c.image, img.hasValues, world.x.warpedSpan > 0, world.y.warpedSpan > 0 {
+        if let img = c.displayedImage, img.hasValues, world.x.warpedSpan > 0, world.y.warpedSpan > 0 {
             let col = Int(floor((wx - world.x.warpedLo) / world.x.warpedSpan * Double(img.width)))
             let row = Int(floor((world.y.warpedHi - wy) / world.y.warpedSpan * Double(img.height)))
             if let v = img.value(column: col, row: row) {

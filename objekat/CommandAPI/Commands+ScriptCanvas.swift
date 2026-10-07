@@ -105,9 +105,17 @@ extension CommandRegistry {
                 "polarity": .string(c.polarity.rawValue),
                 "history": .object(history),
                 "image": c.image.map { img in
-                    .object(["path": .string(img.path), "width": .int(img.width),
-                             "height": .int(img.height), "has_values": .bool(img.hasValues),
-                             "history_rev": c.imageHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null])
+                    var slots: [String: JSONValue] = [:]
+                    for (slot, si) in c.slotImages {
+                        slots[slot.rawValue] = .object(["path": .string(si.image.path), "width": .int(si.image.width),
+                                                        "height": .int(si.image.height),
+                                                        "history_rev": si.historyRev.map { JSONValue.int($0) } ?? JSONValue.null])
+                    }
+                    return .object(["path": .string(img.path), "width": .int(img.width),
+                                    "height": .int(img.height), "has_values": .bool(img.hasValues),
+                                    "history_rev": c.imageHistoryRev.map { JSONValue.int($0) } ?? JSONValue.null,
+                                    "slots": .object(slots),
+                                    "shown": .string(c.displayedImage?.path ?? img.path)])
                 } ?? .null,
                 "layers": .array(ScriptCanvasStore.layersInDrawOrder(c.layers).map(layerPayload)),
                 "world": c.world.map { .object(["x": axisPayload($0.x), "y": axisPayload($0.y)]) } ?? .null,
@@ -252,17 +260,25 @@ extension CommandRegistry {
         }
 
         register("script.canvas.set_image",
-                 summary: "Sets the BASE image and the world it covers. `x` / `y` are {min, max, unit?, mapping?} "
+                 summary: "Sets the BASE image and the world it covers — or, with `slot`, the picture of one audio slot. "
+                        + "`x` / `y` are {min, max, unit?, mapping?} "
                         + "(unit \"s\" gives time rulers, \"Hz\" Hz / kHz rulers; mapping \"lin\" or \"log\", the "
                         + "latter needing min > 0). The file is an OBJKCNV1 (indexed, with values), an OBJKRGB1 "
                         + "or any image ImageIO reads (no values). Same axes as before: the view and the layers "
                         + "are kept; otherwise the view is refitted and every layer dropped. `history_rev` = the "
                         + "history revision the image reflects (counted with the layers' to hide traces). "
-                        + "Never moves rev.",
+                        + "With `slot` (original | result | delta) the file is that slot's picture instead: it covers "
+                        + "the SAME world as the base image (no `x` / `y`, which are ignored; a base image must exist), "
+                        + "and the plot draws the picture of the slot being HEARD, the base image when that slot has "
+                        + "none — so switching what is heard switches the picture with no round trip. `path: null` "
+                        + "with `slot` removes it. Never moves rev.",
                  params: [ParamSpec("canvas_id", "uuid", "The canvas."),
-                          ParamSpec("path", "string", "The image file."),
-                          ParamSpec("x", "object", "{min, max, unit?, mapping?}"),
-                          ParamSpec("y", "object", "{min, max, unit?, mapping?}"),
+                          ParamSpec("path", "string|null", required: false,
+                                    "The image file (required; null only with `slot`: removes that picture)."),
+                          ParamSpec("slot", "string", required: false,
+                                    "original | result | delta: the picture of that audio slot instead of the base image."),
+                          ParamSpec("x", "object", required: false, "{min, max, unit?, mapping?} (base image only)."),
+                          ParamSpec("y", "object", required: false, "{min, max, unit?, mapping?} (base image only)."),
                           ParamSpec("value_unit", "string", required: false,
                                     "The unit of the image's values, for the pointer readout."),
                           ParamSpec("history_rev", "int", required: false,
@@ -271,16 +287,33 @@ extension CommandRegistry {
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("canvas_id")
-            let x = try parseAxis(p.raw["x"], "x")
-            let y = try parseAxis(p.raw["y"], "y")
-            let valueUnit = try p.string("value_unit", or: "")
             let historyRev = try p.optionalInt("history_rev")
+            var slot: CanvasSlot? = nil
+            if let s = try p.optionalString("slot") {
+                guard let parsed = CanvasSlot(rawValue: s) else { throw bad("'slot' is \"original\", \"result\" or \"delta\"") }
+                slot = parsed
+            }
             guard let c = vm.scriptCanvases.canvases[id] else {
                 throw CommandError(code: .not_found, message: "no canvas \(id.uuidString)")
             }
             guard c.state == .open else {
                 throw CommandError(code: .invalid_state, message: "canvas is \(c.state.rawValue)")
             }
+            if let slot {
+                // A slot's picture covers the base image's world: no axes of its own.
+                var picture: ScriptCanvasImage? = nil
+                if p.raw["path"] == .null {
+                    // removes the slot's picture
+                } else {
+                    picture = try ScriptCanvasImage.load(path: try p.string("path"))
+                }
+                try vm.scriptCanvases.setSlotImage(id, slot: slot, image: picture, historyRev: historyRev)
+                return .object(["width": .int(picture?.width ?? 0), "height": .int(picture?.height ?? 0),
+                                "has_values": .bool(picture?.hasValues ?? false)])
+            }
+            let x = try parseAxis(p.raw["x"], "x")
+            let y = try parseAxis(p.raw["y"], "y")
+            let valueUnit = try p.string("value_unit", or: "")
             let image = try ScriptCanvasImage.load(path: try p.string("path"))
             try vm.scriptCanvases.setImage(id, image: image, world: CanvasWorld(x: x, y: y), valueUnit: valueUnit,
                                            historyRev: historyRev)
