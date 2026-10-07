@@ -29,6 +29,12 @@ comes back in (44.1 kHz / 16-bit mono, float, stereo with L != R, stereo with L 
 REFUSALS AND ENDINGS: a group of 601 s, Cancel, a SIGKILLed script, a clip whose file has gone. (c), (d)
 and (e) are skipped when the script's venv is missing (`install.sh`).
 
+Section (h) — REVISION 5: a picture per listening state (`set_image {slot}`: the plot draws the picture of the slot
+being heard, no round trip), and the monitoring level (`input {monitor_db}`, -20..+20 dB, app-owned, kept IN THE
+PROJECT under the canvas's `remember` key: saved, restored on reopening, 0 dB in another project, never in the user's
+UserDefaults). The real script's pictures (Original, Difference) and the overlap's effect on the picture are checked
+in (c).
+
 Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
 an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
 window is the window layer's only side effect, and `--headless` forbids it).
@@ -36,6 +42,7 @@ window is the window layer's only side effect, and `--headless` forbids it).
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
+import json
 import math
 import os
 import shutil
@@ -1120,6 +1127,12 @@ class Script:
                 and s["transport"]["audio_history_rev"] == rev and not s["busy"])
 
     @staticmethod
+    def pictures_synced(s):
+        """Instant mode, and the Difference's picture (sent after the rest has settled) is at the current rev too."""
+        delta = (s["image"] or {}).get("slots", {}).get("delta")
+        return Script.synced(s) and delta is not None and delta["history_rev"] == s["history"]["rev"]
+
+    @staticmethod
     def synced_selection(s):
         """Selection mode with something pending: the selection layer and the audio reflect the history at
         hand, and no trace is left. (The picture is NOT redrawn by a draft: it shows committed steps only.)"""
@@ -1241,6 +1254,30 @@ def section_c(c):
               goertzel_db(dl, RATE, 3000) > goertzel_db(dl, RATE, 300) + 30,
               (goertzel_db(dl, RATE, 3000), goertzel_db(dl, RATE, 300)))
 
+        # ---- revision 5: one picture per listening state ---------------------------------------
+        st = sc.wait_for(Script.pictures_synced)
+        check("c: r5: the Difference's picture arrives (slot delta, at the current history rev)", st is not None)
+        if st is None:
+            return
+        slots = st["image"]["slots"]
+        check("c: r5: Original and Difference have a picture of their own; the Result's is the base image",
+              set(slots) == {"original", "delta"}, sorted(slots))
+        o3k, o300 = image_db(slots["original"]["path"], st["world"], 1.0, 3000), image_db(slots["original"]["path"], st["world"], 1.0, 300)
+        check("c: r5: the Original's picture is the untouched spectrogram (3 kHz and 300 Hz as at the start, +-0.7 dB)",
+              abs(o3k - i3k0) <= 0.7 and abs(o300 - i300) <= 0.7, (o3k, i3k0, o300, i300))
+        d3k, d300k = image_db(slots["delta"]["path"], st["world"], 1.0, 3000), image_db(slots["delta"]["path"], st["world"], 1.0, 300)
+        check("c: r5: the Difference's picture shows what was taken away: 3 kHz nearly as loud as the original "
+              "(-0.6 dB, +-2), 300 Hz at the floor (<= -80 dB)", abs(d3k - (i3k0 - 0.56)) <= 2.0 and d300k <= -80.0, (d3k, i3k0, d300k))
+        check("c: r5: the picture and the audio of the Difference come from the same history rev",
+              slots["delta"]["history_rev"] == st["transport"]["audio_history_rev"], (slots["delta"], st["transport"]))
+        shown = {}
+        for listen in ("original", "delta", "result"):
+            sc.hand(listen=listen)
+            shown[listen] = sc.get()["image"]["shown"]
+        check("c: r5: what is drawn follows what is heard (Original -> slot original, Difference -> slot delta, Result -> base)",
+              shown["original"] == slots["original"]["path"] and shown["delta"] == slots["delta"]["path"]
+              and shown["result"] == st["image"]["path"], (shown, slots, st["image"]["path"]))
+
         e = st["history"]["entries"][st["history"]["cursor"] - 1]
         check("c: rect: ONE step, sealed with every hand value (the gain it was drawn at)",
               e["kind"] == "step" and e["params"]["gain"] == -24 and e["params"]["quantity"] == 25
@@ -1259,6 +1296,11 @@ def section_c(c):
         check("c: undo: 3 kHz is back within +-0.2 dB", abs(d3) <= 0.2, d3)
         check("c: undo: the spectrogram is the original again at (1 s, 3 kHz) (+-0.7 dB), still no layer",
               abs(image_db(st["image"]["path"], st["world"], 1.0, 3000) - i3k0) <= 0.7 and st["layers"] == [])
+        st = sc.wait_for(Script.pictures_synced)
+        check("c: r5: undo: the Difference's picture is silence again (3 kHz at the floor)",
+              st is not None and image_db(st["image"]["slots"]["delta"]["path"], st["world"], 1.0, 3000) <= -80.0)
+        if st is None:
+            return
 
         # ---- brush, calibrated (gain -12, quantity 25: one pass = -3 dB) ---------------------
         sc.hand(values={"gain": -12})
@@ -1305,6 +1347,7 @@ def section_c(c):
 
         # ---- expert change ---------------------------------------------------------------
         img_before, res_before = st["image"]["path"], st["transport"]["slots"]["result"]
+        w4 = st["image"]["width"]
         sc.hand(values={"overlap": 8})
         st = sc.wait_for(lambda s: s["image"]["path"] != img_before and s["transport"]["slots"]["result"] != res_before
                          and not s["busy"])
@@ -1313,6 +1356,8 @@ def section_c(c):
             return
         check("c: overlap 8: the operations are kept", st["history"]["count"] == 1 and st["history"]["cursor"] == 1,
               st["history"]["count"])
+        check("c: overlap 8: the picture has twice the columns (one per NEW hop: %d -> %d)" % (w4, st["image"]["width"]),
+              w4 == 96000 // 512 + 1 and st["image"]["width"] == 96000 // 256 + 1, (w4, st["image"]["width"]))
         res = read_wav_any(st["transport"]["slots"]["result"])[3][0]
         d8 = goertzel_db(res, RATE, 3000, 0.5, 1.5) - goertzel_db(orig, RATE, 3000, 0.5, 1.5)
         check("c: overlap 8: the result still carries the stroke (-6 dB +-0.5)", abs(d8 + 6) <= 0.5, d8)
@@ -1814,13 +1859,152 @@ def section_f(c):
 
 
 # ---------------------------------------------------------------------------------------------
+# (h) revision 5 — a picture per listening state, the monitoring level
+# ---------------------------------------------------------------------------------------------
+
+def section_h(c):
+    ROOT = tmproot("h")
+    WAV = make_wav(os.path.join(ROOT, "tone.wav"), 1.0, 48000, 24)
+    BASE = write_cnv(os.path.join(ROOT, "base.objkcnv"), 4, 2)
+    ORIG = write_cnv(os.path.join(ROOT, "orig.objkcnv"), 8, 4)
+    DELTA = write_cnv(os.path.join(ROOT, "delta.objkcnv"), 2, 2)
+    fresh_saved_project(c, ROOT, "p")
+    cid = open_canvas(c)
+
+    def get():
+        return c.send("script.canvas.get", {"canvas_id": cid})
+
+    def hist():
+        return get()["history"]
+
+    # -- a picture per slot ----------------------------------------------------------------
+    expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "original", "path": ORIG}),
+                 "invalid_state", "h: set_image with a slot before any base image -> invalid_state")
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": BASE, "x": X_AXIS, "y": Y_AXIS, "value_unit": "dB"})
+    g = get()
+    check("h: no slot picture at first: image.slots is empty and the base image is shown",
+          g["image"]["slots"] == {} and g["image"]["shown"] == BASE, g["image"])
+    r = c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "original", "path": ORIG})
+    check("h: set_image {slot} answers the size of that picture (it need not match the base image's)",
+          (r["width"], r["height"]) == (8, 4), r)
+    c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "delta", "path": DELTA, "history_rev": 0})
+    g = get()
+    check("h: get lists both pictures with their size and history_rev",
+          g["image"]["slots"] == {"original": {"path": ORIG, "width": 8, "height": 4, "history_rev": None},
+                                  "delta": {"path": DELTA, "width": 2, "height": 2, "history_rev": 0}}, g["image"]["slots"])
+    check("h: the base image is unchanged by them", g["image"]["path"] == BASE and g["image"]["width"] == 4, g["image"])
+    check("h: before any audio the listened slot is the original: its picture is shown", g["image"]["shown"] == ORIG, g["image"])
+    c.send("script.canvas.set_audio", {"canvas_id": cid, "original": WAV, "result": WAV, "delta": WAV, "listen": "result"})
+    check("h: Result shows the base image", get()["image"]["shown"] == BASE)
+    c.send("script.canvas.input", {"canvas_id": cid, "listen": "delta"})
+    check("h: Difference shows its own picture", get()["image"]["shown"] == DELTA)
+    rev = get()["rev"]
+    c.send("script.canvas.input", {"canvas_id": cid, "listen": "original"})
+    check("h: Original shows its own picture", get()["image"]["shown"] == ORIG)
+    check("h: switching the listened slot does not move rev", get()["rev"] == rev)
+    c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "original", "path": None})
+    check("h: path null removes a slot's picture: the base image is shown again for it",
+          "original" not in get()["image"]["slots"] and get()["image"]["shown"] == BASE, get()["image"])
+    expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "nope", "path": ORIG}),
+                 "bad_params", "h: an unknown slot -> bad_params")
+    expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "original",
+                                                             "path": os.path.join(ROOT, "no.objkcnv")}),
+                 "not_found", "h: a missing slot picture -> not_found")
+    expect_error(lambda: c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "original"}),
+                 "bad_params", "h: a slot picture with no path -> bad_params")
+    # a picture that reflects the history hides the traces, whichever slot it belongs to
+    c.send("script.canvas.input", {"canvas_id": cid, "op": {"kind": "rect", "x0": 1, "x1": 2, "y0": 100, "y1": 1000}})
+    check("h: a gesture leaves its raw trace", len(hist()["unreflected"]) == 1, hist())
+    c.send("script.canvas.set_image", {"canvas_id": cid, "slot": "delta", "path": DELTA, "history_rev": hist()["rev"]})
+    check("h: a slot picture stamped with the history rev hides the trace (it counts like a layer)",
+          hist()["unreflected"] == [], hist())
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": BASE, "x": X_AXIS, "y": Y_AXIS})
+    check("h: the same world keeps the slot pictures", "delta" in get()["image"]["slots"])
+    c.send("script.canvas.set_image", {"canvas_id": cid, "path": BASE, "x": {"min": 0, "max": 20, "unit": "s"}, "y": Y_AXIS})
+    check("h: a new world drops them (they cover the old one)", get()["image"]["slots"] == {}, get()["image"])
+
+    # -- the monitoring level ---------------------------------------------------------------
+    check("h: the monitoring level starts at 0 dB", get()["transport"]["monitor_db"] == 0, get()["transport"])
+    rev = get()["rev"]
+    r = c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": 6})
+    g = get()
+    check("h: input monitor_db sets it, and moves no rev", g["transport"]["monitor_db"] == 6 and g["rev"] == rev
+          and r["rev"] == rev, (g["transport"], g["rev"], rev))
+    for given, want in ((35, 20), (-99, -20), (3.14159, 3.1), (-0.04, 0), (20, 20), (-20, -20)):
+        c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": given})
+        got = get()["transport"]["monitor_db"]
+        check("h: monitor_db %s -> %s (clamped to -20..+20, rounded to 0.1 dB)" % (given, want), got == want, got)
+    expect_error(lambda: c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": "loud"}),
+                 "bad_params", "h: a non-number monitor_db -> bad_params")
+    check("h: a refused level changes nothing", get()["transport"]["monitor_db"] == -20)
+    c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": 5})
+    check("h: a canvas that does not remember keeps nothing in the project",
+          "canvasSettings" not in c.send("project.get_state"), c.send("project.get_state").get("canvasSettings"))
+    check("h: the monitoring level never moves the history or the audio files",
+          hist()["rev"] == 1 and get()["transport"]["slots"]["original"] == WAV, hist())
+
+    # -- ... and PER PROJECT -----------------------------------------------------------------
+    key = "spectral-editor.r5.%s" % os.path.basename(ROOT.rstrip("/"))
+    other = key + ".other"
+
+    def open_remembering(k):
+        return c.send("script.canvas.open", {"title": "R", "tools": TOOLS, "controls": CANVAS_CONTROLS,
+                                            "remember": k})["canvas_id"]
+
+    dirty0 = c.send("app.info").get("dirty")
+    cid = open_remembering(key)
+    check("h: a remembering canvas in a project that knows nothing opens at 0 dB", get()["transport"]["monitor_db"] == 0)
+    c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": 7.5})
+    check("h: its level lands in the project document, under its remember key",
+          c.send("project.get_state").get("canvasSettings") == {key: {"monitorDB": 7.5}},
+          c.send("project.get_state").get("canvasSettings"))
+    check("h: changing it does not mark the project modified (a listening preference, like the viewport)",
+          c.send("app.info").get("dirty") == dirty0)
+    cid = open_remembering(key)
+    check("h: reopening the editor in the same project finds the level (7.5 dB)", get()["transport"]["monitor_db"] == 7.5)
+    cid = open_remembering(other)
+    check("h: another key has a level of its own (0 dB)", get()["transport"]["monitor_db"] == 0)
+    c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": -3})
+    check("h: ... kept beside the first", c.send("project.get_state").get("canvasSettings")
+          == {key: {"monitorDB": 7.5}, other: {"monitorDB": -3}}, c.send("project.get_state").get("canvasSettings"))
+    c.send("script.canvas.input", {"canvas_id": cid, "monitor_db": 0})
+    check("h: back to 0 dB writes nothing for that key",
+          c.send("project.get_state").get("canvasSettings") == {key: {"monitorDB": 7.5}})
+    c.send("project.save")
+    with open(os.path.join(ROOT, "p.objekat"), encoding="utf-8") as f:
+        on_disk = json.load(f)
+    check("h: the saved file carries canvasSettings", on_disk.get("canvasSettings") == {key: {"monitorDB": 7.5}},
+          on_disk.get("canvasSettings"))
+    check("h: ... without bumping the format (the key is optional: an older reader ignores it)",
+          on_disk.get("version") == 19, on_disk.get("version"))
+    c.send("project.new")
+    cid = open_remembering(key)
+    check("h: a NEW project starts the editor at 0 dB", get()["transport"]["monitor_db"] == 0)
+    check("h: ... and carries no canvasSettings", "canvasSettings" not in c.send("project.get_state"))
+    c.send("project.open", {"path": os.path.join(ROOT, "p.objekat")})
+    cid = open_remembering(key)
+    check("h: reopening the saved project restores 7.5 dB", get()["transport"]["monitor_db"] == 7.5, get()["transport"])
+    # a hand-edited file: a level out of range is clamped, a non-number is ignored
+    doc = json.load(open(os.path.join(ROOT, "p.objekat"), encoding="utf-8"))
+    doc["canvasSettings"] = {key: {"monitorDB": 99}, other: {"monitorDB": "x"}}
+    bad_path = os.path.join(ROOT, "edited.objekat")
+    json.dump(doc, open(bad_path, "w", encoding="utf-8"))
+    c.send("project.open", {"path": bad_path})
+    cid = open_remembering(key)
+    check("h: a hand-edited level of 99 dB opens clamped to +20", get()["transport"]["monitor_db"] == 20)
+    cid = open_remembering(other)
+    check("h: a level of the wrong type is ignored (0 dB), the project still opens", get()["transport"]["monitor_db"] == 0)
+    c.send("project.new")
+
+
+# ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdefg")
+        only = os.environ.get("SECTIONS", "abcdefgh")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g)):
+                         ("f", section_f), ("g", section_g), ("h", section_h)):
             if name in only:
                 fn(c)
 finally:
