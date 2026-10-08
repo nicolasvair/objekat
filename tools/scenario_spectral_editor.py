@@ -40,6 +40,10 @@ the undo that REVEALS an applied step's selection (pending again, settings resto
 Section (j) — REVISION 6, END TO END: working on the Difference (G' = 1 - (1 - G) g; Result + Difference = Original,
 pending selection included) and the spectrogram's display range (recoloured in place, remembered, Reset).
 
+Section (k) — THE BIG WINDOWS: FFT 16384 and 32768 end to end (the picture's width follows the hop, a -24 dB rectangle
+is -24 dB, the choice is remembered, Reset gives back 2048) and an object shorter than the window (coarse picture,
+no refusal, the rectangle still works).
+
 Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
 an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
 window is the window layer's only side effect, and `--headless` forbids it).
@@ -2391,13 +2395,143 @@ def section_j(c):
 
 
 # ---------------------------------------------------------------------------------------------
+# k. The two largest FFT sizes (16384, 32768), end to end
+# ---------------------------------------------------------------------------------------------
+
+def section_k(c):
+    """THE BIG WINDOWS, END TO END (the real script): 16384 and 32768 chosen in the Expert section — the picture's
+    width follows the hop (one column per hop), a rectangle at -24 dB is -24 dB on the result, the choice is remembered
+    by the next session, and an object SHORTER than the window (0.4 s against a 0.68 s window) opens, draws a coarse
+    picture (never fewer than one column) and takes its rectangle all the same: no refusal, no clamp."""
+    if not venv_ok():
+        print("skip  k: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
+        return
+    ROOT = tmproot("k")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    TONES = {300.0: 0.2, 3000.0: 0.2}
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tone.wav"), T, RATE, TONES, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tone"})["id"]
+
+    def hop(n, k=4):
+        return int(math.floor(n / float(k) + 0.5))
+
+    def audio(st, slot):
+        return read_wav_any(st["transport"]["slots"][slot])[3][0]
+
+    def lvl(x, ref, hz, a=0.5, b=1.5):
+        return goertzel_db(x, RATE, hz, a, b) - goertzel_db(ref, RATE, hz, a, b)
+
+    key = "spectral-editor.scenario.k"
+    sc = Script(c, oid, CACHE, key=key)
+    try:
+        if sc.find_canvas() is None:
+            check("k: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("k: the canvas is ready, at the default 2048 / 4", st is not None and st["values"]["fft_size"] == "2048", st and st["values"])
+        if st is None:
+            return
+        orig = audio(st, "original")
+        for n in (16384, 32768):
+            want_w = int(T * RATE) // hop(n) + 1
+            sc.hand(values={"fft_size": str(n), "overlap": 4})
+            st = sc.wait_for(lambda s: s["values"]["fft_size"] == str(n) and s["image"]["width"] == want_w
+                             and Script.pictures_synced(s), 90)
+            check("k: FFT %d: the picture is redrawn, %d columns (one per hop of %d) by 1024 rows" % (n, want_w, hop(n)),
+                  st is not None, st and (st["values"]["fft_size"], st["image"]["width"], st["image"]["height"]))
+            if st is None:
+                return
+            check("k: FFT %d: no step yet, the result is the original (null, within 0.01 dB at 3 kHz and 300 Hz)" % n,
+                  abs(lvl(audio(st, "result"), orig, 3000)) < 0.01 and abs(lvl(audio(st, "result"), orig, 300)) < 0.01)
+            sc.hand(values={"gain": -24})
+            sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+            st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 1 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: FFT %d: the rectangle settles" % n, False)
+                return
+            res = audio(st, "result")
+            check("k: FFT %d: a rectangle at -24 dB: 3 kHz at -24 (+-0.5), 300 Hz untouched (+-0.2)" % n,
+                  abs(lvl(res, orig, 3000) + 24) <= 0.5 and abs(lvl(res, orig, 300)) <= 0.2, (lvl(res, orig, 3000), lvl(res, orig, 300)))
+            sc.hand(undo=True)
+            st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 1 and s["history"]["cursor"] == 0 and Script.pictures_synced(s), 90)
+            check("k: FFT %d: undo gives the original back" % n, st is not None)
+            if st is None:
+                return
+        sc.hand(press="cancel")
+        sc.finish(60)
+    finally:
+        sc.abort()
+
+    # ---- the next session remembers 32768 (the last choice), and opens on it -----------------------------------
+    sc2 = Script(c, oid, CACHE, key=key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        check("k: remember: the next session opens", st2 is not None)
+        if st2 is not None:
+            want_w = int(T * RATE) // hop(32768) + 1
+            check("k: remember: FFT 32768 comes back, and the FIRST picture is already drawn with it (%d columns)" % want_w,
+                  st2["values"]["fft_size"] == "32768" and st2["image"]["width"] == want_w, (st2["values"]["fft_size"], st2["image"]["width"]))
+            sc2.hand(press="reset")
+            check("k: remember: Reset gives back 2048 (the default is unchanged)", sc2.get()["values"]["fft_size"] == "2048")
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+
+    # ---- an object SHORTER than the window: not refused, not clamped ---------------------------------------------
+    TS = 0.4
+    fresh_saved_project(c, ROOT, "k2")
+    short = make_tones_wav(os.path.join(ROOT, "short.wav"), TS, RATE, TONES, 24)
+    sid = c.send("object.add", {"path": short, "lane": 0, "start": 0.0, "name": "short"})["id"]
+    sc3 = Script(c, sid, os.path.join(ROOT, "cache-short"), key=key + ".short")
+    try:
+        sc3.find_canvas()
+        st = sc3.ready()
+        check("k: short object: opens at 2048", st is not None)
+        if st is None:
+            return
+        orig = audio(st, "original")
+        for n in (16384, 32768):
+            want_w = max(1, int(TS * RATE) // hop(n) + 1)
+            sc3.hand(values={"fft_size": str(n), "overlap": 4, "gain": -24})
+            st = sc3.wait_for(lambda s: s["values"]["fft_size"] == str(n) and s["image"]["width"] == want_w
+                              and Script.pictures_synced(s), 90)
+            check("k: short object (%.1f s) at FFT %d (a %.2f s window): a coarse picture of %d column(s), no refusal"
+                  % (TS, n, n / float(RATE), want_w), st is not None, st and (st["values"]["fft_size"], st["image"]["width"]))
+            if st is None:
+                return
+            sc3.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": TS, "y0": 2000, "y1": 4500})
+            st = sc3.wait_for(lambda s: len(s["history"]["entries"]) == 1 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: short object at FFT %d: the rectangle settles" % n, False)
+                return
+            res = audio(st, "result")
+            check("k: short object at FFT %d: the rectangle still gives -24 dB at 3 kHz (+-1), 300 Hz untouched (+-0.3)" % n,
+                  abs(lvl(res, orig, 3000, 0.1, 0.3) + 24) <= 1.0 and abs(lvl(res, orig, 300, 0.1, 0.3)) <= 0.3,
+                  (lvl(res, orig, 3000, 0.1, 0.3), lvl(res, orig, 300, 0.1, 0.3)))
+            sc3.hand(undo=True)
+            st = sc3.wait_for(lambda s: s["history"]["cursor"] == 0 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: short object at FFT %d: undo settles" % n, False)
+                return
+        sc3.hand(press="cancel")
+        sc3.finish(60)
+    finally:
+        sc3.abort()
+
+
+# ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdefghij")
+        only = os.environ.get("SECTIONS", "abcdefghijk")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j)):
+                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j),
+                         ("k", section_k)):
             if name in only:
                 fn(c)
 finally:
