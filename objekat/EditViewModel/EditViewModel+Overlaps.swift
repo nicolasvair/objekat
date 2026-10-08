@@ -189,6 +189,7 @@ extension EditViewModel {
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
                         markers: ex.markers.shiftedInTime(by: -(ne - es)),
+                        araSource: .some(copiedARASource(of: ex)),
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))
@@ -291,6 +292,7 @@ extension EditViewModel {
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
                         markers: ex.markers.shiftedInTime(by: -(ne - es)),
+                        araSource: .some(copiedARASource(of: ex)),
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))

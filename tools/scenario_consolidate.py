@@ -430,12 +430,12 @@ try:
               pa_row and pa_row["file"] == os.path.join(CONS, dr[ids["a"]]["wave"]), pa_row)
 
         # ── B5 ───────────────────────────────────────────────────────────────────────────────
-        section("B5 — saving: format 19, historic keys, relative paths")
+        section("B5 — saving: format 20, historic keys, relative paths")
         cmd("project.save")
         doc = read_json(ids["manifest"])
         st = cmd("project.get_state")
-        check("B5: version 19 on disk and in get_state",
-              doc.get("version") == 19 and st.get("version") == 19, (doc.get("version"), st.get("version")))
+        check("B5: version 20 on disk and in get_state",
+              doc.get("version") == 20 and st.get("version") == 20, (doc.get("version"), st.get("version")))
         check("B5: key objectDefinitions kept", "objectDefinitions" in doc
               and "consolidateDefinitions" not in doc, list(doc))
         dB = [d for d in doc["objectDefinitions"] if d["id"] == ids["b"]][0]

@@ -2090,7 +2090,7 @@ def section_h(c):
     check("h: the saved file carries canvasSettings", on_disk.get("canvasSettings") == {key: {"monitorDB": 7.5}},
           on_disk.get("canvasSettings"))
     check("h: ... without bumping the format (the key is optional: an older reader ignores it)",
-          on_disk.get("version") == 19, on_disk.get("version"))
+          on_disk.get("version") == 20, on_disk.get("version"))
     c.send("project.new")
     cid = open_remembering(key)
     check("h: a NEW project starts the editor at 0 dB", get()["transport"]["monitor_db"] == 0)

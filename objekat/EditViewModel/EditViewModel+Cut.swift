@@ -281,6 +281,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: child)),
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev))
             rightIDMap[child.id] = rc.id
@@ -305,6 +306,7 @@ extension EditViewModel {
                 instruments: copiedInstruments(of: child),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: child)),
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
             rightIDMap[child.id] = rc.id
@@ -332,6 +334,7 @@ extension EditViewModel {
                     plugins: copiedPlugins(of: child),
                     automation: autoR,
                     markers: markR,
+                    araSource: .some(copiedARASource(of: child)),
                     kind: .group(children: looped.children, isExpanded: isExpanded))
                 rg.loopRangeStart = looped.loopStart
                 rg.loopRangeEnd   = looped.loopEnd
@@ -363,6 +366,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: child),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: child)),
                 kind: .group(children: innerRight, isExpanded: isExpanded))
             rightIDMap[child.id] = rg.id
             return (lg, rg)
@@ -500,6 +504,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: original),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: original)),
                 kind: .clip(
                     filePath: filePath,
                     // sourceOffset in source seconds: the edge advances by splitRel on the timeline →
@@ -513,6 +518,10 @@ extension EditViewModel {
             )
             items.append(rightObject)
             engine.updateFade(in: 0, fadeOut: rightFadeOut, forID: newID.uuidString)
+            // The right half is a FRESH engine clip (`splitSoundObject` makes it with `insertWaveClip`,
+            // not through `engineAddClip`): its Melodyne source is set up from the archive its
+            // `derivedCopy` carries, the left half keeping the live instance.
+            if rightObject.araSource != nil { syncARASource(rightObject) }
             syncSends(rightObject)   // the right half feeds the same auxes as the left
 
             if !rightObject.plugins.isEmpty { syncPlugins(rightObject) }
@@ -571,6 +580,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: captured),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: captured)),
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev)
             )
@@ -592,6 +602,7 @@ extension EditViewModel {
             // The fades of both fragments (splitSoundObject does not set them).
             engine.updateFade(in: leftChild.fadeIn, fadeOut: 0, forID: leftChild.id.uuidString)
             engine.updateFade(in: 0, fadeOut: rightChild.fadeOut, forID: rightChild.id.uuidString)
+            if rightChild.araSource != nil { syncARASource(rightChild) }   // as in case 1
 
             if !rightChild.plugins.isEmpty { syncPlugins(rightChild) }
             // As in case 1, and for the same reason: last, with the carriers in place.
@@ -636,6 +647,7 @@ extension EditViewModel {
                 plugins: rightPlugins,
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: original)),
                 kind: .aux
             )
 
@@ -709,6 +721,7 @@ extension EditViewModel {
                 plugins: rightPlugins, instruments: rightInstruments,
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: original)),
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
 
@@ -817,6 +830,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoL,
                 markers: markL,
+                araSource: .some(copiedARASource(of: capturedOriginal)),
                 kind: .group(children: leftChildren, isExpanded: isExpanded)
             )
             var right = original.derivedCopy(
@@ -827,6 +841,7 @@ extension EditViewModel {
                 plugins: copiedPlugins(of: capturedOriginal),
                 automation: autoR,
                 markers: markR,
+                araSource: .some(copiedARASource(of: capturedOriginal)),
                 kind: .group(children: rightChildren, isExpanded: isExpanded)
             )
             // IN/OUT bounds rebased on the new start: the loop resumes in phase

@@ -140,7 +140,7 @@ struct TimelineHoverProbe {
 // MARK: - Snapshot for undo/redo
 
 struct EditSnapshot {
-    let items: [SoundObject]
+    var items: [SoundObject]
     // INC 2: a bus's FX chain lives on Stem.plugins → included in the undo. Optional = the
     // snapshots from before this field (none in practice, in-memory) restore the current stems.
     var stems: [Stem]? = nil

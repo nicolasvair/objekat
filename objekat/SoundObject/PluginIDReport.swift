@@ -65,7 +65,7 @@ enum PluginIDReport {
         out.append("6. Reopen the project in OBJEKAT: it must open with no warning about duplicated plugins.")
         out.append("")
         out.append("The paths above are JSON paths from the root of the file (items[i].kind.children[j] descends into")
-        out.append("a group; .plugins / .instruments are chains; .rack.voices[v] and .fxBlock.plugins hold nested")
+        out.append("a group; .plugins / .instruments are chains; .araSource.plugin is an ARA source; .rack.voices[v] and .fxBlock.plugins hold nested")
         out.append("plugins).")
         return out.joined(separator: "\n") + "\n"
     }

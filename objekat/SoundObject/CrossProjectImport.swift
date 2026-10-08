@@ -262,6 +262,11 @@ enum CrossProjectImport {
             let (newPlugins, pluginIDMap) = clonePlugins(o.plugins)
             no.plugins = newPlugins
 
+            // An ARA source (Melodyne): a brand-new plugin id (never shared, never linked), the archive
+            // as the clipboard froze it at copy time. Nothing is read from the target's engine — the
+            // archive is the whole content of the source (docs/ara_melodyne_plan.md, step 8).
+            no.araSource = o.araSource?.copiedForNewObject()
+
             // The instrument slot (index 0 of a MIDI clip) is never linked and never a rack —
             // a fresh id, cold, is enough (mirrors `copiedInstruments`'s shape with no engine read).
             no.instruments = o.instruments.map { inst in

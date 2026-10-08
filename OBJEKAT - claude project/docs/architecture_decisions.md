@@ -629,6 +629,51 @@ silent under speed compensation (Q7), sends across boundaries (phase 2) and bake
 
 ---
 
+## An ARA source: Melodyne on an audio object (October 2026)
+
+*Branch `feature/ara-melodyne`, engine patch `0038`. The plan, with its questions and rulings, is
+`ara_melodyne_plan.md`; this is the decision and its reasons.*
+
+**The problem.** Letting the user retouch the notes of a monophonic audio object with Melodyne, inside
+OBJEKAT, with the result heard in the timeline, in the bakes and in the exports.
+
+**Decision: the ARA plugin is the clip's SOURCE, not an insert.** ARA is a protocol in which the plugin
+reads the audio itself (a document, a source, a playback region) and renders it. Tracktion already models
+that as an audio clip in `ara` time-stretch mode whose proxy reader owns the plugin instance. So:
+- the model carries `SoundObject.araSource` (a plugin and its archive), separate from `plugins` (the FX
+  chain): the chain keeps working AFTER the source, unchanged;
+- ONE instance per object (Q3). An instance per sequence would have been cheaper but cannot be edited
+  independently; the measured cost (about 20 MB and 70 ms per object) settles it for v1;
+- the retouches live in an ARCHIVE captured from the live plugin on demand (save, copy, undo push,
+  render) and written into the session (format 20). Undo never rewinds a live retouch (Q1): the archive is
+  only used to re-create an instance (`ARAUndoPolicy.adoptingLive`);
+- only the VST3 is an ARA source (Q2); no AU-to-VST3 twin;
+- a copy gets a FRESH plugin id and is never linked (the plugin link would try to share parameters of an
+  instance that has no parameters to share);
+- loops are refused on such an object and on a group that loops one (Q5), because the ARA node would have
+  to follow a container's local process state (the engine patch's option D, left for later); a
+  consolidated object cannot carry one, because its instances share a wave that one instance's retouches
+  could not leave alone.
+
+**Renders go through the same source.** A bake, a targeted render or an export works on a CLONE of the
+edit; the archive is stamped on the clone's clip (the ARADOCUMENT child of the copy is removed) and the
+clone's `setupARA` restores from it, so the render hears the retouches without ever touching the live
+instance.
+
+**Offering the plugins.** The app's plugin scan reads Info.plist only and never loads a VST3 binary, so it
+cannot know `hasARAExtension`. The picker therefore lists the VST3 that a file-only PRE-FILTER marks
+(moduleinfo.json category "ARA Main Factory Class", else the string in the executable), and confirms at
+placement by resolving the plugin in-process. A false positive (RX, Ozone, Trash, WaveShell) is refused
+with a reason. Left to the user: fall back to an ordinary FX insert instead of refusing, or probe in a
+child process at scan time (heavier, protects against a plugin that kills the process).
+
+**What this costs, and what was not done.** Archives weigh about 650 KB per minute of melody; a project
+with 40 sources is ~18 MB of JSON. No note overlay on the timeline, no source dragging, no waveform of the
+Melodyne render (the displayed wave is the original). Reopening an inactive tab re-instantiates its
+plugins from the archives.
+
+---
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

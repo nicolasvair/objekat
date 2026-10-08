@@ -132,6 +132,17 @@ struct SynopticActions {
     /// The bins this host does not hold yet, and joining one.
     var joinableFXLinks: (() -> [(id: UUID, name: String)])? = nil
     var onJoinFXLink: ((UUID) -> Void)? = nil
+
+    /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
+    var onOpenARAEditor: (() -> Void)? = nil
+    var onRemoveARA: (() -> Void)? = nil
+}
+
+/// The ARA source an audio object plays THROUGH, as the 'audio file' zone shows it.
+struct SynopticARA: Equatable {
+    var name: String
+    /// The plugin is still analysing the audio (a spinner stands in for the open button).
+    var analysing: Bool
 }
 
 /// The data of the 'audio file' zone (an audio clip), carried over into the signal view.
@@ -145,6 +156,9 @@ struct SynopticAudioFile: Equatable {
     /// LR / L / R / C selector, holding the current choice. nil for a mono file (or one that cannot
     /// be read): no selector, and the zone keeps its original height.
     var channelMode: ChannelMode? = nil
+    /// Non-nil ⇒ the object carries an ARA source: the zone shows one more row, and the time
+    /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
+    var ara: SynopticARA? = nil
 }
 
 /// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
@@ -341,7 +355,7 @@ struct SynopticView: View {
     var body: some View {
         let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
                                        midi: isMIDI, audioFile: audioFile != nil,
-                                       audioStereo: audioFile?.channelMode != nil, mix: mix != nil,
+                                       audioStereo: audioFile?.channelMode != nil, audioAra: audioFile?.ara != nil, mix: mix != nil,
                                        mixWide: mix?.attrLinks != nil,
                                        stems: stems != nil || groupRouting != nil,
                                        sendRows: sends.count, receivedRows: receivedSends.count,
@@ -1845,7 +1859,7 @@ struct AudioFileZoneView: View {
                     Button { actions.onToggleLoop?() } label: {
                         Text(L("synoptic.loop.label"))
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(file.isLooping ? Color.white : Color.secondary.opacity(file.isReversed ? 0.4 : 1))
+                            .foregroundStyle(file.isLooping ? Color.white : Color.secondary.opacity((file.isReversed || file.ara != nil) ? 0.4 : 1))
                             .padding(.horizontal, 6).frame(height: 16)
                             .background(RoundedRectangle(cornerRadius: 4)
                                 .fill(file.isLooping ? Color.accentColor : Color.secondary.opacity(0.18)))
@@ -1853,10 +1867,11 @@ struct AudioFileZoneView: View {
                                 .strokeBorder(Color.secondary.opacity(0.35)))
                     }
                     .buttonStyle(.plain)
-                    .disabled(file.isReversed)
+                    .disabled(file.isReversed || file.ara != nil)
                     // Looping is not handled in reverse yet: the source anchor is recomputed from the
                     // length, which becomes unbounded precisely when looping (@see [[loop-item-plan]]).
-                    .help(file.isReversed ? L("synoptic.loop.unavailableReversed")
+                    .help(file.ara != nil ? L("synoptic.ara.timeLocked")
+                          : file.isReversed ? L("synoptic.loop.unavailableReversed")
                           : file.isLooping ? L("synoptic.loop.on")
                           : L("synoptic.loop.off"))
                     Button { actions.onToggleReverse?() } label: {
@@ -1870,7 +1885,43 @@ struct AudioFileZoneView: View {
                                 .strokeBorder(Color.secondary.opacity(0.35)))
                     }
                     .buttonStyle(.plain)
-                    .help(file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
+                    .disabled(file.ara != nil && !file.isReversed)
+                    .opacity(file.ara != nil && !file.isReversed ? 0.4 : 1)
+                    .help(file.ara != nil && !file.isReversed ? L("synoptic.ara.timeLocked")
+                          : file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
+                }
+
+                // The ARA source (Melodyne), when there is one: its name opens the editor, the cross takes it off.
+                if let ara = file.ara {
+                    HStack(spacing: 4) {
+                        Text(L("synoptic.ara.source"))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize()
+                        Button { actions.onOpenARAEditor?() } label: {
+                            Text(ara.name)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(Color.white)
+                                .lineLimit(1)
+                                .padding(.horizontal, 6).frame(height: 16)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(ara.analysing)
+                        if ara.analysing {
+                            ProgressView().controlSize(.mini)
+                                .help(L("synoptic.ara.analysing"))
+                        }
+                        Spacer(minLength: 0)
+                        Button { actions.onRemoveARA?() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 16, height: 16)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("synoptic.ara.remove"))
+                    }
                 }
 
                 // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
@@ -1975,6 +2026,9 @@ struct AudioFileZoneView: View {
                         .fixedSize()
                         .layoutPriority(1)
                 }
+                // An ARA source needs speed 1: the speed / semitone / bpm boxes only show it then.
+                .allowsHitTesting(file.ara == nil)
+                .opacity(file.ara == nil ? 1 : 0.45)
             }
             .padding(.horizontal, 10).padding(.top, 8)
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
@@ -2489,6 +2543,8 @@ struct SynopticBoundView: View {
     @State private var loadErrors: [UUID: String] = [:]
     // VU meter levels per plugin (0..1), polled read-only.
     @State private var levels: [UUID: Double] = [:]
+    // The ARA source of this object is still analysing (polled with the instance states).
+    @State private var araAnalysing = false
     // An aux: the senders listed at the head (the sends it receives). A STICKY list — a row taken
     // down to -∞ stays shown until the selection changes, otherwise it would vanish mid-drag
     // (activeSenders filters silent sends out) and SwiftUI would re-associate the gesture with a neighbour.
@@ -2513,7 +2569,8 @@ struct SynopticBoundView: View {
         // groups / auxes keep the Source pill).
         let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
-                                                       channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil) }
+                                                       channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
+                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing) }) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
@@ -2786,7 +2843,9 @@ struct SynopticBoundView: View {
                 }
             },
             joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
-            onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) }
+            onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
+            onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
+            onRemoveARA: { viewModel.removeARASource(objectID: objectID) }
         ))
         .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
         .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
@@ -2829,7 +2888,8 @@ struct SynopticBoundView: View {
                 searchText: $pickerSearch,
                 dismiss: { activeSheet = nil },
                 onSelect: { available in onSelect(available); activeSheet = nil },
-                filter: filter
+                filter: filter,
+                showsARASource: !instrumentsOnly
             )
         }
         .frame(width: 280, height: 420)
@@ -2961,6 +3021,8 @@ struct SynopticBoundView: View {
 
     /// Polls the loading state of the external instances (built-ins ignored).
     private func refreshStates() {
+        let analysing = viewModel.araIsAnalysing(objectID)
+        if analysing != araAnalysing { araAnalysing = analysing }
         guard viewModel.chainPlugins(objectID) != nil else { return }   // an object OR a stem bus
         var st: [UUID: Int] = [:]
         var errs: [UUID: String] = [:]

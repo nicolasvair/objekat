@@ -320,6 +320,46 @@
 // availablePlugins : liste des plugins connus (scan préalable ou cache)
 // Chaque dict : @{@"name":…, @"manufacturer":…, @"identifier":…, @"format":…}
 - (NSArray<NSDictionary*>*)availablePlugins;
+// ARA (docs/ara_melodyne_plan.md, étape 1) : chaque entrée de availablePlugins porte `isARA` (VST3 seulement :
+// moduleinfo.json, ou chaîne « ARA Main Factory » de l'exécutable — aucun binaire chargé). Un AU n'est
+// JAMAIS une source ARA (Q2). Pour POSER une source ARA, la description doit être résolue : le module VST3
+// est chargé pour lire le vrai hasARAExtension. Renvoie {identifier, format:"VST3", name, manufacturer},
+// ou nil (pas un VST3 ARA).
+- (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary* _Nonnull)pluginInfo;
+// MARK: ARA — source Melodyne (étape 3 ; docs/ara_melodyne_plan.md §2)
+//
+// Pose une source ARA sur un objet AUDIO. nil = succès ; sinon la RAISON (machine, anglais) :
+// no_edit, not_an_audio_clip, already_ara, source_file_missing, speed_not_one, reversed, looping,
+// not_ara_plugin, ara_setup_failed. Échec ⇒ le clip reste en lecture fichier : l'objet sonne SEC,
+// il ne devient jamais muet. `archive` : nil ou {data (base64), sourceID, modID, docArchiveID}.
+- (NSString* _Nullable)setARASource:(NSDictionary* _Nonnull)pluginInfo
+                            archive:(NSDictionary* _Nullable)archive
+                        forObjectID:(NSString* _Nonnull)uuid NS_SWIFT_NAME(setARASource(_:archive:forObjectID:));
+- (void)removeARASourceForObjectID:(NSString* _Nonnull)uuid;
+// {data, sourceID, modID, docArchiveID, bytes, ms} ; nil si pas de source ARA active. Efface « périmée ».
+- (NSDictionary* _Nullable)captureARAArchiveForObjectID:(NSString* _Nonnull)uuid;
+// Une retouche (ou la fin d'une analyse) est arrivée depuis la dernière capture.
+- (BOOL)isARAArchiveStaleForObjectID:(NSString* _Nonnull)uuid;
+#if DEBUG
+- (void)debugMarkARAStale:(NSArray<NSString*>* _Nonnull)objectIDs;
+#endif
+// {valid, analysing, regions, mode ("ara"|"disabled"|"none"), plugin}
+- (NSDictionary<NSString*, id>* _Nonnull)araStatusForObjectID:(NSString* _Nonnull)uuid;
+// Les notes que Melodyne a analysées : [{pitch, start, duration, velocity}] (secondes du contenu).
+- (NSArray<NSDictionary*>* _Nonnull)araAnalysedNotesForObjectID:(NSString* _Nonnull)uuid;
+// L'éditeur natif de la source ; `sourceKey` = clé de fenêtre (pas un plugin de pluginMap).
+- (void)openARAEditorForObjectID:(NSString* _Nonnull)uuid sourceKey:(NSString* _Nonnull)key colorHex:(NSInteger)colorHex;
+- (void)closeARAEditorForObjectID:(NSString* _Nonnull)uuid;
+// La vue des éditeurs ouverts suit ces objets (le dernier de la liste l'emporte).
+- (void)notifyARASelection:(NSArray<NSString*>* _Nonnull)objectIDs;
+// Une retouche ou une fin d'analyse est arrivée sur l'objet (thread principal).
+@property (nonatomic, copy, nullable) void (^onARAContentChanged)(NSString * _Nonnull objectID);
+// Requête de transport d'un plugin ARA (kind : 0 start, 1 stop, 2 setPosition(a=s), 3 setCycleRange(a=début,
+// b=durée), 4 enableCycle(a=0/1)). Posé ⇒ l'hôte traite la requête ; non posé ⇒ comportement natif.
+@property (nonatomic, copy, nullable) void (^onARATransportRequest)(NSInteger kind, double a, double b);
+// DEBUG (debug.ara_probe) : {has_ara, resolved_identifier, resolved_format, resolved_name,
+// factory_archive_id, factory_plugin_name, api_generation_lowest/highest, supports_timestretch}.
+- (NSDictionary<NSString*, id>* _Nonnull)debugARAProbe:(NSDictionary* _Nonnull)pluginInfo;
 
 // hasCachedPlugins : YES si un cache UserDefaults existe (evite un scan au démarrage)
 - (BOOL)hasCachedPlugins;

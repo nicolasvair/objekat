@@ -207,6 +207,7 @@
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules",
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules/juce_audio_processors/format_types/VST3_SDK",
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules/juce_audio_processors_headless/format_types/VST3_SDK",
+					"$(SRCROOT)/ARA_SDK",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
@@ -272,6 +273,7 @@
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules",
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules/juce_audio_processors/format_types/VST3_SDK",
 					"$(SRCROOT)/tracktion_engine/modules/juce/modules/juce_audio_processors_headless/format_types/VST3_SDK",
+					"$(SRCROOT)/ARA_SDK",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
@@ -311,6 +313,8 @@
 					"JUCE_STANDALONE_APPLICATION=1",
 					"JUCE_PLUGINHOST_AU=1",
 					"JUCE_PLUGINHOST_VST3=1",
+					"JUCE_PLUGINHOST_ARA=1",
+					"TRACKTION_ENABLE_ARA=1",
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
@@ -402,6 +406,8 @@
 					"JUCE_STANDALONE_APPLICATION=1",
 					"JUCE_PLUGINHOST_AU=1",
 					"JUCE_PLUGINHOST_VST3=1",
+					"JUCE_PLUGINHOST_ARA=1",
+					"TRACKTION_ENABLE_ARA=1",
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;

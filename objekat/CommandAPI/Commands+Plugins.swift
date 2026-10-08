@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import CryptoKit
 
 // MARK: - Plugins
 
@@ -38,7 +39,9 @@ extension CommandRegistry {
                              // name).
                              "identifier": .string(plugin.identifier),
                              "format": .string(plugin.formatName),
-                             "is_instrument": .bool(plugin.isInstrument)])
+                             "is_instrument": .bool(plugin.isInstrument),
+                             // Can act as an ARA source (Melodyne VST3 only): known without loading any module.
+                             "ara": .bool(plugin.isARA)])
                 }),
                 "count": .int(plugins.count),
                 "scanning": .bool(vm.isScanning),
@@ -55,10 +58,16 @@ extension CommandRegistry {
             }
             let gains = vm.chainGains(host)
             let status = vm.bridgeStatusNow()
+            // An audio object's ARA source (Melodyne) comes FIRST, `slot: "ara_source"`: it is what the
+            // clip plays through, ahead of its chain.
+            var entries = plugins.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) }
+            if let source = vm.find(id: host)?.araSource {
+                entries.insert(CommandAdapters.araSourcePayload(source, objectID: host, in: vm), at: 0)
+            }
             var payload: [String: JSONValue] = [
                 "host": .string(host.uuidString),
                 "is_stem": .bool(vm.isStemHost(host)),
-                "plugins": .array(plugins.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) }),
+                "plugins": .array(entries),
                 "chain_in_db": .number(Double(gains.inDb)),
                 "chain_out_db": .number(Double(gains.outDb)),
             ]
@@ -153,6 +162,25 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
             let available = try CommandAdapters.resolvePlugin(p, in: vm)
+            // An ARA plugin (Melodyne VST3) is not a chain insert: on an audio object it becomes the
+            // clip's SOURCE (`slot: "ara_source"`), and a host that cannot take one refuses.
+            if available.isARA {
+                guard vm.find(id: host) != nil else {
+                    throw CommandError(code: .invalid_state,
+                                       message: "'\(available.name)' is an ARA plugin: it can only be the source of an audio object",
+                                       details: .object(["reason": .string(ARARefusal.notAClip.rawValue)]))
+                }
+                if let refusal = vm.setARASource(objectID: host, available: available) {
+                    throw CommandError(code: .invalid_state, message: refusal.reason,
+                                       details: .object(["reason": .string(refusal.rawValue)]))
+                }
+                guard let source = vm.find(id: host)?.araSource else {
+                    throw CommandError(code: .engine_error, message: "the ARA source vanished after being set")
+                }
+                return .object(["host": .string(host.uuidString),
+                                "slot": .string("ara_source"),
+                                "plugin": CommandAdapters.araSourcePayload(source, objectID: host, in: vm)])
+            }
             vm.addPlugin(objectID: host, available: available)
             let after = vm.chainPlugins(host) ?? []
             // `addPlugin` removes the entry if the engine cannot instantiate it: not checking
@@ -173,6 +201,12 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let host = try p.uuid("host")
             let pluginID = try p.uuid("plugin")
+            // The ARA source has its own removal (the model slot and the engine's source, one undo point).
+            if vm.find(id: host)?.araSource?.plugin.id == pluginID {
+                vm.removeARASource(objectID: host)
+                return .object(["host": .string(host.uuidString), "slot": .string("ara_source"),
+                                "remaining": .int((vm.chainPlugins(host) ?? []).count)])
+            }
             try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
             vm.removePlugin(objectID: host, pluginID: pluginID)
             return .object(["host": .string(host.uuidString),
@@ -779,6 +813,32 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "no live instance for plugin \(pluginID.uuidString)")
             }
             return .object(["plugin": .string(pluginID.uuidString)])
+        }
+
+        register("debug.ara_probe",
+                 summary: """
+                 DEBUG. ARA probe: does this plugin act as an ARA source. Only a VST3 can (Tracktion's \
+                 ARA host only loads VST3; an AudioUnit never is). The module is loaded to read the real \
+                 `hasARAExtension`. Answers `has_ara`, \
+                 `resolved_identifier` / `resolved_format` / `resolved_name` and, from the module's ARA \
+                 factory, `factory_archive_id`, `factory_plugin_name`, `api_generation_lowest` / \
+                 `_highest`, `supports_timestretch`. The factory is kept for the session (never \
+                 released: ARA must not be initialised twice). Opens no window.
+                 """,
+                 params: [ParamSpec("identifier", "string", "Exact identifier (see plugin.list_available)."),
+                          ParamSpec("format", "string", "'VST3' (an 'AudioUnit' always answers has_ara false)."),
+                          ParamSpec("name", "string", required: false,
+                                    "Plugin name (defaults to the catalogue's).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let identifier = try p.string("identifier")
+            let format = try p.string("format")
+            let name = try p.optionalString("name")
+                ?? vm.availablePlugins.first(where: { $0.identifier == identifier && $0.formatName == format })?.name
+                ?? ""
+            let info: [String: Any] = ["identifier": identifier, "format": format, "name": name]
+            return JSONValue.fromFoundation(engine.debugARAProbe(info))
         }
 
         register("debug.plugin_buses",

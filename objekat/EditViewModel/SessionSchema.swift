@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 19
+    static let formatVersion = 20
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -47,6 +47,16 @@ enum SessionSchema {
         "  WRITTEN ONLY WHEN IT IS NOT the default: no key = both channels as they are (\"lr\"),",
         "  which is every session written before format 18 and every mono or multichannel clip.",
         "  A consolidated instance never carries one: the choice was baked into its wave.",
+        "",
+        "araSource — on a clip only (never a consolidated instance): the object is played THROUGH an",
+        "  ARA plugin (Melodyne VST3) instead of straight off its file. { plugin, archive? }.",
+        "  `plugin` is a plugin entry (id, name, identifier = the .vst3 bundle path, format VST3) whose",
+        "  `stateXML` stays empty: the state is `archive`, the plugin's notes and their corrections for",
+        "  THIS object only — { data (base64, opaque, proprietary), sourceID, modificationID,",
+        "  documentArchiveID, bytes }. It is NOT audio: the audio stays the clip's file. `archive` absent =",
+        "  never captured (a fresh analysis at the next load). Treat `data` as opaque and copy it as",
+        "  is; any copy of the object needs a NEW `plugin.id`. While it is there the clip's speed must be 1,",
+        "  and it is neither reversed nor looped. A format earlier than 20 opens without a source.",
         "",
         "TIME — startTime, duration, fadeIn, fadeOut are in SECONDS. MIDI notes, on the other",
         "  hand, are in MUSICAL TIME (startBeat, lengthBeats): converted at the current tempo.",

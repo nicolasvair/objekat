@@ -510,6 +510,8 @@ enum SynopticLayout {
     /// One more row (a 16 pt pill plus the zone's 7 pt spacing) when the file is stereo: the
     /// LR / L / R / C selector.
     static let audioZoneStereoExtraH: CGFloat = 23
+    /// And one more again for the ARA source row (name · spinner · remove), the same 16 pt pill.
+    static let audioZoneAraExtraH: CGFloat = 23
     static let clipZoneW: CGFloat = 224          // the 'clip' zone (pan / volume / mute on one line)
     static let clipZoneWWide: CGFloat = 328      // the same plus the attribute link icons (a linked consolidated object)
     static let clipZoneH: CGFloat = 36
@@ -536,7 +538,7 @@ enum SynopticLayout {
     ///   - receivedRows: the sends an aux receives, listed in its chain head.
     ///   - infiniteOption: the head carries the 'infinite' checkbox (a top-level aux / group).
     static func diagram(for root: SynopticNode, chainInDb: Float = 0, chainOutDb: Float = 0,
-                        midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false,
+                        midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, audioAra: Bool = false,
                         mix: Bool = false,
                         mixWide: Bool = false, stems: Bool = false,
                         sendRows: Int = 0, receivedRows: Int = 0,
@@ -547,7 +549,7 @@ enum SynopticLayout {
         let busHead = !midi && !audioFile && (infiniteOption || receivedRows > 0)
         let busHeadH = pillH + (receivedRows > 0 ? CGFloat(receivedRows) * sendRowH + zonePadV : 0)
         let leadW = midi ? midiZoneW : (audioFile ? audioZoneW : (busHead ? sendsZoneW : sourceW))
-        let leadH = midi ? midiZoneH : (audioFile ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) : (busHead ? busHeadH : pillH))
+        let leadH = midi ? midiZoneH : (audioFile ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) + (audioAra ? audioZoneAraExtraH : 0) : (busHead ? busHeadH : pillH))
         let clipW = mixWide ? clipZoneWWide : clipZoneW
 
         // Everything is centred on a single vertical column.

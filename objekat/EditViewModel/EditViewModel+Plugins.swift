@@ -48,6 +48,7 @@ extension EditViewModel {
     private static func collectPluginRefs(in object: SoundObject, into out: inout [ObjectPlugin]) {
         collectPluginRefs(object.plugins, into: &out)
         collectPluginRefs(object.instruments, into: &out)
+        if let ara = object.araSource { out.append(ara.plugin) }   // Melodyne missing ⇒ the object plays dry
         if case .group(let children, _) = object.kind {
             for c in children { collectPluginRefs(in: c, into: &out) }
         }
@@ -125,9 +126,10 @@ extension EditViewModel {
               let identifier = d["identifier"] as? String, let format = d["format"] as? String
         else { return nil }
         let isInstrument = (d["isInstrument"] as? NSNumber)?.boolValue ?? false
+        let isARA = (d["isARA"] as? NSNumber)?.boolValue ?? false
         return AvailablePlugin(name: name, manufacturer: manufacturer,
                                identifier: identifier, formatName: format,
-                               isInstrument: isInstrument)
+                               isInstrument: isInstrument, isARA: isARA)
     }
 
     func rescanPlugins() {
@@ -1037,6 +1039,9 @@ extension EditViewModel {
     enum DeferredChainCompile {
         case plugins(SoundObject)
         case instrument(SoundObject)
+        /// An ARA source (Melodyne): its own case so the progress bar can weigh it (a first instance
+        /// costs ~1.4 s) and so it is set AFTER the object's chain is queued behind it (@see engineAddClip).
+        case ara(SoundObject)
     }
 
     /// Replaces every direct `syncPlugins`/`syncInstruments` call made while an object is (re)added
@@ -1059,6 +1064,8 @@ extension EditViewModel {
             syncPlugins(object, rewireLinks: rewireLinks)
         case .instrument(let object):
             syncInstruments(object, rewireLinks: rewireLinks)
+        case .ara(let object):
+            syncARASource(object)
         }
     }
 

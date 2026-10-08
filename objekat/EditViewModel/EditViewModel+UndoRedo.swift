@@ -31,6 +31,9 @@ extension EditViewModel {
         // automatic FX link waiting to adopt its original) must survive the next step's own push.
         if undoTransactionDepth == 0 { clearPendingFXSources() }
         undoPushCount &+= 1
+        // The model's Melodyne archives catch up with the engine's BEFORE the point is taken and
+        // before the gesture reads any object from the model (@see EditViewModel+ARA).
+        refreshARAModelArchives()
         undoStack.append(currentSnapshot())
         redoStack = []
         // The cap waits for the end of a `singleUndoStep`: trimming the bottom of the stack while
@@ -130,6 +133,11 @@ extension EditViewModel {
         let t0 = CFAbsoluteTimeGetCurrent()
         clearPendingFXSources()   // the snapshot brings back plain plugins under the same ids: never re-adopt them
         let live = live ?? currentSnapshot()
+        // Q1 (ARA): an undo never touches a live Melodyne retouch. The snapshot's objects wear the LIVE
+        // archive of every source that still lives, so they compare equal to themselves (left in place)
+        // or are recreated from the live archive (@see EditViewModel.adoptingLiveARA).
+        var snapshot = snapshot
+        snapshot.items = Self.adoptingLiveARA(snapshot.items, live: live.items)
 
         // Tempo / time signature first: the engine must have the right tempo BEFORE the clips
         // (MIDI ones in particular, whose notes are in beats) are recreated. A restoration ⇒
