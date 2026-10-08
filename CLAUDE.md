@@ -2308,8 +2308,14 @@ What has landed since mid-August, in order:
   (1.8 MB for 3 min, capture 208 ms); 40 sources load in 2.7 s, ~20 MB RSS each; `pushUndo` with 40 STALE
   archives 1.5 s (one stale: 40 ms).
   **Traps.** (1) Without a retouch Melodyne returns the audio: RMS or pitch cannot prove the path. The proof is
-  its SIGNATURE — a fade-out of the last ~2.4 ms at the file's native rate (44100 Hz), absent from a dry render
-  and at 48 kHz. (2) The ARA description must be set BEFORE the time-stretch mode. (3) `Clip::getTrack()` is null
+  its SIGNATURE — a fade-out of the last ~2.4 ms of the source, which exists ONLY when Melodyne renders at a rate
+  DIFFERENT from its file's (it resamples; at the file's own rate it is the identity, measured 44.1x44.1 and 48x48:
+  no fade; 44.1x48, 48x44.1, 96x44.1/48: fade), and which a dry render never has. **A bake renders at the DEVICE's
+  rate** (`OBJRenderFileSpec.sampleRate` 0), which is the machine's state, not the project's: a headless
+  `--no-audio` instance opens the output device anyway when there is one (48 kHz here since 8 October ~20h) and
+  runs at 44.1 kHz when there is none. A proof of "the bake went through Melodyne" must therefore use a source file
+  whose rate differs from `app.info.sample_rate` (`scenario_ara.py` section J does; it failed 3/3 for a whole
+  evening with a 48 kHz file on a 48 kHz device — the bake was then a perfect copy of the dry file, and CORRECT). (2) The ARA description must be set BEFORE the time-stretch mode. (3) `Clip::getTrack()` is null
   inside a container: use the owning track. (4) The render filter must keep the ARA plugin. (5) A cut MUST call
   `syncARASource` for the right half (a split clip had no source). (6) SourceKit "Cannot find type" in these
   files is noise; only `xcodebuild` counts.

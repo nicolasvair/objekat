@@ -31,6 +31,7 @@ socket and exits 3 (SKIP) if no Melodyne VST3 is installed.
 Exit: 0 everything passes, 1 a failure, 2 bad usage, 3 SKIP.
 """
 
+import glob
 import json
 import subprocess, math, os, shutil, subprocess, sys, tempfile, time, wave
 
@@ -170,12 +171,12 @@ def correlation(a, b):
     return float(np.dot(a, b)) / d if d > 0 else 0.0
 
 
-def make_sine(path, seconds=10.0, hz=220.0, dbfs=-12.0, stereo_left_only=False):
-    t = np.arange(int(seconds * SR)) / SR
+def make_sine(path, seconds=10.0, hz=220.0, dbfs=-12.0, stereo_left_only=False, rate=SR):
+    t = np.arange(int(seconds * rate)) / rate
     s = 10 ** (dbfs / 20.0) * np.sin(2 * math.pi * hz * t)
     if stereo_left_only:
         s = np.stack([s, np.zeros_like(s)], axis=1)
-    write_wav(path, s)
+    write_wav(path, s, rate)
 
 
 def make_melody(path, seconds):
@@ -196,6 +197,15 @@ def make_melody(path, seconds):
         out[i:i + m] = env * sum(np.sin(h * ph) / h for h in (1, 2, 3)) * 0.2
     out += 0.02 * rng.standard_normal(n) * 0.2
     write_wav(path, np.clip(out, -0.95, 0.95))
+
+
+def wave_rate(path):
+    """Sample rate of any audio file `afinfo` reads (the bakes are 32-bit float, which `wave` refuses)."""
+    out = subprocess.run(["afinfo", path], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        if "Data format" in line and " Hz" in line:
+            return int(line.split(" Hz")[0].split()[-1])
+    return None
 
 
 def pid_for_socket(sock_path):
@@ -678,10 +688,20 @@ try:
         if want("J"):
             section("J  consolidation / export / isolated render go THROUGH Melodyne")
             # Without a retouch Melodyne gives the audio back, so RMS and pitch cannot tell "through the
-            # plugin" from "dry". Its SIGNATURE can: rendered at the file's own rate (44100 Hz), Melodyne
-            # fades the last ~2.4 ms of an audio source out (a dry render does not), at 48000 Hz it does not.
-            # Every render below is compared at 44100 Hz with the live ARA render and with the dry one.
-            R = 44100
+            # plugin" from "dry". Its SIGNATURE can: when it renders at a rate DIFFERENT from its source
+            # file's (it resamples), it fades the last ~2.4 ms of an audio source out; at the file's own
+            # rate it is the identity and leaves no trace (measured, file x render: 44.1x48 and 48x44.1 and
+            # 96x44.1/48 fade, 44.1x44.1 and 48x48 do not). A dry render never fades.
+            # The bake renders at the DEVICE's rate (OBJRenderFileSpec.sampleRate 0 = the card's), so the
+            # source file must NOT be at that rate or the bake is a perfect copy of the dry file and no
+            # proof is left. The device's rate is the machine's state (a headless instance with no device
+            # runs at 44.1 kHz, one that opened the saved interface at 48 kHz, @see app.info): the file is
+            # made to differ from it, and EVERY render below is made at the device's rate.
+            R = int(send("app.info")["sample_rate"])
+            F = 44100 if R != 44100 else 48000
+            J_SRC = os.path.join(WORK, "sine220_%d.wav" % F)
+            make_sine(J_SRC, rate=F)
+            info("device rate %d Hz ; source file at %d Hz (they must differ for the signature to exist)" % (R, F))
 
             def mono(x):
                 return x.mean(axis=1) if x.ndim == 2 else x
@@ -690,12 +710,12 @@ try:
                 return float(np.abs(mono(x)[-3:]).max())
 
             fresh("j_consol")
-            a = add_clip(SINE220, lane=0)
-            dry = mono(render_iso(a, "j_dry44", rate=R))
+            a = add_clip(J_SRC, lane=0)
+            dry = mono(render_iso(a, "j_dry", rate=R))
             add_ara(a)
             wait_ara(a)
-            live = mono(render_iso(a, "j_live44", rate=R))
-            info("dry44 tail %.4f ; live44 tail %.4f (the Melodyne signature: the live one is faded out)"
+            live = mono(render_iso(a, "j_live", rate=R))
+            info("dry tail %.4f ; live tail %.4f (the Melodyne signature: the live one is faded out)"
                  % (tail_level(dry), tail_level(live)))
             check("signature: the live ARA render is faded out at its end, the dry one is not",
                   tail_level(live) < 0.2 * tail_level(dry), (tail_level(live), tail_level(dry)))
@@ -722,7 +742,12 @@ try:
                 check("consolidate.make produced a consolidated instance", len(inst) >= 1, objs())
                 if inst:
                     cid = inst[0]["id"]
-                    x = mono(render_iso(cid, "j_cons44", rate=R))
+                    # the premise, read off the baked wave itself: written at the card's rate, faded
+                    waves = sorted(glob.glob(os.path.join(WORK, "samples", "consolidate", "*.wav")),
+                                   key=os.path.getmtime)
+                    bake_rate = wave_rate(waves[-1]) if waves else None
+                    check("the bake is written at the device's rate (%s Hz)" % R, bake_rate == R, bake_rate)
+                    x = mono(render_iso(cid, "j_cons", rate=R))
                     info("bake vs live: %.2e ; bake vs dry: %.2e (rms %.2f dB, pitch %.2f Hz)"
                          % (same(x, live), same(x, dry), rms_db(x, 0.0, 4.0, rate=R), pitch_hz(x, rate=R, t0=0.5)))
                     check("the bake went THROUGH the plugin (== live within -70 dBFS: the signature is there)", same(x, live) <= 3e-4, same(x, live))
