@@ -38,6 +38,22 @@ struct PluginPickerPopover: View {
     /// An optional extra filter (instruments only, say, for the instrument area of a MIDI clip).
     /// nil = no restriction.
     var filter: ((AvailablePlugin) -> Bool)? = nil
+    /// The "ARA source" section (Melodyne-like VST3 an audio object plays THROUGH). False for the
+    /// instrument picker of a MIDI clip.
+    var showsARASource: Bool = true
+
+    /// The VST3 the pre-filter marks as ARA candidates and the session has not disproved.
+    private var araCandidates: [AvailablePlugin] {
+        guard showsARASource, viewModel.araPickerApplies(to: objectID) else { return [] }
+        let base = viewModel.availablePlugins.filter {
+            $0.isARA && $0.formatName == "VST3" && !viewModel.araDisprovedIdentifiers.contains($0.identifier)
+        }
+        guard !searchText.isEmpty else { return base }
+        return base.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.manufacturer.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
     private var filtered: [AvailablePlugin] {
         var base = viewModel.availablePlugins
@@ -88,6 +104,11 @@ struct PluginPickerPopover: View {
                             sectionHeader(L("plugins.section.external"))
                             ForEach(externals) { plugin in pluginRow(plugin) }
                         }
+                        let araList = araCandidates
+                        if !araList.isEmpty {
+                            sectionHeader(L("plugins.section.ara"))
+                            ForEach(araList) { plugin in araRow(plugin) }
+                        }
                     }
                 }
                 .frame(maxHeight: 280)
@@ -135,6 +156,38 @@ struct PluginPickerPopover: View {
             .padding(.horizontal, 10)
             .padding(.top, 6)
             .padding(.bottom, 2)
+    }
+
+    /// A candidate ARA source. Greyed, with the reason as its tooltip, when this object cannot take one.
+    @ViewBuilder
+    private func araRow(_ plugin: AvailablePlugin) -> some View {
+        let refusal = viewModel.araPickerRefusal(for: objectID)
+        Button {
+            dismiss()
+            viewModel.addARASourceFromPicker(objectID: objectID, available: plugin)
+        } label: {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(plugin.name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(refusal == nil ? .primary : .tertiary)
+                    Text(plugin.manufacturer)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Text(verbatim: "ARA")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(refusal == nil ? Color.accentColor : Color.secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(refusal != nil)
+        .help(refusal?.localizedInfo ?? L("plugins.ara.help"))
+        Divider()
     }
 
     @ViewBuilder

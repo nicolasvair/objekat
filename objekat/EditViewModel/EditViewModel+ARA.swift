@@ -127,6 +127,40 @@ extension EditViewModel {
         }
     }
 
+    // MARK: - The interface's door: the "+" of the audio object
+
+    /// Whether Melodyne-like sources are offered for `objectID` in the picker, and why not: nil = the
+    /// object may take one. `nil` host (a stem) or a non-audio object: the section is not shown at all.
+    func araPickerRefusal(for objectID: UUID) -> ARARefusal? { araEligibilityRefusal(for: objectID) }
+
+    /// True when the picker should show the ARA section for this host (an audio clip, whatever its state).
+    func araPickerApplies(to objectID: UUID) -> Bool { find(id: objectID)?.isClip ?? false }
+
+    /// The picker entry "ARA source": the ONE function that confirms a candidate. The candidate was
+    /// marked from files alone (moduleinfo.json, or the factory's name in the binary); the real
+    /// `hasARAExtension` is only known once the module is loaded, which `setARASource` does through
+    /// `resolveARAPluginInfo` — in this process, exactly as an FX would be loaded by the "+". A false
+    /// positive comes back as `.pluginNotARA` and is remembered. Presents the refusal itself.
+    func addARASourceFromPicker(objectID: UUID, available: AvailablePlugin) {
+        if let refusal = setARASource(objectID: objectID, available: available) {
+            if refusal == .pluginNotARA { araDisprovedIdentifiers.insert(available.identifier) }
+            presentARARefusal(refusal, pluginName: available.name)
+            return
+        }
+        // Opened on the spot, as a plugin added by the "+" is (headless: nothing to open).
+        if hasInterface { openARAEditor(objectID: objectID) }
+    }
+
+    func presentARARefusal(_ refusal: ARARefusal, pluginName: String) {
+        notify(L("ara.refusal.title", pluginName), refusal.localizedInfo)
+    }
+
+    /// Melodyne is still analysing the object's audio (the card shows a spinner).
+    func araIsAnalysing(_ id: UUID) -> Bool {
+        guard araSynced.contains(id), araSyncFailures[id] == nil, let engine else { return false }
+        return (engine.araStatus(forObjectID: id.uuidString)["analysing"] as? NSNumber)?.boolValue ?? false
+    }
+
     /// The engine forgot this object (removed, or its source taken off): so does the view-model.
     func araForget(_ id: UUID) {
         araArchiveCache[id] = nil
@@ -296,5 +330,25 @@ extension EditViewModel {
     func araRefusalForLoop(id: UUID, enabled: Bool) -> ARARefusal? {
         guard enabled, let obj = find(id: id) else { return nil }
         return ARAEligibility.refusalOfLoop(on: obj)
+    }
+}
+
+
+extension ARARefusal {
+    /// The interface's sentence (the API keeps the English `reason`). One literal key per case, on
+    /// purpose: `xcstrings.py orphans` reads the code for key-shaped strings.
+    var localizedInfo: String {
+        switch self {
+        case .notAClip:             return L("ara.refusal.notAClip")
+        case .consolidatedInstance: return L("ara.refusal.consolidatedInstance")
+        case .alreadySource:        return L("ara.refusal.alreadySource")
+        case .speedNotOne:          return L("ara.refusal.speedNotOne")
+        case .reversed:             return L("ara.refusal.reversed")
+        case .looped:               return L("ara.refusal.looped")
+        case .ancestorLooped:       return L("ara.refusal.ancestorLooped")
+        case .fileMissing:          return L("ara.refusal.fileMissing")
+        case .pluginNotARA:         return L("ara.refusal.pluginNotARA")
+        case .setupFailed:          return L("ara.refusal.setupFailed")
+        }
     }
 }

@@ -1497,6 +1497,10 @@ final class EditViewModel {
     /// Why an object's source is NOT playing (plugin missing, engine refusal): the object sounds dry,
     /// its model and archive stay intact. Machine reason of `OBJEngineCore.setARASource`.
     var araSyncFailures: [UUID: String] = [:]
+    /// VST3 identifiers the "+" offered as ARA candidates and that, once loaded, turned out NOT to
+    /// declare ARA (a false positive of the pre-filter: RX, Ozone...). Session memory: the picker
+    /// stops offering them as a source. @see `confirmedARASource`.
+    var araDisprovedIdentifiers: Set<String> = []
     @ObservationIgnored var araRefreshWork: DispatchWorkItem? = nil
     /// Timings of the last captures, for `debug.ara_report` and the cost measurements (section O).
     @ObservationIgnored var araCaptureStats: (count: Int, totalMs: Double, lastMs: Double, bytes: Int) = (0, 0, 0, 0)

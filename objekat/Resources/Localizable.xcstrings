@@ -1,6 +1,259 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "ara.refusal.alreadySource": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This object already has an ARA source."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este objeto ya tiene una fuente ARA."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cet objet a déjà une source ARA."
+          }
+        }
+      }
+    },
+    "ara.refusal.ancestorLooped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An ARA source cannot be used inside a looping group (loops are not supported yet)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una fuente ARA no se puede usar dentro de un grupo en bucle (los bucles aún no son compatibles)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une source ARA ne peut pas servir dans un groupe bouclé (les boucles ne sont pas gérées pour l'instant)."
+          }
+        }
+      }
+    },
+    "ara.refusal.consolidatedInstance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A consolidated object cannot carry an ARA source."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un objeto consolidado no puede llevar una fuente ARA."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un objet consolidé ne peut pas porter de source ARA."
+          }
+        }
+      }
+    },
+    "ara.refusal.fileMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The audio file of this object is missing."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se encuentra el archivo de audio de este objeto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier audio de cet objet est introuvable."
+          }
+        }
+      }
+    },
+    "ara.refusal.looped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An ARA source cannot be used on a looping object (loops are not supported yet)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una fuente ARA no se puede usar en un objeto en bucle (los bucles aún no son compatibles)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une source ARA ne peut pas servir sur un objet bouclé (les boucles ne sont pas gérées pour l'instant)."
+          }
+        }
+      }
+    },
+    "ara.refusal.notAClip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only an audio clip can be played through an ARA plugin."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo un clip de audio puede pasar por un plugin ARA."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seul un clip audio peut passer par un plugin ARA."
+          }
+        }
+      }
+    },
+    "ara.refusal.pluginNotARA": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plugin is not an ARA plugin (only VST3 ARA plugins are supported)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este plugin no es un plugin ARA (solo se admiten VST3 ARA)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce plugin n'est pas un plugin ARA (seuls les VST3 ARA sont gérés)."
+          }
+        }
+      }
+    },
+    "ara.refusal.reversed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An ARA source cannot be used on a reversed object."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una fuente ARA no se puede usar en un objeto invertido."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une source ARA ne peut pas servir sur un objet inversé."
+          }
+        }
+      }
+    },
+    "ara.refusal.setupFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ARA plugin could not be set up on this object (see the log)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo configurar el plugin ARA en este objeto (consulta el registro)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le plugin ARA n'a pas pu être mis en place sur cet objet (voir le journal)."
+          }
+        }
+      }
+    },
+    "ara.refusal.speedNotOne": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An ARA source needs a speed of 1: reset the speed first."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una fuente ARA exige una velocidad de 1: restablece primero la velocidad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une source ARA exige une vitesse de 1 : remets d'abord la vitesse à 1."
+          }
+        }
+      }
+    },
+    "ara.refusal.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ cannot be used as an ARA source"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede usar %@ como fuente ARA"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d'utiliser %@ comme source ARA"
+          }
+        }
+      }
+    },
     "audio.device.none": {
       "extractionState": "manual",
       "localizations": {
@@ -8994,6 +9247,29 @@
         }
       }
     },
+    "plugins.ara.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plays the object through this ARA plugin: its edits stay editable."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reproduce el objeto a través de este plugin ARA: sus ediciones siguen siendo editables."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Joue l'objet à travers ce plugin ARA : ses retouches restent éditables."
+          }
+        }
+      }
+    },
     "plugins.category.distortion": {
       "extractionState": "manual",
       "localizations": {
@@ -9381,6 +9657,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Scan…"
+          }
+        }
+      }
+    },
+    "plugins.section.ara": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ARA source (Melodyne)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fuente ARA (Melodyne)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source ARA (Melodyne)"
           }
         }
       }
@@ -12279,6 +12578,98 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ajouter un plugin en série"
+          }
+        }
+      }
+    },
+    "synoptic.ara.analysing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Analysing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Analizando"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Analyse en cours"
+          }
+        }
+      }
+    },
+    "synoptic.ara.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove the ARA source (its edits are lost)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar la fuente ARA (se pierden las ediciones)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer la source ARA (les retouches sont perdues)"
+          }
+        }
+      }
+    },
+    "synoptic.ara.source": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ARA source"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fuente ARA"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source ARA"
+          }
+        }
+      }
+    },
+    "synoptic.ara.timeLocked": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time settings (speed, direction, loop) are locked while the ARA source is present."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los ajustes de tiempo (velocidad, sentido, bucle) están bloqueados mientras exista la fuente ARA."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les réglages de temps (vitesse, sens, boucle) sont verrouillés tant que la source ARA est là."
           }
         }
       }
