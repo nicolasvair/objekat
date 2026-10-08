@@ -386,6 +386,30 @@ Checked as still biting: `develop` still had the linear `std::find`.
   debug check in `createNodeForClips` complains if a clip carrying a tap ever overrides it).
   Written on a machine with no compiler for the engine: see `docs/plan_sidechain.md` for what the
   Mac still has to build and measure.
+- `0038` — **an ARA source (Melodyne) plays through its clip's chain, inside a group, inside the
+  bridge.** Tracktion played an ARA clip OUTSIDE the clip pipeline: `createClipsNode` built a bare
+  `ARANode` per track (no clip plugins, no fade, no `CombiningNode`, hence no rank, lane latency or
+  head/tail), and a clip inside a `ContainerClip` crashed because `Clip::getTrack()` is null there.
+  **A.** `createNodeForAudioClip`: the `ARANode` is the clip's SOURCE and follows the same tail as a
+  file (clip plugins, then `FadeInOut`); `ARANode::getNodeProperties` gives it a stable `nodeID`
+  derived from the clip (mixed with an "ara" constant so it never collides with another node holding
+  the same `EditItemID`). **B.** `createNodeForClip` passes `includeARA = true`, so the ARA clip goes
+  through `createNodeForClips` like any other (track OR container `CombiningNode`, ranks, lane
+  latency, `allowedClips`); `createClipsNode` no longer calls `createARAClipsNode` (it would play
+  the clip twice; the function stays, `[[maybe_unused]]`). **C.** `getOwningTrackForARA`: the region
+  sequence of a container's child is that of the track carrying the outermost container (same rule
+  as the app's `objOwningTrack`); with no owning track no region is created and `setupARA` fails
+  cleanly; a changed owning track rebuilds the regions (`PlaybackRegionAndSource::owningTrackMatches`);
+  the ID migration uses it as well; and `notifyARAContentChanged` goes through `visitAllTrackItems`,
+  which descends into containers (the old loop over the tracks' direct clips would have missed a
+  child's edit). **E.** `ARAHostTransportHook::handler`: the host can intercept the transport requests
+  of the plugin (start / stop / position / cycle range / cycle on-off) instead of letting it drive
+  `TransportControl` directly; with no handler the behaviour is unchanged.
+  Not in this patch: **D** (the ARA node following a looping container's local `ProcessState`, so a
+  looping group holding Melodyne stays refused in v1) and the app side (`OBJEngineCore` bridge).
+  Six files; most of the 350 lines of `tracktion_EditNodeBuilder.cpp` in the diff are the
+  re-indentation of the file branch of `createNodeForAudioClip` (`git diff -w` shows ~20). Written
+  with `docs/ara_melodyne_plan.md` §3 step 2; the runtime proof comes with the app bridge (step 3).
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

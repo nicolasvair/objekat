@@ -1,0 +1,771 @@
+From efff893e68402ced1f375301644c757aa6855953 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 01:51:18 +0200
+Subject: [PATCH] =?UTF-8?q?feat(ara):=20l'objet=20Melodyne=20joue=20sa=20c?=
+ =?UTF-8?q?ha=C3=AEne,=20dans=20un=20groupe,=20dans=20le=20pont?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Le nœud ARA était joué hors de la piste, nu : ni plugins du clip, ni fondu,
+ni CombiningNode (donc ni rangs, ni latence de lane, ni head/tail), et un clip
+ARA dans un ContainerClip plantait (Clip::getTrack() nul).
+
+A. createNodeForAudioClip : l'ARANode est la SOURCE et suit la même queue
+   qu'un fichier (plugins du clip, puis FadeInOut). ARANode::getNodeProperties
+   donne un nodeID stable dérivé du clip.
+B. createNodeForClip passe includeARA = true : le clip ARA entre dans
+   createNodeForClips comme les autres ; createClipsNode n'appelle plus
+   createARAClipsNode (le clip serait joué deux fois).
+C. getOwningTrackForARA : la piste propriétaire d'un clip enfant de container
+   est celle qui porte le container le plus extérieur. Sans piste, aucune région
+   n'est créée (setupARA échoue proprement). Une piste propriétaire qui change
+   reconstruit les régions ; la migration d'identifiants l'utilise aussi, et
+   notifyARAContentChanged descend dans les containers (visitAllTrackItems).
+E. ARAHostTransportHook : l'hôte peut intercepter les requêtes de transport du
+   plugin (start/stop/position/boucle) au lieu de laisser le plugin piloter
+   TransportControl.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../playback/graph/tracktion_ARANode.cpp      |   5 +
+ .../graph/tracktion_EditNodeBuilder.cpp       | 357 +++++++++---------
+ .../plugins/ARA/tracktion_ARAFileReader.cpp   |   8 +-
+ .../plugins/ARA/tracktion_ARAFileReader.h     |  13 +
+ .../ARA/tracktion_ARAWrapperFunctions.h       |  55 ++-
+ .../ARA/tracktion_ARAWrapperInterfaces.h      |  71 +++-
+ 6 files changed, 316 insertions(+), 193 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ARANode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ARANode.cpp
+index d67257bfca7..34312442764 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ARANode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ARANode.cpp
+@@ -131,6 +131,11 @@ tracktion::graph::NodeProperties ARANode::getNodeProperties()
+     props.hasAudio = true;
+     props.numberOfChannels = fileInfo.numChannels;
+ 
++    // Patch local Objekat — 0038 : un identifiant stable, dérivé du clip, pour que le graphe reconnaisse
++    // ce nœud d'une reconstruction à l'autre (comme un WaveNodeRealTime). Constante « ara » mélangée,
++    // pour ne jamais entrer en collision avec un autre nœud portant le même EditItemID.
++    props.nodeID = std::max<size_t> (1, (size_t) (clip.itemID.getRawID() ^ 0x41524100ull));
++
+     if (auto plugin = araProxy->getPlugin())
+         if (auto p = plugin->getAudioPluginInstance())
+             props.numberOfChannels = juce::jmax (props.numberOfChannels, p->getTotalNumInputChannels(), p->getTotalNumOutputChannels());
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index b0ebc69e123..f28c486db43 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -486,188 +486,215 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioClip (AudioClipBase& c
+     if (playFile.isNull())
+         return {};
+ 
++    std::unique_ptr<Node> node;
++
+     // Check if ARA should be used
+     if (clip.isUsingARA())
+     {
+-        if (includeARA)
+-        {
+-            if (! clip.setupARA (true))
+-                return {};
+-
+-            jassert (clip.getARAProxy() != nullptr);
+-            return makeNode<ARANode> (clip, playHeadState.playHead, params.forRendering);
+-        }
+-
+-        return {}; // the ARA node creation will be handled by the track to allow live-play...
+-    }
+-
+-    clip.tearDownARA();
+-
+-    // Otherwise use audio file
+-    auto original = clip.getAudioFile();
++        if (! includeARA)
++            return {};
+ 
+-    // Trigger proxy render if it needs it
+-    clip.beginRenderingNewProxyIfNeeded();
++        if (! clip.setupARA (true))
++            return {};
+ 
+-    std::unique_ptr<Node> node;
++        jassert (clip.getARAProxy() != nullptr);
+ 
+-    if (clip.canUseProxy())
++        // Patch local Objekat — 0038 : l'ARANode est la SOURCE du clip. Il suit la même queue qu'un
++        // fichier (plugins du clip, puis fondu), au lieu de sortir nu comme dans l'arbre d'origine.
++        node = makeNode<ARANode> (clip, playHeadState.playHead, params.forRendering);
++    }
++    else
+     {
+-        assert (role != ClipRole::launcher);
+-        assert (! clipTimeRangeToUse.isBeats());
+-        TimeDuration nodeOffset;
+-        double speed = 1.0;
+-        TimeRange loopRange;
++        clip.tearDownARA();
+ 
+-        if (! clip.usesTimeStretchedProxy())
+-        {
+-            nodeOffset = clip.getPosition().getOffset();
+-            loopRange = clip.getLoopRange();
+-            speed = clip.getSpeedRatio();
+-        }
++        // Otherwise use audio file
++        auto original = clip.getAudioFile();
+ 
+-        const auto channelConfig = clip.getOutputChannelConfiguration();
++        // Trigger proxy render if it needs it
++        clip.beginRenderingNewProxyIfNeeded();
+ 
+-        if ((clip.getFadeInBehaviour() == AudioClipBase::speedRamp && clip.getFadeIn() != 0_td)
+-            || (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp && clip.getFadeOut() != 0_td))
++        if (clip.canUseProxy())
+         {
+-            SpeedFadeDescription desc;
+-            const auto clipPos = clip.getPosition();
++            assert (role != ClipRole::launcher);
++            assert (! clipTimeRangeToUse.isBeats());
++            TimeDuration nodeOffset;
++            double speed = 1.0;
++            TimeRange loopRange;
+ 
+-            if (clip.getFadeInBehaviour() == AudioClipBase::speedRamp)
+-            {
+-                desc.inTimeRange = TimeRange (clipPos.getStart(), clip.getFadeIn());
+-                desc.fadeInType = clip.getFadeInType();
+-            }
+-            else
++            if (! clip.usesTimeStretchedProxy())
+             {
+-                desc.inTimeRange = TimeRange (clipPos.getStart(), TimeDuration());
++                nodeOffset = clip.getPosition().getOffset();
++                loopRange = clip.getLoopRange();
++                speed = clip.getSpeedRatio();
+             }
+ 
+-            if (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp)
++            const auto channelConfig = clip.getOutputChannelConfiguration();
++
++            if ((clip.getFadeInBehaviour() == AudioClipBase::speedRamp && clip.getFadeIn() != 0_td)
++                || (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp && clip.getFadeOut() != 0_td))
+             {
+-                desc.outTimeRange = TimeRange (clipPos.getEnd() - clip.getFadeOut(), clip.getFadeOut());
+-                desc.fadeOutType = clip.getFadeOutType();
++                SpeedFadeDescription desc;
++                const auto clipPos = clip.getPosition();
++
++                if (clip.getFadeInBehaviour() == AudioClipBase::speedRamp)
++                {
++                    desc.inTimeRange = TimeRange (clipPos.getStart(), clip.getFadeIn());
++                    desc.fadeInType = clip.getFadeInType();
++                }
++                else
++                {
++                    desc.inTimeRange = TimeRange (clipPos.getStart(), TimeDuration());
++                }
++
++                if (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp)
++                {
++                    desc.outTimeRange = TimeRange (clipPos.getEnd() - clip.getFadeOut(), clip.getFadeOut());
++                    desc.fadeOutType = clip.getFadeOutType();
++                }
++                else
++                {
++                    desc.outTimeRange = TimeRange (clipPos.getEnd(), TimeDuration());
++                }
++
++                node = tracktion::graph::makeNode<SpeedRampWaveNode> (playFile,
++                                                                      toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
++                                                                      nodeOffset,
++                                                                      loopRange,
++                                                                      clip.getLiveClipLevel(),
++                                                                      speed,
++                                                                      channelConfig,
++                                                                      ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
++                                                                      params.processState,
++                                                                      idToUse,
++                                                                      params.forRendering,
++                                                                      desc);
+             }
+             else
+             {
+-                desc.outTimeRange = TimeRange (clipPos.getEnd(), TimeDuration());
++                node = tracktion::graph::makeNode<WaveNode> (playFile,
++                                                             toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
++                                                             nodeOffset,
++                                                             loopRange,
++                                                             clip.getLiveClipLevel(),
++                                                             speed,
++                                                             channelConfig,
++                                                             ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
++                                                             params.processState,
++                                                             idToUse,
++                                                             params.forRendering,
++                                                             params.forRendering ? nullptr : clip.getPlayhead());
+             }
+-
+-            node = tracktion::graph::makeNode<SpeedRampWaveNode> (playFile,
+-                                                                  toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                                                  nodeOffset,
+-                                                                  loopRange,
+-                                                                  clip.getLiveClipLevel(),
+-                                                                  speed,
+-                                                                  channelConfig,
+-                                                                  ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
+-                                                                  params.processState,
+-                                                                  idToUse,
+-                                                                  params.forRendering,
+-                                                                  desc);
+         }
+         else
+         {
+-            node = tracktion::graph::makeNode<WaveNode> (playFile,
+-                                                         toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                                         nodeOffset,
+-                                                         loopRange,
+-                                                         clip.getLiveClipLevel(),
+-                                                         speed,
+-                                                         channelConfig,
+-                                                         ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
+-                                                         params.processState,
+-                                                         idToUse,
+-                                                         params.forRendering,
+-                                                         params.forRendering ? nullptr : clip.getPlayhead());
+-        }
+-    }
+-    else
+-    {
+-        const auto timeStretcherMode = clip.getActualTimeStretchMode();
+-        const auto timeStretcherOpts = clip.elastiqueProOptions.get();
+-        const auto readAhead = params.readAheadTimeStretchNodes ? WaveNodeRealTime::ReadAhead::yes
+-                                                                : WaveNodeRealTime::ReadAhead::no;
++            const auto timeStretcherMode = clip.getActualTimeStretchMode();
++            const auto timeStretcherOpts = clip.elastiqueProOptions.get();
++            const auto readAhead = params.readAheadTimeStretchNodes ? WaveNodeRealTime::ReadAhead::yes
++                                                                    : WaveNodeRealTime::ReadAhead::no;
+ 
+-        const auto speedFadeDesc = getSpeedFadeDescription (clip);
+-        auto warpMap = getWarpMap (clip);
+-        std::optional<tempo::Sequence::Position> editTempoPosition (speedFadeDesc.isEmpty() ? std::optional<tempo::Sequence::Position>() : createPosition (clip.edit.tempoSequence));
++            const auto speedFadeDesc = getSpeedFadeDescription (clip);
++            auto warpMap = getWarpMap (clip);
++            std::optional<tempo::Sequence::Position> editTempoPosition (speedFadeDesc.isEmpty() ? std::optional<tempo::Sequence::Position>() : createPosition (clip.edit.tempoSequence));
+ 
+-        if (clip.getAutoTempo() || clip.getAutoPitch() || role == ClipRole::launcher)
+-        {
+-            assert (clipTimeRangeToUse.isBeats());
+-            std::vector<tempo::TempoChange> tempos;
+-            std::vector<tempo::TimeSigChange> timeSigs;
+-            std::vector<tempo::KeyChange> keyChanges;
+-            auto syncTempo = WaveNodeRealTime::SyncTempo::no;
+-            auto syncPitch = WaveNodeRealTime::SyncPitch::no;
++            if (clip.getAutoTempo() || clip.getAutoPitch() || role == ClipRole::launcher)
++            {
++                assert (clipTimeRangeToUse.isBeats());
++                std::vector<tempo::TempoChange> tempos;
++                std::vector<tempo::TimeSigChange> timeSigs;
++                std::vector<tempo::KeyChange> keyChanges;
++                auto syncTempo = WaveNodeRealTime::SyncTempo::no;
++                auto syncPitch = WaveNodeRealTime::SyncPitch::no;
+ 
+-            auto wi = clip.getWaveInfo();
+-            auto& li = clip.getLoopInfo();
++                auto wi = clip.getWaveInfo();
++                auto& li = clip.getLoopInfo();
+ 
+-            if (clip.getAutoTempo() && li.getNumBeats() > 0 && wi.hashCode != 0)
+-            {
+-                tempos.push_back ({ 0_bp, li.getBpm (wi), 1.0 });
+-                timeSigs.push_back ({ 0_bp, li.getNumerator(), li.getDenominator(), false });
+-                syncTempo = WaveNodeRealTime::SyncTempo::yes;
+-            }
+-            else
+-            {
+-                tempos.push_back ({ 0_bp, 120.0, 0.0 });
+-                timeSigs.push_back ({ 0_bp, 4, 4, false });
+-            }
++                if (clip.getAutoTempo() && li.getNumBeats() > 0 && wi.hashCode != 0)
++                {
++                    tempos.push_back ({ 0_bp, li.getBpm (wi), 1.0 });
++                    timeSigs.push_back ({ 0_bp, li.getNumerator(), li.getDenominator(), false });
++                    syncTempo = WaveNodeRealTime::SyncTempo::yes;
++                }
++                else
++                {
++                    tempos.push_back ({ 0_bp, 120.0, 0.0 });
++                    timeSigs.push_back ({ 0_bp, 4, 4, false });
++                }
+ 
+-            if (clip.getAutoPitch() && li.getRootNote() != -1)
+-            {
+-                keyChanges.push_back ({ 0_bp, { li.getRootNote(), 0 } });
+-                syncPitch = WaveNodeRealTime::SyncPitch::yes;
+-            }
++                if (clip.getAutoPitch() && li.getRootNote() != -1)
++                {
++                    keyChanges.push_back ({ 0_bp, { li.getRootNote(), 0 } });
++                    syncPitch = WaveNodeRealTime::SyncPitch::yes;
++                }
+ 
+-            tempo::Sequence seq (std::move (tempos),
+-                                 std::move (timeSigs),
+-                                 std::move (keyChanges),
+-                                 clip.edit.engine.getEngineBehaviour().lengthOfOneBeatDependsOnTimeSignature() ? tempo::LengthOfOneBeat::dependsOnTimeSignature
+-                                                                                                               : tempo::LengthOfOneBeat::isAlwaysACrotchet);
++                tempo::Sequence seq (std::move (tempos),
++                                     std::move (timeSigs),
++                                     std::move (keyChanges),
++                                     clip.edit.engine.getEngineBehaviour().lengthOfOneBeatDependsOnTimeSignature() ? tempo::LengthOfOneBeat::dependsOnTimeSignature
++                                                                                                                   : tempo::LengthOfOneBeat::isAlwaysACrotchet);
+ 
+-            if (role == ClipRole::launcher)
+-            {
+-                WaveNodeRealTime::BeatConfig config
++                if (role == ClipRole::launcher)
++                {
++                    WaveNodeRealTime::BeatConfig config
++                    {
++                        .processState = params.processState,
++                        .audioFile = playFile,
++                        .timeStretchMode = timeStretcherMode,
++                        .elastiqueProOptions = timeStretcherOpts,
++                        .editTime = BeatRange (0_bp, BeatPosition::fromBeats (std::numeric_limits<double>::max())),
++                        .offset = clip.getOffsetInBeats(),
++                        .loopSection = clip.getLoopRangeBeats(),
++                        .liveClipLevel = clip.getLiveClipLevel(),
++                        .sourceChannelsToUse = clip.getActiveChannelConfiguration(),
++                        .destChannelsToFill = ChannelConfiguration::discreteChannels (clip.getActiveChannelConfiguration().getNumChannels()),
++                        .itemID = idToUse,
++                        .isOfflineRender = params.forRendering,
++                        .resamplingQuality = clip.getResamplingQuality(),
++                        .speedFadeDescription = speedFadeDesc,
++                        .editTempoSequence = std::move (editTempoPosition),
++                        .warpMap = std::move (warpMap),
++                        .sourceFileTempoMap = std::move (seq),
++                        .syncTempo = syncTempo,
++                        .syncPitch = syncPitch,
++                        .chordPitchSequence = getChordTrackSequenceIfRequired (clip),
++                        .pitchChangeSemitones = clip.getPitchChange(),
++                        .readAhead = readAhead,
++                        .playhead = params.forRendering ? nullptr : clip.getPlayhead()
++                    };
++                    node = makeNode<WaveNodeRealTime> (std::move (config));
++                }
++                else
+                 {
+-                    .processState = params.processState,
+-                    .audioFile = playFile,
+-                    .timeStretchMode = timeStretcherMode,
+-                    .elastiqueProOptions = timeStretcherOpts,
+-                    .editTime = BeatRange (0_bp, BeatPosition::fromBeats (std::numeric_limits<double>::max())),
+-                    .offset = clip.getOffsetInBeats(),
+-                    .loopSection = clip.getLoopRangeBeats(),
+-                    .liveClipLevel = clip.getLiveClipLevel(),
+-                    .sourceChannelsToUse = clip.getActiveChannelConfiguration(),
+-                    .destChannelsToFill = ChannelConfiguration::discreteChannels (clip.getActiveChannelConfiguration().getNumChannels()),
+-                    .itemID = idToUse,
+-                    .isOfflineRender = params.forRendering,
+-                    .resamplingQuality = clip.getResamplingQuality(),
+-                    .speedFadeDescription = speedFadeDesc,
+-                    .editTempoSequence = std::move (editTempoPosition),
+-                    .warpMap = std::move (warpMap),
+-                    .sourceFileTempoMap = std::move (seq),
+-                    .syncTempo = syncTempo,
+-                    .syncPitch = syncPitch,
+-                    .chordPitchSequence = getChordTrackSequenceIfRequired (clip),
+-                    .pitchChangeSemitones = clip.getPitchChange(),
+-                    .readAhead = readAhead,
+-                    .playhead = params.forRendering ? nullptr : clip.getPlayhead()
+-                };
+-                node = makeNode<WaveNodeRealTime> (std::move (config));
++                    node = makeNode<WaveNodeRealTime> (playFile,
++                                                       timeStretcherMode, timeStretcherOpts,
++                                                       toBeats (clipTimeRangeToUse, clip.edit.tempoSequence),
++                                                       clip.getOffsetInBeats(),
++                                                       BeatRange (clip.getLoopStartBeats(), clip.getLoopLengthBeats()),
++                                                       clip.getLiveClipLevel(),
++                                                       clip.getActiveChannelConfiguration(),
++                                                       ChannelConfiguration::discreteChannels (clip.getActiveChannelConfiguration().getNumChannels()),
++                                                       params.processState,
++                                                       idToUse,
++                                                       params.forRendering,
++                                                       clip.getResamplingQuality(),
++                                                       speedFadeDesc, std::move (editTempoPosition),
++                                                       std::move (warpMap),
++                                                       seq, syncTempo, syncPitch,
++                                                       getChordTrackSequenceIfRequired (clip),
++                                                       clip.getPitchChange(),
++                                                       readAhead,
++                                                       params.forRendering ? nullptr : clip.getPlayhead());
++                }
+             }
+             else
+             {
++                assert (role != ClipRole::launcher);
++                assert (! clipTimeRangeToUse.isBeats());
+                 node = makeNode<WaveNodeRealTime> (playFile,
+-                                                   timeStretcherMode, timeStretcherOpts,
+-                                                   toBeats (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                                   clip.getOffsetInBeats(),
+-                                                   BeatRange (clip.getLoopStartBeats(), clip.getLoopLengthBeats()),
++                                                   toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
++                                                   clip.getPosition().getOffset(),
++                                                   clip.getLoopRange(),
+                                                    clip.getLiveClipLevel(),
++                                                   clip.getSpeedRatio(),
+                                                    clip.getActiveChannelConfiguration(),
+                                                    ChannelConfiguration::discreteChannels (clip.getActiveChannelConfiguration().getNumChannels()),
+                                                    params.processState,
+@@ -675,36 +702,12 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioClip (AudioClipBase& c
+                                                    params.forRendering,
+                                                    clip.getResamplingQuality(),
+                                                    speedFadeDesc, std::move (editTempoPosition),
+-                                                   std::move (warpMap),
+-                                                   seq, syncTempo, syncPitch,
+-                                                   getChordTrackSequenceIfRequired (clip),
++                                                   timeStretcherMode, timeStretcherOpts,
+                                                    clip.getPitchChange(),
+                                                    readAhead,
+                                                    params.forRendering ? nullptr : clip.getPlayhead());
+             }
+         }
+-        else
+-        {
+-            assert (role != ClipRole::launcher);
+-            assert (! clipTimeRangeToUse.isBeats());
+-            node = makeNode<WaveNodeRealTime> (playFile,
+-                                               toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                               clip.getPosition().getOffset(),
+-                                               clip.getLoopRange(),
+-                                               clip.getLiveClipLevel(),
+-                                               clip.getSpeedRatio(),
+-                                               clip.getActiveChannelConfiguration(),
+-                                               ChannelConfiguration::discreteChannels (clip.getActiveChannelConfiguration().getNumChannels()),
+-                                               params.processState,
+-                                               idToUse,
+-                                               params.forRendering,
+-                                               clip.getResamplingQuality(),
+-                                               speedFadeDesc, std::move (editTempoPosition),
+-                                               timeStretcherMode, timeStretcherOpts,
+-                                               clip.getPitchChange(),
+-                                               readAhead,
+-                                               params.forRendering ? nullptr : clip.getPlayhead());
+-        }
+     }
+ 
+     // Plugins
+@@ -1170,8 +1173,10 @@ std::unique_ptr<tracktion::graph::Node> createNodeForClip (Clip& clip, const Tra
+     if (auto containerClip = dynamic_cast<ContainerClip*> (&clip))
+         return createNodeForContainerClip (*containerClip, trackMuteState, params, role);
+ 
++    // Patch local Objekat — 0038 : un clip ARA entre comme un autre dans createNodeForClips (donc dans
++    // le CombiningNode de la piste OU du container : rangs, latence de lane, head/tail, allowedClips).
+     if (auto audioClip = dynamic_cast<AudioClipBase*> (&clip))
+-        return createNodeForAudioClip (*audioClip, false, params, role);
++        return createNodeForAudioClip (*audioClip, true, params, role);
+ 
+     if (auto midiClip = dynamic_cast<MidiClip*> (&clip))
+         return createNodeForMidiClip (*midiClip, trackMuteState, params, role);
+@@ -1424,7 +1429,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForFrozenAudioTrack (AudioTrac
+     return node;
+ }
+ 
+-std::unique_ptr<tracktion::graph::Node> createARAClipsNode (const juce::Array<Clip*>& clips, const TrackMuteState&, const CreateNodeParams& params)
++// Patch local Objekat — 0038 : n'est plus appelée (les clips ARA passent par createNodeForClips).
++[[maybe_unused]] std::unique_ptr<tracktion::graph::Node> createARAClipsNode (const juce::Array<Clip*>& clips, const TrackMuteState&, const CreateNodeParams& params)
+ {
+     juce::Array<AudioClipBase*> araClips;
+ 
+@@ -1463,8 +1469,9 @@ std::unique_ptr<tracktion::graph::Node> createClipsNode (AudioTrack& at, const T
+         arrangerNodes.push_back (std::move (clipsNode));
+     }
+ 
+-    if (auto araNode = createARAClipsNode (clips, trackMuteState, params))
+-        arrangerNodes.push_back (std::move (araNode));
++    // Patch local Objekat — 0038 : plus de chemin ARA à part. createNodeForClips joue déjà les clips
++    // ARA (createNodeForClip → createNodeForAudioClip includeARA = true) ; un second appel les jouerait
++    // deux fois. @see createARAClipsNode
+ 
+     if (! params.allowClipSlots)
+     {
+diff --git a/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.cpp b/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.cpp
+index 0318b47a5ea..acb2a380061 100644
+--- a/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.cpp
++++ b/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.cpp
+@@ -713,9 +713,12 @@ private:
+                     // Only rebuild when the region layout (loop mode / repeat count) no
+                     // longer matches the clip - a rebuild is a remove-all/re-add the
+                     // plugin can see and hear, so it mustn't happen for no-op updates
++                    // Patch local Objekat — 0038 : ... ou quand la piste propriétaire du clip a changé
++                    // (clip enfant d'un container déplacé sur une autre piste).
+                     if (! playbackRegionAndSource->playbackRegionLayoutMatches (clip.isLooping(),
+                                                                                 clip.getPosition().getLength().inSeconds(),
+-                                                                                clip.getLoopLength().inSeconds()))
++                                                                                clip.getLoopLength().inSeconds())
++                         || ! playbackRegionAndSource->owningTrackMatches())
+                     {
+                         const ScopedDocumentEditor sde (*this, true);
+ 
+@@ -1130,7 +1133,8 @@ struct ARADocumentHolder::Pimpl
+             if (hashString.isEmpty())
+                 return true;
+ 
+-            auto track = c->getTrack();
++            // Patch local Objekat — 0038 : la piste propriétaire, pas le parent direct (container)
++            auto track = ARAClipPlayer::getOwningTrackForARA (*c);
+             if (track == nullptr)
+                 return true;
+ 
+diff --git a/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.h b/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.h
+index 6b51c837fe8..d945e03fddc 100644
+--- a/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.h
++++ b/modules/tracktion_engine/plugins/ARA/tracktion_ARAFileReader.h
+@@ -17,6 +17,19 @@ namespace tracktion::inline engine {
+ 
+ struct ARAClipPlayer;
+ 
++//==============================================================================
++// Patch local Objekat — 0038 : l'hôte peut intercepter les requêtes de transport d'un plugin ARA
++// (play/stop/position/boucle) au lieu de laisser le plugin piloter TransportControl directement.
++struct ARAHostTransportHook
++{
++    enum class Kind { start, stop, setPosition, setCycleRange, enableCycle };
++
++    /** Appelé sur le thread principal, avec (genre, a, b) :
++          setPosition → a = secondes ; setCycleRange → a = début, b = durée ; enableCycle → a = 0 ou 1.
++        Renvoie true si l'hôte a traité la requête (le comportement natif est alors sauté). */
++    static inline std::function<bool (Kind, double, double)> handler;
++};
++
+ //==============================================================================
+ /**
+     Manages an ARA plugin instance for an audio clip.
+diff --git a/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperFunctions.h b/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperFunctions.h
+index 5e80ffe03b8..cc4f7714c19 100644
+--- a/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperFunctions.h
++++ b/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperFunctions.h
+@@ -127,32 +127,61 @@ struct EditProxyFunctions
+     static void ARA_CALL requestStartPlayback (ARAPlaybackControllerHostRef ref)
+     {
+         CRASH_TRACER
+-        marshalToMessageThread (ref, [] (TransportControl& tc) { tc.play (false); });
++        marshalToMessageThread (ref, [] (TransportControl& tc)
++                                     {
++                                         if (ARAHostTransportHook::handler && ARAHostTransportHook::handler (ARAHostTransportHook::Kind::start, 0.0, 0.0))
++                                             return;
++
++                                         tc.play (false);
++                                     });
+     }
+ 
+     static void ARA_CALL requestStopPlayback (ARAPlaybackControllerHostRef ref)
+     {
+         CRASH_TRACER
+-        marshalToMessageThread (ref, [] (TransportControl& tc) { tc.stop (false, false); });
++        marshalToMessageThread (ref, [] (TransportControl& tc)
++                                     {
++                                         if (ARAHostTransportHook::handler && ARAHostTransportHook::handler (ARAHostTransportHook::Kind::stop, 0.0, 0.0))
++                                             return;
++
++                                         tc.stop (false, false);
++                                     });
+     }
+ 
+     static void ARA_CALL requestSetPlaybackPosition (ARAPlaybackControllerHostRef ref, ARATimePosition timePosition)
+     {
+         CRASH_TRACER
+-        marshalToMessageThread (ref, [timePosition] (TransportControl& tc) { tc.setPosition (TimePosition::fromSeconds (timePosition)); });
++        marshalToMessageThread (ref, [timePosition] (TransportControl& tc)
++                                     {
++                                         if (ARAHostTransportHook::handler && ARAHostTransportHook::handler (ARAHostTransportHook::Kind::setPosition, (double) timePosition, 0.0))
++                                             return;
++
++                                         tc.setPosition (TimePosition::fromSeconds (timePosition));
++                                     });
+     }
+ 
+     static void ARA_CALL requestSetCycleRange (ARAPlaybackControllerHostRef ref, ARATimePosition startTime, ARATimeDuration duration)
+     {
+         CRASH_TRACER
+         marshalToMessageThread (ref, [startTime, duration] (TransportControl& tc)
+-                                     { tc.setLoopRange ({ TimePosition::fromSeconds (startTime), TimeDuration::fromSeconds (duration) }); });
++                                     {
++                                         if (ARAHostTransportHook::handler && ARAHostTransportHook::handler (ARAHostTransportHook::Kind::setCycleRange, (double) startTime, (double) duration))
++                                             return;
++
++                                         tc.setLoopRange ({ TimePosition::fromSeconds (startTime), TimeDuration::fromSeconds (duration) });
++                                     });
+     }
+ 
+     static void ARA_CALL requestEnableCycle (ARAPlaybackControllerHostRef ref, ARABool enable)
+     {
+         CRASH_TRACER
+-        marshalToMessageThread (ref, [enable] (TransportControl& tc) { tc.looping = enable != kARAFalse; });
++        marshalToMessageThread (ref, [enable] (TransportControl& tc)
++                                     {
++                                         if (ARAHostTransportHook::handler && ARAHostTransportHook::handler (ARAHostTransportHook::Kind::enableCycle, enable != kARAFalse ? 1.0 : 0.0, 0.0))
++                                             return;
++
++                                         tc.looping = enable != kARAFalse;
++                                     });
+     }
+ };
+ 
+@@ -163,11 +192,17 @@ struct ModelUpdateFunctions
+     {
+         edit.markAsChanged();
+ 
+-        for (auto track : getAudioTracks (edit))
+-            for (auto clip : track->getClips())
+-                if (auto audioClip = dynamic_cast<AudioClipBase*> (clip))
+-                    if (auto proxy = audioClip->getARAProxy())
+-                        proxy->contentHasChanged();
++        // Patch local Objekat — 0038 : visitAllTrackItems descend dans les ContainerClips ; l'ancienne
++        // boucle sur les clips directs des pistes ratait un clip ARA enfant d'un groupe (sa retouche
++        // n'aurait jamais marqué son archive périmée).
++        visitAllTrackItems (edit, [] (TrackItem& item)
++        {
++            if (auto audioClip = dynamic_cast<AudioClipBase*> (&item))
++                if (auto proxy = audioClip->getARAProxy())
++                    proxy->contentHasChanged();
++
++            return true;
++        });
+     }
+ 
+     /** These notifications arrive from inside our own notifyModelUpdates() call, so
+diff --git a/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperInterfaces.h b/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperInterfaces.h
+index 478421d1b48..9519e81ad08 100644
+--- a/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperInterfaces.h
++++ b/modules/tracktion_engine/plugins/ARA/tracktion_ARAWrapperInterfaces.h
+@@ -12,6 +12,32 @@ class MusicalContextWrapper;
+ class RegionSequenceWrapper;
+ class AudioSourceWrapper;
+ 
++// Patch local Objekat — 0038 : un clip dans un ContainerClip n'a pas de piste directe
++// (Clip::getTrack() == nullptr) ; sa séquence de régions est celle de la piste qui porte
++// le container le plus extérieur. Même règle que objOwningTrack côté app.
++static inline Track* getOwningTrackForARA (Clip& c)
++{
++    Clip* cl = &c;
++
++    while (cl != nullptr)
++    {
++        if (auto t = cl->getTrack())
++            return t;
++
++        cl = dynamic_cast<ContainerClip*> (cl->getParent());
++    }
++
++    return nullptr;
++}
++
++static inline EditItemID getOwningTrackIDForARA (Clip& c)
++{
++    if (auto t = getOwningTrackForARA (c))
++        return t->itemID;
++
++    return {};
++}
++
+ ARA_MAP_HOST_REF(juce::MemoryOutputStream, ARAArchiveWriterHostRef)
+ ARA_MAP_HOST_REF(juce::MemoryBlock, ARAArchiveReaderHostRef)
+ ARA_MAP_HOST_REF(Edit, ARAContentAccessControllerHostRef, ARAModelUpdateControllerHostRef, ARAMusicalContextHostRef, ARARegionSequenceHostRef, ARAAudioModificationHostRef, ARAPlaybackRegionHostRef)
+@@ -1545,14 +1571,21 @@ public:
+                            const AudioModificationWrapper& audioModification)
+       : doc (d),
+         clip (audioClip),
+-        trackID (audioClip.getTrack()->itemID),
++        trackID (getOwningTrackIDForARA (audioClip)),
+         supportedFlags (factory.supportedPlaybackTransformationFlags),
+         audioModificationRef (audioModification.audioModificationRef)
+     {
+         CRASH_TRACER
+         TRACKTION_ASSERT_MESSAGE_THREAD
+ 
+-        doc.willCreatePlaybackRegionOnTrack (clip.getTrack());
++        // Patch local Objekat — 0038 : sans piste propriétaire, aucune région n'est créée
++        // (playbackRegionRef reste nul) et PlaybackRegionAndSource ne la retient pas.
++        auto* owningTrack = getOwningTrackForARA (clip);
++
++        if (owningTrack == nullptr)
++            return;
++
++        doc.willCreatePlaybackRegionOnTrack (owningTrack);
+ 
+         jassert (d.musicalContext != nullptr && d.musicalContext->musicalContextRef != nullptr);
+         updatePlaybackRegionProperties();
+@@ -1573,7 +1606,7 @@ public:
+                            int loopIterationIndex)
+       : doc (d),
+         clip (audioClip),
+-        trackID (audioClip.getTrack()->itemID),
++        trackID (getOwningTrackIDForARA (audioClip)),
+         supportedFlags (factory.supportedPlaybackTransformationFlags),
+         audioModificationRef (audioModification.audioModificationRef),
+         isLoopIteration (true),
+@@ -1582,7 +1615,14 @@ public:
+         CRASH_TRACER
+         TRACKTION_ASSERT_MESSAGE_THREAD
+ 
+-        doc.willCreatePlaybackRegionOnTrack (clip.getTrack());
++        // Patch local Objekat — 0038 : sans piste propriétaire, aucune région n'est créée
++        // (playbackRegionRef reste nul) et PlaybackRegionAndSource ne la retient pas.
++        auto* owningTrack = getOwningTrackForARA (clip);
++
++        if (owningTrack == nullptr)
++            return;
++
++        doc.willCreatePlaybackRegionOnTrack (owningTrack);
+ 
+         jassert (d.musicalContext != nullptr && d.musicalContext->musicalContextRef != nullptr);
+         updatePlaybackRegionProperties();
+@@ -1800,6 +1840,15 @@ public:
+         return playbackRegions.size() == getNumLoopRegions (clipLengthSecs, loopLengthSecs);
+     }
+ 
++    /** Patch local Objekat — 0038 : true si la piste propriétaire du clip est encore celle sur
++        laquelle les régions ont été créées (un groupe déplacé sur une autre lane change la piste
++        d'un clip enfant sans que sa mise en boucle bouge). */
++    bool owningTrackMatches() const
++    {
++        return playbackRegions.empty()
++                 || playbackRegions.front()->trackID == getOwningTrackIDForARA (clip);
++    }
++
+     /** Rebuilds all playback regions based on whether the clip is looping.
+         If looping, creates one PlaybackRegionWrapper per loop iteration.
+         If not looping, creates a single region covering the whole clip. */
+@@ -1826,6 +1875,11 @@ public:
+             {
+                 auto pr = std::make_unique<PlaybackRegionWrapper> (araDoc, clip, araFactory, *audioModification,
+                                                                    (int) iteration);
++
++                // Patch local Objekat — 0038 : pas de piste propriétaire = pas de région
++                if (pr->playbackRegionRef == nullptr)
++                    continue;
++
+                 addPlaybackRegion (*pr);
+                 playbackRegions.push_back (std::move (pr));
+             }
+@@ -1833,8 +1887,13 @@ public:
+         else
+         {
+             auto pr = std::make_unique<PlaybackRegionWrapper> (araDoc, clip, araFactory, *audioModification);
+-            addPlaybackRegion (*pr);
+-            playbackRegions.push_back (std::move (pr));
++
++            // Patch local Objekat — 0038 : pas de piste propriétaire = pas de région
++            if (pr->playbackRegionRef != nullptr)
++            {
++                addPlaybackRegion (*pr);
++                playbackRegions.push_back (std::move (pr));
++            }
+         }
+     }
+ 
+-- 
+2.50.1 (Apple Git-155)
+
