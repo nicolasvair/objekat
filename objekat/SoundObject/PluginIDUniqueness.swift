@@ -56,6 +56,9 @@ enum PluginIDUniqueness {
             for obj in arr {
                 walk(obj.plugins, host: obj.id)
                 walk(obj.instruments, host: obj.id)
+                // An ARA source (Melodyne) is a plugin of its own: two objects sharing its id would
+                // share an editor key. Walked right after the instruments, in all three traversals.
+                if let ara = obj.araSource { walk([ara.plugin], host: obj.id) }
                 if case .group(let children, _) = obj.kind { walkItems(children) }
             }
         }
@@ -161,6 +164,11 @@ enum PluginIDUniqueness {
                      hostName: name, link: nil)
                 walk(obj.instruments, path: "\(here).instruments", hostID: obj.id, hostKind: .object,
                      hostName: name, link: nil)
+                if let ara = obj.araSource, wanted.contains(ara.plugin.id) {
+                    sitesByID[ara.plugin.id, default: []].append(
+                        Site(hostID: obj.id, hostKind: .object, hostName: name(), pluginName: ara.plugin.name,
+                             fxLinkID: nil, fxLinkName: nil, jsonPath: "\(here).araSource.plugin"))
+                }
                 if case .group(let children, _) = obj.kind { walkItems(children, path: "\(here).kind.children") }
             }
         }
@@ -228,6 +236,10 @@ enum PluginIDUniqueness {
                 var scan = HostScan()
                 o.plugins = rekey(o.plugins, host: o.id, scan: &scan)
                 o.instruments = rekey(o.instruments, host: o.id, scan: &scan)
+                if var ara = o.araSource {
+                    ara.plugin = rekey([ara.plugin], host: o.id, scan: &scan)[0]
+                    o.araSource = ara
+                }
                 if !scan.table.isEmpty {
                     for i in o.automation.indices { o.automation[i].param = remap(o.automation[i].param, scan.table) }
                     o.automationTouchOrder = o.automationTouchOrder.map { remap($0, scan.table) }

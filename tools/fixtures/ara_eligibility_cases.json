@@ -1,0 +1,30 @@
+{
+  "_readme": "ARAEligibility cases. object.kind: clip|group|aux|midi. Defaults: clip, speed 1, not reversed, no loop, not consolidated, no source, file present. ancestors: groups above the object (only loop matters). expected: the ARARefusal raw value, or null if the object may carry a source.",
+  "eligibility": [
+    { "name": "plain clip is eligible", "object": {}, "expected": null },
+    { "name": "clip inside a plain group is eligible", "object": {}, "ancestors": [{"loop": false}], "expected": null },
+    { "name": "clip inside two nested plain groups is eligible", "object": {}, "ancestors": [{"loop": false}, {"loop": false}], "expected": null },
+    { "name": "group refused", "object": {"kind": "group"}, "expected": "notAClip" },
+    { "name": "aux refused", "object": {"kind": "aux"}, "expected": "notAClip" },
+    { "name": "midi clip refused", "object": {"kind": "midi"}, "expected": "notAClip" },
+    { "name": "consolidated instance refused", "object": {"consolidated": true}, "expected": "consolidatedInstance" },
+    { "name": "speed 1.07 refused", "object": {"speed": 1.07}, "expected": "speedNotOne" },
+    { "name": "speed 0.5 refused", "object": {"speed": 0.5}, "expected": "speedNotOne" },
+    { "name": "speed 1.0 plus float noise accepted", "object": {"speed": 1.0000000000001}, "expected": null },
+    { "name": "reversed refused", "object": {"reversed": true}, "expected": "reversed" },
+    { "name": "looped refused", "object": {"loop": true}, "expected": "looped" },
+    { "name": "child of a looping group refused", "object": {}, "ancestors": [{"loop": true}], "expected": "ancestorLooped" },
+    { "name": "child of a looping grandparent refused", "object": {}, "ancestors": [{"loop": false}, {"loop": true}], "expected": "ancestorLooped" },
+    { "name": "already a source refused", "object": {"source": true}, "expected": "alreadySource" },
+    { "name": "missing file refused", "object": {}, "fileMissing": true, "expected": "fileMissing" },
+    { "name": "not-a-clip wins over everything else", "object": {"kind": "aux", "loop": true, "source": true}, "fileMissing": true, "expected": "notAClip" },
+    { "name": "consolidated wins over speed", "object": {"consolidated": true, "speed": 2}, "expected": "consolidatedInstance" }
+  ],
+  "loop": [
+    { "name": "loop on a plain clip is free", "object": {}, "expected": null },
+    { "name": "loop on a Melodyne clip refused", "object": {"source": true}, "expected": "looped" },
+    { "name": "loop on a group holding a Melodyne child refused", "object": {"kind": "group", "children": [{"source": true}]}, "expected": "ancestorLooped" },
+    { "name": "loop on a group holding a Melodyne grandchild refused", "object": {"kind": "group", "children": [{"kind": "group", "children": [{"source": true}]}]}, "expected": "ancestorLooped" },
+    { "name": "loop on a group of plain clips is free", "object": {"kind": "group", "children": [{}, {}]}, "expected": null }
+  ]
+}

@@ -116,6 +116,46 @@ struct SidechainSource: Codable, Equatable {
     var sourceID: UUID
 }
 
+// MARK: - ARA source (Melodyne)
+
+/// The archive of what Melodyne has been told to do to ONE object: its notes, their pitch and time
+/// corrections. Opaque (a proprietary blob of the plugin) and tiny next to audio. It is NOT the audio:
+/// the audio stays the object's file. @see `ARASource`, docs/ara_melodyne_plan.md.
+struct ARAArchive: Codable, Equatable {
+    /// base64 of `storeObjectsForCopy` — the plugin's state for this object only.
+    var data: String
+    /// `araArchiveSourceID`: the hash of the file at capture time (the restore transposes it).
+    var sourceID: String
+    /// `araArchiveModID`.
+    var modificationID: String
+    /// The ARA factory's ID (`com.celemony.ara.…`): which plugin can read this archive.
+    var documentArchiveID: String
+    /// Size of the decoded blob, for reports and tests.
+    var bytes: Int
+}
+
+/// An audio object played THROUGH an ARA plugin (Melodyne) instead of straight off its file: the
+/// plugin is the object's SOURCE, ahead of the whole chain (trims, FX, fader, fades). One per
+/// object, never linked, never in a bin. The plugin keeps TIME and PITCH of the object: speed,
+/// reverse and loop are refused while it is there.
+struct ARASource: Codable, Equatable {
+    /// Unique id (a copy gets a NEW one — the engine's editor key and the id audit rely on it), the
+    /// name, the VST3 identifier and the colour. `stateXML` stays nil: the state is `archive`.
+    var plugin: ObjectPlugin
+    /// nil = never captured (a fresh analysis at the next load).
+    var archive: ARAArchive?
+
+    /// The same source for ANOTHER object: a brand-new plugin id (never share an instance), the
+    /// same archive. @see SoundObject.derivedCopy
+    func copiedForNewObject() -> ARASource {
+        var p = plugin
+        p.id = UUID()
+        p.linkGroupID = nil          // an ARA source is never linked
+        p.detachedLinkGroupID = nil
+        return ARASource(plugin: p, archive: archive)
+    }
+}
+
 struct ObjectPlugin: Identifiable, Codable, Equatable {
     var id: UUID
     var name: String
@@ -439,6 +479,14 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// that start from `var n = o` get it for free); a site that forgets turns the clip back into
     /// a plain LR one without a word.
     var channelMode: ChannelMode = .lr
+    /// Non-nil ⇒ the object's audio is played THROUGH an ARA plugin (Melodyne) — session format 20.
+    /// Meaningful only for a `.clip` that is not a consolidated instance (@see `ARAEligibility`).
+    ///
+    /// TOP LEVEL, like `channelMode`, for the same reason (about twenty construction sites of
+    /// `.clip`) and the same rule: every site that rebuilds a clip FIELD BY FIELD must carry it
+    /// (`derivedCopy` does, with a NEW plugin id; the copies that start from `var n = o` inherit
+    /// the SAME id, which `EditViewModel.copiedARASource(of:)` must then replace).
+    var araSource: ARASource? = nil
     /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
     /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -1065,6 +1113,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                      plugins: [ObjectPlugin], instruments: [ObjectPlugin] = [],
                      automation: [AutomationLane]? = nil,
                      markers: [Marker]? = nil,
+                     araSource: ARASource?? = nil,
                      kind: Kind) -> SoundObject {
         var remap = Self.pluginIDRemap(from: self.plugins,     to: plugins)
         remap.merge(Self.pluginIDRemap(from: self.instruments, to: instruments)) { a, _ in a }
@@ -1072,7 +1121,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // Markers travel exactly like the curves: inherited as they are unless the caller, which
         // has just cut or fragmented, hands over the half that belongs to this copy.
         let inheritedMarkers = markers ?? self.markers
-        return SoundObject(id: id, startTime: startTime, duration: duration, lane: lane,
+        // The ARA source travels with the object, under a NEW plugin id: the right half of a cut, a
+        // paste, a duplicate all get the same retouches and diverge afterwards. `araSource` lets a
+        // caller that has just re-read the LIVE archive hand it over (@see copiedARASource).
+        let inheritedARA: ARASource?
+        if let given = araSource { inheritedARA = given } else { inheritedARA = self.araSource?.copiedForNewObject() }
+        var derived = SoundObject(id: id, startTime: startTime, duration: duration, lane: lane,
                     volume: volume, pan: pan, fadeIn: fadeIn, fadeOut: fadeOut,
                     // The LENGTHS are the caller's business (it cuts, trims, fragments); the
                     // SHAPES are the object's identity and are inherited unless the caller, which
@@ -1100,6 +1154,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     markers: inheritedMarkers,
                     channelMode: channelMode,
                     kind: kind)
+        derived.araSource = inheritedARA
+        return derived
     }
 
     /// A chain's plugin leaves, the branches of parallel blocks flattened in series order.
@@ -1136,7 +1192,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1187,6 +1243,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(fileSize, forKey: .fileSize)
         // Written only when it says something: LR is the overwhelming case (a key absent = LR).
         if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
+        try c.encodeIfPresent(araSource, forKey: .araSource)
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1227,6 +1284,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // A value this build does not know (written by a later one) reads as LR rather than
         // failing the whole project: the choice is playback-only, the sound is still there.
         channelMode    = (try? c.decodeIfPresent(ChannelMode.self, forKey: .channelMode)) ?? .lr
+        // A source this build cannot read (written by a later one) is dropped, not fatal: the object
+        // then plays its file, dry. Absent in every session before format 20.
+        araSource      = try? c.decodeIfPresent(ARASource.self, forKey: .araSource)
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }

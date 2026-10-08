@@ -48,6 +48,7 @@ extension EditViewModel {
     private static func collectPluginRefs(in object: SoundObject, into out: inout [ObjectPlugin]) {
         collectPluginRefs(object.plugins, into: &out)
         collectPluginRefs(object.instruments, into: &out)
+        if let ara = object.araSource { out.append(ara.plugin) }   // Melodyne missing ⇒ the object plays dry
         if case .group(let children, _) = object.kind {
             for c in children { collectPluginRefs(in: c, into: &out) }
         }
