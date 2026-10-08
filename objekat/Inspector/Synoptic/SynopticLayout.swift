@@ -65,6 +65,14 @@ enum SynopticLayout {
 
     static let cardNameFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
+    /// The ARA source card's width: its whole name, from `cardW` up to the 'audio file' frame's width, like
+    /// any card (@see cardWidth). It has no on/off column; its chrome is padding 8+8 · the analysis spinner
+    /// ~12 + gap 6 · ✕ ~9 + gap 6 · 4 of slack.
+    static func araCardWidth(name: String) -> CGFloat {
+        let nameW = ceil((name as NSString).size(withAttributes: [.font: cardNameFont]).width)
+        return min(audioZoneW, max(cardW, nameW + 16 + 18 + 15 + 4))
+    }
+
     /// A bin's header card width: its name whole, from `cardW` up to the 'audio file' zone's width, like a
     /// plugin card (@see cardWidth) — the chrome is the same, and the link badge is always there:
     /// on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack.
@@ -482,6 +490,9 @@ enum SynopticLayout {
         /// An audio clip: an 'audio file' zone at the head of the chain (replacing the Source pill);
         /// it holds speed / semitones / bpm. nil for a MIDI clip / group / aux.
         var audioZone: CGRect? = nil
+        /// An audio clip carrying an ARA source: its card, right under the 'audio file' frame and ahead of
+        /// the start gain and of the FX. nil without a source.
+        var araCard: CGRect? = nil
         /// The 'clip' zone (the output mix: volume / pan / mute), between the end gain and the output.
         /// nil for a bus (no object).
         var clipZone: CGRect? = nil
@@ -510,8 +521,9 @@ enum SynopticLayout {
     /// One more row (a 16 pt pill plus the zone's 7 pt spacing) when the file is stereo: the
     /// LR / L / R / C selector.
     static let audioZoneStereoExtraH: CGFloat = 23
-    /// And one more again for the ARA source row (name · spinner · remove), the same 16 pt pill.
-    static let audioZoneAraExtraH: CGFloat = 23
+    /// The ARA source (Melodyne) is a CARD, the first one out of the 'audio file' frame: this is the wire
+    /// between the frame's foot and the card's top (room for the "ARA" tag hanging above the card's corner).
+    static let araCardGap: CGFloat = 30
     static let clipZoneW: CGFloat = 224          // the 'clip' zone (pan / volume / mute on one line)
     static let clipZoneWWide: CGFloat = 328      // the same plus the attribute link icons (a linked consolidated object)
     static let clipZoneH: CGFloat = 36
@@ -534,11 +546,13 @@ enum SynopticLayout {
     }
 
     /// - Parameters:
+    ///   - araCardWidth: non-nil = the audio object carries an ARA source: its card (this wide) hangs under the
+    ///     'audio file' frame, and the start gain and the chain move down by its height.
     ///   - sendRows: how many outgoing sends are shown at the foot (0 = no 'sends' zone).
     ///   - receivedRows: the sends an aux receives, listed in its chain head.
     ///   - infiniteOption: the head carries the 'infinite' checkbox (a top-level aux / group).
     static func diagram(for root: SynopticNode, chainInDb: Float = 0, chainOutDb: Float = 0,
-                        midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, audioAra: Bool = false,
+                        midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         mixWide: Bool = false, stems: Bool = false,
                         sendRows: Int = 0, receivedRows: Int = 0,
@@ -549,12 +563,12 @@ enum SynopticLayout {
         let busHead = !midi && !audioFile && (infiniteOption || receivedRows > 0)
         let busHeadH = pillH + (receivedRows > 0 ? CGFloat(receivedRows) * sendRowH + zonePadV : 0)
         let leadW = midi ? midiZoneW : (audioFile ? audioZoneW : (busHead ? sendsZoneW : sourceW))
-        let leadH = midi ? midiZoneH : (audioFile ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) + (audioAra ? audioZoneAraExtraH : 0) : (busHead ? busHeadH : pillH))
+        let leadH = midi ? midiZoneH : (audioFile ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) : (busHead ? busHeadH : pillH))
         let clipW = mixWide ? clipZoneWWide : clipZoneW
 
         // Everything is centred on a single vertical column.
         let contentW = max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0,
-                           sendRows > 0 ? sendsZoneW : 0)
+                           sendRows > 0 ? sendsZoneW : 0, araCardWidth ?? 0)
         let centerX = margin + contentW / 2
 
         // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP.
@@ -570,14 +584,28 @@ enum SynopticLayout {
             audioZone = leadRect
         }
 
-        // head → [start gain] → trunk
-        let inGainCenter = CGPoint(x: centerX, y: leadRect.maxY + chainGainGap / 2)
-        let rootOrigin = CGPoint(x: centerX - chainSize.width / 2, y: leadRect.maxY + chainGainGap)
+        // head → [ARA source card] → [start gain] → trunk. The ARA source is what the file's audio goes THROUGH
+        // first, so its card sits between the frame and the start gain: the chain starts below it.
+        var araCard: CGRect? = nil
+        var headBottomY = leadRect.maxY
+        if audioFile, let w = araCardWidth {
+            let r = CGRect(x: centerX - w / 2, y: leadRect.maxY + araCardGap, width: w, height: cardH)
+            araCard = r
+            headBottomY = r.maxY
+        }
+        let inGainCenter = CGPoint(x: centerX, y: headBottomY + chainGainGap / 2)
+        let rootOrigin = CGPoint(x: centerX - chainSize.width / 2, y: headBottomY + chainGainGap)
         var placement = place(root, at: rootOrigin)
 
         placement.cables.insert(
-            Cable(from: CGPoint(x: centerX, y: leadRect.maxY),
+            Cable(from: CGPoint(x: centerX, y: headBottomY),
                   to: CGPoint(x: centerX, y: inGainCenter.y - gainHalfGap), style: .connector), at: 0)
+        if let r = araCard {
+            // frame → card (the arrow arrives at the card, as it does at any card)
+            placement.cables.insert(
+                Cable(from: CGPoint(x: centerX, y: leadRect.maxY),
+                      to: CGPoint(x: centerX, y: r.minY), style: .connector), at: 0)
+        }
         placement.cables.insert(
             Cable(from: CGPoint(x: centerX, y: inGainCenter.y + gainHalfGap),
                   to: placement.entry, style: .connector), at: 0)
@@ -638,7 +666,7 @@ enum SynopticLayout {
                        chainInGain: ChainGain(dB: chainInDb, center: inGainCenter),
                        chainOutGain: ChainGain(dB: chainOutDb, center: outGainCenter),
                        midiZone: midiZone, instrumentSlot: instrumentSlot,
-                       audioZone: audioZone, clipZone: clipZone, stemsZone: stemsZone,
+                       audioZone: audioZone, araCard: araCard, clipZone: clipZone, stemsZone: stemsZone,
                        sendsZone: sendsZone, busHeadZone: busHead ? leadRect : nil)
     }
 }
