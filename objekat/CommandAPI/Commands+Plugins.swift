@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import CryptoKit
 
 // MARK: - Plugins
 
@@ -807,6 +808,86 @@ extension CommandRegistry {
                 ?? ""
             let info: [String: Any] = ["identifier": identifier, "format": format, "name": name]
             return JSONValue.fromFoundation(engine.debugARAProbe(info))
+        }
+
+        // TEMPORARY (ARA step 3): the model has no ARA source yet (step 4), so this talks to the engine
+        // bridge only. It is replaced by plugin.add / object.ara.* once the model carries `araSource`.
+        register("debug.ara_set",
+                 summary: """
+                 DEBUG, temporary. Puts an ARA source (Melodyne VST3) on an audio object, ENGINE ONLY \
+                 (the model is not told: a rebuild from the model drops it). `remove: true` takes it \
+                 off again. Answers `ok` and, when refused, the machine `reason` (not_an_audio_clip, \
+                 speed_not_one, reversed, looping, not_ara_plugin, ara_setup_failed...), then `ms` / \
+                 `rss_mb` around the call and the `status` of the source.
+                 """,
+                 params: [ParamSpec("id", "uuid", "Audio object."),
+                          ParamSpec("identifier", "string", required: false,
+                                    "Exact identifier of the VST3 (see plugin.list_available). Not needed with `remove`."),
+                          ParamSpec("name", "string", required: false,
+                                    "Plugin name (defaults to the catalogue's)."),
+                          ParamSpec("remove", "bool", required: false, "Take the source off instead.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            if try p.bool("remove", or: false) {
+                engine.removeARASource(forObjectID: id.uuidString)
+                return .object(["ok": .bool(true),
+                                "status": JSONValue.fromFoundation(engine.araStatus(forObjectID: id.uuidString))])
+            }
+            let identifier = try p.string("identifier")
+            let name = try p.optionalString("name")
+                ?? vm.availablePlugins.first(where: { $0.identifier == identifier && $0.formatName == "VST3" })?.name
+                ?? ""
+            let info: [String: Any] = ["identifier": identifier, "format": "VST3", "name": name]
+            let t0 = Date()
+            let reason = engine.setARASource(info, archive: nil, forObjectID: id.uuidString)
+            let ms = Date().timeIntervalSince(t0) * 1000
+            var out: [String: JSONValue] = ["ok": .bool(reason == nil),
+                                            "ms": .number(ms),
+                                            "status": JSONValue.fromFoundation(engine.araStatus(forObjectID: id.uuidString))]
+            if let reason { out["reason"] = .string(reason) }
+            return .object(out)
+        }
+
+        register("debug.ara_status",
+                 summary: """
+                 DEBUG, temporary. State of the ARA source of an object: `status` (valid, analysing, regions, \
+                 mode, plugin), `stale` (a retouch or an end of analysis since the last capture) and the \
+                 `notes` Melodyne analysed (pitch, start, duration, velocity). `capture: true` also reads \
+                 the archive (`bytes`, `ms`, `sha1` of the data; clears `stale`).
+                 """,
+                 params: [ParamSpec("id", "uuid", "Audio object."),
+                          ParamSpec("capture", "bool", required: false, "Also read the archive.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let uuid = id.uuidString
+            var out: [String: JSONValue] = [
+                "status": JSONValue.fromFoundation(engine.araStatus(forObjectID: uuid)),
+                "stale": .bool(engine.isARAArchiveStale(forObjectID: uuid)),
+                "notes": JSONValue.fromFoundation(engine.araAnalysedNotes(forObjectID: uuid)),
+            ]
+            if try p.bool("capture", or: false) {
+                if let archive = engine.captureARAArchive(forObjectID: uuid) {
+                    var info = archive
+                    if let data = info["data"] as? String {
+                        info["sha1"] = Insecure.SHA1.hash(data: Data(data.utf8)).map { String(format: "%02x", $0) }.joined()
+                        info["data"] = nil
+                    }
+                    out["archive"] = JSONValue.fromFoundation(info)
+                } else {
+                    out["archive"] = .null
+                }
+            }
+            return .object(out)
         }
 
         register("debug.plugin_buses",

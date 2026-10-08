@@ -6,6 +6,7 @@
 #import "OBJEngineCore.h"
 #import <AppKit/AppKit.h>   // notifications d'activation de l'app (éditeurs suivant le focus)
 #import <AudioUnit/AudioUnit.h>
+#include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"
 #include "OBJWindowFadePlugin.h"
@@ -746,6 +747,19 @@ static constexpr double kObjLinkStateGestureStaleMs = 5000.0;
 static constexpr int    kObjLinkStateTimerMs        = 500;
 static constexpr int    kObjLinkStateGestureEndMs   = 300;
 
+// Écoute le proxy ARA d'un clip (te::ARAFileReader est un ChangeBroadcaster) : une retouche dans
+// Melodyne, ou la fin d'une analyse, y fait émettre un message — asynchrone, sur le thread
+// principal. Tient une référence sur le proxy, donc À RELÂCHER avant de retirer le clip
+// (@see -closeEditorsAndPurgePluginsForObjectID:, -removeARASourceForObjectID:).
+struct OBJARAWatcher : public juce::ChangeListener {
+    te::ARAFileReader::Ptr proxy;
+    std::function<void()>  onChange;
+    OBJARAWatcher(te::ARAFileReader::Ptr p, std::function<void()> cb)
+        : proxy(std::move(p)), onChange(std::move(cb)) { proxy->addChangeListener(this); }
+    ~OBJARAWatcher() override { if (proxy) proxy->removeChangeListener(this); }
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { if (onChange) onChange(); }
+};
+
 // Écoute tous les paramètres automatables d'un plugin et notifie un callback à chaque
 // changement de valeur (index dans la liste des params + nouvelle valeur). Le callback
 // tourne sur le message thread (AsyncCaller de Tracktion), jamais sur le thread audio.
@@ -1401,6 +1415,13 @@ struct OBJRenderChain {
     // The transaction changed something the graph reads: ONE restartPlayback at its end.
     bool                                                      _bridgeDirty;
     std::unordered_map<std::string, te::WaveAudioClip::Ptr>   _clipMap;
+    // ARA (source Melodyne, docs/ara_melodyne_plan.md). objectID → écouteur du proxy ARA de son clip ;
+    // objectID → « l'archive vivante a bougé depuis la dernière capture » ; clé de fenêtre d'éditeur
+    // ARA → objectID (ces fenêtres vivent dans _editorWindows, sous une clé qui n'est PAS un plugin
+    // de _pluginMap : pas de lien d'état, pas de synchro).
+    std::unordered_map<std::string, std::unique_ptr<OBJARAWatcher>> _araWatchers;
+    std::unordered_set<std::string>                           _araStale;
+    std::unordered_map<std::string, std::string>              _araEditorObjectByKey;
     // clipID → MidiClip. Un objet MIDI est un ContainerClip (dans _containerClipMap, sous la
     // MÊME clé) dont ce clip est l'unique enfant : c'est le container qui porte la chaîne,
     // instrument compris. @see addMidiClip:withID:
@@ -1583,6 +1604,17 @@ static BOOL gOBJAudioDisabled = NO;
 - (instancetype)init {
     if (self = [super init]) {
         juce::initialiseJuce_GUI();
+        // ARA : les requêtes de transport d'un plugin (play / stop / position / boucle) passent par
+        // l'hôte. Sans rappel posé, on rend false et Tracktion garde son comportement natif.
+        {
+            OBJEngineCore* hostSelf = self;
+            te::ARAHostTransportHook::handler = [hostSelf](te::ARAHostTransportHook::Kind kind, double a, double b) {
+                auto cb = hostSelf.onARATransportRequest;
+                if (!cb) return false;
+                cb((NSInteger) kind, a, b);
+                return true;
+            };
+        }
         // Coupe le bruit console de Tracktion (scan MIDI/Wave devices, etc.).
         juce::Logger::setCurrentLogger(new OBJSilentLogger());
         // Réglages multi-cœur (plan multi-cœur, étape 1). Drapeaux GLOBAUX du moteur : le workgroup
@@ -1692,6 +1724,7 @@ static BOOL gOBJAudioDisabled = NO;
 }
 
 - (void)dealloc {
+    te::ARAHostTransportHook::handler = nullptr;   // il capture `self`
     if (_deviceWatcher)
         _engine->getDeviceManager().deviceManager.removeChangeListener(_deviceWatcher.get());
     if (_latencyWatcher)      _latencyWatcher->stopTimer();      // coupe les timers avant
@@ -2093,6 +2126,8 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
 // MARK: - Edit persistant
 
 - (void)createEdit {
+    // ARA : les éditeurs et les écouteurs tiennent le plugin / le proxy d'un clip de l'Edit qui part.
+    [self teardownAllARA];
     // AVANT de remplacer l'Edit : vider la consigne. Un plugin consigné tient une référence sur
     // SON Edit et vit dans SON PluginCache ; le laisser survivre au remplacement ferait courir
     // son destructeur après celui de l'Edit qui le possède.
@@ -2994,6 +3029,12 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
 
 - (void)closeEditorsAndPurgePluginsForObjectID:(NSString*)uuid {
     std::string key([uuid UTF8String]);
+
+    // ARA : l'éditeur d'abord (piège ~AudioProcessor avec un éditeur ouvert), puis l'écouteur, qui
+    // tient une référence sur le proxy du clip qu'on s'apprête à retirer.
+    [self closeARAEditorForObjectID:uuid];
+    _araWatchers.erase(key);
+    _araStale.erase(key);
 
     // AVANT de lâcher les Ptr : mettre en consigne. Beaucoup de gestes retirent un objet pour le
     // réajouter identique dans la foulée, et sans ça chaque aller-retour recharge ses AU.
@@ -5517,6 +5558,239 @@ static std::map<std::string, juce::PluginDescription>& objResolvedARADescription
     return out;
 }
 
+// MARK: - ARA (source Melodyne)
+//
+// Une SOURCE ARA remplace la lecture du fichier d'un objet audio par le plugin (Melodyne, VST3) :
+// le clip passe en mode time-stretch `ara`, et le moteur (patch 0038) construit un ARANode qui
+// joue la chaîne du clip comme un fichier. Le plugin n'est PAS dans _pluginMap : il appartient au
+// proxy ARA du clip (te::ARAFileReader), qui possède son document, ses régions et son instance.
+// Docs : docs/ara_melodyne_plan.md §2 et étape 3.
+
+static double objResidentMB() {
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) return -1.0;
+    return (double) info.resident_size / (1024.0 * 1024.0);
+}
+
+static juce::String objJuceString(NSString* s) { return juce::String::fromUTF8(s ? [s UTF8String] : ""); }
+static NSString*    objNSString(const juce::String& s) { return [NSString stringWithUTF8String:s.toRawUTF8()]; }
+
+// Retire d'un clip tout ce qui le désigne comme source ARA : la description (qui réinitialise le
+// proxy), et les propriétés d'archive que tearDownARA / flushStateToValueTree y auraient posées.
+static void objClearARAState(te::WaveAudioClip& clip) {
+    clip.setTimeStretchMode(te::TimeStretcher::disabled);   // AVANT : la description ne rebâtit rien
+    clip.state.removeProperty(te::IDs::araPluginDescription, nullptr);
+    clip.state.removeProperty(te::IDs::araArchive, nullptr);
+    clip.state.removeProperty(te::IDs::araArchiveSourceID, nullptr);
+    clip.state.removeProperty(te::IDs::araArchiveModID, nullptr);
+    clip.state.removeProperty(te::IDs::araDocumentArchiveID, nullptr);
+    clip.state.removeProperty(te::IDs::araSourceID, nullptr);
+    clip.state.removeProperty(te::IDs::araModID, nullptr);
+}
+
+// (Ré)installe l'écouteur sur le proxy COURANT du clip : Tracktion peut remplacer le proxy (changement
+// de description, reconstruction), l'écouteur d'avant pointerait alors un lecteur mort.
+- (void)araEnsureWatcherForKey:(const std::string&)key {
+    auto cit = _clipMap.find(key);
+    te::ARAFileReader::Ptr proxy = cit != _clipMap.end() ? cit->second->getARAProxy() : nullptr;
+    auto wit = _araWatchers.find(key);
+    if (!proxy || !proxy->isValid()) {
+        if (wit != _araWatchers.end()) _araWatchers.erase(wit);
+        return;
+    }
+    if (wit != _araWatchers.end() && wit->second->proxy.get() == proxy.get()) return;
+    OBJEngineCore* rawSelf = self;
+    std::string keyCopy = key;
+    _araWatchers[key] = std::make_unique<OBJARAWatcher>(proxy, [rawSelf, keyCopy] {
+        rawSelf->_araStale.insert(keyCopy);
+        if (rawSelf.onARAContentChanged)
+            rawSelf.onARAContentChanged([NSString stringWithUTF8String:keyCopy.c_str()]);
+    });
+}
+
+- (NSString* _Nullable)setARASource:(NSDictionary*)pluginInfo
+                            archive:(NSDictionary* _Nullable)archive
+                        forObjectID:(NSString*)uuid {
+    if (!_edit) return @"no_edit";
+    std::string key([uuid UTF8String]);
+    auto cit = _clipMap.find(key);
+    if (cit == _clipMap.end()) return @"not_an_audio_clip";
+    te::WaveAudioClip::Ptr clip = cit->second;
+
+    if (clip->isUsingARA()) return @"already_ara";
+    if (!clip->getOriginalFile().existsAsFile()) return @"source_file_missing";
+    if (std::abs(clip->getSpeedRatio() - 1.0) > 1.0e-9) return @"speed_not_one";
+    if (clip->getIsReversed()) return @"reversed";
+    if (clip->isLooping()) return @"looping";   // v1 : boucles refusées (Q5)
+
+    NSDictionary* resolved = [self resolveARAPluginInfo:pluginInfo];
+    if (!resolved) return @"not_ara_plugin";
+    auto& descs = objResolvedARADescriptions();
+    auto dit = descs.find(std::string([resolved[@"identifier"] UTF8String]));
+    if (dit == descs.end()) return @"not_ara_plugin";
+
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    const double rss0 = objResidentMB();
+
+    // (1) L'archive attend dans l'arbre du clip : setupARA la lit à la création du proxy et la
+    //     rend au plugin (restoreARAArchiveForPaste), puis retire les propriétés.
+    if (archive) {
+        NSString* data = archive[@"data"];
+        if ([data isKindOfClass:[NSString class]] && data.length > 0) {
+            clip->state.setProperty(te::IDs::araArchive, objJuceString(data), nullptr);
+            clip->state.setProperty(te::IDs::araArchiveSourceID, objJuceString(archive[@"sourceID"]), nullptr);
+            clip->state.setProperty(te::IDs::araArchiveModID, objJuceString(archive[@"modID"]), nullptr);
+            clip->state.setProperty(te::IDs::araDocumentArchiveID, objJuceString(archive[@"docArchiveID"]), nullptr);
+        }
+    }
+    // (2) La description AVANT le mode : sinon, à la reconstruction asynchrone, setupARA sans
+    //     description prendrait ARAPluginFactory::getDefaultInstance (un autre plugin ARA).
+    clip->araPluginDescription.setValue(dit->second, nullptr);
+    // (3) Le mode, (4) la mise en place SYNCHRONE : le résultat est connu tout de suite.
+    clip->setTimeStretchMode(te::TimeStretcher::ara);
+    const bool ok = clip->setupARA(true);
+    auto proxy = clip->getARAProxy();
+    if (!ok || !proxy || !proxy->isValid()) {
+        // (5) Échec : retour à la lecture fichier. L'objet sonne SEC, il ne devient jamais muet.
+        objClearARAState(*clip);
+        updateProxyUse(*clip);
+        NSLog(@"[ARA] setARASource: échec pour %@", uuid);
+        return @"ara_setup_failed";
+    }
+    // (6) Piège AU/JUCE : un plugin dont l'unité n'est pas préparée refuse ClassInfo et plante son
+    //     GUI. Le graphe de lecture n'étant alloué qu'au premier play, on l'alloue ici.
+    if (!_edit->getTransport().isPlayContextActive())
+        _edit->getTransport().ensureContextAllocated();
+    // (7) Les retouches (et la fin d'analyse) marquent l'archive périmée.
+    _araStale.erase(key);
+    [self araEnsureWatcherForKey:key];
+
+    NSLog(@"[PERF] ara setARASource: %.0f ms, rss %.0f -> %.0f MB, instances=%d (%@)",
+          juce::Time::getMillisecondCounterHiRes() - t0, rss0, objResidentMB(),
+          (int) _araWatchers.size(), resolved[@"name"]);
+    return nil;
+}
+
+- (void)removeARASourceForObjectID:(NSString*)uuid {
+    std::string key([uuid UTF8String]);
+    auto cit = _clipMap.find(key);
+    // Dans tous les cas : l'éditeur d'abord (~AudioProcessor avec un éditeur ouvert), puis l'écouteur.
+    [self closeARAEditorForObjectID:uuid];
+    _araWatchers.erase(key);
+    _araStale.erase(key);
+    if (cit == _clipMap.end()) return;
+    te::WaveAudioClip::Ptr clip = cit->second;
+    objClearARAState(*clip);
+    updateProxyUse(*clip);
+}
+
+- (NSDictionary* _Nullable)captureARAArchiveForObjectID:(NSString*)uuid {
+    std::string key([uuid UTF8String]);
+    auto cit = _clipMap.find(key);
+    if (cit == _clipMap.end()) return nil;
+    auto proxy = cit->second->getARAProxy();
+    if (!proxy || !proxy->isValid()) return nil;
+
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    juce::MemoryBlock block = proxy->storeARAArchiveForCopy();
+    const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+    if (block.getSize() == 0) return nil;
+
+    _araStale.erase(key);
+    NSLog(@"[PERF] ara capture: %.1f ms, %zu octets", ms, block.getSize());
+    return @{
+        @"data":         objNSString(block.toBase64Encoding()),
+        @"sourceID":     objNSString(proxy->getAudioSourcePersistentID()),
+        @"modID":        objNSString(proxy->getAudioModificationPersistentID()),
+        @"docArchiveID": objNSString(proxy->getDocumentArchiveID()),
+        @"bytes":        @((long long) block.getSize()),
+        @"ms":           @(ms),
+    };
+}
+
+- (BOOL)isARAArchiveStaleForObjectID:(NSString*)uuid {
+    return _araStale.count(std::string([uuid UTF8String])) > 0;
+}
+
+- (NSDictionary*)araStatusForObjectID:(NSString*)uuid {
+    std::string key([uuid UTF8String]);
+    auto cit = _clipMap.find(key);
+    if (cit == _clipMap.end()) return @{ @"valid": @NO, @"analysing": @NO, @"regions": @0, @"mode": @"none", @"plugin": @"" };
+    auto& clip = *cit->second;
+    auto proxy = clip.getARAProxy();
+    const bool valid = proxy && proxy->isValid();
+    juce::String pluginName;
+    if (valid)
+        if (auto* p = proxy->getPlugin())
+            pluginName = p->getName();
+    return @{
+        @"valid":     @(valid),
+        @"analysing": @(valid && proxy->isAnalysingContent()),
+        @"regions":   @(valid ? proxy->getNumPlaybackRegions() : 0),
+        @"mode":      clip.isUsingARA() ? @"ara" : @"disabled",
+        @"plugin":    objNSString(pluginName),
+    };
+}
+
+- (NSArray<NSDictionary*>*)araAnalysedNotesForObjectID:(NSString*)uuid {
+    auto cit = _clipMap.find(std::string([uuid UTF8String]));
+    if (cit == _clipMap.end()) return @[];
+    auto proxy = cit->second->getARAProxy();
+    if (!proxy || !proxy->isValid()) return @[];
+    juce::MidiMessageSequence seq = proxy->getAnalysedMIDISequence();
+    NSMutableArray* out = [NSMutableArray array];
+    for (int i = 0; i < seq.getNumEvents(); ++i) {
+        auto* ev = seq.getEventPointer(i);
+        if (!ev->message.isNoteOn()) continue;
+        const double start = ev->message.getTimeStamp();
+        const double end   = ev->noteOffObject ? ev->noteOffObject->message.getTimeStamp() : start;
+        [out addObject:@{ @"pitch":    @(ev->message.getNoteNumber()),
+                          @"start":    @(start),
+                          @"duration": @(end - start),
+                          @"velocity": @(ev->message.getVelocity()) }];
+    }
+    return out;
+}
+
+- (void)openARAEditorForObjectID:(NSString*)uuid sourceKey:(NSString*)key colorHex:(NSInteger)colorHex {
+    [self _doOpenEditorForKey:key araObjectID:uuid attempt:0 colorHex:colorHex];
+}
+
+- (void)closeARAEditorForObjectID:(NSString*)uuid {
+    std::string id([uuid UTF8String]);
+    std::vector<std::string> keys;
+    for (auto& kv : _araEditorObjectByKey)
+        if (kv.second == id) keys.push_back(kv.first);
+    for (auto& k : keys) {
+        _araEditorObjectByKey.erase(k);
+        const bool closed = _editorWindows.erase(k) > 0;   // détache l'éditeur du processor
+        if (closed && self.onEditorVisibilityChanged)
+            self.onEditorVisibilityChanged([NSString stringWithUTF8String:k.c_str()], NO);
+    }
+}
+
+- (void)notifyARASelection:(NSArray<NSString*>*)objectIDs {
+    // Chaque proxy envoie SA sélection aux vues d'éditeur ouvertes : avec plusieurs objets, c'est
+    // le dernier de la liste que Melodyne montre.
+    for (NSString* uuid in objectIDs) {
+        auto cit = _clipMap.find(std::string([uuid UTF8String]));
+        if (cit == _clipMap.end()) continue;
+        if (auto proxy = cit->second->getARAProxy(); proxy && proxy->isValid())
+            proxy->notifyViewSelection();
+    }
+}
+
+// Ferme tout ARA avant que l'Edit ne soit remplacé ou détruit : les fenêtres ET les écouteurs.
+- (void)teardownAllARA {
+    std::vector<std::string> keys;
+    for (auto& kv : _araEditorObjectByKey) keys.push_back(kv.first);
+    for (auto& k : keys) _editorWindows.erase(k);
+    _araEditorObjectByKey.clear();
+    _araWatchers.clear();
+    _araStale.clear();
+}
+
 // Détecte si un bundle VST3 est un instrument (VSTi), SANS charger son binaire : lit
 // Contents/Resources/moduleinfo.json (VST3 SDK ≥ 3.7) et cherche "Instrument" dans le tableau
 // "Sub Categories" d'une classe. JSON relâché (virgules traînantes) → pas de parser strict :
@@ -7155,7 +7429,17 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
 }
 
 - (void)_doOpenPluginEditor:(NSString*)pluginKey attempt:(int)attempt colorHex:(NSInteger)colorHex {
+    [self _doOpenEditorForKey:pluginKey araObjectID:nil attempt:attempt colorHex:colorHex];
+}
+
+// Ouvre l'éditeur natif d'un ExternalPlugin. `araObjectID` nil : plugin FX de _pluginMap (clé =
+// ObjectPlugin.id). Sinon : la SOURCE ARA de l'objet — le plugin est celui du proxy ARA de son clip,
+// la clé de fenêtre est celle que l'appelant a choisie, et le lien d'état (réservé aux plugins de
+// _pluginMap) est sauté. @see -openARAEditorForObjectID:sourceKey:colorHex:
+- (void)_doOpenEditorForKey:(NSString*)pluginKey araObjectID:(NSString* _Nullable)araObjectID
+                    attempt:(int)attempt colorHex:(NSInteger)colorHex {
     std::string pk([pluginKey UTF8String]);
+    const bool isARA = (araObjectID != nil);
 
     auto winIt = _editorWindows.find(pk);
     if (winIt != _editorWindows.end() && winIt->second) {
@@ -7163,10 +7447,18 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
         return;
     }
 
-    auto mapIt = _pluginMap.find(pk);
-    if (mapIt == _pluginMap.end()) return;
-
-    auto* ext = dynamic_cast<te::ExternalPlugin*>(mapIt->second.get());
+    te::ExternalPlugin* ext = nullptr;
+    if (isARA) {
+        auto cit = _clipMap.find(std::string([araObjectID UTF8String]));
+        if (cit == _clipMap.end()) return;
+        auto proxy = cit->second->getARAProxy();
+        if (!proxy || !proxy->isValid()) return;
+        ext = proxy->getPlugin();
+    } else {
+        auto mapIt = _pluginMap.find(pk);
+        if (mapIt == _pluginMap.end()) return;
+        ext = dynamic_cast<te::ExternalPlugin*>(mapIt->second.get());
+    }
     if (!ext) return;  // built-in → éditeur SwiftUI géré côté Swift
 
     // Le plugin doit être PRÉPARÉ avant qu'on ouvre son interface. Certains AU (Soundtoys :
@@ -7187,7 +7479,7 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
         NSLog(@"[OBJ] openPluginEditor: instance en cours de chargement, retry %d/20…", attempt + 1);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC),
                        dispatch_get_main_queue(), ^{
-            [self _doOpenPluginEditor:pluginKey attempt:attempt + 1 colorHex:colorHex];
+            [self _doOpenEditorForKey:pluginKey araObjectID:araObjectID attempt:attempt + 1 colorHex:colorHex];
         });
         return;
     }
@@ -7217,7 +7509,7 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
                         (juce::uint8)(colorHex & 0xFF));
     // La bande Sidechain (ou rien) : demandée MAINTENANT, l'instance étant chargée.
     NSView* accessory = gPluginEditorAccessoryProvider ? gPluginEditorAccessoryProvider(pluginKey) : nil;
-    auto* win = new OBJPluginEditorWindow(title, editor, accessory, [rawSelf, pk] {
+    auto* win = new OBJPluginEditorWindow(title, editor, accessory, [rawSelf, pk, isARA] {
         // « delete this » indirect (erase détruit la fenêtre + ce lambda + pk) :
         // on sort tout ce dont on a besoin sur la pile AVANT l'erase.
         OBJEngineCore* engineRef = rawSelf;
@@ -7225,7 +7517,8 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
         NSString* nsKey = [NSString stringWithUTF8String:keyCopy.c_str()];
         // Dernière chance de la synchro d'état AVANT que la fenêtre ne parte : ce que la main
         // vient de régler dans l'éditeur (un switch que l'hôte ne voit pas) rejoint le groupe.
-        [engineRef syncLinkedStateFrom:keyCopy force:YES];
+        if (!isARA) [engineRef syncLinkedStateFrom:keyCopy force:YES];
+        engineRef->_araEditorObjectByKey.erase(keyCopy);
         engineRef->_editorWindows.erase(keyCopy);
         [engineRef updateLinkStateTimer];
         if (engineRef.onEditorVisibilityChanged) engineRef.onEditorVisibilityChanged(nsKey, NO);
@@ -7249,9 +7542,17 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
         if (b != win->getBounds()) win->setBounds(b);
     }
     _editorWindows[pk].reset(win);
-    // Un éditeur ouvert sur un membre lié : la référence de la synchro d'état est ce que
-    // l'instance a À L'OUVERTURE, et le minuteur se met à surveiller ce que la main va y changer.
-    [self seedLinkStateBaseline:pk overwrite:YES];
+    if (isARA) {
+        _araEditorObjectByKey[pk] = std::string([araObjectID UTF8String]);
+        // La vue de l'éditeur suit l'objet : Melodyne montre CET objet, pas le dernier ouvert.
+        if (auto cit = _clipMap.find(std::string([araObjectID UTF8String])); cit != _clipMap.end())
+            if (auto proxy = cit->second->getARAProxy(); proxy && proxy->isValid())
+                proxy->notifyViewSelection();
+    } else {
+        // Un éditeur ouvert sur un membre lié : la référence de la synchro d'état est ce que
+        // l'instance a À L'OUVERTURE, et le minuteur se met à surveiller ce que la main va y changer.
+        [self seedLinkStateBaseline:pk overwrite:YES];
+    }
     [self updateLinkStateTimer];
     if (self.onEditorVisibilityChanged) self.onEditorVisibilityChanged(pluginKey, YES);
     NSLog(@"[OBJ] openPluginEditor: '%s' ouvert", title.toRawUTF8());
@@ -7263,7 +7564,9 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
 
 - (void)closePluginEditor:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
-    if (_editorWindows.count(pk)) [self syncLinkedStateFrom:pk force:YES];   // avant l'erase
+    if (_editorWindows.count(pk) && !_araEditorObjectByKey.count(pk))
+        [self syncLinkedStateFrom:pk force:YES];   // avant l'erase
+    _araEditorObjectByKey.erase(pk);
     const bool closed = _editorWindows.erase(pk) > 0;
     [self updateLinkStateTimer];
     if (closed && self.onEditorVisibilityChanged)
