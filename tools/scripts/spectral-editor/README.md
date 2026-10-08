@@ -73,6 +73,13 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
    Result and the Difference alike. Display only (no effect on the sound), instant (the pictures are
    re-coloured from memory, no new analysis), remembered with the other settings; the ceiling is kept at
    least 6 dB above the floor.
+   **Display mode** (Expert, for testing, remembered): *Normal* or *Concentré* — a time-frequency **reassigned**
+   spectrogram (a tone is a thin line, a click a thin vertical one, instead of the window's lobe). **Display only**:
+   the gains, the audio, the preview and Validate stay the normal FFT. Its own **window** (256…4096, default 512),
+   **compute size** (1024…32768, default 4096), **overlap** (2…16, default 8) and **threshold** (dB under the loudest
+   bin, −120…−40, default −80). The three pictures use it alike; the status says "Concentré (affichage seul)". It
+   cannot separate what its window cannot (two tones 7 Hz apart at window 512 stay one blur: use a long Normal FFT
+   for that) and smears a pitch below ~2 bins of its window (190 Hz at 512). About 1–2.5 s for 30–120 s of stereo.
 5. **Validate** writes what you HEAR (a selection still pending asks first: Apply, Ignore or Cancel) as a wav, lays it on a **new row at the same instant** (inside the
    same group if there is one), named **"<name> (spectral)"**, and **mutes the original** (it is not
    deleted). ONE project undo step takes it all back. **Cancel** (or closing the window) leaves the
@@ -111,13 +118,14 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
 | `run.sh`, `install.sh`, `manifest.json`, `requirements.txt` | packaging |
 | `mask.py` | **the only home of the gain mathematics** (rectangle, brush dabs, the weighted selection, pro rata gain in dB) |
 | `dsp.py` | STFT / ISTFT with a time-frequency gain, streamed in blocks |
+| `reassign.py` | the focused (reassigned) spectrogram, display only (numpy, same grid as `image.py`) |
 | `image.py`, `selection.py`, `canvasfile.py`, `colormap.py` | the base spectrogram (of the result), the selection layer, the two raw image formats |
 | `wavio.py` | WAV reader / writer (RIFF / RF64, PCM 16 / 24 / 32, float) |
 | `decide.py` | the small pure decisions: depth class, rates, durations, mono, names |
 | `make_fixture.py` | writes the two image-format fixtures to `tools/fixtures/spectral/` |
 | `test_*.py`, `run_tests.sh` | the unit tests (`./run_tests.sh [python]`) |
 
-End to end, headless: `tools/scenario_spectral_editor.py` (sections c, d, e, g, j drive this script through the
+End to end, headless: `tools/scenario_spectral_editor.py` (sections c, d, e, g, j, k, l drive this script through the
 real app).
 
 ## Testing hooks

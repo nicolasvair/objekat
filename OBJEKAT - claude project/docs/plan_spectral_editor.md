@@ -1307,3 +1307,38 @@ scenario section (k)), and the measures.
   below 1.3 GB at the 120 s warning, to decide if 600 s objects at 32768 are to be used (≈ 5 × more).
 - **Tests.** `test_bigfft.py` (new, 15: the choice and its fallbacks, short objects, caps, axis, click times), scenario
   section (k) (the real script at 16384 and 32768: width, null, −24 dB, undo, remembered, Reset, a 0.4 s object).
+
+## 14. Revision 7 (8 October 2026): the focused display ("Concentré")
+
+Asked, for testing: an expert display mode, a **time-frequency reassigned spectrogram**, to see what a long window cannot
+separate without its time smear. **Display only**: `dsp.py` (the mask and the ISTFT), the audio, the preview and Validate
+do not read any of these settings (pinned by a test: changing the mode never calls `dsp.process`).
+
+- **Controls** (Expert, all `advanced`, remembered by the app like the others): *Mode d'affichage* Normal | Concentré
+  (default Normal); *Fenêtre d'analyse* 256…4096 (512); *Taille de calcul* 1024…32768 (4096; zero-padded FFT, lifted to the
+  window); *Recouvrement* 2…16 (8); *Seuil* −120…−40 dB under the loudest bin (−80; below it a bin is not reassigned).
+  `decide.focus_settings(values)` clamps and returns `None` in Normal. The status line adds " — Concentré (affichage seul)".
+- **Method** (`reassign.py`, numpy only, Auger–Flandrin): three STFTs of the same frames with the Hann window *h*, *t·h*
+  and *dh/dt*. With Δt = Re(X_th·X_h*) / |X_h|² (samples) and Δω = Im(X_dh·X_h*) / |X_h|² (rad/sample, a common phase
+  factor cancels): f̂ = (k/pad − Δω/2π)·sr, t̂ = j·hop + Δt. |X_h|² is accumulated at (t̂, f̂) on THE SAME grid as
+  `image.build_db` (log-frequency rows, same columns) by bilinear 4-cell splatting (`np.bincount` on a padded-border
+  accumulator), then dB, the existing colormap and range; stereo = max of the channels' accumulators. A bin whose |Δt| is
+  over half a window, or that lands outside the signal / 20 Hz…Nyquist, is dropped. 0 dB = a full-scale sine (calibrated:
+  a line astride two rows reads up to −3 dB on each).
+- **Refresh**: the Original, Result and Difference pictures are all drawn with the current mode, after every step, undo,
+  redo; a display change redraws them but never recomputes the audio. The cache keys are unchanged in Normal; in Concentré
+  `(focus,)` is appended.
+- **Physics, not bugs** (documented in `reassign.py` and pinned by tests): (1) two tones closer than the window resolves
+  (55 / 61.7 Hz at window 512) give ONE blur with no valley, reassignment does not invent resolution; only a longer window
+  separates them (Normal 32768: valley 0.11, 16384: 0.82); (2) below ~2 bins of the window (190 Hz at 512) the
+  negative-frequency image of a real tone lies inside the main lobe and smears the line (55 Hz at 512: smeared over
+  20…140 Hz; clean at 2048). On a kick (decaying sweep) the sweep is drawn as a thin falling line and the click as a thin
+  vertical one; the steady low tones stay a speckled band at window 512.
+- **Cost**: frames per column capped (1; hop never above window/2), blocks spread over `min(8, cpu)` threads, result
+  deterministic. 512 / 4096 / 8, stereo, offline (Apple silicon): 30 s 0.8–1.1 s, 120 s 1.9–2.5 s (white noise = the
+  worst case, every bin above the threshold; compute size 2048: 1.6 s, 1024: 1.1 s). Normal 2048 / 4: 0.2 / 0.7 s.
+- **Tests**: `test_reassign.py` (16: 440 Hz within ±2 Hz and ≤ 5 rows lit vs ≥ 40 in Normal, level calibration, size
+  independence, chirp, click within 1 column, the 55 / 61.7 non-resolution, low-tone limit, finite values, grid and column
+  cap, stereo, threshold, thread independence), `test_decide.py` (focus_settings), `test_editor.py` (controls, redraw
+  without audio, status, a step, audio independent of the display), scenario section (l) (the real script: grid, line,
+  status, −24 dB rectangle still −24 dB on the audio, compute size lifted, remembered, Reset).
