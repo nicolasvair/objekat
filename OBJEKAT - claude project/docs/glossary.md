@@ -22,6 +22,8 @@ source, not a translation.
 | définition (d'un consolidé) | definition | definición | the recorded content, shared by every instance |
 | exemplaire | instance | ejemplar | one occurrence of a definition in the timeline |
 | baker / baké | bake / baked | renderizar / renderizado | the render that freezes a sub-tree into a wave |
+| source ARA | ARA source | fuente ARA | the ARA plugin (Melodyne) an audio object is played THROUGH, ahead of its chain; not an insert. The type `ARASource` |
+| archive ARA | ARA archive | archivo ARA | the plugin's saved state (its retouches), captured live and written into the session; what re-creates an instance |
 | sonothèque | sound library | sonoteca | the audio file browser |
 | sonie (LUFS) | loudness (LUFS) | sonoridad (LUFS) | ITU-R BS.1770-4 / EBU R128 measurement of the render: M momentary (400 ms), S short-term (3 s), I integrated (gated) |
 | plage de sonie (LRA) | loudness range (LRA) | rango de sonoridad (LRA) | EBU Tech 3342: the spread of the short-term loudness, 10th to 95th percentile |

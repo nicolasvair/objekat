@@ -38,7 +38,7 @@ unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6
 An engine series of **35** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0037` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). `0037`, the audio bridge, came in with the sidechain merge of 6 October 2026 (see its
-entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); the next one will be `0038`. (`0035` and `0036`, the FX link state fixes of
+entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); the next one will be `0038` on `main` (it already exists, unmerged, on the branch `feature/ara-melodyne`, see its entry below). (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2279,6 +2279,36 @@ What has landed since mid-August, in order:
   leave a note stuck), Q6 (a muted GROUP or STEM still keys — the mute sits downstream of the tap),
   Q7 (speed compensation silences keys with a delay), phase 2 (sends over the bridge) and phase 3
   (bake with key sources) are not started.
+- **An ARA source on an audio object — Melodyne** (7–8 October 2026, branch `feature/ara-melodyne`, engine
+  `objekat-ara-0038`, patch `0038`; **LOCAL COMMITS ONLY, merged nowhere, pushed nowhere; built and driven by
+  `tools/scenario_ara.py` (131 OK) but nothing yet HEARD or SEEN in the interface**). An audio object can
+  carry `SoundObject.araSource` (`ARASource {plugin, archive}`): the clip plays THROUGH a Melodyne VST3 ahead of
+  its chain (not an insert). The plan, its Q1–Q5 rulings and the execution journal: `docs/ara_melodyne_plan.md`;
+  the API: `command_api.md` ("An ARA source (Melodyne)"); the decision: `architecture_decisions.md`.
+  **Model.** Session format **20**; the archive (Melodyne's retouches) travels in the session, captured live
+  at save / copy / undo-push (`ARAUndoPolicy.adoptingLive`: OBJEKAT's undo NEVER touches a live retouch, Q1);
+  a FRESH plugin id on every copy (`copiedForNewObject()`, never linked); one instance per object (Q3); loops
+  refused on such an object and on a looping group holding one (Q5); a consolidated object cannot carry one.
+  Only the VST3 is an ARA source (Q2: no AU twin). Rules in `Shared/ARAEligibility.swift` + its case table.
+  **Engine.** `0038`: the `ARANode` is the clip's SOURCE and goes through `createNodeForClips` (rank, lane
+  latency, container `CombiningNode`); `getOwningTrackForARA` for a container's child; host transport hook.
+  **Bridge** (`OBJEngineCore.mm`): set / remove / capture / status / notes / editor; renders (bake, targeted
+  render, export on a copy) clone the edit and STAMP the archive on the clone's clip props, the ARADOCUMENT
+  child of the copy being removed (`objStampARAArchives`); `shouldLoadPlugin` accepts a parentless ARA plugin.
+  **UI.** The picker has its OWN "ARA source" section (the FX path is untouched); the audio zone gets an ARA
+  row and locks speed / reverse / loop. The candidates are a PRE-FILTER (moduleinfo.json category, else the
+  string "ARA Main Factory" in the binary: RX, Ozone, Trash and WaveShell are false positives); the app's scan
+  never loads a VST3 binary, so the confirmation is `resolveARAPluginInfo` AT PLACEMENT, and a false positive is
+  REFUSED with a message (remembered for the session). Measured (Debug): archive ~650 KB/min of melody
+  (1.8 MB for 3 min, capture 208 ms); 40 sources load in 2.7 s, ~20 MB RSS each; `pushUndo` with 40 STALE
+  archives 1.5 s (one stale: 40 ms).
+  **Traps.** (1) Without a retouch Melodyne returns the audio: RMS or pitch cannot prove the path. The proof is
+  its SIGNATURE — a fade-out of the last ~2.4 ms at the file's native rate (44100 Hz), absent from a dry render
+  and at 48 kHz. (2) The ARA description must be set BEFORE the time-stretch mode. (3) `Clip::getTrack()` is null
+  inside a container: use the owning track. (4) The render filter must keep the ARA plugin. (5) A cut MUST call
+  `syncARASource` for the right half (a split clip had no source). (6) SourceKit "Cannot find type" in these
+  files is noise; only `xcodebuild` counts.
+
 - **Three fixes read off the hand: ⌥-click in the ruler, a fine start for automation, an export sheet that stays 460 pt**
   (4 October 2026, on `main`, **written on a Linux machine: nothing compiled, nothing run, nothing
   seen** — only `xcstrings.py check` / `orphans` and a careful re-read).

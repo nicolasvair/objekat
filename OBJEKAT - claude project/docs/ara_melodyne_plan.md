@@ -708,3 +708,69 @@ attendu sur un clip non ARA, mais on le mesure).
 Estimation brute : étapes 0–1 ≈ 0,5 j ; 2–3 ≈ 2 j ; 4–6 ≈ 1,5 j ; 7–8 ≈ 1 j ; 9 ≈ 1 j ;
 tests et docs ≈ 1 j. Le chemin critique, c'est l'étape 0 (compile ou pas), puis E/G du scénario
 (groupe et rechargement).
+
+---
+
+## 7. Journal d'exécution (7–8 octobre 2026)
+
+Branches : app `feature/ara-melodyne` (rien poussé), moteur `objekat-ara-0038` (`efff893e684`, rien poussé).
+
+| Étape | Commit app | Résultat |
+|---|---|---|
+| 0 | `059ab285` | SDK ARA 2.3.0 et drapeaux, Debug + Release : compile |
+| 1 | `6956e97c` | détection et résolution (`isARA`, `resolveARAPluginInfo`, `debug.ara_probe`) |
+| 2 | `7261e81c` | patch moteur 0038 (A + B + C + E) |
+| 3 | `9f8c3f2e` | pont `OBJEngineCore` |
+| 4 | `6fe350a4` | modèle `ARASource`, format 20, règles d'éligibilité |
+| 5–6 | `673a7b5c` | view-model et API de commande |
+| 7–8 | `c975e816` | rendus via Melodyne (bake / export sur clone), onglets, copier-coller inter-projets |
+| 9 | `e98077b2` | interface |
+| 10 | (ce commit) | documentation |
+
+`tools/scenario_ara.py` : 131 OK (sections A à O et Z). Non-régression verte (dont
+`test_cross_project_import.swift` 43/43, `test_ara_model.swift`, `test_ara_eligibility.swift`).
+
+### Écarts au plan
+
+1. **Étape 1 / Q2** : pas de jumelage AU vers VST3 (réponse de l'utilisateur). Seul le VST3 est source.
+   L'idée « marquer un VST3 candidat grâce à son jumeau AU » n'est donc pas faite.
+2. **Étape 9, le « + »** : le plan routait l'entrée ARA dans `addPlugin(objectID:available:)`. Fait
+   autrement : une section « Source ARA (Melodyne) » SÉPARÉE dans `PluginPickerPopover`, qui appelle
+   `addARASourceFromPicker` ; le chemin des FX n'est pas touché (aucun risque de régression sur le
+   « + » ordinaire). Le contrôle du « + » des instruments MIDI n'a pas la section.
+3. **Étape 9, la carte** : pas de `araSlot` ni de carte glissable ; la source est une LIGNE de la zone
+   « fichier audio » (nom = ouvre l'éditeur, roue pendant l'analyse, croix = retire), la zone gagne
+   23 pt de hauteur. Vitesse, st, bpm, reverse et boucle sont verrouillés (`synoptic.ara.timeLocked`).
+4. **Étape 9, la détection** : le scan de l'app ne charge JAMAIS un binaire VST3 (il lit l'Info.plist),
+   donc `hasARAExtension` n'y est pas connu. Choix B + C de l'architecte : pré-filtre sur fichiers
+   (`moduleinfo.json`, sinon la chaîne « ARA Main Factory » dans l'exécutable), confirmation au
+   placement par `resolveARAPluginInfo` dans le processus. Faux positifs connus : RX, Ozone, Trash,
+   WaveShell. Un faux positif est REFUSÉ avec une raison (`ara.refusal.pluginNotARA`) et mémorisé pour la
+   session (`araDisprovedIdentifiers`). Non fait : la sonde en processus enfant (option A).
+5. **Preuve du chemin Melodyne** : sans retouche, Melodyne rend l'audio tel quel, ni le RMS ni la hauteur ne
+   prouvent quoi que ce soit. La preuve est sa SIGNATURE : un fondu de sortie des ~2,4 dernières ms au
+   taux natif du fichier (44100 Hz), absent d'un rendu sec et à 48 kHz.
+6. **Bug trouvé en route** : la moitié droite d'un clip coupé n'avait pas de source (corrigé : `syncARASource`
+   explicite dans `+Cut.swift`).
+
+### Mesures (Debug, `scenario_ara.py`, sections M et O)
+
+| Signal | Analyse | Archive | base64 | Capture | Par minute |
+|---|---|---|---|---|---|
+| mélodie 30 s | 0,1 s | 325 873 o | 434 505 o | 35 ms | 651 746 o |
+| mélodie 3 min | 1,2 s | 1 791 563 o | 2 388 759 o | 208 ms | 597 188 o |
+
+| N objets | Chargement | RSS | Instances | JSON |
+|---|---|---|---|---|
+| 1 | 0,06 s | 3646 Mo | 1 | 448 Ko |
+| 10 | 0,66 s | 3795 Mo | 10 | 4,4 Mo |
+| 40 | 2,74 s | 4430 Mo | 40 | 17,9 Mo |
+
+`pushUndo` avec 40 sources : aucune périmée 1 ms ; une périmée 40 ms ; toutes périmées 1491 ms
+(40 captures). Soit ~20 Mo et ~70 ms par objet.
+
+### Reste (voir 5.4) : tout ce qui demande un écran ou une oreille
+
+L'interface (picker, ligne ARA, verrous, messages), l'éditeur Melodyne à l'écran, le ressenti, Q4,
+la fixture Q6. Choix laissés à l'utilisateur : (a) faux positif du pré-filtre = refus (actuel) ou repli
+vers un insert FX ordinaire ; (b) sonde en processus enfant (A) si le refus gêne.
