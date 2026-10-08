@@ -10,6 +10,11 @@ The sections below are updated; the technical side is `plan_spectral_editor.md` 
 questions were answered on 7 October 2026: **Q-A** and **Q-B** below (an alert Apply / Ignore / Cancel), the
 others (Q-C, Q-D, Q-E) are kept as proposed — so every **[r3, kept]** is now settled.
 
+**Revision 7 (8 October 2026), requested by the user for testing:** an expert **display mode "Concentré"** (focused,
+time-frequency reassigned spectrogram) next to the normal one. DISPLAY ONLY: the mask, the preview, the audio and the
+Validate are the normal STFT, unchanged; the setting is an Expert control, remembered, not reverted by "undo shows the
+selection". The technical side is `plan_spectral_editor.md` §14.
+
 **Revision 6 (7 October 2026), decided by the user:** (1) the spectrogram's **dynamic range** (floor and ceiling in
 dB, e.g. −120…0) is settable, for display only, remembered with the other settings, and applies to the Original,
 the Result and the Difference alike; (2) in Selection mode **undo shows the selection**: undoing an applied step
@@ -173,6 +178,10 @@ undo stack until Validate (which is ONE project undo step, as in `retouche-exter
   −120 dB, whatever the overlap.
 - **Expert settings** (behind the side bar's Expert button) **[decided]**:
   - **FFT size**: 1024 / 2048 / 4096 / 8192 / 16384 / 32768.
+    The two largest (a 0.34 s / 0.68 s window at 48 kHz, bins of 2.9 / 1.5 Hz) give the finest frequency
+    resolution and the coarsest time resolution: an edge is smeared over the window, and an object shorter
+    than the window is neither refused nor clamped — it gets a picture of a few columns (never fewer than
+    one) and still takes its gestures. Measures and limits: plan §13.
   - **Overlap factor**: an integer 2 … 10 — `k` = k FFTs of size N overlapping, each shifted by
     N/k (2 = two FFTs shifted by N/2). The hop is `round(N/k)`; the normalisation above keeps the
     reconstruction exact for every k.
@@ -181,6 +190,11 @@ undo stack until Validate (which is ONE project undo step, as in `retouche-exter
   - Changing any of them recomputes the display and the preview; the operations already made are
     KEPT, since they are stored in seconds and Hz, not in bins.
 - Display: magnitude in dB, range −100 … 0 dBFS, a perceptual colormap (magma) **[proposed]**.
+- Display mode **[r7]**: *Normal* (the STFT magnitude above, default) or *Concentré* (a reassigned spectrogram of the same
+  signal: each point of the window's energy is moved to its centre of gravity in time and frequency, so a tone is a thin line
+  and a click a thin vertical one). Its own window (256…4096, default 512), compute size (1024…32768, default 4096),
+  overlap (2…16, default 8) and threshold (−120…−40 dB under the loudest bin, default −80). Same grid, colormap and range.
+  It never draws more resolution than the signal holds: two tones closer than its window resolves stay one blur.
 - Mask smoothing: feather applied in the mask domain, before the ISTFT.
 
 ## 8. Generic surface — what the app must offer any script

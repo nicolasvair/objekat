@@ -40,6 +40,14 @@ the undo that REVEALS an applied step's selection (pending again, settings resto
 Section (j) — REVISION 6, END TO END: working on the Difference (G' = 1 - (1 - G) g; Result + Difference = Original,
 pending selection included) and the spectrogram's display range (recoloured in place, remembered, Reset).
 
+Section (k) — THE BIG WINDOWS: FFT 16384 and 32768 end to end (the picture's width follows the hop, a -24 dB rectangle
+is -24 dB, the choice is remembered, Reset gives back 2048) and an object shorter than the window (coarse picture,
+no refusal, the rectangle still works).
+
+Section (l) — REVISION 7, THE FOCUSED DISPLAY: the reassigned spectrogram chosen in the Expert section (display only): the
+three pictures on the focused grid, a tone drawn as a line, the status "Focused (display only)", the audio untouched (a
+-24 dB rectangle is -24 dB), the compute size lifted to the window, remembered, Reset.
+
 Section (f) — NO WINDOW ON THE HEADLESS PID: a canvas is opened, given an image, a layer, audio and
 an op, played, and closed, and `CGWindowListCopyWindowInfo` on the app's pid stays empty (opening a
 window is the window layer's only side effect, and `--headless` forbids it).
@@ -2391,13 +2399,272 @@ def section_j(c):
 
 
 # ---------------------------------------------------------------------------------------------
+# k. The two largest FFT sizes (16384, 32768), end to end
+# ---------------------------------------------------------------------------------------------
+
+def section_k(c):
+    """THE BIG WINDOWS, END TO END (the real script): 16384 and 32768 chosen in the Expert section — the picture's
+    width follows the hop (one column per hop), a rectangle at -24 dB is -24 dB on the result, the choice is remembered
+    by the next session, and an object SHORTER than the window (0.4 s against a 0.68 s window) opens, draws a coarse
+    picture (never fewer than one column) and takes its rectangle all the same: no refusal, no clamp."""
+    if not venv_ok():
+        print("skip  k: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
+        return
+    ROOT = tmproot("k")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    TONES = {300.0: 0.2, 3000.0: 0.2}
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tone.wav"), T, RATE, TONES, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tone"})["id"]
+
+    def hop(n, k=4):
+        return int(math.floor(n / float(k) + 0.5))
+
+    def audio(st, slot):
+        return read_wav_any(st["transport"]["slots"][slot])[3][0]
+
+    def lvl(x, ref, hz, a=0.5, b=1.5):
+        return goertzel_db(x, RATE, hz, a, b) - goertzel_db(ref, RATE, hz, a, b)
+
+    key = "spectral-editor.scenario.k"
+    sc = Script(c, oid, CACHE, key=key)
+    try:
+        if sc.find_canvas() is None:
+            check("k: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("k: the canvas is ready, at the default 2048 / 4", st is not None and st["values"]["fft_size"] == "2048", st and st["values"])
+        if st is None:
+            return
+        orig = audio(st, "original")
+        for n in (16384, 32768):
+            want_w = int(T * RATE) // hop(n) + 1
+            sc.hand(values={"fft_size": str(n), "overlap": 4})
+            st = sc.wait_for(lambda s: s["values"]["fft_size"] == str(n) and s["image"]["width"] == want_w
+                             and Script.pictures_synced(s), 90)
+            check("k: FFT %d: the picture is redrawn, %d columns (one per hop of %d) by 1024 rows" % (n, want_w, hop(n)),
+                  st is not None, st and (st["values"]["fft_size"], st["image"]["width"], st["image"]["height"]))
+            if st is None:
+                return
+            check("k: FFT %d: no step yet, the result is the original (null, within 0.01 dB at 3 kHz and 300 Hz)" % n,
+                  abs(lvl(audio(st, "result"), orig, 3000)) < 0.01 and abs(lvl(audio(st, "result"), orig, 300)) < 0.01)
+            sc.hand(values={"gain": -24})
+            sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+            st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 1 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: FFT %d: the rectangle settles" % n, False)
+                return
+            res = audio(st, "result")
+            check("k: FFT %d: a rectangle at -24 dB: 3 kHz at -24 (+-0.5), 300 Hz untouched (+-0.2)" % n,
+                  abs(lvl(res, orig, 3000) + 24) <= 0.5 and abs(lvl(res, orig, 300)) <= 0.2, (lvl(res, orig, 3000), lvl(res, orig, 300)))
+            sc.hand(undo=True)
+            st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 1 and s["history"]["cursor"] == 0 and Script.pictures_synced(s), 90)
+            check("k: FFT %d: undo gives the original back" % n, st is not None)
+            if st is None:
+                return
+        sc.hand(press="cancel")
+        sc.finish(60)
+    finally:
+        sc.abort()
+
+    # ---- the next session remembers 32768 (the last choice), and opens on it -----------------------------------
+    sc2 = Script(c, oid, CACHE, key=key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        check("k: remember: the next session opens", st2 is not None)
+        if st2 is not None:
+            want_w = int(T * RATE) // hop(32768) + 1
+            check("k: remember: FFT 32768 comes back, and the FIRST picture is already drawn with it (%d columns)" % want_w,
+                  st2["values"]["fft_size"] == "32768" and st2["image"]["width"] == want_w, (st2["values"]["fft_size"], st2["image"]["width"]))
+            sc2.hand(press="reset")
+            check("k: remember: Reset gives back 2048 (the default is unchanged)", sc2.get()["values"]["fft_size"] == "2048")
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+
+    # ---- an object SHORTER than the window: not refused, not clamped ---------------------------------------------
+    TS = 0.4
+    fresh_saved_project(c, ROOT, "k2")
+    short = make_tones_wav(os.path.join(ROOT, "short.wav"), TS, RATE, TONES, 24)
+    sid = c.send("object.add", {"path": short, "lane": 0, "start": 0.0, "name": "short"})["id"]
+    sc3 = Script(c, sid, os.path.join(ROOT, "cache-short"), key=key + ".short")
+    try:
+        sc3.find_canvas()
+        st = sc3.ready()
+        check("k: short object: opens at 2048", st is not None)
+        if st is None:
+            return
+        orig = audio(st, "original")
+        for n in (16384, 32768):
+            want_w = max(1, int(TS * RATE) // hop(n) + 1)
+            sc3.hand(values={"fft_size": str(n), "overlap": 4, "gain": -24})
+            st = sc3.wait_for(lambda s: s["values"]["fft_size"] == str(n) and s["image"]["width"] == want_w
+                              and Script.pictures_synced(s), 90)
+            check("k: short object (%.1f s) at FFT %d (a %.2f s window): a coarse picture of %d column(s), no refusal"
+                  % (TS, n, n / float(RATE), want_w), st is not None, st and (st["values"]["fft_size"], st["image"]["width"]))
+            if st is None:
+                return
+            sc3.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": TS, "y0": 2000, "y1": 4500})
+            st = sc3.wait_for(lambda s: len(s["history"]["entries"]) == 1 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: short object at FFT %d: the rectangle settles" % n, False)
+                return
+            res = audio(st, "result")
+            check("k: short object at FFT %d: the rectangle still gives -24 dB at 3 kHz (+-1), 300 Hz untouched (+-0.3)" % n,
+                  abs(lvl(res, orig, 3000, 0.1, 0.3) + 24) <= 1.0 and abs(lvl(res, orig, 300, 0.1, 0.3)) <= 0.3,
+                  (lvl(res, orig, 3000, 0.1, 0.3), lvl(res, orig, 300, 0.1, 0.3)))
+            sc3.hand(undo=True)
+            st = sc3.wait_for(lambda s: s["history"]["cursor"] == 0 and Script.pictures_synced(s), 90)
+            if st is None:
+                check("k: short object at FFT %d: undo settles" % n, False)
+                return
+        sc3.hand(press="cancel")
+        sc3.finish(60)
+    finally:
+        sc3.abort()
+
+
+# ---------------------------------------------------------------------------------------------
+# l. The focused display (revision 7), end to end
+# ---------------------------------------------------------------------------------------------
+
+def section_l(c):
+    """THE FOCUSED (REASSIGNED) DISPLAY, END TO END (the real script): chosen in the Expert section, the three pictures are
+    drawn on the focused grid (one column per hop of the DISPLAY analysis, 1024 rows) and a 440 Hz tone is a line where the
+    normal picture shows its lobe; the status says "Focused (display only)"; the PROCESSING stays the normal FFT (a rectangle at
+    -24 dB is -24 dB on the audio and visible in the focused picture); the compute size is lifted to the window; the choice is
+    remembered by the next session; Reset gives Normal back."""
+    if not venv_ok():
+        print("skip  l: the script's venv is missing (run tools/scripts/spectral-editor/install.sh)")
+        return
+    ROOT = tmproot("l")
+    CACHE = os.path.join(ROOT, "cache")
+    RATE, T = 48000, 2.0
+    fresh_saved_project(c, ROOT)
+    wav = make_tones_wav(os.path.join(ROOT, "tones.wav"), T, RATE, {440.0: 0.25, 3000.0: 0.25}, 24)
+    oid = c.send("object.add", {"path": wav, "lane": 0, "start": 0.0, "name": "tones"})["id"]
+
+    def hop(n, k):
+        return int(math.floor(n / float(k) + 0.5))
+
+    def width(n, k):
+        return int(T * RATE) // hop(n, k) + 1
+
+    def audio(st, slot):
+        return read_wav_any(st["transport"]["slots"][slot])[3][0]
+
+    key = "spectral-editor.scenario.l"
+    sc = Script(c, oid, CACHE, key=key)
+    try:
+        if sc.find_canvas() is None:
+            check("l: the script opens a canvas", False, sc.proc.poll())
+            return
+        st = sc.ready()
+        check("l: the canvas opens in the Normal display, the focused settings at their defaults",
+              st is not None and st["values"].get("display_mode") == "normal" and st["values"].get("focus_window") == "512"
+              and st["values"].get("focus_pad") == "4096" and st["values"].get("focus_overlap") == 8
+              and st["values"].get("focus_threshold") == -80, st and st["values"])
+        if st is None:
+            return
+        check("l: Normal: the status does not mention the focused display", "Focused" not in st["status"], st["status"])
+        world, w0 = st["world"], st["image"]["width"]
+        n440, n470 = image_db(st["image"]["path"], world, 1.0, 440), image_db(st["image"]["path"], world, 1.0, 470)
+        check("l: Normal 2048: the 440 Hz lobe is wide: 470 Hz is within 25 dB (%.1f vs %.1f)" % (n470, n440), n470 - n440 > -25.0, (n440, n470))
+        orig = audio(st, "original")
+
+        # ---- the focused display (defaults: window 512, compute size 4096, overlap 8, threshold -80) ----------------
+        sc.hand(values={"display_mode": "focused"})
+        want_w = width(512, 8)
+        st = sc.wait_for(lambda s: s["values"]["display_mode"] == "focused" and s["image"]["width"] == want_w
+                         and Script.pictures_synced(s) and "Focused (display only)" in s["status"], 120)
+        check("l: focused: the pictures are redrawn on the focused grid (%d columns = one per hop of 64) by 1024 rows, "
+              "and the status says Focused (display only)" % want_w, st is not None,
+              st and (st["image"]["width"], st["image"]["height"], st["status"]))
+        if st is None:
+            return
+        world = st["world"]
+        f440, f470 = image_db(st["image"]["path"], world, 1.0, 440), image_db(st["image"]["path"], world, 1.0, 470)
+        check("l: focused: the 440 Hz tone is a line at about -12 dB (%.1f), 470 Hz is at least 45 dB under it (%.1f)" % (f440, f470),
+              -16.0 <= f440 <= -11.0 and f470 - f440 < -45.0, (f440, f470))
+        slots = st["image"]["slots"]
+        check("l: focused: the Original's and the Difference's pictures are there too (all three redrawn together)",
+              set(slots) == {"original", "delta"} and all(slots[k].get("path") for k in slots), slots)
+        f3k0 = image_db(st["image"]["path"], world, 1.0, 3000)
+        check("l: focused: the processing is untouched by the display: the result is still the original (null, 0.01 dB)",
+              abs(goertzel_db(audio(st, "result"), RATE, 3000) - goertzel_db(orig, RATE, 3000)) < 0.01)
+
+        # ---- a step: the audio is the normal FFT's, the focused picture shows it ---------------------------------
+        sc.hand(values={"gain": -24})
+        sc.hand(tool="rect", op={"kind": "rect", "x0": 0, "x1": T, "y0": 2000, "y1": 4500})
+        st = sc.wait_for(lambda s: len(s["history"]["entries"]) == 1 and Script.pictures_synced(s), 120)
+        check("l: focused: a rectangle settles (picture, audio, difference)", st is not None)
+        if st is None:
+            return
+        res = audio(st, "result")
+        d3 = goertzel_db(res, RATE, 3000) - goertzel_db(orig, RATE, 3000)
+        d440 = goertzel_db(res, RATE, 440) - goertzel_db(orig, RATE, 440)
+        check("l: focused: the audio is the normal processing: 3 kHz at -24 dB (+-0.5), 440 Hz untouched (+-0.2)",
+              abs(d3 + 24) <= 0.5 and abs(d440) <= 0.2, (d3, d440))
+        f3k = image_db(st["image"]["path"], world, 1.0, 3000)
+        check("l: focused: the picture shows it: 3 kHz down by 24 dB (+-3, %.1f -> %.1f)" % (f3k0, f3k),
+              abs((f3k - f3k0) + 24) <= 3.0, (f3k0, f3k))
+        check("l: focused: the status keeps both: the step count and the display",
+              "1 step" in st["status"] and "Focused (display only)" in st["status"], st["status"])
+        sc.hand(undo=True)
+        st = sc.wait_for(lambda s: s["history"]["cursor"] == 0 and Script.pictures_synced(s), 120)
+        check("l: focused: undo gives the original picture back (3 kHz as at the start, +-3 dB)",
+              st is not None and abs(image_db(st["image"]["path"], world, 1.0, 3000) - f3k0) <= 3.0)
+        if st is None:
+            return
+
+        # ---- the compute size is lifted to the window; another window and overlap -----------------------------------
+        sc.hand(values={"focus_window": "2048", "focus_pad": "1024", "focus_overlap": 4})
+        want_w = width(2048, 4)
+        st = sc.wait_for(lambda s: s["values"]["focus_window"] == "2048" and s["image"]["width"] == want_w
+                         and Script.pictures_synced(s), 120)
+        check("l: focused 2048 / compute size 1024 (lifted to 2048) / overlap 4: %d columns, no refusal" % want_w, st is not None,
+              st and st["image"]["width"])
+        if st is None:
+            return
+        sc.hand(press="cancel")
+        sc.finish(60)
+    finally:
+        sc.abort()
+
+    # ---- the next session remembers the focused display, and its first picture is already drawn with it -------------------
+    sc2 = Script(c, oid, CACHE, key=key)
+    try:
+        sc2.find_canvas()
+        st2 = sc2.ready()
+        want_w = width(2048, 4)
+        check("l: remember: the next session opens focused (window 2048, overlap 4), the FIRST picture drawn with it (%d columns)" % want_w,
+              st2 is not None and st2["values"]["display_mode"] == "focused" and st2["values"]["focus_window"] == "2048"
+              and st2["image"]["width"] == want_w and "Focused (display only)" in st2["status"],
+              st2 and (st2["values"], st2["image"]["width"], st2["status"]))
+        if st2 is not None:
+            sc2.hand(press="reset")
+            st2 = sc2.wait_for(lambda s: s["values"]["display_mode"] == "normal" and s["image"]["width"] == width(2048, 4) and
+                               "Focused" not in s["status"] and Script.pictures_synced(s), 120)
+            check("l: Reset gives the Normal display back (the 2048 / 4 picture and its status)", st2 is not None,
+                  st2 and (st2["values"]["display_mode"], st2["image"]["width"], st2["status"]))
+            sc2.hand(press="cancel")
+        sc2.finish(60)
+    finally:
+        sc2.abort()
+
+
+# ---------------------------------------------------------------------------------------------
 
 try:
     with ObjekatClient(SOCK, timeout=180) as c:
         c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-        only = os.environ.get("SECTIONS", "abcdefghij")
+        only = os.environ.get("SECTIONS", "abcdefghijkl")
         for name, fn in (("a", section_a), ("b", section_b), ("c", section_c), ("d", section_d), ("e", section_e),
-                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j)):
+                         ("f", section_f), ("g", section_g), ("h", section_h), ("i", section_i), ("j", section_j),
+                         ("k", section_k), ("l", section_l)):
             if name in only:
                 fn(c)
 finally:

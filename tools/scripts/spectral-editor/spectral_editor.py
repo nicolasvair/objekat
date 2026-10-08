@@ -49,6 +49,7 @@ import decide  # noqa: E402
 import dsp  # noqa: E402
 import image  # noqa: E402
 import mask  # noqa: E402
+import reassign  # noqa: E402
 import selection  # noqa: E402
 import wavio  # noqa: E402
 
@@ -249,6 +250,25 @@ def canvas_controls():
             decide.DB_FLOOR[0], decide.DB_FLOOR[1], 1, decide.DB_FLOOR[2], "dB", advanced=True),
         num("db_ceiling", tr("Plafond du spectrogramme", "Spectrogram ceiling", "Techo del espectrograma"),
             decide.DB_CEIL[0], decide.DB_CEIL[1], 1, decide.DB_CEIL[2], "dB", advanced=True),
+        # Revision 7, for testing — DISPLAY ONLY: the pictures drawn as a reassigned ("focused") spectrogram. The mask and
+        # the STFT / ISTFT that make the sound stay the plain FFT of "FFT size" / "Overlap" above, whatever is chosen here.
+        {"id": "sec_focus", "kind": "section", "advanced": True,
+         "label": tr("Concentré (affichage seul)", "Focused (display only)", "Concentrado (solo visualización)")},
+        {"id": "display_mode", "kind": "choice", "advanced": True,
+         "label": tr("Mode d'affichage", "Display mode", "Modo de visualización"), "value": decide.DISPLAY_NORMAL,
+         "options": [{"id": decide.DISPLAY_NORMAL, "label": tr("Normal", "Normal", "Normal")},
+                     {"id": decide.DISPLAY_FOCUSED, "label": tr("Concentré", "Focused", "Concentrado")}]},
+        {"id": "focus_window", "kind": "choice", "advanced": True,
+         "label": tr("Fenêtre d'analyse (Concentré)", "Analysis window (Focused)", "Ventana de análisis (Concentrado)"),
+         "value": str(decide.FOCUS_WINDOW_DEFAULT), "options": [{"id": str(n), "label": str(n)} for n in decide.FOCUS_WINDOWS]},
+        {"id": "focus_pad", "kind": "choice", "advanced": True,
+         "label": tr("Taille de calcul (Concentré)", "Compute size (Focused)", "Tamaño de cálculo (Concentrado)"),
+         "value": str(decide.FOCUS_PAD_DEFAULT), "options": [{"id": str(n), "label": str(n)} for n in decide.FOCUS_PADS]},
+        num("focus_overlap", tr("Recouvrement d'affichage (Concentré)", "Display overlap (Focused)",
+                                "Solapamiento de visualización (Concentrado)"),
+            decide.FOCUS_OVERLAP[0], decide.FOCUS_OVERLAP[1], 1, decide.FOCUS_OVERLAP[2], "", advanced=True),
+        num("focus_threshold", tr("Seuil (Concentré)", "Threshold (Focused)", "Umbral (Concentrado)"),
+            decide.FOCUS_THRESHOLD[0], decide.FOCUS_THRESHOLD[1], 1, decide.FOCUS_THRESHOLD[2], "dB", advanced=True),
     ]
 
 
@@ -321,6 +341,10 @@ class Editor:
         self.db = {"base": None, "original": None, "delta": None}
         self.shown = {"base": None, "original": None, "delta": None}
         self.pic_rev = {"base": 0, "delta": 0}
+        # Revision 7: the FOCUSED display (None = Normal, else the reassignment's (window, pad, overlap, threshold)) the pictures
+        # are to be drawn with, and the one they were drawn with. DISPLAY ONLY: the audio never reads it.
+        self.focus = None
+        self.focus_drawn = None
 
     # -- the app ---------------------------------------------------------------------------
 
@@ -333,6 +357,8 @@ class Editor:
         if pending:
             text += tr(" — sélection : %d geste(s)", " — selection: %d gesture(s)",
                        " — selección: %d gesto(s)") % pending
+        if self.focus is not None:   # the picture is not the transform that makes the sound: say so
+            text += " — " + tr("Concentré (affichage seul)", "Focused (display only)", "Concentrado (solo visualización)")
         return "%s — %s" % (self.warn_text, text) if self.warn_text else text
 
     def remember_file(self, kind, path):
@@ -348,6 +374,23 @@ class Editor:
 
     # -- the base image -------------------------------------------------------------------
 
+    def focus_tag(self):
+        """What the pictures' cache keys add to (n, k): nothing in Normal (the keys keep their old shape), the focus otherwise."""
+        return () if self.focus is None else (self.focus,)
+
+    def picture_db(self, signal, n, k):
+        """The levels of a picture of `signal`: the plain STFT of (n, k), or the focused (reassigned) display. Same grid."""
+        if self.focus is None:
+            return image.build_db(signal, self.sr, n, k)
+        window, pad, overlap, threshold = self.focus
+        return reassign.build_db(signal, self.sr, window, pad, overlap, threshold)
+
+    def blank_picture_db(self, length, n, k):
+        """The levels of silence, shaped like `picture_db`'s."""
+        if self.focus is None:
+            return image.blank_db(length, n, k)
+        return reassign.blank_db(length, self.focus[0], self.focus[2])
+
     def send_base(self, y, n, k, steps, rev):
         """The spectrogram of `y` (the result of the COMMITTED steps; the original when there are none)
         as the base image — the RESULT's picture — stamped with the history rev so the app lets the raw
@@ -359,18 +402,18 @@ class Editor:
         self.seq += 1
         path = os.path.join(self.work, "base-%d.objkcnv" % self.seq)
         floor, ceil = self.range
-        base_db = image.build_db(y, self.sr, n, k).astype(np.float32)
+        base_db = self.picture_db(y, n, k).astype(np.float32)
         image.write_db_image(path, base_db, floor, ceil)
         self.app.send("script.canvas.set_image", {
             "canvas_id": self.cid, "path": path, "x": self.world["x"], "y": self.world["y"],
             "value_unit": "dB", "history_rev": rev})
         self.remember_file("base", path)
         self.db["base"], self.shown["base"], self.pic_rev["base"] = base_db, self.range, rev
-        if self.original_fft != (n, k):
+        if self.original_fft != (n, k) + self.focus_tag():
             self.seq += 1
             opath = os.path.join(self.work, "original-%d.objkcnv" % self.seq)
             if steps:
-                orig_db = image.build_db(self.x, self.sr, n, k).astype(np.float32)
+                orig_db = self.picture_db(self.x, n, k).astype(np.float32)
                 image.write_db_image(opath, orig_db, floor, ceil)
             else:
                 orig_db = base_db
@@ -378,8 +421,9 @@ class Editor:
             self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "original", "path": opath})
             self.remember_file("original", opath)
             self.db["original"], self.shown["original"] = orig_db, self.range
-            self.original_fft = (n, k)
+            self.original_fft = (n, k) + self.focus_tag()
         self.fft = (n, k)
+        self.focus_drawn = self.focus
         self.image_steps = steps
         # The world is constant for a session, so the app keeps the layers (the selection layer stays).
 
@@ -389,15 +433,15 @@ class Editor:
         picture and the audio have settled (it is the one the hand needs last), and only when the
         committed steps or the analysis changed: a live tweak of a pending selection never redraws it.
         With no step it is silence, a blank picture that costs no transform."""
-        key = (steps, n, k)
+        key = (steps, n, k) + self.focus_tag()
         if self.delta_key == key:
             return
         self.seq += 1
         path = os.path.join(self.work, "delta-%d.objkcnv" % self.seq)
         if steps:
-            delta_db = image.build_db(self.x - self.committed_result(steps, n, k), self.sr, n, k).astype(np.float32)
+            delta_db = self.picture_db(self.x - self.committed_result(steps, n, k), n, k).astype(np.float32)
         else:
-            delta_db = image.blank_db(self.x.shape[0], n, k)
+            delta_db = self.blank_picture_db(self.x.shape[0], n, k)
         image.write_db_image(path, delta_db, *self.range)
         self.app.send("script.canvas.set_image", {"canvas_id": self.cid, "slot": "delta", "path": path,
                                                   "history_rev": rev})
@@ -510,6 +554,7 @@ class Editor:
         n, k = analysis_settings(values)
         analysis_changed = (n, k) != self.fft
         self.range = decide.display_range(values)   # the pictures written from here on use it; `recolour` catches up the others
+        self.focus = decide.focus_settings(values)   # likewise for the display mode (the audio does not read it)
         # What a change of the side bar's values makes stale while a selection is pending.
         dirty = decide.preview_dirty(self.prev_values, values, pending)
         if "selection" in dirty:
@@ -518,11 +563,12 @@ class Editor:
             self.audio_key = None
         fms, fst = mask.step_values(live_values(values))[1:] if pending else (None, None)
         sel_stale = (self.sel_key != (hist["rev"], fms, fst)) if drafts else (self.sel_key is not None)
-        image_stale = analysis_changed or self.image_steps is None or steps != self.image_steps
+        image_stale = (analysis_changed or self.focus != self.focus_drawn or self.image_steps is None
+                       or steps != self.image_steps)
         key = self.audio_key_for(hist, pending, n, k, values)
         audio_stale = analysis_changed or key != self.audio_key
         self.prev_values = values
-        delta_stale = self.delta_key != (steps, n, k)
+        delta_stale = self.delta_key != (steps, n, k) + self.focus_tag()
         if not (sel_stale or image_stale or audio_stale):
             if delta_stale:
                 self.send_delta_image(steps, n, k, hist["rev"])
@@ -549,6 +595,7 @@ class Editor:
         st = self.app.send("script.canvas.get", {"canvas_id": self.cid})
         n, k = analysis_settings(st.get("values") or {})
         self.range = decide.display_range(st.get("values"))   # the remembered range, from the first picture
+        self.focus = decide.focus_settings(st.get("values"))   # and the remembered display mode
         self.send_base(self.x, n, k, [], 0)
         self.result = self.x
         # The preview opens on the RESULT (`listen`), the slot the hand is here to judge. No gesture

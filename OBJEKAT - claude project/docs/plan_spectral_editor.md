@@ -1246,3 +1246,99 @@ one selected at a time (default −12). The display range stays in Expert as it 
 - **Tests.** `test_script_control_presets.swift` (new, 31), `test_editor.py` / `test_decide.py` / `test_difference.py`
   (the control, the click, every button on the Difference), scenario (b) (the contract, refusals, remember), (c) and (g)
   (the real script: snapping, every button heard live, remembered value snapped).
+
+---
+
+## 13. The two largest FFT sizes (8 October 2026): audit, no code change
+
+Asked: "add 16384 and 32768 to the FFT size choices". **They were already there** since the first version
+(`FFT_SIZES = (1024, 2048, 4096, 8192, 16384, 32768)`, the spec's §7 lists them, the Python identity / null / −24 dB
+tests of `test_dsp.py` and `test_overlap.py` already loop over all six). So nothing was added; this section records
+the audit of everything that leans on the size at 16384 and 32768, the tests that now pin it (`test_bigfft.py`,
+scenario section (k)), and the measures.
+
+- **Hop / overlap.** `dsp.hop_for(n, k) = floor(n/k + 0.5)`: 16384 → 8192 … 1638 for k = 2 … 10, 32768 → 16384 … 3277.
+  Null test (mask = 1) ≤ −90 dB in float32 and −300 dB in float64 at both sizes with every overlap (already in
+  `test_overlap.py`), −24 dB rectangle within 0.1 dB at both sizes with every overlap (idem).
+- **Picture.** Always 1024 rows; columns = `min(L // H + 1, 8192)`. A bigger window means FEWER columns (120 s at k = 4:
+  2048 → 8192 (capped), 16384 → 1407, 32768 → 704), so the caps (width ≤ 16384, height ≤ 4096, w × h ≤ 32 M) are
+  never closer than at 2048. At the 600 s ceiling and k = 10 the width stays ≤ 8192 for every size.
+- **Log axis (20 Hz … sr/2).** Bins are 2.93 Hz (16384) and 1.46 Hz (32768) at 48 kHz, so the first bin ≥ 20 Hz is the
+  7th / 14th (20.5 Hz) and 303 / 210 of the 1024 rows are filled by interpolation (597 at 2048: the finer the bins, the fewer): rows still
+  partition exactly into "a bin falls inside" and "interpolate", indices in range, for 8 … 192 kHz. The bins below 20 Hz
+  are not drawn; a rectangle that touches the bottom edge is open on that side and does act on them.
+- **Frame-centre column times.** Frame j is centred at j·H/sr: a click lands in the column of its time at both sizes and
+  every overlap (already for k = 2 at 32768; now k = 2, 3, 4, 7, 10 at both).
+- **Short objects.** The transform zero-pads (centred frames), so an object shorter than the window works: null test and
+  −24 dB rectangle hold down to 1 sample, the picture has `L // H + 1` ≥ 1 column(s) (0.4 s at 32768 / k = 4: 3 columns;
+  under 0.17 s: 1). **Decision (the smallest one): no refusal and no clamp** — the audio is right, the picture is coarse,
+  and the size is the hand's to change. No message is shown either; if one is wanted, the place is
+  `Editor.status` (e.g. "window longer than the object"). Time resolution is what it is: an edge is smeared over the
+  window (0.68 s at 32768), `test_overlap.py`'s edge test is at 2048 only on purpose.
+- **Persistence.** The choice is the string of the size (`"32768"`), remembered by the app like any `choice`; every size an
+  older version offered is still in the list, an unknown value falls back on 2048 (`analysis_settings`), Reset gives
+  2048, the default is unchanged.
+- **Measures** (Python 3.12 / numpy in the venv, Apple silicon, 48 kHz stereo noise, k = 4). Offline, the script's own
+  path (`image.build_db` + file; `dsp.process` with one rectangle step) and peak RSS:
+
+  | | image | process | peak RSS |
+  |---|---|---|---|
+  | 30 s, 2048 | 0.19 s | 0.18 s | 0.38 GB |
+  | 30 s, 16384 | 0.10 s | 0.21 s | 0.58 GB |
+  | 30 s, 32768 | 0.09 s | 0.21 s | 0.51 GB |
+  | 120 s, 2048 | 0.60 s | 0.71 s | 0.60 GB |
+  | 120 s, 16384 | 0.36 s | 0.80 s | 0.78 GB |
+  | 120 s, 32768 | 0.37 s | 0.88 s | 1.24 GB |
+
+  120 s at 32768 with k = 2 / 10: image 0.20 / 0.88 s, process 0.54 / 1.82 s, 1.07 / 1.32 GB. Memory grows with the
+  window because the blocks hold 256 frames of N samples each (`block=256`): ~0.5 GB more than at 2048 for 120 s stereo.
+  Through the real app (Debug build, headless, 30 s / 120 s stereo noise, from the call to the settled picture + audio):
+
+  | | 30 s: 2048 / 16384 / 32768 | 120 s: 2048 / 16384 / 32768 |
+  |---|---|---|
+  | change of FFT size (picture + audio) | — / 0.13 / 0.15 s | — / 0.44 / 0.44 s |
+  | Instant gesture, 2nd step | 0.59 / 0.41 / 0.40 s | 2.27 / 1.60 / 1.68 s |
+  | live gain tweak (Selection) | 0.22–0.25 / 0.24–0.27 / 0.26–0.30 s | 0.85–0.89 / 0.89–0.91 / 0.94–0.95 s |
+  | Apply | 0.44 / 0.37 / 0.36 s | 1.54 / 1.25 / 1.25 s |
+
+  The big sizes are as fast as 2048 (fewer frames, fewer columns), except the live tweak at 120 s (≈ +10 %), and the
+  first opening at 120 s is dominated by the app's render (19 s whatever the size).
+- **Not done, on purpose.** `block = 256` could shrink with N to bound the memory (e.g. `max(16, 2**22 // N)`): not needed
+  below 1.3 GB at the 120 s warning, to decide if 600 s objects at 32768 are to be used (≈ 5 × more).
+- **Tests.** `test_bigfft.py` (new, 15: the choice and its fallbacks, short objects, caps, axis, click times), scenario
+  section (k) (the real script at 16384 and 32768: width, null, −24 dB, undo, remembered, Reset, a 0.4 s object).
+
+## 14. Revision 7 (8 October 2026): the focused display ("Concentré")
+
+Asked, for testing: an expert display mode, a **time-frequency reassigned spectrogram**, to see what a long window cannot
+separate without its time smear. **Display only**: `dsp.py` (the mask and the ISTFT), the audio, the preview and Validate
+do not read any of these settings (pinned by a test: changing the mode never calls `dsp.process`).
+
+- **Controls** (Expert, all `advanced`, remembered by the app like the others): *Mode d'affichage* Normal | Concentré
+  (default Normal); *Fenêtre d'analyse* 256…4096 (512); *Taille de calcul* 1024…32768 (4096; zero-padded FFT, lifted to the
+  window); *Recouvrement* 2…16 (8); *Seuil* −120…−40 dB under the loudest bin (−80; below it a bin is not reassigned).
+  `decide.focus_settings(values)` clamps and returns `None` in Normal. The status line adds " — Concentré (affichage seul)".
+- **Method** (`reassign.py`, numpy only, Auger–Flandrin): three STFTs of the same frames with the Hann window *h*, *t·h*
+  and *dh/dt*. With Δt = Re(X_th·X_h*) / |X_h|² (samples) and Δω = Im(X_dh·X_h*) / |X_h|² (rad/sample, a common phase
+  factor cancels): f̂ = (k/pad − Δω/2π)·sr, t̂ = j·hop + Δt. |X_h|² is accumulated at (t̂, f̂) on THE SAME grid as
+  `image.build_db` (log-frequency rows, same columns) by bilinear 4-cell splatting (`np.bincount` on a padded-border
+  accumulator), then dB, the existing colormap and range; stereo = max of the channels' accumulators. A bin whose |Δt| is
+  over half a window, or that lands outside the signal / 20 Hz…Nyquist, is dropped. 0 dB = a full-scale sine (calibrated:
+  a line astride two rows reads up to −3 dB on each).
+- **Refresh**: the Original, Result and Difference pictures are all drawn with the current mode, after every step, undo,
+  redo; a display change redraws them but never recomputes the audio. The cache keys are unchanged in Normal; in Concentré
+  `(focus,)` is appended.
+- **Physics, not bugs** (documented in `reassign.py` and pinned by tests): (1) two tones closer than the window resolves
+  (55 / 61.7 Hz at window 512) give ONE blur with no valley, reassignment does not invent resolution; only a longer window
+  separates them (Normal 32768: valley 0.11, 16384: 0.82); (2) below ~2 bins of the window (190 Hz at 512) the
+  negative-frequency image of a real tone lies inside the main lobe and smears the line (55 Hz at 512: smeared over
+  20…140 Hz; clean at 2048). On a kick (decaying sweep) the sweep is drawn as a thin falling line and the click as a thin
+  vertical one; the steady low tones stay a speckled band at window 512.
+- **Cost**: frames per column capped (1; hop never above window/2), blocks spread over `min(8, cpu)` threads, result
+  deterministic. 512 / 4096 / 8, stereo, offline (Apple silicon): 30 s 0.8–1.1 s, 120 s 1.9–2.5 s (white noise = the
+  worst case, every bin above the threshold; compute size 2048: 1.6 s, 1024: 1.1 s). Normal 2048 / 4: 0.2 / 0.7 s.
+- **Tests**: `test_reassign.py` (16: 440 Hz within ±2 Hz and ≤ 5 rows lit vs ≥ 40 in Normal, level calibration, size
+  independence, chirp, click within 1 column, the 55 / 61.7 non-resolution, low-tone limit, finite values, grid and column
+  cap, stereo, threshold, thread independence), `test_decide.py` (focus_settings), `test_editor.py` (controls, redraw
+  without audio, status, a step, audio independent of the display), scenario section (l) (the real script: grid, line,
+  status, −24 dB rectangle still −24 dB on the audio, compute size lifted, remembered, Reset).
