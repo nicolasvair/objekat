@@ -748,8 +748,12 @@ Branches : app `feature/ara-melodyne` (rien poussé), moteur `objekat-ara-0038` 
    WaveShell. Un faux positif est REFUSÉ avec une raison (`ara.refusal.pluginNotARA`) et mémorisé pour la
    session (`araDisprovedIdentifiers`). Non fait : la sonde en processus enfant (option A).
 5. **Preuve du chemin Melodyne** : sans retouche, Melodyne rend l'audio tel quel, ni le RMS ni la hauteur ne
-   prouvent quoi que ce soit. La preuve est sa SIGNATURE : un fondu de sortie des ~2,4 dernières ms au
-   taux natif du fichier (44100 Hz), absent d'un rendu sec et à 48 kHz.
+   prouvent quoi que ce soit. La preuve est sa SIGNATURE : un fondu de sortie des ~2,4 dernières ms de la
+   source, qui n'existe QUE si Melodyne rend à une fréquence DIFFÉRENTE de celle du fichier (il rééchantillonne ;
+   à la fréquence du fichier il est l'identité : 44,1×44,1 et 48×48 sans fondu, 44,1×48, 48×44,1, 96×44,1/48
+   avec). Un rendu sec n'en a jamais. (Corrigé le 8 octobre soir : le journal disait « au taux natif 44100 Hz »,
+   ce qui était faux — le fichier de test était à 48 kHz.) Le bake se rend à la fréquence de la CARTE (`app.info.
+   sample_rate`) : la section J du scénario génère donc un fichier source de fréquence ≠ carte.
 6. **Bug trouvé en route** : la moitié droite d'un clip coupé n'avait pas de source (corrigé : `syncARASource`
    explicite dans `+Cut.swift`).
 
