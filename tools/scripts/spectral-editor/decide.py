@@ -158,3 +158,44 @@ def display_range(values):
     floor = read("db_floor", DB_FLOOR)
     ceil = read("db_ceiling", DB_CEIL)
     return floor, max(ceil, floor + DB_MIN_GAP)
+
+
+# --- the FOCUSED display (revision 7) --------------------------------------------------------------
+# DISPLAY ONLY, for testing: the pictures are drawn as a time-frequency REASSIGNED spectrogram (`reassign.py`)
+# instead of the plain STFT. The processing (mask, STFT / ISTFT) never reads any of these.
+DISPLAY_NORMAL = "normal"
+DISPLAY_FOCUSED = "focused"
+DISPLAY_MODES = (DISPLAY_NORMAL, DISPLAY_FOCUSED)
+FOCUS_WINDOWS = (256, 512, 1024, 2048, 4096)               # the analysis window, in samples
+FOCUS_WINDOW_DEFAULT = 512
+FOCUS_PADS = (1024, 2048, 4096, 8192, 16384, 32768)        # the zero-padded transform size ("compute size")
+FOCUS_PAD_DEFAULT = 4096
+FOCUS_OVERLAP = (2, 16, 8)                                 # (min, max, default): the display's own overlap
+FOCUS_THRESHOLD = (-120.0, -40.0, -80.0)                   # dB under the loudest cell: below it, a bin is not reassigned
+
+
+def focus_settings(values):
+    """None when the display is Normal, else (window, pad, overlap, threshold_db) from the side bar's values, each
+    clamped to what is allowed (an unreadable value falls back to its default) and the compute size lifted to at
+    least the window: a transform cannot be shorter than what it analyses."""
+    values = values or {}
+    if str(values.get("display_mode")) != DISPLAY_FOCUSED:
+        return None
+
+    def number(key, default):
+        try:
+            v = float(values.get(key))
+        except (TypeError, ValueError):
+            return default
+        return default if v != v else v
+
+    def choice(key, allowed, default):
+        n = int(number(key, default))
+        return n if n in allowed else default
+
+    window = choice("focus_window", FOCUS_WINDOWS, FOCUS_WINDOW_DEFAULT)
+    pad = max(window, choice("focus_pad", FOCUS_PADS, FOCUS_PAD_DEFAULT))
+    lo, hi, default = FOCUS_OVERLAP
+    overlap = int(min(hi, max(lo, round(number("focus_overlap", default)))))
+    lo, hi, default = FOCUS_THRESHOLD
+    return window, pad, overlap, min(hi, max(lo, number("focus_threshold", default)))

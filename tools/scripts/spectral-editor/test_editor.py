@@ -304,6 +304,87 @@ class EditorProtocol(unittest.TestCase):
             if old is not None:
                 os.environ["OBJEKAT_SPECTRAL_REMEMBER"] = old
 
+    # -- revision 7: the focused display ---------------------------------------------------------
+
+    def width(self, path):
+        import struct
+        with open(path, "rb") as f:
+            return struct.unpack("<I", f.read(12)[8:12])[0]
+
+    def focused(self, **kw):
+        return dict(VALUES, display_mode="focused", focus_window=256, focus_pad=1024, focus_overlap=4, **kw)
+
+    def test_the_focus_controls_are_expert_view_settings_with_the_agreed_defaults(self):
+        ctl = {c["id"]: c for c in sg.canvas_controls()}
+        self.assertEqual(ctl["display_mode"]["value"], "normal")
+        self.assertEqual([o["id"] for o in ctl["display_mode"]["options"]], ["normal", "focused"])
+        self.assertEqual((ctl["focus_window"]["value"], [o["id"] for o in ctl["focus_window"]["options"]]),
+                         ("512", ["256", "512", "1024", "2048", "4096"]))
+        self.assertEqual((ctl["focus_pad"]["value"], [o["id"] for o in ctl["focus_pad"]["options"]]),
+                         ("4096", ["1024", "2048", "4096", "8192", "16384", "32768"]))
+        self.assertEqual(ctl["focus_overlap"]["value"], 8)
+        self.assertEqual((ctl["focus_threshold"]["min"], ctl["focus_threshold"]["max"], ctl["focus_threshold"]["value"]),
+                         (-120, -40, -80))
+        for key in ("display_mode", "focus_window", "focus_pad", "focus_overlap", "focus_threshold", "sec_focus"):
+            self.assertTrue(ctl[key]["advanced"], key)   # not reverted by an undo that reveals a selection
+
+    def test_choosing_the_focused_mode_redraws_the_three_pictures_and_never_the_audio(self):
+        self.start()
+        calls = []
+        real = sg.dsp.process
+        sg.dsp.process = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+        self.addCleanup(setattr, sg.dsp, "process", real)
+        self.ed.sync(answer([step(1)], rev=1))
+        calls.clear()
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=self.focused(), rev=1))
+        self.assertEqual(calls, [])                                            # the processing is the normal FFT, untouched
+        self.assertEqual(self.app.named("script.canvas.set_audio"), [])
+        self.assertEqual(self.app.named("script.canvas.set_layer"), [])
+        base, orig, delta = self.app.bases(), self.app.slots("original"), self.app.slots("delta")
+        self.assertEqual((len(base), len(orig), len(delta)), (1, 1, 1))
+        want = sg.reassign.column_count(SR, 256, 4)
+        for p in (base[0], orig[0], delta[0]):
+            self.assertEqual(self.width(p["path"]), want)                      # the focused grid, the same for the three
+        self.assertEqual(base[0]["history_rev"], 1)
+        self.assertEqual(self.ed.focus, (256, 1024, 4, -80.0))
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=self.focused(), rev=1))
+        self.assertEqual(self.app.calls, [])                                   # the same display again: nothing sent
+        self.ed.sync(answer([step(1)], rev=1))                                 # and back to Normal: redrawn once more
+        self.assertEqual((len(self.app.bases()), len(self.app.slots("original")), len(self.app.slots("delta"))), (1, 1, 1))
+        self.assertEqual(self.width(self.app.bases()[-1]["path"]), SR // sg.dsp.hop_for(1024, 4) + 1)
+
+    def test_the_status_says_the_display_is_focused_and_only_then(self):
+        import re
+        self.start()
+        self.ed.sync(answer([step(1)], values=self.focused(), rev=1))
+        status = [p["status"] for p in self.app.named("script.canvas.update") if "status" in p][-1]
+        self.assertIn("Focused (display only)", status)                        # OBJEKAT_LANGUAGE defaults to en in the tests
+        self.assertIn("1 step", status)
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], rev=1))
+        status = [p["status"] for p in self.app.named("script.canvas.update") if "status" in p][-1]
+        self.assertIsNone(re.search("Focused", status))
+
+    def test_a_step_in_the_focused_mode_refreshes_pictures_drawn_by_the_focused_display(self):
+        self.start()
+        self.ed.sync(answer([], values=self.focused(), rev=0))
+        self.app.calls.clear()
+        self.ed.sync(answer([step(1)], values=self.focused(), rev=1))
+        base, delta = self.app.bases(), self.app.slots("delta")
+        self.assertEqual((len(base), len(delta), len(self.app.slots("original"))), (1, 1, 0))   # the Original never moves
+        self.assertEqual(self.width(base[0]["path"]), sg.reassign.column_count(SR, 256, 4))
+        self.assertEqual(self.width(delta[0]["path"]), self.width(base[0]["path"]))
+        self.assertGreater(int(self.pixels(delta[0]["path"]).max()), 0)        # the difference is not blank once a step took something
+
+    def test_the_audio_does_not_read_the_display_settings(self):
+        self.start()
+        self.ed.sync(answer([step(1)], rev=1))
+        normal = self.ed.committed[3].copy()
+        self.ed.sync(answer([step(1)], values=self.focused(focus_threshold=-50), rev=1))
+        self.assertTrue(np.array_equal(self.ed.committed[3], normal))
+
 
 if __name__ == "__main__":
     unittest.main()

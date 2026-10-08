@@ -181,5 +181,35 @@ class TestDisplayRange(unittest.TestCase):
                 self.assertGreaterEqual(ceil - floor, decide.DB_MIN_GAP)
 
 
+class TestFocusSettings(unittest.TestCase):
+    """Revision 7: the focused display's settings, display only."""
+
+    def test_normal_is_the_default_and_means_none(self):
+        self.assertIsNone(decide.focus_settings({}))
+        self.assertIsNone(decide.focus_settings(None))
+        self.assertIsNone(decide.focus_settings({"display_mode": "normal", "focus_window": "2048"}))
+        self.assertIsNone(decide.focus_settings({"display_mode": "nonsense"}))
+
+    def test_the_defaults_of_the_focused_mode(self):
+        self.assertEqual(decide.focus_settings({"display_mode": "focused"}), (512, 4096, 8, -80.0))
+
+    def test_the_hand_s_values(self):
+        got = decide.focus_settings({"display_mode": "focused", "focus_window": "1024", "focus_pad": "16384",
+                                     "focus_overlap": 6, "focus_threshold": -100})
+        self.assertEqual(got, (1024, 16384, 6, -100.0))
+
+    def test_the_compute_size_is_lifted_to_the_window(self):
+        got = decide.focus_settings({"display_mode": "focused", "focus_window": "4096", "focus_pad": "1024"})
+        self.assertEqual(got[:2], (4096, 4096))
+
+    def test_unknown_or_unreadable_values_fall_back_and_numbers_are_clamped(self):
+        got = decide.focus_settings({"display_mode": "focused", "focus_window": "300", "focus_pad": "x",
+                                     "focus_overlap": 99, "focus_threshold": "nan"})
+        self.assertEqual(got, (512, 4096, 16, -80.0))
+        got = decide.focus_settings({"display_mode": "focused", "focus_overlap": 0, "focus_threshold": -500})
+        self.assertEqual(got[2:], (2, -120.0))
+        self.assertEqual(decide.focus_settings({"display_mode": "focused", "focus_threshold": 10})[3], -40.0)
+
+
 if __name__ == "__main__":
     unittest.main()
