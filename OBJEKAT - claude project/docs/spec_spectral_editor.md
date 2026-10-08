@@ -173,6 +173,10 @@ undo stack until Validate (which is ONE project undo step, as in `retouche-exter
   −120 dB, whatever the overlap.
 - **Expert settings** (behind the side bar's Expert button) **[decided]**:
   - **FFT size**: 1024 / 2048 / 4096 / 8192 / 16384 / 32768.
+    The two largest (a 0.34 s / 0.68 s window at 48 kHz, bins of 2.9 / 1.5 Hz) give the finest frequency
+    resolution and the coarsest time resolution: an edge is smeared over the window, and an object shorter
+    than the window is neither refused nor clamped — it gets a picture of a few columns (never fewer than
+    one) and still takes its gestures. Measures and limits: plan §13.
   - **Overlap factor**: an integer 2 … 10 — `k` = k FFTs of size N overlapping, each shifted by
     N/k (2 = two FFTs shifted by N/2). The hop is `round(N/k)`; the normalisation above keeps the
     reconstruction exact for every k.

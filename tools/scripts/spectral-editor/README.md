@@ -98,6 +98,10 @@ Creates a venv at `~/Library/Application Support/Objekat/venvs/spectral-editor`,
 - The amber selection layer is a fixed grid (at most 4096 × 512 cells): a very small brush stroke looks
   blocky at a strong zoom. The result does not: the audio is computed on the STFT grid.
 - Memory: about 0.5 GB of float32 at the 10-minute ceiling at 96 kHz stereo.
+- The two largest FFT sizes (16384, 32768) trade time for frequency resolution: a window of 0.34 s / 0.68 s at 48 kHz
+  smears an edge over that time, and an object shorter than the window gets a picture of a few columns (it still takes
+  its gestures; nothing is refused). They need more memory (about 1.2 GB peak for 120 s stereo at 32768) and are as
+  fast as 2048 otherwise. See `plan_spectral_editor.md`, section 13.
 
 ## Files
 
