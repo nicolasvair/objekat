@@ -21,6 +21,21 @@ enum ARARefusal: String, Codable, Equatable, CaseIterable {
     case ancestorLooped        // ... and so is a group that loops its Melodyne children
     case fileMissing           // nothing to analyse
     case pluginNotARA          // the plugin chosen does not declare ARA (VST3 only: Q2)
+    case setupFailed           // the engine could not set the source up (plugin missing, refused the file...)
+
+    /// The engine's machine reason (`OBJEngineCore.setARASource`) as a refusal.
+    init(engineReason: String) {
+        switch engineReason {
+        case "not_an_audio_clip":    self = .notAClip
+        case "already_ara":          self = .alreadySource
+        case "source_file_missing":  self = .fileMissing
+        case "speed_not_one":        self = .speedNotOne
+        case "reversed":             self = .reversed
+        case "looping":              self = .looped
+        case "not_ara_plugin":       self = .pluginNotARA
+        default:                     self = .setupFailed
+        }
+    }
 
     /// English sentence, for the API and the logs.
     var reason: String {
@@ -34,6 +49,7 @@ enum ARARefusal: String, Codable, Equatable, CaseIterable {
         case .ancestorLooped:       return "an ARA source cannot be used inside a looping group (loops are not supported yet)"
         case .fileMissing:          return "the audio file of this object is missing"
         case .pluginNotARA:         return "this plugin is not an ARA plugin (only VST3 ARA plugins are supported)"
+        case .setupFailed:          return "the ARA plugin could not be set up on this object (see the log)"
         }
     }
 }

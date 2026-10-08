@@ -23,6 +23,7 @@
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/PluginIDUniqueness.swift \
 //         ../objekat/SoundObject/PluginIDReport.swift \
+//         ../objekat/Shared/ARAUndoPolicy.swift \
 //         test_ara_model.swift -o /tmp/am && /tmp/am
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -103,6 +104,36 @@ enum ARAModelTest {
         check("repair gives the second object a new id",
               fixed[0].araSource?.plugin.id == shared && fixed[1].araSource?.plugin.id != shared)
         check("after repair no duplicate remains", PluginIDUniqueness.duplicates(items: fixed, stems: []).isEmpty)
+
+        // 5. Q1: the undo adopts the LIVE archive of a source it leaves alive.
+        func arch(_ tag: String) -> ARAArchive {
+            ARAArchive(data: tag, sourceID: "s", modificationID: tag, documentArchiveID: "d", bytes: tag.count)
+        }
+        let pid = UUID()
+        let stale = clip(source: ARASource(plugin: melodyne(id: pid), archive: arch("OLD")))
+        var live = stale
+        live.araSource?.archive = arch("LIVE")
+        let adopted = ARAUndoPolicy.adoptingLive([stale], live: [live])
+        check("Q1: same plugin id -> the live archive wins", adopted[0].araSource?.archive == arch("LIVE"))
+        check("Q1: the adopted object equals the live one (differential undo leaves it alone)", adopted[0] == live)
+        var replugged = live
+        replugged.araSource?.plugin.id = UUID()
+        check("Q1: another plugin id (a recreated source) keeps the snapshot's archive",
+              ARAUndoPolicy.adoptingLive([stale], live: [replugged])[0].araSource?.archive == arch("OLD"))
+        check("Q1: a source the live model does not have (undone removal) keeps the snapshot's archive",
+              ARAUndoPolicy.adoptingLive([stale], live: [clip()])[0].araSource?.archive == arch("OLD"))
+        check("Q1: nothing live -> the snapshot is returned as is",
+              ARAUndoPolicy.adoptingLive([stale], live: [])[0] == stale)
+        let inner = clip(source: ARASource(plugin: melodyne(id: pid), archive: arch("OLD")))
+        var innerLive = inner
+        innerLive.araSource?.archive = arch("LIVE")
+        let grp = SoundObject(id: UUID(), startTime: 0, duration: 1, lane: 0, fadeIn: 0, fadeOut: 0,
+                              kind: .group(children: [inner], isExpanded: true))
+        var grpLive = grp
+        grpLive.kind = .group(children: [innerLive], isExpanded: true)
+        if case .group(let kids, _) = ARAUndoPolicy.adoptingLive([grp], live: [grpLive])[0].kind {
+            check("Q1: a child of a group is adopted too", kids[0].araSource?.archive == arch("LIVE"))
+        } else { check("Q1: group kept", false) }
 
         print(fails.isEmpty ? "ALL OK (\(total))" : "\(fails.count) FAIL / \(total)")
         exit(fails.isEmpty ? 0 : 1)

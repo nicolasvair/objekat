@@ -610,6 +610,10 @@ extension EditViewModel {
         if !obj.instruments.isEmpty {
             o.instruments = capturingPluginStates(obj.instruments)
         }
+        // The ARA source's archive is read live (a retouch lives only in the engine's plugin).
+        if let ara = obj.araSource {
+            o.araSource = capturingARA(obj.id, ara)
+        }
         if case .group(let children, let isExpanded) = obj.kind {
             o.kind = .group(children: children.map { capturedPluginStates($0) },
                             isExpanded: isExpanded)

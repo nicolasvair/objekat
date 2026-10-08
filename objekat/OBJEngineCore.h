@@ -340,6 +340,9 @@
 - (NSDictionary* _Nullable)captureARAArchiveForObjectID:(NSString* _Nonnull)uuid;
 // Une retouche (ou la fin d'une analyse) est arrivée depuis la dernière capture.
 - (BOOL)isARAArchiveStaleForObjectID:(NSString* _Nonnull)uuid;
+#if DEBUG
+- (void)debugMarkARAStale:(NSArray<NSString*>* _Nonnull)objectIDs;
+#endif
 // {valid, analysing, regions, mode ("ara"|"disabled"|"none"), plugin}
 - (NSDictionary<NSString*, id>* _Nonnull)araStatusForObjectID:(NSString* _Nonnull)uuid;
 // Les notes que Melodyne a analysées : [{pitch, start, duration, velocity}] (secondes du contenu).

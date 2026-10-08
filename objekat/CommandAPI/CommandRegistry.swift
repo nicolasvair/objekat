@@ -238,6 +238,7 @@ final class CommandRegistry {
         registerStemCommands()
         registerSoloCommands()
         registerPluginCommands()
+        registerARACommands()
         registerFXLinkCommands()
         registerAuxCommands()
         registerMIDICommands()

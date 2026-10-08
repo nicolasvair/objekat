@@ -88,6 +88,8 @@ private enum ProjectLoadWeight {
     static let structurePerObject: Double = 0.05
     static let fx: Double = 1.0
     static let instrument: Double = 2.0
+    /// An ARA source: the first Melodyne instance of a session costs ~1.4 s, the next ones less.
+    static let ara: Double = 2.0
     static let stemPlugin: Double = 1.0
     static let finalize: Double = 2.0
     /// Below this, nothing here ever breathes: two engine calls in a row cost far less than one
@@ -118,6 +120,7 @@ extension EditViewModel {
         var objectCount = 0
         var fxEntries = 0
         var instrumentEntries = 0
+        var araEntries = 0
     }
 
     /// Walks `items` exactly as `syncAdd`/`syncAddGroup` will — every object counts once, and a
@@ -131,6 +134,7 @@ extension EditViewModel {
                 w.objectCount += 1
                 if obj.needsChainCompile { w.fxEntries += 1 }
                 if case .midiClip = obj.kind, obj.instruments.first != nil { w.instrumentEntries += 1 }
+                if case .clip = obj.kind, obj.araSource != nil { w.araEntries += 1 }
                 if case .group(let children, _) = obj.kind { walk(children) }
             }
         }
@@ -155,6 +159,7 @@ extension EditViewModel {
                   + ProjectLoadWeight.structurePerObject * Double(scan.objectCount)
                   + ProjectLoadWeight.fx * Double(scan.fxEntries)
                   + ProjectLoadWeight.instrument * Double(scan.instrumentEntries)
+                  + ProjectLoadWeight.ara * Double(scan.araEntries)
                   + ProjectLoadWeight.stemPlugin * Double(stemPluginCount)
                   + ProjectLoadWeight.finalize
         return LoadPlan(total: total, stemPluginCount: stemPluginCount, oldPluginCount: oldPluginCount)
@@ -349,6 +354,8 @@ extension EditViewModel {
             return (object.plugins.first?.name ?? object.displayName, ProjectLoadWeight.fx)
         case .instrument(let object):
             return (object.instruments.first?.name ?? object.displayName, ProjectLoadWeight.instrument)
+        case .ara(let object):
+            return (object.araSource?.plugin.name ?? object.displayName, ProjectLoadWeight.ara)
         }
     }
 

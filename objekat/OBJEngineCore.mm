@@ -5713,6 +5713,19 @@ static void objClearARAState(te::WaveAudioClip& clip) {
     return _araStale.count(std::string([uuid UTF8String])) > 0;
 }
 
+#if DEBUG
+// DEBUG: simulates what a retouch does (the stale flag of every named source set, the content-changed
+// callback fired), for the cost measurements: a real retouch needs a hand.
+- (void)debugMarkARAStale:(NSArray<NSString*>*)objectIDs {
+    for (NSString* uuid in objectIDs) {
+        std::string key([uuid UTF8String]);
+        if (_araWatchers.find(key) == _araWatchers.end()) continue;
+        _araStale.insert(key);
+        if (self.onARAContentChanged) self.onARAContentChanged(uuid);
+    }
+}
+#endif
+
 - (NSDictionary*)araStatusForObjectID:(NSString*)uuid {
     std::string key([uuid UTF8String]);
     auto cit = _clipMap.find(key);

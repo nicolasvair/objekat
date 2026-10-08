@@ -193,7 +193,10 @@ extension CommandRegistry {
             guard let object = vm.find(id: id), object.isClip else {
                 throw CommandError(code: .not_found, message: "unknown audio clip: \(id.uuidString)")
             }
-            vm.updateSpeed(id: id, ratio: try p.double("ratio"))
+            if let refusal = vm.updateSpeed(id: id, ratio: try p.double("ratio")) {
+                throw CommandError(code: .invalid_state, message: refusal.reason,
+                                   details: .object(["reason": .string(refusal.rawValue)]))
+            }
             guard let after = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "object lost")
             }
@@ -215,7 +218,10 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown audio clip: \(id.uuidString)")
             }
             let reversed = try p.bool("reversed", or: !object.isReversed)
-            vm.updateReversed(id: id, reversed: reversed)
+            if let refusal = vm.updateReversed(id: id, reversed: reversed) {
+                throw CommandError(code: .invalid_state, message: refusal.reason,
+                                   details: .object(["reason": .string(refusal.rawValue)]))
+            }
             return .object(["id": .string(id.uuidString), "reversed": .bool(reversed)])
         }
 
@@ -266,7 +272,10 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown loopable object: \(id.uuidString)")
             }
             let enabled = try p.bool("enabled", or: !object.loopEnabled)
-            vm.updateLoopEnabled(id: id, enabled: enabled)
+            if let refusal = vm.updateLoopEnabled(id: id, enabled: enabled) {
+                throw CommandError(code: .invalid_state, message: refusal.reason,
+                                   details: .object(["reason": .string(refusal.rawValue)]))
+            }
             return .object(["id": .string(id.uuidString), "loop": .bool(enabled)])
         }
 

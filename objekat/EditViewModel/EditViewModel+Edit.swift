@@ -73,6 +73,7 @@ extension EditViewModel {
     /// a group = its descendants (recursive, bottom-up) then its FolderTrack. Independent of
     /// nesting (no more nested/top-level distinction).
     func removeFromEngine(_ obj: SoundObject) {
+        if obj.araSource != nil { araForget(obj.id) }
         switch obj.kind {
         case .clip, .midiClip:
             engine?.removeSoundObject(withID: obj.id.uuidString)

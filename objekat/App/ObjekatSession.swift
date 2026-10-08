@@ -74,6 +74,22 @@ final class ObjekatSession {
     /// the view's `.onAppear` as from a windowless launch.
     func start() {
         viewModel.engine = engine
+        viewModel.installARAHooks()
+        // An ARA plugin (Melodyne's own play button, a click in its ruler) asks the HOST to move the
+        // transport: the session stays master. Loop requests are ignored in v1.
+        engine.onARATransportRequest = { [weak self] kind, a, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    switch kind {
+                    case 0: if !self.isPlaying { self.play() }
+                    case 1: if self.isPlaying { self.stop() }
+                    case 2: self.seek(to: a)
+                    default: break
+                    }
+                }
+            }
+        }
         // Fixes the bug flagged by project_load_progress_plan: a project load stops the engine
         // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
         // left the transport showing ▶ although the sound had already stopped.

@@ -99,6 +99,7 @@ final class EditViewModel {
         didSet {
             multiSelectionCache = nil
             if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] }
+            if !araSynced.isEmpty { notifyARASelectionIfNeeded() }
         }
     }
     /// The crossfade selected, if any: the pair whose shared zone the click landed in. Its own
@@ -1486,6 +1487,20 @@ final class EditViewModel {
     /// the WHOLE project on every undoable gesture. @see EditViewModel+UndoRedo.
     @ObservationIgnored var pluginStateCaptureCount = 0
 
+    // MARK: ARA (Melodyne) — session memory, see EditViewModel+ARA.swift
+    /// The freshest archive known per object, as last read from (or handed to) the engine. The MODEL
+    /// may lag behind it by the debounce of `scheduleARAModelRefresh`; every consumer that needs the
+    /// truth asks `liveARAArchive(for:fallback:)`, which reads this before going back to the engine.
+    @ObservationIgnored var araArchiveCache: [UUID: ARAArchive] = [:]
+    /// Objects whose ARA source has been pushed to the engine (successfully or not).
+    @ObservationIgnored var araSynced: Set<UUID> = []
+    /// Why an object's source is NOT playing (plugin missing, engine refusal): the object sounds dry,
+    /// its model and archive stay intact. Machine reason of `OBJEngineCore.setARASource`.
+    var araSyncFailures: [UUID: String] = [:]
+    @ObservationIgnored var araRefreshWork: DispatchWorkItem? = nil
+    /// Timings of the last captures, for `debug.ara_report` and the cost measurements (section O).
+    @ObservationIgnored var araCaptureStats: (count: Int, totalMs: Double, lastMs: Double, bytes: Int) = (0, 0, 0, 0)
+
     // MARK: - Selection
 
     var selectedID: UUID? { selectedIDs.first }
@@ -1516,7 +1531,16 @@ final class EditViewModel {
         isDirty = true
     }
 
-    func updateReversed(id: UUID, reversed: Bool) {
+    /// An object carrying an ARA source (Melodyne) cannot be reversed: refused with the reason, the
+    /// model untouched (@see ARAEligibility).
+    @discardableResult
+    func updateReversed(id: UUID, reversed: Bool) -> ARARefusal? {
+        if let refusal = araRefusalForReverse(id: id, reversed: reversed) { return refusal }
+        applyReversed(id: id, reversed: reversed)
+        return nil
+    }
+
+    private func applyReversed(id: UUID, reversed: Bool) {
         update(id: id) { obj in
             guard case .clip(let fp, let so, let fd, let sr, let was) = obj.kind else { return }
             guard was != reversed else { return }
@@ -1549,7 +1573,15 @@ final class EditViewModel {
     /// (@see SoundObject.canLoop, [[loop-item-plan]]). The first activation: the bounds are laid
     /// on the size current AT THAT MOMENT (`[0, duration]`) then stay frozen for the following
     /// activations — turning it off and on again does not lose an IN/OUT setting already made.
-    func updateLoopEnabled(id: UUID, enabled: Bool) {
+    @discardableResult
+    func updateLoopEnabled(id: UUID, enabled: Bool) -> ARARefusal? {
+        // Loops are refused in v1 on a Melodyne object and on a group holding one.
+        if let refusal = araRefusalForLoop(id: id, enabled: enabled) { return refusal }
+        applyLoopEnabled(id: id, enabled: enabled)
+        return nil
+    }
+
+    private func applyLoopEnabled(id: UUID, enabled: Bool) {
         guard find(id: id)?.canLoop == true else { return }
         update(id: id) {
             $0.loopEnabled = enabled
@@ -1629,7 +1661,17 @@ final class EditViewModel {
         return max(0.01, ns - obj.startTime)
     }
 
-    func updateSpeed(id: UUID, ratio: Double) {
+    /// An object carrying an ARA source (Melodyne) keeps speed 1: refused with the reason, the model
+    /// untouched (@see ARAEligibility). The clamp is applied first, so a ratio that CLAMPS to 1 is accepted.
+    @discardableResult
+    func updateSpeed(id: UUID, ratio: Double) -> ARARefusal? {
+        let clamped = max(0.0625, min(16.0, ratio))
+        if let refusal = araRefusalForSpeedChange(id: id, to: clamped) { return refusal }
+        applySpeed(id: id, ratio: ratio)
+        return nil
+    }
+
+    private func applySpeed(id: UUID, ratio: Double) {
         let newSpeed = max(0.0625, min(16.0, ratio))  // ±48 semitones (2^±4)
         // Non-destructive: the lengthening by varispeed must not overlap the next clip.
         // NB: a "quick" choice — the stored duration is trimmed, so resetting the pitch does not restore it.
@@ -1922,6 +1964,9 @@ final class EditViewModel {
                                   loopRangeStart: loopBounds.start, loopRangeEnd: loopBounds.end,
                                   forID: object.id.uuidString)
         }
+        // An ARA source (Melodyne) plays THROUGH the clip: set before the chain is compiled, so the
+        // FX come after it. A project load queues it (the expensive phase), anything else sets it now.
+        if object.araSource != nil { scheduleChainCompile(.ara(object)) }
         // Compiles as well when the chain holds ONLY trim gains (with no plugin):
         // otherwise the synoptic's trims were never reapplied on loading/pasting.
         if object.needsChainCompile { scheduleChainCompile(.plugins(object)) }

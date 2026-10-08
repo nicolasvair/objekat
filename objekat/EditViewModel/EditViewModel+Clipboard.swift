@@ -156,6 +156,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                araSource: .some(copiedARASource(of: item)),
                 kind: .clip(filePath: fp, sourceOffset: so, fileDuration: fd,
                             speedRatio: sr, isReversed: rev)
             )
@@ -168,6 +169,7 @@ extension EditViewModel {
                 // Fresh note ids: without them, the copy and the original shared the identity
                 // of every note — selecting then transposing / deleting in one of them
                 // did it in ALL of them. @see EditViewModel.freshNoteIDs
+                araSource: .some(copiedARASource(of: item)),
                 kind: .midiClip(notes: Self.freshNoteIDs(notes), lengthBeats: lengthBeats)
             )
         case .aux:
@@ -175,6 +177,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                araSource: .some(copiedARASource(of: item)),
                 kind: .aux
             )
         case .group(let children, let isExpanded):
@@ -189,6 +192,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                araSource: .some(copiedARASource(of: item)),
                 kind: .group(children: copiedChildren, isExpanded: isExpanded)
             )
         }
@@ -413,6 +417,7 @@ extension EditViewModel {
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
+                    araSource: .some(copiedARASource(of: entry.item)),
                     kind: .clip(filePath: fp, sourceOffset: so + (fragStart - s) * sr,
                                 fileDuration: fd, speedRatio: sr, isReversed: rev)
                 ))
@@ -437,6 +442,7 @@ extension EditViewModel {
                     instruments: copiedInstruments(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
+                    araSource: .some(copiedARASource(of: entry.item)),
                     kind: .midiClip(notes: subNotes, lengthBeats: max(0.01, lenBeat))
                 ))
 
@@ -451,6 +457,7 @@ extension EditViewModel {
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
+                    araSource: .some(copiedARASource(of: entry.item)),
                     kind: .aux
                 ))
 
@@ -490,6 +497,7 @@ extension EditViewModel {
                     plugins: copiedPlugins(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
+                    araSource: .some(copiedARASource(of: entry.item)),
                     kind: .group(children: fragChildren, isExpanded: isExpanded)
                 )
                 if let looped {
@@ -783,6 +791,7 @@ extension EditViewModel {
                         plugins: copiedPlugins(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
                         markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
+                        araSource: .some(copiedARASource(of: child)),
                         kind: .clip(filePath: fp, sourceOffset: so + (cutHi - absStart) * sr,
                                     fileDuration: fd, speedRatio: sr, isReversed: rev)
                     )
@@ -855,6 +864,7 @@ extension EditViewModel {
                         instruments: copiedInstruments(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
                         markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
+                        araSource: .some(copiedARASource(of: child)),
                         kind: .midiClip(notes: Self.splitMidiNotes(notes, atBeat: hiBeat).right,
                                         lengthBeats: max(0.01, lengthBeats - hiBeat)))
                     engineAddMidiClip(right)

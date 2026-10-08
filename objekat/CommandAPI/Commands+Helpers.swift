@@ -85,10 +85,34 @@ extension CommandAdapters {
         guard let plugins = vm.chainPlugins(hostID) else {
             throw CommandError(code: .not_found, message: "unknown host: \(hostID.uuidString)")
         }
+        try rejectARASource(pluginID, on: hostID, in: vm)
         guard let plugin = EditViewModel.flattenLeaves(plugins).first(where: { $0.id == pluginID }) else {
             throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)")
         }
         return plugin
+    }
+
+    /// The ARA source of an object (Melodyne) is NOT a card of its chain: it is the clip's source, with
+    /// one verb of its own — `plugin.remove`. Every other command that names a plugin (toggle, move,
+    /// copy, link, drop, parameters, sidechain…) refuses its id with `invalid_state`, rather than
+    /// answering "unknown plugin" for something `plugin.list` just showed.
+    static func rejectARASource(_ pluginID: UUID, on hostID: UUID, in vm: EditViewModel) throws {
+        guard vm.find(id: hostID)?.araSource?.plugin.id == pluginID else { return }
+        throw CommandError(code: .invalid_state,
+                           message: "plugin \(pluginID.uuidString) is the ARA source of the object: "
+                                  + "only plugin.remove and the object.ara.* commands apply to it",
+                           details: .object(["slot": .string("ara_source")]))
+    }
+
+    /// `slot: "ara_source"` entry of `plugin.list` / answer of `plugin.add`.
+    static func araSourcePayload(_ source: ARASource, objectID: UUID, in vm: EditViewModel) -> JSONValue {
+        var payload = pluginPayload(source.plugin)
+        if case .object(var o) = payload {
+            o["slot"] = .string("ara_source")
+            o["ara_valid"] = .bool(vm.araSynced.contains(objectID) && vm.araSyncFailures[objectID] == nil)
+            payload = .object(o)
+        }
+        return payload
     }
 
     /// The cards a transfer command aims at: the list `plugins` when it is given, and the single

@@ -1039,6 +1039,9 @@ extension EditViewModel {
     enum DeferredChainCompile {
         case plugins(SoundObject)
         case instrument(SoundObject)
+        /// An ARA source (Melodyne): its own case so the progress bar can weigh it (a first instance
+        /// costs ~1.4 s) and so it is set AFTER the object's chain is queued behind it (@see engineAddClip).
+        case ara(SoundObject)
     }
 
     /// Replaces every direct `syncPlugins`/`syncInstruments` call made while an object is (re)added
@@ -1061,6 +1064,8 @@ extension EditViewModel {
             syncPlugins(object, rewireLinks: rewireLinks)
         case .instrument(let object):
             syncInstruments(object, rewireLinks: rewireLinks)
+        case .ara(let object):
+            syncARASource(object)
         }
     }
 

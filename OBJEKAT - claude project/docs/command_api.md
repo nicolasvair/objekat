@@ -802,6 +802,43 @@ measures by export) or `latencyTester` through the normal model path; `debug.set
 {plugin, property, value}` sets a numeric property on a live plugin (the latency tester's `time`, in
 seconds).
 
+### An ARA source (Melodyne)
+
+An audio object can carry an **ARA source**: a Melodyne VST3 that the clip plays THROUGH (the plugin
+reads the file, retouches it, and its output is the clip's sound). It is not an insert: it comes
+first, it is unique per object, and a copy of the object gets its own fresh instance (never linked).
+Design, rules and the user's decisions (Q1–Q5): `ara_melodyne_plan.md`.
+
+It is added and removed with the plugin commands; the `object.ara.*` family only reads it.
+**No command opens an editor** (the window is a user gesture), and none of them is an edit.
+
+| | |
+|---|---|
+| `plugin.add` | `host` = an audio object, `plugin` = an ARA-capable VST3 → `{host, slot: "ara_source", plugin}`: the plugin becomes the object's source, it is not an insert. Refused (`invalid_state`, `details.reason`) when the object cannot carry one (below). One undo step |
+| `plugin.list` | the source comes FIRST in `plugins`, with `slot: "ara_source"` |
+| `plugin.remove` | on the source's id: the clip plays its file again, retouches are lost (undo brings them back from the archive). Every other plugin command (`set_param`, `set_bypass`, `move`, `link`, `set_sidechain`…) answers `invalid_state` with `details.slot = "ara_source"` |
+| `object.ara.status` | `{has_source, plugin, engine_valid, analysing, regions, archive_bytes, archive_stale, model_archive_bytes, model_archive_sha1, sync_failure}`. Reads only |
+| `object.ara.wait_analysis` | `id`, `timeout_ms` (default 120000) → like `status` + `waited_ms`. `timeout` when Melodyne does not finish; `invalid_state` when the source cannot be set up |
+| `object.ara.capture` | reads the archive from the live instance NOW → `{bytes, ms, sha1, source_id, modification_id, stale_before}`. Not an undo point; marks the project modified when the archive changed |
+| `object.ara.notes` | the notes Melodyne analysed, `[{pitch, start, duration, velocity}]` (seconds from the source's start) |
+
+Refusal reasons (`details.reason`, the raw value of `ARARefusal`): `notAClip` (only an audio clip can
+carry one), `consolidatedInstance` (a consolidated object cannot), `alreadySource`, `speedNotOne` and
+`reversed` (ARA reads the file at its own speed and direction: `object.set_speed` / `set_reversed` on a
+source are refused too, as is putting a source on such an object), `looped` and `ancestorLooped` (a loop
+on the object, or on a looping group that contains it), `fileMissing`, `pluginNotARA` and
+`setupFailed` (the engine could not set the instance up; the engine's reason is in `message`).
+
+Undo (Q1): OBJEKAT's undo NEVER touches the retouches made live in Melodyne. The model keeps an ARA
+archive only to RECREATE the instance (load, copy, tab return, undo of a removal); an undo that keeps
+the same plugin id keeps the live archive. The archive is refreshed at each undo point and, debounced
+(0.5 s), after a retouch.
+
+DEBUG builds add `debug.ara_report {}` (instances alive, failures, stale count, capture counters,
+archive bytes, `rss_mb`), `debug.ara_mark_stale {ids?}` (simulates a retouch: the next undo point pays
+one capture each) and `debug.ara_probe {identifier, format, name?}` (does a plugin act as an ARA source,
+read from the module's real factory; opens no window).
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that
