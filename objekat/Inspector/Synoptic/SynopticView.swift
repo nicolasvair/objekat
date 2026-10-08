@@ -138,11 +138,15 @@ struct SynopticActions {
     var onRemoveARA: (() -> Void)? = nil
 }
 
-/// The ARA source an audio object plays THROUGH, as the 'audio file' zone shows it.
+/// The ARA source an audio object plays THROUGH. It is drawn as a CARD, the first one out of the 'audio file'
+/// frame (@see SynopticLayout.Diagram.araCard); the frame itself only needs to know it is there, to lock the
+/// speed / reverse / loop controls.
 struct SynopticARA: Equatable {
     var name: String
-    /// The plugin is still analysing the audio (a spinner stands in for the open button).
+    /// The plugin is still analysing the audio (a spinner on the card, and the editor cannot be opened yet).
     var analysing: Bool
+    /// The source's identity colour, like any plugin card's halo.
+    var color: Color = .gray
 }
 
 /// The data of the 'audio file' zone (an audio clip), carried over into the signal view.
@@ -156,7 +160,7 @@ struct SynopticAudioFile: Equatable {
     /// LR / L / R / C selector, holding the current choice. nil for a mono file (or one that cannot
     /// be read): no selector, and the zone keeps its original height.
     var channelMode: ChannelMode? = nil
-    /// Non-nil ⇒ the object carries an ARA source: the zone shows one more row, and the time
+    /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
     /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
     var ara: SynopticARA? = nil
 }
@@ -355,7 +359,8 @@ struct SynopticView: View {
     var body: some View {
         let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
                                        midi: isMIDI, audioFile: audioFile != nil,
-                                       audioStereo: audioFile?.channelMode != nil, audioAra: audioFile?.ara != nil, mix: mix != nil,
+                                       audioStereo: audioFile?.channelMode != nil,
+                                       araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                        mixWide: mix?.attrLinks != nil,
                                        stems: stems != nil || groupRouting != nil,
                                        sendRows: sends.count, receivedRows: receivedSends.count,
@@ -386,6 +391,22 @@ struct SynopticView: View {
                                 actions: actions)
             } else {
                 pill(L("synoptic.source"), rect: d.sourcePill)
+            }
+            // The ARA source: the FIRST card out of the 'audio file' frame, ahead of the FX. It is the SOURCE,
+            // not an insert — so it sits outside the FX group below (never greyed with a closed consolidated
+            // object), cannot be dragged, bypassed, linked or dropped upon, and has no '+' around it.
+            if let r = d.araCard, let ara = audioFile?.ara {
+                SynopticCardView(
+                    plugin: SynopticPlugin(name: ara.name, category: .utility, formatLabel: "VST3", color: ara.color),
+                    isSelected: false,
+                    onSelect: {},
+                    onOpenEditor: ara.analysing ? nil : actions.onOpenARAEditor,
+                    onToggleBypass: {},
+                    onRemove: { actions.onRemoveARA?() },
+                    width: r.width,
+                    ara: ara
+                )
+                .position(x: r.midX, y: r.midY)
             }
             if let cz = d.clipZone, let m = mix {
                 ClipMixZoneView(rect: cz, mix: m, actions: actions)
@@ -1128,6 +1149,12 @@ struct SynopticCardView: View {
     /// nil = sized on its own name (@see SynopticLayout.cardWidth); the MIDI zone's instrument
     /// slot passes its fixed width.
     var width: CGFloat? = nil
+    /// Non-nil = this card is the ARA SOURCE of the object (Melodyne), not an FX: the same chrome, minus
+    /// what a source has no business with — no on/off (there is no bypass: take the source off), no VU
+    /// meter, no link, no drag, nothing dropped on it — plus an "ARA" tag and, while the plugin analyses the
+    /// audio, a spinner. The ✕ takes the source off.
+    var ara: SynopticARA? = nil
+    private var isARA: Bool { ara != nil }
     private var cardW: CGFloat { width ?? SynopticLayout.cardWidth(for: plugin) }
     private let cardH = SynopticLayout.cardH
 
@@ -1149,23 +1176,27 @@ struct SynopticCardView: View {
     var body: some View {
         HStack(spacing: 0) {
             // on/off — a REAL button, full height, square edges (the identity colour = active)
-            Button(action: onToggleBypass) {
-                ZStack {
-                    Rectangle()
-                        .fill(plugin.isEnabled ? plugin.color : Color.secondary.opacity(0.18))
-                    Image(systemName: "power")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(plugin.isEnabled ? .white : .secondary)
+            if !isARA {
+                Button(action: onToggleBypass) {
+                    ZStack {
+                        Rectangle()
+                            .fill(plugin.isEnabled ? plugin.color : Color.secondary.opacity(0.18))
+                        Image(systemName: "power")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(plugin.isEnabled ? .white : .secondary)
+                    }
+                    .frame(width: toggleW)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .frame(width: toggleW)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .help(L("synoptic.bypass"))
             }
-            .buttonStyle(.plain)
-            .help(L("synoptic.bypass"))
 
             // Content: NAME (the drag area) · ✕  +  a thin VU meter
             VStack(spacing: 0) {
+                // The source has no VU line under it: its row is centred in the card instead.
+                if isARA { Spacer(minLength: 0) }
                 HStack(spacing: 6) {
                     // NAME — the ONLY drag area (reorder / move) plus a double click for the editor
                     Text(plugin.name)
@@ -1179,7 +1210,7 @@ struct SynopticCardView: View {
                         .onDragIf(dragProvider) {
                             PluginDragPreview(plugin: plugin, dragCount: dragCount)
                         }
-                        .help(L("synoptic.openPlugin"))
+                        .help(isARA ? L("synoptic.ara.open") : L("synoptic.openPlugin"))
 
                     // 🔗 — the link toggle. Linked: a solid badge, tinted by the group's colour.
                     // DETACHED: the badge REMAINS, hollow and in the same tint — the group left is
@@ -1203,6 +1234,12 @@ struct SynopticCardView: View {
                         .help(linkHelp)
                     }
 
+                    // Melodyne is still reading the audio: the editor will open once it is done.
+                    if let ara, ara.analysing {
+                        ProgressView().controlSize(.mini)
+                            .help(L("synoptic.ara.analysing"))
+                    }
+
                     // ✕ — remove the fx (always visible)
                     Button(action: onRemove) {
                         Image(systemName: "xmark")
@@ -1210,21 +1247,23 @@ struct SynopticCardView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(L("synoptic.removePlugin"))
+                    .help(isARA ? L("synoptic.ara.remove") : L("synoptic.removePlugin"))
                 }
 
                 Spacer(minLength: 0)
 
                 // VU meter: a very thin horizontal line, right at the bottom
-                Capsule()
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(height: 2)
-                    .overlay(alignment: .leading) {
-                        GeometryReader { g in
-                            Capsule().fill(Color.green)
-                                .frame(width: max(0, g.size.width * plugin.vu))
+                if !isARA {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(height: 2)
+                        .overlay(alignment: .leading) {
+                            GeometryReader { g in
+                                Capsule().fill(Color.green)
+                                    .frame(width: max(0, g.size.width * plugin.vu))
+                            }
                         }
-                    }
+                }
             }
             .padding(.horizontal, 8)
             .padding(.top, 5)
@@ -1287,6 +1326,21 @@ struct SynopticCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .offset(x: 4, y: -15)
                 .help(badge.text)
+            }
+        }
+        // The ARA source's tag: the sidechain's capsule, in the same spot above the top-left corner.
+        .overlay(alignment: .topLeading) {
+            if isARA {
+                Text(verbatim: "ARA")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(plugin.color)
+                    .padding(.horizontal, 5)
+                    .frame(height: 13)
+                    .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(Capsule().strokeBorder(plugin.color.opacity(0.6), lineWidth: 1))
+                    .fixedSize()
+                    .offset(x: 4, y: -15)
+                    .help(L("synoptic.ara.source"))
             }
         }
     }
@@ -1889,39 +1943,6 @@ struct AudioFileZoneView: View {
                     .opacity(file.ara != nil && !file.isReversed ? 0.4 : 1)
                     .help(file.ara != nil && !file.isReversed ? L("synoptic.ara.timeLocked")
                           : file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
-                }
-
-                // The ARA source (Melodyne), when there is one: its name opens the editor, the cross takes it off.
-                if let ara = file.ara {
-                    HStack(spacing: 4) {
-                        Text(L("synoptic.ara.source"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1).fixedSize()
-                        Button { actions.onOpenARAEditor?() } label: {
-                            Text(ara.name)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(Color.white)
-                                .lineLimit(1)
-                                .padding(.horizontal, 6).frame(height: 16)
-                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(ara.analysing)
-                        if ara.analysing {
-                            ProgressView().controlSize(.mini)
-                                .help(L("synoptic.ara.analysing"))
-                        }
-                        Spacer(minLength: 0)
-                        Button { actions.onRemoveARA?() } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 16, height: 16)
-                        }
-                        .buttonStyle(.plain)
-                        .help(L("synoptic.ara.remove"))
-                    }
                 }
 
                 // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
@@ -2570,7 +2591,7 @@ struct SynopticBoundView: View {
         let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
-                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing) }) }
+                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing, color: $0.plugin.color) }) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.

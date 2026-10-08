@@ -2295,11 +2295,16 @@ What has landed since mid-August, in order:
   **Bridge** (`OBJEngineCore.mm`): set / remove / capture / status / notes / editor; renders (bake, targeted
   render, export on a copy) clone the edit and STAMP the archive on the clone's clip props, the ARADOCUMENT
   child of the copy being removed (`objStampARAArchives`); `shouldLoadPlugin` accepts a parentless ARA plugin.
-  **UI.** The picker has its OWN "ARA source" section (the FX path is untouched); the audio zone gets an ARA
-  row and locks speed / reverse / loop. The candidates are a PRE-FILTER (moduleinfo.json category, else the
+  **UI.** The picker has its OWN "ARA source" section (the FX path is untouched); the audio zone locks speed /
+  reverse / loop, and the source is shown in the signal view as the FIRST plugin CARD under the "audio file"
+  frame (`SynopticLayout.diagram` `araCard`; an "ARA" tag like the sidechain's; double-click opens Melodyne, ✕
+  removes, spinner while analysing; no power button, link, VU or drag). The candidates are a PRE-FILTER (moduleinfo.json category, else the
   string "ARA Main Factory" in the binary: RX, Ozone, Trash and WaveShell are false positives); the app's scan
   never loads a VST3 binary, so the confirmation is `resolveARAPluginInfo` AT PLACEMENT, and a false positive is
-  REFUSED with a message (remembered for the session). Measured (Debug): archive ~650 KB/min of melody
+  REFUSED with a message (remembered for the session — ONLY when the module was loaded and declares no ARA:
+  `resolveARAPluginInfo:definitive:` tells a verdict from a failure to judge, which comes back as
+  `ara_setup_failed` and leaves the row offered). The rows are computed at every picker opening
+  (`araPickerCandidates`); `debug.ara_picker` reproduces the "+" click (scenario section P). Measured (Debug): archive ~650 KB/min of melody
   (1.8 MB for 3 min, capture 208 ms); 40 sources load in 2.7 s, ~20 MB RSS each; `pushUndo` with 40 STALE
   archives 1.5 s (one stale: 40 ms).
   **Traps.** (1) Without a retouch Melodyne returns the audio: RMS or pitch cannot prove the path. The proof is

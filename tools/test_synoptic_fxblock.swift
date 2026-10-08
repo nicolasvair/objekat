@@ -236,6 +236,23 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
         for fb in tpl.fxBlocks { checkBlock(fb, in: tpl, "two blocks (\(fb.link.name))") }
         check(!tpl.fxBlocks[0].rect.intersects(tpl.fxBlocks[1].rect), "two consecutive blocks do not overlap")
 
+        // MARK: the ARA source's card: first under the "audio file" frame, above the chain, wired in series
+        let araRoot = SynopticNode(id: UUID(), kind: .series([card("Fx")]))
+        let withARA = SynopticLayout.diagram(for: araRoot, audioFile: true,
+                                             araCardWidth: SynopticLayout.araCardWidth(name: "Melodyne"))
+        let noARA = SynopticLayout.diagram(for: araRoot, audioFile: true)
+        if let ac = withARA.araCard, let az = withARA.audioZone, let fx = withARA.placement.cards.first?.frame {
+            check(ac.minY >= az.maxY + SynopticLayout.araCardGap - 0.5, "the ARA card sits under the audio frame")
+            check(ac.maxY <= fx.minY, "the ARA card is above the first FX")
+            check(abs(ac.midX - az.midX) < 0.5, "the ARA card is centred on the audio frame")
+            check(ac.width <= az.width + 0.5, "the ARA card is no wider than the audio frame")
+            check(withARA.canvasSize.height > noARA.canvasSize.height, "the card makes the canvas taller")
+            check(withARA.placement.cards.first.map { $0.frame.minY > ac.maxY } ?? false, "the chain starts below the card")
+        } else {
+            check(false, "an ARA card is laid when asked")
+        }
+        check(noARA.araCard == nil, "no ARA card when not asked")
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

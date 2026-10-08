@@ -42,20 +42,11 @@ struct PluginPickerPopover: View {
     /// instrument picker of a MIDI clip.
     var showsARASource: Bool = true
 
-    /// The VST3 the pre-filter marks as ARA candidates and the session has not disproved.
+    /// The VST3 the pre-filter marks as ARA candidates and the session has not disproved: asked of the
+    /// view-model at every render (so at every opening of the picker), never kept in the view.
     private var araCandidates: [AvailablePlugin] {
-        guard showsARASource, viewModel.araPickerApplies(to: objectID) else { return [] }
-        let base = viewModel.availablePlugins.filter {
-            $0.isARA && $0.formatName == "VST3" && !viewModel.araDisprovedIdentifiers.contains($0.identifier)
-        }
-        // One row per module: the scan can list the same VST3 bundle twice (an older cache entry).
-        var seen = Set<String>()
-        let unique = base.filter { seen.insert($0.identifier).inserted }
-        guard !searchText.isEmpty else { return unique }
-        return unique.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.manufacturer.localizedCaseInsensitiveContains(searchText)
-        }
+        guard showsARASource else { return [] }
+        return viewModel.araPickerCandidates(for: objectID, search: searchText)
     }
 
     private var filtered: [AvailablePlugin] {

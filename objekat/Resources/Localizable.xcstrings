@@ -12605,6 +12605,29 @@
         }
       }
     },
+    "synoptic.ara.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double-click: open the editor (the audio plays through this plugin)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Doble clic: abrir el editor (el sonido pasa por este plugin)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double-clic : ouvrir l'éditeur (le son passe par ce plugin)"
+          }
+        }
+      }
+    },
     "synoptic.ara.remove": {
       "extractionState": "manual",
       "localizations": {

@@ -19,6 +19,8 @@ plays THROUGH it, ahead of its chain. This scenario asserts, with no screen:
   M  archive size      30 s and 3 min melodies (bytes, base64, ms, bytes per minute)
   N  missing plugin    the object plays dry, the archive is rewritten untouched
   O  cost (Q3)         1, 10 and 40 Melodyne objects: load time, RSS, pushUndo with stale archives
+  P  the "+" door      place -> remove -> place again through the picker's own logic (debug.ara_picker),
+                       also after undo / redo of a removal, of a placement, and after a false-positive pick
   Z  end               no window on the headless pid; no duplicated plugin id
 
 It launches ITS OWN instance (`--headless --api --no-recent`, `--no-audio` unless --audio) on its own
@@ -1059,6 +1061,99 @@ try:
                     rep1 = send("debug.ara_report")
                     info("pushUndo (rename) with %d sources, %s: %.0f ms (%d captures, %d stale before)"
                          % (len(ids), label, ms, rep1["captures"] - rep0["captures"], rep0["stale"]))
+        # ══════════════════════════════════════════════════════════════════════ P
+        if want("P"):
+            section("P  the \"+\" door: place, remove, place again")
+            fresh("p_door")
+            a = add_clip(SINE220, lane=0)
+
+            def door(pick=None):
+                pr = {"host": a}
+                if pick:
+                    pr["pick"] = pick
+                return send("debug.ara_picker", pr)
+
+            def offered(d):
+                return [c["identifier"] for c in d["candidates"]]
+
+            def pick_mel(label):
+                d = door(mel["identifier"])
+                pk = d.get("picked", {})
+                check("%s: the picker offers Melodyne and the click goes through" % label,
+                      pk.get("clickable") and pk.get("ok"), d)
+                wait_ara(a)
+                st = status(a)
+                check("%s: the source is set and valid" % label, st["has_source"] and st["engine_valid"], st)
+                return d
+
+            def remove_source():
+                plug = send("plugin.list", {"host": a})["plugins"][0]["id"]
+                send("plugin.remove", {"host": a, "plugin": plug})
+                wait()
+                check("removed: no source", not status(a)["has_source"], status(a))
+
+            d0 = door()
+            check("before any source: Melodyne is among the offered rows", mel["identifier"] in offered(d0), d0)
+            check("before any source: nothing refuses the object", d0["refusal"] is None, d0)
+            pick_mel("first placement")
+            d1 = door()
+            check("with a source: the row is refused (already_source), the picker is not asked twice",
+                  d1["refusal"] == "alreadySource", d1)
+            remove_source()
+            d2 = door()
+            check("after the removal: Melodyne is offered again", mel["identifier"] in offered(d2), d2)
+            check("after the removal: nothing refuses the object", d2["refusal"] is None, d2)
+            check("after the removal: Melodyne was never 'disproved'", mel["identifier"] not in d2["disproved"], d2)
+            pick_mel("second placement (after a removal)")
+            # place -> remove -> place, several times over
+            for i in range(3):
+                remove_source()
+                pick_mel("round %d" % (i + 3))
+            # undo / redo of a removal, then the door
+            remove_source()
+            send("edit.undo")
+            wait()
+            wait_ara(a)
+            check("undo of the removal: the source is back", status(a)["has_source"] and status(a)["engine_valid"], status(a))
+            remove_source()
+            send("edit.undo")
+            wait()
+            send("edit.redo")
+            wait()
+            check("undo then redo of the removal: no source", not status(a)["has_source"], status(a))
+            d3 = door()
+            check("after undo+redo of a removal: Melodyne is offered, nothing refuses",
+                  mel["identifier"] in offered(d3) and d3["refusal"] is None, d3)
+            pick_mel("placement after undo+redo of a removal")
+            # undo of the placement itself, then place again
+            send("edit.undo")
+            wait()
+            check("undo of the placement: no source", not status(a)["has_source"], status(a))
+            d4 = door()
+            check("after the undo of a placement: offered, nothing refuses",
+                  mel["identifier"] in offered(d4) and d4["refusal"] is None, d4)
+            pick_mel("placement after the undo of a placement")
+            # a removal made while Melodyne is still analysing
+            fresh("p_door2")
+            a = add_clip(MELODY30, lane=0)
+            door(mel["identifier"])
+            remove_source()
+            pick_mel("placement right after a removal during the analysis")
+            # a candidate the module PROVES not ARA (a false positive of the file pre-filter) must not
+            # take Melodyne's row away with it; a module the engine could not read must not be condemned.
+            others = [i for i in offered(door()) if i != mel["identifier"]]
+            info("%d other candidate(s) offered by the pre-filter" % len(others))
+            remove_source()
+            for ident in others[:3]:
+                d = door(ident)
+                pk = d.get("picked", {})
+                info("  %s -> %s" % (os.path.basename(ident), pk.get("refusal") or "set up"))
+                if pk.get("ok"):
+                    remove_source()
+                check("a pick on %s leaves Melodyne offered" % os.path.basename(ident),
+                      mel["identifier"] in offered(d), d)
+            pick_mel("placement after the picks on other candidates")
+
         # ══════════════════════════════════════════════════════════════════════ Z
         if want("Z") or SECTIONS is None:
             section("Z  end")

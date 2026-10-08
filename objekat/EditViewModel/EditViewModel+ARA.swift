@@ -136,19 +136,41 @@ extension EditViewModel {
     /// True when the picker should show the ARA section for this host (an audio clip, whatever its state).
     func araPickerApplies(to objectID: UUID) -> Bool { find(id: objectID)?.isClip ?? false }
 
+    /// The rows of the picker's ARA section for `objectID`, computed AT THE MOMENT the picker is drawn
+    /// from the live catalogue (nothing is kept between two openings): the VST3 the pre-filter marks
+    /// ARA, minus those a loaded module has PROVED not to be (`araDisprovedIdentifiers`: only ever fed by
+    /// the engine's verdict, never by a failure to judge), one row per module, filtered by `search`.
+    func araPickerCandidates(for objectID: UUID, search: String = "") -> [AvailablePlugin] {
+        guard araPickerApplies(to: objectID) else { return [] }
+        let base = availablePlugins.filter {
+            $0.isARA && $0.formatName == "VST3" && !araDisprovedIdentifiers.contains($0.identifier)
+        }
+        // One row per module: the scan can list the same VST3 bundle twice (an older cache entry).
+        var seen = Set<String>()
+        let unique = base.filter { seen.insert($0.identifier).inserted }
+        guard !search.isEmpty else { return unique }
+        return unique.filter {
+            $0.name.localizedCaseInsensitiveContains(search) ||
+            $0.manufacturer.localizedCaseInsensitiveContains(search)
+        }
+    }
+
     /// The picker entry "ARA source": the ONE function that confirms a candidate. The candidate was
     /// marked from files alone (moduleinfo.json, or the factory's name in the binary); the real
     /// `hasARAExtension` is only known once the module is loaded, which `setARASource` does through
     /// `resolveARAPluginInfo` — in this process, exactly as an FX would be loaded by the "+". A false
-    /// positive comes back as `.pluginNotARA` and is remembered. Presents the refusal itself.
-    func addARASourceFromPicker(objectID: UUID, available: AvailablePlugin) {
+    /// positive comes back as `.pluginNotARA` — only when the module was LOADED and declares no ARA
+    /// (a module the engine could not read comes back as `.setupFailed`, and stays offered) — and is remembered. Presents the refusal itself.
+    @discardableResult
+    func addARASourceFromPicker(objectID: UUID, available: AvailablePlugin) -> ARARefusal? {
         if let refusal = setARASource(objectID: objectID, available: available) {
             if refusal == .pluginNotARA { araDisprovedIdentifiers.insert(available.identifier) }
             presentARARefusal(refusal, pluginName: available.name)
-            return
+            return refusal
         }
         // Opened on the spot, as a plugin added by the "+" is (headless: nothing to open).
         if hasInterface { openARAEditor(objectID: objectID) }
+        return nil
     }
 
     func presentARARefusal(_ refusal: ARARefusal, pluginName: String) {
