@@ -837,7 +837,9 @@ the same plugin id keeps the live archive. The archive is refreshed at each undo
 DEBUG builds add `debug.ara_report {}` (instances alive, failures, stale count, capture counters,
 archive bytes, `rss_mb`), `debug.ara_mark_stale {ids?}` (simulates a retouch: the next undo point pays
 one capture each) and `debug.ara_probe {identifier, format, name?}` (does a plugin act as an ARA source,
-read from the module's real factory; opens no window).
+read from the module's real factory; opens no window) and `debug.ara_picker {host, pick?, search?}` (the ARA
+rows the "+" picker would offer for that object NOW, and the click on one of them, exactly as the row does it:
+`{candidates, refusal, has_source, disproved, picked?}`).
 
 ### A selection of plugin cards
 

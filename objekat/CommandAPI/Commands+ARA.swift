@@ -176,6 +176,39 @@ extension CommandRegistry {
             engine.debugMarkARAStale(ids.map(\.uuidString))
             return .object(["marked": .int(ids.count)])
         }
+        register("debug.ara_picker",
+                 summary: "DEBUG: the ARA section of the \"+\" picker for an audio object, as the interface would compute it NOW, "
+                        + "and optionally the click on one of its rows (exactly what the row does: addARASourceFromPicker). "
+                        + "Returns {candidates:[{identifier,name,manufacturer}], refusal, has_source, disproved, picked?:{ok, refusal}}.",
+                 params: [ParamSpec("host", "uuid", "the audio object the picker is opened on"),
+                          ParamSpec("pick", "string", required: false, "identifier (bundle path) of the row to click, if offered"),
+                          ParamSpec("search", "string", required: false, "the picker's search field")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            let candidates = vm.araPickerCandidates(for: host, search: try p.string("search", or: ""))
+            var out: [String: JSONValue] = [:]
+            if let ident = try p.optionalString("pick") {
+                // The row is only clickable when offered and not refused (`.disabled(refusal != nil)`).
+                if let row = candidates.first(where: { $0.identifier == ident }) {
+                    if let refusal = vm.araPickerRefusal(for: host) {
+                        out["picked"] = .object(["ok": .bool(false), "refusal": .string(refusal.rawValue), "clickable": .bool(false)])
+                    } else {
+                        let refusal = vm.addARASourceFromPicker(objectID: host, available: row)
+                        out["picked"] = .object(["ok": .bool(refusal == nil), "refusal": .stringOrNull(refusal?.rawValue), "clickable": .bool(true)])
+                    }
+                } else {
+                    out["picked"] = .object(["ok": .bool(false), "refusal": .string("not_offered"), "clickable": .bool(false)])
+                }
+            }
+            out["candidates"] = .array(vm.araPickerCandidates(for: host).map {
+                .object(["identifier": .string($0.identifier), "name": .string($0.name), "manufacturer": .string($0.manufacturer)])
+            })
+            out["refusal"] = .stringOrNull(vm.araPickerRefusal(for: host)?.rawValue)
+            out["has_source"] = .bool(vm.find(id: host)?.araSource != nil)
+            out["disproved"] = .array(vm.araDisprovedIdentifiers.sorted().map { .string($0) })
+            return .object(out)
+        }
         #endif
     }
 }

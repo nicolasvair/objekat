@@ -5550,13 +5550,22 @@ static std::map<std::string, juce::PluginDescription>& objResolvedARADescription
 // charger que du VST3 : tracktion_ARAPluginFactory.h, getFactoryForPlugin). Seul un VST3 est
 // accepté (Q2 : un AU, même jumeau de Melodyne, n'est PAS une source ARA). Le module est chargé
 // (findAllTypesForFile) pour lire le vrai `hasARAExtension` : JAMAIS sur un AU.
-// nil = pas un VST3 ARA.
+// nil = pas un VST3 ARA. `definitive` (facultatif) dit si ce « non » est un VERDICT : vrai seulement
+// quand le module a été CHARGÉ et que ses types ne déclarent pas ARA (ou que le format n'est pas VST3) ;
+// faux quand on n'a pas pu juger (bundle absent, module qui ne se charge pas) — un échec de ce genre ne
+// doit jamais faire condamner le plugin (« pas ARA ») pour le reste de la session.
 - (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary*)pluginInfo {
+    return [self resolveARAPluginInfo:pluginInfo definitive:nullptr];
+}
+
+- (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary*)pluginInfo definitive:(BOOL*)definitive {
+    if (definitive) *definitive = NO;
     if (!_engine) return nil;
     NSString* format     = pluginInfo[@"format"];
     NSString* identifier = pluginInfo[@"identifier"];
     NSString* name       = pluginInfo[@"name"];
-    if (!format || !identifier || ![format isEqualToString:@"VST3"]) return nil;
+    if (!format || !identifier) return nil;
+    if (![format isEqualToString:@"VST3"]) { if (definitive) *definitive = YES; return nil; }
 
     juce::String wantedName = juce::String::fromUTF8([(name ?: @"") UTF8String]);
     NSString* bundlePath = identifier;
@@ -5579,7 +5588,10 @@ static std::map<std::string, juce::PluginDescription>& objResolvedARADescription
             if (!t->hasARAExtension) continue;
             if (!best || t->name.equalsIgnoreCase(wantedName)) best = t;
         }
-        if (!best) return nil;
+        if (!best) {
+            if (definitive) *definitive = (types.size() > 0);   // chargé et sans ARA = verdict ; rien lu = pas jugé
+            return nil;
+        }
         hit = resolved.emplace(cacheKey, *best).first;
     }
 
@@ -5697,11 +5709,14 @@ static void objClearARAState(te::WaveAudioClip& clip) {
     if (clip->getIsReversed()) return @"reversed";
     if (clip->isLooping()) return @"looping";   // v1 : boucles refusées (Q5)
 
-    NSDictionary* resolved = [self resolveARAPluginInfo:pluginInfo];
-    if (!resolved) return @"not_ara_plugin";
+    BOOL definitive = NO;
+    NSDictionary* resolved = [self resolveARAPluginInfo:pluginInfo definitive:&definitive];
+    // « not_ara_plugin » = le module chargé ne déclare pas ARA (verdict). Un module qu'on n'a pas pu
+    // lire n'est PAS jugé : ara_setup_failed (le « + » le laisse alors réessayable).
+    if (!resolved) return definitive ? @"not_ara_plugin" : @"ara_setup_failed";
     auto& descs = objResolvedARADescriptions();
     auto dit = descs.find(std::string([resolved[@"identifier"] UTF8String]));
-    if (dit == descs.end()) return @"not_ara_plugin";
+    if (dit == descs.end()) return @"ara_setup_failed";
 
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     const double rss0 = objResidentMB();

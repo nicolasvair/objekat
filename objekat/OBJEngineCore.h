@@ -326,6 +326,8 @@
 // est chargé pour lire le vrai hasARAExtension. Renvoie {identifier, format:"VST3", name, manufacturer},
 // ou nil (pas un VST3 ARA).
 - (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary* _Nonnull)pluginInfo;
+// Idem, et `definitive` (facultatif) dit si un nil est un VERDICT (module chargé, sans ARA) ou un « pas pu juger ».
+- (NSDictionary* _Nullable)resolveARAPluginInfo:(NSDictionary* _Nonnull)pluginInfo definitive:(BOOL* _Nullable)definitive;
 // MARK: ARA — source Melodyne (étape 3 ; docs/ara_melodyne_plan.md §2)
 //
 // Pose une source ARA sur un objet AUDIO. nil = succès ; sinon la RAISON (machine, anglais) :
