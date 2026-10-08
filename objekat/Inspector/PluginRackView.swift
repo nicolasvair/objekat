@@ -48,8 +48,11 @@ struct PluginPickerPopover: View {
         let base = viewModel.availablePlugins.filter {
             $0.isARA && $0.formatName == "VST3" && !viewModel.araDisprovedIdentifiers.contains($0.identifier)
         }
-        guard !searchText.isEmpty else { return base }
-        return base.filter {
+        // One row per module: the scan can list the same VST3 bundle twice (an older cache entry).
+        var seen = Set<String>()
+        let unique = base.filter { seen.insert($0.identifier).inserted }
+        guard !searchText.isEmpty else { return unique }
+        return unique.filter {
             $0.name.localizedCaseInsensitiveContains(searchText) ||
             $0.manufacturer.localizedCaseInsensitiveContains(searchText)
         }
@@ -107,7 +110,9 @@ struct PluginPickerPopover: View {
                         let araList = araCandidates
                         if !araList.isEmpty {
                             sectionHeader(L("plugins.section.ara"))
-                            ForEach(araList) { plugin in araRow(plugin) }
+                            // Own identity: these plugins are ALSO rows of the external section above,
+                            // in the same LazyVStack — sharing their ids made SwiftUI drop these rows.
+                            ForEach(araList, id: \.identifier) { plugin in araRow(plugin) }
                         }
                     }
                 }
