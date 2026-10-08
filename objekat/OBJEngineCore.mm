@@ -246,6 +246,11 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // (`p.edit.shouldLoadPlugins()`), donc le graphe live n'est jamais amputé.
     bool shouldLoadPlugin(te::ExternalPlugin& p) override {
         if (!OBJRenderPluginFilter::active) return te::EngineBehaviour::shouldLoadPlugin(p);
+        // L'instance d'une source ARA est un ExternalPlugin SANS parent dans l'arbre (il appartient au
+        // proxy du clip, pas à une plugin-list) : `wants` le refuserait. Les clips ARA hors de la chaîne
+        // rendue ont été repassés en lecture fichier dans la copie (@see objStampARAArchives), donc
+        // tout ARA parentless qui se construit ici sert la chaîne rendue.
+        if (!p.state.getParent().isValid() && p.desc.hasARAExtension) return true;
         return OBJRenderPluginFilter::wants(p.state);
     }
 
@@ -1140,6 +1145,61 @@ static te::Plugin::Array objAllPluginsDeep(te::Edit& edit) {
         for (auto* cc : te::getTrackItemsOfType<te::ContainerClip>(*t))
             objCollectContainedPlugins(*cc, list);
     return list;
+}
+
+// ARA et rendus (docs/ara_melodyne_plan.md, étape 7).
+//
+// Un CLONE de rendu naît de `_edit->state.createCopy()`. Or l'état d'une source ARA ne vit PAS dans
+// cet arbre : les retouches sont dans l'instance Melodyne du clip, et l'enfant ARADOCUMENT de l'Edit
+// ne porte qu'un état périmé (écrit à la sauvegarde seulement). Sans cette étape, le clone relirait
+// le fichier sans retouche. On capture donc l'archive de chaque proxy ARA VIVANT et on l'écrit sur
+// le clip HOMOLOGUE de la copie (mêmes propriétés que `captureARAStateToValueTree` : `setupARA` du
+// clone les relit et les rend à son plugin), puis on retire ARADOCUMENT de la copie : une seule
+// source de vérité, les archives par clip.
+//
+// `allowed` (rendu ciblé / bake) : un clip ARA HORS de l'ensemble n'est de toute façon pas rendu ;
+// on le repasse en lecture fichier dans la copie plutôt que d'instancier un Melodyne pour rien
+// (et, sans description, `setupARA` irait chercher le plugin ARA par défaut).
+// Retourne le nombre d'archives estampillées.
+static juce::ValueTree objFindClipState(const juce::ValueTree& root, te::EditItemID id) {
+    if (te::Clip::isClipState(root) && te::EditItemID::fromID(root) == id) return root;
+    for (int i = 0; i < root.getNumChildren(); ++i) {
+        auto found = objFindClipState(root.getChild(i), id);
+        if (found.isValid()) return found;
+    }
+    return {};
+}
+
+template <typename ClipMap>
+static int objStampARAArchives(const ClipMap& clips, juce::ValueTree& stateCopy,
+                               const std::set<te::EditItemID>* allowed, int* demoted = nullptr) {
+    int stamped = 0;
+    for (auto& kv : clips) {
+        te::WaveAudioClip* clip = kv.second.get();
+        if (!clip || !clip->isUsingARA()) continue;
+        auto cs = objFindClipState(stateCopy, clip->itemID);
+        if (!cs.isValid()) continue;
+
+        if (allowed && allowed->count(clip->itemID) == 0) {
+            cs.setProperty(te::IDs::elastiqueMode,
+                           juce::VariantConverter<te::TimeStretcher::Mode>::toVar(te::TimeStretcher::disabled), nullptr);
+            cs.removeProperty(te::IDs::araPluginDescription, nullptr);
+            if (demoted) ++*demoted;
+            continue;
+        }
+        auto proxy = clip->getARAProxy();
+        if (!proxy || !proxy->isValid()) continue;
+        juce::MemoryBlock block = proxy->storeARAArchiveForCopy();
+        if (block.getSize() == 0) continue;
+        cs.setProperty(te::IDs::araArchive, block.toBase64Encoding(), nullptr);
+        cs.setProperty(te::IDs::araArchiveSourceID, proxy->getAudioSourcePersistentID(), nullptr);
+        cs.setProperty(te::IDs::araArchiveModID, proxy->getAudioModificationPersistentID(), nullptr);
+        cs.setProperty(te::IDs::araDocumentArchiveID, proxy->getDocumentArchiveID(), nullptr);
+        ++stamped;
+    }
+    for (int i = stateCopy.getNumChildren(); --i >= 0;)
+        if (stateCopy.getChild(i).hasType(te::IDs::ARADOCUMENT)) stateCopy.removeChild(i, nullptr);
+    return stamped;
 }
 
 // DIAGNOSTIC PERF : seuls les plugins EXTERNES coûtent à l'instanciation — un AU se charge,
@@ -3739,6 +3799,15 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // Clone l'Edit en rôle forRendering (playDisabled → ne s'attache PAS au device live).
     // On opère le détach/bypass sur cette copie : le graphe live est intact.
     auto stateCopy = _edit->state.createCopy();
+    {   // Source ARA : les retouches vivent dans l'instance, pas dans l'arbre (@see objStampARAArchives).
+        const std::set<te::EditItemID> allowedSet(allowedClipIDs.begin(), allowedClipIDs.end());
+        int demoted = 0;
+        const int stamped = objStampARAArchives(_clipMap, stateCopy,
+                                                allowedSet.empty() ? nullptr : &allowedSet, &demoted);
+        if (stamped > 0 || demoted > 0)
+            NSLog(@"[ARA] rendu « %@ » : %d archive(s) transmise(s) au clone, %d source(s) repassée(s) en fichier",
+                  desc, stamped, demoted);
+    }
     const double tCopy = juce::Time::getMillisecondCounterHiRes();
     std::unique_ptr<te::Edit> clone;
     {
@@ -4124,6 +4193,10 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         const double tFlush = juce::Time::getMillisecondCounterHiRes();
 
         auto stateCopy = _edit->state.createCopy();
+        {   // Source ARA : les retouches vivent dans l'instance, pas dans l'arbre (@see objStampARAArchives).
+            const int stamped = objStampARAArchives(_clipMap, stateCopy, nullptr);
+            if (stamped > 0) NSLog(@"[ARA] export : %d archive(s) transmise(s) au clone", stamped);
+        }
         const double tCopy = juce::Time::getMillisecondCounterHiRes();
         // Pas de OBJRenderPluginFilter::Scope ici : tout le projet doit sonner.
         clone = te::loadEditFromState(*_engine, stateCopy, te::Edit::EditRole::forRendering);

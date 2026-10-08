@@ -98,6 +98,9 @@ extension EditViewModel {
     /// bus's FX editor is exactly as capable of outliving the engine state it points at as an
     /// object's.
     func closeAllPluginEditors() {
+        // An ARA source's editor (Melodyne) belongs to the object's clip, not to a plugin-list: it is
+        // not in `allPluginRefs()`. Closing one that is not open is a no-op.
+        for o in araObjects() { closeARAEditor(objectID: o.id) }
         for ref in allPluginRefs() {
             if isPluginEditorOpen(plug: ref.plugin) { closePluginEditor(plug: ref.plugin) }
         }

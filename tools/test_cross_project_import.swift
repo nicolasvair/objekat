@@ -345,6 +345,35 @@ enum CrossProjectImportTest {
                   plan.clips[3].plugins[0].sidechain == nil)
         }
 
+        // MARK: - An ARA source (Melodyne): a fresh plugin id, the archive as frozen at copy time
+
+        do {
+            let archive = ARAArchive(data: "QUJD", sourceID: "src-1", modificationID: "mod-1",
+                                     documentArchiveID: "com.celemony.ara.test", bytes: 3)
+            let srcPlugin = ObjectPlugin(id: UUID(), name: "Melodyne", manufacturer: "Celemony",
+                                         identifier: "melodyne-id", formatName: "VST3")
+            var araClip = clip(startTime: 0, lane: 0)
+            araClip.araSource = ARASource(plugin: srcPlugin, archive: archive)
+            var araChild = clip(startTime: 1, lane: 0)
+            araChild.araSource = ARASource(plugin: ObjectPlugin(id: UUID(), name: "Melodyne", manufacturer: "Celemony",
+                                                                identifier: "melodyne-id", formatName: "VST3"),
+                                           archive: archive)
+            let g = group(startTime: 0, lane: 1, children: [araChild])
+            let cb = CrossProjectImport.Clipboard(clips: [araClip, g], comments: [], consolidateDefinitions: [:],
+                                                  originFolder: originFolder, originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 5, pasteLane: 0))
+            let pasted = plan.clips[0].araSource
+            check("a pasted ARA source is still a source", pasted != nil)
+            check("... with a NEW plugin id (never shared)", pasted?.plugin.id != srcPlugin.id)
+            check("... the archive travels untouched", pasted?.archive == archive)
+            check("... and it is never linked", pasted?.plugin.linkGroupID == nil)
+            guard case .group(let kids, _) = plan.clips[1].kind else { check("pasted group", false); return }
+            check("an ARA source inside a pasted group gets a new id too",
+                  kids[0].araSource != nil && kids[0].araSource?.plugin.id != araChild.araSource?.plugin.id
+                  && kids[0].araSource?.plugin.id != pasted?.plugin.id)
+            check("... and keeps its archive", kids[0].araSource?.archive == archive)
+        }
+
         // MARK: - plan() performs no mutation of anything resembling "the target"
 
         do {
