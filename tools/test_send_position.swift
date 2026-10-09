@@ -1,0 +1,288 @@
+// Where a send takes its signal (INC 2 of the sends rework, session format 22) — the PURE half:
+// the model's encoding (a format-21 object decodes post-fader and re-encodes without the new keys),
+// the four positions and their round trip, "the marker wins over tap", the 5x5 transitions that keep
+// the marker <-> send bijection, and `sanitisingSends` (orphan, duplicate, nested in a rack branch,
+// nested in a bin, on an aux, idempotence). The "marker survives" tests of the transformations
+// (copies, runs, removal…) are in the sections added by step 2.2 of the plan.
+//
+//     cd tools && swiftc -parse-as-library \
+//         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/SoundObject/Automation.swift \
+//         ../objekat/SoundObject/AutomationCurveMath.swift \
+//         ../objekat/SoundObject/Marker.swift \
+//         ../objekat/SoundObject/ChannelMode.swift \
+//         ../objekat/Shared/LaneEntryIndex.swift \
+//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
+//         ../objekat/SoundObject/ConsolidateDefinition.swift \
+//         ../objekat/SoundObject/FadeCurve.swift \
+//         ../objekat/SoundObject/ComposedName.swift \
+//         ../objekat/SoundObject/FXLink.swift \
+//         ../objekat/SoundObject/SendPosition.swift \
+//         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/Localization.swift \
+//         ../objekat/EditViewModel/EditViewModel+Types.swift \
+//         ../objekat/EditViewModel/SessionSchema.swift \
+//         ../objekat/App/LaunchArguments.swift \
+//         ../objekat/Shared/BridgeScope.swift \
+//         ../objekat/Shared/ScriptCanvasMemory.swift \
+//         test_send_position.swift \
+//         -o /tmp/test_send_position && /tmp/test_send_position
+//
+// Exit: 0 if every assertion passes, 1 otherwise.
+
+import Foundation
+
+var fails: [String] = []
+var total = 0
+
+func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+    total += 1
+    if ok { print("ok    " + label) }
+    else { fails.append(label); print("FAIL  \(label)  \(detail)") }
+}
+
+@main
+enum SendPositionTest {
+    static func main() {
+
+        // MARK: - Fixtures
+
+        func plugin(_ name: String) -> ObjectPlugin {
+            ObjectPlugin(id: UUID(), name: name, manufacturer: "Objekat", identifier: name,
+                         formatName: "TracktionInternal")
+        }
+        func rackOf(_ voices: [[ObjectPlugin]]) -> ObjectPlugin {
+            ObjectPlugin(id: UUID(), name: "//", manufacturer: "", identifier: "", formatName: "",
+                         rack: PluginRack(voices: voices, wetDb: Array(repeating: 0, count: voices.count)))
+        }
+        func binOf(_ inner: [ObjectPlugin]) -> ObjectPlugin {
+            FXLink.blockEntry(linkID: UUID(), name: "bin", instances: inner)
+        }
+        func clip(plugins: [ObjectPlugin], sends: [AuxSend]) -> SoundObject {
+            SoundObject(id: UUID(), startTime: 0, duration: 4, lane: 0, plugins: plugins, sends: sends,
+                        kind: .clip(filePath: "a.wav", sourceOffset: 0, fileDuration: 4,
+                                    speedRatio: 1, isReversed: false))
+        }
+        func auxObject(plugins: [ObjectPlugin] = [], sends: [AuxSend] = []) -> SoundObject {
+            SoundObject(id: UUID(), startTime: 0, duration: 4, lane: 1, plugins: plugins, sends: sends,
+                        kind: .aux)
+        }
+        func json(_ v: some Encodable) -> String {
+            let e = JSONEncoder()
+            e.outputFormatting = [.sortedKeys]
+            return String(data: try! e.encode(v), encoding: .utf8)!
+        }
+        func decode<T: Decodable>(_ type: T.Type, _ text: String) -> T? {
+            try? JSONDecoder().decode(type, from: Data(text.utf8))
+        }
+        func names(_ plugins: [ObjectPlugin]) -> [String] {
+            plugins.map { $0.isSendMarker ? "m" : $0.name }
+        }
+        let auxA = UUID(), auxB = UUID()
+
+        // MARK: - Encoding: format 21 in, format 21 shape out
+
+        do {
+            let a = UUID()
+            let old = "{\"auxID\":\"\(a.uuidString)\",\"levelDb\":-6,\"enabled\":true}"
+            let send = decode(AuxSend.self, old)
+            check("a format-21 send decodes post-fader", send?.tap == .postFader)
+            check("and re-encodes without a tap key", send.map { !json($0).contains("tap") } ?? false,
+                  send.map(json) ?? "nil")
+
+            let pre = AuxSend(auxID: a, levelDb: -3, tap: .preFader)
+            check("a pre-fader send writes tap", json(pre).contains("\"tap\":\"preFader\""), json(pre))
+            check("a pre-fader send round-trips", decode(AuxSend.self, json(pre)) == pre)
+            let inp = AuxSend(auxID: a, levelDb: -3, tap: .input)
+            check("an input send round-trips", decode(AuxSend.self, json(inp)) == inp)
+
+            let junk = "{\"auxID\":\"\(a.uuidString)\",\"levelDb\":0,\"enabled\":true,\"tap\":\"sideways\"}"
+            check("an unknown tap value reads as post-fader (no failure)",
+                  decode(AuxSend.self, junk)?.tap == .postFader)
+
+            let plain = plugin("EQ")
+            check("a plain plugin writes no sendMarker key", !json(plain).contains("sendMarker"))
+            let m = ObjectPlugin.makeSendMarker(for: a)
+            check("a marker writes its aux", json(m).contains("\"sendMarker\":{\"auxID\":\"\(a.uuidString)\"}"))
+            check("a marker round-trips", decode(ObjectPlugin.self, json(m)) == m)
+            check("a marker is a container with no series", m.isContainer && m.childSeries.isEmpty
+                  && !m.isRack && !m.isFXBlock)
+            check("a plugin, a rack and a bin are not markers",
+                  !plain.isSendMarker && !rackOf([[plain]]).isSendMarker && !binOf([plain]).isSendMarker)
+
+            let obj = clip(plugins: [plugin("A"), plugin("B")], sends: [AuxSend(auxID: a, levelDb: -6)])
+            check("an object with no marker and a default send encodes with neither key",
+                  !json(obj).contains("sendMarker") && !json(obj).contains("\"tap\""))
+            check("an object round-trips", decode(SoundObject.self, json(obj)) == obj)
+        }
+
+        // MARK: - The four positions and "the marker wins"
+
+        do {
+            let base = clip(plugins: [plugin("A"), plugin("B")],
+                            sends: [AuxSend(auxID: auxA, levelDb: 0), AuxSend(auxID: auxB, levelDb: 0)])
+            check("no send, no position", base.sendPosition(auxID: UUID()) == nil)
+            check("default is post-fader", base.sendPosition(auxID: auxA) == .postFader)
+            check("input", base.settingSendPosition(auxID: auxA, .input).sendPosition(auxID: auxA) == .input)
+            check("pre-fader", base.settingSendPosition(auxID: auxA, .preFader).sendPosition(auxID: auxA) == .preFader)
+            for i in 0...2 {
+                let o = base.settingSendPosition(auxID: auxA, .chain(i))
+                check("chain(\(i)) reads back", o.sendPosition(auxID: auxA) == .chain(i))
+                let want: [String] = {
+                    var w = ["A", "B"]; w.insert("m", at: i); return w
+                }()
+                check("chain(\(i)) lays the marker at \(i)", names(o.plugins) == want, "\(names(o.plugins))")
+            }
+            check("chain(99) is clamped to the end",
+                  base.settingSendPosition(auxID: auxA, .chain(99)).sendPosition(auxID: auxA) == .chain(2))
+            check("chain(-4) is clamped to the start",
+                  base.settingSendPosition(auxID: auxA, .chain(-4)).sendPosition(auxID: auxA) == .chain(0))
+            check("an unknown aux changes nothing",
+                  base.settingSendPosition(auxID: UUID(), .chain(1)) == base)
+
+            // The marker wins over tap (a hand-edited file holding both).
+            var both = base.settingSendPosition(auxID: auxA, .chain(1))
+            both.sends[0].tap = .preFader
+            check("the marker wins over tap", both.sendPosition(auxID: auxA) == .chain(1))
+            check("sanitising writes the canonical form (tap back to post-fader)",
+                  both.sanitisingSends().sends[0].tap == .postFader
+                  && both.sanitisingSends().sendPosition(auxID: auxA) == .chain(1))
+
+            // Moving out of the chain removes the marker; into it resets tap.
+            let pre = base.settingSendPosition(auxID: auxA, .preFader)
+            let into = pre.settingSendPosition(auxID: auxA, .chain(1))
+            check("into the chain resets tap", into.sends[0].tap == .postFader)
+            let out = into.settingSendPosition(auxID: auxA, .input)
+            check("out of the chain removes the marker", !out.plugins.contains(where: \.isSendMarker)
+                  && out.sends[0].tap == .input, "\(names(out.plugins))")
+
+            // Two markers in one gap: the second goes immediately before the entry, after the first.
+            let two = base.settingSendPosition(auxID: auxA, .chain(1)).settingSendPosition(auxID: auxB, .chain(1))
+            check("two markers in one gap: the newer sits right before the entry",
+                  names(two.plugins) == ["A", "m", "m", "B"]
+                  && two.plugins[1].sendMarker?.auxID == auxA && two.plugins[2].sendMarker?.auxID == auxB)
+            check("and both read chain(1)", two.sendPosition(auxID: auxA) == .chain(1)
+                  && two.sendPosition(auxID: auxB) == .chain(1))
+        }
+
+        // MARK: - 5 x 5 transitions keep the bijection
+
+        do {
+            let base = clip(plugins: [plugin("A"), plugin("B"), plugin("C")],
+                            sends: [AuxSend(auxID: auxA, levelDb: -4), AuxSend(auxID: auxB, levelDb: -9)])
+            let spots: [SendPosition] = [.input, .chain(0), .chain(2), .preFader, .postFader]
+            var bad: [String] = []
+            for from in spots {
+                for to in spots {
+                    // A second send sits somewhere else the whole time: it must not move.
+                    let start = base.settingSendPosition(auxID: auxA, from)
+                        .settingSendPosition(auxID: auxB, .chain(1))
+                    let o = start.settingSendPosition(auxID: auxA, to)
+                    let markersA = ObjectPlugin.topLevelSendMarkers(in: o.plugins).filter { $0.auxID == auxA }.count
+                    var okLocal = o.sendPosition(auxID: auxA) == to
+                    switch to { case .chain: okLocal = okLocal && markersA == 1; default: okLocal = okLocal && markersA == 0 }
+                    okLocal = okLocal && o.sendPosition(auxID: auxB) == .chain(1)
+                    okLocal = okLocal && o.sanitisingSends() == o
+                    okLocal = okLocal && ObjectPlugin.chainEntryCount(o.plugins) == 3
+                    okLocal = okLocal && o.sends.map(\.levelDb) == [-4, -9]
+                    if !okLocal { bad.append("\(from)->\(to)") }
+                }
+            }
+            check("all 25 transitions: read-back, one marker iff chain, the other send untouched, sanitising is a no-op",
+                  bad.isEmpty, bad.joined(separator: ", "))
+        }
+
+        // MARK: - sanitisingSends
+
+        do {
+            let m = ObjectPlugin.makeSendMarker(for: auxA)
+            let sendA = [AuxSend(auxID: auxA, levelDb: 0)]
+
+            // Orphan: a marker whose aux has no send.
+            let orphan = clip(plugins: [plugin("A"), ObjectPlugin.makeSendMarker(for: auxB)], sends: sendA)
+            check("an orphan marker is removed", names(orphan.sanitisingSends().plugins) == ["A"])
+
+            // Duplicate: the first is kept.
+            let dup = clip(plugins: [plugin("A"), m, plugin("B"), ObjectPlugin.makeSendMarker(for: auxA)], sends: sendA)
+            let dupFixed = dup.sanitisingSends()
+            check("two markers for one aux: the first is kept", names(dupFixed.plugins) == ["A", "m", "B"]
+                  && dupFixed.plugins[1].id == m.id, "\(names(dupFixed.plugins))")
+
+            // Nested in a rack branch: hoisted after the rack.
+            let inRack = clip(plugins: [plugin("A"), rackOf([[plugin("X"), m], [plugin("Y")]]), plugin("B")], sends: sendA)
+            let rackFixed = inRack.sanitisingSends()
+            check("a marker nested in a rack branch is hoisted just after the rack",
+                  names(rackFixed.plugins) == ["A", "//", "m", "B"], "\(names(rackFixed.plugins))")
+            check("and the rack lost it (its branches keep their plugins)",
+                  rackFixed.plugins[1].rack?.voices.map { names($0) } == [["X"], ["Y"]])
+            check("the hoisted marker reads chain(2)", rackFixed.sendPosition(auxID: auxA) == .chain(2))
+
+            // Nested in a bin: hoisted after the bin block.
+            let inBin = clip(plugins: [binOf([plugin("X"), m, plugin("Y")]), plugin("B")], sends: sendA)
+            let binFixed = inBin.sanitisingSends()
+            check("a marker nested in a bin is hoisted just after the bin",
+                  names(binFixed.plugins) == ["bin", "m", "B"] || names(binFixed.plugins) == ["", "m", "B"],
+                  "\(names(binFixed.plugins))")
+            check("and the bin lost it", binFixed.plugins[0].fxBlock?.plugins.map { $0.name } == ["X", "Y"])
+
+            // Rack inside a rack: hoisted after the top-level ancestor, in the order met.
+            let deep = clip(plugins: [rackOf([[rackOf([[ObjectPlugin.makeSendMarker(for: auxB)]])]]), plugin("Z")],
+                            sends: [AuxSend(auxID: auxA), AuxSend(auxID: auxB)])
+            check("a marker two racks deep is hoisted after the top-level one",
+                  names(deep.sanitisingSends().plugins) == ["//", "m", "Z"])
+
+            // On an aux object: removed.
+            let onAux = auxObject(plugins: [plugin("A"), m], sends: sendA)
+            check("a marker on an aux object is removed", names(onAux.sanitisingSends().plugins) == ["A"])
+
+            // Idempotence on every case above.
+            let all = [orphan, dup, inRack, inBin, deep, onAux]
+            check("sanitising is idempotent", all.allSatisfy { $0.sanitisingSends().sanitisingSends() == $0.sanitisingSends() })
+            let clean = clip(plugins: [plugin("A"), m, plugin("B")], sends: sendA)
+            check("a consistent object is left exactly as it is", clean.sanitisingSends() == clean)
+
+            // A stem / Main chain never keeps one.
+            check("stripping removes the markers at any depth",
+                  names(ObjectPlugin.strippingSendMarkers([plugin("A"), rackOf([[m]]), m])) == ["A", "//"])
+            check("containsSendMarker finds a nested one",
+                  ObjectPlugin.containsSendMarker(in: [rackOf([[plugin("X"), m]])], where: { _ in true }))
+        }
+
+        // MARK: - Indices follow the array (plugin inserted, removed, reordered around a marker)
+
+        do {
+            let base = clip(plugins: [plugin("A"), plugin("B")], sends: [AuxSend(auxID: auxA)])
+            let o = base.settingSendPosition(auxID: auxA, .chain(1))        // [A, m, B]
+            var inserted = o; inserted.plugins.insert(plugin("N"), at: 0)    // [N, A, m, B]
+            check("a plugin inserted BEFORE the marker pushes it to chain(2)", inserted.sendPosition(auxID: auxA) == .chain(2))
+            var after = o; after.plugins.append(plugin("N"))                 // [A, m, B, N]
+            check("a plugin appended after leaves it at chain(1)", after.sendPosition(auxID: auxA) == .chain(1))
+            var removed = o
+            let firstID = o.plugins[0].id
+            removed.plugins.removeAll { $0.id == firstID }
+            check("removing the first plugin leaves chain(0) — the marker kept its array place",
+                  removed.sendPosition(auxID: auxA) == .chain(0), "\(names(removed.plugins))")
+            var reordered = o; reordered.plugins.swapAt(0, 2)                // [B, m, A]
+            check("reordering the two plugins around it leaves chain(1)", reordered.sendPosition(auxID: auxA) == .chain(1))
+            var markerFirst = o; markerFirst.plugins.swapAt(0, 1)            // [m, A, B]
+            check("moving the marker by array hand reads chain(0)", markerFirst.sendPosition(auxID: auxA) == .chain(0))
+        }
+
+        // MARK: - Names
+
+        do {
+            check("position names", SendPosition.input.name == "input" && SendPosition.chain(3).name == "chain"
+                  && SendPosition.preFader.name == "pre_fader" && SendPosition.postFader.name == "post_fader")
+            check("named() inverts them", SendPosition.named("pre_fader") == .preFader
+                  && SendPosition.named("chain", index: 2) == .chain(2)
+                  && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
+            check("the session format is 22", SessionSchema.formatVersion == 22)
+            check("the notice mentions both new keys",
+                  SessionSchema.note.joined(separator: "\n").contains("sendMarker")
+                  && SessionSchema.note.joined(separator: "\n").contains("preFader"))
+        }
+
+        print("\n\(total - fails.count)/\(total) passed")
+        if !fails.isEmpty { print("FAILED: \(fails)"); exit(1) }
+    }
+}

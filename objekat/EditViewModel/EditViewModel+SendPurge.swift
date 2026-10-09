@@ -72,6 +72,34 @@ extension EditViewModel {
         return (out, sends, lanes)
     }
 
+    /// `items` with every object's sends and markers made consistent (@see SoundObject.sanitisingSends),
+    /// at any depth; `stems` with their markers stripped (a stem and the Main never send). Pure.
+    /// `changed` counts the objects and stems that were repaired.
+    static func sanitisingSendMarkers(_ items: [SoundObject], stems: [Stem] = [])
+        -> (items: [SoundObject], stems: [Stem], changed: Int) {
+        var changed = 0
+        func walk(_ array: [SoundObject]) -> [SoundObject] {
+            array.map { o in
+                var o = o
+                if case .group(let children, let expanded) = o.kind {
+                    o.kind = .group(children: walk(children), isExpanded: expanded)
+                }
+                let clean = o.sanitisingSends()
+                if clean != o { changed += 1 }
+                return clean
+            }
+        }
+        let outItems = walk(items)
+        let outStems: [Stem] = stems.map { st in
+            guard ObjectPlugin.containsSendMarker(in: st.plugins, where: { _ in true }) else { return st }
+            var st = st
+            st.plugins = ObjectPlugin.strippingSendMarkers(st.plugins)
+            changed += 1
+            return st
+        }
+        return (outItems, outStems, changed)
+    }
+
     /// Sweeps the LIVE model after an aux was deleted. A no-op unless `removeFromEngine` saw an aux go
     /// (`sendPrunePending`), and when it did, unless a send really dangles: an aux that was merely
     /// replaced in place (same id, rebuilt) leaves nothing to purge. The engine side needs nothing
@@ -81,7 +109,8 @@ extension EditViewModel {
         sendPrunePending = false
         let result = Self.purgingDanglingSends(items)
         guard result.sends > 0 || result.lanes > 0 else { return }
-        items = result.items
+        // The markers of the sends that went with the aux go too (a marker needs its send).
+        items = Self.sanitisingSendMarkers(result.items).items
         isDirty = true
         NSLog("[SENDS] purged %d send(s) and %d automation lane(s) aimed at a deleted aux", result.sends, result.lanes)
     }

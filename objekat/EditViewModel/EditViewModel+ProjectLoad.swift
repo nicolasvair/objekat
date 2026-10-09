@@ -254,7 +254,13 @@ extension EditViewModel {
             NSLog("[LOAD] %d send(s) and %d automation lane(s) aimed at a deleted aux dropped",
                   sanitised.sends, sanitised.lanes)
         }
-        items = sanitised.items
+        // Markers and sends made consistent (a retouched file: orphan, duplicate or nested marker).
+        let consistent = Self.sanitisingSendMarkers(sanitised.items, stems: stems)
+        if consistent.changed > 0 {
+            NSLog("[LOAD] send markers repaired on %d object(s) or stem(s)", consistent.changed)
+            stems = consistent.stems
+        }
+        items = consistent.items
         return (duplicates, fixed.repairs.count)
     }
 

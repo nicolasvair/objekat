@@ -45,6 +45,16 @@ is the foundation and is not repeated here.
 | Q-U7 | Where sends are drawn | ALL sends are cards in the signal view. A post-fader send is a card UNDER the pan / volume zone; dragging it upwards moves it into the chain. The fixed "aux" zone at the foot disappears for outgoing sends. | D.1.A.j. The aux bus head (received sends) is not concerned. |
 | — | Choosing the target of a new send | As for the sidechain: a "Send to…" menu (reachable auxes, order same group / rest of the stem / Main, refused ones greyed with the reason) and the "choose an object" mode on the timeline. The Aux tool (A) and the multi-selection inspector keep setting the level per (object, aux), whatever the position. | Step 2.11 (`SidechainPick` generalised). |
 
+**Third round (confirmed by the user through the coordinator, during the INC 2 implementation) — the three
+hypotheses below are DECISIONS now; the text of D.1 that calls them hypotheses or "interpretation to
+confirm" is superseded by this table:**
+
+| # | Subject | Decision | Consequence for INC 2 |
+|---|---|---|---|
+| Q-U12 | Mute / solo of an object sending taken before the fader | CONFIRMED as planned: an object that is muted, or silenced by another's solo or by its stem's mute, feeds no aux, even pre-fader / in the chain / at the input. | Step 2.5 stands as written (`sendIsGated` also true when the sender itself is silenced and its tap is not post-fader). |
+| Q-U6 | Consolidate / bake with a mid-chain send | CONFIRMED as planned: an alert at the moment of consolidating (fold to post-fader / delete the send / cancel); API parameter `mid_chain_sends` = `refuse` (default) / `fold` / `remove`. | Step 2.8 stands as written. |
+| Q-U13 | Which sends the signal view draws | CONFIRMED: only the sends that exist are drawn as cards; the other reachable auxes are reached through "Send to…". | Steps 2.9–2.11 stand as written. |
+
 ## Decisions taken in this plan (the architect's, each justified below)
 
 | # | Subject | Decision |

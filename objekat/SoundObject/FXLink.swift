@@ -175,15 +175,27 @@ struct FXLinkBlock: Codable, Equatable {
 
 extension ObjectPlugin {
 
-    /// True for the entries that are not a plugin but hold a chain of their own: a parallel block
-    /// (`rack`) or a bin's block (`fxBlock`).
-    var isContainer: Bool { rack != nil || fxBlock != nil }
+    /// True for the entries that are not a plugin: a parallel block (`rack`) and a bin's block
+    /// (`fxBlock`), which hold a chain of their own, and a send's marker (`sendMarker`), which holds
+    /// none. A marker answers "container" so that every walk that skips leaves skips it too, and
+    /// `childSeries` is empty so that no walk descends into it.
+    var isContainer: Bool { rack != nil || fxBlock != nil || sendMarker != nil }
+
+    /// True if this entry is the place of a send on the trunk (@see SendMarker).
+    var isSendMarker: Bool { sendMarker != nil }
+
+    /// A marker for the send towards `auxID`: no plugin identity, a fresh id of its own (the engine's
+    /// key for the send stays `sender|aux`, never this id).
+    static func makeSendMarker(for auxID: UUID, id: UUID = UUID()) -> ObjectPlugin {
+        ObjectPlugin(id: id, name: "", manufacturer: "", identifier: "", formatName: "",
+                     colorIndex: 0, sendMarker: SendMarker(auxID: auxID))
+    }
 
     /// True if this entry is a bin's block.
     var isFXBlock: Bool { fxBlock != nil }
 
     /// The series a container holds: a rack's branches, or a block's single series. Empty for a
-    /// plain plugin. EVERY traversal that descends into a chain goes through this, so that a new
+    /// plain plugin and for a send's marker. EVERY traversal that descends into a chain goes through this, so that a new
     /// kind of container is one place to teach and not a dozen.
     var childSeries: [[ObjectPlugin]] {
         if let rack { return rack.voices }

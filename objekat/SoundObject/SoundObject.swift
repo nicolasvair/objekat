@@ -193,6 +193,11 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// The object or stem keying this plugin's sidechain input (nil = none). Meaningful on a leaf
     /// plugin or an instrument only. Session format 19. @see SidechainSource
     var sidechain: SidechainSource? = nil
+    /// Non-nil ⇒ this entry is NOT a plugin but the PLACE a send takes on the trunk: the point of the
+    /// chain where the send towards `sendMarker.auxID` taps the signal. A third kind of container,
+    /// beside `rack` and `fxBlock`, with no series of its own. Top level of `plugins` only. Session
+    /// format 22. @see SendMarker, SoundObject.sendPosition(auxID:)
+    var sendMarker: SendMarker? = nil
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
@@ -200,7 +205,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
          rack: PluginRack? = nil,
          fxBlock: FXLinkBlock? = nil,
          colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
-         sidechain: SidechainSource? = nil) {
+         sidechain: SidechainSource? = nil,
+         sendMarker: SendMarker? = nil) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -214,6 +220,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.fxBlock = fxBlock
         self.colorIndex = colorIndex
         self.sidechain = sidechain
+        self.sendMarker = sendMarker
     }
 
     /// True if this entry represents a parallel block (and not a plain plugin).
@@ -239,7 +246,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -259,6 +266,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
                         ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
         sidechain = try c.decodeIfPresent(SidechainSource.self, forKey: .sidechain)
+        sendMarker = try c.decodeIfPresent(SendMarker.self, forKey: .sendMarker)
     }
 }
 
@@ -297,14 +305,32 @@ let sendMinDb: Float = -60.0
 /// A send's gain ceiling (dB).
 let sendMaxDb: Float = 6.0
 
-/// A POST-FADER send from an object (clip or group) towards an AUX object, by its id.
-/// The level is in dB. Routing and time gating are handled on the aux's side (its in/out window).
+/// Where a send takes its signal, when it is NOT written in the chain as a marker. Session format 22.
+/// `postFader` is the default and the oldest behaviour: after the object's fader and window (what is
+/// heard of it). The fourth position, "in the chain", is not a case here: it is a `SendMarker` entry of
+/// `plugins` (@see SoundObject.sendPosition(auxID:)).
+enum SendTapPoint: String, Codable, Equatable {
+    case postFader, preFader, input
+}
+
+/// The place of a send on the trunk of its object's chain: a marker entry of `plugins`, named after the
+/// aux it belongs to. One per (object, aux) at most; at the top level of the chain only.
+struct SendMarker: Codable, Equatable {
+    var auxID: UUID
+}
+
+/// A send from an object (clip or group) towards an AUX object, by its id. The level is in dB.
+/// Routing and time gating are handled on the aux's side (its in/out window). Taken POST-FADER unless
+/// `tap` or a chain marker says otherwise (@see SoundObject.sendPosition(auxID:)).
 /// `enabled` = the user's intent (the inspector's toggle); the level is remembered even when
 /// off. The send is only audible/wired if `enabled && levelDb > sendMinDb`.
 struct AuxSend: Codable, Equatable, Identifiable {
     var auxID: UUID
     var levelDb: Float = 0.0
     var enabled: Bool = true
+    /// Where the signal is taken when the chain holds no marker for this send. Encoded ONLY when it is
+    /// not `.postFader`: a session of format 21 re-encodes without the key.
+    var tap: SendTapPoint = .postFader
     var id: UUID { auxID }
 
     /// True if the level is -∞ (≤ sendMinDb).
@@ -312,19 +338,29 @@ struct AuxSend: Codable, Equatable, Identifiable {
     /// True if the send really has to be routed to the engine.
     var isRouted: Bool { enabled && !isSilent }
 
-    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true) {
+    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true, tap: SendTapPoint = .postFader) {
         self.auxID = auxID
         self.levelDb = levelDb
         self.enabled = enabled
+        self.tap = tap
     }
 
-    // Backwards-compatible decoding: `enabled` absent (old projects) ⇒ true.
-    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled }
+    // Backwards-compatible decoding: `enabled` absent (old projects) ⇒ true; `tap` absent (or a value
+    // this build does not know) ⇒ post-fader.
+    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled, tap }
     init(from decoder: Decoder) throws {
         let c   = try decoder.container(keyedBy: CodingKeys.self)
         auxID   = try c.decode(UUID.self, forKey: .auxID)
         levelDb = try c.decodeIfPresent(Float.self, forKey: .levelDb) ?? 0.0
         enabled = try c.decodeIfPresent(Bool.self,  forKey: .enabled) ?? true
+        tap     = ((try? c.decodeIfPresent(SendTapPoint.self, forKey: .tap)) ?? nil) ?? .postFader
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(auxID, forKey: .auxID)
+        try c.encode(levelDb, forKey: .levelDb)
+        try c.encode(enabled, forKey: .enabled)
+        if tap != .postFader { try c.encode(tap, forKey: .tap) }
     }
 }
 
