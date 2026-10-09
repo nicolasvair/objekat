@@ -103,6 +103,10 @@ struct SynopticActions {
     var onSetSendLevel: ((UUID, Float) -> Void)? = nil
     var onToggleSend: ((UUID) -> Void)? = nil
     var onBeginSendEdit: (() -> Void)? = nil
+    /// A send card's ✕ / menu "Delete": removes the send of that aux (its marker goes with it).
+    var onRemoveSend: ((UUID) -> Void)? = nil
+    /// A send card's menu "Fold to post-fader": moves the send of that aux to a slot (undoable).
+    var onMoveSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
 
     // A bus's chain head: the 'infinite' toggle (a top-level aux / group).
     var onToggleInfinite: (() -> Void)? = nil
@@ -206,21 +210,6 @@ struct SynopticStem: Identifiable, Equatable {
     let name: String
     let color: Color
     let isCurrent: Bool
-}
-
-/// One send row in the signal view. At the foot of an object = a departure towards an aux
-/// (`id` = the aux); at the head of an aux = a received send (`id` = the sending object).
-struct SynopticSend: Identifiable, Equatable {
-    let id: UUID
-    let name: String
-    /// The user's intent (the toggle) — independent of the level, which may stay at -∞.
-    let enabled: Bool
-    let levelDb: Float
-    /// An automation CURVE drives this level: the static setting is no longer heard.
-    var isAutomated: Bool = false
-    /// Why the bridge refuses (or would refuse) this send — the text of a tooltip; the row is greyed.
-    /// nil = the send is accepted.
-    var refusal: String? = nil
 }
 
 /// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.
@@ -331,8 +320,11 @@ struct SynopticView: View {
     /// A group's child: a read-only 'output' zone (→ the parent group) in place
     /// of the stems zone. Mutually exclusive with `stems`.
     var groupRouting: SynopticGroupRouting? = nil
-    /// Departures towards the reachable auxes, listed at the foot (the 'sends' zone). Empty = no zone.
+    /// The departures that exist, one CARD each beside the trunk (@see SendCardView). Empty = none yet.
     var sends: [SynopticSend] = []
+    /// This object can send (a clip, a group, a MIDI clip: not an aux, a stem or the Main): it gets the
+    /// card column and the "+ Send to…" button even with no send yet.
+    var canSend: Bool = false
     /// An aux: the sends it RECEIVES, listed at the head of the chain (the signal comes in there). Empty = no list.
     var receivedSends: [SynopticSend] = []
     /// Non-nil ⇒ the chain's head carries the 'infinite' checkbox (a top-level aux / group).
@@ -366,7 +358,7 @@ struct SynopticView: View {
                                        araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                        mixWide: mix?.attrLinks != nil,
                                        stems: stems != nil || groupRouting != nil,
-                                       sendRows: sends.count, receivedRows: receivedSends.count,
+                                       sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                        infiniteOption: infinite != nil)
         Group {
             if scrolls {
@@ -414,8 +406,13 @@ struct SynopticView: View {
             if let cz = d.clipZone, let m = mix {
                 ClipMixZoneView(rect: cz, mix: m, actions: actions)
             }
-            if let sz = d.sendsZone {
-                SendsZoneView(rect: sz, sends: sends, actions: actions)
+            // The outgoing sends: a card each, in a column beside the trunk (the wires are drawn in `draw`).
+            // Not in the FX group below: a closed consolidated object keeps its sends interactive, as
+            // it keeps its mix.
+            ForEach(d.sendCards) { c in
+                SendCardView(send: c.send, actions: actions)
+                    .frame(width: c.frame.width, height: c.frame.height)
+                    .position(x: c.frame.midX, y: c.frame.midY)
             }
             if let sz = d.stemsZone, let gr = groupRouting {
                 GroupRoutingZoneView(rect: sz, routing: gr)
@@ -833,6 +830,29 @@ struct SynopticView: View {
         for p in d.placement.dots {
             ctx.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
                      with: .color(Color.secondary.opacity(0.8)))
+        }
+
+        // The sends' wires: a branch leaves the trunk at the card's anchor, sideways, and arrives at the
+        // card's left edge (the main signal carries on down the trunk). Dashed: it is a TAP, not the
+        // flow. A refused send is dimmer.
+        for c in d.sendCards {
+            let from = CGPoint(x: c.anchor.x + SynopticLayout.plusW / 2 + 2, y: c.anchor.y)
+            let to = CGPoint(x: c.frame.minX, y: c.frame.midY)
+            var path = Path()
+            path.move(to: from)
+            let midX = (from.x + to.x) / 2
+            path.addCurve(to: to, control1: CGPoint(x: midX, y: from.y), control2: CGPoint(x: midX, y: to.y))
+            let live = c.send.enabled && c.send.refusal == nil
+            ctx.stroke(path, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
+                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [4, 3]))
+            var head = Path()
+            head.move(to: CGPoint(x: to.x - 6, y: to.y - 4))
+            head.addLine(to: to)
+            head.addLine(to: CGPoint(x: to.x - 6, y: to.y + 4))
+            ctx.stroke(head, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
+                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+            ctx.fill(Path(ellipseIn: CGRect(x: c.anchor.x - 2.5 + SynopticLayout.plusW / 2 + 2, y: c.anchor.y - 2.5, width: 5, height: 5)),
+                     with: .color((live ? Color.accentColor : Color.secondary).opacity(0.8)))
         }
     }
 }
@@ -2265,6 +2285,15 @@ struct SynopticSendRow: View {
                 .truncationMode(.middle)
                 .foregroundStyle(isRouted ? .primary : .secondary)
                 .help(send.refusal ?? "")
+            // A received row says where the sender takes the signal when it is not the usual post-fader.
+            if !outgoing, let short = send.slot.shortLabel {
+                Text(short)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 3)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.15)))
+                    .help(send.slot.longLabel)
+            }
             Spacer(minLength: 4)
             DragValueBox(value: Double(send.levelDb),
                          format: { levelLabel($0) },
@@ -2299,36 +2328,110 @@ struct SynopticSendRow: View {
     }
 }
 
-/// The 'sends' zone at the foot: the departures towards the auxes, taken after the object's mix.
-/// A dashed border = a branch (the main signal carries on towards the stems).
-struct SendsZoneView: View {
-    let rect: CGRect
-    let sends: [SynopticSend]
+/// A send CARD: the branch arrow, the aux's name, a draggable level, the on/off switch, a menu and the
+/// cross. Greyed, with the reason as its tooltip, when the bridge refuses the send or its aux no longer
+/// overlaps the object in time (Q-U15) — a card never disappears because an object was moved.
+struct SendCardView: View {
+    let send: SynopticSend
     let actions: SynopticActions
 
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35),
-                                  style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
+    private var isSilent: Bool { send.levelDb <= sendMinDb }
+    private var isRouted: Bool { send.enabled && !isSilent && send.refusal == nil }
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(L("synoptic.zone.aux"))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(height: SynopticLayout.zoneTitleH, alignment: .center)
-                ForEach(sends) { s in
-                    SynopticSendRow(send: s, outgoing: true, actions: actions)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-            .position(x: rect.midX, y: rect.midY)
+    private func levelLabel(_ db: Double) -> String {
+        db <= Double(sendMinDb) ? "-∞ dB" : (db == 0 ? "0 dB" : String(format: "%+.0f dB", db))
+    }
+
+    /// The position, in words (the tooltip of the arrow).
+    private var positionText: String {
+        switch send.slot {
+        case .input:      return L("synoptic.send.pos.input")
+        case .chain(let i): return L("synoptic.send.pos.chain", i + 1)
+        case .preFader:   return L("synoptic.send.pos.preFader")
+        case .postFader:  return L("synoptic.send.pos.postFader")
         }
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
+                .frame(width: 14)
+                .help(positionText)
+            Text(send.name)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(isRouted ? .primary : .secondary)
+                .help(send.refusal ?? positionText)
+            Spacer(minLength: 2)
+            DragValueBox(value: Double(send.levelDb),
+                         format: { levelLabel($0) },
+                         range: Double(sendMinDb)...Double(sendMaxDb),
+                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                         help: L("help.drag.sendLevel"),
+                         onTouch: { actions.onTouchParam?(.send(auxID: send.id)) },
+                         onBegin: { actions.onBeginSendEdit?() },
+                         onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
+                         onReset: {
+                             actions.onBeginSendEdit?()
+                             actions.onSetSendLevel?(send.id, sendMinDb)
+                         })
+                .opacity(send.enabled ? 1 : 0.5)
+                .automationLocked(send.isAutomated)
+            Button { actions.onToggleSend?(send.id) } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(send.enabled ? Color.accentColor : Color.secondary)
+                    .frame(width: 18, height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4)
+                        .fill((send.enabled ? Color.accentColor : Color.secondary).opacity(0.18)))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder((send.enabled ? Color.accentColor : Color.secondary).opacity(0.45)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("common.mute"))
+            Menu {
+                sendMenuItems
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(L("synoptic.send.menu.help"))
+            Button { actions.onRemoveSend?(send.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("synoptic.send.remove.help"))
+        }
+        .padding(.horizontal, 7)
+        .background(RoundedRectangle(cornerRadius: 7)
+            .fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 7)
+            .strokeBorder((isRouted ? Color.accentColor : Color.secondary).opacity(isRouted ? 0.55 : 0.3), lineWidth: 1))
+        .opacity(send.refusal == nil ? 1 : 0.55)
+        .contextMenu { sendMenuItems }
+    }
+
+    /// The card's menu (the ellipsis and the right click). "Change target…" joins it in step 2.11.
+    @ViewBuilder
+    private var sendMenuItems: some View {
+        Button(L("synoptic.send.menu.fold")) { actions.onMoveSend?(send.id, .postFader) }
+            .disabled(send.slot == .postFader || actions.onMoveSend == nil)
+        Divider()
+        Button(L("synoptic.send.menu.delete"), role: .destructive) { actions.onRemoveSend?(send.id) }
     }
 }
 
@@ -2637,18 +2740,20 @@ struct SynopticBoundView: View {
             }
         }
 
-        // Sends: departures towards the reachable auxes read at the FOOT of the chain (after the mix,
-        // before the stems); an aux shows at its HEAD what it receives. No more dedicated column.
-        let sendAuxes = (obj != nil && !(obj?.isAux ?? false)) ? viewModel.sendToolAuxes(for: objectID) : []
-        // The reasons come from the plan's own check (a scheduling loop included), once for the zone.
-        let sendRefusals = viewModel.sendRefusals(from: objectID, among: Set(sendAuxes.map(\.id)))
-        let sends: [SynopticSend] = sendAuxes.map { aux in
-            SynopticSend(id: aux.id, name: aux.displayName,
-                         enabled: viewModel.isSendEnabled(from: objectID, to: aux.id),
-                         levelDb: viewModel.sendLevel(from: objectID, to: aux.id),
-                         isAutomated: viewModel.isAutomated(.send(auxID: aux.id), on: objectID),
-                         refusal: sendRefusals[aux.id].map { EditViewModel.sendReasonText($0) })
-        }
+        // Sends: the departures that EXIST are cards beside the trunk (Q-U7, Q-U13), each at the slot its
+        // position names; the reachable auxes without a send are reached through "Send to…". A card whose
+        // aux no longer overlaps the object in time, or that the scope refuses, stays — greyed, with the
+        // reason (Q-U15): moving an object never makes a send vanish from the chain. An aux shows at its
+        // HEAD what it receives.
+        let canSend = obj != nil && !(obj?.isAux ?? true)
+        let sends: [SynopticSend] = canSend ? (obj?.sends ?? []).compactMap { snd in
+            guard let aux = viewModel.find(id: snd.auxID) else { return nil }
+            return SynopticSend(id: snd.auxID, name: aux.displayName,
+                                enabled: snd.enabled, levelDb: snd.levelDb,
+                                isAutomated: viewModel.isAutomated(.send(auxID: snd.auxID), on: objectID),
+                                refusal: viewModel.sendCardRefusalText(from: objectID, to: snd.auxID),
+                                slot: EditViewModel.synopticSlot(obj?.sendPosition(auxID: snd.auxID)))
+        } : []
         let received: [SynopticSend] = (obj?.isAux ?? false)
             ? receivedIDs.compactMap { sid in
                 viewModel.find(id: sid).map { sender in
@@ -2659,7 +2764,8 @@ struct SynopticBoundView: View {
                                  // if the row is shown at the head of the receiving aux.
                                  isAutomated: viewModel.isAutomated(.send(auxID: objectID), on: sender),
                                  refusal: { if case .refused(let why) = viewModel.sendStatus(from: sid, to: objectID) {
-                                                return EditViewModel.sendReasonText(why) } else { return nil } }())
+                                                return EditViewModel.sendReasonText(why) } else { return nil } }(),
+                                 slot: EditViewModel.synopticSlot(sender.sendPosition(auxID: objectID)))
                 }
               }
             : []
@@ -2697,7 +2803,7 @@ struct SynopticBoundView: View {
                             isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
                             audioFile: audioFile, mix: mix, stems: stems,
                             groupRouting: groupRouting,
-                            sends: sends, receivedSends: received, infinite: infinite, loop: loop,
+                            sends: sends, canSend: canSend, receivedSends: received, infinite: infinite, loop: loop,
                             // A closed consolidated object → read-only FX ('Open to edit'). While editing, the
                             // placement is materialised (no longer isConsolidateInstance) so the FX become
                             // interactive again.
@@ -2842,6 +2948,10 @@ struct SynopticBoundView: View {
                 }
             },
             onBeginSendEdit: { viewModel.pushUndo() },
+            onRemoveSend: { auxID in viewModel.edit { viewModel.removeSend(from: objectID, to: auxID) } },
+            onMoveSend: { auxID, slot in
+                viewModel.setSendPositionFromHand(from: objectID, to: auxID, EditViewModel.sendPosition(of: slot))
+            },
             onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) },
             // FX links. The block's id is what every one of these carries; the model resolves the
             // bin (attached) or the block's own copy (detached) itself.
