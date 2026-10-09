@@ -100,7 +100,7 @@ extension CommandRegistry {
         register("send.candidates",
                  summary: "Every aux in the project as seen from a sender: the plan's verdict "
                         + "(`refusal` null = a send would be accepted; else why: outOfStem, hostNotAux, "
-                        + "ancestorSource, cycle…), whether it overlaps the sender in time, its group path "
+                        + "ancestorSource, cycle…; `send.list` can also say chainFull: the sender's plugin list is full), whether it overlaps the sender in time, its group path "
                         + "and stem.",
                  params: [ParamSpec("id", "uuid", "Sending object.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()

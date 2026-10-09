@@ -169,7 +169,9 @@ extension EditViewModel {
         // invalidate every view that reads them.
         if plan != bridgePlan { bridgePlan = plan }
         if status != bridgeRouteStatus { bridgeRouteStatus = status }
-        if sendStatus != sendRouteStatus { sendRouteStatus = sendStatus }
+        // `sendRouteStatus` is written AFTER the engine laid the sends: a send whose plugin the engine
+        // could not insert (a full chain) joins the plan's refusals, and writing twice per sync would
+        // flicker every view that reads it.
 
         engine.beginBridgeSync()
         // Sorted: the order the engine sees must not depend on a dictionary's.
@@ -191,8 +193,9 @@ extension EditViewModel {
 
         // The sends the plan accepts: one engine-only plugin each, at the end of the sender's chain.
         // `0` = the engine could not lay it yet (its aux is not born): it is NOT counted as laid, so
-        // the next sync — which the aux's birth provokes — finds it new. `2` = a brand-new plugin,
-        // whose curve is gone: the automation is pushed again below.
+        // the next sync — which the aux's birth provokes — finds it new. `-1` = the sender's list is
+        // full: refused, with a reason (`chainFull`). `2` = a brand-new plugin, whose curve is gone:
+        // the automation is pushed again below.
         var laid: Set<SendKey> = []
         var bornAgain = false
         for i in plan.sendRoutes where topology.routeOwners.indices.contains(i) {
@@ -203,8 +206,10 @@ extension EditViewModel {
                                                  levelDb: level, gated: gated)
             if result > 0 { laid.insert(key) }
             if result == 2 { bornAgain = true }
+            if result < 0 { sendStatus[key] = .chainFull }      // the engine's own verdict
         }
         engine.commitBridgeSync()
+        if sendStatus != sendRouteStatus { sendRouteStatus = sendStatus }
 
         bridgeEngineHasTaps = !plan.taps.isEmpty || !laid.isEmpty
         bridgeLaidSends = laid
@@ -226,7 +231,9 @@ extension EditViewModel {
         return status
     }
 
-    /// The same for the SENDS: (sender, aux) → why it is refused, computed NOW from the model.
+    /// The same for the SENDS: (sender, aux) → why it is refused, computed NOW from the model. The
+    /// ENGINE's one verdict (`chainFull`: the sender's list had no room) cannot be computed from the
+    /// model: it is the last sync's, kept while the send is still in the plan.
     func sendStatusNow() -> [SendKey: BridgeScope.Refusal] {
         let topology = bridgeTopology()
         if topology.routes.isEmpty { return [:] }
@@ -234,6 +241,12 @@ extension EditViewModel {
         var status: [SendKey: BridgeScope.Refusal] = [:]
         for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
             if let key = topology.routeOwners[i].sendKey { status[key] = why }
+        }
+        for (key, why) in sendRouteStatus where why == .chainFull && status[key] == nil {
+            if plan.sendRoutes.contains(where: { topology.routeOwners.indices.contains($0)
+                                                  && topology.routeOwners[$0].sendKey == key }) {
+                status[key] = why
+            }
         }
         return status
     }
@@ -362,7 +375,7 @@ extension EditViewModel {
         case .mainSource:                  return L("plugin.sidechain.reason.mainSource")
         case .cycle:                       return L("plugin.sidechain.reason.cycle")
         // Send-only refusals: a key never meets them (`staticRefusal` branches on the consumer).
-        case .hostNotAux, .stemSource, .outOfStem: return Self.sendReasonText(why)
+        case .hostNotAux, .stemSource, .outOfStem, .chainFull: return Self.sendReasonText(why)
         }
     }
 
@@ -377,6 +390,7 @@ extension EditViewModel {
         case .ancestorSource:              return L("send.reason.ancestorSource")
         case .outOfStem:                   return L("send.reason.outOfStem")
         case .cycle:                       return L("send.reason.cycle")
+        case .chainFull:                   return L("send.reason.chainFull")
         }
     }
 

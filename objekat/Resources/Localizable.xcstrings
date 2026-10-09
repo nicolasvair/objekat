@@ -11754,6 +11754,29 @@
         }
       }
     },
+    "send.reason.chainFull": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the object's chain is full (20 entries)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la cadena del objeto está llena (20 entradas)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "la chaîne de l'objet est pleine (20 entrées)"
+          }
+        }
+      }
+    },
     "send.reason.cycle": {
       "extractionState": "manual",
       "localizations": {

@@ -1254,6 +1254,72 @@ not).
    is open; a finding there lands under INC 2.
 7. Q-U6 and Q-U12 are built on hypotheses; both are isolated in one step each.
 
+### D.1.F Journal of INC 2 (recorded as it was done, 9 October 2026, Debug, headless, WITH audio)
+
+#### 2.0 — legacy removal, the real inventory, the measures
+
+Commits: `a2ec19b1` (the pre-bridge send path deleted), then the "chain full" refusal below. After the
+removal `tools/scenario_bridge_sends.py` = 223 OK, 0 FAILED; sidechain 55, bridge_latency 66,
+families 261, fxlink ALL PASS, consolidate ALL PASS, plugin_selection 58, cross_paste 31.
+
+**Measures that corrected the plan**
+
+| Question of 2.0 | Answer, measured |
+|---|---|
+| What does `ensureBridgeSend` answer on a full list? | The list cap is **20 entries**, not 45 (`maxPluginsOnTrack = 20` is the one that bites: an object's chain lives on a TRACK in this architecture). Fixed entries: trimIn, trimOut, fader, window-fade = 4, so **16 user plugins without a send, 15 with one** (probe: the 16th `objKeyProbe` is refused with a send, the 17th without). With 16 plugins in place and a send created afterwards, `insertPlugin` returned null: the engine logged `insertion refusée` and the model kept saying `status: active, routed: true` while no reader existed (silent absence). Fixed in 2.0: the engine answers `-1`, the sync writes `BridgeScope.Refusal.chainFull` into `sendRouteStatus` (merged with the plan's refusals, ONE write per sync), `send.list` says `status: refused, refusal: chainFull`; key `send.reason.chainFull` (fr/en/es). Scenario F2: send refused at 16 plugins, laid as soon as a slot is freed, level -6.000 dB, aligned to the sample. NOTE for 2.3: the three send positions that add no plugin keep costing one slot; a marker costs none (it is not an engine entry). |
+| Is a MIDI object's instrument in `plugins`? | No: `SoundObject.instruments` is a separate array (copied by `copiedInstruments`, cloned by `CrossProjectImport` apart from `cloneSeries`). `chain 0` therefore means "before the first user plugin, after the instrument", and `input` is "after the instrument, before trimIn". |
+| `OBJ_GRAPH_CENSUS` before / after | NOT measured: it is a compile-time macro of the fork (`OBJ_GRAPH_PROFILE`), a Debug engine rebuild with the flag is needed. The removal touched app-side code only and no node of the fork's graph: the dormant `ContainerAuxSend` scan in the fork is a type test that no app plugin satisfies any more. To measure only if INC 3's `0040` is built anyway. |
+
+**Inventory of the sites that walk a chain or build an `ObjectPlugin`** (marker = `ObjectPlugin` with
+`sendMarker != nil`, `isContainer == true`, `childSeries == []`, no `rack`, no `fxBlock`)
+
+*Safe through `isContainer` / `childSeries` / `mappingChildSeries` (the marker has no child series: seen, left as it is)*
+
+| Site | File:line |
+|---|---|
+| `collectPluginRefs` | `EditViewModel+Plugins.swift:59` |
+| `pluginDisplayNames` | `EditViewModel+Plugins.swift:286` |
+| `removingPlugins` (a marker id is never in `ids`) | `EditViewModel+Plugins.swift:298` |
+| `flattenLeaves`, `settingEnabled`, `settingLinkGroup`, `settingDetachedLinkGroup`, `settingStateXML`, `branchingEmpty`, `settingVoiceGain/Mute`, `removingVoice`, unwrap helpers | `SynopticModelMapping.swift:109, 310, 326, 346, 357, 369, 397, 429, 441, 454, 463, 472` |
+| `updatingBlock` / `replacingBlock` / `fxBlocks(in:)` / `enclosingFXBlock` / `rewriting` | `EditViewModel+FXLinkEdit.swift:33,48`, `EditViewModel+FXLink.swift:27,68,170` |
+| `isFXLinkEligible` (`!isContainer`: the marker is NOT eligible, the bins split around it) | `EditViewModel+FXLinkEdit.swift:56` |
+| `fxAddPluginCopies`, `fxAddPlugin` (refuse a container) | `EditViewModel+FXLinkEdit.swift:629, 654` |
+| FX-link divergence walks | `FXLinkDivergence.swift:96, 202` (`p.rack != nil`: a marker is a leaf-less no-op) |
+| Id-uniqueness walk | `PluginIDUniqueness.swift:52` (`childSeries`), `:141-154` (hand `rack`/`fxBlock` for the path text: a marker falls to the LEAF case and is reported by its own id, which is right: the marker has a fresh id) |
+| `containsPlugin`, `pluginLeaves` | `SoundObject.swift:957, 1165` |
+| Automation search, project walk | `EditViewModel+Automation.swift:108`, `EditViewModel+Project.swift:633` |
+| Undo walk `walk(a, b)` | `EditViewModel+UndoRedo.swift:390` |
+| Clipboard `remappingSidechain` (a `var q = p` copy: every field, the marker included, is kept) | `EditViewModel+Clipboard.swift:205-217` |
+
+*TO TEACH (hand-rolled `if rack … else if fxBlock … else LEAF`: the marker would be read as a PLUGIN)*
+
+| Site | File:line | What happens untaught | Family (2.2) |
+|---|---|---|---|
+| `rackSpec` | `EditViewModel+Plugins.swift:196-228` | emitted as a `plugin` with an empty identifier: unresolved, comes back in `failed`, `compileRack` REMOVES it from the model | a |
+| `compileRack` `failed` handling, `locate` / `inserting` / `simplifyTree` | `EditViewModel+Plugins.swift:~230`, `SynopticModelMapping.swift:250-260` (`inserting`), `buildSeries` `:50, :64` | a marker would be drawn / indexed as a card or leaf; an insert index would count it | a |
+| `bridgeTopology.collectLeaves` | `EditViewModel+Bridge.swift:66-70` | listed as a leaf (harmless today, wrong once keys are counted) | b |
+| `bridgeLeafExists.has` | `EditViewModel+Bridge.swift:245-250` | a marker id would answer "is a plugin" | b |
+| `settingSidechain` | `EditViewModel+Bridge.swift:261-277` | the `p.id == pluginID` leaf branch would accept a marker's id | b |
+| `copiedPlugins` (`copySeries` / `copyLeaf`) | `EditViewModel+Plugins.swift:755-805` | a copy of the object holds an EMPTY-identifier plugin instead of the marker | c |
+| `CrossProjectImport` `cloneSeries` / `cloneLeaf` | `CrossProjectImport.swift:213-229, 140-157` | same, in another project; also `auxID` must be remapped | c |
+| `deepFreshCopy` `freshPlugins` (bake / restore) | `EditViewModel+Bake.swift:126-142` | same | c |
+| `PluginDrop` payload checks | `EditViewModel+PluginDrop.swift:203-258` | `findBlock` only: a marker is never a payload (not selectable) — to confirm by the test, not to patch | c |
+| API: plugin payload + counts | `Commands+Helpers.swift:258-267`, `Commands+Runtime.swift:184` | listed as a plugin / counted in `pluginCount` | d |
+| `adoptingPluginStates` (patchability) | `EditViewModel+UndoRedo.swift:340-370` | a chain whose markers differ is "not patchable" → object rebuilt (correct, expensive: step 2.7) | 2.7 |
+
+*NEVER sees a marker (and why)*
+
+| Site | File:line | Why |
+|---|---|---|
+| Fresh plugin from an `AvailablePlugin` | `EditViewModel+Plugins.swift:308, 363`, `SynopticModelMapping.swift:114`, `EditViewModel+ARA.swift:65`, `Commands+FXLink.swift:230` | built from a catalogue entry |
+| `copiedInstruments`, `CrossProjectImport` instruments, `placed` (instrument drag) | `EditViewModel+Plugins.swift:445, 722`, `CrossProjectImport.swift:167, 273` | the instrument slot is not `plugins` and never holds a container |
+| Plugin-only transfers `.move / .copy / .link`, `independentCopy` | `EditViewModel+PluginSelection.swift:290-304, 366` | built from the SELECTED leaves; a marker is not a leaf (`flattenLeaves` yields none) so is never selectable |
+| `copiedRun`, FX-link `instanceSeries`, `fxMake…`, wrap into a bin | `EditViewModel+FXLinkAuto.swift:61,76`, `FXLink.swift:125,137`, `EditViewModel+FXLinkEdit.swift:226,494,546,634,656` | fed by eligible runs (`isFXLinkEligible` excludes the marker) or by selected leaves |
+| `synopticCopyPlugin`, `rackCarrier` | `SynopticModelMapping.swift:222, 293` | a copy of a SELECTED leaf; the carrier is a new container |
+| `Bake` bin definitions | `EditViewModel+Bake.swift:97` | definitions of a bin hold plugins only |
+
+Totals: 33 lines construct an `ObjectPlugin(` in the app (tools tests excluded). Field-by-field COPIES of an existing entry that can meet a marker: `copiedPlugins` (`copyLeaf`, the rack branch), `CrossProjectImport` (`cloneLeaf`, the rack branch), `Bake.freshPlugins` — these are the constructions to teach; every other one is built from a catalogue entry, from a selected leaf, from an instrument, or is a container. The pure test per family in 2.2 proves each row.
+
 ## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-chain`, format 23, engine patch `0040`)
 
 **Steps.**

@@ -65,6 +65,10 @@ enum BridgeScope {
         // `auxInput` routes only (a send): the host is not an aux; the sender is a stem (it can key a
         // sidechain, it cannot send); the aux lives in another stem than the sender (and is not a Main aux).
         case hostNotAux, stemSource, outOfStem
+        // The ENGINE's verdict, never the pure plan's: the sender's plugin list is full (the engine
+        // caps a list at 20 entries, the chain's fixed ones included) so the send's plugin could not
+        // be inserted. The sync writes it into `sendRouteStatus` after the engine answered -1.
+        case chainFull
     }
 
     struct Plan: Equatable {

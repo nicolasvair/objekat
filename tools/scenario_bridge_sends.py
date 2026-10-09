@@ -1045,6 +1045,44 @@ def section_T(c):
     check("T: all aligned", all(r.get("alignment_error_samples") == 0 for r in rds), rds)
 
 
+
+# --------------------------------------------------------------------------------------------------
+# F2 — a full chain: the send is refused WITH a reason, not silently absent (INC 2, step 2.0)
+# --------------------------------------------------------------------------------------------------
+
+def section_F2(c):
+    print("\n--- F2  a full chain: the send says why it is not heard")
+    if REF:
+        print("       (skipped in --ref: needs the bridge's report)")
+        return
+    x, a = cast_siblings(c, "F2")
+    plugs = []
+    for _ in range(16):             # the engine caps a list at 20: trims, fader and window leave 16
+        plugs.append(add_test(c, x, "objKeyProbe")["plugin"])
+        wait(c)
+    check("F2: 16 plugins fit", len(c.send("plugin.list", {"host": x})["plugins"]) == 16)
+    lay_send(c, x, a, -6.0)
+    wait(c)
+    time.sleep(0.5)
+    wait(c)
+    rep = bridge_report(c)
+    row = [s for s in c.send("send.list", {"id": x})["sends"] if s["aux"] == a][0]
+    print("       F2: send.list row: status=%s refusal=%s routed=%s; readers=%d"
+          % (row.get("status"), row.get("refusal"), row.get("routed"), len(send_readers(rep))))
+    check("F2: no send reader was laid", len(send_readers(rep)) == 0, send_readers(rep))
+    check("F2: the row says chainFull", row.get("refusal") == "chainFull" and row.get("status") == "refused", row)
+    # One plugin out: the slot is free, the next sync lays the send.
+    c.send("plugin.remove", {"host": x, "plugin": plugs[-1]})
+    wait(c)
+    time.sleep(0.5)
+    wait(c)
+    rep = bridge_report(c)
+    row = [s for s in c.send("send.list", {"id": x})["sends"] if s["aux"] == a][0]
+    check("F2: a slot freed, the send is laid", len(send_readers(rep)) == 1, send_readers(rep))
+    check("F2: and the refusal is gone", row.get("refusal") is None and row.get("status") == "active", row)
+    dry, wet = measure(c, "F2", x, a, -6.0)
+    level_and_index("F2 after the slot is freed", dry, wet, -6.0)
+
 # --------------------------------------------------------------------------------------------------
 
 fixtures()
@@ -1055,7 +1093,8 @@ with ObjekatClient(SOCK) as c:
     for sec, fn in (("A", section_A), ("B", section_B), ("C", section_C), ("D", section_D), ("D2", section_D2),
                     ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("J", section_J),
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
-                    ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T)):
+                    ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
+                    ("F2", section_F2)):
         if want(sec):
             fn(c)
 

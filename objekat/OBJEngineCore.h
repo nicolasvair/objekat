@@ -179,7 +179,8 @@
 // chain carrying the level — and commitBridgeSync removes the ones that were not confirmed and
 // rewrites each aux's list of sends. The scope is the model's (BridgeScope): the engine lays what it is
 // told. ensureBridgeSend returns 0 = not laid (aux not born yet / no chain), 1 = laid and already
-// there, 2 = laid with a NEW plugin (the caller pushes the automation curves again).
+// there, 2 = laid with a NEW plugin (the caller pushes the automation curves again), -1 = refused: the
+// sender's plugin list is full (the model shows it as `chainFull`).
 //   setSendLevel     : hot (the plugin smooths the ramp), no rebuild.
 //   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
 - (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated;

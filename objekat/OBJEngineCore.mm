@@ -4793,7 +4793,12 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 
     te::Plugin::Ptr p = pl->insertPlugin(te::ObjBridgeSendPlugin::create(), pl->size());
     auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
-    if (!send) { NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée (%@ → %@)", senderID, auxID); return 0; }
+    if (!send) {
+        // The list is full (the engine's limit counts the chain's fixed entries): not a transient
+        // state, the model shows it as the send's refusal.
+        NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée, liste pleine (%@ → %@)", senderID, auxID);
+        return -1;
+    }
     send->setTargetAuxClip(ait->second->itemID);
     send->setLevelDb(levelDb);
     send->setGated(gated);
