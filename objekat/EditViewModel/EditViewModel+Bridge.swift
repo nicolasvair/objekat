@@ -283,6 +283,22 @@ extension EditViewModel {
         case .auxSource:                   return L("plugin.sidechain.reason.auxSource")
         case .mainSource:                  return L("plugin.sidechain.reason.mainSource")
         case .cycle:                       return L("plugin.sidechain.reason.cycle")
+        // Send-only refusals: a key never meets them (`staticRefusal` branches on the consumer).
+        case .hostNotAux, .stemSource, .outOfStem: return Self.sendReasonText(why)
+        }
+    }
+
+    /// The reason a SEND is refused, for a person (docs/plan_sends_rework.md §A.3). A literal key per case.
+    static func sendReasonText(_ why: BridgeScope.Refusal) -> String {
+        switch why {
+        case .unknownSource, .unknownHost: return L("send.reason.unknown")
+        case .hostNotAux:                  return L("send.reason.hostNotAux")
+        case .selfSource:                  return L("send.reason.selfSource")
+        case .auxSource:                   return L("send.reason.auxSource")
+        case .mainSource, .stemSource:     return L("send.reason.stemSource")
+        case .ancestorSource:              return L("send.reason.ancestorSource")
+        case .outOfStem:                   return L("send.reason.outOfStem")
+        case .cycle:                       return L("send.reason.cycle")
         }
     }
 

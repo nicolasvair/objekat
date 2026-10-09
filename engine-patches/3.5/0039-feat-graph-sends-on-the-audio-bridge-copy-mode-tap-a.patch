@@ -1,0 +1,736 @@
+From fb0ae39e63180ec5ee0dc9a6abb99291393dd637 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 12:32:42 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20sends=20on=20the=20audio=20bridg?=
+ =?UTF-8?q?e=20=E2=80=94=20copy-mode=20tap,=20aux=20return=20as=20N=20brid?=
+ =?UTF-8?q?ge=20readers=20sharing=20one=20declared=20latency?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A send is an engine-only plugin that writes a ring; the level is applied once per
+block on the tap's copy (removes the automated-send defect). The aux return reads
+one BridgeReader per send (registerAuxReaders), group-resolved latency, and an
+aux-only container now gets a SilentNode content.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_ContainerClipNode.cpp     | 58 ++++++++++-
+ .../graph/tracktion_ContainerClipNode.h       | 23 ++++-
+ .../graph/tracktion_EditNodeBuilder.cpp       | 51 +++++++++-
+ .../graph/tracktion_ObjBridgeNodes.cpp        | 83 ++++++++++++++--
+ .../playback/graph/tracktion_ObjBridgeNodes.h | 17 +++-
+ .../plugins/tracktion_ObjBridge.cpp           | 99 ++++++++++++++++++-
+ .../plugins/tracktion_ObjBridge.h             | 33 ++++++-
+ .../plugins/tracktion_ObjBridgeCore.h         | 69 ++++++++++++-
+ 8 files changed, 407 insertions(+), 26 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index 982dc9c68c8..d29e937c2b6 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -286,7 +286,10 @@ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+                                     TimeRange auxTimeRange,
+                                     int numChannelsToUse,
+                                     size_t nodeIDToUse,
+-                                    int referenceLatencyNumSamples)
++                                    int referenceLatencyNumSamples,
++                                    std::shared_ptr<BridgeBuild> bridgeBuild,
++                                    std::vector<int> bridgeReaderIndices,
++                                    int declaredLatencyNumSamples)
+     : TracktionEngineNode (editProcessState),
+       dependency (std::move (dependencyToUse)),
+       senderPlugins (std::move (sendersToUse)),
+@@ -294,10 +297,16 @@ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+       auxRange (auxTimeRange),
+       numChannels (std::max (1, numChannelsToUse)),
+       auxNodeID (nodeIDToUse),
+-      referenceLatency (std::max (0, referenceLatencyNumSamples))
++      referenceLatency (std::max (0, referenceLatencyNumSamples)),
++      bridge (std::move (bridgeBuild)),
++      outputLatency (std::max (std::max (0, referenceLatencyNumSamples), declaredLatencyNumSamples))
+ {
+     assert (dependency);
+ 
++    if (bridge != nullptr)
++        for (auto index : bridgeReaderIndices)
++            bridgeReaders.push_back ({ index, {}, nullptr });
++
+     for (auto& p : senderPlugins)
+         if (auto send = dynamic_cast<ContainerAuxSend*> (p.get()))
+             senders.push_back (send);
+@@ -323,7 +332,7 @@ tracktion::graph::NodeProperties ObjAuxReturnNode::getNodeProperties()
+     // Ce que ce nœud émet est aussi vieux que ce que le nœud de contenu émet : les taps ont été
+     // remis à cet âge-là un par un. Le déclarer est ce qui fait retomber juste l'égalisation
+     // d'aval. @see la doc de la classe.
+-    props.latencyNumSamples = referenceLatency;
++    props.latencyNumSamples = outputLatency;
+     props.nodeID = auxNodeID;
+ 
+     return props;
+@@ -337,6 +346,16 @@ std::vector<tracktion::graph::Node*> ObjAuxReturnNode::getDirectInputNodes()
+ 
+ void ObjAuxReturnNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+ {
++    // Patch 0039 — the plans exist once the pass is KEPT (rings sized, delays resolved).
++    for (auto& r : bridgeReaders)
++    {
++        r.plan = bridge->readerPlan (r.index);
++        r.counters = &bridge->counters (r.index);
++    }
++
++    if (! bridgeReaders.empty())
++        bridgeScratch.setSize (2, std::max (1, info.blockSize), false, true, false);
++
+     for (auto& d : tapDelays)
+     {
+         if (d.numSamples <= 0)
+@@ -497,6 +516,37 @@ void ObjAuxReturnNode::process (ProcessContext& pc)
+         addTap (tap, numSamples, delay, destAudio);
+     }
+ 
++    // Patch 0039 — les envois du pont : chacun lit l'anneau de son tap à (début de bloc − retard).
++    // Le niveau est déjà appliqué au tap ; ici on ne fait que sommer. Une lecture « torn » rend du
++    // silence (l'ordre du graphe a été violé), jamais un bloc à moitié écrit.
++    if (! bridgeReaders.empty() && (int) numDestFrames <= bridgeScratch.getNumSamples())
++    {
++        auto scratchView = tracktion::graph::toBufferView (bridgeScratch);
++        float* dest[2] = { bridgeScratch.getWritePointer (0), bridgeScratch.getWritePointer (1) };
++        const auto chans = std::min (numDestChans, (choc::buffer::ChannelCount) 2);
++
++        for (auto& r : bridgeReaders)
++        {
++            if (r.plan.ring == nullptr || r.plan.status == objbridge::ReaderStatus::sourceAbsent)
++                continue;
++
++            const auto result = r.plan.ring->read (pc.referenceSampleRange.getStart() - (int64_t) r.plan.delay,
++                                                   (int) numDestFrames, dest, 2);
++
++            r.counters->blocksRead.fetch_add (1, std::memory_order_relaxed);
++
++            if (result.framesCovered < (int) numDestFrames)
++                r.counters->blocksUncovered.fetch_add (1, std::memory_order_relaxed);
++
++            if (result.torn)
++                r.counters->blocksTorn.fetch_add (1, std::memory_order_relaxed);
++
++            if (result.framesCovered > 0 && ! result.torn)
++                choc::buffer::add (destAudio.getChannelRange ({ 0, chans }),
++                                   scratchView.getChannelRange ({ 0, chans }).getStart (numDestFrames));
++        }
++    }
++
+     // Bornes de l'aux. Sans ça il sonnerait hors de sa propre fenêtre dès qu'un émetteur joue :
+     // le nœud n'a pas de CombiningNode au-dessus de lui pour l'activer par tranches — c'est le
+     // prix de l'arête de dépendance. Même geste que ContainerClipNode::process pour son contenu.
+@@ -507,7 +557,7 @@ void ObjAuxReturnNode::process (ProcessContext& pc)
+     // à ses plugins.
+     {
+         const auto sectionRange = getTimelineSampleRange();
+-        const auto clipRange = toSamples (auxRange, getSampleRate()) + (SampleCount) referenceLatency;
++        const auto clipRange = toSamples (auxRange, getSampleRate()) + (SampleCount) outputLatency;
+ 
+         auto numToClearAtStart = std::min (clipRange.getStart() - sectionRange.getStart(),
+                                            (SampleCount) numDestFrames);
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index 091b1dea4d0..733c1cad3f7 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -117,7 +117,13 @@ public:
+                       TimeRange auxTimeRange,
+                       int numChannels,
+                       size_t nodeID,
+-                      int referenceLatencyNumSamples);
++                      int referenceLatencyNumSamples,
++                      // Patch 0039 — the BRIDGE sends: the readers (BridgeBuild::registerAuxReaders) that feed
++                      // this aux, one per send, and the latency X they share (>= the reference). Without a
++                      // build the node is the legacy one, byte for byte. docs/plan_sends_rework.md §A.2.
++                      std::shared_ptr<BridgeBuild> bridgeBuild = {},
++                      std::vector<int> bridgeReaderIndices = {},
++                      int declaredLatencyNumSamples = 0);
+ 
+     //==============================================================================
+     tracktion::graph::NodeProperties getNodeProperties() override;
+@@ -171,6 +177,21 @@ private:
+     const size_t auxNodeID;
+     // Latence déclarée = celle du nœud de contenu auquel ce retour sera sommé. @see la doc.
+     const int referenceLatency;
++
++    // Patch 0039 — les envois sur le PONT. Chaque lecteur lit l'anneau du tap d'un envoi, `delay`
++    // échantillons en arrière, et la somme se fait ici. `outputLatency` = la latence X partagée par le
++    // groupe (>= referenceLatency) : c'est elle que ce nœud déclare, et celle qui décale la fenêtre.
++    struct BridgeReaderState
++    {
++        int index = 0;
++        BridgeBuild::ReaderPlan plan;
++        BridgeBuild::Counters* counters = nullptr;
++    };
++
++    std::shared_ptr<BridgeBuild> bridge;
++    std::vector<BridgeReaderState> bridgeReaders;
++    juce::AudioBuffer<float> bridgeScratch;     // 2 canaux, dimensionné dans prepareToPlay
++    const int outputLatency;
+ };
+ 
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index f28c486db43..def4238db6a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -909,6 +909,28 @@ static std::vector<PluginList*> senderPluginLists (const juce::Array<Clip*>& cli
+     return result;
+ }
+ 
++// Patch 0039 — the BRIDGE sends of an aux: the send plugins the app listed on the aux clip
++// (objbridge_ids::sends, written in the same transaction as the sends themselves). Empty = the legacy
++// ContainerAuxSend path of this aux. @see docs/plan_sends_rework.md §A.2
++static std::vector<EditItemID> bridgeSendIDsOf (const ContainerClip& auxClip)
++{
++    std::vector<EditItemID> ids;
++
++    for (auto id : EditItemID::parseStringList (auxClip.state[objbridge_ids::sends].toString()))
++        ids.push_back (id);
++
++    return ids;
++}
++
++static bool anyAuxHasBridgeSends (const juce::Array<ContainerClip*>& auxClips)
++{
++    for (auto a : auxClips)
++        if (a->state[objbridge_ids::sends].toString().isNotEmpty())
++            return true;
++
++    return false;
++}
++
+ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& senderLists,
+                                                const juce::Array<ContainerClip*>& auxClips,
+                                                std::unique_ptr<Node> contentNode,
+@@ -969,6 +991,16 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
+                 for (auto p : *pluginList)
+                     chainPlugins.push_back (p);
+ 
++        // Patch 0039 — the sends that go through the bridge: one reader per send plugin, all sharing the
++        // latency X declared here. The aux's legacy senders are looked up as before (the app puts none
++        // there on the bridge path, and nothing on the bridge path under OBJ_SENDS_LEGACY).
++        BridgeBuild::AuxReaders bridgeReaders;
++
++        if (params.bridgeBuild != nullptr)
++            if (auto ids = bridgeSendIDsOf (*auxClip); ! ids.empty())
++                bridgeReaders = params.bridgeBuild->registerAuxReaders (auxClip->itemID, ids,
++                                                                        contentProps.latencyNumSamples);
++
+         // La latence du nœud de CONTENU est la référence d'alignement des taps : c'est à cette
+         // somme-là que le retour ira s'ajouter. @see ObjAuxReturnNode.
+         std::unique_ptr<Node> returnNode = makeNode<ObjAuxReturnNode> (params.processState,
+@@ -978,7 +1010,10 @@ static std::unique_ptr<Node> createAuxReturns (const std::vector<PluginList*>& s
+                                                                        auxClip->getEditTimeRange(),
+                                                                        numChannels,
+                                                                        nodeID,
+-                                                                       contentProps.latencyNumSamples);
++                                                                       contentProps.latencyNumSamples,
++                                                                       params.bridgeBuild,
++                                                                       std::move (bridgeReaders.readers),
++                                                                       bridgeReaders.declared);
+ 
+         if (params.includePlugins)
+         {
+@@ -1041,8 +1076,12 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+     }
+ 
+     // Un container sans contenu ne produit rien — même s'il porte des aux, personne ne leur
+-    // enverrait quoi que ce soit.
+-    if (clips.isEmpty())
++    // enverrait quoi que ce soit. Patch 0039 : SAUF si un aux du container reçoit des envois du pont
++    // (émetteur hors du container) : il lui faut alors un contenu, silencieux, auquel sommer son retour.
++    const bool auxOnlyWithBridgeSends = clips.isEmpty() && params.bridgeBuild != nullptr
++                                         && params.includePlugins && anyAuxHasBridgeSends (auxClips);
++
++    if (clips.isEmpty() && ! auxOnlyWithBridgeSends)
+         return {};
+ 
+    #if USE_DYNAMIC_OFFSET_CONTAINER_CLIP
+@@ -1101,6 +1140,9 @@ std::unique_ptr<tracktion::graph::Node> createNodeForContainerClip (ContainerCli
+     // @see docs/plan_sidechain.md §5.5, §5.6
+     auto contentNode = [&]() -> std::unique_ptr<Node>
+     {
++        if (auxOnlyWithBridgeSends)
++            return std::make_unique<tracktion::graph::SilentNode> (2);
++
+         std::map<int, juce::Array<Clip*>> clipsByRank;
+ 
+         for (auto c : clips)
+@@ -1869,7 +1911,8 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+             if (params.bridgeBuild != nullptr)
+                 params.bridgeBuild->registerTap (*p, *tap, age, rank);
+ 
+-            node = makeNode<BridgeTapNode> (params.processState, std::move (node), p, *tap, params.bridgeBuild, rank);
++            node = makeNode<BridgeTapNode> (params.processState, std::move (node), p, *tap, params.bridgeBuild, rank,
++                                            params.sampleRate, params.blockSize, params.forRendering);
+         }
+         else if (auto meterPlugin = dynamic_cast<LevelMeterPlugin*> (p))
+         {
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+index cc2e44695b9..2d5306024e3 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+@@ -17,23 +17,42 @@ namespace
+ BridgeTapNode::BridgeTapNode (ProcessState& ps,
+                               std::unique_ptr<tracktion::graph::Node> inputNode,
+                               Plugin::Ptr tapPluginToUse,
+-                              BridgeTapSource&,
++                              BridgeTapSource& source,
+                               std::shared_ptr<BridgeBuild> buildToUse,
+-                              int rankToUse)
++                              int rankToUse,
++                              double sampleRate, int blockSize, bool rendering)
+     : TracktionEngineNode (ps),
+       input (std::move (inputNode)),
+       tapPlugin (std::move (tapPluginToUse)),
+       build (std::move (buildToUse)),
+       rank (rankToUse),
+-      tapID (tapPlugin->itemID)
++      tapID (tapPlugin->itemID),
++      copyMode (source.processesTapCopy()),
++      isRendering (rendering)
+ {
+     jassert (input != nullptr);
+ 
++    if (copyMode)
++    {
++        // Plugin::applyToBufferWithAutomation asserts it was initialised; a PluginNode does it in its
++        // constructor, and so does this. The tap sits behind the input's age: automation reads the
++        // time the signal was MADE at, as PluginNode does.
++        tapPlugin->baseClassInitialise ({ 0_tp, sampleRate, blockSize });
++        pluginInitialised = true;
++        automationAdjustmentTime = TimeDuration::fromSamples (-input->getNodeProperties().latencyNumSamples, sampleRate);
++    }
++
+     // The output IS the input (copied unless aliased): nothing to clear, the copy overwrites it.
+     setOptimisations ({ tracktion::graph::ClearBuffers::no,
+                         tracktion::graph::AllocateAudioBuffer::yes });
+ }
+ 
++BridgeTapNode::~BridgeTapNode()
++{
++    if (pluginInitialised && ! tapPlugin->baseClassNeedsInitialising())
++        tapPlugin->baseClassDeinitialise();
++}
++
+ tracktion::graph::NodeProperties BridgeTapNode::getNodeProperties()
+ {
+     auto props = input->getNodeProperties();     // latency UNCHANGED: the tap's age is its input's
+@@ -57,10 +76,13 @@ bool BridgeTapNode::isReadyToProcess()
+     return input->hasProcessed();
+ }
+ 
+-void BridgeTapNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&)
++void BridgeTapNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+ {
+     // The ring was sized by BridgeBuild::finalise; nothing is allocated here.
+     ring = build != nullptr ? build->ringForTap (tapID) : nullptr;
++
++    if (copyMode)
++        scratch.setSize (2, std::max (1, info.blockSize), false, true, false);
+ }
+ 
+ void BridgeTapNode::process (ProcessContext& pc)
+@@ -76,10 +98,57 @@ void BridgeTapNode::process (ProcessContext& pc)
+         return;
+ 
+     float* channels[2] = { nullptr, nullptr };
+-    const int numChannels = std::min (2, (int) pc.buffers.audio.getNumChannels());
++    int numChannels = std::min (2, (int) pc.buffers.audio.getNumChannels());
++
++    if (copyMode)
++    {
++        // The send: the level is applied to a COPY, once for the whole block (Q8 of the sidechain plan: a
++        // plugin run in 128-sample sub-blocks overwrote its own tap). What passes through is untouched.
++        const int n = (int) pc.numSamples;
++
++        if (n > scratch.getNumSamples())
++            return;                                  // a block longer than prepared: write nothing
++
++        const int inChannels = (int) pc.buffers.audio.getNumChannels();
++
++        for (int c = 0; c < 2; ++c)
++        {
++            float* dst = scratch.getWritePointer (c);
++
++            if (inChannels <= 0)
++                juce::FloatVectorOperations::clear (dst, n);
++            else
++                juce::FloatVectorOperations::copy (dst, pc.buffers.audio.getIterator ((choc::buffer::ChannelCount) std::min (c, inChannels - 1)).sample, n);
++        }
++
++        if (tapPlugin->isEnabled())
++        {
++            const auto blockTime = getEditTimeRange();
++            const auto adjusted = TimeRange (blockTime.getStart() + automationAdjustmentTime,
++                                             blockTime.getEnd() + automationAdjustmentTime);
++            juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), 2, n);
++
++            midiScratch.clear();
++            tapPlugin->prepareForNextBlock (adjusted.getStart());
++            tapPlugin->applyToBufferWithAutomation ({ &view, 0, n, &midiScratch, 0.0, adjusted,
++                                                      getPlayHeadState().playHead.isPlaying(),
++                                                      getPlayHeadState().playHead.isUserDragging(),
++                                                      isRendering, false });
++        }
++        else
++        {
++            scratch.clear (0, n);
++        }
+ 
+-    for (int c = 0; c < numChannels; ++c)
+-        channels[c] = pc.buffers.audio.getIterator ((choc::buffer::ChannelCount) c).sample;
++        channels[0] = scratch.getWritePointer (0);
++        channels[1] = scratch.getWritePointer (1);
++        numChannels = 2;
++    }
++    else
++    {
++        for (int c = 0; c < numChannels; ++c)
++            channels[c] = pc.buffers.audio.getIterator ((choc::buffer::ChannelCount) c).sample;
++    }
+ 
+     // didPlayheadJump excludes loop wraps: a folding container keeps ONE run.
+     ring->write (pc.referenceSampleRange.getStart(), (int) pc.numSamples,
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+index 53075ee360d..88f161dd7fe 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+@@ -16,6 +16,11 @@ namespace tracktion::inline engine
+ //==============================================================================
+ /** A pass-through node that records its input into a ring, indexed by STREAM sample.
+ 
++    A SEND tap (BridgeTapSource::processesTapCopy) runs its plugin on the COPY it records — once per
++    block, never in sub-blocks, never on the signal that passes through — and writes the result:
++    that is the send level applied at the tap (docs/plan_sends_rework.md §A.2). Such a plugin is
++    initialised here like a PluginNode would, and its edit time is moved back by the input's age.
++
+     It reports its input's properties unchanged (latency included): the tap's age is the age of
+     its input, which is what the readers' arithmetic needs. It never relies on `numOutputNodes`
+     (-1 inside a TimedNode: the trap that killed LatencyMaskingNode, patch 0019). */
+@@ -29,7 +34,9 @@ public:
+                    Plugin::Ptr tapPlugin,
+                    BridgeTapSource&,   // the tap's persistent state; the ring is reached through BridgeBuild
+                    std::shared_ptr<BridgeBuild>,
+-                   int rank);
++                   int rank,
++                   double sampleRate, int blockSize, bool rendering);
++    ~BridgeTapNode() override;
+ 
+     //==============================================================================
+     tracktion::graph::NodeProperties getNodeProperties() override;
+@@ -47,6 +54,14 @@ private:
+     const int rank;
+     const EditItemID tapID;
+     std::shared_ptr<objbridge::Ring> ring;      // set in prepareToPlay, null = nobody reads this tap
++
++    // Copy mode (a send): the plugin runs on `scratch`, which is what the ring receives.
++    const bool copyMode;
++    const bool isRendering;
++    bool pluginInitialised = false;
++    TimeDuration automationAdjustmentTime;
++    juce::AudioBuffer<float> scratch;           // 2 channels, sized in prepareToPlay
++    MidiMessageArray midiScratch;
+ };
+ 
+ //==============================================================================
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
+index 29fdfea15cc..21501172856 100644
+--- a/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.cpp
+@@ -113,6 +113,7 @@ int BridgeBuild::registerReader (EditItemID tapPluginID, EditItemID destPluginID
+     r.destPlugin = destPlugin;
+     r.consumer = consumer;
+     r.referenceLatency = referenceLatency;
++    r.cachedAge = cached;
+     r.declared = objbridge::declaredLatency (referenceLatency, cached);
+     r.groupKey = groupKey;
+ 
+@@ -121,6 +122,59 @@ int BridgeBuild::registerReader (EditItemID tapPluginID, EditItemID destPluginID
+     return (int) readers.size() - 1;
+ }
+ 
++BridgeBuild::AuxReaders BridgeBuild::registerAuxReaders (EditItemID auxClipID,
++                                                         const std::vector<EditItemID>& sendPluginIDs,
++                                                         int referenceLatency)
++{
++    struct Found { EditItemID id; Plugin::Ptr plugin; int cached = -1; };
++    std::vector<Found> found;
++
++    // Looked up BEFORE the lock, like registerReader: the cache is the Edit's, not ours.
++    for (auto id : sendPluginIDs)
++    {
++        if (! hasTap (id))
++            continue;
++
++        auto p = edit.getPluginCache().getPluginFor (id);
++        auto* src = dynamic_cast<BridgeTapSource*> (p.get());
++
++        if (src == nullptr || src->getBridgeTargetAuxClipID() != auxClipID)
++            continue;
++
++        found.push_back ({ id, p, objbridge::scaleCachedAge (src->cachedAgeNumSamples, src->cachedAgeSampleRate, sampleRate) });
++    }
++
++    std::vector<int> cachedAges;
++
++    for (auto& f : found)
++        cachedAges.push_back (f.cached);
++
++    AuxReaders result;
++    result.declared = objbridge::declaredGroupLatency (referenceLatency, cachedAges.data(), (int) cachedAges.size());
++
++    const std::lock_guard<std::mutex> lock (mutex);
++
++    for (auto& f : found)
++    {
++        ReaderEntry r;
++        r.tapID = f.id;
++        r.destID = f.id;
++        r.auxID = auxClipID;
++        r.destPlugin = f.plugin;
++        r.consumer = Consumer::auxInput;
++        r.referenceLatency = referenceLatency;
++        r.cachedAge = f.cached;
++        r.declared = result.declared;
++        r.groupKey = auxClipID.getRawID();
++
++        readers.push_back (std::move (r));
++        readerCounters.emplace_back();
++        result.readers.push_back ((int) readers.size() - 1);
++    }
++
++    return result;
++}
++
+ int BridgeBuild::getDeclaredLatency (int readerIndex) const
+ {
+     jassert (juce::isPositiveAndBelow (readerIndex, (int) readers.size()));
+@@ -139,10 +193,13 @@ bool BridgeBuild::finalise()
+     const std::lock_guard<std::mutex> lock (mutex);
+     bool again = false;
+ 
+-    // 1. Every reader, now that every tap of the pass exists (containers' content included: it is
+-    //    constructed synchronously by createNodeForContainerClip).
++    // 1. Every sidechain reader, now that every tap of the pass exists (containers' content included:
++    //    it is constructed synchronously by createNodeForContainerClip).
+     for (auto& r : readers)
+     {
++        if (r.consumer != Consumer::sidechain)
++            continue;
++
+         const TapEntry* tap = findTap (r.tapID);
+ 
+         r.sourceAge = tap != nullptr ? tap->age : 0;
+@@ -153,6 +210,43 @@ bool BridgeBuild::finalise()
+             again = true;
+     }
+ 
++    // 2. Every aux return, as a whole: its readers share one declared X (objbridge::resolveGroup).
++    {
++        std::map<uint64_t, std::vector<size_t>> groups;      // aux clip -> its readers
++
++        for (size_t i = 0; i < readers.size(); ++i)
++            if (readers[i].consumer == Consumer::auxInput)
++                groups[readers[i].groupKey].push_back (i);
++
++        for (auto& [key, members] : groups)
++        {
++            juce::ignoreUnused (key);
++            const int n = (int) members.size();
++            std::unique_ptr<bool[]> built (new bool[(size_t) n]);       // std::vector<bool> has no data()
++            std::vector<int> ages ((size_t) n), cached ((size_t) n);
++            std::vector<objbridge::ReaderResolution> out ((size_t) n);
++
++            for (int k = 0; k < n; ++k)
++            {
++                auto& r = readers[members[(size_t) k]];
++                const TapEntry* tap = findTap (r.tapID);
++                built[(size_t) k] = tap != nullptr;
++                ages[(size_t) k] = tap != nullptr ? tap->age : 0;
++                cached[(size_t) k] = r.cachedAge;
++                r.sourceAge = ages[(size_t) k];
++            }
++
++            const auto& first = readers[members.front()];
++
++            if (objbridge::resolveGroup (first.referenceLatency, first.declared, built.get(),
++                                         ages.data(), cached.data(), n, out.data()))
++                again = true;
++
++            for (int k = 0; k < n; ++k)
++                readers[members[(size_t) k]].resolution = out[(size_t) k];
++        }
++    }
++
+     converged = ! again;
+     return again;
+ }
+@@ -285,6 +379,7 @@ BridgeReport BridgeBuild::getReport() const
+         BridgeReport::Reader out;
+ 
+         out.plugin = r.destID;
++        out.aux = r.auxID;
+         out.destInstance = juce::String::toHexString ((juce::int64) (intptr_t) r.destPlugin.get());
+         out.tap = r.tapID;
+         out.consumer = r.consumer == Consumer::sidechain ? "sidechain" : "auxInput";
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+index ff0981d2ba5..fdcab8bae77 100644
+--- a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+@@ -31,6 +31,12 @@ namespace objbridge_ids
+ 
+     /** string: the model UUID a tap plugin serves (report only). */
+     inline const juce::Identifier source ("objBridgeSource");
++
++    /** string, on an AUX clip: the comma-separated item ids of the send plugins (BridgeTapSource)
++        that feed it. Written by the app in the same transaction as the sends themselves; read by the
++        builder (createAuxReturns) to register one reader per send. Absent / empty = the legacy
++        ContainerAuxSend path. docs/plan_sends_rework.md §A.2. */
++    inline const juce::Identifier sends  ("objBridgeSends");
+ }
+ 
+ //==============================================================================
+@@ -46,8 +52,9 @@ struct BridgeTapSource
+     std::shared_ptr<objbridge::Ring> ring;     /**< Swapped only when it must GROW; old graphs keep theirs. */
+     int    ringGeneration = 0;
+ 
+-    // Phase 2 — a bridge SEND: the aux it targets (invalid for a sidechain tap), and whether the
+-    // tap must run the plugin on its copy (the send level).
++    // A bridge SEND (docs/plan_sends_rework.md): the aux it targets (invalid for a sidechain tap), and
++    // whether the tap node must run the plugin on its COPY of the signal, once per block (the send
++    // level, applied at the tap: the signal passing through is never touched).
+     virtual EditItemID getBridgeTargetAuxClipID() const     { return {}; }
+     virtual bool processesTapCopy() const                   { return false; }
+ };
+@@ -87,7 +94,9 @@ struct BridgeReport
+ 
+     struct Reader
+     {
+-        EditItemID plugin;                       // the destination plugin (the app maps it to its model UUID)
++        EditItemID plugin;                       // the destination plugin (the app maps it to its model UUID); for an
++                                                 // auxInput reader, the SEND plugin that feeds it
++        EditItemID aux;                          // auxInput only: the aux clip it belongs to
+         juce::String destInstance;               // hex pointer of the live plugin: proves no reload across an undo
+         EditItemID tap;
+         juce::String consumer;                   // "sidechain" | "auxInput"
+@@ -129,6 +138,21 @@ public:
+     int  registerReader (EditItemID tapPluginID, EditItemID destPluginID, Plugin* destPlugin,
+                          Consumer, int referenceLatency, uint64_t groupKey);
+ 
++    /** The readers of ONE aux return: one per send plugin in `sendPluginIDs` that exists in the Edit, is
++        a BridgeTapSource and targets `auxClipID`. They share ONE declared latency
++        X = max(referenceLatency, every tap's cached age) (objbridge::declaredGroupLatency), because the
++        return has a single output age; the group is resolved as a whole by finalise. `readers` are the
++        indices to hand to the return node, in the order of `sendPluginIDs`. A send whose plugin is gone
++        is dropped, not an error: the app's list is rewritten in the same transaction as the sends. */
++    struct AuxReaders
++    {
++        std::vector<int> readers;
++        int declared = 0;
++    };
++
++    AuxReaders registerAuxReaders (EditItemID auxClipID, const std::vector<EditItemID>& sendPluginIDs,
++                                   int referenceLatency);
++
+     /** What the reader declares (X), fixed at registration. */
+     int  getDeclaredLatency (int readerIndex) const;
+ 
+@@ -197,8 +221,9 @@ private:
+ 
+     struct ReaderEntry
+     {
+-        EditItemID tapID, destID;
++        EditItemID tapID, destID, auxID;
+         Plugin::Ptr destPlugin;
++        int cachedAge = -1;                    // the tap's cached age as the reader was registered (scaled)
+         Consumer consumer = Consumer::sidechain;
+         int referenceLatency = 0, declared = 0;
+         uint64_t groupKey = 0;
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
+index a4df75f514d..19f5dc11c74 100644
+--- a/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridgeCore.h
+@@ -293,9 +293,72 @@ inline ReaderResolution resolve (int referenceLatency, int declared, bool source
+     return r;
+ }
+ 
+-// Phase 2 (an aux's input): every reader of one aux shares one declared X = max(ref, max cached),
+-// and the group is late / over-declared as a whole. The signature is reserved here and implemented
+-// in step 2.1 — nothing in phase 1 calls it.
++//==============================================================================
++// An aux return reads SEVERAL taps (one per send) and sums them: they share ONE declared latency X,
++// because the node has one output age. docs/plan_sends_rework.md §A.2.
++
++/** X for a group of readers: max(L_ref, every cached age). A negative cached age ("never built") asks
++    for nothing. */
++inline int declaredGroupLatency (int referenceLatency, const int* cachedAges, int numReaders) noexcept
++{
++    int x = std::max (0, referenceLatency);
++
++    for (int i = 0; i < numReaders; ++i)
++        x = std::max (x, cachedAges[i]);
++
++    return x;
++}
++
++/** What a group needs once the true ages are known. `built[i]` false = the tap was not built in this
++    pass (a restricted render): that reader is sourceAbsent and, because nothing will ever refresh its
++    cached age, its cached age stays a FLOOR of what the group needs — otherwise a stale high cache
++    would read as "over-declared" in every pass and never converge. `out` receives one resolution per
++    reader. Returns true if another pass is needed (any built reader late, or the group over-declared).
++    A group of one reader answers exactly what `resolve` answers. */
++inline bool resolveGroup (int referenceLatency, int declared, const bool* built, const int* trueAges,
++                          const int* cachedAges, int numReaders, ReaderResolution* out) noexcept
++{
++    int needed = std::max (0, referenceLatency);
++    bool anyLate = false;
++
++    for (int i = 0; i < numReaders; ++i)
++    {
++        if (built[i])
++        {
++            needed = std::max (needed, trueAges[i]);
++            anyLate = anyLate || trueAges[i] > declared;
++        }
++        else
++        {
++            needed = std::max (needed, cachedAges[i]);
++        }
++    }
++
++    const bool over = ! anyLate && declared > needed;
++
++    for (int i = 0; i < numReaders; ++i)
++    {
++        ReaderResolution r;
++
++        if (built[i])
++        {
++            if (trueAges[i] > declared)
++            {
++                r.status = ReaderStatus::late;
++                r.alignmentError = trueAges[i] - declared;
++            }
++            else
++            {
++                r.delay = declared - trueAges[i];
++                r.status = over ? ReaderStatus::overDeclared : ReaderStatus::aligned;
++            }
++        }
++
++        out[i] = r;
++    }
++
++    return anyLate || over;
++}
+ 
+ /** Ring sizing: the next power of two >= maxDelay + 2 x blockSize, and >= 4 x blockSize. */
+ inline int requiredRingCapacity (int maxDelay, int blockSize) noexcept
+-- 
+2.50.1 (Apple Git-155)
+

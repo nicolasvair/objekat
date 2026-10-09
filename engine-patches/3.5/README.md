@@ -410,6 +410,21 @@ Checked as still biting: `develop` still had the linear `std::find`.
   Six files; most of the 350 lines of `tracktion_EditNodeBuilder.cpp` in the diff are the
   re-indentation of the file branch of `createNodeForAudioClip` (`git diff -w` shows ~20). Written
   with `docs/ara_melodyne_plan.md` §3 step 2; the runtime proof comes with the app bridge (step 3).
+- `0039` — **sends on the audio bridge (docs/plan_sends_rework.md, INC 1).** A send is now an
+  engine-only plugin (`ObjBridgeSendPlugin`, app side) laid at the END of the sender's chain; the
+  builder turns it into a `BridgeTapNode` in **copy mode** (`BridgeTapSource::processesTapCopy()`):
+  the node runs the plugin's `applyToBuffer` on its COPY of the signal, ONCE per block (never in
+  128-sample sub-blocks), and writes that copy to the ring — the signal passing through is never
+  touched. That removes the "an automated send overwrites its own tap" defect of the legacy
+  `ObjAuxSendPlugin` (measured ~6 dB under the curve on `main`). The aux return
+  (`ObjAuxReturnNode`, `tracktion_ContainerClipNode.*`) reads the rings through ONE `BridgeReader` per
+  send, all sharing one declared latency X (`BridgeBuild::registerAuxReaders`, `resolveGroup` in
+  `tracktion_ObjBridgeCore.h`: `X = max(L_ref, max over the group of the cached tap ages)`, each reader
+  delaying by `X - age`), the aux clip listing its sends in the state property `objBridgeSends`
+  (comma-separated plugin ids, written by the app in the commit of the bridge transaction). A
+  container holding only auxes used to produce NO node (`createNodeForContainerClip` returned `{}`):
+  it now gets a `SilentNode` as its content. Files: `tracktion_ObjBridgeCore.h`, `tracktion_ObjBridge.*`,
+  `tracktion_ObjBridgeNodes.*`, `tracktion_ContainerClipNode.*`, `tracktion_EditNodeBuilder.cpp`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

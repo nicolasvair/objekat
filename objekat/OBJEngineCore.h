@@ -181,6 +181,19 @@
 - (void)removeSend:(NSString*)senderID toAux:(NSString*)auxID;
 - (void)setSendLevel:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb;
 
+// SENDS ON THE BRIDGE (patch 0039, docs/plan_sends_rework.md). Since INC 1 every send goes through
+// the audio bridge, in one transaction with the sidechain taps (beginBridgeSync … commitBridgeSync):
+// ensureBridgeSend lays (or confirms) ONE send — an engine-only plugin at the end of the sender's
+// chain carrying the level — and commitBridgeSync removes the ones that were not confirmed and
+// rewrites each aux's list of sends. The scope is the model's (BridgeScope): the engine lays what it is
+// told. addSend/removeSend above are the LEGACY path, used only under OBJ_SENDS_LEGACY=1.
+//   setSendLevel     : hot (the plugin smooths the ramp), same call on both paths.
+//   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
+//   usesLegacySends  : OBJ_SENDS_LEGACY=1 was set at launch (read ONCE).
+- (void)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated;
+- (void)setSendGated:(BOOL)gated from:(NSString*)senderID toAux:(NSString*)auxID;
+- (BOOL)usesLegacySends;
+
 // MARK: - Bake — rendu offline
 // Rend la sortie complète du sous-mix d'un groupe (FolderTrack + sous-pistes : dry, bus FX,
 // returns d'aux internes) dans un fichier wave, EN TÂCHE DE FOND : rendu sur une COPIE de l'Edit

@@ -14,6 +14,7 @@
 #include "OBJParallelBlockPlugin.h"
 #include "OBJAuxSendPlugin.h"
 #include "OBJBridgeTapPlugin.h"
+#include "OBJBridgeSendPlugin.h"
 #include "OBJKeyProbePlugin.h"
 #include "OBJAudioProbe.h"
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
@@ -1465,6 +1466,11 @@ struct OBJRenderChain {
     // The audio bridge (docs/plan_sidechain.md §5.8). Source key (object or stem) → its engine-only
     // tap plugin, at the end of that chain. Never a model plugin: the model does not know it.
     std::unordered_map<std::string, te::Plugin::Ptr>          _bridgeTapMap;
+    // "émetteurID|auxID" → ObjBridgeSendPlugin posé en fin de chaîne de l'émetteur (patch 0039,
+    // docs/plan_sends_rework.md) : ce qui remplace _auxSendMap sur le chemin du pont. Touchés = ce que
+    // la transaction courante a posé ou confirmé ; le reste est retiré au commit.
+    std::unordered_map<std::string, te::Plugin::Ptr>          _bridgeSendMap;
+    std::unordered_set<std::string>                           _bridgeTouchedSends;
     // Plugin keys that carry a sidechain source / object keys whose rank was set: what the NEXT
     // sync must clear if it does not touch them again. The `_bridgeTouched*` sets are what the
     // current transaction (beginBridgeSync … commitBridgeSync) touched.
@@ -1710,6 +1716,9 @@ static BOOL gOBJAudioDisabled = NO;
         // The audio bridge (patch 0037): the engine-only tap, and two MEASURING tools reachable only
         // through DEBUG commands. None is added to tracktionBuiltInPluginList(): nothing new in the UI.
         _engine->getPluginManager().createBuiltInType<te::ObjBridgeTapPlugin>();
+        // The bridge SEND (patch 0039): the tap that carries a send's level. Registered next to the
+        // legacy ObjAuxSendPlugin, which stays for OBJ_SENDS_LEGACY=1 (the plan's null test).
+        _engine->getPluginManager().createBuiltInType<te::ObjBridgeSendPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjKeyProbePlugin>();
         _engine->getPluginManager().createBuiltInType<te::LatencyPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
@@ -2222,6 +2231,8 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _midiClipMap.clear();
     _instrumentMap.clear();
     _bridgeTapMap.clear();
+    _bridgeSendMap.clear();
+    _bridgeTouchedSends.clear();
     _bridgeKeyedPlugins.clear();
     _bridgeRankedKeys.clear();
     _bridgeTouchedTaps.clear();
@@ -3035,6 +3046,13 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         if (it->first.compare(0, key.size(), key) == 0 && it->first.size() > key.size()
             && it->first[key.size()] == '|')
             it = _auxSendMap.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
+        if (it->first.compare(0, key.size(), key) == 0 && it->first.size() > key.size()
+            && it->first[key.size()] == '|')
+            it = _bridgeSendMap.erase(it);
         else
             ++it;
     }
@@ -4386,6 +4404,17 @@ static void logRoutingDisabledOnce(const char* what) {
         NSLog(@"[OBJ] %s : hors de portée du routage (@see -isSend:routableToAux:)", what);
 }
 
+// OBJ_SENDS_LEGACY=1, read ONCE at launch (docs/plan_sends_rework.md): every send goes through the old
+// ObjAuxSendPlugin path again, so that the null test can export the same session on both paths. Never
+// a user setting.
+static bool objSendsLegacyMode() {
+    static const bool legacy = [] {
+        const char* e = getenv("OBJ_SENDS_LEGACY");
+        return e != nullptr && e[0] == '1';
+    }();
+    return legacy;
+}
+
 static std::string sendMapKey(const std::string& senderKey, const std::string& auxKey) {
     return senderKey + "|" + auxKey;
 }
@@ -4536,6 +4565,18 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
         }
     }
 
+    // Idem sur le pont : un envoi dont l'aux disparaît n'a plus de lecteur, son tap écrirait pour rien.
+    for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
+        const std::string& k = it->first;
+        const auto sep = k.find('|');
+        if (sep != std::string::npos && k.compare(sep + 1, std::string::npos, key) == 0) {
+            if (it->second) it->second->removeFromParent();
+            it = _bridgeSendMap.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     std::string parentKey;
     if (auto ow = _childOwnerMap.find(key); ow != _childOwnerMap.end()) parentKey = ow->second;
 
@@ -4618,6 +4659,11 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
 
 - (void)setSendLevel:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb {
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
+    // The bridge path first (patch 0039): same hot door, the plugin smooths the ramp, no rebuild.
+    if (auto bit = _bridgeSendMap.find(sendMapKey(sKey, aKey)); bit != _bridgeSendMap.end()) {
+        if (auto* s = dynamic_cast<te::ObjBridgeSendPlugin*>(bit->second.get())) s->setLevelDb(levelDb);
+        return;
+    }
     auto it = _auxSendMap.find(sendMapKey(sKey, aKey));
     if (it == _auxSendMap.end()) return;
     // À chaud : le plugin lisse la rampe, le graphe n'est pas reconstruit.
@@ -4650,6 +4696,7 @@ static NSString* objNS(const juce::String& s);   // defined with the other debug
     _bridgeTouchedTaps.clear();
     _bridgeTouchedKeyed.clear();
     _bridgeTouchedRanked.clear();
+    _bridgeTouchedSends.clear();
 }
 
 - (void)setBridgeRank:(NSInteger)rank forID:(NSString*)uuid {
@@ -4834,6 +4881,103 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     }
 }
 
+// A SEND on the bridge (patch 0039, docs/plan_sends_rework.md §A.2): an engine-only plugin at the END
+// of the sender's chain (post-fader, post-window — what is heard is what is sent) that carries the
+// level and names the aux. Idempotent: called by every sync for every alive send. The level and the
+// gate are the HOT part (no rebuild); the plugin itself, or its aux, changing is what marks the
+// transaction dirty. The aux lists its sends in `objBridgeSends` (@see commitBridgeSync).
+- (BOOL)usesLegacySends { return objSendsLegacyMode() ? YES : NO; }
+
+- (void)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated {
+    if (!_edit || !senderID || !auxID || objSendsLegacyMode()) return;
+    std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
+
+    // An aux not born yet (a rebuild in progress): the next sync will come back when it is.
+    auto ait = _containerClipMap.find(aKey);
+    if (ait == _containerClipMap.end() || !_auxKeys.count(aKey)) return;
+
+    te::PluginList* pl = [self userPluginListForKey:sKey];
+    if (!pl) { logRoutingDisabledOnce("Send depuis un objet sans chaîne"); return; }
+
+    const std::string mk = sendMapKey(sKey, aKey);
+    _bridgeTouchedSends.insert(mk);
+
+    auto applyHot = [&](te::Plugin* p) {
+        auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p);
+        if (!send) return;
+        if (send->getBridgeTargetAuxClipID() != ait->second->itemID) {
+            send->setTargetAuxClip(ait->second->itemID);      // the aux clip was remade (an undo)
+            _bridgeDirty = true;
+        }
+        if (std::fabs(send->getLevelDb() - levelDb) > 1.0e-4f) send->setLevelDb(levelDb);
+        send->setGated(gated);
+    };
+
+    if (auto it = _bridgeSendMap.find(mk); it != _bridgeSendMap.end()) {
+        // Still in the list? A recompile of the sender's chain can have remade it.
+        bool stillInList = false;
+        for (auto* p : *pl) if (p == it->second.get()) { stillInList = true; break; }
+        if (stillInList) { applyHot(it->second.get()); return; }
+        _bridgeSendMap.erase(it);
+    }
+
+    // Adopt a send already present in the chain but absent from the registry, never double it.
+    for (auto* p : *pl) {
+        auto* existing = dynamic_cast<te::ObjBridgeSendPlugin*>(p);
+        if (existing && existing->getBridgeTargetAuxClipID() == ait->second->itemID) {
+            _bridgeSendMap[mk] = te::Plugin::Ptr(p);
+            applyHot(p);
+            _bridgeDirty = true;
+            return;
+        }
+    }
+
+    te::Plugin::Ptr p = pl->insertPlugin(te::ObjBridgeSendPlugin::create(), pl->size());
+    auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
+    if (!send) { NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée (%@ → %@)", senderID, auxID); return; }
+    send->setTargetAuxClip(ait->second->itemID);
+    send->setLevelDb(levelDb);
+    send->setGated(gated);
+    _bridgeSendMap[mk] = p;
+    _bridgeDirty = true;
+}
+
+// The audibility gate of a send, hot: no rebuild, the plugin's smoother does the rest.
+- (void)setSendGated:(BOOL)gated from:(NSString*)senderID toAux:(NSString*)auxID {
+    std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
+    if (auto it = _bridgeSendMap.find(sendMapKey(sKey, aKey)); it != _bridgeSendMap.end())
+        if (auto* s = dynamic_cast<te::ObjBridgeSendPlugin*>(it->second.get())) s->setGated(gated);
+}
+
+// Rewrites the list of sends on every aux clip (`objBridgeSends`, sorted, only on change). The engine
+// writes it, never the model: the ids are the engine's.
+- (void)writeBridgeSendLists {
+    std::unordered_map<std::string, std::vector<te::EditItemID>> byAux;
+    for (auto& [k, p] : _bridgeSendMap) {
+        const auto sep = k.find('|');
+        if (sep == std::string::npos || !p) continue;
+        byAux[k.substr(sep + 1)].push_back(p->itemID);
+    }
+
+    for (auto& auxKey : _auxKeys) {
+        auto cit = _containerClipMap.find(auxKey);
+        if (cit == _containerClipMap.end() || !cit->second) continue;
+
+        juce::Array<te::EditItemID> ids;
+        if (auto bit = byAux.find(auxKey); bit != byAux.end()) {
+            auto sorted = bit->second;
+            std::sort(sorted.begin(), sorted.end());
+            for (auto id : sorted) ids.add(id);
+        }
+        const juce::String wanted = te::EditItemID::listToString(ids);
+        auto& state = cit->second->state;
+        if (state[te::objbridge_ids::sends].toString() == wanted) continue;
+        if (wanted.isEmpty()) state.removeProperty(te::objbridge_ids::sends, nullptr);
+        else                  state.setProperty(te::objbridge_ids::sends, wanted, nullptr);
+        _bridgeDirty = true;
+    }
+}
+
 // Wires that had to wait for an AU to finish loading: lay them as soon as it has, and rebuild once.
 // Called by the latency tick (checkLatencyAndRebuild).
 - (void)layPendingBridgeWires {
@@ -4881,6 +5025,16 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         it = _bridgeTapMap.erase(it);
         _bridgeDirty = true;
     }
+
+    // Sends the sync did not confirm are gone from the model (or refused): remove them, then rewrite
+    // each aux's list of sends. Before the rebuild below, so that ONE restartPlayback carries both.
+    for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
+        if (_bridgeTouchedSends.count(it->first)) { ++it; continue; }
+        if (it->second) it->second->removeFromParent();
+        it = _bridgeSendMap.erase(it);
+        _bridgeDirty = true;
+    }
+    [self writeBridgeSendLists];
 
     // ONE rebuild for the whole sync. `_latencyResyncPending`: the rebuild compensates the latency
     // that follows, the watcher must not ask for a second one.
@@ -4939,7 +5093,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     for (auto& rd : r.readers) {
         const juce::String tapID = rd.tap.toString();
         const juce::String inst = rd.destInstance, consumer = rd.consumer, status = rd.status;
+        const juce::String auxItemID = rd.aux.isValid() ? rd.aux.toString() : juce::String();
         [readers addObject:@{ @"plugin": pluginKeyFor(rd.plugin), @"dest_instance": objNS(inst),
+                              @"aux": rd.aux.isValid() ? (id) objNS(auxItemID) : (id) [NSNull null],
                               @"tap": objNS(tapID), @"consumer": objNS(consumer), @"rank": @(rd.rank),
                               @"l_ref": @(rd.lRef), @"declared": @(rd.declared),
                               @"source_age": @(rd.sourceAge), @"delay": @(rd.delay),
@@ -8392,8 +8548,9 @@ static void objDumpPluginList(te::PluginList& pl,
 
         case OBJAutomationTargetSend: {
             if (!targetKey) return {};
-            auto it = _auxSendMap.find(sendMapKey(key, std::string([targetKey UTF8String])));
-            if (it != _auxSendMap.end()) plugin = it->second;
+            const auto mk = sendMapKey(key, std::string([targetKey UTF8String]));
+            if (auto bit = _bridgeSendMap.find(mk); bit != _bridgeSendMap.end()) plugin = bit->second;
+            else if (auto it = _auxSendMap.find(mk); it != _auxSendMap.end()) plugin = it->second;
             wantedID = "level";
             break;
         }

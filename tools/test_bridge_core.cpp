@@ -283,6 +283,78 @@ int main()
         check ("resolve: no latency anywhere", r.status == ReaderStatus::aligned && r.delay == 0);
     }
 
+    // ---- a group of readers sharing one declared X (an aux return, docs/plan_sends_rework.md)
+    {
+        int cached[3] = { 300, -1, 700 };
+        check ("declaredGroupLatency: max of the reference and the cached ages",
+               declaredGroupLatency (500, cached, 3) == 700 && declaredGroupLatency (900, cached, 3) == 900
+                 && declaredGroupLatency (0, cached, 0) == 0 && declaredGroupLatency (-5, cached, 0) == 0);
+
+        // Three taps of ages 300, 500, 700, X = 700: every reader is brought to 700.
+        bool built[3] = { true, true, true };
+        int age[3] = { 300, 500, 700 };
+        int cache[3] = { 300, 500, 700 };
+        ReaderResolution out[3];
+        bool again = resolveGroup (200, 700, built, age, cache, 3, out);
+        check ("group aligned: delay = X - age for each reader, no other pass",
+               ! again && out[0].delay == 400 && out[1].delay == 200 && out[2].delay == 0
+                 && out[0].status == ReaderStatus::aligned && out[1].status == ReaderStatus::aligned
+                 && out[2].status == ReaderStatus::aligned);
+
+        // After resolution every reader lands on the same instant: delay + age == X.
+        check ("group aligned: delay + age is the same instant for all", out[0].delay + age[0] == 700
+               && out[1].delay + age[1] == 700 && out[2].delay + age[2] == 700);
+
+        // One tap got older than X: it is late, the others are delayed against the OLD X, and another pass is needed.
+        age[1] = 900;
+        again = resolveGroup (200, 700, built, age, cache, 3, out);
+        check ("group late: one reader late asks for another pass, the others stay what they were",
+               again && out[1].status == ReaderStatus::late && out[1].alignmentError == 200 && out[1].delay == 0
+                 && out[0].status == ReaderStatus::aligned && out[0].delay == 400);
+
+        // X was 700 but the oldest tap is now 300 and the reference 200: over-declared as a whole.
+        age[0] = 300; age[1] = 100; age[2] = 250;
+        again = resolveGroup (200, 700, built, age, cache, 3, out);
+        check ("group over-declared as a whole: every built reader says so",
+               again && out[0].status == ReaderStatus::overDeclared && out[1].status == ReaderStatus::overDeclared
+                 && out[2].status == ReaderStatus::overDeclared && out[0].delay == 400);
+
+        // A single reader group answers what resolve answers, in every status.
+        bool one = true;
+        const int cases[][3] = { { 1500, 1500, 1000 }, { 0, 1000, 1000 }, { 0, 0, 960 }, { 0, 1500, 1000 }, { 1200, 1200, 1000 }, { 0, 0, 0 } };
+
+        for (auto& k : cases)
+        {
+            int a = k[2], c = k[2];
+            bool b = true;
+            ReaderResolution g, ref = resolve (k[0], k[1], true, k[2]);
+            const bool ag = resolveGroup (k[0], k[1], &b, &a, &c, 1, &g);
+            one = one && g.delay == ref.delay && g.status == ref.status && g.alignmentError == ref.alignmentError
+                    && ag == (ref.status == ReaderStatus::late || ref.status == ReaderStatus::overDeclared);
+        }
+
+        check ("a group of one answers exactly what resolve answers", one);
+
+        // An absent tap (a restricted render) keeps its cached age as a floor: a stale high cache must not
+        // read as over-declared in every pass (that would never converge), and it is not delayed.
+        bool b2[2] = { true, false };
+        int age2[2] = { 300, 0 }, cache2[2] = { 300, 900 };
+        again = resolveGroup (0, 900, b2, age2, cache2, 2, out);
+        check ("group with an absent tap: X = its cached age is NOT over-declared, absent reader untouched",
+               ! again && out[0].delay == 600 && out[0].status == ReaderStatus::aligned
+                 && out[1].status == ReaderStatus::sourceAbsent && out[1].delay == 0);
+
+        // ...and the same group with X above every floor IS over-declared.
+        again = resolveGroup (0, 1200, b2, age2, cache2, 2, out);
+        check ("group with an absent tap: X above every floor is over-declared", again && out[0].status == ReaderStatus::overDeclared);
+
+        // Nothing built at all: nothing to ask for.
+        bool none[2] = { false, false };
+        again = resolveGroup (100, 100, none, age2, cache2, 2, out);
+        check ("group with no tap built: sourceAbsent for all, no pass", ! again && out[0].status == ReaderStatus::sourceAbsent
+               && out[1].status == ReaderStatus::sourceAbsent);
+    }
+
     // ---- requiredRingCapacity
     {
         auto pow2 = [] (int v) { return v > 0 && (v & (v - 1)) == 0; };
