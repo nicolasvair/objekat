@@ -89,7 +89,7 @@ enum SendDrop {
 /// A send card in the hand: the sender (so that a drop on another object is refused) and the aux (the
 /// send is one per pair). JSON under `public.plain-text` like the plugin payload; it does not decode as
 /// a `PluginDragPayload`, so the doors that take plugins ignore it by themselves.
-struct SendDragPayload: Codable, Equatable {
+nonisolated struct SendDragPayload: Codable, Equatable {
     let sendSender: UUID
     let sendAux: UUID
 }
