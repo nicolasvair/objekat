@@ -387,6 +387,8 @@ private struct StemStripDropDelegate: DropDelegate {
     /// What a release here would do with the drag in flight (@see EditViewModel.pluginDropOutcome);
     /// nil when there is none to read (the legacy reading then holds).
     private func outcome() -> PluginDropOutcome? {
+        // A send card never goes to a stem's strip (a stem does not send): "a send stays on its object".
+        if SendDragSession.shared.current != nil { return .sendRefused(.refusedElsewhere) }
         guard let payload = PluginDragSession.shared.current else { return nil }
         return viewModel.pluginDropOutcome(payload, toHost: stemID, at: .hostEnd, flags: NSEvent.modifierFlags)
     }

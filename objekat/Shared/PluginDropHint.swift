@@ -32,7 +32,9 @@ final class PluginDropHint {
     ///    object and stays a plain plugin here; ⌥ takes an independent copy and leaves the bin alone.
     ///  • `.blockMove` — a whole FX link block: it moves to the target, which joins the bin (⌥ or ⌘ =
     ///    the source keeps its own, still on the same bin).
-    enum Context: Equatable { case host, sameChain, intoBin, outOfBin, blockMove }
+    ///  • `.send` — a SEND card is in the hand (not a plugin): the band says where it would be taken, or
+    ///    why it cannot (@see SendDrop). No modifier: one send per pair, so no copy.
+    enum Context: Hashable { case host, sameChain, intoBin, outOfBin, blockMove, send(SendDropBanner) }
 
     struct State: Equatable {
         var context: Context
@@ -79,7 +81,16 @@ final class PluginDropHint {
         }
         // The most specific place wins: a bin's own contexts, then a plain chain, then a host.
         let present = Set(targets.values)
-        let context: Context = [Context.blockMove, .intoBin, .outOfBin, .sameChain].first(where: present.contains) ?? .host
+        // A send in the hand outranks every other reading; between two lines the accepting one wins
+        // (a neighbour's late exit must not hide where the card would land).
+        var sendLines: [SendDropBanner] = []
+        for case .send(let b) in present { sendLines.append(b) }
+        let context: Context
+        if let line = sendLines.first(where: { !$0.isRefusal }) ?? sendLines.first {
+            context = .send(line)
+        } else {
+            context = [Context.blockMove, .intoBin, .outOfBin, .sameChain].first(where: present.contains) ?? .host
+        }
         let f = NSEvent.modifierFlags
         let next = State(context: context, alt: f.contains(.option), cmd: f.contains(.command))
         // Reassigned only if it changes: the timeline reads it, and rewriting the same value on

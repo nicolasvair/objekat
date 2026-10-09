@@ -102,8 +102,18 @@ enum PluginDropOutcome: Equatable {
     case extractFromBin(UUID)
     /// Nothing happens, and the cursor says so. The reason is for the machine (the API's dry run).
     case refuse(String)
+    // — a SEND card in the hand (INC 2, @see SendDrop): it travels through the same doors —
+    /// The send is taken at the slot the line names.
+    case sendTaken(SendDropBanner)
+    /// A send cannot go here; the line says why (the cursor is the refusing one).
+    case sendRefused(SendDropBanner)
 
-    var isRefusal: Bool { if case .refuse = self { return true } else { return false } }
+    var isRefusal: Bool {
+        switch self {
+        case .refuse, .sendRefused: return true
+        default: return false
+        }
+    }
 
     /// What the drop LINKS: the ⌘ maillon and the band's linked-copy line are shown for these, and
     /// only these.
@@ -119,7 +129,8 @@ enum PluginDropOutcome: Equatable {
     /// `.link` draws an alias arrow, which is not what a ⌘ drop means; the band and the maillon say it.
     var operation: DropOperation {
         switch self {
-        case .refuse: return .forbidden
+        case .refuse, .sendRefused: return .forbidden
+        case .sendTaken: return .move
         case .move, .moveBlock, .adoptIntoBin, .extractFromBin: return .move
         case .copy, .link, .joinBin, .copyBlock, .copyIntoBin: return .copy
         }
@@ -131,6 +142,7 @@ enum PluginDropOutcome: Equatable {
     func hintContext(plainContext: PluginDropHint.Context) -> PluginDropHint.Context? {
         switch self {
         case .refuse: return nil
+        case .sendTaken(let b), .sendRefused(let b): return .send(b)
         case .move, .copy: return plainContext
         case .link, .joinBin: return .host
         case .adoptIntoBin, .copyIntoBin: return .intoBin
@@ -155,6 +167,8 @@ enum PluginDropOutcome: Equatable {
         case .copyIntoBin: return "copy_into_bin"
         case .extractFromBin: return "extract_from_bin"
         case .refuse: return "refuse"
+        case .sendTaken: return "send_taken"
+        case .sendRefused: return "send_refused"
         }
     }
 }
@@ -303,7 +317,8 @@ extension EditViewModel {
                            modifiers flags: NSEvent.ModifierFlags) -> Bool {
         let outcome = pluginDropOutcome(payload, toHost: targetID, at: site, flags: flags)
         switch outcome {
-        case .refuse:
+        case .refuse, .sendTaken, .sendRefused:
+            // (a send card never comes through here: @see SendDrop)
             return false
 
         case .move, .copy, .link:

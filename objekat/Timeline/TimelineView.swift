@@ -1126,6 +1126,8 @@ struct TimelineView: View {
                             if active { hoverStore.clearZoneAndCut() }
                         },
                         pluginOutcome: { loc, flags in
+                            // A send card never goes to the timeline: "a send stays on its object".
+                            if SendDragSession.shared.current != nil { return .sendRefused(.refusedElsewhere) }
                             guard let payload = PluginDragSession.shared.current else { return nil }
                             guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
                             return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
@@ -4124,7 +4126,22 @@ struct TimelineView: View {
     /// by a line saying where it does.
     @ViewBuilder
     private var pluginDropHUD: some View {
-        if let s = PluginDropHint.shared.state {
+        if let s = PluginDropHint.shared.state, case .send(let line) = s.context {
+            // A send card is in the hand: where it would be taken, or why it cannot be (no modifier).
+            HStack(spacing: 7) {
+                Image(systemName: line.isRefusal ? "nosign" : "arrow.turn.down.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(line.isRefusal ? Color.red : Color.accentColor)
+                Text(L(line.titleKey))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder((line.isRefusal ? Color.red : Color.accentColor).opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
+        } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
                 Image(systemName: s.isLink ? "link"
                                   : s.isCopy ? "plus.square.on.square"
@@ -4150,6 +4167,8 @@ struct TimelineView: View {
                     Text(L("hud.pluginDrop.sameChainNoLink"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                case .send:
+                    EmptyView()    // drawn by the branch above
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -4172,6 +4191,8 @@ struct TimelineView: View {
             return s.alt ? L("hud.move.copy") : L("hud.pluginDrop.outOfBin")
         case .blockMove:
             return s.isCopy ? L("hud.pluginDrop.blockCopy") : L("hud.pluginDrop.blockMove")
+        case .send(let line):
+            return L(line.titleKey)
         }
     }
 
