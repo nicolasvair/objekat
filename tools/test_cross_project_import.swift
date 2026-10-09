@@ -27,6 +27,8 @@
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/CrossProjectImport.swift \
+//         ../objekat/Shared/BridgeScope.swift \
+//         ../objekat/Shared/ScriptCanvasMemory.swift \
 //         test_cross_project_import.swift \
 //         -o /tmp/cpi && /tmp/cpi
 //
