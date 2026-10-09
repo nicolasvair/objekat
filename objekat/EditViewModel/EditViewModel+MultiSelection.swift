@@ -138,7 +138,18 @@ extension EditViewModel {
         }
         var position: [UUID: Int] = [:]
         for (i, a) in allAuxes.enumerated() where auxByID[a.id] != nil { position[a.id] = i }
+        // The offer's order (Q-U3): the auxes of a sender's own group first, then the rest of its
+        // stem, then the Main's — for a selection, the NEAREST tier any of its senders gives the aux.
+        var tierOf: [UUID: Int] = [:]
+        if !Self.sendsLegacy {
+            let index = sendScopeIndex
+            for (auxID, senders) in sendersByAux {
+                tierOf[auxID] = senders.map { index.offerTier(sender: $0.id, aux: auxID) }.min() ?? 0
+            }
+        }
         let sendAuxes = auxByID.values.sorted { l, r in
+            let tl = tierOf[l.id] ?? 0, tr = tierOf[r.id] ?? 0
+            if tl != tr { return tl < tr }
             let ll = laneOf[l.id] ?? (find(id: l.id)?.lane ?? 0)
             let rl = laneOf[r.id] ?? (find(id: r.id)?.lane ?? 0)
             if ll != rl { return ll < rl }

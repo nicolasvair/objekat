@@ -6,9 +6,13 @@
 //  à l'endroit de la chaîne où il est posé (l'app le met post-fader). Le signal continue
 //  son chemin inchangé — un send n'est pas un insert.
 //
-//  Portée : l'émetteur et l'aux visé doivent être enfants directs du MÊME ContainerClip.
-//  C'est la frontière du graphe local d'un container, et rien ne la traverse.
-//  @see te::ContainerAuxSend, ObjAuxReturnNode, EditViewModel.canRouteSend
+//  LEGACY — since patch 0039 a send is an ObjBridgeSendPlugin (OBJBridgeSendPlugin.h) on the audio
+//  bridge, and this plugin is used only under OBJ_SENDS_LEGACY=1, as the oracle of the null test
+//  (docs/plan_sends_rework.md); it is deleted in INC 2.
+//
+//  Portée (de ce chemin seulement) : l'émetteur et l'aux visé doivent être enfants directs du MÊME
+//  ContainerClip. C'est la frontière du graphe local d'un container, et rien ne la traverse.
+//  @see te::ContainerAuxSend, ObjAuxReturnNode
 //
 //  Pourquoi un PLUGIN et pas un nœud de graphe : la chaîne de chaque objet vit sur la
 //  plugin-list de son CLIP, donc dans un TimedNode du CombiningNode de la piste — et

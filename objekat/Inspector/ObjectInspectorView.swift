@@ -552,6 +552,10 @@ struct ObjectInspectorView: View {
         let senders = snap.sendersByAux[aux.id] ?? []
         let enabledCount = senders.filter { MultiSelectionSnapshot.isSendEnabled(of: $0, toAux: aux.id) }.count
         let allOn = !senders.isEmpty && enabledCount == senders.count
+        // The senders whose send the bridge refuses although it is alive (a scheduling loop, Q-U10):
+        // the row says so — faded, with the reason — once every send it carries is one of them.
+        let refusals = senders.compactMap { viewModel.sendRouteStatus[SendKey(sender: $0.id, aux: aux.id)] }
+        let allRefused = !refusals.isEmpty && refusals.count >= enabledCount
         return HStack(spacing: 6) {
             Image(systemName: "arrow.turn.down.right")
                 .font(.system(size: 10, weight: .semibold))
@@ -560,6 +564,7 @@ struct ObjectInspectorView: View {
             Text(auxLabel)
                 .font(.system(size: 10)).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(enabledCount > 0 ? .primary : .secondary)
+                .help(refusals.first.map { EditViewModel.sendReasonText($0) } ?? "")
             relBadge(rel)
             Spacer(minLength: 4)
             DragValueBox(
@@ -618,6 +623,7 @@ struct ObjectInspectorView: View {
             .help(L("common.mute"))
         }
         .frame(height: SynopticLayout.sendRowH)
+        .opacity(allRefused ? 0.55 : 1)
     }
 
     // 'stems': the destination, one menu. The background takes the current stem's colour; a mixed

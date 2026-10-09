@@ -113,7 +113,18 @@ extension EditViewModel {
         func laneOf(_ id: UUID) -> Int {
             laneEntries.first { $0.item.id == id }?.displayLane ?? (_referenceFind(id: id)?.lane ?? 0)
         }
-        return result.sorted { laneOf($0.id) < laneOf($1.id) }
+        // The nearest tier any selected sender gives the aux (Q-U3), then the lane.
+        var offered: [UUID: Set<UUID>] = [:]    // sender → the auxes offered to it (time overlap too)
+        for s in senders { offered[s.id] = Set(_referenceOverlappingAuxes(for: s.id).map(\.id)) }
+        func tierOf(_ aux: SoundObject) -> Int {
+            senders.filter { offered[$0.id]?.contains(aux.id) ?? false }
+                .map { _referenceOfferTier(sender: $0.id, aux: aux.id) }.min() ?? 0
+        }
+        return result.sorted { l, r in
+            let tl = tierOf(l), tr = tierOf(r)
+            if tl != tr { return tl < tr }
+            return laneOf(l.id) < laneOf(r.id)
+        }
     }
 
     /// `selectedSenders(toAux:)` as it was.

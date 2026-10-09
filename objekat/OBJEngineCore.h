@@ -192,8 +192,8 @@
 //   setSendLevel     : hot (the plugin smooths the ramp), same call on both paths.
 //   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
 //   usesLegacySends  : OBJ_SENDS_LEGACY=1 was set at launch (read ONCE).
-- (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated;
-- (void)setSendGated:(BOOL)gated from:(NSString*)senderID toAux:(NSString*)auxID;
+- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated;
+- (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
 - (BOOL)usesLegacySends;
 
 // MARK: - Bake — rendu offline

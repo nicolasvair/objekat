@@ -94,6 +94,14 @@ extension EditViewModel {
         return .active
     }
 
+    /// True if the plan has not refused the send (`sendRouteStatus` holds the last sync's verdicts — the
+    /// scheduling loops) AND the static scope allows it. What the readers of "who actually feeds this aux"
+    /// ask (`activeSenders`, the solo closure): the same answer as the wires drawn on the timeline.
+    func sendIsAcceptedByPlan(from objectID: UUID, to auxID: UUID) -> Bool {
+        guard canRouteSend(from: objectID, to: auxID) else { return false }
+        return Self.sendsLegacy || sendRouteStatus[SendKey(sender: objectID, aux: auxID)] == nil
+    }
+
     /// The reasons the bridge would refuse a send from `sender` towards each of `auxIDs` — the static
     /// rules AND a scheduling loop with the keys already laid — as if it were appended last (an alive
     /// send to the same aux answers nil unless it IS the loop). One construction of the plan's graphs
@@ -366,7 +374,7 @@ extension EditViewModel {
         func walk(_ arr: [SoundObject]) {
             for o in arr where !o.isAux {
                 if let s = o.sends.first(where: { $0.auxID == auxID }), s.levelDb > sendMinDb,
-                   canRouteSend(from: o.id, to: auxID) {   // the same scope as the Send tool
+                   sendIsAcceptedByPlan(from: o.id, to: auxID) {   // what the plan lays, as the wires show it
                     result.append((o.id, o.startTime))
                 }
                 if case .group(let children, _) = o.kind { walk(children) }

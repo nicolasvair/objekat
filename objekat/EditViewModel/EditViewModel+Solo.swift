@@ -332,7 +332,7 @@ extension EditViewModel {
         closeOverAncestors()   // groups first: an audible group can itself send
 
         for o in allObjectsFlat where !o.isAux && audible.contains(o.id) {
-            for s in o.sends where s.isRouted && canRouteSend(from: o.id, to: s.auxID) {
+            for s in o.sends where s.isRouted && sendIsAcceptedByPlan(from: o.id, to: s.auxID) {
                 audible.insert(s.auxID)
             }
         }

@@ -4386,13 +4386,13 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
 // et lui substitue un ObjAuxReturnNode qui somme les taps des envois, suivi de la chaîne de FX
 // de l'aux et de ses fades. Le tout est sommé avec la sortie sèche du container.
 //
-// D'où la PORTÉE dans un container, et elle n'est pas négociable : émetteur et aux doivent être
-// enfants DIRECTS du même container. Un container est une frontière de graphe (getDirectInputNodes
-// et getInternalNodes renvoient {}) — rien ne la traverse, ni vers l'extérieur ni vers l'intérieur.
-// Au top-level, la frontière est celle d'un bus et elle se franchit VERS LE HAUT : @see ci-dessous
-// -isSend:routableToAux:. La règle est dupliquée côté modèle dans EditViewModel.canRouteSend, qui
-// filtre en amont ; ce qui suit refuse quand même, car le moteur reste sollicité pendant les
-// reconstructions.
+// SCOPE — since patch 0039 (docs/plan_sends_rework.md) the engine keeps NO copy of the rule. The model
+// (BridgeScope, `SendIndex`) decides which sends exist, at any group depth, and tells the engine through
+// -ensureBridgeSendFrom:toAux:levelDb:gated: (an ObjBridgeSendPlugin, a tap on the audio bridge read by
+// the aux's return). What follows in this paragraph — direct children of one container, one stem or an aux
+// of the Main, checked by -isSend:routableToAux: — is the LEGACY path (OBJ_SENDS_LEGACY=1), kept only as
+// the null test's oracle and deleted in INC 2: there a container is a graph boundary and the sender and
+// the aux must be direct children of the same one.
 //
 // L'envoi est un PLUGIN posé en FIN de chaîne de l'émetteur — donc post-fader et post-fenêtre :
 // ce qu'on entend est ce qu'on envoie. Il ne touche pas au signal, il en prélève une copie. C'est
@@ -4430,7 +4430,7 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
 //     la somme contient déjà le folder de son stem — mais il ne descend pas, et deux stems frères
 //     ne se voient pas. @see createTopLevelAuxReturns / createSubmixAuxReturns
 // Ce n'est pas un interdit de politique : un tap prélevé hors de portée serait lu sans ordre
-// établi. La règle est dupliquée côté modèle dans EditViewModel.canRouteSend.
+// établi. LEGACY (OBJ_SENDS_LEGACY=1) : le modèle suit désormais BridgeScope, pas cette règle.
 - (BOOL)isSend:(const std::string&)senderKey routableToAux:(const std::string&)auxKey {
     if (senderKey == auxKey) return NO;
     if (!_auxKeys.count(auxKey)) return NO;

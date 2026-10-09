@@ -1741,6 +1741,19 @@ struct TimelineView: View {
         return linkTarget(for: entry)
     }
 
+    /// Where a WIRE to `id` lands: its own block, or — when it sits inside a group that is CLOSED, so
+    /// has no lane entry at all — the nearest enclosing group that is shown. A send reaches an aux at
+    /// any depth now (docs/plan_sends_rework.md, Q-U3), so an aux hidden in a closed group is the
+    /// ordinary case, and the wire still has to arrive somewhere the eye can follow.
+    private func wireTarget(for id: UUID) -> LinkTarget? {
+        var cursor = id
+        while true {
+            if let target = linkTarget(for: cursor) { return target }
+            guard let group = viewModel.parentGroup(for: cursor) else { return nil }
+            cursor = group.id
+        }
+    }
+
     /// The same, for an entry the caller already holds — what the link overlays use once they have
     /// resolved their ids in a single walk, instead of one scan of the entries per id.
     private func linkTarget(for entry: LaneEntry) -> LinkTarget {
@@ -1782,7 +1795,7 @@ struct TimelineView: View {
                 let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
                 let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
                 guard isFocus || routed else { continue }
-                guard let at = linkTarget(for: aux.id) else { continue }
+                guard let at = wireTarget(for: aux.id) else { continue }
                 let ar = at.rect
                 // The link sets off from the centre of that aux's on/off button (the
                 // bottom of its column), horizontally aligned on the knob.
@@ -3047,7 +3060,8 @@ struct TimelineView: View {
             guard let rows = tools.sendRows?[item.id], !rows.isEmpty else { return nil }
             let columns = rows.map {
                 ToolOverlaySendColumn(label: $0.label, level: $0.level, enabled: $0.enabled,
-                                      focused: $0.focused, automated: $0.automated)
+                                      focused: $0.focused, automated: $0.automated,
+                                      refused: $0.refusal != nil)
             }
             return CanvasToolOverlay(content: .sends(columns: columns,
                                                      leadingInset: crossfadeSharedPx(for: item).leading),
