@@ -218,6 +218,9 @@ struct SynopticSend: Identifiable, Equatable {
     let levelDb: Float
     /// An automation CURVE drives this level: the static setting is no longer heard.
     var isAutomated: Bool = false
+    /// Why the bridge refuses (or would refuse) this send — the text of a tooltip; the row is greyed.
+    /// nil = the send is accepted.
+    var refusal: String? = nil
 }
 
 /// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.
@@ -2243,7 +2246,7 @@ struct SynopticSendRow: View {
     let actions: SynopticActions
 
     private var isSilent: Bool { send.levelDb <= sendMinDb }
-    private var isRouted: Bool { send.enabled && !isSilent }
+    private var isRouted: Bool { send.enabled && !isSilent && send.refusal == nil }
 
     private func levelLabel(_ db: Double) -> String {
         db <= Double(sendMinDb) ? "-∞ dB" : (db == 0 ? "0 dB" : String(format: "%+.0f dB", db))
@@ -2261,6 +2264,7 @@ struct SynopticSendRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(isRouted ? .primary : .secondary)
+                .help(send.refusal ?? "")
             Spacer(minLength: 4)
             DragValueBox(value: Double(send.levelDb),
                          format: { levelLabel($0) },
@@ -2291,6 +2295,7 @@ struct SynopticSendRow: View {
             .help(L("common.mute"))
         }
         .frame(height: SynopticLayout.sendRowH)
+        .opacity(send.refusal == nil ? 1 : 0.55)
     }
 }
 
@@ -2634,14 +2639,16 @@ struct SynopticBoundView: View {
 
         // Sends: departures towards the reachable auxes read at the FOOT of the chain (after the mix,
         // before the stems); an aux shows at its HEAD what it receives. No more dedicated column.
-        let sends: [SynopticSend] = (obj != nil && !(obj?.isAux ?? false))
-            ? viewModel.sendToolAuxes(for: objectID).map { aux in
-                SynopticSend(id: aux.id, name: aux.displayName,
-                             enabled: viewModel.isSendEnabled(from: objectID, to: aux.id),
-                             levelDb: viewModel.sendLevel(from: objectID, to: aux.id),
-                             isAutomated: viewModel.isAutomated(.send(auxID: aux.id), on: objectID))
-              }
-            : []
+        let sendAuxes = (obj != nil && !(obj?.isAux ?? false)) ? viewModel.sendToolAuxes(for: objectID) : []
+        // The reasons come from the plan's own check (a scheduling loop included), once for the zone.
+        let sendRefusals = viewModel.sendRefusals(from: objectID, among: Set(sendAuxes.map(\.id)))
+        let sends: [SynopticSend] = sendAuxes.map { aux in
+            SynopticSend(id: aux.id, name: aux.displayName,
+                         enabled: viewModel.isSendEnabled(from: objectID, to: aux.id),
+                         levelDb: viewModel.sendLevel(from: objectID, to: aux.id),
+                         isAutomated: viewModel.isAutomated(.send(auxID: aux.id), on: objectID),
+                         refusal: sendRefusals[aux.id].map { EditViewModel.sendReasonText($0) })
+        }
         let received: [SynopticSend] = (obj?.isAux ?? false)
             ? receivedIDs.compactMap { sid in
                 viewModel.find(id: sid).map { sender in
@@ -2650,7 +2657,9 @@ struct SynopticBoundView: View {
                                  levelDb: viewModel.sendLevel(from: sid, to: objectID),
                                  // A send lives on the SENDER: it is ITS curve we read, even
                                  // if the row is shown at the head of the receiving aux.
-                                 isAutomated: viewModel.isAutomated(.send(auxID: objectID), on: sender))
+                                 isAutomated: viewModel.isAutomated(.send(auxID: objectID), on: sender),
+                                 refusal: { if case .refused(let why) = viewModel.sendStatus(from: sid, to: objectID) {
+                                                return EditViewModel.sendReasonText(why) } else { return nil } }())
                 }
               }
             : []
@@ -2817,13 +2826,16 @@ struct SynopticBoundView: View {
             // sender we set (sender → this aux). Otherwise we set this object → the target aux.
             onSetSendLevel: { rowID, db in
                 let isAux = viewModel.find(id: objectID)?.isAux ?? false
-                viewModel.setSendLevel(from: isAux ? rowID : objectID,
-                                       to: isAux ? objectID : rowID, levelDb: db)
+                let from = isAux ? rowID : objectID
+                let to   = isAux ? objectID : rowID
+                guard viewModel.handMayCreateSend(from: from, to: to) else { return }
+                viewModel.setSendLevel(from: from, to: to, levelDb: db)
             },
             onToggleSend: { rowID in
                 let isAux = viewModel.find(id: objectID)?.isAux ?? false
                 let from = isAux ? rowID : objectID
                 let to   = isAux ? objectID : rowID
+                guard viewModel.isSendEnabled(from: from, to: to) || viewModel.handMayCreateSend(from: from, to: to) else { return }
                 viewModel.edit {
                     viewModel.setSendEnabled(from: from, to: to,
                                              enabled: !viewModel.isSendEnabled(from: from, to: to))

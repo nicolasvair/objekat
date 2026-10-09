@@ -50,6 +50,7 @@ final class EditViewModel {
             parentIDCache = nil
             parentLookupsSinceMutation = 0
             allAuxesCache = nil
+            sendScopeIndexCache = nil
             multiSelectionCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
@@ -76,6 +77,8 @@ final class EditViewModel {
     @ObservationIgnored var parentLookupsSinceMutation = 0
     /// @see allAuxes — the flat list of auxes (absolute lanes), dropped with `items`.
     @ObservationIgnored var allAuxesCache: [SoundObject]? = nil
+    /// The send rules over the current tree (@see `sendScopeIndex`), invalidated with `items` and `stems`.
+    @ObservationIgnored var sendScopeIndexCache: BridgeScope.SendIndex? = nil
     /// @see multiSelectionSnapshot — everything the inspector reads about a MULTIPLE selection,
     /// computed once per (items, selectedIDs) instead of once per SwiftUI pass. Dropped by `items`,
     /// `selectedIDs` and `rebuildLaneEntries` (the lane order of the sends comes from there).
@@ -345,7 +348,10 @@ final class EditViewModel {
     /// See ShortcutCheatsheet / CheatsheetHold.
     var cheatsheet: CheatsheetContext? = nil
     var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)] {
-        didSet { scheduleBridgeSync() }     // a stem can be a key's source or host (audio bridge)
+        didSet {
+            sendScopeIndexCache = nil       // a send's scope reads the stems
+            scheduleBridgeSync()            // a stem can be a key's source or host (audio bridge)
+        }
     }
 
     // MARK: - Audio bridge (sidechain) — @see EditViewModel+Bridge
@@ -357,9 +363,21 @@ final class EditViewModel {
     var bridgePlan = BridgeScope.Plan()
     /// Plugin id → why its key is refused. Absent = the key is active (or there is none).
     var bridgeRouteStatus: [UUID: BridgeScope.Refusal] = [:]
+    /// Send (sender, aux) → why the bridge refuses it. Absent = laid, or not alive. Written only on change.
+    var sendRouteStatus: [SendKey: BridgeScope.Refusal] = [:]
+    /// The sends the last sync laid in the engine (alive, accepted by the plan AND confirmed by the
+    /// engine): what the knob's per-frame path compares a send's alive-state with.
+    @ObservationIgnored var bridgeLaidSends: Set<SendKey> = []
+    /// When the hand last beeped for a refused send (@see handMayCreateSend).
+    @ObservationIgnored var lastSendRefusalBeep: CFAbsoluteTime = 0
+    /// An aux went from the engine: the next bridge sync sweeps the sends that named it (@see pruneOrphanSends).
+    @ObservationIgnored var sendPrunePending = false
+    /// OBJ_SENDS_LEGACY=1 at launch (read ONCE, never a setting): every send goes through the old
+    /// ObjAuxSendPlugin path and the old scope, so that the null test can export one session on both.
+    static let sendsLegacy: Bool = ProcessInfo.processInfo.environment["OBJ_SENDS_LEGACY"] == "1"
     @ObservationIgnored var bridgeSyncScheduled = false
-    /// The engine holds taps laid by a previous sync: a sync with no route must still run once, to
-    /// take them away.
+    /// The engine holds taps OR sends laid by a previous sync: a sync with no route must still run
+    /// once, to take them away.
     @ObservationIgnored var bridgeEngineHasTaps = false
     /// The topology the last sync laid down and the plan it gave: an equal topology reuses the plan
     /// (the engine is pushed all the same, @see syncBridge).
@@ -2059,12 +2077,13 @@ final class EditViewModel {
         }
     }
 
-    /// (Re)pushes to the engine the post-fader sends of a sender towards its auxes.
-    /// The target auxes must already exist on the engine side.
+    /// (Re)pushes to the engine the post-fader sends of a sender towards its auxes. On the bridge the
+    /// sends are part of the plan, laid by the coalesced `syncBridge` (one pass for the lot, the plan
+    /// deciding what is accepted); an object with no send costs nothing. On the legacy path
+    /// (OBJ_SENDS_LEGACY=1) the engine wires each one itself, and only within the old scope.
     func syncSends(_ object: SoundObject) {
-        // `canRouteSend`: the engine only wires a send between siblings of the same group. The
-        // others stay in the model, silent — not pushing them to it avoids a no-op
-        // journalled on every reload. @see EditViewModel+Aux
+        guard !object.sends.isEmpty else { return }
+        if !Self.sendsLegacy { scheduleBridgeSync(); return }
         for send in object.sends where send.isRouted && canRouteSend(from: object.id, to: send.auxID) {
             engine?.addSend(object.id.uuidString, toAux: send.auxID.uuidString, levelDb: send.levelDb)
         }

@@ -149,6 +149,28 @@ enum BridgeScopeTest {
         }
     }
 
+    // The offer's order (Q-U3): the sender's own level first, then the rest of its stem, then the Main.
+    do {
+        func id(_ n: UInt8) -> UUID { UUID(uuid: (n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)) }
+        let main = id(1), stem = id(2), a = id(3), x = id(4), g = id(5), y = id(6), c = id(7), z = id(8)
+        let nodes: [BridgeScope.Node] = [
+            .init(id: a, kind: .object, parent: nil, stem: stem),
+            .init(id: x, kind: .aux, parent: nil, stem: stem),
+            .init(id: g, kind: .group, parent: nil, stem: stem),
+            .init(id: y, kind: .aux, parent: g, stem: nil),
+            .init(id: c, kind: .object, parent: g, stem: nil),
+            .init(id: z, kind: .aux, parent: nil, stem: nil),
+            .init(id: main, kind: .main, parent: nil, stem: nil),
+            .init(id: stem, kind: .stem, parent: nil, stem: nil)]
+        let idx = BridgeScope.SendIndex(nodes: nodes)
+        check("tier: top-level sender, aux of its level", idx.offerTier(sender: a, aux: x) == 0, "")
+        check("tier: top-level sender, aux inside a group of its stem", idx.offerTier(sender: a, aux: y) == 1, "")
+        check("tier: top-level sender in a stem, aux of the Main", idx.offerTier(sender: a, aux: z) == 2, "")
+        check("tier: child, aux of its own group", idx.offerTier(sender: c, aux: y) == 0, "")
+        check("tier: child, top-level aux of the same stem", idx.offerTier(sender: c, aux: x) == 1, "")
+        check("tier: child, aux of the Main", idx.offerTier(sender: c, aux: z) == 2, "")
+    }
+
     print("\n\(total) assertions, \(fails.count) failed")
     print(fails.isEmpty ? "ALL PASS" : "FAILED")
     exit(fails.isEmpty ? 0 : 1)

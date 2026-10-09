@@ -448,6 +448,7 @@ extension TimelineView {
                 viewModel.edit { viewModel.setSendEnabledSelected(toAux: hit.auxID, enabled: target) }
             } else {
                 let on = viewModel.isSendEnabled(from: hit.clipID, to: hit.auxID)
+                guard on || viewModel.handMayCreateSend(from: hit.clipID, to: hit.auxID) else { return }
                 viewModel.edit { viewModel.setSendEnabled(from: hit.clipID, to: hit.auxID, enabled: !on) }
             }
         }

@@ -186,11 +186,13 @@
 // ensureBridgeSend lays (or confirms) ONE send — an engine-only plugin at the end of the sender's
 // chain carrying the level — and commitBridgeSync removes the ones that were not confirmed and
 // rewrites each aux's list of sends. The scope is the model's (BridgeScope): the engine lays what it is
-// told. addSend/removeSend above are the LEGACY path, used only under OBJ_SENDS_LEGACY=1.
+// told. ensureBridgeSend returns 0 = not laid (aux not born yet / no chain), 1 = laid and already
+// there, 2 = laid with a NEW plugin (the caller pushes the automation curves again).
+// addSend/removeSend above are the LEGACY path, used only under OBJ_SENDS_LEGACY=1.
 //   setSendLevel     : hot (the plugin smooths the ramp), same call on both paths.
 //   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
 //   usesLegacySends  : OBJ_SENDS_LEGACY=1 was set at launch (read ONCE).
-- (void)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated;
+- (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated;
 - (void)setSendGated:(BOOL)gated from:(NSString*)senderID toAux:(NSString*)auxID;
 - (BOOL)usesLegacySends;
 

@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 20
+    static let formatVersion = 21
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -67,7 +67,14 @@ enum SessionSchema {
         "",
         "stems — the output buses. An object leaves through the bus named by its stemID; stemID",
         "  absent = the main bus.",
-        "sends — sends towards an aux object: { auxID, levelDb, enabled }.",
+        "sends — sends towards an aux object: { auxID, levelDb, enabled }. ONE per (object, aux). Since",
+        "  format 21 an object reaches ANY aux of its own stem or of the Main, in any group at any depth",
+        "  (a send to an aux in another stem, to a non-aux, or that would make the aux's return run before",
+        "  its own sender stays written and is silent: the app says why). A group's mute silences its",
+        "  children's sends towards an aux OUTSIDE that group; its fader, effects and fades do not act on",
+        "  them. A session of an earlier format opens unchanged — sends once silent only because the",
+        "  old, narrower scope did not reach their aux now SOUND. A send naming an aux that no longer",
+        "  exists is dropped at load, with its automation.",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
         "  An entry with an `fxBlock` key is neither: it is the place an FX LINK (a bin of shared",

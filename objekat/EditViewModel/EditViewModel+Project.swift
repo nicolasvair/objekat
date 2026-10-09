@@ -537,6 +537,9 @@ extension EditViewModel {
         bridgeEngineHasTaps = false
         bridgePlan = BridgeScope.Plan()
         bridgeRouteStatus = [:]
+        sendRouteStatus = [:]
+        bridgeLaidSends = []
+        sendScopeIndexCache = nil
         // Solo (session state, not persisted): starts again from nothing on a new project / an opening,
         // otherwise orphan IDs would remain. No engine apply here (the graph is rebuilt).
         soloedIDs = []

@@ -4886,18 +4886,20 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 // level and names the aux. Idempotent: called by every sync for every alive send. The level and the
 // gate are the HOT part (no rebuild); the plugin itself, or its aux, changing is what marks the
 // transaction dirty. The aux lists its sends in `objBridgeSends` (@see commitBridgeSync).
+// Returns 0 = not laid (aux not born yet, sender without a chain), 1 = laid and already there,
+// 2 = laid with a NEW plugin (its curve is gone: the caller pushes the automation again).
 - (BOOL)usesLegacySends { return objSendsLegacyMode() ? YES : NO; }
 
-- (void)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated {
-    if (!_edit || !senderID || !auxID || objSendsLegacyMode()) return;
+- (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated {
+    if (!_edit || !senderID || !auxID || objSendsLegacyMode()) return 0;
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
 
     // An aux not born yet (a rebuild in progress): the next sync will come back when it is.
     auto ait = _containerClipMap.find(aKey);
-    if (ait == _containerClipMap.end() || !_auxKeys.count(aKey)) return;
+    if (ait == _containerClipMap.end() || !_auxKeys.count(aKey)) return 0;
 
     te::PluginList* pl = [self userPluginListForKey:sKey];
-    if (!pl) { logRoutingDisabledOnce("Send depuis un objet sans chaîne"); return; }
+    if (!pl) { logRoutingDisabledOnce("Send depuis un objet sans chaîne"); return 0; }
 
     const std::string mk = sendMapKey(sKey, aKey);
     _bridgeTouchedSends.insert(mk);
@@ -4917,7 +4919,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         // Still in the list? A recompile of the sender's chain can have remade it.
         bool stillInList = false;
         for (auto* p : *pl) if (p == it->second.get()) { stillInList = true; break; }
-        if (stillInList) { applyHot(it->second.get()); return; }
+        if (stillInList) { applyHot(it->second.get()); return 1; }
         _bridgeSendMap.erase(it);
     }
 
@@ -4928,18 +4930,19 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             _bridgeSendMap[mk] = te::Plugin::Ptr(p);
             applyHot(p);
             _bridgeDirty = true;
-            return;
+            return 2;
         }
     }
 
     te::Plugin::Ptr p = pl->insertPlugin(te::ObjBridgeSendPlugin::create(), pl->size());
     auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
-    if (!send) { NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée (%@ → %@)", senderID, auxID); return; }
+    if (!send) { NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée (%@ → %@)", senderID, auxID); return 0; }
     send->setTargetAuxClip(ait->second->itemID);
     send->setLevelDb(levelDb);
     send->setGated(gated);
     _bridgeSendMap[mk] = p;
     _bridgeDirty = true;
+    return 2;
 }
 
 // The audibility gate of a send, hot: no rebuild, the plugin's smoother does the rest.

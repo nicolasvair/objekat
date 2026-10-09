@@ -78,6 +78,7 @@ extension EditViewModel {
         case .clip, .midiClip:
             engine?.removeSoundObject(withID: obj.id.uuidString)
         case .aux:
+            sendPrunePending = true     // the sends that named it are swept by the next bridge sync (§1.7)
             engine?.removeAux(obj.id.uuidString)
         case .group(let children, _):
             for child in children { removeFromEngine(child) }

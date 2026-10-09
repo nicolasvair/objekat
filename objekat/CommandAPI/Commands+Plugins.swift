@@ -746,7 +746,7 @@ extension CommandRegistry {
                  latest_end, runs}], `readers` [{plugin, dest_instance, tap, consumer, rank, l_ref, declared, \
                  source_age, delay, status, alignment_error_samples, blocks_read, blocks_uncovered, \
                  blocks_torn}]. `model`: the plan — `refused` ({plugin: reason}), `root_ranks`, `aux_ranks`, \
-                 `inner_ranks`, `stem_ranks`, `taps`. The static numbers say what the graph BELIEVES; what the \
+                 `inner_ranks`, `stem_ranks`, `taps`, `send_routes` (the sends laid), `send_refused`; `sends_path` \"bridge\" or \"legacy\" (OBJ_SENDS_LEGACY=1). The static numbers say what the graph BELIEVES; what the \
                  ear hears is measured by export. Reads only.
                  """,
                  undo: .none) { _ in
@@ -761,9 +761,16 @@ extension CommandRegistry {
                 "refused": .object(Dictionary(uniqueKeysWithValues: refused.map { ($0.key.uuidString, JSONValue.string($0.value.rawValue)) })),
                 "root_ranks": ranks(plan.rootRanks), "aux_ranks": ranks(plan.auxRanks),
                 "inner_ranks": ranks(plan.innerRanks), "stem_ranks": ranks(plan.stemRanks),
-                "taps": ranks(plan.taps)])
+                "taps": ranks(plan.taps),
+                // The sends the last sync laid (alive, accepted AND confirmed by the engine), and the
+                // alive ones the plan refused.
+                "send_routes": .array(vm.bridgeLaidSends.sorted { $0.sender.uuidString + $0.aux.uuidString < $1.sender.uuidString + $1.aux.uuidString }
+                    .map { .object(["sender": .string($0.sender.uuidString), "aux": .string($0.aux.uuidString)]) }),
+                "send_refused": .object(Dictionary(uniqueKeysWithValues: vm.sendRouteStatus.map {
+                    ("\($0.key.sender.uuidString)|\($0.key.aux.uuidString)", JSONValue.string($0.value.rawValue)) }))])
             let report = JSONValue.fromFoundation(engine.bridgeReport())
-            return .object(["engine": report, "model": model])
+            return .object(["engine": report, "model": model,
+                            "sends_path": .string(EditViewModel.sendsLegacy ? "legacy" : "bridge")])
         }
 
         register("debug.add_test_plugin",

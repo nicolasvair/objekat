@@ -214,6 +214,15 @@ enum BridgeScope {
             world.sendRefusal(sender: sender, aux: aux)
         }
 
+        /// Where an aux comes in the offer to `sender` (Q-U3): 0 = the sender's own level (the same
+        /// group — or, at the top level, the same stem), 1 = another group of the same stem, 2 = an aux
+        /// of the Main seen from a sender that lives in a stem. Only an ORDER: the rule is `staticRefusal`.
+        func offerTier(sender: UUID, aux: UUID) -> Int {
+            guard let s = world.node(sender), let a = world.node(aux) else { return 2 }
+            guard world.effectiveStem(a.id) == world.effectiveStem(s.id) else { return 2 }
+            return s.parent == a.parent ? 0 : 1
+        }
+
         /// Today's rule, kept for the migration notice and for nothing else: both children of the same
         /// group, or both top-level with the aux in the Main or in the sender's own stem.
         func isNear(sender: UUID, aux: UUID) -> Bool {

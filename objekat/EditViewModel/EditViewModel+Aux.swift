@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 extension EditViewModel {
 
@@ -38,34 +39,35 @@ extension EditViewModel {
 
     // MARK: - The scope of a send
     //
-    // A send is wired only if the sender is upstream of the LEVEL where the engine brings the aux's
-    // return up — the only place we know the taps are written before being read. There are
-    // two levels, and the rule differs:
-    //   • direct children of the same group → inside the ContainerClip's local graph. Strict
-    //     equality: nothing crosses a container's boundary, neither inwards nor
-    //     outwards;
-    //   • both TOP-LEVEL → onto the sum of the tracks of the STEM that carries the aux (in its
-    //     submix FolderTrack), or onto the root tracks when the aux is at the Main. Nothing
-    //     guarantees that the sender and the aux share a track — the engine allocates them by
-    //     compartments — so a point where the whole stem has already gone past is needed.
-    // Hence the top-level rule: THE SAME STEM, OR an aux of the Main. A send goes UP — the sum of the
-    // root tracks already contains each stem's folder, detached from the Main or not — but it does not
-    // go down, and two sibling stems cannot see each other. That is what makes a single reverb
-    // shared by several stems possible, at the Main and there only.
-    // An accepted cost for a send that goes up: the wet leaves its stem (out of its meter,
-    // out of its bounce), so "Σ stems = mix" assumes the Main is delivered as a stem.
-    // What stays out of scope, and will stay so: crossing a container's boundary.
-    // Three consequences worth knowing:
-    //   • a child of a sub-group does not reach the parent group's aux, nor a top-level aux.
-    //     The way round: put the send on the sub-group itself, which IS a sibling;
-    //   • a group cannot send towards an aux it CONTAINS — that would be a loop
-    //     (the aux's output is already summed into its own). The rule excludes it outright;
-    //   • moving an object OR an aux to another stem can tip the scope either
-    //     way — hence the call to `resyncAllSends()` in `assignStem`.
+    // docs/plan_sends_rework.md §A.3, and ONE place for the rule: `BridgeScope` (`SendIndex` for the
+    // questions per pair, `plan` for the whole). Every send goes through the audio bridge: a tap per
+    // send, read by the aux's return, whatever the depth of the sender and of the aux. So the only
+    // question left is the STEM: an object reaches any aux of its own stem or of the Main, in any
+    // group, at any depth. What it does NOT reach:
+    //   • an aux in another stem (`outOfStem`) — two sibling stems cannot see each other, which is
+    //     what makes a reverb shared at the Main possible and nothing else;
+    //   • an aux inside the group that SENDS (`ancestorSource`): the aux's output is already summed
+    //     into the group's own — that is a loop, excluded outright;
+    //   • anything that is not an aux (`hostNotAux`); and an aux, a stem or the Main never sends.
+    // A send is also refused `cycle` when the keys already laid make the aux's return run BEFORE the
+    // sender — a scheduling loop, decided by the plan, not here (@see `sendStatus`).
+    // Accepted costs: the wet of an aux outside the sender's group does not obey the group's fader,
+    // FX or fades (Q-U1b) — but the group's MUTE silences it (Q-U1, @see `sendIsGated`) — and a send
+    // that goes UP leaves its stem (out of its meter, out of its bounce).
     // Sends out of scope stay in the model, silent. We merely stop offering them.
+    //
+    // OBJ_SENDS_LEGACY=1 keeps the previous rule (siblings of one container, or one stem) for the null
+    // test of the plan: `legacyCanRouteSend`.
 
-    /// True if a send from `objectID` towards `auxID` can be wired by the engine.
+    /// True if a send from `objectID` towards `auxID` is within the STATIC scope (the cycle apart:
+    /// @see `sendStatus`).
     func canRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
+        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) }
+        return sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) == nil
+    }
+
+    /// The rule as it stood before the rework (OBJ_SENDS_LEGACY=1 only).
+    private func legacyCanRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
         guard objectID != auxID,
               let sender = find(id: objectID), !sender.isAux,
               let aux = find(id: auxID), aux.isAux
@@ -73,13 +75,77 @@ extension EditViewModel {
 
         let senderGroup = parentGroup(for: objectID)
         guard senderGroup?.id == parentGroup(for: auxID)?.id else { return false }
-
-        // Inside a group, the container already makes the boundary (and a child has no stem of its
-        // own: it follows its group). At the top level it is the stem that makes it — except for the
-        // Main, whose level of assembly contains all the others.
         guard senderGroup == nil else { return true }
         let auxStem = aux.stemID ?? mainStemID
         return auxStem == mainStemID || auxStem == (sender.stemID ?? mainStemID)
+    }
+
+    /// What the bridge says about the send `objectID` → `auxID`: `off` (not alive), `active` (the plan
+    /// lays it) or `refused` with why — the static rules from the model right now, the scheduling
+    /// loop from the last sync's plan (or `status`, a reading computed by `sendStatusNow()`).
+    func sendStatus(from objectID: UUID, to auxID: UUID,
+                    using status: [SendKey: BridgeScope.Refusal]? = nil) -> SendStatus {
+        guard let obj = find(id: objectID),
+              let send = obj.sends.first(where: { $0.auxID == auxID }),
+              isSendAlive(send, on: obj) else { return .off }
+        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) ? .active : .refused(.outOfStem) }
+        if let why = sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) { return .refused(why) }
+        if let why = (status ?? sendRouteStatus)[SendKey(sender: objectID, aux: auxID)] { return .refused(why) }
+        return .active
+    }
+
+    /// The reasons the bridge would refuse a send from `sender` towards each of `auxIDs` — the static
+    /// rules AND a scheduling loop with the keys already laid — as if it were appended last (an alive
+    /// send to the same aux answers nil unless it IS the loop). One construction of the plan's graphs
+    /// for the lot. Only the refused ones have an entry. Empty on the legacy path.
+    func sendRefusals(from sender: UUID, among auxIDs: Set<UUID>) -> [UUID: BridgeScope.Refusal] {
+        guard !Self.sendsLegacy, !auxIDs.isEmpty else { return [:] }
+        let topology = bridgeTopology()
+        var out: [UUID: BridgeScope.Refusal] = [:]
+        for entry in BridgeScope.sendCandidates(sender: sender, nodes: topology.nodes, routes: topology.routes,
+                                                among: auxIDs) {
+            if let why = entry.refusal { out[entry.id] = why }
+        }
+        return out
+    }
+
+    /// Would a send from `objectID` towards `auxID` be refused if it were created now? nil = no. A send
+    /// that is already alive is never "created": it is accepted or refused by the plan, and says so
+    /// in `sendStatus`. What the doors of the HAND ask before laying a NEW send (Q-U10).
+    func sendCreationRefusal(from objectID: UUID, to auxID: UUID) -> BridgeScope.Refusal? {
+        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) ? nil : .outOfStem }
+        if let why = sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) { return why }
+        if let obj = find(id: objectID), let send = obj.sends.first(where: { $0.auxID == auxID }),
+           isSendAlive(send, on: obj) { return nil }
+        return sendRefusals(from: objectID, among: [auxID])[auxID]
+    }
+
+    /// The hand's check before it LAYS a send (Q-U10): true = go ahead. A refused creation beeps (at
+    /// most every half second: a drag asks on every frame) and the model is left untouched; the reason
+    /// is what the greyed row says (`SendRow.refusal`, the signal view's tooltip).
+    @discardableResult
+    func handMayCreateSend(from objectID: UUID, to auxID: UUID) -> Bool {
+        guard sendCreationRefusal(from: objectID, to: auxID) != nil else { return true }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastSendRefusalBeep > 0.5 { NSSound.beep(); lastSendRefusalBeep = now }
+        return false
+    }
+
+    /// The offer's order (Q-U3): the auxes of the sender's own group first, then the other auxes of its
+    /// stem, then those of the Main. @see `BridgeScope.SendIndex.offerTier`.
+    private func stableByOfferTier(_ auxes: [SoundObject], sender: SoundObject) -> [SoundObject] {
+        guard !Self.sendsLegacy, auxes.count > 1 else { return auxes }
+        let index = sendScopeIndex
+        var keyed: [(tier: Int, offset: Int, aux: SoundObject)] = []
+        keyed.reserveCapacity(auxes.count)
+        for (offset, aux) in auxes.enumerated() {
+            keyed.append((tier: index.offerTier(sender: sender.id, aux: aux.id), offset: offset, aux: aux))
+        }
+        keyed.sort { l, r in
+            if l.tier != r.tier { return l.tier < r.tier }
+            return l.offset < r.offset
+        }
+        return keyed.map { $0.aux }
     }
 
     /// The auxes whose window overlaps the object `objectID` in time AND that are within its
@@ -113,32 +179,38 @@ extension EditViewModel {
     }
 
     /// The scope test shared by `sendScope` and `sendToolAuxes(forObjects:)`: for each sender, the
-    /// auxes of `ordered` it can reach (time overlap AND scope), IN THAT ORDER. @see `canRouteSend`,
-    /// of which this is the batch form — the equivalence is asserted by `debug.selection_send_scope`.
+    /// auxes of `ordered` it can reach (time overlap AND scope), in that order but grouped by offer
+    /// tier (@see `stableByOfferTier`). @see `canRouteSend`, of which this is the batch form — the
+    /// equivalence is asserted by `debug.selection_send_scope`.
     private func reachableAuxes(forSenders senders: [SoundObject], ordered: [SoundObject]) -> [UUID: [SoundObject]] {
         let senders = senders.filter { !$0.isAux }
         guard !senders.isEmpty, !ordered.isEmpty else { return [:] }
-        let parents = parentIDMap()
+        let legacy = Self.sendsLegacy
+        let parents = legacy ? parentIDMap() : [:]
         let mainID = mainStemID
+        let index = sendScopeIndex
         var result: [UUID: [SoundObject]] = [:]
         for s in senders {
-            let sParent = parents[s.id]
-            let sStem = s.stemID ?? mainID
             let oStart = s.startTime
             let oEnd = s.startTime + s.duration
+            let sParent = parents[s.id]
+            let sStem = s.stemID ?? mainID
             let reachable = ordered.filter { aux in
-                guard aux.id != s.id, parents[aux.id] == sParent else { return false }
-                // The scope (@see canRouteSend): inside a group the container makes the boundary; at
-                // the top level, the same stem or an aux of the Main.
-                if sParent == nil {
-                    let auxStem = aux.stemID ?? mainID
-                    guard auxStem == mainID || auxStem == sStem else { return false }
+                guard aux.id != s.id else { return false }
+                if legacy {
+                    guard parents[aux.id] == sParent else { return false }
+                    if sParent == nil {
+                        let auxStem = aux.stemID ?? mainID
+                        guard auxStem == mainID || auxStem == sStem else { return false }
+                    }
+                } else {
+                    guard index.staticRefusal(sender: s.id, aux: aux.id) == nil else { return false }
                 }
                 // An infinite aux: a bus always active → it overlaps any sender.
                 if aux.isInfiniteBus { return true }
                 return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
             }
-            if !reachable.isEmpty { result[s.id] = reachable }
+            if !reachable.isEmpty { result[s.id] = stableByOfferTier(reachable, sender: s) }
         }
         return result
     }
@@ -217,7 +289,8 @@ extension EditViewModel {
                     level:   e?.levelDb ?? sendMinDb,
                     enabled: e?.enabled ?? false,
                     focused: focus == SendFocus(objectID: s.id, auxID: aux.id),
-                    automated: isAutomated(.send(auxID: aux.id), on: s)))
+                    automated: isAutomated(.send(auxID: aux.id), on: s),
+                    refusal: Self.sendsLegacy ? nil : sendRouteStatus[SendKey(sender: s.id, aux: aux.id)]))
             }
             result[s.id] = rows
         }
@@ -263,7 +336,7 @@ extension EditViewModel {
 
     /// A relative nudge of the send level towards `auxID` over the whole selection (preserves the gaps).
     func adjustSendLevelSelected(toAux auxID: UUID, deltaDb: Float) {
-        for id in selectedSendersWithFreeLevel(toAux: auxID) {
+        for id in selectedSendersWithFreeLevel(toAux: auxID) where handMayCreateSend(from: id, to: auxID) {
             setSendLevel(from: id, to: auxID, levelDb: sendLevel(from: id, to: auxID) + deltaDb)
         }
         isDirty = true
@@ -271,7 +344,7 @@ extension EditViewModel {
 
     /// Sets one identical absolute level towards `auxID` over the whole selection.
     func setSendLevelSelected(toAux auxID: UUID, levelDb: Float) {
-        for id in selectedSendersWithFreeLevel(toAux: auxID) {
+        for id in selectedSendersWithFreeLevel(toAux: auxID) where handMayCreateSend(from: id, to: auxID) {
             setSendLevel(from: id, to: auxID, levelDb: levelDb)
         }
         isDirty = true
@@ -279,7 +352,7 @@ extension EditViewModel {
 
     /// Turns the send towards `auxID` on/off over the whole selection.
     func setSendEnabledSelected(toAux auxID: UUID, enabled: Bool) {
-        for id in selectedSenders(toAux: auxID) {
+        for id in selectedSenders(toAux: auxID) where !enabled || handMayCreateSend(from: id, to: auxID) {
             setSendEnabled(from: id, to: auxID, enabled: enabled)
         }
         isDirty = true
@@ -322,9 +395,11 @@ extension EditViewModel {
         sendEntry(from: objectID, to: auxID)?.enabled ?? false
     }
 
-    /// True if the send is effectively routed (enabled && level > -∞).
+    /// True if the send is effectively routed: alive AND accepted by the plan (@see `sendStatus`). On
+    /// the legacy path (OBJ_SENDS_LEGACY=1) it is what it always was: enabled && level > -∞.
     func isSendRouted(from objectID: UUID, to auxID: UUID) -> Bool {
-        sendEntry(from: objectID, to: auxID)?.isRouted ?? false
+        if Self.sendsLegacy { return sendEntry(from: objectID, to: auxID)?.isRouted ?? false }
+        return sendStatus(from: objectID, to: auxID) == .active
     }
 
     /// The remembered level; -∞ (sendMinDb) by default if there is no entry.
@@ -359,6 +434,7 @@ extension EditViewModel {
     /// Which is why `adjustSendLevelSelected` does NOT go through it — it reads the stored value
     /// and adds, and its callers already hand over whole steps.
     func setSendLevelFromHand(from objectID: UUID, to auxID: UUID, levelDb: Float) {
+        guard handMayCreateSend(from: objectID, to: auxID) else { return }
         setSendLevel(from: objectID, to: auxID, levelDb: levelDb.rounded())
     }
 
@@ -381,48 +457,76 @@ extension EditViewModel {
         isDirty = true
     }
 
+    /// Deletes the send entry `objectID` → `auxID` and the automation lane aimed at it. The engine side
+    /// follows by itself: the bridge sync (or `removeSend` on the legacy path) takes the plugin away.
+    func removeSend(from objectID: UUID, to auxID: UUID) {
+        update(id: objectID) { obj in
+            obj.sends.removeAll { $0.auxID == auxID }
+            obj.automation.removeAll { $0.param == .send(auxID: auxID) }
+            obj.automationTouchOrder.removeAll { $0 == .send(auxID: auxID) }
+        }
+        syncSendEngine(objectID: objectID, auxID: auxID)
+        isDirty = true
+    }
+
     /// Reconciles a send's engine state with the model (idempotent).
     ///
-    /// `isRouted` (enabled AND level > -∞) was enough as long as a send had only a static
-    /// level: not wiring a silent tap avoids a graph node for nothing. A level CURVE
-    /// changes that — it needs the send plugin to write itself into, even if the
-    /// static level has stayed at -∞ (that is even the normal case: the curve is laid on a send
-    /// that has never been raised by hand). The switch, for its part, keeps the last word: cutting it
-    /// is an explicit intention of silence.
+    /// ALIVE = enabled AND (not at -∞ OR driven by a curve). The old `isRouted` (enabled AND level >
+    /// -∞) was enough as long as a send had only a static level; a level CURVE needs the send plugin to
+    /// write itself into, even if the static level has stayed at -∞ (that is even the normal case: the
+    /// curve is laid on a send that has never been raised by hand). The switch keeps the last word:
+    /// cutting it is an explicit intention of silence.
+    ///
+    /// On the bridge, a send that is ALREADY laid and stays alive only changes its level: that is the
+    /// knob's per-frame path, hot, no plan and no rebuild. Anything else — a send born, cut, or whose
+    /// curve appeared or went — changes the topology: the coalesced bridge sync lays or removes it.
     func syncSendEngine(objectID: UUID, auxID: UUID) {
         let s = sendEntry(from: objectID, to: auxID)
         let alive = (s?.enabled ?? false)
             && (!(s?.isSilent ?? true) || isAutomated(.send(auxID: auxID), on: objectID))
-        if let s, alive, canRouteSend(from: objectID, to: auxID) {
-            engine?.addSend(objectID.uuidString, toAux: auxID.uuidString, levelDb: s.levelDb)
-        } else {
-            engine?.removeSend(objectID.uuidString, toAux: auxID.uuidString)
+
+        if Self.sendsLegacy {
+            if let s, alive, canRouteSend(from: objectID, to: auxID) {
+                engine?.addSend(objectID.uuidString, toAux: auxID.uuidString, levelDb: s.levelDb)
+            } else {
+                engine?.removeSend(objectID.uuidString, toAux: auxID.uuidString)
+            }
+            return
+        }
+
+        let laid = bridgeLaidSends.contains(SendKey(sender: objectID, aux: auxID))
+        if let s, alive, laid {
+            engine?.setSendLevel(objectID.uuidString, toAux: auxID.uuidString, levelDb: s.levelDb)
+        } else if alive || laid {
+            scheduleBridgeSync()
         }
     }
 
-    /// Reconciles EVERY send in the project with the engine, both ways: wires those that
-    /// are routable, unwires the others. To be called after a full rebuild (load /
-    /// undo-redo), where a sender can be synced before the target aux, but ALSO after any
-    /// change of group membership: a send's scope is "siblings of the same
-    /// container", so grouping or ungrouping can tip it either
-    /// way. Idempotent.
+    /// Reconciles EVERY send in the project with the engine, both ways. To be called after a full
+    /// rebuild (load / undo-redo), where a sender can be synced before the target aux, and after any
+    /// change of group membership or stem, which can tip a send's scope either way. Idempotent.
     func resyncAllSends() {
-        func walk(_ arr: [SoundObject]) {
-            for o in arr {
-                for s in o.sends { syncSendEngine(objectID: o.id, auxID: s.auxID) }
-                if case .group(let children, _) = o.kind { walk(children) }
+        if Self.sendsLegacy {
+            func walk(_ arr: [SoundObject]) {
+                for o in arr {
+                    for s in o.sends { syncSendEngine(objectID: o.id, auxID: s.auxID) }
+                    if case .group(let children, _) = o.kind { walk(children) }
+                }
             }
+            walk(items)
+            // A rewired send is a BRAND-NEW plugin: its curve has gone back to nothing on the engine
+            // side. And since this pass is the meeting point of everything that reshapes the topology
+            // (loading, undo, composing/dissolving a group, changing stem, pasting), it is the right
+            // place to push the rest of the project's curves again as well.
+            pushAllAutomation()
+            syncBridge()
+            return
         }
-        walk(items)
-        // A rewired send is a BRAND-NEW plugin: its curve has gone back to nothing on the engine side. And
-        // since this pass is precisely the meeting point of everything that reshapes the topology
-        // (loading, undo, composing/dissolving a group, changing stem, pasting),
-        // it is the right place to push the rest of the project's curves again as well — a plain
-        // tree walk, free for objects with no automation.
+        // On the bridge the sends are part of the plan: ONE sync lays the keys AND the sends, and
+        // only then are the curves pushed — a send laid by this sync is a brand-new plugin, so the
+        // order is the reverse of the legacy walk's (which had run `addSend` before).
+        syncBridge(pushingAutomation: false)
         pushAllAutomation()
-        // The same meeting point serves the audio bridge: load, undo/redo, grouping, a stem change
-        // and a paste all reshape who is above whom, which is what a key's validity and rank read.
-        syncBridge()
     }
 
     /// Copies onto `newAuxID` every send that targeted `origAuxID` (the same level).

@@ -189,6 +189,31 @@ struct SendFocus: Equatable {
     let auxID: UUID
 }
 
+/// One send, as a pair: the sender (an object or a group) and the aux it feeds.
+struct SendKey: Hashable {
+    let sender: UUID
+    let aux: UUID
+}
+
+/// What the bridge says about a send (docs/plan_sends_rework.md §1.5): `off` = it is not alive (cut,
+/// or at -∞ with no curve), `active` = the plan lays it, `refused` = alive but the rules say no — out
+/// of the sender's stem, towards a non-aux, or closing a scheduling loop with the keys already laid.
+enum SendStatus: Equatable {
+    case off
+    case active
+    case refused(BridgeScope.Refusal)
+}
+
+/// What a route of the bridge's topology is made of — a key of a plugin's sidechain input, or a send.
+/// `routeOwners[i]` names the owner of `routes[i]`.
+enum BridgeRouteOwner: Equatable {
+    case plugin(host: UUID, plugin: UUID)
+    case send(sender: UUID, aux: UUID)
+
+    var pluginID: UUID? { if case .plugin(_, let p) = self { return p } else { return nil } }
+    var sendKey: SendKey? { if case .send(let s, let a) = self { return SendKey(sender: s, aux: a) } else { return nil } }
+}
+
 /// The data of one send-knob row (one aux), for the overlay on the clip.
 /// The rows are ordered by the aux's lane (top → bottom).
 struct SendRow: Identifiable {
@@ -201,6 +226,9 @@ struct SendRow: Identifiable {
     /// greyed and answers no gesture. The same rule, and the same reading, as the signal view's
     /// `automationLocked` (@see SynopticSend.isAutomated).
     var automated: Bool = false
+    /// Why the bridge refuses this send although it is alive (a scheduling loop with the keys already
+    /// laid — Q-U10): the row is shown greyed, with this reason. nil = accepted, or not alive.
+    var refusal: BridgeScope.Refusal? = nil
     var id: UUID { auxID }
 }
 

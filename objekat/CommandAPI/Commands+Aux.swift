@@ -52,21 +52,34 @@ extension CommandRegistry {
         }
 
         register("send.list",
-                 summary: "Sends leaving an object: level, on/off, and what is actually wired.",
+                 summary: "Sends leaving an object: level, on/off, and what the bridge actually lays.",
                  params: [ParamSpec("id", "uuid", "Sending object.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
             guard let object = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
+            // Computed NOW from the model: an answer must not depend on whether the coalesced bridge
+            // sync has run yet (a scheduling loop is only known to the plan).
+            let live = vm.sendStatusNow()
             let sends = object.sends.map { send -> JSONValue in
-                .object(["aux": .string(send.auxID.uuidString),
+                let status = vm.sendStatus(from: id, to: send.auxID, using: live)
+                var refusal: JSONValue = .null
+                var statusName = "off"
+                switch status {
+                case .off:              statusName = "off"
+                case .active:           statusName = "active"
+                case .refused(let why): statusName = "refused"; refusal = .string(why.rawValue)
+                }
+                return .object(["aux": .string(send.auxID.uuidString),
                          "level_db": .number(Double(send.levelDb)),
                          "enabled": .bool(send.enabled),
-                         // `routed` = what the engine ACTUALLY wires. Different from `enabled`: a send that is
-                         // out of scope (another stem, another container) stays in the model and makes no
-                         // sound.
-                         "routed": .bool(vm.isSendRouted(from: id, to: send.auxID)),
+                         // `routed` = what the plan ACTUALLY lays: alive AND accepted. Different from
+                         // `enabled`: a send that is refused (another stem, a scheduling loop) stays in
+                         // the model and makes no sound — `status` and `refusal` say which and why.
+                         "routed": .bool(status == .active),
+                         "status": .string(statusName),
+                         "refusal": refusal,
                          // A CURVE drives the level: `level_db` is still what is written, but it is
                          // no longer what is heard, and no gesture of the hand may change it
                          // (@see EditViewModel.selectedSendersWithFreeLevel). Here so that the lock
@@ -75,10 +88,63 @@ extension CommandRegistry {
             }
             return .object(["id": .string(id.uuidString),
                             "sends": .array(sends),
-                            // What this object CAN send to, scope included.
+                            // What this object CAN send to by the static rule (any time, any depth)...
+                            "reachable_auxes": .array(vm.allAuxes.filter { vm.canRouteSend(from: id, to: $0.id) }
+                                                        .map { .string($0.id.uuidString) }),
+                            // ...and what the tools OFFER: the reachable ones that overlap it in time.
                             "available_auxes": .array(vm.sendToolAuxes(for: id).map {
                                 .string($0.id.uuidString)
                             })])
+        }
+
+        register("send.candidates",
+                 summary: "Every aux in the project as seen from a sender: the plan's verdict "
+                        + "(`refusal` null = a send would be accepted; else why: outOfStem, hostNotAux, "
+                        + "ancestorSource, cycle…), whether it overlaps the sender in time, its group path "
+                        + "and stem.",
+                 params: [ParamSpec("id", "uuid", "Sending object.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let sender = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let auxes = vm.allAuxes
+            let refusals = vm.sendRefusals(from: id, among: Set(auxes.map(\.id)))
+            let rows = auxes.map { aux -> JSONValue in
+                var path: [JSONValue] = []
+                var cursor = aux.id
+                while let g = vm.parentGroup(for: cursor) { path.insert(.string(g.displayName), at: 0); cursor = g.id }
+                let stemID = aux.stemID ?? vm.mainStemID
+                let stemName = vm.stems.first { $0.id == stemID }.map { $0.id == vm.mainStemID ? "Main" : $0.name } ?? "Main"
+                return .object(["aux": .string(aux.id.uuidString),
+                                "name": .string(aux.displayName),
+                                "group_path": .array(path),
+                                "stem": .string(stemName),
+                                "overlaps": .bool(aux.isInfiniteBus
+                                                  || (aux.startTime < sender.startTime + sender.duration
+                                                      && aux.startTime + aux.duration > sender.startTime)),
+                                "refusal": refusals[aux.id].map { .string($0.rawValue) } ?? .null])
+            }
+            return .object(["id": .string(id.uuidString), "candidates": .array(rows)])
+        }
+
+        register("send.remove",
+                 summary: "Deletes a send entry (and the automation lane aimed at it). There was no "
+                        + "other way to take an entry out of the model.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            guard object.sends.contains(where: { $0.auxID == auxID }) else {
+                throw CommandError(code: .not_found, message: "no send from \(id.uuidString) to \(auxID.uuidString)")
+            }
+            vm.removeSend(from: id, to: auxID)
+            return .object(["id": .string(id.uuidString), "aux": .string(auxID.uuidString), "removed": .bool(true)])
         }
 
         register("send.set_level",
@@ -95,7 +161,7 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "aux": .string(auxID.uuidString),
                             "level_db": .number(Double(vm.sendLevel(from: id, to: auxID))),
-                            "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
+                            "routed": .bool(vm.sendStatus(from: id, to: auxID, using: vm.sendStatusNow()) == .active)])
         }
 
         register("send.adjust_level",
@@ -147,7 +213,7 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "aux": .string(auxID.uuidString),
                             "enabled": .bool(vm.isSendEnabled(from: id, to: auxID)),
-                            "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
+                            "routed": .bool(vm.sendStatus(from: id, to: auxID, using: vm.sendStatusNow()) == .active)])
         }
 
         #if DEBUG
