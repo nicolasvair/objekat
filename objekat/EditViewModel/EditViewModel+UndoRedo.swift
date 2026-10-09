@@ -273,6 +273,15 @@ extension EditViewModel {
         else { return false }
         probe.plugins     = plugins
         probe.instruments = instruments
+        // A send's POSITION (docs/plan_sends_rework.md, INC 2) is recoverable: its marker is a place
+        // on the trunk (ignored by `adoptingPluginStates`, `pushPatch` recompiles the chain for it)
+        // and its `tap` reaches the engine with the bridge sync that closes every restore. Only the
+        // `tap` — a send born, removed, retargeted or re-levelled still rebuilds, as before.
+        if old.sends.count == new.sends.count {
+            var sends = old.sends
+            for i in sends.indices where sends[i].auxID == new.sends[i].auxID { sends[i].tap = new.sends[i].tap }
+            probe.sends = sends
+        }
         probe.startTime     = new.startTime
         probe.duration      = new.duration
         probe.lane          = new.lane
@@ -338,6 +347,18 @@ extension EditViewModel {
     /// doing, at the end of the load, exactly the call we now make on its own.
     static func adoptingPluginStates(_ old: [ObjectPlugin],
                                      _ new: [ObjectPlugin]) -> [ObjectPlugin]? {
+        // A send marker is the PLACE of a send on the trunk (INC 2), not a plugin: it holds no state
+        // and two chains that differ only by their markers are the same chain. The answer keeps the
+        // plugins of `old` wearing `new`'s states, and takes `new`'s markers where `new` has them.
+        let realOld = old.filter { !$0.isSendMarker }
+        let realNew = new.filter { !$0.isSendMarker }
+        guard let adopted = adoptingRealPluginStates(realOld, realNew) else { return nil }
+        var next = adopted.makeIterator()
+        return new.map { $0.isSendMarker ? $0 : next.next()! }
+    }
+
+    private static func adoptingRealPluginStates(_ old: [ObjectPlugin],
+                                                 _ new: [ObjectPlugin]) -> [ObjectPlugin]? {
         guard old.count == new.count else { return nil }
         var out = old
         for i in old.indices {
@@ -386,7 +407,9 @@ extension EditViewModel {
     static func changedPluginStates(_ old: [ObjectPlugin], _ new: [ObjectPlugin]) -> [(id: UUID, xml: String)] {
         var out: [(id: UUID, xml: String)] = []
         func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
-            for (x, y) in zip(a, b) {
+            // The markers are not plugins: pair the real entries only (two chains differing by their
+            // markers are patchable, and a position pairing would read a marker against a plugin).
+            for (x, y) in zip(a.filter { !$0.isSendMarker }, b.filter { !$0.isSendMarker }) {
                 if x.isContainer, y.isContainer {
                     for (va, vb) in zip(x.childSeries, y.childSeries) { walk(va, vb) }
                 } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
@@ -416,6 +439,13 @@ extension EditViewModel {
                 engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
                                             forObjectID: object.id.uuidString)
             }
+        }
+        // The send markers moved (a position undone or redone): the chain's order tells the engine
+        // where to lay each send, so the chain is compiled again — the plugins are KEPT (the compile
+        // finds every one in the engine's map), only the list order changes. The `tap` positions and
+        // the send plugins themselves come with the bridge sync that closes `applySnapshot`.
+        if let live, ObjectPlugin.sendMarkerPlaces(in: live.plugins) != ObjectPlugin.sendMarkerPlaces(in: object.plugins) {
+            recompileForSendMarker(object.id)
         }
         // The channel choice of a stereo clip (no-op for every other kind: the engine looks the
         // clip up and finds none). Pushed only when it moved — a plugin is added or removed for it.

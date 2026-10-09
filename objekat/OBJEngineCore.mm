@@ -5201,6 +5201,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     for (int i = 0; i < pl->size(); ++i) {
         te::Plugin* p = (*pl)[i];
         NSMutableDictionary* e = [NSMutableDictionary dictionaryWithObject:@(i) forKey:@"index"];
+        // The engine object's identity (a scenario compares it before and after an undo: an instance
+        // that is KEPT keeps its address, a rebuilt one is a new object).
+        e[@"instance"] = [NSString stringWithFormat:@"%p", (void*)p];
         if (p == trimIn)       e[@"role"] = @"trimIn";
         else if (p == trimOut) e[@"role"] = @"trimOut";
         else if (p == fader)   e[@"role"] = @"fader";

@@ -308,6 +308,18 @@ enum SendPositionTest {
                                   kind: .group(children: [clip(plugins: [m, a], sends: sendA)], isExpanded: false))]) == 2)
         }
 
+        // MARK: - Marker places (what undo compares)
+
+        do {
+            let a = plugin("A"), b = plugin("B")
+            let ma = ObjectPlugin.makeSendMarker(for: auxA), mb = ObjectPlugin.makeSendMarker(for: auxB)
+            check("sendMarkerPlaces: aux -> index among the real entries",
+                  ObjectPlugin.sendMarkerPlaces(in: [ma, a, mb, b]) == [auxA: 0, auxB: 1])
+            check("sendMarkerPlaces: no marker, no place", ObjectPlugin.sendMarkerPlaces(in: [a, b]).isEmpty)
+            check("sendMarkerPlaces: two markers in one gap share an index",
+                  ObjectPlugin.sendMarkerPlaces(in: [a, ma, mb, b]) == [auxA: 1, auxB: 1])
+        }
+
         // MARK: - Names
 
         do {

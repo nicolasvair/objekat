@@ -1701,6 +1701,118 @@ def section_W2(c):
         wait(c)
 
 # --------------------------------------------------------------------------------------------------
+# X2 — undo / redo of a send's position: one move = one undo point, the object is PATCHED (not rebuilt)
+# --------------------------------------------------------------------------------------------------
+
+def app_log_lines():
+    """The app's stderr (set APP_LOG=/path), or None when this run was not given it."""
+    path = os.environ.get("APP_LOG")
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, errors="replace") as f:
+        return f.read().splitlines()
+
+
+def undo_trace_since(before):
+    now = app_log_lines()
+    if now is None or before is None:
+        return None
+    return [l for l in now[len(before):] if "[UNDO]" in l]
+
+
+def fx_instances(c, x):
+    lay = (c.send("debug.send_marker_audit").get("engine_layouts") or {}).get(x, [])
+    return [(e.get("key"), e.get("instance")) for e in lay if e["role"] == "fx"]
+
+
+def section_X2(c):
+    print("\n--- X2  undo / redo of a send's position: one gesture = one undo, patched in place")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "X2")
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    audit(c, "X2 start", want_senders=1)
+    # The reference WITHOUT the send, rendered once up front: `send.enable` is an undo point, so the
+    # by-difference measure of the other sections (which toggles it) would cut the undo chain under test.
+    c.send("send.enable", {"id": x, "aux": a, "enabled": False})
+    off_ref = render(c, "X2_off_ref.wav", 0.0, 3.0)
+    c.send("send.enable", {"id": x, "aux": a, "enabled": True})
+
+    def wet_now(label):
+        on = render(c, label.replace(" ", "_") + ".wav", 0.0, 3.0)
+        return wet_db(sub(on, off_ref))
+
+    P = [("post",   {"position": "post_fader"},               -41.0),
+         ("input",  {"position": "input"},                      0.0),
+         ("chain0", {"position": "chain", "index": 0},         -6.0),
+         ("chain1", {"position": "chain", "index": 1},        -18.0),
+         ("pre",    {"position": "pre_fader"},                -21.0),
+         ("post",   {"position": "post_fader"},               -41.0)]
+    base_inst = fx_instances(c, x)
+    check("X2: the chain holds one plugin, with an engine instance", len(base_inst) == 1 and base_inst[0][1], base_inst)
+
+    def state_is(label, k):
+        name, params, expect = P[k]
+        audit(c, label)
+        row = position_row(c, x, a)
+        ok = row.get("position") == params["position"] and (params["position"] != "chain" or row.get("index") == params["index"])
+        check("%s: send.list says %s" % (label, name), ok, row)
+        db = wet_now(label)
+        print("       %s: wet %s dB re source" % (label, None if db is None else "%.3f" % db))
+        check("%s: wet %.0f dB re source (0.05)" % (label, expect), db is not None and abs(db - expect) <= 0.05, db)
+        inst = fx_instances(c, x)
+        check("%s: the plugin instance is the SAME engine object" % label, inst == base_inst, (inst, base_inst))
+
+    # forward: five moves, each one undo point
+    for k in range(1, 6):
+        c.send("send.set_position", dict({"id": x, "aux": a}, **P[k][1]))
+        state_is("X2 move %d to %s" % (k, P[k][0]), k)
+
+    log0 = app_log_lines()
+    if log0 is None:
+        print("       (no APP_LOG: the [UNDO] trace is not read)")
+    for j in range(1, 6):
+        before = app_log_lines()
+        c.send("edit.undo", {})
+        settle(c)
+        tr = undo_trace_since(before)
+        if tr is not None:
+            check("X2 undo %d: trace says 0 rebuilt, 1 patched" % j, bool(tr) and "0 rebuilt, 1 patched" in tr[-1], tr)
+        state_is("X2 undo %d (back to %s)" % (j, P[5 - j][0]), 5 - j)
+    for j in range(1, 6):
+        before = app_log_lines()
+        c.send("edit.redo", {})
+        settle(c)
+        tr = undo_trace_since(before)
+        if tr is not None:
+            check("X2 redo %d: trace says 0 rebuilt, 1 patched" % j, bool(tr) and "0 rebuilt, 1 patched" in tr[-1], tr)
+        state_is("X2 redo %d (forward to %s)" % (j, P[j][0]), j)
+
+    # the card's deletion: removes the send AND its marker, one undo point; undo brings both back
+    c.send("send.set_position", {"id": x, "aux": a, "position": "chain", "index": 1})
+    settle(c)
+    c.send("send.remove", {"id": x, "aux": a})
+    settle(c)
+    check("X2: send removed", send_entry(c, x, a) is None)
+    before = app_log_lines()
+    c.send("edit.undo", {})
+    settle(c)
+    tr = undo_trace_since(before)
+    print("       X2: undo of the card's deletion -> %s" % (tr[-1].strip() if tr else None))
+    row = position_row(c, x, a)
+    check("X2: undo of the deletion brings the send back at chain 1", row.get("position") == "chain" and row.get("index") == 1, row)
+    audit(c, "X2 after the undo of the deletion")
+    db = wet_now("X2 after undo deletion")
+    check("X2: ... and the wet is -18 dB again", db is not None and abs(db - (-18.0)) <= 0.05, db)
+
+
+# --------------------------------------------------------------------------------------------------
 # U2 — Q-U12: a silenced sender feeds no aux, wherever its send taps
 # --------------------------------------------------------------------------------------------------
 
@@ -1767,7 +1879,7 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2),
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2),
                     ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)

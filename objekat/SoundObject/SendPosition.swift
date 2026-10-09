@@ -67,6 +67,17 @@ extension ObjectPlugin {
         return nil
     }
 
+    /// Where each top-level marker stands, as aux → `chain(i)` index. Two chains with the same answer have
+    /// their markers in the same places (undo reads it to know whether a restore moved one).
+    static func sendMarkerPlaces(in plugins: [ObjectPlugin]) -> [UUID: Int] {
+        var out: [UUID: Int] = [:]
+        var entries = 0
+        for p in plugins {
+            if let m = p.sendMarker { out[m.auxID] = entries } else { entries += 1 }
+        }
+        return out
+    }
+
     /// The model index that stands for the view's index `visible` (markers do not count): immediately
     /// BEFORE the `visible`-th entry that is not a marker, after the markers sitting in that gap; the end
     /// of the array when `visible` is past the last entry.
