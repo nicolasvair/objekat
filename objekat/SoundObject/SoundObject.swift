@@ -606,8 +606,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// exist without a compile), OR an AUTOMATION of those gains: a trim curve laid on an object
     /// whose static trim stayed at 0 dB would otherwise have no plugin to write itself into, and
     /// would never be heard.
+    ///
+    /// A send's marker alone does NOT count: with no plugin and no trim there is no chain to order a
+    /// send in, and a send placed "in the chain" of an empty chain taps exactly the signal the fader
+    /// receives (docs/plan_sends_rework.md §A.d).
     var needsChainCompile: Bool {
-        !plugins.isEmpty || chainInGainDb != 0 || chainOutGainDb != 0
+        plugins.contains(where: { !$0.isSendMarker }) || chainInGainDb != 0 || chainOutGainDb != 0
             || automation.contains { ($0.param == .chainInGain || $0.param == .chainOutGain)
                                      && !$0.points.isEmpty }
     }

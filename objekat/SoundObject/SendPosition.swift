@@ -67,6 +67,24 @@ extension ObjectPlugin {
         return nil
     }
 
+    /// The model index that stands for the view's index `visible` (markers do not count): immediately
+    /// BEFORE the `visible`-th entry that is not a marker, after the markers sitting in that gap; the end
+    /// of the array when `visible` is past the last entry.
+    static func modelIndex(ofVisibleIndex visible: Int, in plugins: [ObjectPlugin]) -> Int {
+        let wanted = max(0, visible)
+        var seen = 0
+        for (k, p) in plugins.enumerated() where !p.isSendMarker {
+            if seen == wanted { return k }
+            seen += 1
+        }
+        return plugins.count
+    }
+
+    /// The view's index of the entry at model index `model`: how many non-markers precede it.
+    static func visibleIndex(ofModelIndex model: Int, in plugins: [ObjectPlugin]) -> Int {
+        plugins.prefix(max(0, model)).reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }
+    }
+
     /// How many top-level entries are not markers: the largest valid `chain(i)`.
     static func chainEntryCount(_ plugins: [ObjectPlugin]) -> Int {
         plugins.reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }

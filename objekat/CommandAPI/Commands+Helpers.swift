@@ -256,6 +256,12 @@ extension CommandAdapters {
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).
         if plugin.isRack { payload["is_rack"] = .bool(true) }
+        // A send's marker is not a plugin either: it only says where the send towards `send_marker.aux`
+        // taps the chain (`send.list` gives the position as a person reads it).
+        if let marker = plugin.sendMarker {
+            payload["is_send_marker"] = .bool(true)
+            payload["send_marker"] = .object(["aux": .string(marker.auxID.uuidString)])
+        }
         // An FX link's block is not a plugin either: its instances are listed under `plugins`, and
         // `plugin.set_param` & co. address THEM (they are ordinary instances, mirrors of the bin).
         if let block = plugin.fxBlock {
@@ -264,7 +270,7 @@ extension CommandAdapters {
             payload["detached"] = .bool(block.isDetached)
             payload["plugins"] = .array(block.plugins.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
         }
-        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil {
+        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil, plugin.sendMarker == nil {
             if let key = plugin.sidechain {
                 let why = bridgeStatus[plugin.id]
                 payload["sidechain"] = .object(["source": .string(key.sourceID.uuidString),

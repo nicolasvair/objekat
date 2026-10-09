@@ -772,6 +772,26 @@ extension CommandRegistry {
             return .object(["engine": report, "model": model, "sends_path": .string("bridge")])
         }
 
+        register("debug.send_marker_audit",
+                 summary: """
+                 DEBUG. The audit of send markers (docs/plan_sends_rework.md, INC 2): reads the model and \
+                 answers `violations` [{host, path, rule}] — `orphan` (a marker with no send), `duplicate` \
+                 (two markers for one aux), `nested` (inside a parallel block or a bin), `on_aux`, `on_stem`, \
+                 `in_instruments`, and `phantom` (an entry with no plugin identity that is neither a block \
+                 nor a marker: what a marker becomes when a copy rebuilds it as a plugin) — plus `markers` \
+                 (how many, top level) and `ok`. The scenario asserts `ok` after every phase. Reads only.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let violations = SendMarkerAudit.violations(items: vm.items, stems: vm.stems)
+            return .object([
+                "ok": .bool(violations.isEmpty),
+                "markers": .int(SendMarkerAudit.markerCount(items: vm.items)),
+                "violations": .array(violations.map {
+                    .object(["host": .string($0.host.uuidString), "path": .string($0.path), "rule": .string($0.rule)])
+                })])
+        }
+
         register("debug.add_test_plugin",
                  summary: """
                  DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \

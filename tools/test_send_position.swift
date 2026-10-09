@@ -18,6 +18,7 @@
 //         ../objekat/SoundObject/ComposedName.swift \
 //         ../objekat/SoundObject/FXLink.swift \
 //         ../objekat/SoundObject/SendPosition.swift \
+//         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
@@ -266,6 +267,45 @@ enum SendPositionTest {
             check("reordering the two plugins around it leaves chain(1)", reordered.sendPosition(auxID: auxA) == .chain(1))
             var markerFirst = o; markerFirst.plugins.swapAt(0, 1)            // [m, A, B]
             check("moving the marker by array hand reads chain(0)", markerFirst.sendPosition(auxID: auxA) == .chain(0))
+        }
+
+        // MARK: - View indices (markers do not count) and the audit
+
+        do {
+            let a = plugin("A"), b = plugin("B"), c = plugin("C")
+            let m = ObjectPlugin.makeSendMarker(for: auxA), m2 = ObjectPlugin.makeSendMarker(for: auxB)
+            let series = [m, a, m2, b, c]          // markers at 0 and 2
+            check("view index 0 -> right before the first non-marker (after the leading marker)",
+                  ObjectPlugin.modelIndex(ofVisibleIndex: 0, in: series) == 1)
+            check("view index 1 -> right before B (after the marker in that gap)",
+                  ObjectPlugin.modelIndex(ofVisibleIndex: 1, in: series) == 3)
+            check("view index 3 (past the end) -> the end of the array", ObjectPlugin.modelIndex(ofVisibleIndex: 3, in: series) == 5)
+            check("view index of C is 2", ObjectPlugin.visibleIndex(ofModelIndex: 4, in: series) == 2)
+            check("view index of A is 0", ObjectPlugin.visibleIndex(ofModelIndex: 1, in: series) == 0)
+            check("with no marker both are the identity",
+                  (0...3).allSatisfy { ObjectPlugin.modelIndex(ofVisibleIndex: $0, in: [a, b, c]) == $0
+                                       && ObjectPlugin.visibleIndex(ofModelIndex: $0, in: [a, b, c]) == $0 })
+
+            // The audit: each rule once, and a clean object.
+            let sendA = [AuxSend(auxID: auxA)]
+            func rules(_ items: [SoundObject], stems: [Stem] = []) -> [String] {
+                SendMarkerAudit.violations(items: items, stems: stems).map(\.rule).sorted()
+            }
+            check("a clean object is clean", rules([clip(plugins: [a, m, b], sends: sendA)]).isEmpty)
+            check("orphan", rules([clip(plugins: [a, m2], sends: sendA)]) == ["orphan"])
+            check("duplicate", rules([clip(plugins: [m, a, ObjectPlugin.makeSendMarker(for: auxA)], sends: sendA)]) == ["duplicate"])
+            check("nested", rules([clip(plugins: [rackOf([[m]])], sends: sendA)]) == ["nested"])
+            check("on_aux", rules([auxObject(plugins: [m], sends: sendA)]) == ["on_aux"])
+            var st = Stem(id: UUID(), name: "S", colorIndex: 0, format: .stereo); st.plugins = [m]
+            check("on_stem", rules([], stems: [st]) == ["on_stem"])
+            let phantom = ObjectPlugin(id: UUID(), name: "", manufacturer: "", identifier: "", formatName: "")
+            check("phantom: a marker rebuilt as a plugin is caught", rules([clip(plugins: [a, phantom], sends: sendA)]) == ["phantom"])
+            check("an object whose violations were sanitised audits clean",
+                  rules([clip(plugins: [rackOf([[m]]), ObjectPlugin.makeSendMarker(for: auxB)], sends: sendA).sanitisingSends()]).isEmpty)
+            check("markerCount counts the top-level ones, in groups too",
+                  SendMarkerAudit.markerCount(items: [clip(plugins: [m], sends: sendA),
+                      SoundObject(id: UUID(), startTime: 0, duration: 4, lane: 0,
+                                  kind: .group(children: [clip(plugins: [m, a], sends: sendA)], isExpanded: false))]) == 2)
         }
 
         // MARK: - Names

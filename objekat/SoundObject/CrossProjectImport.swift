@@ -212,6 +212,12 @@ enum CrossProjectImport {
             }
             func cloneSeries(_ series: [ObjectPlugin]) -> [ObjectPlugin] {
                 series.flatMap { p -> [ObjectPlugin] in
+                    // A marker follows its send: remapped onto the pasted aux, or dropped with the send
+                    // when the aux is not in the lot (@see the `sends` remap below).
+                    if let m = p.sendMarker {
+                        guard let newAux = objectIDMap[m.auxID] else { return [] }
+                        return [ObjectPlugin.makeSendMarker(for: newAux)]
+                    }
                     if let fb = p.fxBlock { return cloneBlock(p, fb) }
                     if let rack = p.rack {
                         let newID = UUID()

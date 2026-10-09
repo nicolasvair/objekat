@@ -184,6 +184,13 @@ extension ObjectPlugin {
     /// True if this entry is the place of a send on the trunk (@see SendMarker).
     var isSendMarker: Bool { sendMarker != nil }
 
+    /// The same marker with an id of its own (a copy of the object that holds it).
+    func copiedSendMarker() -> ObjectPlugin {
+        var q = self
+        q.id = UUID()
+        return q
+    }
+
     /// A marker for the send towards `auxID`: no plugin identity, a fresh id of its own (the engine's
     /// key for the send stays `sender|aux`, never this id).
     static func makeSendMarker(for auxID: UUID, id: UUID = UUID()) -> ObjectPlugin {

@@ -65,6 +65,7 @@ extension EditViewModel {
 
         func collectLeaves(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
             for p in plugins {
+                if p.isSendMarker { continue }       // the place of a send, not a plugin
                 if let rack = p.rack { for voice in rack.voices { collectLeaves(voice, into: &out) } }
                 else if let block = p.fxBlock { collectLeaves(block.plugins, into: &out) }
                 else { out.append(p) }
@@ -257,6 +258,7 @@ extension EditViewModel {
     private func bridgeLeafExists(_ pluginID: UUID, host: UUID) -> Bool {
         func has(_ plugins: [ObjectPlugin]) -> Bool {
             plugins.contains { p in
+                if p.isSendMarker { return false }
                 if let rack = p.rack { return rack.voices.contains { has($0) } }
                 if let block = p.fxBlock { return block.plugins.contains { $0.id == pluginID } }
                 return p.id == pluginID
@@ -285,7 +287,7 @@ extension EditViewModel {
                     q.fxBlock?.plugins = inner
                     found = true
                 }
-            } else if p.id == pluginID {
+            } else if p.id == pluginID && !p.isSendMarker {
                 q.sidechain = key
                 found = true
             }

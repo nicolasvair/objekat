@@ -21,6 +21,8 @@
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
 //         ../objekat/SoundObject/FXLink.swift \
+//         ../objekat/SoundObject/SendPosition.swift \
+//         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
@@ -204,6 +206,49 @@ enum CrossProjectImportTest {
                   plan.clips[0].automation.isEmpty)
             check("its automationTouchOrder entry is dropped along with it",
                   plan.clips[0].automationTouchOrder.isEmpty)
+        }
+
+        // MARK: - Send positions travel with their send (INC 2 of the sends rework)
+
+        do {
+            let auxOld = UUID()
+            let auxObj = aux(id: auxOld, startTime: 0, lane: 5)
+            let marker = ObjectPlugin.makeSendMarker(for: auxOld)
+            let src = clip(startTime: 0, lane: 0,
+                          plugins: [plugin(), marker, plugin()],
+                          sends: [AuxSend(auxID: auxOld, levelDb: -3)])
+            let pre = clip(startTime: 0, lane: 1, sends: [AuxSend(auxID: auxOld, levelDb: -3, tap: .preFader)])
+            let cb = CrossProjectImport.Clipboard(clips: [src, pre, auxObj], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            let newAux = plan.clips[2].id
+            let p0 = plan.clips[0].plugins
+            check("the marker of a send inside the batch stays between its plugins",
+                  p0.count == 3 && p0[1].isSendMarker && !p0[0].isSendMarker && !p0[2].isSendMarker)
+            check("and names the PASTED aux", p0[1].sendMarker?.auxID == newAux)
+            check("with an id of its own", p0[1].id != marker.id)
+            check("the position reads chain(1) on the pasted object", plan.clips[0].sendPosition(auxID: newAux) == .chain(1))
+            check("a pre-fader tap travels with its send", plan.clips[1].sendPosition(auxID: newAux) == .preFader)
+            check("the audit finds nothing", SendMarkerAudit.violations(items: plan.clips).isEmpty,
+                  "\(SendMarkerAudit.violations(items: plan.clips))")
+        }
+
+        do {
+            let outside = UUID()   // an aux that is NOT in the lot
+            let src = clip(startTime: 0, lane: 0,
+                          plugins: [plugin(), ObjectPlugin.makeSendMarker(for: outside), plugin()],
+                          sends: [AuxSend(auxID: outside, levelDb: -3)])
+            let cb = CrossProjectImport.Clipboard(clips: [src], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            check("a send to an aux OUTSIDE the batch is dropped, and its marker with it",
+                  plan.clips[0].sends.isEmpty && plan.clips[0].plugins.count == 2
+                  && !plan.clips[0].plugins.contains(where: \.isSendMarker))
+            check("the audit finds nothing", SendMarkerAudit.violations(items: plan.clips).isEmpty)
         }
 
         // MARK: - A consolidated object always becomes a new definition

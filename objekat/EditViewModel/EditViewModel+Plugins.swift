@@ -194,7 +194,11 @@ extension EditViewModel {
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
     private func rackSpec(for plugins: [ObjectPlugin]) -> [[String: Any]] {
-        plugins.map { p in
+        plugins.compactMap { p in
+            // A send's marker is not a plugin: the engine has nothing to resolve for it, and an entry it
+            // could not resolve would come back in `failed` and be ERASED from the model (step 2.3
+            // gives it a place in the spec, as an ordering token).
+            if p.isSendMarker { return nil }
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
@@ -788,7 +792,11 @@ extension EditViewModel {
                     continue
                 }
                 i += 1
-                if let fb = p.fxBlock {
+                if p.isSendMarker {
+                    // The copy of an object keeps its sends (same auxes): its markers go with them, each
+                    // with an id of its own.
+                    out.append(p.copiedSendMarker())
+                } else if let fb = p.fxBlock {
                     out.append(copyBlock(p, fb))
                 } else if let rack = p.rack {
                     out.append(ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,

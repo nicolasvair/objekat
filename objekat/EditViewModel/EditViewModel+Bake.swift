@@ -125,6 +125,10 @@ extension EditViewModel {
         // the restoration flattens/loses the parallel structure. Ids and links regenerated on the leaves.
         func freshPlugins(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
             plugins.map { p in
+                if let m = p.sendMarker {
+                    // A fresh id; an aux internal to the sub-tree follows it to its copy (as the send does).
+                    return ObjectPlugin.makeSendMarker(for: idMap[m.auxID] ?? m.auxID)
+                }
                 if let fb = p.fxBlock { return freshBlock(p, fb) }
                 if let rack = p.rack {
                     return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,

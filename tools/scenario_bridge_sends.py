@@ -912,7 +912,7 @@ def section_P(c):
     level_and_index("P the old-session send now sounds", dry, wet, -6.0)
     c.send("project.save")
     d2 = json.load(open(path))
-    check("P: saved again as format 21", d2.get("version") == 21, d2.get("version"))
+    check("P: saved again as format 22", d2.get("version") == 22, d2.get("version"))
     blob = json.dumps(d2)
     check("P: neither the ghost send nor its curve survive the save", ghost not in blob, "")
 
