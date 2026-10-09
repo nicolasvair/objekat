@@ -183,7 +183,11 @@
 // sender's plugin list is full (the model shows it as `chainFull`).
 //   setSendLevel     : hot (the plugin smooths the ramp), no rebuild.
 //   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
-- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated;
+// `position`: where the send sits in its sender's list — 0 post-fader (the end), 1 pre-fader, 2 input,
+// 3 in the chain (placed per the order of the last compile, @see OBJBridgeSendPlugin.h). The actual move
+// is made by the transaction's commit and by every compile of the sender's chain, so that a recompile and
+// a sync cannot fight over the order.
+- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated position:(NSInteger)position;
 - (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
 
 // MARK: - Bake — rendu offline
@@ -573,6 +577,8 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)commitBridgeSync;
 // The newest published build, as plain data (plan §4.8): `build`, `taps`, `readers`. nil = none yet.
 - (NSDictionary<NSString*, id>* _Nullable)bridgeReport;
+// The sender's plugin list as roles, in order ({index, role, key?, aux?, tap_position?, type?}); nil if the host is unknown.
+- (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString* _Nonnull)uuid;
 // YES if the LIVE instance can take a sidechain (an AU still loading answers NO: not known yet).
 - (BOOL)pluginCanSidechain:(NSString* _Nonnull)pluginKey;
 // DEBUG tool: sets a numeric property on a live plugin's state (the latency tester's `time`).

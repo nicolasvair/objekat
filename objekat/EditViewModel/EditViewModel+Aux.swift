@@ -433,13 +433,79 @@ extension EditViewModel {
     /// Deletes the send entry `objectID` → `auxID` and the automation lane aimed at it. The engine side
     /// follows by itself: the bridge sync takes the plugin away.
     func removeSend(from objectID: UUID, to auxID: UUID) {
+        // The send's marker goes with it, in the same model write (one undo point): a marker without
+        // its send is an orphan, and the engine's recorded order would keep a token for nothing.
+        let hadMarker = find(id: objectID).map { $0.sendPosition(auxID: auxID) }.map { pos -> Bool in
+            if case .chain = pos { return true } else { return false }
+        } ?? false
         update(id: objectID) { obj in
             obj.sends.removeAll { $0.auxID == auxID }
+            obj.plugins = ObjectPlugin.removingSendMarkers(from: obj.plugins) { $0.auxID == auxID }
             obj.automation.removeAll { $0.param == .send(auxID: auxID) }
             obj.automationTouchOrder.removeAll { $0 == .send(auxID: auxID) }
         }
+        if hadMarker { recompileForSendMarker(objectID) }
         syncSendEngine(objectID: objectID, auxID: auxID)
         isDirty = true
+    }
+
+    // MARK: - Where a send takes its signal (INC 2)
+    //
+    // The model is `SoundObject.settingSendPosition` (pure); this is the view-model's side: the write,
+    // the engine, the undo point. The ENGINE places the plugin (`applySendPositionsForKey:`), told by
+    // the bridge sync (a position code per send) and by the chain compile (the order of the trunk, the
+    // marker as a token).
+
+    /// Recompiles the chain so that the engine knows where the markers are — only when there is a chain
+    /// to order: an object with no real plugin has nothing between its IN and its OUT, a chain send on
+    /// it is the pre-fader one (the engine's fallback, same signal) and materialising a chain for it
+    /// would cost a rack and a restart for nothing.
+    func recompileForSendMarker(_ objectID: UUID) {
+        guard let plugins = chainPlugins(objectID),
+              ObjectPlugin.chainEntryCount(plugins) > 0 else { return }
+        compileRack(objectID: objectID)
+    }
+
+    /// The machine's door (`send.set_position`): moves the send of `objectID` towards `auxID` to
+    /// `position`. `chain(i)` is clamped to the chain. False when the object has no such send (or is an
+    /// aux, which never sends); true otherwise, including when the send was already there (no write, no
+    /// engine work). Takes no undo point: the command bus (or the hand's door below) owns it.
+    @discardableResult
+    func setSendPosition(from objectID: UUID, to auxID: UUID, _ position: SendPosition) -> Bool {
+        guard let obj = find(id: objectID), !obj.isAux,
+              let current = obj.sendPosition(auxID: auxID) else { return false }
+        var wanted = position
+        if case .chain(let i) = position {
+            wanted = .chain(min(max(0, i), ObjectPlugin.chainEntryCount(obj.plugins)))
+        }
+        if current == wanted { return true }
+
+        var involvesMarker = false
+        if case .chain = current { involvesMarker = true }
+        if case .chain = wanted { involvesMarker = true }
+
+        update(id: objectID) { $0 = $0.settingSendPosition(auxID: auxID, wanted) }
+        if involvesMarker { recompileForSendMarker(objectID) }
+        // The position code reaches the engine plugin with the sync, which also places it.
+        scheduleBridgeSync()
+        isDirty = true
+        return true
+    }
+
+    /// The hand's door: an undo point BEFORE the write, popped if nothing moved (the convention).
+    @discardableResult
+    func setSendPositionFromHand(from objectID: UUID, to auxID: UUID, _ position: SendPosition) -> Bool {
+        guard let obj = find(id: objectID), !obj.isAux, let current = obj.sendPosition(auxID: auxID) else {
+            NSSound.beep()
+            return false
+        }
+        var wanted = position
+        if case .chain(let i) = position {
+            wanted = .chain(min(max(0, i), ObjectPlugin.chainEntryCount(obj.plugins)))
+        }
+        if current == wanted { return true }              // already there: no write, no undo point
+        pushUndo()
+        return setSendPosition(from: objectID, to: auxID, wanted)
     }
 
     /// Reconciles a send's engine state with the model (idempotent).

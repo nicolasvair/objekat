@@ -204,7 +204,8 @@ extension EditViewModel {
             let level = sendEntry(from: key.sender, to: key.aux)?.levelDb ?? sendMinDb
             let gated = sendIsGated(sender: key.sender, aux: key.aux)
             let result = engine.ensureBridgeSend(from: key.sender.uuidString, toAux: key.aux.uuidString,
-                                                 levelDb: level, gated: gated)
+                                                 levelDb: level, gated: gated,
+                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)))
             if result > 0 { laid.insert(key) }
             if result == 2 { bornAgain = true }
             if result < 0 { sendStatus[key] = .chainFull }      // the engine's own verdict
@@ -216,6 +217,17 @@ extension EditViewModel {
         bridgeLaidSends = laid
         bridgeLastTopology = (topology.nodes, topology.routes, plan)
         if bornAgain && pushingAutomation { pushAllAutomation() }
+    }
+
+    /// The engine's code for a send's position (OBJBridgeSendPlugin::TapPosition): 0 post-fader,
+    /// 1 pre-fader, 2 input, 3 on the trunk (the root order of the last compile places it).
+    static func enginePosition(of position: SendPosition?) -> Int {
+        switch position {
+        case .none, .some(.postFader): return 0
+        case .some(.preFader):         return 1
+        case .some(.input):            return 2
+        case .some(.chain):            return 3
+        }
     }
 
     /// Plugin id → why its key is refused, computed NOW from the model (pure: no engine call, no

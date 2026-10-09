@@ -84,7 +84,8 @@ extension CommandRegistry {
                          // no longer what is heard, and no gesture of the hand may change it
                          // (@see EditViewModel.selectedSendersWithFreeLevel). Here so that the lock
                          // can be asserted with no screen.
-                         "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))])
+                         "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))]
+                         .merging(CommandAdapters.sendPositionFields(of: object, send: send)) { _, new in new })
             }
             return .object(["id": .string(id.uuidString),
                             "sends": .array(sends),
@@ -145,6 +146,76 @@ extension CommandRegistry {
             }
             vm.removeSend(from: id, to: auxID)
             return .object(["id": .string(id.uuidString), "aux": .string(auxID.uuidString), "removed": .bool(true)])
+        }
+
+        register("send.set_position",
+                 summary: "Moves a send to another place on its sender's signal path: `input` (before the "
+                        + "chain), `chain` (between two plugins of the trunk: `index` = before the i-th "
+                        + "top-level plugin, or `before_plugin` / `after_plugin` = a top-level plugin id), "
+                        + "`pre_fader` (after the chain, before the fader) or `post_fader` (the default). "
+                        + "The send must exist (`send.create` makes one). `index` past the chain is clamped.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux."),
+                          ParamSpec("position", "string", required: false,
+                                    "input | chain | pre_fader | post_fader. Omit with before_plugin / after_plugin."),
+                          ParamSpec("index", "int", required: false, "chain: before the top-level plugin i (count = at the end)."),
+                          ParamSpec("before_plugin", "uuid", required: false, "chain: just before this top-level plugin."),
+                          ParamSpec("after_plugin", "uuid", required: false, "chain: just after this top-level plugin.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            try CommandAdapters.checkSendPair(id, auxID, in: vm)
+            let object = vm.find(id: id)!
+            guard object.sends.contains(where: { $0.auxID == auxID }) else {
+                throw CommandError(code: .not_found, message: "no send from \(id.uuidString) to \(auxID.uuidString)")
+            }
+            let position = try CommandAdapters.parseSendPosition(p, on: object)
+            guard vm.setSendPosition(from: id, to: auxID, position) else {
+                throw CommandError(code: .invalid_state, message: "this object cannot hold a send")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(auxID.uuidString)]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == auxID }!) { out[k] = v }
+            return .object(out)
+        }
+
+        register("send.create",
+                 summary: "Creates a send towards an aux at -inf (silent; raise it with `send.set_level`), "
+                        + "already at the requested position (default post_fader). Refused like the hand "
+                        + "refuses it (scope, loops, stem): the answer carries the reason. One send per "
+                        + "(object, aux): an existing one is moved, not duplicated.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux."),
+                          ParamSpec("position", "string", required: false,
+                                    "input | chain | pre_fader | post_fader (default post_fader)."),
+                          ParamSpec("index", "int", required: false, "chain: before the top-level plugin i."),
+                          ParamSpec("before_plugin", "uuid", required: false, "chain: just before this top-level plugin."),
+                          ParamSpec("after_plugin", "uuid", required: false, "chain: just after this top-level plugin.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            try CommandAdapters.checkSendPair(id, auxID, in: vm)
+            let object = vm.find(id: id)!
+            if object.isAux {
+                throw CommandError(code: .invalid_state, message: "an aux does not send")
+            }
+            let position = try CommandAdapters.parseSendPosition(p, on: object, fallback: .postFader)
+            if let why = vm.sendCreationRefusal(from: id, to: auxID) {
+                throw CommandError(code: .invalid_state, message: "send refused: \(why.rawValue)")
+            }
+            if !object.sends.contains(where: { $0.auxID == auxID }) {
+                vm.setSendEnabled(from: id, to: auxID, enabled: true)     // a silent entry, -inf
+            }
+            guard vm.setSendPosition(from: id, to: auxID, position) else {
+                throw CommandError(code: .invalid_state, message: "this object cannot hold a send")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(auxID.uuidString),
+                                            "level_db": .number(Double(vm.sendLevel(from: id, to: auxID)))]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == auxID }!) { out[k] = v }
+            return .object(out)
         }
 
         register("send.set_level",

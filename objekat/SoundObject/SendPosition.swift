@@ -85,6 +85,27 @@ extension ObjectPlugin {
         plugins.prefix(max(0, model)).reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }
     }
 
+    /// The `chain(i)` index that puts a marker immediately BEFORE the top-level plugin `id` (markers do
+    /// not count); nil if `id` is not a top-level non-marker entry.
+    static func chainIndex(ofTopLevelPlugin id: UUID, in plugins: [ObjectPlugin]) -> Int? {
+        var entries = 0
+        for p in plugins where !p.isSendMarker {
+            if p.id == id { return entries }
+            entries += 1
+        }
+        return nil
+    }
+
+    /// The real (non-marker) top-level entries on each side of the marker for `auxID`: the one before
+    /// it and the one after it, nil at the ends. nil overall if there is no such marker.
+    static func neighbours(ofMarkerFor auxID: UUID,
+                           in plugins: [ObjectPlugin]) -> (after: UUID?, before: UUID?)? {
+        guard let k = plugins.firstIndex(where: { $0.sendMarker?.auxID == auxID }) else { return nil }
+        let prev = plugins[..<k].last(where: { !$0.isSendMarker })?.id
+        let next = plugins[(k + 1)...].first(where: { !$0.isSendMarker })?.id
+        return (prev, next)
+    }
+
     /// How many top-level entries are not markers: the largest valid `chain(i)`.
     static func chainEntryCount(_ plugins: [ObjectPlugin]) -> Int {
         plugins.reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }

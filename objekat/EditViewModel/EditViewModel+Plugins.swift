@@ -193,12 +193,15 @@ extension EditViewModel {
 
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
-    private func rackSpec(for plugins: [ObjectPlugin]) -> [[String: Any]] {
+    private func rackSpec(for plugins: [ObjectPlugin], topLevel: Bool = false) -> [[String: Any]] {
         plugins.compactMap { p in
-            // A send's marker is not a plugin: the engine has nothing to resolve for it, and an entry it
-            // could not resolve would come back in `failed` and be ERASED from the model (step 2.3
-            // gives it a place in the spec, as an ordering token).
-            if p.isSendMarker { return nil }
+            // A send's marker is not a plugin: the engine has nothing to resolve for it. It travels as an
+            // ORDERING TOKEN, `{kind: "send", aux}`, at the root only (a marker lives nowhere else): the
+            // engine records the root order with it and -applySendPositionsForKey: reads the place of
+            // the send from there. It carries no `id` — nothing in the engine is created or erased for it.
+            if let m = p.sendMarker {
+                return topLevel ? ["kind": "send", "aux": m.auxID.uuidString] : nil
+            }
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
@@ -239,7 +242,7 @@ extension EditViewModel {
                      chainInDb: Float, chainOutDb: Float) -> [UUID] {
         guard let engine else { return [] }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
-                                                tree: rackSpec(for: plugins),
+                                                tree: rackSpec(for: plugins, topLevel: true),
                                                 chainInDb: chainInDb,
                                                 chainOutDb: chainOutDb) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })

@@ -89,4 +89,57 @@ enum SendMarkerAudit {
         visit(items)
         return n
     }
+
+    // MARK: - The engine's half
+
+    /// One entry of the engine's list for a sender (`OBJEngineCore chainLayoutForObjectID:`).
+    struct LayoutEntry: Equatable {
+        let index: Int
+        let role: String            // trimIn, trimOut, fader, windowFade, fx, send, other
+        let key: String?            // fx: the model plugin id
+        let aux: String?            // send: the aux id
+        let tapPosition: Int?       // send: the code the plugin was told (0 post, 1 pre, 2 input, 3 chain)
+    }
+
+    /// Where the engine put each of `object`'s sends against where the model asks (PURE: the layout is
+    /// data). `rule` strings: `index_before_<role>` / `index_after_<role>`, `tap_position`. Only sends
+    /// that are in the layout are judged (a send the plan did not lay has no plugin).
+    static func engineViolations(object: SoundObject, layout: [LayoutEntry]) -> [Violation] {
+        var out: [Violation] = []
+        func first(_ role: String) -> Int? { layout.first { $0.role == role }?.index }
+        let trimIn = first("trimIn"), trimOut = first("trimOut"), fader = first("fader"), window = first("windowFade")
+        func fx(_ id: UUID?) -> Int? {
+            guard let id else { return nil }
+            return layout.first { $0.role == "fx" && $0.key?.lowercased() == id.uuidString.lowercased() }?.index
+        }
+        for entry in layout where entry.role == "send" {
+            guard let aux = entry.aux.flatMap({ UUID(uuidString: $0) }),
+                  let position = object.sendPosition(auxID: aux) else { continue }
+            let at = entry.index
+            func bad(_ rule: String) { out.append(Violation(host: object.id, path: "send[\(aux.uuidString)]@\(at)", rule: rule)) }
+            func after(_ other: Int?, _ name: String) { if let o = other, !(at > o) { bad("index_after_" + name) } }
+            func before(_ other: Int?, _ name: String) { if let o = other, !(at < o) { bad("index_before_" + name) } }
+            let code: Int
+            switch position {
+            case .postFader:
+                code = 0
+                after(fader, "fader"); after(window, "windowFade")
+            case .preFader:
+                code = 1
+                after(trimOut, "trimOut"); before(fader, "fader")
+            case .input:
+                code = 2
+                before(trimIn ?? fader, trimIn != nil ? "trimIn" : "fader")
+            case .chain:
+                code = 3
+                after(trimIn, "trimIn")
+                let n = ObjectPlugin.neighbours(ofMarkerFor: aux, in: object.plugins)
+                after(fx(n?.after), "previous_plugin")
+                if let nextIndex = fx(n?.before) { before(nextIndex, "next_plugin") }
+                else { before(trimOut ?? fader, trimOut != nil ? "trimOut" : "fader") }
+            }
+            if let t = entry.tapPosition, t != code { bad("tap_position") }
+        }
+        return out
+    }
 }

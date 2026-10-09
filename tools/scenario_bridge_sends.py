@@ -24,7 +24,7 @@ Options:
                      report (`passes`, `gate_edges`, aligned readers…) and the sections that need the
                      new scope are skipped, every measured number is printed as a REFERENCE.
     --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
-                     Y2, Z2, P2 — INC 1 already used the letters P to T).
+                     Y2, Z2, P2 and K2 — INC 1 already used the letters P to T).
 
 NOT `--no-audio` (the bridge reads the device's clock); exits 2 if `app.info` says audio is not
 running. A DEBUG build (it reads `debug.bridge_report`). Exit: 0 if everything passes, 1 otherwise.
@@ -127,10 +127,12 @@ def send_readers(rep):
     return [r for r in eng.get("readers", []) if r.get("consumer") in ("auxInput", "aux")]
 
 
-def add_test(c, host, kind, latency_ms=None):
+def add_test(c, host, kind, latency_ms=None, gain_db=None):
     p = {"host": host, "type": kind}
     if latency_ms is not None:
         p["latency_ms"] = latency_ms
+    if gain_db is not None:
+        p["gain_db"] = gain_db
     return c.send("debug.add_test_plugin", p)
 
 
@@ -1084,6 +1086,303 @@ def section_F2(c):
     level_and_index("F2 after the slot is freed", dry, wet, -6.0)
 
 # --------------------------------------------------------------------------------------------------
+# INC 2 — where a send takes its signal (docs/plan_sends_rework.md §D.1). Sections carry a 2.
+# --------------------------------------------------------------------------------------------------
+
+def settle(c):
+    """The bridge sync is coalesced on the main queue: let it run, then run what it scheduled."""
+    wait(c)
+    time.sleep(0.3)
+    wait(c)
+
+
+def audit(c, label, want_senders=None):
+    """The model's bijection marker <-> send AND the engine's list against the model. Returns the answer."""
+    settle(c)
+    r = c.send("debug.send_marker_audit")
+    check(label + ": send_marker_audit (model + engine) has no violation", r.get("ok") is True, r.get("violations"))
+    if want_senders is not None:
+        check(label + ": the engine half judged %d sender(s)" % want_senders,
+              r.get("engine_senders_checked") == want_senders, r.get("engine_senders_checked"))
+    return r
+
+
+def where_in_list(layout, aux):
+    """Reads a sender's engine list (the audit's `engine_layouts`) and names the place of its send:
+    input | chain<n> (n plugins upstream) | pre | post."""
+    roles = {e["role"]: e["index"] for e in layout if e["role"] in ("trimIn", "trimOut", "fader", "windowFade")}
+    mine = [e for e in layout if e["role"] == "send" and e.get("aux") == aux]
+    if not mine:
+        return "absent"
+    i = mine[0]["index"]
+    if "trimIn" in roles and i < roles["trimIn"]:
+        return "input"
+    if "windowFade" in roles and i > roles["windowFade"]:
+        return "post"
+    if "fader" in roles and i > roles["fader"]:
+        return "post"
+    if "trimOut" in roles and i > roles["trimOut"]:
+        return "pre"
+    return "chain%d" % sum(1 for e in layout if e["role"] == "fx" and e["index"] < i)
+
+
+_K = []
+
+
+def pipeline_offset_db(c):
+    """The export's own offset against the file (0.2 comes out at 0.1838: -0.733 dB, the same for the
+    dry and for any wet), measured ONCE on a bare object: the levels below are re the SOURCE, corrected
+    by it, so that "the sum of the gains upstream" can be read straight off."""
+    if not _K:
+        fresh(c, "CAL")
+        c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})
+        d = render(c, "CAL.wav", 0.0, 3.0)
+        _K.append(20.0 * math.log10(d[B.peak_index(d)] / IMP_AMP))
+        print("       (pipeline offset of the export against the file: %.3f dB)" % _K[0])
+    return _K[0]
+
+
+def wet_db(wet):
+    pw = B.peak_index(wet)
+    if pw is None:
+        return None
+    return 20.0 * math.log10(max(abs(wet[pw]), 1e-12) / IMP_AMP) - (_K[0] if _K else 0.0)
+
+
+def position_row(c, x, a):
+    return [s for s in c.send("send.list", {"id": x})["sends"] if s["aux"] == a][0]
+
+
+def measure_wet_db(c, label, x, a):
+    dry, wet = measure(c, label, x, a, 0.0)
+    pd, pw = B.peak_index(dry), B.peak_index(wet)
+    db = wet_db(wet)
+    print("       %s: peak dry @%s, wet @%s, wet %s dB re source" % (label, pd, pw, None if db is None else "%.3f" % db))
+    return dry, wet, db
+
+
+# --------------------------------------------------------------------------------------------------
+# Q2 — the wet's level IS the sum of the gains upstream of the tap
+# --------------------------------------------------------------------------------------------------
+
+def section_Q2(c):
+    print("\n--- Q2  position of a send: the wet's level is the sum of the gains upstream of the tap")
+    if REF:
+        print("       (skipped in --ref: positions are INC 2)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "Q2")
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    created = c.send("send.create", {"id": x, "aux": a, "position": "input"})
+    check("Q2: send.create answers the position", created.get("position") == "input" and created.get("level_db") <= -59.0, created)
+    lay_send(c, x, a, 0.0)
+    audit(c, "Q2 created at input", want_senders=1)
+    # IN -6, [G -12], OUT -3, fader -20: what is upstream of each place
+    steps = [("input",   {"position": "input"},                  0.0,   "input"),
+             ("chain 0", {"position": "chain", "index": 0},      -6.0,  "chain0"),
+             ("chain 1", {"position": "chain", "index": 1},      -18.0, "chain1"),
+             ("pre",     {"position": "pre_fader"},               -21.0, "pre"),
+             ("post",    {"position": "post_fader"},              -41.0, "post"),
+             ("input again", {"position": "input"},              0.0,   "input"),
+             ("chain 1 again", {"position": "chain", "index": 1}, -18.0, "chain1")]
+    for name, params, expect, place in steps:
+        r = c.send("send.set_position", dict({"id": x, "aux": a}, **params))
+        check("Q2 %s: send.set_position answers %s" % (name, params["position"]), r.get("position") == params["position"], r)
+        rep = audit(c, "Q2 %s" % name, want_senders=1)
+        lay = (rep.get("engine_layouts") or {}).get(x, [])
+        got_place = where_in_list(lay, a)
+        check("Q2 %s: the engine's list puts the send at '%s'" % (name, place), got_place == place,
+              [(e["index"], e["role"]) for e in lay])
+        row = position_row(c, x, a)
+        check("Q2 %s: send.list says %s" % (name, params["position"]), row.get("position") == params["position"], row)
+        _, wet, db = measure_wet_db(c, "Q2_" + name.replace(" ", "_"), x, a)
+        check("Q2 %s: wet %.1f dB re source (+-0.05)" % (name, expect), db is not None and abs(db - expect) <= 0.05, db)
+    eng = (bridge_report(c).get("engine") or {})
+    rows = [r for r in eng.get("sends", []) if r.get("aux") == a]
+    lay = (c.send("debug.send_marker_audit").get("engine_layouts") or {}).get(x, [])
+    idx = [e["index"] for e in lay if e["role"] == "send"]
+    check("Q2: debug.bridge_report's list_index is the audit's", len(rows) == 1 and [rows[0].get("list_index")] == idx, (rows, idx))
+    check("Q2: the plugin was told chain (3)", rows and rows[0].get("tap_position") == 3, rows)
+
+
+# --------------------------------------------------------------------------------------------------
+# R2 — the marker keeps its place in the ARRAY
+# --------------------------------------------------------------------------------------------------
+
+def section_R2(c):
+    print("\n--- R2  the marker keeps its array place: reorder, then delete")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "R2")
+    g12 = add_test(c, x, "gainTester", gain_db=-12.0)["plugin"]
+    g7 = add_test(c, x, "gainTester", gain_db=-7.0)["plugin"]
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 1})
+    lay_send(c, x, a, 0.0)
+    audit(c, "R2 [G12 | G7]", want_senders=1)
+    check("R2: send.list names the plugins on each side",
+          position_row(c, x, a).get("after_plugin") == g12 and position_row(c, x, a).get("before_plugin") == g7,
+          position_row(c, x, a))
+    _, _, db = measure_wet_db(c, "R2_a", x, a)
+    check("R2: tapped between the two: -12 dB", db is not None and abs(db + 12.0) <= 0.05, db)
+    # Reorder: drop G7 at the front of the root series. A drop is REMOVE + INSERT: [G12, m, G7] becomes
+    # [G7, G12, m] — the marker keeps its place relative to the entries that stay (still after G12), and
+    # G7, which was downstream of it, is now upstream (docs/plan_sends_rework.md journal D.1.F: the plan's
+    # "-7" assumed a swap in place, which no gesture performs).
+    c.send("plugin.drop_at", {"from": x, "host": x, "plugin": g7, "series": "root", "at": 0})
+    audit(c, "R2 reordered", want_senders=1)
+    seq = ["marker" if e.get("is_send_marker") else e["id"] for e in c.send("plugin.list", {"host": x})["plugins"]]
+    check("R2: the array is now [G7, G12, marker]", seq == [g7, g12, "marker"], seq)
+    row = position_row(c, x, a)
+    _, _, db = measure_wet_db(c, "R2_b", x, a)
+    check("R2: the tap, still after G12, now has G7 upstream too: -19 dB (index %s)" % row.get("index"),
+          db is not None and abs(db + 19.0) <= 0.05, (db, row))
+    check("R2: send.list: chain 2, after G12, before nothing",
+          row.get("index") == 2 and row.get("after_plugin") == g12 and row.get("before_plugin") is None, row)
+    # Delete the first plugin (G7).
+    c.send("plugin.remove", {"host": x, "plugin": g7})
+    audit(c, "R2 first deleted", want_senders=1)
+    row = position_row(c, x, a)
+    _, _, db = measure_wet_db(c, "R2_c", x, a)
+    check("R2: G7 deleted, only G12 upstream: -12 dB", db is not None and abs(db + 12.0) <= 0.05, (db, row))
+    check("R2: the send is chain 1 (the position follows the array)", row.get("position") == "chain" and row.get("index") == 1, row)
+    # Delete the last one too: the marker stays, now in front of nothing.
+    c.send("plugin.remove", {"host": x, "plugin": g12})
+    audit(c, "R2 all deleted", want_senders=1)
+    row = position_row(c, x, a)
+    _, _, db = measure_wet_db(c, "R2_d", x, a)
+    check("R2: no plugin left: 0 dB, chain 0", db is not None and abs(db) <= 0.05 and row.get("index") == 0, (db, row))
+
+
+# --------------------------------------------------------------------------------------------------
+# V2 — latency: the wet stays on the dry's sample at every position; the tap's age follows the chain
+# --------------------------------------------------------------------------------------------------
+
+def section_V2(c):
+    print("\n--- V2  latency: the wet is on the dry's sample at every position")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "V2")
+    add_test(c, x, "latencyTester", latency_ms=20.0)
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    add_test(c, x, "latencyTester", latency_ms=10.0)
+    c.send("send.create", {"id": x, "aux": a, "position": "input"})
+    lay_send(c, x, a, 0.0)
+    ms = lambda v: int(round(v * SR / 1000.0))
+    # (name, params, expected level re source, expected age in samples)
+    steps = [("input",   {"position": "input"},                0.0,   0),
+             ("chain 0", {"position": "chain", "index": 0},    0.0,   0),
+             ("chain 1", {"position": "chain", "index": 1},    0.0,   ms(20)),
+             ("chain 2", {"position": "chain", "index": 2},    -12.0, ms(20)),
+             ("chain 3", {"position": "chain", "index": 3},    -12.0, ms(30)),
+             ("pre",     {"position": "pre_fader"},            -12.0, ms(30)),
+             ("post",    {"position": "post_fader"},           -12.0, ms(30))]
+    for name, params, expect, age in steps:
+        c.send("send.set_position", dict({"id": x, "aux": a}, **params))
+        audit(c, "V2 %s" % name, want_senders=1)
+        dry, wet, db = measure_wet_db(c, "V2_" + name.replace(" ", "_"), x, a)
+        pd, pw = B.peak_index(dry), B.peak_index(wet)
+        check("V2 %s: wet on the dry's sample" % name, pd is not None and pd == pw, (pd, pw))
+        check("V2 %s: level %.0f dB re source" % (name, expect), db is not None and abs(db - expect) <= 0.05, db)
+        rep = bridge_report(c)
+        rows = [r for r in (rep.get("engine") or {}).get("sends", []) if r.get("aux") == a]
+        got_age = rows[0].get("age_samples") if rows else None
+        print("       V2 %s: age_samples=%s (wanted %d)" % (name, got_age, age))
+        check("V2 %s: age_samples == %d" % (name, age), got_age is not None and abs(got_age - age) <= 1, rows)
+
+
+# --------------------------------------------------------------------------------------------------
+# K2 — the marker survives every gesture that rebuilds a chain (runtime half of the 2.2 tests)
+# --------------------------------------------------------------------------------------------------
+
+def markers_and_positions(c, ids, a):
+    """For each id: (position name, chain index) of its send to `a`, and the marker count in plugin.list."""
+    out_ = []
+    for i in ids:
+        rows = [s for s in c.send("send.list", {"id": i})["sends"] if s["aux"] == a]
+        mk = [e for e in c.send("plugin.list", {"host": i})["plugins"] if e.get("is_send_marker")]
+        out_.append((rows[0].get("position") if rows else None, rows[0].get("index") if rows else None, len(mk)))
+    return out_
+
+
+def section_K2(c):
+    print("\n--- K2  the marker survives duplicate, cut, copy/paste, group/ungroup, delete of a neighbour")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    x, a = cast_siblings(c, "K2")
+    g12 = add_test(c, x, "gainTester", gain_db=-12.0)["plugin"]
+    g7 = add_test(c, x, "gainTester", gain_db=-7.0)["plugin"]
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 1})
+    lay_send(c, x, a, 0.0)
+    audit(c, "K2 start")
+    check("K2: start: chain 1, one marker", markers_and_positions(c, [x], a) == [("chain", 1, 1)], markers_and_positions(c, [x], a))
+
+    d = c.send("object.duplicate", {"ids": [x]})["ids"]
+    audit(c, "K2 duplicate")
+    pos = markers_and_positions(c, d, a)
+    print("       K2: duplicate -> %s" % pos)
+    check("K2: the duplicate has its own send, still chain 1, one marker (the audit: no orphan, no duplicate)",
+          pos == [("chain", 1, 1)], pos)
+
+    pieces = c.send("object.split_at", {"seconds": 1.5, "ids": [x]})["ids"]
+    audit(c, "K2 cut")
+    pos = markers_and_positions(c, pieces, a)
+    print("       K2: cut -> %s" % pos)
+    check("K2: both halves of the cut keep chain 1 and one marker", len(pos) == 2 and all(p == ("chain", 1, 1) for p in pos), pos)
+
+    c.send("clipboard.copy", {"ids": pieces[:1]})
+    c.send("clipboard.paste", {})
+    audit(c, "K2 paste")
+    allobj = [o["id"] for o in c.send("object.list", {})["objects"] if o["id"] != a]
+    pos = markers_and_positions(c, allobj, a)
+    print("       K2: after paste, %d objects: %s" % (len(allobj), pos))
+    check("K2: every object that sends keeps one marker for one send",
+          all((p[0] is None and p[2] == 0) or p == ("chain", 1, 1) for p in pos), pos)
+
+    g = c.send("group.create", {"ids": allobj})["id"]
+    audit(c, "K2 group")
+    c.send("group.disband", {"id": g})
+    audit(c, "K2 ungroup")
+    pos = markers_and_positions(c, allobj, a)
+    check("K2: group then ungroup: the same positions", all((p[0] is None and p[2] == 0) or p == ("chain", 1, 1) for p in pos), pos)
+
+    # Deleting the plugin on the left of the marker: the marker is still there, now at index 0.
+    # (A copy is FX-linked by default: its plugins sit in bins, so take the first LEAF.)
+    def first_leaf(entries):
+        for e in entries:
+            if e.get("is_send_marker"):
+                continue
+            if e.get("is_fx_block"):
+                inner = first_leaf(e.get("plugins", []))
+                if inner:
+                    return inner
+                continue
+            return e["id"]
+        return None
+    c.send("plugin.remove", {"host": allobj[0], "plugin": first_leaf(c.send("plugin.list", {"host": allobj[0]})["plugins"])})
+    audit(c, "K2 neighbour deleted")
+    row = markers_and_positions(c, [allobj[0]], a)
+    print("       K2: after a neighbour is deleted: %s" % row)
+    check("K2: a neighbour deleted: one marker, chain position clamped to the plugins left",
+          row[0][0] == "chain" and row[0][2] == 1, row)
+
+    c.send("send.remove", {"id": allobj[0], "aux": a})
+    audit(c, "K2 send removed")
+    row = markers_and_positions(c, [allobj[0]], a)
+    check("K2: removing the send removes its marker (one undo point)", row == [(None, None, 0)], row)
+    c.send("edit.undo", {})
+    settle(c)
+    row = markers_and_positions(c, [allobj[0]], a)
+    audit(c, "K2 undo of the removal")
+    check("K2: undo brings the send AND its marker back", row[0][0] == "chain" and row[0][2] == 1, row)
+
+# --------------------------------------------------------------------------------------------------
 
 fixtures()
 with ObjekatClient(SOCK) as c:
@@ -1094,7 +1393,8 @@ with ObjekatClient(SOCK) as c:
                     ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("J", section_J),
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
-                    ("F2", section_F2)):
+                    ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
+                    ("K2", section_K2)):
         if want(sec):
             fn(c)
 

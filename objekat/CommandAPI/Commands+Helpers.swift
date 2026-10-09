@@ -74,6 +74,67 @@ extension CommandAdapters {
         }
     }
 
+    // MARK: Sends — position
+
+    /// The position a command asked for: `position` (+ `index`), or `before_plugin` / `after_plugin`
+    /// (a top-level plugin id, which means `chain`). `fallback` answers when nothing was asked.
+    static func parseSendPosition(_ p: CommandParams, on object: SoundObject,
+                                  fallback: SendPosition? = nil) throws -> SendPosition {
+        func topLevel(_ key: String) throws -> Int? {
+            guard let raw = try p.optionalString(key) else { return nil }
+            guard let id = UUID(uuidString: raw) else {
+                throw CommandError(code: .bad_params, message: "parameter '\(key)': invalid UUID ('\(raw)')")
+            }
+            guard let i = ObjectPlugin.chainIndex(ofTopLevelPlugin: id, in: object.plugins) else {
+                throw CommandError(code: .not_found,
+                                   message: "'\(key)': \(raw) is not a top-level plugin of this object's chain")
+            }
+            return i
+        }
+        let before = try topLevel("before_plugin")
+        let after = try topLevel("after_plugin")
+        if before != nil && after != nil {
+            throw CommandError(code: .bad_params, message: "give either before_plugin or after_plugin, not both")
+        }
+        let named = try p.optionalString("position")
+        if let named, named != "chain", before != nil || after != nil {
+            throw CommandError(code: .bad_params, message: "before_plugin / after_plugin mean position 'chain'")
+        }
+        if let i = before { return .chain(i) }
+        if let i = after { return .chain(i + 1) }
+        guard let named else {
+            if let fallback { return fallback }
+            throw CommandError(code: .bad_params, message: "parameter 'position' required (input, chain, pre_fader, post_fader)")
+        }
+        let index = try p.optionalInt("index")
+        if named == "chain" && index == nil {
+            throw CommandError(code: .bad_params, message: "position 'chain' needs 'index', 'before_plugin' or 'after_plugin'")
+        }
+        guard let position = SendPosition.named(named, index: index) else {
+            throw CommandError(code: .bad_params,
+                               message: "unknown position '\(named)' (input, chain, pre_fader, post_fader)")
+        }
+        return position
+    }
+
+    /// The position fields of a send, as `send.list` / `send.set_position` / `send.create` answer them.
+    static func sendPositionFields(of object: SoundObject, send: AuxSend) -> [String: JSONValue] {
+        let position = object.sendPosition(auxID: send.auxID) ?? .postFader
+        var out: [String: JSONValue] = ["position": .string(position.name),
+                                        // A send that is not post-fader follows the object's fades and
+                                        // window but not its volume / pan (Q-U5).
+                                        "follows_window": .bool(position != .postFader),
+                                        "index": .null, "after_plugin": .null, "before_plugin": .null]
+        if case .chain(let i) = position {
+            out["index"] = .int(i)
+            if let n = ObjectPlugin.neighbours(ofMarkerFor: send.auxID, in: object.plugins) {
+                out["after_plugin"] = n.after.map { .string($0.uuidString) } ?? .null
+                out["before_plugin"] = n.before.map { .string($0.uuidString) } ?? .null
+            }
+        }
+        return out
+    }
+
     // MARK: Plugins
 
     /// A plugin can live inside a BRANCH of a parallel block: the search has to flatten the

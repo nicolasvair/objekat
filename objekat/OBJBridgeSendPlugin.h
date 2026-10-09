@@ -2,9 +2,11 @@
 //  OBJBridgeSendPlugin.h
 //  objekat
 //
-//  A SEND, on the audio bridge: an engine-only plugin laid at the END of a sender's chain (after its
-//  fader and its window, so what it sends is what is HEARD of the sender), that carries the send's
-//  LEVEL and names the aux it feeds. docs/plan_sends_rework.md §A.2.
+//  A SEND, on the audio bridge: an engine-only plugin that carries the send's LEVEL and names the aux it
+//  feeds. By default it is laid at the END of a sender's chain (after its fader and its window, so what it
+//  sends is what is HEARD of the sender); since INC 2 the model can put it elsewhere in the list — before
+//  the fader, before the chain's IN gain, or between two plugins — and `-applySendPositionsForKey:` moves
+//  it there. docs/plan_sends_rework.md §A.2, §D.1.
 //
 //  Like ObjBridgeTapPlugin it is never processed through a PluginNode: the builder puts a
 //  BridgeTapNode in its place (createPluginNodeForList, patch 0037), which records the signal in the
@@ -76,6 +78,14 @@ public:
 
     //==============================================================================
     void setTargetAuxClip (EditItemID id)                   { auxClipID = id.toString(); }
+
+    /// WHERE the model wants this send in its sender's list (docs/plan_sends_rework.md §D.1.A): set by the
+    /// bridge sync, read by `-applySendPositionsForKey:` on the message thread only. 0 post-fader (the end
+    /// of the list), 1 pre-fader (before the fader), 2 input (before the chain's IN gain), 3 in the chain
+    /// (per the order the last compile recorded). Not state: it is rebuilt by every sync.
+    enum TapPosition { postFader = 0, preFader = 1, input = 2, chain = 3 };
+    void setTapPosition (int p) noexcept                    { tapPosition = p; }
+    int  getTapPosition() const noexcept                    { return tapPosition; }
 
     float getLevelDb() const                                { return levelParam->getCurrentValue(); }
     void  setLevelDb (float dB)                             { levelParam->setParameter (juce::jlimit (silenceDb, 12.0f, dB),
@@ -159,6 +169,7 @@ private:
     //==============================================================================
     juce::SmoothedValue<float> smoothedLevel;
     std::atomic<bool> gated { false };
+    int tapPosition = postFader;       // message thread only
 
     float currentGain() const
     {

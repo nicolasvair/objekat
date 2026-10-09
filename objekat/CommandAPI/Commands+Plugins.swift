@@ -185,7 +185,8 @@ extension CommandRegistry {
             let after = vm.chainPlugins(host) ?? []
             // `addPlugin` removes the entry if the engine cannot instantiate it: not checking
             // would have a command return "ok" while it laid nothing down.
-            guard after.count > before.count, let added = after.last else {
+            // `last(where:)`: a send's marker can sit at the end of the array (an append lands behind it).
+            guard after.count > before.count, let added = after.last(where: { !$0.isSendMarker }) else {
                 throw CommandError(code: .engine_error,
                                    message: "the engine could not instantiate '\(available.name)'")
             }
@@ -778,13 +779,42 @@ extension CommandRegistry {
                  answers `violations` [{host, path, rule}] — `orphan` (a marker with no send), `duplicate` \
                  (two markers for one aux), `nested` (inside a parallel block or a bin), `on_aux`, `on_stem`, \
                  `in_instruments`, and `phantom` (an entry with no plugin identity that is neither a block \
-                 nor a marker: what a marker becomes when a copy rebuilds it as a plugin) — plus `markers` \
+                 nor a marker: what a marker becomes when a copy rebuilds it as a plugin) — AND the engine's half: \
+                 for every sender whose sends are laid, `index_after_*` / `index_before_*` / `tap_position` \
+                 when the send plugin sits elsewhere in the list than the model asks (`engine_senders_checked` \
+                 says how many senders were judged; call it after `wait_idle`) — plus `markers` \
                  (how many, top level) and `ok`. The scenario asserts `ok` after every phase. Reads only.
                  """,
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
-            let violations = SendMarkerAudit.violations(items: vm.items, stems: vm.stems)
+            var violations = SendMarkerAudit.violations(items: vm.items, stems: vm.stems)
+            // The engine's half: for every sender with a send plugin, where it sits in the list against
+            // where the model asks. Run after `wait_idle` (the bridge sync is coalesced).
+            var engineChecked = 0
+            var layouts: [String: JSONValue] = [:]
+            if let engine = try? CommandContext.shared.requireEngine() {
+                @MainActor func visit(_ array: [SoundObject]) {
+                    for o in array {
+                        if o.sends.contains(where: { s in vm.bridgeLaidSends.contains(SendKey(sender: o.id, aux: s.auxID)) }),
+                           let raw = engine.chainLayout(forObjectID: o.id.uuidString) as? [[String: Any]] {
+                            let layout = raw.compactMap { d -> SendMarkerAudit.LayoutEntry? in
+                                guard let i = d["index"] as? Int, let role = d["role"] as? String else { return nil }
+                                return SendMarkerAudit.LayoutEntry(index: i, role: role, key: d["key"] as? String,
+                                                                   aux: d["aux"] as? String, tapPosition: d["tap_position"] as? Int)
+                            }
+                            engineChecked += 1
+                            layouts[o.id.uuidString] = JSONValue.fromFoundation(raw)
+                            violations += SendMarkerAudit.engineViolations(object: o, layout: layout)
+                        }
+                        if case .group(let children, _) = o.kind { visit(children) }
+                    }
+                }
+                visit(vm.items)
+            }
             return .object([
+                "engine_senders_checked": .int(engineChecked),
+                // Each checked sender's list as roles, in order — what a scenario reads to assert an index.
+                "engine_layouts": .object(layouts),
                 "ok": .bool(violations.isEmpty),
                 "markers": .int(SendMarkerAudit.markerCount(items: vm.items)),
                 "violations": .array(violations.map {
@@ -796,19 +826,21 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \
                  `objKeyProbe` (its output left = the direct signal, its right = the sidechain key, so an \
-                 export shows whether the key is aligned) or `latencyTester` (declares and applies a delay, \
-                 `latency_ms`). Answers `{plugin}`.
+                 export shows whether the key is aligned), `latencyTester` (declares and applies a delay, \
+                 `latency_ms`) or `gainTester` (a fixed gain, `gain_db`: the identifiable plugin of the \
+                 send-position proof). Answers `{plugin}`.
                  """,
                  params: [ParamSpec("host", "uuid", "Receiving object or stem."),
-                          ParamSpec("type", "string", "`objKeyProbe` or `latencyTester`."),
-                          ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay.")],
+                          ParamSpec("type", "string", "`objKeyProbe`, `latencyTester` or `gainTester`."),
+                          ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay."),
+                          ParamSpec("gain_db", "number", required: false, "gainTester only: the gain, in dB.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
             let host = try p.uuid("host")
             let type = try p.string("type")
-            guard type == "objKeyProbe" || type == "latencyTester" else {
-                throw CommandError(code: .bad_params, message: "type must be objKeyProbe or latencyTester")
+            guard type == "objKeyProbe" || type == "latencyTester" || type == "gainTester" else {
+                throw CommandError(code: .bad_params, message: "type must be objKeyProbe, latencyTester or gainTester")
             }
             guard let before = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
@@ -817,13 +849,34 @@ extension CommandRegistry {
             let available = AvailablePlugin(name: type, manufacturer: "Tracktion", identifier: type,
                                             formatName: "TracktionInternal")
             vm.addPlugin(objectID: host, available: available)
-            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last : nil }) else {
+            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last(where: { !$0.isSendMarker }) : nil }) else {
                 throw CommandError(code: .engine_error, message: "the engine could not instantiate '\(type)'")
             }
             if type == "latencyTester", let ms = try p.optionalDouble("latency_ms") {
                 _ = engine.debugSetPluginProperty("time", value: ms / 1000.0, forPlugin: added.id.uuidString)
             }
+            if type == "gainTester", let db = try p.optionalDouble("gain_db") {
+                _ = engine.debugSetPluginProperty("gainDb", value: db, forPlugin: added.id.uuidString)
+            }
             return .object(["plugin": .string(added.id.uuidString)])
+        }
+
+        register("debug.set_chain_gain",
+                 summary: "DEBUG. Sets a host's chain IN and/or OUT gain (dB) through the normal model path — "
+                        + "the gains the position proof of a send stacks up (no public command sets them).",
+                 params: [ParamSpec("host", "uuid", "Object or stem."),
+                          ParamSpec("in_db", "number", required: false, "Chain start gain."),
+                          ParamSpec("out_db", "number", required: false, "Chain end gain.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard vm.chainPlugins(host) != nil else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            if let v = try p.optionalDouble("in_db") { vm.setChainGain(objectID: host, output: false, dB: Float(v)) }
+            if let v = try p.optionalDouble("out_db") { vm.setChainGain(objectID: host, output: true, dB: Float(v)) }
+            let g = vm.chainGains(host)
+            return .object(["host": .string(host.uuidString), "in_db": .number(Double(g.inDb)), "out_db": .number(Double(g.outDb))])
         }
 
         register("debug.set_plugin_property",

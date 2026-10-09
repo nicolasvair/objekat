@@ -15,6 +15,7 @@
 #include "OBJBridgeTapPlugin.h"
 #include "OBJBridgeSendPlugin.h"
 #include "OBJKeyProbePlugin.h"
+#include "OBJGainTesterPlugin.h"
 #include "OBJAudioProbe.h"
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
@@ -524,13 +525,22 @@ struct CompileNode {
     // bloc parallèle (isRack) — `key` = id du rack-carrier ; `wetDb` = gain dB par voie
     std::vector<CompileSeries> voices;
     std::vector<float>         wetDb;
+    // JETON D'ORDRE d'un envoi (isSend) : la place d'un envoi sur le tronc, à la racine SEULEMENT.
+    // Ce n'est pas un plugin — `key` reste VIDE, donc ni compileSeries ni collectCompileKeys n'y touchent :
+    // jamais créé, jamais détruit, jamais dans `failed`. Il ne sert qu'à `chain.rootOrder`, que lit
+    // -applySendPositionsForKey:. `sendAux` = l'id de l'aux visé.
+    bool                       isSend = false;
+    std::string                sendAux;
 };
 
 static CompileSeries parseCompileSeries(NSArray<NSDictionary*>* arr);
 
 static CompileNode parseCompileNode(NSDictionary* d) {
     CompileNode n;
-    if ([d[@"kind"] isEqualToString:@"rack"]) {
+    if ([d[@"kind"] isEqualToString:@"send"]) {
+        n.isSend  = true;
+        n.sendAux = std::string([(d[@"aux"] ?: @"") UTF8String]);
+    } else if ([d[@"kind"] isEqualToString:@"rack"]) {
         n.isRack = true;
         n.key = std::string([(d[@"id"] ?: @"") UTF8String]);   // id du bloc → clé des gains de voie
         for (NSArray* v in (NSArray*)d[@"voices"])
@@ -1345,6 +1355,8 @@ struct OBJRenderChain {
          before:(const te::Plugin::Ptr&)anchor;
 // Sonde : journalise l'ordre RÉEL d'une chaîne compilée, branches parallèles comprises.
 - (void)dumpChainOrderForKey:(const std::string&)key in:(te::PluginList&)pl;
+// Où chaque envoi de `key` se tient dans la liste de son émetteur. YES si quelque chose a bougé.
+- (BOOL)applySendPositionsForKey:(const std::string&)key;
 // Helper générique de rendu offline en tâche de fond (clone d'Edit + EditRenderer async). `prepare`
 // applique le bypass spécifique (fader/fenêtre/fades) sur la piste clonée détachée à la racine.
 // `allowedClipIDs` restreint le rendu à ces clips (vide = toute la piste) : c'est ce qui ISOLE
@@ -1532,6 +1544,9 @@ struct OBJRenderChain {
         std::vector<std::string> pluginKeys;   // ordre série (source de vérité de l'ordre)
         te::Plugin::Ptr          trimIn;
         te::Plugin::Ptr          trimOut;
+        // L'ordre de la RACINE de la dernière compile, jetons d'envoi compris (« @émetteur|aux »).
+        // Ce que lit -applySendPositionsForKey: pour poser un envoi « dans la chaîne ».
+        std::vector<std::string> rootOrder;
     };
     std::unordered_map<std::string, OBJObjectChain> _objectChainMap;  // objectID → chaîne user
 
@@ -1713,6 +1728,7 @@ static BOOL gOBJAudioDisabled = NO;
         // The bridge SEND (patch 0039): the tap that carries a send's level.
         _engine->getPluginManager().createBuiltInType<te::ObjBridgeSendPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjKeyProbePlugin>();
+        _engine->getPluginManager().createBuiltInType<te::ObjGainTesterPlugin>();
         _engine->getPluginManager().createBuiltInType<te::LatencyPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
         // que de sauter l'appel — Tracktion s'attend à un device manager initialisé, et le
@@ -2565,6 +2581,8 @@ static te::Track* objOwningTrack(te::Clip& clip) {
                           end:window.getEnd().inSeconds()
                        fadeIn:fadeIn fadeOut:fadeOut];
     }
+    // A rebuilt tail lands AFTER the sends already in the list: put them back where the model wants them.
+    [self applySendPositionsForKey:key];
 }
 
 // Repose la fenêtre + les fades de l'objet (ObjWindowFade mémorisé). Conserve les fades
@@ -4747,7 +4765,8 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 // transaction dirty. The aux lists its sends in `objBridgeSends` (@see commitBridgeSync).
 // Returns 0 = not laid (aux not born yet, sender without a chain), 1 = laid and already there,
 // 2 = laid with a NEW plugin (its curve is gone: the caller pushes the automation again).
-- (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated {
+- (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated
+                        position:(NSInteger)position {
     if (!_edit || !senderID || !auxID) return 0;
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
 
@@ -4770,6 +4789,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         }
         if (std::fabs(send->getLevelDb() - levelDb) > 1.0e-4f) send->setLevelDb(levelDb);
         send->setGated(gated);
+        send->setTapPosition((int)position);       // placed by the commit (-applySendPositionsForKey:)
     };
 
     if (auto it = _bridgeSendMap.find(mk); it != _bridgeSendMap.end()) {
@@ -4802,9 +4822,136 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     send->setTargetAuxClip(ait->second->itemID);
     send->setLevelDb(levelDb);
     send->setGated(gated);
+    send->setTapPosition((int)position);
     _bridgeSendMap[mk] = p;
     _bridgeDirty = true;
     return 2;
+}
+
+// WHERE each send of `key` sits in the sender's plugin list — the one owner of that question
+// (docs/plan_sends_rework.md §D.1.A.d). The list is
+//     [ channel mode? | instrument? | trimIn | FX… | trimOut | fader | window-fade | sends… ]
+// and the model asks, per send: post-fader (the end, after the window-fade: today's place), pre-fader
+// (after trimOut, before the fader), input (before trimIn; before the fader when no chain is
+// materialised — the same signal) or in the chain (between the plugins, as the last compile recorded the
+// root order, `@sender|aux` tokens included). A send is moved ONLY when it is not where it should be
+// (movePluginBefore detaches the plugin for the time of the move, which wakes its listeners), so that the
+// common case — nothing to do — costs a few index reads. Returns YES when something moved: the caller
+// owes a rebuild (compileUserRack and commitBridgeSync both restart).
+//
+// Called from compileUserRackForObjectID: (the compile has just put the plugins before trimOut, possibly
+// on the wrong side of a send), from commitBridgeSync (a send was laid or its position changed) and from
+// installObjectChainTail: (a new fader / window were appended behind the sends). In any order: each call
+// reads the whole truth, none depends on the others having run.
+- (BOOL)applySendPositionsForKey:(const std::string&)key {
+    if (!_edit) return NO;
+    te::PluginList* pl = [self userPluginListForKey:key];
+    if (!pl) return NO;
+
+    const std::string prefix = key + "|";
+    std::vector<std::pair<std::string, te::Plugin::Ptr>> mine;
+    for (auto& [mk, p] : _bridgeSendMap)
+        if (p && mk.size() > prefix.size() && mk.compare(0, prefix.size(), prefix) == 0)
+            mine.emplace_back(mk, p);
+    if (mine.empty()) return NO;
+    std::sort(mine.begin(), mine.end(), [](auto& a, auto& b) { return a.first < b.first; });
+
+    auto inList = [&](const te::Plugin::Ptr& p) -> te::Plugin::Ptr {
+        return (p && pl->indexOf(p.get()) >= 0) ? p : te::Plugin::Ptr();
+    };
+    te::Plugin::Ptr trimIn, trimOut, fader, window;
+    const std::vector<std::string>* rootOrder = nullptr;
+    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) {
+        trimIn = inList(it->second.trimIn);
+        trimOut = inList(it->second.trimOut);
+        rootOrder = &it->second.rootOrder;
+    }
+    if (auto it = _faderGainMap.find(key); it != _faderGainMap.end())   fader  = inList(it->second);
+    if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) window = inList(it->second);
+
+    bool moved = false;
+    auto idx = [&](const te::Plugin::Ptr& p) { return pl->indexOf(p.get()); };
+    auto moveBefore = [&](const te::Plugin::Ptr& p, const te::Plugin::Ptr& anchor) {
+        movePluginBefore(*pl, p, anchor);
+        moved = true;
+    };
+    auto sendAt = [&](const std::string& mk) -> te::Plugin::Ptr {
+        auto it = _bridgeSendMap.find(mk);
+        return it != _bridgeSendMap.end() ? inList(it->second) : te::Plugin::Ptr();
+    };
+    auto kindOf = [&](const te::Plugin::Ptr& p) {
+        auto* s = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
+        return s ? s->getTapPosition() : (int)te::ObjBridgeSendPlugin::postFader;
+    };
+
+    // The three places that do not depend on the chain's content.
+    for (auto& [mk, raw] : mine) {
+        te::Plugin::Ptr p = inList(raw);
+        if (!p) continue;
+        switch (kindOf(p)) {
+            case te::ObjBridgeSendPlugin::preFader:
+                if (!fader) break;
+                if (!(idx(p) < idx(fader) && (!trimOut || idx(p) > idx(trimOut)))) moveBefore(p, fader);
+                break;
+            case te::ObjBridgeSendPlugin::input: {
+                const te::Plugin::Ptr anchor = trimIn ? trimIn : fader;     // no chain: the same signal
+                if (!anchor) break;
+                if (!(idx(p) < idx(anchor))) moveBefore(p, anchor);
+                break;
+            }
+            case te::ObjBridgeSendPlugin::chain:
+                break;                                                      // below
+            default: {                                                      // post-fader: the end
+                const int floor = juce::jmax(window ? idx(window) : -1, fader ? idx(fader) : -1);
+                if (!(idx(p) > floor)) moveBefore(p, te::Plugin::Ptr());
+                break;
+            }
+        }
+    }
+
+    // In the chain: the order of the root, tokens included.
+    bool anyChain = false;
+    for (auto& [mk, raw] : mine) if (kindOf(raw) == te::ObjBridgeSendPlugin::chain) { anyChain = true; break; }
+    if (anyChain) {
+        std::unordered_set<std::string> placed;
+        const te::Plugin::Ptr endAnchor = trimOut ? trimOut : fader;
+        if (rootOrder) {
+            te::Plugin::Ptr prev = trimIn;
+            for (size_t i = 0; i < rootOrder->size(); ++i) {
+                const std::string& e = (*rootOrder)[i];
+                if (e.empty()) continue;
+                if (e[0] != '@') {
+                    if (auto pit = _pluginMap.find(e); pit != _pluginMap.end()) {
+                        if (auto q = inList(pit->second)) prev = q;
+                    }
+                    continue;
+                }
+                te::Plugin::Ptr p = sendAt(e.substr(1));
+                if (!p || kindOf(p) != te::ObjBridgeSendPlugin::chain) continue;
+                te::Plugin::Ptr anchor;
+                for (size_t j = i + 1; j < rootOrder->size() && !anchor; ++j) {
+                    const std::string& f = (*rootOrder)[j];
+                    if (f.empty() || f[0] == '@') continue;
+                    if (auto pit = _pluginMap.find(f); pit != _pluginMap.end()) anchor = inList(pit->second);
+                }
+                if (!anchor) anchor = endAnchor;
+                const bool ok = (!anchor || idx(p) < idx(anchor)) && (!prev || idx(p) > idx(prev));
+                if (!ok) moveBefore(p, anchor);
+                prev = p;
+                placed.insert(e.substr(1));
+            }
+        }
+        // A chain send whose marker has not been compiled yet: the end of the chain, where it taps the
+        // whole of it, until the compile that carries the marker arrives.
+        for (auto& [mk, raw] : mine) {
+            if (placed.count(mk)) continue;
+            te::Plugin::Ptr p = inList(raw);
+            if (!p || kindOf(p) != te::ObjBridgeSendPlugin::chain || !endAnchor) continue;
+            if (!(idx(p) < idx(endAnchor))) moveBefore(p, endAnchor);
+        }
+    }
+
+    return moved;
 }
 
 // The audibility gate of a send, hot: no rebuild, the plugin's smoother does the rest.
@@ -4901,6 +5048,16 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     }
     [self writeBridgeSendLists];
 
+    // Where each send sits in its sender's list: one owner (-applySendPositionsForKey:), called here for
+    // every sender this sync touched and by every compile of a chain. A move that changed an index
+    // rides the rebuild below.
+    {
+        std::set<std::string> senders;
+        for (auto& mk : _bridgeTouchedSends) senders.insert(mk.substr(0, mk.find('|')));
+        for (auto& sender : senders)
+            if ([self applySendPositionsForKey:sender]) _bridgeDirty = true;
+    }
+
     // ONE rebuild for the whole sync. `_latencyResyncPending`: the rebuild compensates the latency
     // that follows, the watcher must not ask for a second one.
     if (_bridgeDirty) {
@@ -4954,12 +5111,20 @@ static void objLayBridgeWires(te::Plugin& plugin) {
                            @"latest_end": @(t.latestEnd), @"runs": runs }];
     }
 
+    // The sends this engine lays, by plugin id: the readers of an aux name the SEND plugin that feeds
+    // them, and a send is not in `_pluginMap`.
+    std::unordered_map<uint64_t, std::string> sendKeyByItemID;
+    for (auto& [mk, p] : _bridgeSendMap) if (p) sendKeyByItemID[p->itemID.getRawID()] = mk;
+
     NSMutableArray* readers = [NSMutableArray array];
     for (auto& rd : r.readers) {
         const juce::String tapID = rd.tap.toString();
         const juce::String inst = rd.destInstance, consumer = rd.consumer, status = rd.status;
         const juce::String auxItemID = rd.aux.isValid() ? rd.aux.toString() : juce::String();
-        [readers addObject:@{ @"plugin": pluginKeyFor(rd.plugin), @"dest_instance": objNS(inst),
+        id sendKey = [NSNull null];
+        if (auto sit = sendKeyByItemID.find(rd.plugin.getRawID()); sit != sendKeyByItemID.end())
+            sendKey = [NSString stringWithUTF8String:sit->second.c_str()];
+        [readers addObject:@{ @"plugin": pluginKeyFor(rd.plugin), @"send": sendKey, @"dest_instance": objNS(inst),
                               @"aux": rd.aux.isValid() ? (id) objNS(auxItemID) : (id) [NSNull null],
                               @"tap": objNS(tapID), @"consumer": objNS(consumer), @"rank": @(rd.rank),
                               @"l_ref": @(rd.lRef), @"declared": @(rd.declared),
@@ -4970,11 +5135,80 @@ static void objLayBridgeWires(te::Plugin& plugin) {
                               @"blocks_torn": @(rd.blocksTorn) }];
     }
 
+    // Per send: where it sits in its sender's list, the position the plugin was told, whether an
+    // envelope source is set, and the AGE of its tap (what the graph believes the signal has
+    // accumulated in latency at that point — 0 / 20 ms / … in the position proof).
+    NSMutableArray* sends = [NSMutableArray array];
+    {
+        std::vector<std::string> mks;
+        for (auto& [mk, p] : _bridgeSendMap) if (p) mks.push_back(mk);
+        std::sort(mks.begin(), mks.end());
+        for (auto& mk : mks) {
+            auto sp = _bridgeSendMap[mk];
+            const auto bar = mk.find('|');
+            const std::string sender = mk.substr(0, bar), aux = mk.substr(bar + 1);
+            te::PluginList* pl = [self userPluginListForKey:sender];
+            id age = [NSNull null];
+            for (auto& rd : r.readers) if (rd.plugin == sp->itemID) { age = @(rd.sourceAge); break; }
+            auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(sp.get());
+            [sends addObject:@{ @"sender": [NSString stringWithUTF8String:sender.c_str()],
+                                @"aux": [NSString stringWithUTF8String:aux.c_str()],
+                                @"list_index": @(pl ? pl->indexOf(sp.get()) : -1),
+                                @"tap_position": @(bs ? bs->getTapPosition() : -1),
+                                @"age_samples": age }];
+        }
+    }
+
     return @{ @"build": @{ @"id": @(r.build.id), @"passes": @(r.build.passes),
                            @"converged": @(r.build.converged), @"sample_rate": @(r.build.sampleRate),
                            @"block_size": @(r.build.blockSize), @"gate_edges": @(r.build.gateEdges),
                            @"gate_refused": @(r.build.gateRefused) },
-              @"taps": taps, @"readers": readers };
+              @"taps": taps, @"readers": readers, @"sends": sends };
+}
+
+// The sender's plugin list as ROLES, in order — what the audit and the position scenarios read. Each
+// entry: {index, role, key?, aux?}. Roles: trimIn, trimOut, fader, windowFade, fx (a user plugin or a
+// carrier: `key` = its model id), send (`aux`, `tap_position`), other (an instrument, a channel-mode
+// plugin, anything the engine added on its own: `type`).
+- (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString*)uuid {
+    if (!_edit || !uuid) return nil;
+    const std::string key([uuid UTF8String]);
+    te::PluginList* pl = [self userPluginListForKey:key];
+    if (!pl) return nil;
+    std::unordered_map<te::Plugin*, std::string> userKey, sendKey;
+    for (auto& [k, p] : _pluginMap) if (p) userKey[p.get()] = k;
+    for (auto& [mk, p] : _bridgeSendMap) if (p) sendKey[p.get()] = mk;
+    te::Plugin *trimIn = nullptr, *trimOut = nullptr, *fader = nullptr, *window = nullptr;
+    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) {
+        trimIn = it->second.trimIn.get();
+        trimOut = it->second.trimOut.get();
+    }
+    if (auto it = _faderGainMap.find(key); it != _faderGainMap.end()) fader = it->second.get();
+    if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) window = it->second.get();
+
+    NSMutableArray* out = [NSMutableArray array];
+    for (int i = 0; i < pl->size(); ++i) {
+        te::Plugin* p = (*pl)[i];
+        NSMutableDictionary* e = [NSMutableDictionary dictionaryWithObject:@(i) forKey:@"index"];
+        if (p == trimIn)       e[@"role"] = @"trimIn";
+        else if (p == trimOut) e[@"role"] = @"trimOut";
+        else if (p == fader)   e[@"role"] = @"fader";
+        else if (p == window)  e[@"role"] = @"windowFade";
+        else if (auto sit = sendKey.find(p); sit != sendKey.end()) {
+            e[@"role"] = @"send";
+            e[@"aux"] = [NSString stringWithUTF8String:sit->second.substr(sit->second.find('|') + 1).c_str()];
+            if (auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(p)) e[@"tap_position"] = @(bs->getTapPosition());
+        } else if (auto uit = userKey.find(p); uit != userKey.end()) {
+            e[@"role"] = @"fx";
+            e[@"key"] = [NSString stringWithUTF8String:uit->second.c_str()];
+        } else {
+            e[@"role"] = @"other";
+            const juce::String type = p->getPluginType();
+            e[@"type"] = objNS(type);
+        }
+        [out addObject:e];
+    }
+    return out;
 }
 
 // MARK: - Bus de stem (FolderTrack submix par stem)
@@ -8257,6 +8491,16 @@ static void objDumpPluginList(te::PluginList& pl,
     _compilingHostKey.clear();
     chain.pluginKeys = newOrder;
     for (auto& pk : newOrder) _pluginOwnerHost[pk] = key;
+
+    // L'ordre de la racine, jetons d'envoi compris, puis la pose des envois : le compile vient de
+    // reposer les plugins avant trimOut, il a pu laisser un envoi du mauvais côté d'un voisin. Le
+    // redémarrage ci-dessous porte ce déplacement éventuel.
+    chain.rootOrder.clear();
+    for (auto& n : root) {
+        if (n.isSend) chain.rootOrder.push_back("@" + sendMapKey(key, n.sendAux));
+        else if (!n.key.empty()) chain.rootOrder.push_back(n.key);
+    }
+    [self applySendPositionsForKey:key];
 
     NSLog(@"[FX] compile '%@' OK — %lu plugins", uuid, (unsigned long)newOrder.size());
     [self dumpChainOrderForKey:key in:*pl];
