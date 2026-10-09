@@ -534,6 +534,41 @@ block of `EditViewModel+Aux.swift:40-65`, `OBJEngineCore.mm:4364-4381`, `OBJEngi
 
 ---
 
+## B.J Journal of INC 1 (recorded as it was done)
+
+### 1.0 / 1.1 — recorded on `main` AS IS (9 October 2026, headless Debug instance WITH audio)
+
+`tools/scenario_bridge_sends.py --ref` against `main` (`f3c805c4`, legacy `ObjAuxSendPlugin`). Fixtures: an
+impulse at 0.2 (not 0.9: dry + wet at −6 dB clipped the export), a 1 kHz sine at −12 dBFS. Wet = E_on − E_off;
+every case first asserts that two identical exports subtract to exactly zero (offline renders are
+deterministic).
+
+| Case | Measured on `main` |
+|---|---|
+| A1 siblings at the Main, A2 siblings in a stem, A3 siblings inside a group; send −6 dB | peak wet and peak dry at the same sample (48000); level −6.000 dB in all three |
+| D, 20 ms `latencyTester` on the sender / on the aux / on a sibling, send −6 dB | wet @48000 = dry @48000, level −6.000 dB in all three (the legacy delay line is exact in scope) |
+| **M1 (Q8), level AUTOMATED flat at −6 dB** | (wet − dry) − curve over 360 windows of 10 ms: **min −6.99 dB, mean −6.05 dB, max −5.52 dB**. The automated wet sits ~6 dB UNDER its own curve and wobbles by 1.5 dB from window to window. |
+| **M2 (Q8), automated ramp −30 → 0 dB over 1 s** | min −8.26 dB, mean −6.29 dB, max −4.96 dB; no hole (no window < −90 dB) |
+| O references | `O_A1/A2/A3/Dsender/Daux/Dsibling_main.wav`, bit-identical across two runs (0.00 LSB) |
+
+Q8 is therefore CONFIRMED and larger than the plan assumed: the legacy path is not merely "a bit coarse
+when automated", it delivers a wet about 6 dB too low and unsteady. The bridge send applies the level once
+per block on the copy, which removes the cause (§A.2).
+
+Step 1.0 answers (code read, nothing run):
+- Invariant I1: `compensatesOwnPluginLatency()` is overridden nowhere (`ContainerClip.h:65` says so; only the
+  `Clip` base returns false). Invariant I2: no `setTempoAdjustment` / `setSpeedCompensation` / Link call in
+  `objekat/`.
+- (a) `refreshContainerSpanForKey:` (`OBJEngineCore.mm:2404`): for a BOUNDED group the span IS the model
+  window (`_groupBoundsMap`), so an aux child counts exactly as far as the model's window counts it; for an
+  INFINITE group the envelope skips aux children (`isObjAuxBus`).
+- (b) An infinite aux inside a group: its own bounds are clamped to `[start, start + kOpenWindowSecs]`
+  (never 1e9) and it is skipped by the envelope, so it never inflates its group's span.
+- (c) `linkTarget(for:)` resolves through `laneEntry(forID:)`, which is `nil` for an object with no lane
+  entry: step 1.8 must therefore draw the wire to the visible ancestor group when the aux is hidden.
+
+---
+
 # C. INC 1 — test plan
 
 Run by the test agent after implementation, in this order. Everything is a Debug build unless said.
