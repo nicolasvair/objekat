@@ -44,7 +44,14 @@ extension CommandRegistry {
                  summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id.",
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
-                                    "Other objects to replace with a linked instance.")],
+                                    "Other objects to replace with a linked instance."),
+                          ParamSpec("mid_chain_sends", "string", required: false,
+                                    "What to do with the sends that tap INSIDE the chain being baked "
+                                  + "(`input` or `chain` position; `pre_fader` and `post_fader` are "
+                                  + "not concerned): `refuse` (default) fails with invalid_state and "
+                                  + "lists them, nothing changed; `fold` puts them back to post-fader; "
+                                  + "`remove` deletes them. Both other choices are one undo point of "
+                                  + "their own, taken before the bake.")],
                  // The bake pushes its own undo when it commits (`finishConsolidate`).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -64,13 +71,32 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state, message: "a render is already running on this object")
             }
             let alsoLink = p.raw["also_link"] == nil ? [] : try p.uuids("also_link")
+            // The sends that tap inside the chain (docs/plan_sends_rework.md, Q-U6): no alert is ever
+            // possible from here, so the caller says what to do, and the safe default is to refuse.
+            let policyName = try p.string("mid_chain_sends", or: SendBakePolicy.Choice.refuse.rawValue)
+            guard let policy = SendBakePolicy.Choice(rawValue: policyName) else {
+                throw CommandError(code: .bad_params,
+                                   message: "mid_chain_sends: refuse, fold or remove (got '\(policyName)')")
+            }
+            let concerned = vm.midChainSends(of: [id] + alsoLink)
+            if policy == .refuse, !concerned.isEmpty {
+                throw CommandError(
+                    code: .invalid_state,
+                    message: "mid_chain_sends: \(concerned.count) send(s) tap inside the chain that the bake "
+                           + "would destroy; pass mid_chain_sends = fold or remove, or move them first",
+                    details: .array(concerned.map { c in
+                        .object(["object": .string(c.objectID.uuidString),
+                                 "aux": .string(c.auxID.uuidString),
+                                 "position": .string(c.position.name)])
+                    }))
+            }
             let jobID = JobRegistry.shared.begin(command: "consolidate.make")
             if object.isGroup {
-                vm.consolidate(groupID: id, alsoLinkIDs: alsoLink)
+                vm.consolidate(groupID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             } else {
                 // A lone clip is first wrapped in a one-item group: that wrapper is what carries
                 // fades and live sends on the instance.
-                vm.consolidateWrappingClip(clipID: id, alsoLinkIDs: alsoLink)
+                vm.consolidateWrappingClip(clipID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             }
             CommandAdapters.followBake(jobID, in: vm) {
                 .object(["definitions": .int(vm.consolidateDefinitions.count)])

@@ -11915,6 +11915,167 @@
         }
       }
     },
+    "sendBake.at.chain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in the chain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en la cadena"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dans la chaîne"
+          }
+        }
+      }
+    },
+    "sendBake.at.input": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "at the input"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en la entrada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "à l'entrée"
+          }
+        }
+      }
+    },
+    "sendBake.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold back to post-fader"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a post-fader"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replacer après le fader"
+          }
+        }
+      }
+    },
+    "sendBake.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidating bakes the chain into the wave: these sends can no longer tap where they are.\n\n%@\n\nFolding them back to post-fader keeps the send (its level and its curve); deleting removes it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidar fija la cadena en la onda: estos envíos ya no pueden tomar su señal donde están.\n\n%@\n\nVolver a colocarlos después del fader conserva el envío (su nivel y su curva); eliminarlos lo quita."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolider fige la chaîne dans l'onde : ces envois ne peuvent plus prendre leur signal là où ils sont.\n\n%@\n\nLes replacer après le fader garde l'envoi (son niveau et sa courbe) ; les supprimer le retire."
+          }
+        }
+      }
+    },
+    "sendBake.line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ → %@ (%@)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ → %@ (%@)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ → %@ (%@)"
+          }
+        }
+      }
+    },
+    "sendBake.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the sends"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar los envíos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer les envois"
+          }
+        }
+      }
+    },
+    "sendBake.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some sends tap inside the chain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay envíos que toman su señal dentro de la cadena"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Des envois prennent leur signal dans la chaîne"
+          }
+        }
+      }
+    },
     "shortcut.escape": {
       "extractionState": "manual",
       "localizations": {

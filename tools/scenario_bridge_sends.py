@@ -1813,6 +1813,168 @@ def section_X2(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# Y2 — consolidate / bake and the sends that tap inside the chain (Q-U6, confirmed)
+# --------------------------------------------------------------------------------------------------
+
+def y2_build(c, name, params, fader_db=None):
+    """X = impulse with [G(-12)], IN -6, OUT -3, its send to a root aux at 0 dB at `params`."""
+    fresh(c, name)
+    x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 8})["id"]
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    if fader_db is not None:
+        c.send("object.set_gain", {"ids": [x], "db": fader_db})
+    c.send("send.create", dict({"id": x, "aux": a}, **params))
+    lay_send(c, x, a, 0.0)
+    settle(c)
+    return x, a
+
+
+def y2_fingerprint(c, x):
+    """What 'nothing changed' means: the object, its chain, its sends, the list of objects."""
+    return json.dumps([c.send("object.get", {"id": x}), c.send("plugin.list", {"host": x}),
+                       c.send("send.list", {"id": x}),
+                       sorted(o["id"] for o in c.send("object.list", {})["objects"])], sort_keys=True)
+
+
+def y2_consolidate(c, x, **extra):
+    r = c.send("consolidate.make", dict({"id": x}, **extra))
+    c.send("job.wait", {"id": r["job_id"], "timeout_ms": 180000})
+    settle(c)
+    return r
+
+
+def y2_placement(c, before_ids):
+    new = [o for o in c.send("object.list", {})["objects"] if o["id"] not in before_ids and o["kind"] != "aux"]
+    tops = [o for o in new if o.get("parent") is None]
+    return tops[0]["id"] if tops else None
+
+
+def section_Y2(c):
+    print("\n--- Y2  consolidate: the sends that tap inside the chain (default refuse, fold, remove; pre-fader not concerned)")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    chain = {"position": "chain", "index": 1}
+
+    # --- refuse (the default)
+    x, a = y2_build(c, "Y2refuse", chain)
+    before = y2_fingerprint(c, x)
+    for label, extra in (("default", {}), ("explicit refuse", {"mid_chain_sends": "refuse"})):
+        try:
+            c.send("consolidate.make", dict({"id": x}, **extra))
+            check("Y2 %s: refused" % label, False, "it was accepted")
+        except ObjekatError as e:
+            check("Y2 %s: invalid_state, message names mid_chain_sends" % label,
+                  e.code == "invalid_state" and e.message.startswith("mid_chain_sends"), "%s %s" % (e.code, e.message))
+            rows = e.details or []
+            check("Y2 %s: the error lists the send (object, aux, position)" % label,
+                  len(rows) == 1 and rows[0].get("aux") == a and rows[0].get("position") == "chain", rows)
+    check("Y2 refuse: the model is unchanged (fingerprint)", y2_fingerprint(c, x) == before)
+    check("Y2 refuse: no render was started", c.send("consolidate.state").get("renders") == [], c.send("consolidate.state"))
+    try:
+        c.send("consolidate.make", {"id": x, "mid_chain_sends": "sideways"})
+        check("Y2: an unknown mid_chain_sends is refused", False, "accepted")
+    except ObjekatError as e:
+        check("Y2: an unknown mid_chain_sends is bad_params", e.code == "bad_params", e.code)
+
+    # --- the hand's path, headless: nobody can answer, so it is a refusal, journalled
+    c.send("app.dialogs", {"clear": True})
+    c.send("selection.set", {"ids": [x]})
+    c.send("selection.context_action", {"action": "consolidate_clip", "id": x})
+    wait(c)
+    dl = c.send("app.dialogs", {})
+    mine = [d for d in dl.get("dialogs", []) if d.get("answer") == "refused"]
+    check("Y2 hand path (no interface): the question is journalled as refused", len(mine) == 1, dl)
+    check("Y2 hand path: the model is unchanged", y2_fingerprint(c, x) == before)
+    audit(c, "Y2 refuse")
+
+    # --- fold
+    x, a = y2_build(c, "Y2fold", chain)
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x, mid_chain_sends="fold")
+    pl = y2_placement(c, ids0)
+    check("Y2 fold: a placement was made", pl is not None, pl)
+    if pl:
+        rows = c.send("send.list", {"id": pl})["sends"]
+        check("Y2 fold: the placement has ONE send, post-fader, kept at 0 dB",
+              len(rows) == 1 and rows[0]["aux"] == a and rows[0]["position"] == "post_fader" and rows[0]["level_db"] == 0,
+              rows)
+        mk = [e for e in c.send("plugin.list", {"host": pl})["plugins"] if e.get("is_send_marker")]
+        check("Y2 fold: no marker anywhere", mk == [] and c.send("debug.send_marker_audit").get("markers") == 0, mk)
+        audit(c, "Y2 fold")
+        # the fold is its own undo point, taken before the wrap and the bake: three undos take the
+        # project back (the bake's commit, the wrap in a group — where the send moved to the wrapper —,
+        # then the fold: the chain send is back, marker included)
+        def sends_of(i):
+            try:
+                return c.send("send.list", {"id": i}).get("sends")
+            except ObjekatError:
+                return None
+        c.send("edit.undo", {}); settle(c)
+        check("Y2 fold: undo 1 takes back the bake; the clip is inside its wrapper, the send on the wrapper",
+              sends_of(x) == [] and len(sends_of(pl) or []) == 1, (sends_of(x), sends_of(pl)))
+        c.send("edit.undo", {}); settle(c)
+        rr = sends_of(x)
+        check("Y2 fold: undo 2 takes back the wrap; the send is on the clip, still post-fader (folded)",
+              rr is not None and len(rr) == 1 and rr[0]["position"] == "post_fader", rr)
+        c.send("edit.undo", {}); settle(c)
+        rr = sends_of(x)
+        check("Y2 fold: undo 3 takes back the fold: chain 1 again",
+              rr is not None and len(rr) == 1 and rr[0]["position"] == "chain" and rr[0].get("index") == 1, rr)
+        audit(c, "Y2 fold undone")
+        # (the by-difference measure toggles send.enable, an undo point: it comes AFTER the undo checks)
+        _, _, dbu = measure_wet_db(c, "Y2_fold_undone", x, a)
+        check("Y2 fold: after the two undos the wet is -18 dB again (the chain send)", dbu is not None and abs(dbu + 18.0) <= 0.05, dbu)
+
+    # --- remove
+    x, a = y2_build(c, "Y2remove", chain)
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x, mid_chain_sends="remove")
+    pl = y2_placement(c, ids0)
+    check("Y2 remove: a placement was made", pl is not None, pl)
+    if pl:
+        rows = c.send("send.list", {"id": pl})["sends"]
+        check("Y2 remove: no send on the placement", rows == [], rows)
+        audit(c, "Y2 remove")
+
+    # --- an input send is concerned too
+    x, a = y2_build(c, "Y2input", {"position": "input"})
+    try:
+        c.send("consolidate.make", {"id": x})
+        check("Y2 input: refused by default", False, "accepted")
+    except ObjekatError as e:
+        check("Y2 input: refused by default", e.code == "invalid_state" and (e.details or [{}])[0].get("position") == "input", e)
+
+    # --- a pre-fader send is NOT concerned: accepted without the parameter, the wet unchanged
+    x, a = y2_build(c, "Y2pre", {"position": "pre_fader"})
+    _, _, db0 = measure_wet_db(c, "Y2_pre_before", x, a)
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x)
+    pl = y2_placement(c, ids0)
+    check("Y2 pre-fader: accepted with no parameter, a placement was made", pl is not None, pl)
+    if pl:
+        rows = c.send("send.list", {"id": pl})["sends"]
+        check("Y2 pre-fader: the placement's send is still pre-fader", len(rows) == 1 and rows[0]["position"] == "pre_fader", rows)
+        _, _, db1 = measure_wet_db(c, "Y2_pre_after", pl, a)
+        check("Y2 pre-fader: wet unchanged within 0.05 dB (%s -> %s)" % (db0, db1),
+              db0 is not None and db1 is not None and abs(db1 - db0) <= 0.05, (db0, db1))
+        audit(c, "Y2 pre")
+
+    # --- the same with a fader on the clip: documents what the plan did not foresee
+    x, a = y2_build(c, "Y2preF", {"position": "pre_fader"}, fader_db=-20.0)
+    _, _, db0 = measure_wet_db(c, "Y2_preF_before", x, a)
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x)
+    pl = y2_placement(c, ids0)
+    if pl:
+        _, _, db1 = measure_wet_db(c, "Y2_preF_after", pl, a)
+        print("       Y2 pre-fader WITH a -20 dB fader on the clip: wet %s -> %s dB (the clip's fader is baked into the wave)" % (db0, db1))
+
+
+# --------------------------------------------------------------------------------------------------
 # U2 — Q-U12: a silenced sender feeds no aux, wherever its send taps
 # --------------------------------------------------------------------------------------------------
 
@@ -1879,7 +2041,7 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2),
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2),
                     ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
