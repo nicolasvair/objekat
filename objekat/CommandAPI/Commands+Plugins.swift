@@ -746,7 +746,7 @@ extension CommandRegistry {
                  latest_end, runs}], `readers` [{plugin, dest_instance, tap, consumer, rank, l_ref, declared, \
                  source_age, delay, status, alignment_error_samples, blocks_read, blocks_uncovered, \
                  blocks_torn}]. `model`: the plan — `refused` ({plugin: reason}), `root_ranks`, `aux_ranks`, \
-                 `inner_ranks`, `stem_ranks`, `taps`, `send_routes` (the sends laid), `send_refused`; `sends_path` \"bridge\" or \"legacy\" (OBJ_SENDS_LEGACY=1). The static numbers say what the graph BELIEVES; what the \
+                 `inner_ranks`, `stem_ranks`, `taps`, `send_routes` (the sends laid), `send_refused`; `sends_path` is always \"bridge\" (kept for scripts). The static numbers say what the graph BELIEVES; what the \
                  ear hears is measured by export. Reads only.
                  """,
                  undo: .none) { _ in
@@ -769,8 +769,7 @@ extension CommandRegistry {
                 "send_refused": .object(Dictionary(uniqueKeysWithValues: vm.sendRouteStatus.map {
                     ("\($0.key.sender.uuidString)|\($0.key.aux.uuidString)", JSONValue.string($0.value.rawValue)) }))])
             let report = JSONValue.fromFoundation(engine.bridgeReport())
-            return .object(["engine": report, "model": model,
-                            "sends_path": .string(EditViewModel.sendsLegacy ? "legacy" : "bridge")])
+            return .object(["engine": report, "model": model, "sends_path": .string("bridge")])
         }
 
         register("debug.add_test_plugin",

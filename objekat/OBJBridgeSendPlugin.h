@@ -11,15 +11,15 @@
 //  ring this plugin carries. The difference is `processesTapCopy()`: for a send the node runs
 //  `applyToBuffer` on its COPY of the signal — once per block, never in 128-sample sub-blocks — and
 //  writes THAT to the ring. The signal that passes through is never touched. That is the whole of the
-//  send level (and what removes the "automated send overwrites its own tap" defect of the legacy
-//  ObjAuxSendPlugin, measured at about 6 dB under the curve — plan §B.J).
+//  send level (and what removes the "automated send overwrites its own tap" defect of the first,
+//  pre-bridge send plugin, measured at about 6 dB under the curve — plan §B.J).
 //
 //  The aux return reads the ring through one BridgeReader per send (patch 0039,
 //  BridgeBuild::registerAuxReaders); the aux clip lists its sends in `objBridgeSends`, written by
 //  the app in the same transaction as the sends themselves.
 //
 //  It is NOT a model plugin: the model never sees it, never saves it, and gives it no id of its own.
-//  The legacy ObjAuxSendPlugin stays compiled behind OBJ_SENDS_LEGACY=1 (the null test of the plan).
+//  The pre-bridge send plugin (ObjAuxSendPlugin) and its OBJ_SENDS_LEGACY switch were deleted in INC 2.
 //  @see tracktion_ObjBridge.h, ObjBridgeTapPlugin
 //
 

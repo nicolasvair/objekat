@@ -372,9 +372,6 @@ final class EditViewModel {
     @ObservationIgnored var lastSendRefusalBeep: CFAbsoluteTime = 0
     /// An aux went from the engine: the next bridge sync sweeps the sends that named it (@see pruneOrphanSends).
     @ObservationIgnored var sendPrunePending = false
-    /// OBJ_SENDS_LEGACY=1 at launch (read ONCE, never a setting): every send goes through the old
-    /// ObjAuxSendPlugin path and the old scope, so that the null test can export one session on both.
-    static let sendsLegacy: Bool = ProcessInfo.processInfo.environment["OBJ_SENDS_LEGACY"] == "1"
     @ObservationIgnored var bridgeSyncScheduled = false
     /// The engine holds taps OR sends laid by a previous sync: a sync with no route must still run
     /// once, to take them away.
@@ -2077,16 +2074,12 @@ final class EditViewModel {
         }
     }
 
-    /// (Re)pushes to the engine the post-fader sends of a sender towards its auxes. On the bridge the
-    /// sends are part of the plan, laid by the coalesced `syncBridge` (one pass for the lot, the plan
-    /// deciding what is accepted); an object with no send costs nothing. On the legacy path
-    /// (OBJ_SENDS_LEGACY=1) the engine wires each one itself, and only within the old scope.
+    /// (Re)pushes to the engine the sends of a sender towards its auxes. They are part of the bridge
+    /// plan, laid by the coalesced `syncBridge` (one pass for the lot, the plan deciding what is
+    /// accepted); an object with no send costs nothing.
     func syncSends(_ object: SoundObject) {
         guard !object.sends.isEmpty else { return }
-        if !Self.sendsLegacy { scheduleBridgeSync(); return }
-        for send in object.sends where send.isRouted && canRouteSend(from: object.id, to: send.auxID) {
-            engine?.addSend(object.id.uuidString, toAux: send.auxID.uuidString, levelDb: send.levelDb)
-        }
+        scheduleBridgeSync()
     }
 
     func syncAdd(_ object: SoundObject) {

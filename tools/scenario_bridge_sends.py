@@ -10,23 +10,21 @@ group — and what can be asserted of it with no screen (docs/plan_sends_rework.
     of its chain, and a hard-left sender into a hard-right aux depends on the pan law;
   • LEVEL and ALIGNMENT to the sample: `idx(peak wet) == idx(peak dry)`, and the peak ratio equals
     the send level;
-  • Q8 (section M): the wet's envelope when the send's level is AUTOMATED — the legacy plugin was
-    called in 128-sample sub-blocks there and overwrote its own tap length; the bridge removes the
-    cause by construction. The same section runs on `main` first (`--ref`), the numbers being the
-    answer recorded in the plan;
-  • the NULL TEST (section O): the same sessions exported by an instance launched with
-    OBJ_SENDS_LEGACY=1 and by a normal one must subtract to ≤ 1 LSB of 24 bits.
+  • Q8 (section M): the wet's envelope when the send's level is AUTOMATED — the first, pre-bridge
+    send plugin was called in 128-sample sub-blocks there and overwrote its own tap length; the
+    bridge removes the cause by construction. The numbers measured on `main` (`--ref`) are recorded
+    in the plan (journal B.J). The null test against that old path (former section O) went with the
+    path itself, deleted at the start of INC 2.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-recent --language=en --socket=/tmp/os.sock
     ./scenario_bridge_sends.py /tmp/os.sock /tmp/trial_sends/project.objekat [options]
 
 Options:
-    --ref            run against `main` AS IS (the legacy engine): the checks that need the bridge's
+    --ref            run against `main` AS IS (the pre-bridge engine): the checks that need the bridge's
                      report (`passes`, `gate_edges`, aligned readers…) and the sections that need the
                      new scope are skipped, every measured number is printed as a REFERENCE.
-    --only A,M,O     run only these sections.
-    --tag NAME       section O: the tag of the exports it writes (O_<case>_<tag>.wav).
-    --compare A B    section O, second half: subtract the exports of tags A and B (no instance needed).
+    --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
+                     Y2, Z2, P2 — INC 1 already used the letters P to T).
 
 NOT `--no-audio` (the bridge reads the device's clock); exits 2 if `app.info` says audio is not
 running. A DEBUG build (it reads `debug.bridge_report`). Exit: 0 if everything passes, 1 otherwise.
@@ -53,16 +51,12 @@ def opt(name, n=0):
 
 REF = bool(opt("--ref"))
 ONLY = (opt("--only", 1) or [None])[0]
-TAG = (opt("--tag", 1) or ["run"])[0]
-COMPARE = opt("--compare", 2)
 ONLY = set(ONLY.split(",")) if ONLY else None
 
 T = B.Tally(ObjekatError)
 step, check = T.step, T.check
 
-if COMPARE:
-    pass
-elif len(args) != 2:
+if len(args) != 2:
     print(__doc__)
     sys.exit(2)
 else:
@@ -1052,51 +1046,16 @@ def section_T(c):
 
 
 # --------------------------------------------------------------------------------------------------
-# O — the null test, legacy vs bridge
-# --------------------------------------------------------------------------------------------------
-
-def section_O(c):
-    print("\n--- O  null-test exports (tag %s): in-scope sessions of A and D" % TAG)
-    for label, cast in CASTS_A:
-        n = label.split()[0]
-        x, a = cast(c, n)
-        lay_send(c, x, a, -6.0)
-        render(c, "O_%s_%s.wav" % (n, TAG))
-    for where in ("sender", "aux", "sibling"):
-        x, a = d_case(c, "Od-" + where, where)
-        render(c, "O_D%s_%s.wav" % (where, TAG))
-
-
-def section_O_compare(dirpath, tag_a, tag_b):
-    print("\n--- O  null test: %s vs %s" % (tag_a, tag_b))
-    names = sorted(f[2:-len(tag_a) - 5] for f in os.listdir(dirpath) if f.startswith("O_") and f.endswith("_%s.wav" % tag_a))
-    for n in names:
-        a = B.read_wav(os.path.join(dirpath, "O_%s_%s.wav" % (n, tag_a)))[0]
-        b = B.read_wav(os.path.join(dirpath, "O_%s_%s.wav" % (n, tag_b)))[0]
-        d = maxabs(sub(a, b))
-        print("       %s: max |difference| = %.3e (%.2f LSB)  peak %.4f" % (n, d, d / LSB, maxabs(a)))
-        check("O %s: legacy and bridge null to <= 1 LSB" % n, len(a) == len(b) and d <= LSB * 1.0001, d / LSB)
-
-
-# --------------------------------------------------------------------------------------------------
-
-if COMPARE:
-    DIR = COMPARE[0] if os.path.isdir(COMPARE[0]) else None
-    print("usage of --compare: --compare <dir> <tagA>:<tagB>") if DIR is None else None
-    ta, tb = COMPARE[1].split(":")
-    section_O_compare(DIR, ta, tb)
-    T.finish()
-    sys.exit(0 if T.ko == 0 else 1)
 
 fixtures()
 with ObjekatClient(SOCK) as c:
     B.require_audio(c)
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})
-    print("mode: %s" % ("REFERENCE (main, legacy engine)" if REF else "bridge"))
+    print("mode: %s" % ("REFERENCE (main, pre-bridge engine)" if REF else "bridge"))
     for sec, fn in (("A", section_A), ("B", section_B), ("C", section_C), ("D", section_D), ("D2", section_D2),
                     ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("J", section_J),
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
-                    ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T), ("O", section_O)):
+                    ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T)):
         if want(sec):
             fn(c)
 

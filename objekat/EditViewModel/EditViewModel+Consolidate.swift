@@ -564,10 +564,7 @@ extension EditViewModel {
         }
 
         if !sends.isEmpty {
-            // Removes the child clip's sends (the engine routing cut + the model emptied)…
-            for s in sends {
-                engine?.removeSend(clipID.uuidString, toAux: s.auxID.uuidString)
-            }
+            // Removes the child clip's sends (the model emptied; the bridge sync below takes the engine's away)…
             update(id: clipID) { $0.sends.removeAll() }
             // …and carries them over onto the wrapper group (model + engine wiring of the active sends).
             update(id: wrapper.id) { $0.sends = sends }

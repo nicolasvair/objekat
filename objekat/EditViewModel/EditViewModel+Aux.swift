@@ -55,29 +55,11 @@ extension EditViewModel {
     // FX or fades (Q-U1b) — but the group's MUTE silences it (Q-U1, @see `sendIsGated`) — and a send
     // that goes UP leaves its stem (out of its meter, out of its bounce).
     // Sends out of scope stay in the model, silent. We merely stop offering them.
-    //
-    // OBJ_SENDS_LEGACY=1 keeps the previous rule (siblings of one container, or one stem) for the null
-    // test of the plan: `legacyCanRouteSend`.
 
     /// True if a send from `objectID` towards `auxID` is within the STATIC scope (the cycle apart:
     /// @see `sendStatus`).
     func canRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
-        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) }
-        return sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) == nil
-    }
-
-    /// The rule as it stood before the rework (OBJ_SENDS_LEGACY=1 only).
-    private func legacyCanRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
-        guard objectID != auxID,
-              let sender = find(id: objectID), !sender.isAux,
-              let aux = find(id: auxID), aux.isAux
-        else { return false }
-
-        let senderGroup = parentGroup(for: objectID)
-        guard senderGroup?.id == parentGroup(for: auxID)?.id else { return false }
-        guard senderGroup == nil else { return true }
-        let auxStem = aux.stemID ?? mainStemID
-        return auxStem == mainStemID || auxStem == (sender.stemID ?? mainStemID)
+        sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) == nil
     }
 
     /// What the bridge says about the send `objectID` → `auxID`: `off` (not alive), `active` (the plan
@@ -88,7 +70,6 @@ extension EditViewModel {
         guard let obj = find(id: objectID),
               let send = obj.sends.first(where: { $0.auxID == auxID }),
               isSendAlive(send, on: obj) else { return .off }
-        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) ? .active : .refused(.outOfStem) }
         if let why = sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) { return .refused(why) }
         if let why = (status ?? sendRouteStatus)[SendKey(sender: objectID, aux: auxID)] { return .refused(why) }
         return .active
@@ -99,15 +80,15 @@ extension EditViewModel {
     /// ask (`activeSenders`, the solo closure): the same answer as the wires drawn on the timeline.
     func sendIsAcceptedByPlan(from objectID: UUID, to auxID: UUID) -> Bool {
         guard canRouteSend(from: objectID, to: auxID) else { return false }
-        return Self.sendsLegacy || sendRouteStatus[SendKey(sender: objectID, aux: auxID)] == nil
+        return sendRouteStatus[SendKey(sender: objectID, aux: auxID)] == nil
     }
 
     /// The reasons the bridge would refuse a send from `sender` towards each of `auxIDs` — the static
     /// rules AND a scheduling loop with the keys already laid — as if it were appended last (an alive
     /// send to the same aux answers nil unless it IS the loop). One construction of the plan's graphs
-    /// for the lot. Only the refused ones have an entry. Empty on the legacy path.
+    /// for the lot. Only the refused ones have an entry.
     func sendRefusals(from sender: UUID, among auxIDs: Set<UUID>) -> [UUID: BridgeScope.Refusal] {
-        guard !Self.sendsLegacy, !auxIDs.isEmpty else { return [:] }
+        guard !auxIDs.isEmpty else { return [:] }
         let topology = bridgeTopology()
         var out: [UUID: BridgeScope.Refusal] = [:]
         for entry in BridgeScope.sendCandidates(sender: sender, nodes: topology.nodes, routes: topology.routes,
@@ -121,7 +102,6 @@ extension EditViewModel {
     /// that is already alive is never "created": it is accepted or refused by the plan, and says so
     /// in `sendStatus`. What the doors of the HAND ask before laying a NEW send (Q-U10).
     func sendCreationRefusal(from objectID: UUID, to auxID: UUID) -> BridgeScope.Refusal? {
-        if Self.sendsLegacy { return legacyCanRouteSend(from: objectID, to: auxID) ? nil : .outOfStem }
         if let why = sendScopeIndex.staticRefusal(sender: objectID, aux: auxID) { return why }
         if let obj = find(id: objectID), let send = obj.sends.first(where: { $0.auxID == auxID }),
            isSendAlive(send, on: obj) { return nil }
@@ -142,7 +122,7 @@ extension EditViewModel {
     /// The offer's order (Q-U3): the auxes of the sender's own group first, then the other auxes of its
     /// stem, then those of the Main. @see `BridgeScope.SendIndex.offerTier`.
     private func stableByOfferTier(_ auxes: [SoundObject], sender: SoundObject) -> [SoundObject] {
-        guard !Self.sendsLegacy, auxes.count > 1 else { return auxes }
+        guard auxes.count > 1 else { return auxes }
         let index = sendScopeIndex
         var keyed: [(tier: Int, offset: Int, aux: SoundObject)] = []
         keyed.reserveCapacity(auxes.count)
@@ -193,27 +173,14 @@ extension EditViewModel {
     private func reachableAuxes(forSenders senders: [SoundObject], ordered: [SoundObject]) -> [UUID: [SoundObject]] {
         let senders = senders.filter { !$0.isAux }
         guard !senders.isEmpty, !ordered.isEmpty else { return [:] }
-        let legacy = Self.sendsLegacy
-        let parents = legacy ? parentIDMap() : [:]
-        let mainID = mainStemID
         let index = sendScopeIndex
         var result: [UUID: [SoundObject]] = [:]
         for s in senders {
             let oStart = s.startTime
             let oEnd = s.startTime + s.duration
-            let sParent = parents[s.id]
-            let sStem = s.stemID ?? mainID
             let reachable = ordered.filter { aux in
                 guard aux.id != s.id else { return false }
-                if legacy {
-                    guard parents[aux.id] == sParent else { return false }
-                    if sParent == nil {
-                        let auxStem = aux.stemID ?? mainID
-                        guard auxStem == mainID || auxStem == sStem else { return false }
-                    }
-                } else {
-                    guard index.staticRefusal(sender: s.id, aux: aux.id) == nil else { return false }
-                }
+                guard index.staticRefusal(sender: s.id, aux: aux.id) == nil else { return false }
                 // An infinite aux: a bus always active → it overlaps any sender.
                 if aux.isInfiniteBus { return true }
                 return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
@@ -298,7 +265,7 @@ extension EditViewModel {
                     enabled: e?.enabled ?? false,
                     focused: focus == SendFocus(objectID: s.id, auxID: aux.id),
                     automated: isAutomated(.send(auxID: aux.id), on: s),
-                    refusal: Self.sendsLegacy ? nil : sendRouteStatus[SendKey(sender: s.id, aux: aux.id)]))
+                    refusal: sendRouteStatus[SendKey(sender: s.id, aux: aux.id)]))
             }
             result[s.id] = rows
         }
@@ -403,10 +370,8 @@ extension EditViewModel {
         sendEntry(from: objectID, to: auxID)?.enabled ?? false
     }
 
-    /// True if the send is effectively routed: alive AND accepted by the plan (@see `sendStatus`). On
-    /// the legacy path (OBJ_SENDS_LEGACY=1) it is what it always was: enabled && level > -∞.
+    /// True if the send is effectively routed: alive AND accepted by the plan (@see `sendStatus`).
     func isSendRouted(from objectID: UUID, to auxID: UUID) -> Bool {
-        if Self.sendsLegacy { return sendEntry(from: objectID, to: auxID)?.isRouted ?? false }
         return sendStatus(from: objectID, to: auxID) == .active
     }
 
@@ -466,7 +431,7 @@ extension EditViewModel {
     }
 
     /// Deletes the send entry `objectID` → `auxID` and the automation lane aimed at it. The engine side
-    /// follows by itself: the bridge sync (or `removeSend` on the legacy path) takes the plugin away.
+    /// follows by itself: the bridge sync takes the plugin away.
     func removeSend(from objectID: UUID, to auxID: UUID) {
         update(id: objectID) { obj in
             obj.sends.removeAll { $0.auxID == auxID }
@@ -493,15 +458,6 @@ extension EditViewModel {
         let alive = (s?.enabled ?? false)
             && (!(s?.isSilent ?? true) || isAutomated(.send(auxID: auxID), on: objectID))
 
-        if Self.sendsLegacy {
-            if let s, alive, canRouteSend(from: objectID, to: auxID) {
-                engine?.addSend(objectID.uuidString, toAux: auxID.uuidString, levelDb: s.levelDb)
-            } else {
-                engine?.removeSend(objectID.uuidString, toAux: auxID.uuidString)
-            }
-            return
-        }
-
         let laid = bridgeLaidSends.contains(SendKey(sender: objectID, aux: auxID))
         if let s, alive, laid {
             engine?.setSendLevel(objectID.uuidString, toAux: auxID.uuidString, levelDb: s.levelDb)
@@ -514,25 +470,8 @@ extension EditViewModel {
     /// rebuild (load / undo-redo), where a sender can be synced before the target aux, and after any
     /// change of group membership or stem, which can tip a send's scope either way. Idempotent.
     func resyncAllSends() {
-        if Self.sendsLegacy {
-            func walk(_ arr: [SoundObject]) {
-                for o in arr {
-                    for s in o.sends { syncSendEngine(objectID: o.id, auxID: s.auxID) }
-                    if case .group(let children, _) = o.kind { walk(children) }
-                }
-            }
-            walk(items)
-            // A rewired send is a BRAND-NEW plugin: its curve has gone back to nothing on the engine
-            // side. And since this pass is the meeting point of everything that reshapes the topology
-            // (loading, undo, composing/dissolving a group, changing stem, pasting), it is the right
-            // place to push the rest of the project's curves again as well.
-            pushAllAutomation()
-            syncBridge()
-            return
-        }
-        // On the bridge the sends are part of the plan: ONE sync lays the keys AND the sends, and
-        // only then are the curves pushed — a send laid by this sync is a brand-new plugin, so the
-        // order is the reverse of the legacy walk's (which had run `addSend` before).
+        // The sends are part of the plan: ONE sync lays the keys AND the sends, and only then are the
+        // curves pushed — a send laid by this sync is a brand-new plugin.
         syncBridge(pushingAutomation: false)
         pushAllAutomation()
     }

@@ -55,14 +55,13 @@ extension EditViewModel {
     /// The model in `BridgeScope`'s terms: the nodes (@see bridgeNodes) and one route per plugin that
     /// carries a key — the leaves of every chain (racks and FX link blocks walked down) and the
     /// instruments — followed, after each object's keys, by one route per ALIVE send (in `sends`
-    /// order; not on the legacy path, where the engine owns them). `routeOwners[i]` names the owner
+    /// order). `routeOwners[i]` names the owner
     /// of `routes[i]`.
     func bridgeTopology() -> (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
                               routeOwners: [BridgeRouteOwner]) {
         let nodes = bridgeNodes()
         var routes: [BridgeScope.Route] = []
         var owners: [BridgeRouteOwner] = []
-        let sendsOnBridge = !Self.sendsLegacy
 
         func collectLeaves(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
             for p in plugins {
@@ -84,7 +83,7 @@ extension EditViewModel {
         func walk(_ array: [SoundObject]) {
             for o in array {
                 addRoutes(host: o.id, chain: o.plugins, instruments: o.instruments)
-                if sendsOnBridge && !o.isAux {
+                if !o.isAux {
                     for send in o.sends where isSendAlive(send, on: o) {
                         routes.append(BridgeScope.Route(source: o.id, host: send.auxID, consumer: .auxInput(sender: o.id)))
                         owners.append(.send(sender: o.id, aux: send.auxID))

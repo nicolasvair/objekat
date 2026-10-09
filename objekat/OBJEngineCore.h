@@ -161,14 +161,8 @@
 //                    envois qui le visent, puis passe sa chaîne de FX et ses fades.
 // updateAuxWindow  : bornes [start,end] + fadeIn (entrée) / fadeOut (queue, sortie).
 // removeAux        : supprime le container aux ET les envois qui le visaient.
-// addSend/removeSend/setSendLevel : ObjAuxSendPlugin en fin de chaîne de l'émetteur (donc
-//                    post-fader et post-fenêtre : ce qu'on entend est ce qu'on envoie).
-//
-// PORTÉE : émetteur et aux doivent être FRÈRES. Deux fratries : enfants directs d'un même
-// ContainerClip (le retour est monté dans le graphe local du groupe), ou tous deux TOP-LEVEL
-// (le retour est monté à la racine de l'Edit, au-dessus de la somme des pistes). Franchir la
-// frontière d'un container reste impossible — c'en est une, dans les deux sens. Tout appel
-// hors de ces cas est refusé (et journalisé une fois). @see EditViewModel.canRouteSend
+// Les ENVOIS sont posés par la transaction du pont (voir plus bas) ; la portée est celle du modèle
+// (@see EditViewModel.canRouteSend, BridgeScope).
 - (void)createAux:(NSString*)auxID lane:(NSInteger)lane;
 - (void)createAux:(NSString*)auxID;   // compat : lane 0
 - (void)updateAuxWindow:(NSString*)auxID
@@ -177,8 +171,6 @@
                  fadeIn:(double)fadeInSecs
                 fadeOut:(double)fadeOutSecs;
 - (void)removeAux:(NSString*)auxID;
-- (void)addSend:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb;
-- (void)removeSend:(NSString*)senderID toAux:(NSString*)auxID;
 - (void)setSendLevel:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb;
 
 // SENDS ON THE BRIDGE (patch 0039, docs/plan_sends_rework.md). Since INC 1 every send goes through
@@ -188,13 +180,10 @@
 // rewrites each aux's list of sends. The scope is the model's (BridgeScope): the engine lays what it is
 // told. ensureBridgeSend returns 0 = not laid (aux not born yet / no chain), 1 = laid and already
 // there, 2 = laid with a NEW plugin (the caller pushes the automation curves again).
-// addSend/removeSend above are the LEGACY path, used only under OBJ_SENDS_LEGACY=1.
-//   setSendLevel     : hot (the plugin smooths the ramp), same call on both paths.
+//   setSendLevel     : hot (the plugin smooths the ramp), no rebuild.
 //   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
-//   usesLegacySends  : OBJ_SENDS_LEGACY=1 was set at launch (read ONCE).
 - (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated;
 - (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
-- (BOOL)usesLegacySends;
 
 // MARK: - Bake — rendu offline
 // Rend la sortie complète du sous-mix d'un groupe (FolderTrack + sous-pistes : dry, bus FX,

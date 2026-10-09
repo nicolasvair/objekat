@@ -238,32 +238,8 @@ extension EditViewModel {
             consolidateDefinitions = snapDefs
         }
 
-        // A REBUILT aux is a new clip on the engine side: the send of a KEPT sender
-        // still points at the old one, and the engine believes it wired (the send registry) — it would
-        // merely set its level. So it is explicitly unwired; `resyncAllSends`
-        // makes it afresh towards the right aux.
-        if !kept.isEmpty {
-            let keptRoots = items.filter { kept.contains($0.id) }
-            var preserved: Set<UUID> = []
-            func collect(_ arr: [SoundObject]) {
-                for o in arr {
-                    preserved.insert(o.id)
-                    if case .group(let children, _) = o.kind { collect(children) }
-                }
-            }
-            collect(keptRoots)
-
-            func dropStaleSends(_ arr: [SoundObject]) {
-                for o in arr {
-                    for s in o.sends where !preserved.contains(s.auxID) {
-                        engine?.removeSend(o.id.uuidString, toAux: s.auxID.uuidString)
-                    }
-                    if case .group(let children, _) = o.kind { dropStaleSends(children) }
-                }
-            }
-            dropStaleSends(keptRoots)
-        }
-
+        // A REBUILT aux is a new clip on the engine side: the send of a KEPT sender still points at the old
+        // one. `resyncAllSends` (the bridge sync) retargets it onto the new clip (`ensureBridgeSend`).
         resyncAllSends()   // every aux now exists → rewire the sends
         pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
 

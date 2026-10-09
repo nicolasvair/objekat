@@ -12,7 +12,6 @@
 #include "OBJWindowFadePlugin.h"
 #include "OBJChannelModePlugin.h"
 #include "OBJParallelBlockPlugin.h"
-#include "OBJAuxSendPlugin.h"
 #include "OBJBridgeTapPlugin.h"
 #include "OBJBridgeSendPlugin.h"
 #include "OBJKeyProbePlugin.h"
@@ -1337,8 +1336,6 @@ struct OBJRenderChain {
 - (double)headCutForKey:(const std::string&)key;
 // Oublie tout ce que le moteur retient de l'objet (chaîne, repères, appartenance).
 - (void)forgetObjectBookkeeping:(const std::string&)key;
-// Retire les envois dont l'émetteur et l'aux ne sont plus au même niveau de montage.
-- (BOOL)pruneOutOfScopeSends;
 // Index où insérer un FX user de l'objet `key` dans sa plugin-list : avant le trim de fin de
 // chaîne s'il existe, sinon avant le fader, sinon en fin de liste.
 - (int)userInsertIndexForKey:(const std::string&)key in:(te::PluginList&)pl;
@@ -1461,13 +1458,11 @@ struct OBJRenderChain {
     // sont des containers : ils se déplacent, se dissolvent, portent une chaîne de la même
     // façon), mais ils ne jouent pas leur contenu — ils somment les envois qui les visent.
     std::unordered_set<std::string>                           _auxKeys;
-    // "émetteurID|auxID" → ObjAuxSendPlugin posé en fin de chaîne de l'émetteur.
-    std::unordered_map<std::string, te::Plugin::Ptr>          _auxSendMap;
     // The audio bridge (docs/plan_sidechain.md §5.8). Source key (object or stem) → its engine-only
     // tap plugin, at the end of that chain. Never a model plugin: the model does not know it.
     std::unordered_map<std::string, te::Plugin::Ptr>          _bridgeTapMap;
     // "émetteurID|auxID" → ObjBridgeSendPlugin posé en fin de chaîne de l'émetteur (patch 0039,
-    // docs/plan_sends_rework.md) : ce qui remplace _auxSendMap sur le chemin du pont. Touchés = ce que
+    // docs/plan_sends_rework.md) : les envois, tous posés par le pont. Touchés = ce que
     // la transaction courante a posé ou confirmé ; le reste est retiré au commit.
     std::unordered_map<std::string, te::Plugin::Ptr>          _bridgeSendMap;
     std::unordered_set<std::string>                           _bridgeTouchedSends;
@@ -1712,12 +1707,10 @@ static BOOL gOBJAudioDisabled = NO;
         // d'enregistrement : avant toute création/restauration de clip.
         _engine->getPluginManager().createBuiltInType<te::ObjChannelModePlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjParallelBlockPlugin>();
-        _engine->getPluginManager().createBuiltInType<te::ObjAuxSendPlugin>();
         // The audio bridge (patch 0037): the engine-only tap, and two MEASURING tools reachable only
         // through DEBUG commands. None is added to tracktionBuiltInPluginList(): nothing new in the UI.
         _engine->getPluginManager().createBuiltInType<te::ObjBridgeTapPlugin>();
-        // The bridge SEND (patch 0039): the tap that carries a send's level. Registered next to the
-        // legacy ObjAuxSendPlugin, which stays for OBJ_SENDS_LEGACY=1 (the plan's null test).
+        // The bridge SEND (patch 0039): the tap that carries a send's level.
         _engine->getPluginManager().createBuiltInType<te::ObjBridgeSendPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjKeyProbePlugin>();
         _engine->getPluginManager().createBuiltInType<te::LatencyPlugin>();
@@ -3042,13 +3035,6 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // Les envois PARTANT de cet objet meurent avec sa chaîne : ne pas laisser de Ptr pendante.
     // (Ceux qui le VISAIENT, s'il était un aux, sont retirés par removeAux: — ici la chaîne
     // émettrice, elle, est bien vivante.)
-    for (auto it = _auxSendMap.begin(); it != _auxSendMap.end(); ) {
-        if (it->first.compare(0, key.size(), key) == 0 && it->first.size() > key.size()
-            && it->first[key.size()] == '|')
-            it = _auxSendMap.erase(it);
-        else
-            ++it;
-    }
     for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
         if (it->first.compare(0, key.size(), key) == 0 && it->first.size() > key.size()
             && it->first[key.size()] == '|')
@@ -4389,62 +4375,20 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
 // SCOPE — since patch 0039 (docs/plan_sends_rework.md) the engine keeps NO copy of the rule. The model
 // (BridgeScope, `SendIndex`) decides which sends exist, at any group depth, and tells the engine through
 // -ensureBridgeSendFrom:toAux:levelDb:gated: (an ObjBridgeSendPlugin, a tap on the audio bridge read by
-// the aux's return). What follows in this paragraph — direct children of one container, one stem or an aux
-// of the Main, checked by -isSend:routableToAux: — is the LEGACY path (OBJ_SENDS_LEGACY=1), kept only as
-// the null test's oracle and deleted in INC 2: there a container is a graph boundary and the sender and
-// the aux must be direct children of the same one.
+// the aux's return). The first, pre-bridge implementation of sends was deleted in INC 2.
 //
-// L'envoi est un PLUGIN posé en FIN de chaîne de l'émetteur — donc post-fader et post-fenêtre :
-// ce qu'on entend est ce qu'on envoie. Il ne touche pas au signal, il en prélève une copie. C'est
-// aussi ce qui fait qu'un objet réduit au silence (mute, mute de son stem) n'alimente plus rien.
+// Un envoi est un plugin moteur (ObjBridgeSendPlugin) posé par la transaction du pont, voir
+// -ensureBridgeSendFrom:toAux:levelDb:gated: ; sa POSITION dans la chaîne de l'émetteur (post-fader par
+// défaut) est celle que le modèle demande, voir -applySendPositionsForKey:.
 
 static void logRoutingDisabledOnce(const char* what) {
     static std::unordered_set<std::string> seen;
     if (seen.insert(what).second)
-        NSLog(@"[OBJ] %s : hors de portée du routage (@see -isSend:routableToAux:)", what);
-}
-
-// OBJ_SENDS_LEGACY=1, read ONCE at launch (docs/plan_sends_rework.md): every send goes through the old
-// ObjAuxSendPlugin path again, so that the null test can export the same session on both paths. Never
-// a user setting.
-static bool objSendsLegacyMode() {
-    static const bool legacy = [] {
-        const char* e = getenv("OBJ_SENDS_LEGACY");
-        return e != nullptr && e[0] == '1';
-    }();
-    return legacy;
+        NSLog(@"[OBJ] %s : envoi non posé", what);
 }
 
 static std::string sendMapKey(const std::string& senderKey, const std::string& auxKey) {
     return senderKey + "|" + auxKey;
-}
-
-// L'émetteur est-il en amont du NIVEAU DE MONTAGE du retour ? C'est la seule question, parce que
-// c'est la seule chose dont dépende l'ordre : un tap doit être écrit avant d'être lu. Deux niveaux
-// de montage existent, et la réponse n'est pas la même :
-//   • dans un container : les enfants DIRECTS du même container, le retour se somme sur leur
-//     CombiningNode et rien ne traverse la frontière d'un container, ni vers l'intérieur ni vers
-//     l'extérieur — égalité stricte, donc ;
-//   • au top-level : le retour se somme sur les pistes du folder de son stem, ou sur les pistes
-//     racine pour un aux du Main. Un envoi MONTE — un objet de stem atteint un aux du Main, dont
-//     la somme contient déjà le folder de son stem — mais il ne descend pas, et deux stems frères
-//     ne se voient pas. @see createTopLevelAuxReturns / createSubmixAuxReturns
-// Ce n'est pas un interdit de politique : un tap prélevé hors de portée serait lu sans ordre
-// établi. LEGACY (OBJ_SENDS_LEGACY=1) : le modèle suit désormais BridgeScope, pas cette règle.
-- (BOOL)isSend:(const std::string&)senderKey routableToAux:(const std::string&)auxKey {
-    if (senderKey == auxKey) return NO;
-    if (!_auxKeys.count(auxKey)) return NO;
-    auto so = _childOwnerMap.find(senderKey);
-    auto ao = _childOwnerMap.find(auxKey);
-    const bool senderTopLevel = (so == _childOwnerMap.end());
-    const bool auxTopLevel    = (ao == _childOwnerMap.end());
-    if (senderTopLevel != auxTopLevel) return NO;
-    if (!senderTopLevel) return so->second == ao->second;
-
-    // Clé de stem vide = Main (pas de folder au-dessus de la piste), c'est-à-dire le niveau qui
-    // contient tous les autres : ses aux acceptent n'importe quel émetteur top-level.
-    const std::string auxStem = [self stemKeyForKey:auxKey];
-    return auxStem.empty() || auxStem == [self stemKeyForKey:senderKey];
 }
 
 // Le graphe doit être rebâti : la liste des envois qui alimentent un retour est FIGÉE au build
@@ -4552,20 +4496,8 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
     auto cit = _containerClipMap.find(key);
     if (cit == _containerClipMap.end()) return;
 
-    // Les envois qui visaient cet aux n'ont plus de destinataire : les retirer des chaînes
-    // émettrices, sans quoi ils continueraient de prélever une copie que personne ne lit.
-    for (auto it = _auxSendMap.begin(); it != _auxSendMap.end(); ) {
-        const std::string& k = it->first;
-        const auto sep = k.find('|');
-        if (sep != std::string::npos && k.compare(sep + 1, std::string::npos, key) == 0) {
-            if (it->second) it->second->removeFromParent();
-            it = _auxSendMap.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    // Idem sur le pont : un envoi dont l'aux disparaît n'a plus de lecteur, son tap écrirait pour rien.
+    // Les envois qui visaient cet aux n'ont plus de destinataire : un envoi dont l'aux disparaît n'a plus de
+    // lecteur, son tap écrirait pour rien.
     for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
         const std::string& k = it->first;
         const auto sep = k.find('|');
@@ -4590,84 +4522,11 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
     NSLog(@"[OBJ] removeAux(container): %@", auxID);
 }
 
-- (void)addSend:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb {
-    if (!_edit) return;
-    std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
-
-    // Appelé aussi pendant une reconstruction, où l'aux peut n'être pas encore né : on sort
-    // en silence, resyncAllSends repassera quand tout le monde sera là.
-    auto ait = _containerClipMap.find(aKey);
-    if (ait == _containerClipMap.end()) return;
-
-    if (![self isSend:sKey routableToAux:aKey]) {
-        logRoutingDisabledOnce("Send vers un aux hors de portée de l'émetteur");
-        return;
-    }
-
-    te::PluginList* pl = [self userPluginListForKey:sKey];
-    if (!pl) {
-        logRoutingDisabledOnce("Send depuis un objet sans chaîne");
-        return;
-    }
-
-    const std::string mk = sendMapKey(sKey, aKey);
-    if (auto ex = _auxSendMap.find(mk); ex != _auxSendMap.end()) {
-        // Le Ptr mémorisé garde le plugin en vie même si sa chaîne a été refaite entre-temps
-        // (recompilation des FX de l'objet) : il faut donc vérifier qu'il est TOUJOURS dans la
-        // liste, sans quoi on croirait câblé un envoi devenu orphelin — et donc muet.
-        bool stillInList = false;
-        for (auto* p : *pl) if (p == ex->second.get()) { stillInList = true; break; }
-        if (stillInList) {
-            [self setSendLevel:senderID toAux:auxID levelDb:levelDb];   // câblé → niveau seul
-            return;
-        }
-        _auxSendMap.erase(ex);
-    }
-
-    // Filet : un envoi déjà présent dans la chaîne mais absent du registre (chaîne restaurée
-    // depuis un état sérialisé) est ADOPTÉ, jamais doublé.
-    for (auto* p : *pl) {
-        auto* existing = dynamic_cast<te::ObjAuxSendPlugin*>(p);
-        if (existing && existing->getTargetAuxClipID() == ait->second->itemID) {
-            existing->setLevelDb(levelDb);
-            _auxSendMap[mk] = te::Plugin::Ptr(p);
-            return;
-        }
-    }
-
-    // En FIN de chaîne : après le fader ET après l'ObjWindowFade d'un clip. Un envoi posé
-    // avant la fenêtre alimenterait l'aux avec ce que l'objet ne fait pas entendre.
-    te::Plugin::Ptr p = pl->insertPlugin(te::ObjAuxSendPlugin::create(), pl->size());
-    auto* send = dynamic_cast<te::ObjAuxSendPlugin*>(p.get());
-    if (!send) { NSLog(@"[OBJ] addSend: insertion refusée (%@ → %@)", senderID, auxID); return; }
-
-    send->setTargetAuxClip(ait->second->itemID);
-    send->setLevelDb(levelDb);
-    _auxSendMap[mk] = p;
-    [self rebuildGraphForAuxTopology];
-    NSLog(@"[OBJ] addSend: %@ → %@ (%.1f dB)", senderID, auxID, levelDb);
-}
-
-- (void)removeSend:(NSString*)senderID toAux:(NSString*)auxID {
-    std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
-    auto it = _auxSendMap.find(sendMapKey(sKey, aKey));
-    if (it == _auxSendMap.end()) return;
-    if (it->second) it->second->removeFromParent();
-    _auxSendMap.erase(it);
-    [self rebuildGraphForAuxTopology];
-}
-
 - (void)setSendLevel:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb {
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
-    // The bridge path first (patch 0039): same hot door, the plugin smooths the ramp, no rebuild.
-    if (auto bit = _bridgeSendMap.find(sendMapKey(sKey, aKey)); bit != _bridgeSendMap.end()) {
+    // Hot (patch 0039): the plugin smooths the ramp, the graph is not rebuilt.
+    if (auto bit = _bridgeSendMap.find(sendMapKey(sKey, aKey)); bit != _bridgeSendMap.end())
         if (auto* s = dynamic_cast<te::ObjBridgeSendPlugin*>(bit->second.get())) s->setLevelDb(levelDb);
-        return;
-    }
-    auto it = _auxSendMap.find(sendMapKey(sKey, aKey));
-    if (it == _auxSendMap.end()) return;
-    // À chaud : le plugin lisse la rampe, le graphe n'est pas reconstruit.
-    if (auto* s = dynamic_cast<te::ObjAuxSendPlugin*>(it->second.get())) s->setLevelDb(levelDb);
 }
 
 
@@ -4744,7 +4603,7 @@ static NSString* objNS(const juce::String& s);   // defined with the other debug
     _bridgeTouchedTaps.insert(key);
 
     if (auto it = _bridgeTapMap.find(key); it != _bridgeTapMap.end()) {
-        // Still in the list? A recompile of the chain can have remade it (the same check addSend makes).
+        // Still in the list? A recompile of the chain can have remade it (the same check ensureBridgeSend makes).
         bool stillInList = false;
         for (auto* p : *pl) if (p == it->second.get()) { stillInList = true; break; }
         if (stillInList) {
@@ -4888,10 +4747,8 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 // transaction dirty. The aux lists its sends in `objBridgeSends` (@see commitBridgeSync).
 // Returns 0 = not laid (aux not born yet, sender without a chain), 1 = laid and already there,
 // 2 = laid with a NEW plugin (its curve is gone: the caller pushes the automation again).
-- (BOOL)usesLegacySends { return objSendsLegacyMode() ? YES : NO; }
-
 - (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated {
-    if (!_edit || !senderID || !auxID || objSendsLegacyMode()) return 0;
+    if (!_edit || !senderID || !auxID) return 0;
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
 
     // An aux not born yet (a rebuild in progress): the next sync will come back when it is.
@@ -5141,7 +4998,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 // Un AUX, lui, en a un — et c'est le stem qui détermine où son retour est monté : dans le folder
 // du stem qui porte son ContainerClip (@see createSubmixAuxReturns), à la racine s'il est au Main.
 // D'où la portée d'un envoi top-level : mêmes stem. Changer de stem un aux OU un émetteur peut
-// donc rompre des envois — c'est ce que purge `pruneOutOfScopeSends`.
+// donc rompre des envois — c'est le modèle qui les voit (resyncAllSends → syncBridge).
 
 - (void)createStemBus:(NSString*)stemID {
     if (!_edit) return;
@@ -5210,41 +5067,11 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     [self pruneEmptyPoolTracks];
 
     // Reconstruire le graphe ne se justifie que si la TOPOLOGIE des aux a bougé : un aux qui
-    // change de stem change le niveau où son retour est monté, et un envoi qui sort de portée
-    // change la liste figée que reçoit ObjAuxReturnNode. Un simple clip qui change de bus, lui,
-    // n'y touche pas — et le déplacement de piste déclenche déjà sa propre reconstruction.
-    // L'inverse (un envoi qui redevient possible) passe par addSend, qui rebâtit de lui-même.
-    const BOOL pruned = [self pruneOutOfScopeSends];
-    if (pruned || _auxKeys.count(key))
+    // change de stem change le niveau où son retour est monté. Un simple clip qui change de bus, lui,
+    // n'y touche pas — et le déplacement de piste déclenche déjà sa propre reconstruction. Les envois
+    // que ce changement rend hors de portée sont ceux du modèle (resyncAllSends → syncBridge).
+    if (_auxKeys.count(key))
         [self rebuildGraphForAuxTopology];
-}
-
-// Retire les envois dont l'émetteur et l'aux ne sont plus au même niveau de montage — après un
-// changement de stem, typiquement. Les laisser en place serait pire que les perdre : le tap
-// continuerait d'être prélevé pour un retour qui ne le lit pas (au mieux), ou qui le lit sans
-// ordre établi (au pire). Le modèle Swift décâble les siens de son côté (resyncAllSends) ; ceci
-// est le filet, et il couvre aussi les envois restaurés depuis un projet enregistré avant cette
-// règle. Renvoie OUI si au moins un envoi est parti.
-- (BOOL)pruneOutOfScopeSends {
-    BOOL removedAny = NO;
-
-    for (auto it = _auxSendMap.begin(); it != _auxSendMap.end(); ) {
-        const auto sep = it->first.find('|');
-        if (sep == std::string::npos) { ++it; continue; }
-
-        const std::string senderKey = it->first.substr(0, sep);
-        const std::string auxKey    = it->first.substr(sep + 1);
-
-        if ([self isSend:senderKey routableToAux:auxKey]) { ++it; continue; }
-
-        if (it->second) it->second->removeFromParent();
-        NSLog(@"[OBJ] envoi retiré, hors de portée après changement de stem : %s → %s",
-              senderKey.c_str(), auxKey.c_str());
-        it = _auxSendMap.erase(it);
-        removedAny = YES;
-    }
-
-    return removedAny;
 }
 
 // MARK: - Mixer : gain + VU des stems et du master (increment 1)
@@ -8523,7 +8350,7 @@ static void objDumpPluginList(te::PluginList& pl,
 // Retrouve le paramètre automatable visé par une cible d'automation. nil quand la chaîne n'a
 // pas (encore) le plugin correspondant — trims d'un objet dont le rack n'a jamais été compilé,
 // envoi non câblé, plugin retiré depuis. Cas normal, pas une erreur : le modèle Swift fait foi
-// et repoussera la courbe quand la cible existera (compileUserRack, addSend, syncAdd).
+// et repoussera la courbe quand la cible existera (compileUserRack, syncBridge, syncAdd).
 - (te::AutomatableParameter::Ptr)automatableParamForObject:(NSString*)uuid
                                                     target:(OBJAutomationTarget)target
                                                  targetKey:(NSString*)targetKey
@@ -8553,7 +8380,6 @@ static void objDumpPluginList(te::PluginList& pl,
             if (!targetKey) return {};
             const auto mk = sendMapKey(key, std::string([targetKey UTF8String]));
             if (auto bit = _bridgeSendMap.find(mk); bit != _bridgeSendMap.end()) plugin = bit->second;
-            else if (auto it = _auxSendMap.find(mk); it != _auxSendMap.end()) plugin = it->second;
             wantedID = "level";
             break;
         }

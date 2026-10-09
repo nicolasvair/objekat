@@ -41,7 +41,6 @@ extension EditViewModel {
     /// table — plain walks of `items`. An object reaches any aux of its own stem or of the Main, at any
     /// depth, except an aux inside itself (a group's own descendant) and an aux that is itself.
     func _referenceCanRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
-        if Self.sendsLegacy { return _referenceLegacyCanRouteSend(from: objectID, to: auxID) }
         guard objectID != auxID,
               let sender = _referenceFind(id: objectID), !sender.isAux,
               let aux = _referenceFind(id: auxID), aux.isAux
@@ -56,23 +55,9 @@ extension EditViewModel {
         return auxStem == nil || auxStem == _referenceEffectiveStem(of: objectID)
     }
 
-    /// The rule as it was before the rework (OBJ_SENDS_LEGACY=1 only).
-    private func _referenceLegacyCanRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
-        guard objectID != auxID,
-              let sender = _referenceFind(id: objectID), !sender.isAux,
-              let aux = _referenceFind(id: auxID), aux.isAux
-        else { return false }
-        let senderGroup = referenceParentGroup(for: objectID)
-        guard senderGroup?.id == referenceParentGroup(for: auxID)?.id else { return false }
-        guard senderGroup == nil else { return true }
-        let auxStem = aux.stemID ?? mainStemID
-        return auxStem == mainStemID || auxStem == (sender.stemID ?? mainStemID)
-    }
-
     /// The offer's tier (Q-U3), naively: 0 = same group and same stem, 1 = same stem, 2 = the Main's aux
     /// seen from a sender that lives in a stem.
     private func _referenceOfferTier(sender: UUID, aux: UUID) -> Int {
-        if Self.sendsLegacy { return 0 }
         guard _referenceEffectiveStem(of: aux) == _referenceEffectiveStem(of: sender) else { return 2 }
         return referenceParentGroup(for: sender)?.id == referenceParentGroup(for: aux)?.id ? 0 : 1
     }
