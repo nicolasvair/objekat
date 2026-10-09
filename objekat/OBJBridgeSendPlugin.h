@@ -30,6 +30,7 @@
 #include <atomic>
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"   // ObjGainDbParameter : same dB curve as the object's fader
+#include "OBJWindowFadePlugin.h"   // the envelope a pre-fader / in-chain send FOLLOWS (setEnvelopeSource)
 
 namespace tracktion { inline namespace engine {
 
@@ -87,6 +88,26 @@ public:
     void setTapPosition (int p) noexcept                    { tapPosition = p; }
     int  getTapPosition() const noexcept                    { return tapPosition; }
 
+    /// The sender's window + fades, which this send must FOLLOW when it is not post-fader (Q-U5: a send
+    /// that taps before the fader still follows the object's fades and window — a cropped object stops
+    /// feeding its aux at its window's edge, a fade-out fades the reverb send — but not its volume or
+    /// pan). Applied to the node's COPY, BEFORE the level, so the direct signal is never touched. Null
+    /// for a post-fader send: the window sits upstream of its tap already. Message thread; the audio
+    /// thread reads a raw mirror. The previous plugin is kept alive one generation (`retired`): a block
+    /// that started with the old pointer finishes against a live object, and the next replacement is
+    /// an edit away — milliseconds are not at stake, an edit is a human gesture.
+    void setEnvelopeSource (ObjWindowFadePlugin::Ptr window)
+    {
+        if (window.get() == envelope.get())
+            return;
+
+        retired  = envelope;
+        envelope = window;
+        envelopeRaw.store (window.get(), std::memory_order_release);
+    }
+
+    bool hasEnvelopeSource() const noexcept                 { return envelopeRaw.load (std::memory_order_acquire) != nullptr; }
+
     float getLevelDb() const                                { return levelParam->getCurrentValue(); }
     void  setLevelDb (float dB)                             { levelParam->setParameter (juce::jlimit (silenceDb, 12.0f, dB),
                                                                                         juce::sendNotification); }
@@ -140,6 +161,12 @@ public:
             return;
         }
 
+        // The sender's window and fades, THEN the level: both on this copy. `fc.editTime` is the block's
+        // time moved back by the input's age (BridgeTapNode), i.e. the time the signal was made at —
+        // the same time the window fade of the sender's main path reads for the same samples.
+        if (auto* env = envelopeRaw.load (std::memory_order_acquire))
+            env->applyEnvelope (*buffer, fc.bufferStartSample, fc.bufferNumSamples, fc.editTime);
+
         auto level = smoothedLevel;
 
         for (int c = 0; c < buffer->getNumChannels(); ++c)
@@ -170,6 +197,8 @@ private:
     juce::SmoothedValue<float> smoothedLevel;
     std::atomic<bool> gated { false };
     int tapPosition = postFader;       // message thread only
+    ObjWindowFadePlugin::Ptr envelope, retired;                 // message thread only
+    std::atomic<ObjWindowFadePlugin*> envelopeRaw { nullptr };  // the audio thread's mirror
 
     float currentGain() const
     {

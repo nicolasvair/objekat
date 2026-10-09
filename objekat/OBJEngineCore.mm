@@ -4951,6 +4951,16 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         }
     }
 
+    // The envelope: a send that taps BEFORE the fader follows the sender's window and fades on its copy
+    // (Q-U5); a post-fader one has them upstream already. Set here, with the place, because both change
+    // together and every event that moves a send or rebuilds the tail passes through this function.
+    auto* windowPlugin = dynamic_cast<te::ObjWindowFadePlugin*>(window.get());
+    for (auto& [mk, raw] : mine) {
+        auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(raw.get());
+        if (!bs) continue;
+        const bool follows = bs->getTapPosition() != te::ObjBridgeSendPlugin::postFader;
+        bs->setEnvelopeSource(follows ? te::ObjWindowFadePlugin::Ptr(windowPlugin) : te::ObjWindowFadePlugin::Ptr());
+    }
     return moved;
 }
 
@@ -5155,6 +5165,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
                                 @"aux": [NSString stringWithUTF8String:aux.c_str()],
                                 @"list_index": @(pl ? pl->indexOf(sp.get()) : -1),
                                 @"tap_position": @(bs ? bs->getTapPosition() : -1),
+                                @"follows_envelope": @(bs ? bs->hasEnvelopeSource() : false),
                                 @"age_samples": age }];
         }
     }

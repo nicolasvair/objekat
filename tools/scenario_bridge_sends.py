@@ -26,6 +26,10 @@ Options:
     --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
                      Y2, Z2, P2 and K2 — INC 1 already used the letters P to T).
 
+T2 (4) compares a post-fader send's export with the one an INC 1 build made of the same project:
+set INC1_REF_DIR=<dir>; `--only T2REF` on the INC 1 app writes the reference there (it is NOT part of a
+normal run), T2 on the new app compares against it.
+
 NOT `--no-audio` (the bridge reads the device's clock); exits 2 if `app.info` says audio is not
 running. A DEBUG build (it reads `debug.bridge_report`). Exit: 0 if everything passes, 1 otherwise.
 """
@@ -70,6 +74,8 @@ IMP_AMP = 0.2          # an impulse at 0.2: dry + wet never clips the export (0.
 
 
 def want(section):
+    if section == "T2REF":              # never part of a normal run
+        return ONLY is not None and section in ONLY
     return ONLY is None or section in ONLY
 
 
@@ -1383,6 +1389,163 @@ def section_K2(c):
     check("K2: undo brings the send AND its marker back", row[0][0] == "chain" and row[0][2] == 1, row)
 
 # --------------------------------------------------------------------------------------------------
+# S2 — a send that taps before the fader FOLLOWS the sender's fades and window (Q-U5), not its fader/pan
+# --------------------------------------------------------------------------------------------------
+
+def render_st(c, name, t0=0.0, t1=3.0):
+    wait(c)
+    r = c.send("export.run", {"format": "wav", "sample_rate": SR, "dithering": False,
+                              "start": t0, "end": t1, "path": out(name)})
+    c.send("job.wait", {"id": r["job_id"], "timeout_ms": 180000})
+    return B.read_wav(out(name))
+
+
+def measure_st(c, label, x, a, t1=3.0):
+    """Wet by difference, BOTH channels. Returns (dry channels, wet channels)."""
+    on = render_st(c, "%s_on.wav" % label, 0.0, t1)
+    c.send("send.enable", {"id": x, "aux": a, "enabled": False})
+    off = render_st(c, "%s_off.wav" % label, 0.0, t1)
+    c.send("send.enable", {"id": x, "aux": a, "enabled": True})
+    return off, [sub(on[k], off[k]) for k in range(min(len(on), len(off)))]
+
+
+def section_S2(c):
+    print("\n--- S2  a send before the fader follows the fades and the window, not the fader nor the pan")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    # S2a: the fades. (wet - dry) per 10 ms window = the fader's -20 dB inverse => +20 dB; post-fader: 0 dB.
+    for name, params, ups in (("pre", {"position": "pre_fader"}, 20.0),
+                              ("chain", {"position": "chain", "index": 0}, 20.0),
+                              ("input", {"position": "input"}, 20.0),
+                              ("post", {"position": "post_fader"}, 0.0)):
+        fresh(c, "S2" + name)
+        x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 1})["id"]
+        add_test(c, x, "gainTester", gain_db=0.0)
+        c.send("object.set_fade", {"id": x, "in": 0.5, "out": 0.5})
+        c.send("object.set_gain", {"ids": [x], "db": -20.0})
+        c.send("send.create", dict({"id": x, "aux": a}, **params))
+        lay_send(c, x, a, 0.0)
+        audit(c, "S2 %s" % name, want_senders=1)
+        dry, wet = measure_st(c, "S2" + name, x, a, t1=4.0)
+        wd, dd = dict(window_rms_db(wet[0], 0.0, 4.0)), dict(window_rms_db(dry[0], 0.0, 4.0))
+        live = [t for t in sorted(wd) if dd[t] > -100.0]
+        errs = [(wd[t] - dd[t]) - ups for t in live]
+        worst = max(abs(e) for e in errs) if errs else 99.0
+        fades = [t for t in live if t < 0.5 or t > 3.5]
+        print("       S2 %s: %d windows (%d in the fades), (wet - dry) - %.0f dB: worst %.3f dB"
+              % (name, len(live), len(fades), ups, worst))
+        check("S2 %s: wet = dry %+.0f dB in every window, fades included (0.5 dB)" % (name, ups), worst <= 0.5, "%.3f" % worst)
+        check("S2 %s: the fades were really measured" % name, len(fades) > 80, len(fades))
+        rep = bridge_report(c)
+        eng = [r for r in (rep.get("engine") or {}).get("sends", []) if r.get("aux") == a]
+        check("S2 %s: envelope source %s" % (name, "set" if params["position"] != "post_fader" else "absent"),
+              eng and eng[0].get("follows_envelope") == (params["position"] != "post_fader"), eng)
+
+    # S2b: the window. A group cropped to [1, 2] holds a 4 s sine: the pre-fader send of the GROUP carries
+    # nothing outside the window — exactly nothing.
+    fresh(c, "S2g")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    o = with_other(c, lane=4)
+    a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 8})["id"]
+    g = grp(c, [x, o])
+    c.send("object.trim", {"id": g, "start": 1.0, "duration": 1.0})
+    c.send("send.create", {"id": g, "aux": a, "position": "pre_fader"})
+    lay_send(c, g, a, 0.0)
+    audit(c, "S2 group")
+    dry, wet = measure_st(c, "S2g", g, a, t1=4.0)
+    w = wet[0]
+    outside = [v for i, v in enumerate(w) if i < int(0.98 * SR) or i > int(2.02 * SR)]
+    inside = w[int(1.1 * SR):int(1.9 * SR)]
+    print("       S2 group: wet outside [1,2] max |v| = %.3g, inside = %.3g" % (maxabs(outside), maxabs(inside)))
+    check("S2 group: the wet is exactly 0 outside the group's window", maxabs(outside) == 0.0, maxabs(outside))
+    check("S2 group: and present inside it", maxabs(inside) > 1e-3, maxabs(inside))
+
+    # S2c: the pan. Hard left on X: the dry is left only, the pre-fader wet stays centred.
+    fresh(c, "S2p")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 1})["id"]
+    c.send("object.set_pan", {"ids": [x], "pan": -1.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "pre_fader"})
+    lay_send(c, x, a, 0.0)
+    dry, wet = measure_st(c, "S2p", x, a, t1=3.0)
+    dl, dr = B.rms(dry[0], 0.5, 2.5), B.rms(dry[1], 0.5, 2.5)
+    wl, wr = B.rms(wet[0], 0.5, 2.5), B.rms(wet[1], 0.5, 2.5)
+    print("       S2 pan: dry L %.1f dB R %.1f dB; wet L %.1f dB R %.1f dB" % (B.db(dl), B.db(dr), B.db(wl), B.db(wr)))
+    check("S2 pan: the dry is hard left", B.db(dr) < B.db(dl) - 60.0, (B.db(dl), B.db(dr)))
+    check("S2 pan: the pre-fader wet stays centred (L == R within 0.1 dB)", abs(B.db(wl) - B.db(wr)) <= 0.1, (B.db(wl), B.db(wr)))
+
+
+# --------------------------------------------------------------------------------------------------
+# T2 — the direct signal is never written (bit-identical exports)
+# --------------------------------------------------------------------------------------------------
+
+def section_T2(c):
+    print("\n--- T2  the direct signal is bit-identical with a send at any position")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    ref_dir = os.environ.get("INC1_REF_DIR")
+    fresh(c, "T2")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 1})["id"]
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("object.set_fade", {"id": x, "in": 0.3, "out": 0.3})
+    base = render(c, "T2_1_nosend.wav", 0.0, 3.0)
+    # (2) a mid-chain send at -inf
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 1})
+    audit(c, "T2 created", want_senders=0)
+    r2 = render(c, "T2_2_silent.wav", 0.0, 3.0)
+    check("T2 (1)-(2): a mid-chain send at -inf: exports equal EXACTLY", sub(base, r2) == [0.0] * len(sub(base, r2)), maxabs(sub(base, r2)))
+    # (3) the send at 0 dB into a MUTED aux, at each position
+    c.send("object.set_mute", {"ids": [a], "muted": True})
+    lay_send(c, x, a, 0.0)
+    for name, params in (("chain 1", {"position": "chain", "index": 1}), ("chain 0", {"position": "chain", "index": 0}),
+                         ("input", {"position": "input"}), ("pre", {"position": "pre_fader"}),
+                         ("post", {"position": "post_fader"})):
+        c.send("send.set_position", dict({"id": x, "aux": a}, **params))
+        audit(c, "T2 %s" % name, want_senders=1)
+        r3 = render(c, "T2_3_%s.wav" % name.replace(" ", ""), 0.0, 3.0)
+        d = sub(base, r3)
+        check("T2 (1)-(3) %s: send at 0 dB into a muted aux: the direct signal is bit-identical" % name,
+              maxabs(d) == 0.0, maxabs(d))
+    # (4) a post-fader send only, against the INC 1 build's export of the same project
+    now = t2_post_project(c)
+    ref_path = os.path.join(ref_dir, "T2_4_post.wav") if ref_dir else None
+    if not ref_path or not os.path.exists(ref_path):
+        print("       T2 (4): no INC 1 reference (INC1_REF_DIR=%s) — NOT compared; make it with --only T2REF on the INC 1 app" % ref_dir)
+    else:
+        ref = B.read_wav(ref_path)[0]
+        d = sub(now, ref)
+        check("T2 (4): a post-fader send's export equals the INC 1 build's, bit for bit (%d samples)" % len(now),
+              len(now) == len(ref) and maxabs(d) == 0.0, maxabs(d))
+
+
+def t2_post_project(c):
+    """The project of T2 (4), built with commands the INC 1 build already has; returns its export."""
+    fresh(c, "T2c")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 1})["id"]
+    c.send("object.set_fade", {"id": x, "in": 0.3, "out": 0.3})
+    lay_send(c, x, a, -6.0)
+    return render(c, "T2_4_post.wav", 0.0, 3.0)
+
+
+def section_T2REF(c):
+    """Run on the INC 1 build: writes the reference export T2 (4) compares against."""
+    ref_dir = os.environ.get("INC1_REF_DIR")
+    if not ref_dir:
+        print("T2REF needs INC1_REF_DIR")
+        sys.exit(2)
+    t2_post_project(c)
+    os.makedirs(ref_dir, exist_ok=True)
+    import shutil
+    shutil.copy(out("T2_4_post.wav"), os.path.join(ref_dir, "T2_4_post.wav"))
+    print("       T2REF: reference written to %s" % ref_dir)
+
+
+# --------------------------------------------------------------------------------------------------
 
 fixtures()
 with ObjekatClient(SOCK) as c:
@@ -1394,7 +1557,7 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2)):
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
 

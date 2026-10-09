@@ -164,13 +164,26 @@ public:
 
     void applyToBuffer (const PluginRenderContext& fc) override
     {
+        SCOPED_REALTIME_CHECK
+
+        if (fc.destBuffer == nullptr)
+            return;
+
+        applyEnvelope (*fc.destBuffer, fc.bufferStartSample, fc.bufferNumSamples, fc.editTime);
+    }
+
+    /// The window and the fades, applied to `buffer[start … start + n)` whose first sample sits at the
+    /// start of `editTime`. EXACTLY what `applyToBuffer` has always done, lifted out so that a SEND
+    /// that taps its sender before the fader can follow the sender's fades and window on its COPY of
+    /// the signal (ObjBridgeSendPlugin::setEnvelopeSource, docs/plan_sends_rework.md §D.1.A.g): the
+    /// same function, the same rounding of the window in samples, the same curves — one envelope, two
+    /// readers. Pass-through when the plugin is bypassed or the window is not defined yet.
+    void applyEnvelope (juce::AudioBuffer<float>& buffer, int startSample, int n, TimeRange editTime) const
+    {
         if (! isEnabled())
             return;
 
-        SCOPED_REALTIME_CHECK
-
-        auto* buffer = fc.destBuffer;
-        if (buffer == nullptr || fc.bufferNumSamples <= 0)
+        if (n <= 0)
             return;
 
         const double ws = windowStart, we = windowEnd;
@@ -180,9 +193,8 @@ public:
         if (we <= ws)
             return;
 
-        const double blockStart = fc.editTime.getStart().inSeconds();
-        const double blockEnd   = fc.editTime.getEnd().inSeconds();
-        const int    n  = fc.bufferNumSamples;
+        const double blockStart = editTime.getStart().inSeconds();
+        const double blockEnd   = editTime.getEnd().inSeconds();
 
         // THE WINDOW COUNTS IN SAMPLES, THE WAY THE CLIP DOES. The clip (Tracktion) cuts on a ROUNDED
         // sample index — `toSamples` is `t*sr + 0.5` truncated, and `zeroSamplesOutsideClipRange`
@@ -200,12 +212,12 @@ public:
         // Bloc entièrement hors fenêtre → silence rapide.
         if (k0 + n <= sIn || k0 >= sOut)
         {
-            buffer->clear (fc.bufferStartSample, fc.bufferNumSamples);
+            buffer.clear (startSample, n);
             return;
         }
 
         const double dt = (blockEnd - blockStart) / juce::jmax (1, n);
-        const int numChans = buffer->getNumChannels();
+        const int numChans = buffer.getNumChannels();
 
         // Les deux exposants UNE fois par bloc : `std::pow` par échantillon pour une valeur qui ne
         // change pas d'un échantillon à l'autre serait payer la forme au prix du fondu.
@@ -226,7 +238,7 @@ public:
             }
             if (g == 1.0f) continue;
             for (int c = 0; c < numChans; ++c)
-                buffer->getWritePointer (c, fc.bufferStartSample)[i] *= g;
+                buffer.getWritePointer (c, startSample)[i] *= g;
         }
     }
 
