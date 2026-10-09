@@ -36,6 +36,15 @@ is the foundation and is not repeated here.
 | Q-U10 | Scheduling loop | Accepted: the send is refused, the reason is shown. | As planned. |
 | Q-U11 | Detached stem | Unchanged: a stem detached from the Main still feeds a Main aux. | As planned. |
 
+**Second round, same day, for INC 2** (detailed in section D.1):
+
+| # | Subject | Decision | Consequence for INC 2 |
+|---|---|---|---|
+| Q-U5 | Fades and window on a mid-chain send | A send taken anywhere in the chain FOLLOWS the object's fades and window (attenuated by fade-in / fade-out, cut outside the window). The object's volume and pan do NOT apply to a pre-fader send. | D.1.A.e: the window-fade envelope is applied to the sent copy; the direct signal is untouched. |
+| Q-U6 | Consolidate / bake of an object carrying a mid-chain send | "Ask the user." Read by the launcher as: an alert at the moment of the operation offering fold back to post-fader / delete the send / cancel. **INTERPRETATION TO CONFIRM.** | D.1.A.i and step 2.8, isolated; headless: explicit parameter, default `refuse`. |
+| Q-U7 | Where sends are drawn | ALL sends are cards in the signal view. A post-fader send is a card UNDER the pan / volume zone; dragging it upwards moves it into the chain. The fixed "aux" zone at the foot disappears for outgoing sends. | D.1.A.j. The aux bus head (received sends) is not concerned. |
+| — | Choosing the target of a new send | As for the sidechain: a "Send to…" menu (reachable auxes, order same group / rest of the stem / Main, refused ones greyed with the reason) and the "choose an object" mode on the timeline. The Aux tool (A) and the multi-selection inspector keep setting the level per (object, aux), whatever the position. | Step 2.11 (`SidechainPick` generalised). |
+
 ## Decisions taken in this plan (the architect's, each justified below)
 
 | # | Subject | Decision |
@@ -748,44 +757,502 @@ parallelism).
 
 # D. Sketches
 
-## D.1 INC 2 — a positionable send, the send card (branch `feature/sends-inc2-tap`, format 22)
+## D.1 INC 2 — a positionable send, the send card (branch `feature/sends-inc2-position`, format 22)
 
-**Steps.**
-0. Inventory: every site that switches on `rack` / `fxBlock` by hand or assumes a non-container
-   entry is a plugin; delete the legacy send path and its switch.
-1. Model: `AuxSend.tap`, `ObjectPlugin.sendMarker`, `sanitisingSends`, `effectiveTap`; the hand-rolled
-   walks moved onto `childSeries`.
-2. Compile: `rackSpec` emits a `send` node for a marker; `compileSeries` (`OBJEngineCore.mm:8007`)
-   places the `ObjBridgeSendPlugin` there, keyed `"send|sender|aux"`, reused across recompiles like
-   any plugin key; `input` / `preFader` / `postFader` are placed against the chain's anchors
-   (`trimIn`, the fader, the end). The transaction of INC 1 keeps owning existence and level; the
-   compile owns POSITION. To settle: one owner for the insertion, so that a recompile and a bridge
-   sync never fight (proposal: the bridge sync creates, `compileUserRack` only reorders, and a tap
-   move triggers a compile).
-3. Gate: with a pre-fader tap, the object's own mute / stem mute / solo no longer silence the send
-   through the fader — the INC 1 gate (step 1.6) becomes the general rule "a silenced sender sends
-   nothing".
-4. Signal view: the send CARD on the trunk (`SynopticLayout`, `SynopticModelMapping`,
-   `SynopticView`): level, on/off, target (menu + pick), its wire leaving the trunk; drag along the
-   trunk and to the three fixed points; drop refused inside a parallel block or a bin; the foot zone
-   becomes the post-fader slot. A send card is NOT part of `selectedPluginIDs` (as an instrument is
-   not): it has its own highlight.
-5. API: `send.set_tap {id, aux, tap | after: pluginID | index}`, `tap` in `send.list`.
-6. Tests: marker geometry and sanitising (standalone Swift); the scenario's sections re-run with the
-   tap at each point — a gain plugin of −12 dB before / after the tap proves WHERE it taps, a
-   `latencyTester` before / after proves the alignment; `copiedRun` after a cut keeps the tap between
-   the same two plugins; one undo per move.
+Detailed on 9 October 2026 from the code of `feature/sends-inc1-scope` (HEAD `68aa0799`), after the
+user's answers Q-U5 / Q-U6 / Q-U7 (table at the top of this document). It replaces the one-page
+sketch. Nothing below is implemented. The branch name of the sketch (`feature/sends-inc2-tap`) is
+superseded by `feature/sends-inc2-position`.
 
-**Risks.** The hand-rolled chain walks (a marker read as a plugin is dropped by the compile's
-`failed` list → the model loses it); two owners of one engine plugin; `maxPluginsOnClip = 45` now
-shared with sends (a session with many sends per object); the Aux tool and the card being two doors
-onto the same level.
+### D.1.A Design
 
-**Open questions (the user's).** Q-U5 a mid-chain tap is taken BEFORE the object's window and fades:
-does the send follow the object's fades anyway? Q-U6 baking / consolidating an object with an
-in-chain send: the tap point is destroyed — refuse, fall back to post-fader with a notice, or bake the
-send's side too? Q-U7 the card's look and where a post-fader send is drawn (a card after the fader,
-or the foot zone as today).
+#### A.a Vocabulary: four positions, two of them stored on the send, one in the chain
+
+The signal view is read top to bottom; the engine's list of an object is
+`[channel mode? | instrument? | trimIn | FX… | trimOut | fader | window-fade | sends]`.
+
+| Position (API name) | In the signal view | In the engine's list | Stored as |
+|---|---|---|---|
+| `input` | between the head (file / instrument / source) and the chain's IN gain | just before `trimIn` (after the channel mode and the instrument) | `AuxSend.tap = .input` |
+| `chain`, index `i` | on the trunk, before the root entry `i` (`i == count` = after the last one, still before the OUT gain) | among the user plugins, between `trimIn` and `trimOut` | a MARKER entry in `plugins` (top level) |
+| `pre_fader` | between the chain's OUT gain and the pan / volume / mute zone | just after `trimOut`, before the fader | `AuxSend.tap = .preFader` |
+| `post_fader` (default) | a card UNDER the pan / volume zone (Q-U7) | at the end of the list, after the window-fade — today's place | `AuxSend.tap` absent |
+
+"Before or after the chain gains" (U3) is therefore exact: `input` / `chain 0` are the two sides of
+the IN gain, `chain count` / `pre_fader` the two sides of the OUT gain.
+
+#### A.b Model
+
+```swift
+enum SendTapPoint: String, Codable { case postFader, preFader, input }
+
+struct AuxSend {                 // unchanged identity: one per (object, auxID)
+    var auxID: UUID
+    var levelDb: Float
+    var enabled: Bool
+    var tap: SendTapPoint = .postFader     // encoded ONLY when != .postFader
+}
+
+struct SendMarker: Codable, Equatable { var auxID: UUID }
+
+struct ObjectPlugin {            // third container kind, beside `rack` and `fxBlock`
+    var sendMarker: SendMarker? = nil      // encoded only when present
+    // isContainer == true, childSeries == [] for a marker
+}
+```
+
+- **Effective position** (one pure function, `SoundObject.sendPosition(auxID:)`): a top-level marker
+  naming the aux exists → `.chain(index)`; otherwise `send.tap`. A marker WINS over `tap`; moving a
+  send out of the chain removes its marker and writes `tap`; moving it into the chain inserts the
+  marker and resets `tap` to `.postFader` (so that losing the marker — a bake, a hand-edited file —
+  falls back to the oldest, best-known behaviour).
+- **`SoundObject.sanitisingSends()`** (pure, idempotent; run on load, after every paste / import, and
+  asserted by the audit): a marker without a send entry is removed; two markers for one aux → the
+  first is kept; a marker NESTED in a rack branch or a bin is HOISTED to the top level, just after
+  its top-level ancestor (less destructive than dropping it; U3 forbids it inside); a marker on an
+  aux object or on a stem / Main host is removed (aux and Main do not send).
+- **The marker's `id`** is a fresh UUID like any entry's (the id-uniqueness audit walks it through
+  `childSeries`, unchanged). It is NOT the engine key: the engine plugin stays keyed
+  `sender|aux` in `_bridgeSendMap`, so a marker re-created with another id finds the same instance.
+
+**Why a marker and not an anchor ("after plugin P") — verified on the code.** The array position
+survives every reorder for free. It BREAKS the eligible runs of the automatic FX bins
+(`isFXLinkEligible` is `!isContainer && no link`): a cut on `[A, tap, B]` gives the bins `{A}`,
+`{B}` with the tap still between them, where an anchor on `A` would land INSIDE a bin, which U3
+forbids. The price is an audit, and it is the main risk of the increment:
+
+- ~200 occurrences of `rack` / `fxBlock` / `isContainer` / `childSeries` in 25 files.
+- Sites that already go through `isContainer` / `childSeries` are safe as they are: `flattenLeaves`,
+  `pluginLeaves`, `collectPluginRefs`, `capturingPluginStates`, `pluginDisplayNames`,
+  `changedPluginStates`, the id-uniqueness walk, `isFXLinkEligible`, `fxLinkEligibleRuns`.
+- Sites written `if rack … else if fxBlock … else LEAF` read a marker as a PLUGIN and must be taught
+  it: `rackSpec`, `copiedPlugins` (`copySeries` / `copyLeaf`), `SynopticMapping.buildSeries`,
+  `bridgeTopology.collectLeaves`, `settingSidechain`, `bridgeLeafExists`, `CrossProjectImport`
+  (`cloneLeaf`), `deepFreshCopy` (`freshPlugins`), the clipboard's plugin copy
+  (`EditViewModel+Clipboard.swift` ~209), `adoptingPluginStates`, the API's plugin payload and its
+  counts (`Commands+Helpers` ~258, `Commands+Runtime` ~184), `removingPlugins`, `locate` /
+  `inserting`, `transferPlugins` and the plugin selection, `PluginDrop`, the FX-link editing.
+- 31 field-by-field `ObjectPlugin(id: …)` constructions would silently DROP the new field. Hence:
+  `sendMarker` is an init parameter with a default; every construction site that COPIES an entry is
+  listed in step 2.0 and either passes it or is proven never to see a marker.
+- The failure mode that makes this dangerous: an unresolved leaf of the compile comes back in
+  `failed` and `compileRack` REMOVES it from the model. A marker read as a plugin is not only
+  ignored, it is erased. Counter-measure: `rackSpec` never emits a marker as a leaf (step 2.3), and
+  `debug.send_marker_audit` (step 2.2) is asserted by the scenario after every phase.
+
+#### A.c Session format 22 and compatibility
+
+- `SessionSchema.formatVersion = 22`. Two optional keys: `tap` on a send, `sendMarker` on a chain
+  entry. Absent = post-fader: a format-21 file decodes to exactly the INC 1 model and re-encodes
+  without either key (byte-comparable objects when nothing was moved).
+- A format-22 file opened by an older build: the marker entry decodes as a plugin with an empty
+  identifier and is dropped by that build's compile. Accepted (no downgrade promise in this
+  project), said in the notice.
+- The session notice (the text an LLM reads before retouching the JSON) gains the two keys and the
+  bijection rule; `sanitisingSends` on load repairs a retouched file (same spirit as the duplicate
+  plugin-id repair).
+
+#### A.d Engine: who lays the tap, who orders it — no engine patch
+
+Facts (read in `tracktion_EditNodeBuilder.cpp` and `tracktion_ObjBridgeNodes.cpp`):
+`createPluginNodeForList` turns ANY `BridgeTapSource` found in a plugin list into a `BridgeTapNode`
+AT ITS INDEX and records the age (accumulated latency) of its input; the node passes its input
+through untouched and writes a COPY to the ring. So a send plugin moved to another index of the
+object's list is tapped there by the fork as it is. **Patch `0040` is NOT needed for INC 2** (it
+stays reserved for INC 3's mini-chain).
+
+One owner each (the sketch's open point, settled):
+
+- **Existence, level, gate: the bridge sync** (`syncBridge` → `ensureBridgeSendFrom…` →
+  `commitBridgeSync`), exactly as in INC 1.
+- **Position: one engine function, `applySendPositionsForKey:`**, called from BOTH ends so that a
+  recompile and a sync cannot fight:
+  - `ensureBridgeSendFrom:toAux:levelDb:gated:` gains `position:` (`postFader` / `preFader` /
+    `input` / `chain`) and, for `chain`, nothing else: the index comes from the recorded root order.
+  - `rackSpec` emits, at the ROOT only, `{kind: "send", key: "<sender>|<aux>"}` for a marker.
+    `parseCompileSeries` keeps it as an ordering token: never created, never destroyed, never put in
+    `failed`, and part of the wanted keys so that the compile's clean-up ignores it. The compile
+    stores the root order including the tokens (`chain.rootOrder`) and resolves a token through
+    `_bridgeSendMap` when ordering; a token whose plugin does not exist yet is skipped.
+  - `applySendPositionsForKey:` moves each send plugin of the object to: `input` → before `trimIn`
+    when the chain is materialised, else before the fader (same signal: no plugin, no trim);
+    `chain` → per `rootOrder`, else before the fader; `preFader` → before the fader (after
+    `trimOut` by construction); `postFader` → the end of the list. It moves only when the order is
+    wrong (`plugins:areInOrderIn:before:`), like `compileSeries`.
+  - It is called at the end of `compileUserRackForObjectID` and from `commitBridgeSync` for every
+    touched sender; a move that changed an index is ONE `restartPlayback`, inside the transaction
+    that already has one.
+- A position change from the model side = `scheduleChainCompile` (only when a marker is involved) +
+  `scheduleBridgeSync`. Order of arrival is indifferent by construction; the scenario exercises both.
+- The limit `maxPluginsOnClip = 45` (5 system + 40 user) is already shared with the send plugins
+  since INC 1; INC 2 changes nothing to the count. Step 2.0 reads what `ensureBridgeSend` answers on
+  a full list and makes it a `sendStatus` refusal with a reason rather than a silent absence.
+- The fork still carries the legacy `ContainerAuxSend` node code. It is left DORMANT (no app plugin
+  implements the interface any more), not removed: a deletion-only patch would spend `0040`. Step
+  2.0 checks with `OBJ_GRAPH_CENSUS` that the dormant scan costs nothing; if it does, its removal
+  rides with INC 3's `0040`.
+
+#### A.e Fades and window on the sent copy (Q-U5) — the direct signal untouched
+
+A tap taken before the fader is upstream of `ObjWindowFadePlugin`. Q-U5: the send follows the
+object's fades and window anyway; volume and pan do not apply.
+
+- `ObjWindowFadePlugin::applyToBuffer` is stateless per block (cached values, edit time from the
+  render context, window counted in samples). Its body is extracted into
+  `applyEnvelope (buffer, start, numSamples, editTime)`, public; `applyToBuffer` calls it.
+- `ObjBridgeSendPlugin` gains `setEnvelopeSource (te::Plugin::Ptr windowFade)` (a ref-counted
+  pointer, set on the message thread by `applySendPositionsForKey:` BEFORE the restart that makes
+  the new position live: null for `postFader`, the object's own `_windowFadeMap[key]` otherwise).
+  In `applyToBuffer` — which already receives the node's scratch COPY and an edit time moved back
+  by the tap's age — it applies `envelope` THEN `level`. The direct signal is never written.
+- Consequences that come for free: the fade preview and the head-cut rule follow (same plugin, same
+  values); a fade edited while playing is heard on the send at once; a pre-fader send is cut outside
+  a group's window exactly where the group is.
+- A post-fader send is after the window-fade and keeps today's behaviour, bit for bit (no envelope
+  source set).
+- Both classes are app-side headers (`objekat/OBJWindowFadePlugin.h`, `objekat/OBJBridgeSendPlugin.h`):
+  no fork change. To verify in step 2.4: `_windowFadeMap[key]` is written only in
+  `installObjectChainTail`; a rebuilt tail must be followed by `applySendPositionsForKey:` (add the
+  call there) or the send would hold the previous plugin — alive thanks to the `Ptr`, but stale.
+
+#### A.f Latency
+
+Nothing to build. The tap's age is the latency accumulated BEFORE it; `ObjAuxReturnNode` delays each
+reader by `X − age_i`. A tap before a 20 ms plugin is simply 20 ms younger than a post-fader one and
+is delayed that much more at the return; the wet stays sample-aligned with the dry at every
+position. The level automation and the envelope are evaluated at the edit time of the tapped
+material (the node already shifts it). Proven by section V of the scenario.
+
+#### A.g Mute, solo, the INC 1 gate
+
+Today mute and solo are −96 dB pushed on each object's OWN fader (`engineVolume`). A post-fader send
+is silenced by it; a pre-fader send would keep sounding from a muted object. This is a real choice
+(consoles differ) → **Q-U12**, with the provisional hypothesis **"a muted or solo-silenced object
+sends nothing, wherever its tap is"**, consistent with Q-U1.
+
+Under that hypothesis: `sendIsGated(sender:aux:)` (`EditViewModel+Audibility.swift`) becomes
+"an ancestor group not holding the aux is silenced (INC 1) OR the sender itself is silenced and its
+tap is not post-fader"; `pushMix` pushes the gates for any object owning a non-post-fader send, not
+only for groups. Stem mute: a stem's mute already silences its objects through the same fader path —
+same rule. The gate keeps its 50 ms smoother. Isolated in one step (2.5) so that the other answer to
+Q-U12 is a two-line change.
+
+#### A.h Copies, cut, paste, undo
+
+- **Duplicate, copy / paste in the project, cut:** the marker is an entry of `plugins` and travels
+  with the array ONCE the copy sites of A.b are taught it; `sends` travels as today. After a cut,
+  both halves carry the send at the same position; the automatic bins are `{A}`, `{B}` around it.
+- **Plugin-only transfers** (drag of a plugin or of a selection to another object, with or without
+  ⌥ / ⌘): markers are NOT plugins — never selected, never in a payload; a run dragged away leaves
+  the marker where it is.
+- **Wrapping by hand** (parallel block or bin made from a selection that straddles a marker): the
+  marker is not eligible; the bins split around it (`fxLinkEligibleRuns`), and a parallel block is
+  created without it, the marker left just after the block (the hoisting rule of `sanitisingSends`).
+- **Cross-project paste** (`CrossProjectImport.plan`, pure): a send whose aux is in the pasted lot is
+  remapped (the marker's `auxID` with it), otherwise the send AND its marker are dropped — today's
+  rule, extended to the marker and to `tap`.
+- **Undo / redo:** one undo point per gesture (`pushUndo` before the first modification). A marker
+  added, moved or removed changes the chain's shape, so `adoptingPluginStates` refuses and the
+  object is REBUILT on undo — correct, but it reloads every AU of the object. Step 2.7 makes two
+  chains that differ ONLY by their markers patchable (compile + bridge sync, instances kept),
+  proven by the `[UNDO] 1 patched` trace.
+- **Deleting the card = deleting the send:** `removeSend(from:to:)` removes the entry, its marker and
+  the automation lane aimed at it, in one undo point (the INC 1 door, extended).
+
+#### A.i Consolidate / bake (Q-U6) — INTERPRETATION TO CONFIRM
+
+What the code does today: a consolidated placement is created with `plugins: []` and
+`sends: live.sends`; the chain is baked into the wave, the sends survive on the placement. A marker
+dies with the chain; an `input` tap loses its meaning (there is nothing left before the chain). A
+`pre_fader` tap survives unchanged (the baked wave IS the pre-fader signal) and is NOT concerned.
+
+The user's answer is "ask the user". Planned as the launcher understood it, **not confirmed**:
+when the object to consolidate (or to bake) carries at least one send at `input` or `chain`, an
+alert at the moment of the operation offers **Fold back to post-fader / Delete the send(s) /
+Cancel**. One pure function, `SendBakePolicy.resolve(object, choice)`, does the folding or the
+deletion on the model BEFORE the existing path runs; the existing path is otherwise untouched.
+
+Headless and API (no alert is ever possible, `hasInterface`): `consolidate.make` and the bake
+commands gain `mid_chain_sends: "refuse" | "fold" | "remove"`, default **`refuse`** — the command
+fails with `mid_chain_sends` and the list of sends, nothing is changed. `refuse` is the safe
+default because both other choices change what is heard without anyone having seen it.
+
+Everything of this paragraph lives in step 2.8, isolated, so that another reading of "ask the user"
+(a preference, a per-send choice, a third option "bake the wet too") replaces one step.
+
+Out of this question, unchanged from INC 1: the sends of the CHILDREN of a baked group (rendered
+inside when their aux is inside, lost with the children otherwise).
+
+#### A.j Signal view (Q-U7): every send is a card
+
+- `SynopticNode.Kind` gains `.send(auxID)`; `SynopticMapping.buildSeries` maps a top-level marker to
+  it. `SynopticLayout.Diagram` loses `sendsZone` for outgoing sends and gains three fixed slots:
+  `inputSends` (between the head / ARA card and the IN gain), `preFaderSends` (between the OUT gain
+  and the pan / volume zone), `postFaderSends` (under the pan / volume zone, above the stems zone).
+  Several cards in one slot stack vertically in the order of `sends`.
+- The card: the aux's name and colour, level (same control and same doors as today's row:
+  `setSendLevelFromHand`), on / off, a cross (= delete the send), a menu (Change target…, Fold to
+  post-fader, Delete), its wire leaving the trunk sideways towards the aux. Greyed with the reason
+  when the send is refused or the aux no longer overlaps the sender in time (`sendReasonText`).
+- A send card is NOT in `selectedPluginIDs` (like the instrument): own highlight, own drag payload
+  (`SendDragPayload { sender, aux }`), ignored by the marquee.
+- **Consequence of Q-U7 to be seen by the user (Q-U13):** the zone used to list EVERY reachable aux
+  as a row, existing send or not. Cards exist only for entries of `sends`; the reachable auxes
+  without a send are reached through "Send to…".
+- **Creating:** a "+ Send to…" button in the post-fader slot (creates post-fader), and the same
+  entry in the "+" of a trunk insert point (creates at that point). Both open the same menu: the
+  reachable auxes in the Q-U3 order (same group / rest of the stem / Main), the refused ones greyed
+  with their reason, then "Choose an object on the timeline…". New send at −∞, on
+  (`setSendEnabled(true)` is the existing door that creates `AuxSend(−∞, enabled: true)`).
+- **Pick mode:** `SidechainPick` is generalised into
+  `enum RoutePick { case sidechain(host:, plugin:), send(sender:, position:) }`; the timeline's
+  readers (highlight, cursor, click, Esc, the banner) switch on it; the refusal text for a send
+  comes from `sendCreationRefusal`. Only auxes are valid targets in send mode.
+- **Drag and drop of a card** (no modifier: one send per pair, so no copy):
+
+  | Drop on | Result | Banner |
+  |---|---|---|
+  | a trunk insert point (root series) | `chain`, that index | "Send taken here" |
+  | the input slot / the pre-fader slot / the post-fader slot | that position | "Send taken at the input / before the fader / after the fader" |
+  | a branch of a parallel block, an FX link bin | REFUSED | "A send cannot be taken inside a parallel block / an FX link" |
+  | another object, a stem strip, the timeline | REFUSED | "A send stays on its object" |
+  | an aux bus head, the Main | REFUSED (they do not send) | same |
+
+  The banners are new contexts of the existing `PluginDropHint`.
+- The aux bus head (`BusHeadZoneView`, the RECEIVED sends) is not touched: it lists senders and their
+  level, which the position does not change. One addition, cheap: each received row shows the
+  position's short name when it is not post-fader.
+- The Aux tool (A) and the multi-selection inspector are unchanged: they set the level of the pair
+  whatever the position, and a send they create is post-fader.
+
+#### A.k API
+
+- `send.list`: each send gains `position` (`post_fader` / `pre_fader` / `input` / `chain`), and for
+  `chain`: `index`, `after_plugin`, `before_plugin` (ids or null), plus `follows_window` (bool).
+- `send.set_position {id, aux, position, index? | after? | before?}` — undoable (`.bus`); refuses
+  `chain` aimed inside a block / bin (`bad_params` with the reason), an unknown plugin id, an aux or
+  Main sender.
+- `send.create {id, aux, position?…}` — the hand's creation door (−∞, on), so that scenarios stop
+  creating through `set_level`. `send.set_level` keeps creating post-fader.
+- `send.retarget {id, aux, to}` — the card's "Change target…": renames `auxID` on the send, its
+  marker, its automation lane and the touch order; refused when a send to `to` exists or `to` is
+  refused by the scope.
+- `consolidate.make` / bake: `mid_chain_sends` (A.i).
+- DEBUG: `debug.send_marker_audit` (model bijection marker ↔ send, nesting, hosts; AND engine: for
+  every live send, its index in the object's list against the position the model asks, and whether
+  an envelope source is set); `debug.bridge_report` gains `list_index` and `age_samples` per send;
+  `debug.add_test_plugin` gains the type `gainTester` (fixed gain, `gain_db`) — the identifiable
+  plugin of the position proof.
+
+#### A.l Settled here (technical, reversible) — not questions
+
+Marker rather than anchor; marker wins over `tap`; nested marker hoisted, not dropped; sync creates
+and compile orders through one function; no patch `0040`; envelope then level on the copy; `input`
+of a MIDI object is after its instrument, `input` of a group is the sum of its children before the
+group's FX; an unmaterialised chain puts every non-post-fader tap just before the fader; `refuse` as
+the headless default of Q-U6; the fork's legacy node code left dormant; plugin transfers never carry
+a marker; no copy modifier on a card drag.
+
+### D.1.B Implementation plan
+
+Branch `feature/sends-inc2-position`, created from `feature/sends-inc1-scope` (INC 1 is not merged:
+merging INC 1 first, after the eye / ear gate C.5, is preferable; if not, INC 2 stacks on it). One
+commit per step, build + the step's tests green before the next. Hand strings through `L("…")`, the
+three languages in the same commit as the string.
+
+**2.0 — Branch, legacy removal, inventory (no behaviour change).**
+- Delete the legacy send path and its switch: `OBJAuxSendPlugin.h`; in `OBJEngineCore.mm/.h` the
+  legacy AUX-send section (`addSend` / `removeSend` / `_auxSendMap`, `-isSend:routableToAux:`,
+  `pruneOutOfScopeSends`, the legacy half of `forgetObjectBookkeeping`); in Swift every
+  `Self.sendsLegacy` branch and `legacyCanRouteSend` (`EditViewModel+Aux.swift`,
+  `EditViewModel.swift` `syncSends`, `+Bridge`, `+Groups`, `+Cut`, `+Clipboard`, `+Overlaps`,
+  `+Relink`, `+MultiSelection*`, `Commands+Plugins.swift`); the two calls that survived OUTSIDE the
+  switch and still reach the legacy engine door: `dropStaleSends` (`EditViewModel+UndoRedo.swift`
+  ~240) and `consolidateWrappingClip` (`EditViewModel+Consolidate.swift` ~528, `engine.removeSend`
+  + `syncSends`) — both become a `scheduleBridgeSync()`. The 18 files of the grep
+  `sendsLegacy|OBJ_SENDS_LEGACY|legacyCanRouteSend|addSend|removeSend|_auxSendMap|ObjAuxSendPlugin`
+  must answer only the model's `removeSend(from:to:)` afterwards.
+- `tools/scenario_bridge_sends.py`: the null-test section against the legacy path is removed; its
+  numbers stay in the journal B.J.
+- Inventory, written into this document as a table (site, file:line, "safe through childSeries" /
+  "to teach" / "never sees a marker, why"): every hand-rolled chain walk and every `ObjectPlugin(`
+  construction (A.b). What `ensureBridgeSend` answers on a full plugin list. Whether a MIDI
+  object's instrument is in `plugins` (it decides what `chain 0` means there).
+  `OBJ_GRAPH_CENSUS` before / after the removal.
+- Gate: build, 0 new warning; `tools/scenario_bridge_sends.py` and the C.4 list green.
+
+**2.1 — Model (pure).** `SoundObject/SoundObject.swift`: `SendTapPoint`, `AuxSend.tap`, `SendMarker`,
+`ObjectPlugin.sendMarker` (init parameter, default nil; `isContainer`, `childSeries` in
+`FXLink.swift`), `sendPosition(auxID:)`, `settingSendPosition(auxID:, _:)`, `sanitisingSends()`.
+`SessionSchema.swift`: format 22 + notice. Load path: `sanitisingSends` next to
+`purgingDanglingSends` (`EditViewModel+SendPurge.swift`). New `tools/test_send_position.swift`
+(C.1). No engine or UI effect yet: a marker in a file is carried and ignored.
+
+**2.2 — The audit, before the walks are touched.** `debug.send_marker_audit` (model half) in
+`CommandAPI/Commands+Aux.swift`; then teach the "to teach" sites of the 2.0 table, one commit per
+family: (a) compile-facing (`rackSpec` — the marker is emitted as nothing for now —,
+`compileRack`'s `failed` handling, `removingPlugins`, `locate` / `inserting`); (b) bridge-facing
+(`bridgeTopology.collectLeaves`, `settingSidechain`, `bridgeLeafExists`); (c) copies
+(`copiedPlugins`, clipboard, `deepFreshCopy`, `restoredSubtree`, `CrossProjectImport`,
+`copiedRun` / FX-link editing, `transferPlugins`, `PluginDrop`); (d) API payloads and counts.
+A pure test per transformation: "a chain `[A, marker, B]` through X still holds the marker between
+A and B (or X is documented to drop it with its send)".
+
+**2.3 — Engine: position.** `OBJEngineCore.mm/.h`: the `send` token in `parseCompileSeries` /
+`collectCompileKeys`, `chain.rootOrder`, `applySendPositionsForKey:`, the `position:` argument of
+`ensureBridgeSendFrom…`, the calls from `compileUserRackForObjectID`, `commitBridgeSync` and
+`installObjectChainTail`. Swift: `rackSpec` emits the token; `syncBridge` passes the position;
+`setSendPosition(from:to:_:)` (machine door) and `setSendPositionFromHand` (pushUndo, refusals) in
+`EditViewModel+Aux.swift`; `needsChainCompile` unchanged (a marker alone does not materialise the
+chain: A.d's fallback). API: `send.set_position`, `send.create`, `position` in `send.list`; the
+engine half of `debug.send_marker_audit`; `list_index` / `age_samples` in `debug.bridge_report`;
+`gainTester` in `debug.add_test_plugin`. Scenario sections Q, R, V.
+
+**2.4 — Engine: fades and window on the copy (Q-U5).** `OBJWindowFadePlugin.h` (`applyEnvelope`
+extracted, `applyToBuffer` calls it — the direct path must stay bit-identical: section T),
+`OBJBridgeSendPlugin.h` (`setEnvelopeSource`, envelope then level), set from
+`applySendPositionsForKey:`. Scenario section S.
+
+**2.5 — Gate (Q-U12, hypothesis).** `EditViewModel+Audibility.swift`: `sendIsGated`, `pushMix`.
+Scenario section U. Isolated.
+
+**2.6 — Copies end to end.** Duplicate, cut, copy / paste, cross-project paste, group / ungroup of
+an object carrying sends at the four positions: the scenario's section W drives the real commands
+and asserts the audit after each. Fix what 2.2's pure tests did not catch.
+
+**2.7 — Undo.** `EditViewModel+UndoRedo.swift`: `isPatchable` / `adoptingPluginStates` accept chains
+differing only by markers; `pushPatch` then calls `scheduleChainCompile` + `scheduleBridgeSync`.
+Section X (one undo per move, `[UNDO] 1 patched`, the AU instance pointer unchanged in
+`debug.plugin_id_audit` or the plugin report).
+
+**2.8 — Consolidate / bake (Q-U6) — INTERPRETATION TO CONFIRM, isolated.**
+`SendBakePolicy` (pure, `Shared/`), the alert (hand path only, `hasInterface`), the
+`mid_chain_sends` parameter (`Commands+Consolidate.swift`, bake commands), hooked at the entry of
+`consolidate(groupID:)`, `consolidateWrappingClip`, `consolidateEachInSelection`,
+`consolidateSelectionAsLinkedInstances` and the bake entry. Section Y.
+
+**2.9 — Signal view: cards.** `Inspector/Synoptic/SynopticGraph.swift` (`.send`),
+`SynopticModelMapping.swift`, `SynopticLayout.swift` (three slots, card size, wires),
+`SynopticView.swift` (the card view from `SynopticSendRow`'s controls; `SendsZoneView` removed for
+outgoing sends; `BusHeadZoneView` kept, position label added). `tools/test_synoptic_send_cards.swift`
+(layout: a card per send, slot per position, no card in a branch).
+
+**2.10 — Signal view: drag and drop, deletion.** `SendDragPayload`, the drop sites
+(`SynopticDropTarget`, `dropSite`), the refusals and the `PluginDropHint` contexts, the cross and
+the card menu. i18n.
+
+**2.11 — "Send to…" and the pick mode.** The menu builder (pure: `sendCandidates` + `offerTier` →
+ordered entries with reasons; tested); `RoutePick` replacing `SidechainPick`
+(`EditViewModel+SidechainStrip.swift`, `EditViewModel.swift:341`, `TimelineView.swift`,
+`TimelineKeyHandler.swift`, `TimelineView+TapHandler.swift`, `TimelineView+DragHandler.swift`,
+`SidechainStripView.swift`); `send.retarget`. The sidechain's own scenario must stay green
+(non-regression of the generalisation).
+
+**2.12 — Documentation.** `CLAUDE.md` (INC 2 entry, the marker rule among the permanent points),
+`docs/command_api.md`, `docs/architecture_decisions.md` (marker vs anchor; one owner for position;
+envelope on the copy), this document's journal, the session notice, `engine-patches/3.5/README.md`
+(no new patch; the dormant legacy node code).
+
+i18n keys (fr / en / es, `tools/i18n/xcstrings.py check` and `orphans` at each UI step): card menu
+(3), "+ Send to…", "Choose an object on the timeline…", the four position names, five drop banners,
+the pick-mode banner, the Q-U6 alert (title, text, three buttons), the refusal "chain full".
+
+### D.1.C Test plan
+
+Rules of INC 1 kept: each scenario against its OWN fresh instance, `--no-recent`, audio ON for the
+bridge scenarios, exports re-read in 24 bits, the wet measured by difference (`E_on − E_off`), two
+identical exports must subtract to exactly zero before any measure is trusted.
+
+**C.a Pure (no app, any machine).**
+- `tools/test_send_position.swift`: decode a format-21 object → all post-fader, re-encode without
+  the new keys; round trip of the four positions; marker wins over `tap`; `settingSendPosition`
+  between all 4×4 pairs keeps the bijection; `sanitisingSends`: orphan marker, duplicate, nested in a
+  rack branch, nested in a bin, on an aux — and idempotence; indices after a plugin is inserted,
+  removed, reordered around a marker.
+- "Marker survives" per transformation (2.2): `copiedPlugins` (fresh ids, marker kept),
+  `copiedRun` / `fxLinkEligibleRuns` on `[A, m, B]` → two runs, `adoptingPluginStates`,
+  `capturingPluginStates`, `deepFreshCopy` (aux remapped in the marker too), `removingPlugins(A)`
+  leaves `[m, B]`.
+- `tools/test_cross_project_import.swift` extended: marker remapped with its send; dropped with it.
+- `tools/test_bridge_scope.swift`: unchanged, must stay green (the scope does not depend on position).
+- `tools/test_synoptic_send_cards.swift` (2.9), the menu builder test (2.11), `SendBakePolicy` (2.8).
+- `tools/test_bridge_core.cpp`: unchanged, green.
+
+**C.b `tools/scenario_bridge_sends.py`, new sections** (X = a clip of noise bursts with a click, A =
+an aux without FX unless said; `G(−12)` = `gainTester` at −12 dB; `L(20)` = `latencyTester` 20 ms).
+After EVERY section: `debug.send_marker_audit` answers no violation.
+
+| § | Set-up | Assertion |
+|---|---|---|
+| Q | X with `[G(−12)]`, send at 0 dB, moved through `input`, `chain 0`, `chain 1`, `pre_fader`, `post_fader`; then IN gain −6, OUT gain −3, fader −20 | wet level = the sum of the gains UPSTREAM of the tap, each within 0.05 dB: `input` 0; `chain 0` −6; `chain 1` −18; `pre_fader` −21; `post_fader` −41. The audit's engine `list_index` matches. |
+| R | `[G(−12), G(−7)]`, tap between them; then reorder the two plugins by the API; then delete the first | −12, then −7 (the marker kept its array place), then 0 after deletion — the position follows the ARRAY, as designed |
+| S | X with a 0.5 s fade-in and a 0.5 s fade-out, fader −20 dB, send `pre_fader` 0 dB; same in `chain`, `input` | the wet's envelope equals the fade curve (10 ms RMS windows against `curve_db`, 0.5 dB); the wet is 20 dB ABOVE the dry (pre-fader proven); a group cropped by its window: wet exactly 0 outside the window; pan hard left on X: the wet stays centred |
+| T | the same project exported (1) without any send, (2) with a mid-chain send at −∞, (3) with a mid-chain send at 0 dB into a MUTED aux, (4) after step 2.4 with a post-fader send only | (1) − (2) == 0 and (1) − (3) == 0 EXACTLY (the direct signal is bit-identical); (4) equals the INC 1 reference export kept from before the `applyEnvelope` extraction |
+| V | `[L(20), G(−12), L(10)]`, tap at each of the four trunk points and the three fixed ones | `peak_index(wet) == peak_index(dry)` at every position; `age_samples` of the tap = 0 / 20 ms / 20 ms / 30 ms in the report; the level proves the place as in Q |
+| U | X muted, then X silenced by another object's solo, then X's stem muted — send `pre_fader` and `chain` | wet == 0 (hypothesis Q-U12); un-mute: wet back, same level; `gate_edges` shows the 50 ms ramp, no click |
+| W | duplicate X; cut X in two; copy / paste; group then ungroup; cross-project paste with the aux in the lot, then without | each resulting object: same `position` in `send.list`, same wet level as §Q for its position; without the aux: no send, no marker; after the cut the bins are `{G}`,`{G}` and the tap still measures −12 |
+| X | one move = one undo; undo / redo through the five positions; undo of a card deletion | `send.list` and the measured level come back at each step; trace `[UNDO] 1 patched` (2.7), plugin instances unchanged |
+| Y | `consolidate.make` on X with a `chain` send: default; `fold`; `remove`; and with a `pre_fader` send | default → error `mid_chain_sends`, model unchanged (hash); `fold` → placement's send is `post_fader`; `remove` → no send; `pre_fader` → accepted without the parameter, wet unchanged within 0.05 dB |
+| Z | save, close, reopen (the five positions, a retargeted send, an automated level on a mid-chain send) | `send.list` identical, exports identical to before the save (difference == 0) |
+| P′ | a format-21 project saved by the INC 1 build (fixture committed with its reference export) | opens without notice, every send `post_fader`, export − reference == 0; re-saved: format 22, objects without `tap` / `sendMarker` keys |
+
+Kept from INC 1 and re-run with the tap at `chain` and at `pre_fader` (a loop over the position
+parameter, not new code): A (level and alignment), M (automated level aligned with the material),
+B / C (group mute gate), N (loop), the pass counters.
+
+**C.c Non-regression — exact commands** (each on its own fresh instance; the launch line is the one
+of section C.4, unchanged):
+
+```
+swiftc -O tools/test_send_position.swift … && ./test_send_position
+swiftc -O tools/test_bridge_scope.swift … && ./test_bridge_scope
+python3 tools/test_bridge_scope_reference.py
+swiftc -O tools/test_cross_project_import.swift … && ./test_cross_project_import
+swiftc -O tools/test_synoptic_fxblock.swift … ; tools/test_synoptic_marquee.swift ; tools/test_send_columns.swift ; tools/test_synoptic_send_cards.swift
+clang++ -std=c++20 tools/test_bridge_core.cpp -o test_bridge_core && ./test_bridge_core
+python3 tools/scenario_bridge_sends.py            # all sections, audio ON
+python3 tools/scenario_selection_send_scope.py
+python3 tools/scenario_cross_paste.py ; python3 tools/scenario_tabs.py ; python3 tools/scenario_navigation.py
+the sidechain scenarios and the FX-link scenarios of section C.4 (the walks and the pick mode were touched)
+python3 tools/i18n/xcstrings.py check ; python3 tools/i18n/xcstrings.py orphans
+xcodebuild … Debug build: 0 new warning against the baseline
+```
+
+(The `…` source lists are those already written in C.1 / C.4 for each test; they are copied there
+when the files exist.) A MUTANT run is added, which INC 1 did not have: `applySendPositionsForKey:`
+compiled as a no-op must turn §Q, §R, §V red; `setEnvelopeSource` never called must turn §S red.
+
+**C.d What only a person validates.** The card's look, its wire, the three slots, the stacking of
+several cards; the drag (lift, insert-point highlight, banners, refusals) — SwiftUI gestures are not
+reachable by the scenario; the "Send to…" menu and the pick mode on the timeline (cursor, highlight,
+Esc); the Q-U6 alert; a reverb fed pre-fader from a clip with a long fade-out, heard; moving a card
+while playing (one restart: a click or not?); the mute of an object sending pre-fader (Q-U12 by ear);
+an old project opened and looking the same apart from rows that became cards.
+
+### D.1.D Open questions for INC 2 (the user's) — see section E for the table
+
+Q-U6 (confirm the interpretation and the headless default), Q-U12 (mute / solo of a pre-fader
+sender), Q-U13 (cards only for existing sends), Q-U14 (where "+ Send to…" lives), Q-U15 (a send
+whose aux no longer overlaps: card kept, greyed?), Q-U16 ("Change target…" on the card, in INC 2 or
+not).
+
+### D.1.E Risks, frankly
+
+1. **Silent loss of a marker** (a walk or a field-by-field copy missed): high probability of at
+   least one miss, contained by the 2.0 table, the pure "marker survives" tests and the audit after
+   every scenario phase. The failure is visible (the send falls back to post-fader), never a crash.
+2. **Two code paths ordering one plugin**: closed by the single `applySendPositionsForKey:`, but the
+   order-of-arrival cases (sync before compile, compile before sync, tail rebuilt) must each be in
+   the scenario; medium.
+3. **The envelope source going stale** after a tail rebuild: low once the call is in
+   `installObjectChainTail`; section S after a forced tail rebuild covers it.
+4. **Undo rebuilding AUs** if 2.7 slips: functional but slow on heavy objects (hundreds of ms per AU).
+5. **The signal view** (2.9–2.11) is the largest part by volume and the only one no scenario can
+   see: the layout is tested pure, the gestures are not. The memory of this project holds several
+   SwiftUI drag pitfalls; expect iterations with the user at the screen.
+6. **INC 1 has not been seen or heard yet.** INC 2 stacks on an increment whose eye / ear gate (C.5)
+   is open; a finding there lands under INC 2.
+7. Q-U6 and Q-U12 are built on hypotheses; both are isolated in one step each.
 
 ## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-chain`, format 23, engine patch `0040`)
 
@@ -827,9 +1294,14 @@ is one setting? Q-U9 a parallel block inside a mini-chain: allowed or series onl
 | Q-U2 | Old projects hold sends that went silent after a regrouping and that the new scope would revive. On opening: keep them silent (switched off, visible) or let them sound again? | ANSWERED 9 Oct: LET THEM SOUND (no `enabled = false` at migration). |
 | Q-U3 | The Aux tool (A) and the inspector: one knob per REACHABLE aux (possibly dozens per block) or only the near ones plus the sends that already exist, the far ones being created from the signal view? | ANSWERED 9 Oct: ALL reachable auxes (time-overlap filtered), ordered same group / rest of the stem / Main. Menu and pick postponed to INC 2. |
 | Q-U4 | A send created by the menu or the pick mode starts at 0 dB, or at −∞ waiting for the knob? | ANSWERED 9 Oct: -inf (silent). |
-| Q-U5 | (INC 2) A mid-chain tap is before the object's fades: follow the fades anyway? | Not assumed — blocks INC 2 step 2. |
-| Q-U6 | (INC 2) Bake / consolidate with an in-chain send. | Not assumed. |
-| Q-U7 | (INC 2) The card: where a post-fader send is drawn. | Foot zone, as today. |
+| Q-U5 | (INC 2) A mid-chain tap is before the object's fades: follow the fades anyway? | ANSWERED 9 Oct: YES, fades and window apply to the send at every position; volume and pan do not apply pre-fader. |
+| Q-U6 | (INC 2) Bake / consolidate with an in-chain send. | ANSWERED 9 Oct: "ask the user". **To confirm:** is it an alert at the moment of the operation with fold to post-fader / delete the send / cancel? And for the API, which cannot ask: the plan REFUSES by default (`mid_chain_sends: refuse`) and takes `fold` / `remove` explicitly. A `pre_fader` send is not concerned (the baked wave is the pre-fader signal). |
+| Q-U7 | (INC 2) The card: where a post-fader send is drawn. | ANSWERED 9 Oct: every send is a card; post-fader = a card under the pan / volume zone; the foot zone disappears for outgoing sends. |
+| Q-U12 | (INC 2) An object is MUTED (or silenced by another's solo, or by its stem's mute) and has a send taken BEFORE its fader. Mute is the fader today, so that send would keep feeding the reverb. Should it? | NO: a muted or solo-silenced object sends nothing, wherever the send is taken (consistent with Q-U1). Step 2.5, isolated. |
+| Q-U13 | (INC 2) Consequence of Q-U7: the foot zone listed EVERY reachable aux as a row, send or not. With cards, only the sends that exist are drawn; the other auxes are reached through "Send to…". Acceptable? | Yes. (The Aux tool and the inspector still list all reachable auxes.) |
+| Q-U14 | (INC 2) Where "Send to…" is reached in the signal view. | A "+ Send to…" button in the post-fader slot (creates post-fader), and the same entry in the "+" of each trunk insert point (creates the send right there). |
+| Q-U15 | (INC 2) A send exists but its aux no longer overlaps the object in time (or the send is refused by the scope). The foot zone used to hide a non-overlapping aux. | The card stays, greyed, with the reason; nothing disappears from the chain by moving an object. |
+| Q-U16 | (INC 2) "Change target…" on a card (same position, level and automation, another aux): in INC 2, or delete-and-recreate is enough? | In INC 2 (card menu + `send.retarget`), droppable without consequence. |
 | Q-U8, Q-U9 | (INC 3) Linking / bins and parallel blocks in a mini-chain. | Neither in v1. |
 | Q-U10 | Two groups each sending into an aux of the other is refused (a scheduling loop, no signal loop). Acceptable, with the reason shown? | ANSWERED 9 Oct: accepted, reason shown. |
 | Q-U11 | A stem DETACHED from the Main still feeds a Main aux today (unchanged by this plan). Wanted? | ANSWERED 9 Oct: unchanged. |
