@@ -1546,6 +1546,161 @@ def section_T2REF(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# W2 — copies end to end: duplicate, cut, copy/paste, group/ungroup, cross-project paste
+# --------------------------------------------------------------------------------------------------
+
+W2_POSITIONS = (("input",  {"position": "input"},                 0.0),
+                ("chain0", {"position": "chain", "index": 0},    -6.0),
+                ("chain1", {"position": "chain", "index": 1},    -18.0),
+                ("pre",    {"position": "pre_fader"},            -21.0),
+                ("post",   {"position": "post_fader"},           -41.0))
+
+
+def w2_build(c, name, params):
+    """X = impulse with [G(-12)], IN -6, OUT -3, fader -20, its send to a root aux at 0 dB at `params`."""
+    fresh(c, name)
+    x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 8})["id"]
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    c.send("send.create", dict({"id": x, "aux": a}, **params))
+    lay_send(c, x, a, 0.0)
+    return x, a
+
+
+def w2_check_one(c, label, obj, a, pname, params, expect, others=(), measure_it=True):
+    """The copy `obj` carries the same position, one marker iff in the chain, and (if asked) the same wet."""
+    row = position_row(c, obj, a)
+    want_name = params["position"]
+    ok = row.get("position") == want_name and (want_name != "chain" or row.get("index") == params["index"])
+    check("%s: send.list says %s%s" % (label, want_name, "" if want_name != "chain" else " %d" % params["index"]), ok, row)
+    mk = markers_and_positions(c, [obj], a)[0][2]
+    check("%s: %d marker(s) in the chain" % (label, 1 if want_name == "chain" else 0), mk == (1 if want_name == "chain" else 0), mk)
+    if measure_it:
+        for o in others:
+            c.send("send.enable", {"id": o, "aux": a, "enabled": False})
+        _, _, db = measure_wet_db(c, label.replace(" ", "_"), obj, a)
+        for o in others:
+            c.send("send.enable", {"id": o, "aux": a, "enabled": True})
+        check("%s: wet %.0f dB re source (0.05)" % (label, expect), db is not None and abs(db - expect) <= 0.05, db)
+
+
+def section_W2(c):
+    print("\n--- W2  copies end to end: the position, the marker and the wet survive every way to copy")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    for pname, params, expect in W2_POSITIONS:
+        tag = "W2 " + pname
+        # --- duplicate
+        x, a = w2_build(c, "W2" + pname, params)
+        w2_check_one(c, tag + " original", x, a, pname, params, expect)
+        d = c.send("object.duplicate", {"ids": [x]})["ids"]
+        audit(c, tag + " duplicate")
+        check(tag + " duplicate: one copy", len(d) == 1, d)
+        c.send("object.move", {"id": d[0], "lane": 2, "start": 0.0})    # the copy lands after the original: bring it back under the aux
+        settle(c)
+        w2_check_one(c, tag + " duplicate", d[0], a, pname, params, expect, others=[x])
+        w2_check_one(c, tag + " original after the duplicate", x, a, pname, params, expect, others=[d[0]])
+        # --- cut: the left half carries the impulse (at 1.0 s), the right one is silent but keeps its send
+        pieces = c.send("object.split_at", {"seconds": 1.5, "ids": [d[0]]})["ids"]
+        audit(c, tag + " cut")
+        starts = {i: c.send("object.get", {"id": i})["start"] for i in pieces}
+        left = min(starts, key=starts.get)
+        right = max(starts, key=starts.get)
+        w2_check_one(c, tag + " cut, left half", left, a, pname, params, expect, others=[x])
+        w2_check_one(c, tag + " cut, right half", right, a, pname, params, expect, measure_it=False)
+        if pname == "chain1":
+            shape = {}
+            for half, h in (("left", left), ("right", right)):
+                plist = c.send("plugin.list", {"host": h})["plugins"]
+                shape[half] = [("bin" if e.get("is_fx_block") else "marker" if e.get("is_send_marker") else "plugin") for e in plist]
+            print("       W2 chain1: top level of each half after the cut: %s" % shape)
+            check(tag + " cut: each half holds one bin {G} and the marker after it (the tap measures -18 above)",
+                  shape["left"] == ["bin", "marker"] and shape["right"] == ["bin", "marker"], shape)
+        # --- copy / paste on another lane, same time
+        c.send("selection.set", {"ids": [x]})
+        c.send("clipboard.copy", {})
+        c.send("timesel.set", {"start": 0.0, "end": 3.0, "lane": 3, "lane_count": 1})
+        pasted = c.send("clipboard.paste", {})["ids"]
+        audit(c, tag + " paste")
+        check(tag + " paste: one object pasted", len(pasted) == 1, pasted)
+        if pasted:
+            w2_check_one(c, tag + " paste", pasted[0], a, pname, params, expect, others=[x, left])
+        # --- group / ungroup
+        o = with_other(c, lane=5)
+        g = c.send("group.create", {"ids": [x, o]})["id"]
+        audit(c, tag + " group")
+        w2_check_one(c, tag + " in a group", x, a, pname, params, expect, others=[i for i in (left, *(pasted or [])) if i != x])
+        c.send("group.disband", {"id": g})
+        audit(c, tag + " ungroup")
+        w2_check_one(c, tag + " ungrouped", x, a, pname, params, expect, others=[i for i in (left, *(pasted or [])) if i != x])
+
+    # --- cross-project paste: the aux in the lot, then without it.
+    # The target tab is made FIRST (a `tab.new` after the copy drops the clipboard: the new project
+    # starts with an empty one — see the report), then the copy is made in the source tab.
+    def new_target(tag2):
+        src = c.send("app.info")["active_tab"]
+        c.send("tab.new", {})
+        os.makedirs(out(tag2), exist_ok=True)
+        c.send("project.save_as", {"path": out("%s/project.objekat" % tag2)})
+        tgt = c.send("app.info")["active_tab"]
+        c.send("tab.select", {"id": src})
+        return src, tgt
+
+    for pname, params, expect in (W2_POSITIONS[2], W2_POSITIONS[3]):
+        tag = "W2 cross " + pname
+        x, a = w2_build(c, "W2x" + pname, params)
+        o = with_other(c, lane=5)
+        g = c.send("group.create", {"ids": [x, a, o]})["id"]       # the aux travels with its sender
+        wait(c)
+        src, tgt = new_target("W2xt" + pname)
+        c.send("selection.set", {"ids": [g]})
+        copied = c.send("clipboard.copy", {})
+        check(tag + ": the group is copied", copied.get("copied") == 1, copied)
+        c.send("tab.select", {"id": tgt})
+        c.send("timesel.set", {"start": 0.0, "end": 3.0, "lane": 0, "lane_count": 1})
+        pasted = c.send("clipboard.paste", {})["ids"]
+        settle(c)
+        audit(c, tag + " pasted")
+        check(tag + ": one group pasted", len(pasted) == 1, pasted)
+        newg = pasted[0] if pasted else None
+        if newg:
+            c.send("group.expand", {"id": newg, "expanded": True})
+            wait(c)
+            kids = [k for k in c.send("object.list", {})["objects"] if k.get("parent") == newg]
+            naux = [k["id"] for k in kids if k["kind"] == "aux"]
+            nx = [k["id"] for k in kids if k["kind"] == "clip"
+                  and c.send("send.list", {"id": k["id"]})["sends"]]
+            check(tag + ": the pasted group holds the sender and the aux", len(nx) == 1 and len(naux) == 1, kids)
+            if nx and naux:
+                w2_check_one(c, tag + " (aux in the lot)", nx[0], naux[0], pname, params, expect)
+        c.send("tab.close", {"id": tgt, "discard": True})
+        wait(c)
+        check(tag + ": back on the source tab", c.send("app.info")["active_tab"] == src)
+        # without the aux: the sender alone goes to a project that holds no aux
+        c.send("group.disband", {"id": g})
+        wait(c)
+        src, tgt = new_target("W2xu" + pname)
+        c.send("selection.set", {"ids": [x]})
+        copied = c.send("clipboard.copy", {})
+        check(tag + ": the sender alone is copied", copied.get("copied") == 1, copied)
+        c.send("tab.select", {"id": tgt})
+        c.send("timesel.set", {"start": 0.0, "end": 3.0, "lane": 0, "lane_count": 1})
+        alone = c.send("clipboard.paste", {})["ids"]
+        settle(c)
+        audit(c, tag + " alone")
+        check(tag + ": the sender pasted without its aux: one object", len(alone) == 1, alone)
+        if alone:
+            rows = c.send("send.list", {"id": alone[0]})["sends"]
+            mk = [e for e in c.send("plugin.list", {"host": alone[0]})["plugins"] if e.get("is_send_marker")]
+            check(tag + ": without the aux: no send and no marker", rows == [] and mk == [], (rows, mk))
+        c.send("tab.close", {"id": tgt, "discard": True})
+        wait(c)
+
+# --------------------------------------------------------------------------------------------------
 # U2 — Q-U12: a silenced sender feeds no aux, wherever its send taps
 # --------------------------------------------------------------------------------------------------
 
@@ -1612,7 +1767,8 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("T2REF", section_T2REF)):
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2),
+                    ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
 
