@@ -125,7 +125,17 @@ extension EditViewModel {
     /// does not also hold the aux — a group's mute acts downstream of the sender's tap, so without
     /// this a muted group would go on feeding an aux outside itself. The group's FADER, FX and fades
     /// do not act on the send (Q-U1b): only its silence does.
+    ///
+    /// Since INC 2 (Q-U12): also true when the SENDER itself is silenced — its own mute, its stem's, or a
+    /// solo that filters it out — for a send that taps BEFORE the fader (pre-fader, in the chain, at the
+    /// input). The mute is a -96 dB push onto the fader, and the fader sits DOWNSTREAM of such a tap: left
+    /// alone, a muted object would go on feeding its aux. A post-fader send needs nothing — the fader
+    /// already silenced what it taps — and a gate there would only duplicate it.
     func sendIsGated(sender: UUID, aux: UUID) -> Bool {
+        if let object = find(id: sender), let position = object.sendPosition(auxID: aux), position != .postFader,
+           audibility.isSilenced(object) {
+            return true
+        }
         let parents = parentIDMap()
         guard var group = parents[sender] else { return false }       // a top-level sender: nothing above
         var auxAncestors: Set<UUID> = []
@@ -159,6 +169,10 @@ extension EditViewModel {
         engine.updateVolume(engineVolume(for: obj), pan: obj.pan, forID: id.uuidString)
         // A group's silence acts downstream of its children's sends: their gates follow (§1.6).
         if obj.isGroup { pushSendGates(inSubtreeOf: obj) }
+        else if obj.sends.contains(where: { obj.sendPosition(auxID: $0.auxID) != .postFader }) {
+            // A send that taps before the fader is not silenced by the fader this call just pushed (Q-U12).
+            pushSendGates(inSubtreeOf: obj)
+        }
         // The composed silence cannot be read from the fader's value alone when a volume CURVE
         // rules: it would crush it at the next block. `pushAutomation` removes it for as long as
         // the object is reduced to silence, and puts it back when it becomes audible again. Guarded by

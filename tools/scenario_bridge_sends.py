@@ -1546,6 +1546,61 @@ def section_T2REF(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# U2 — Q-U12: a silenced sender feeds no aux, wherever its send taps
+# --------------------------------------------------------------------------------------------------
+
+def section_U2(c):
+    print("\n--- U2  a muted / filtered-out / stem-muted sender feeds no aux, even before the fader")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    for name, params in (("post", {"position": "post_fader"}), ("pre", {"position": "pre_fader"}),
+                         ("chain", {"position": "chain", "index": 0}), ("input", {"position": "input"})):
+        fresh(c, "U2" + name)
+        x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+        o = c.send("object.add", {"path": out("sine1k.wav"), "lane": 3, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 5})["id"]
+        add_test(c, x, "gainTester", gain_db=0.0)
+        c.send("send.create", dict({"id": x, "aux": a}, **params))
+        lay_send(c, x, a, 0.0)
+        audit(c, "U2 %s" % name, want_senders=1)
+
+        def wet_db_win(label):
+            _, w = measure(c, "U2%s_%s" % (name, label), x, a, 0.0, t1=3.0)
+            return B.db(B.rms(w, 0.5, 2.5)), maxabs(w[int(0.5 * SR):int(2.5 * SR)])
+
+        lit, _ = wet_db_win("lit")
+        check("U2 %s: audible: the wet is there (%.1f dB)" % (name, lit), lit > -40.0, lit)
+        c.send("object.set_mute", {"ids": [x], "muted": True})
+        settle(c)
+        _, mx = wet_db_win("muted")
+        check("U2 %s: X muted: the wet is exactly 0" % name, mx == 0.0, mx)
+        c.send("object.set_mute", {"ids": [x], "muted": False})
+        settle(c)
+        back, _ = wet_db_win("unmuted")
+        check("U2 %s: un-muted: the wet is back, same level (0.05 dB)" % name, abs(back - lit) <= 0.05, (back, lit))
+        c.send("solo.set", {"ids": [o], "on": True})
+        settle(c)
+        _, mx = wet_db_win("solo")
+        check("U2 %s: another object soloed (X filtered out): the wet is exactly 0" % name, mx == 0.0, mx)
+        c.send("solo.clear", {})
+        settle(c)
+        back, _ = wet_db_win("unsolo")
+        check("U2 %s: solo cleared: the wet is back (0.05 dB)" % name, abs(back - lit) <= 0.05, (back, lit))
+        st = c.send("stem.add", {"name": "S"})["id"]
+        c.send("stem.assign", {"stem": st, "ids": [x, a]})
+        settle(c)
+        c.send("stem.mute", {"id": st, "muted": True})
+        settle(c)
+        _, mx = wet_db_win("stemmute")
+        check("U2 %s: X's stem muted: the wet is exactly 0" % name, mx == 0.0, mx)
+        c.send("stem.mute", {"id": st, "muted": False})
+        settle(c)
+        back, _ = wet_db_win("stemback")
+        check("U2 %s: stem un-muted: the wet is back (0.05 dB)" % name, abs(back - lit) <= 0.05, (back, lit))
+        audit(c, "U2 %s end" % name)
+
+# --------------------------------------------------------------------------------------------------
 
 fixtures()
 with ObjekatClient(SOCK) as c:
@@ -1557,7 +1612,7 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("T2REF", section_T2REF)):
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
 
