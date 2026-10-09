@@ -9,6 +9,10 @@ import Foundation
 //
 //   - the SCOPE rule (D2): any source is allowed except the host itself, its ancestors (its groups,
 //     its stem) and the Main / an aux (D4);
+//   - the SEND scope rule (docs/plan_sends_rework.md §A.3): an object reaches any aux of its own stem
+//     or of the Main, at any group depth (`outOfStem` otherwise); the Main, a stem, an aux and a
+//     group's own descendants never send. Sends are routes of consumer `.auxInput`, in the SAME plan
+//     as the sidechain keys — which is how a send can be refused `cycle` because of a key;
 //   - the CYCLE rule (D3): decided per SCOPE UNIT, the granularity the scheduler really has — the
 //     routes are accepted greedily in input order, and one that would close a loop in its scope's
 //     dependency graph is refused `cycle`;
@@ -58,6 +62,9 @@ enum BridgeScope {
 
     enum Refusal: String, Codable {
         case unknownSource, unknownHost, selfSource, ancestorSource, auxSource, mainSource, cycle
+        // `auxInput` routes only (a send): the host is not an aux; the sender is a stem (it can key a
+        // sidechain, it cannot send); the aux lives in another stem than the sender (and is not a Main aux).
+        case hostNotAux, stemSource, outOfStem
     }
 
     struct Plan: Equatable {
@@ -73,8 +80,11 @@ enum BridgeScope {
         var stemRanks: [UUID: Int] = [:]
         /// Active route index → the rank of the unit hosting its reader, rank > 0 only.
         var readerRanks: [Int: Int] = [:]
-        /// Active sources → tap rank (-1 for an object or group, the stem's rank for a stem).
+        /// Active SIDECHAIN sources → tap rank (-1 for an object or group, the stem's rank for a stem).
+        /// An `auxInput` source never appears here: a send is one tap per PAIR, laid by `sendRoutes`.
         var taps: [UUID: Int] = [:]
+        /// The indices of the ACTIVE `auxInput` routes (sends), ascending.
+        var sendRoutes: [Int] = []
     }
 
     // MARK: - The plan
@@ -112,6 +122,9 @@ enum BridgeScope {
 
         for i in acceptedRoutes {
             let route = routes[i]
+            // A send needs no gate (an aux return runs after everything it sums, by the data graph or by
+            // the key edge laid in `accepted`) and writes no per-source tap: only its index is kept.
+            if case .auxInput = route.consumer { plan.sendRoutes.append(i); continue }
             guard let host = world.node(route.host), let source = world.node(route.source) else { continue }
             if source.kind == .stem { plan.stemRanks[source.id] = rank(source.id, in: World.rootScope) }
             if host.kind == .stem   { plan.stemRanks[host.id]   = rank(host.id, in: World.rootScope) }
@@ -160,6 +173,56 @@ enum BridgeScope {
             }
         }
         return result
+    }
+
+    /// The auxes `sender` could send to, each either allowed (nil) or refused with why — as if a send
+    /// to it were appended last to `routes`. Same construction as `candidates` (the model's routes laid
+    /// ONCE, then one static check and one reachability query per aux), but the probe is an `auxInput`
+    /// route, so the send rules of §A.3 apply and a candidate that would close a scheduling loop with
+    /// the keys already laid answers `cycle`. A route of the model already aiming at the same aux is not
+    /// special: its edge is laid, the probe finds it, and the answer is nil.
+    static func sendCandidates(sender: UUID, nodes: [Node], routes: [Route],
+                               among: Set<UUID>? = nil) -> [(id: UUID, refusal: Refusal?)] {
+        let world = World(nodes: nodes)
+        let step = accepted(world: world, routes: routes)
+        var result: [(id: UUID, refusal: Refusal?)] = []
+        for n in nodes where n.kind == .aux && (among?.contains(n.id) ?? true) {
+            let probe = Route(source: sender, host: n.id, consumer: .auxInput(sender: sender))
+            if let why = world.staticRefusal(probe) {
+                result.append((id: n.id, refusal: why))
+            } else if let edge = world.keyEdge(probe),
+                      step.graphs[edge.scope]?.reaches(from: edge.after, to: edge.unit) == true {
+                result.append((id: n.id, refusal: .cycle))
+            } else {
+                result.append((id: n.id, refusal: nil))
+            }
+        }
+        return result
+    }
+
+    /// The send rules, answerable per PAIR in O(depth) once built: what the batch sites (the inspector's
+    /// multi-selection, the Aux tool's offer, `canRouteSend`) read instead of each carrying a copy.
+    /// Built from the same `nodes` as a plan — and the static answer is the plan's own: `staticRefusal`
+    /// of an `auxInput` route calls the same `World` code.
+    struct SendIndex {
+        fileprivate let world: World
+
+        init(nodes: [Node]) { world = World(nodes: nodes) }
+
+        /// Why a send from `sender` to `aux` is statically refused (nil = allowed, the cycle check apart).
+        func staticRefusal(sender: UUID, aux: UUID) -> Refusal? {
+            world.sendRefusal(sender: sender, aux: aux)
+        }
+
+        /// Today's rule, kept for the migration notice and for nothing else: both children of the same
+        /// group, or both top-level with the aux in the Main or in the sender's own stem.
+        func isNear(sender: UUID, aux: UUID) -> Bool {
+            guard let s = world.node(sender), let a = world.node(aux), a.kind == .aux, s.id != a.id else { return false }
+            if (s.parent == nil) != (a.parent == nil) { return false }
+            if let p = s.parent { return p == a.parent }
+            let auxStem = world.effectiveStem(a.id)
+            return auxStem == nil || auxStem == world.effectiveStem(s.id)
+        }
     }
 
     /// Steps 1 and 2 of the plan: the static refusals, then the key edges laid greedily, in input
@@ -288,7 +351,32 @@ enum BridgeScope {
         /// The stem a node lives in (nil = Main), through its top-level ancestor.
         func stemOf(_ id: UUID) -> UUID? { index[top(of: id)]?.stem }
 
+        /// The stem a node lives in through its top-level ancestor; nil = the Main (also when the
+        /// recorded stem is not in the table, as `dataGraphs` treats it).
+        func effectiveStem(_ id: UUID) -> UUID? {
+            guard let s = stemOf(id), let n = index[s], n.kind == .stem else { return nil }
+            return s
+        }
+
+        /// §A.3, in order, first hit wins.
+        func sendRefusal(sender: UUID, aux: UUID) -> Refusal? {
+            guard let s = index[sender] else { return .unknownSource }
+            guard let a = index[aux] else { return .unknownHost }
+            if a.kind != .aux { return .hostNotAux }
+            if s.id == a.id { return .selfSource }
+            switch s.kind {
+            case .aux:  return .auxSource
+            case .main: return .mainSource
+            case .stem: return .stemSource
+            case .object, .group: break
+            }
+            if path(to: a.id).dropLast().contains(s.id) { return .ancestorSource }
+            if let auxStem = effectiveStem(a.id), auxStem != effectiveStem(s.id) { return .outOfStem }
+            return nil
+        }
+
         func staticRefusal(_ r: Route) -> Refusal? {
+            if case .auxInput = r.consumer { return sendRefusal(sender: r.source, aux: r.host) }
             guard let source = index[r.source] else { return .unknownSource }
             guard let host = index[r.host] else { return .unknownHost }
             if source.id == host.id { return .selfSource }

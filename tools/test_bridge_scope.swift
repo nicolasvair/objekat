@@ -106,9 +106,35 @@ enum BridgeScopeTest {
             ("stemRanks", byName(plan.stemRanks, names) == expectedInts(expect["stemRanks"])),
             ("readerRanks", readers == expectedInts(expect["readerRanks"])),
             ("taps", byName(plan.taps, names) == expectedInts(expect["taps"])),
+            ("sendRoutes", plan.sendRoutes == ((expect["sendRoutes"] as? [NSNumber] ?? []).map { $0.intValue })),
         ]
         let bad = got.filter { !$0.1 }.map { $0.0 }
         check(label, bad.isEmpty, "differs on: \(bad.joined(separator: ", "))")
+
+        for q in (c["sendCandidates"] as? [[String: Any]] ?? []) {
+            let sender = names.id(q["sender"] as! String)
+            let result = BridgeScope.sendCandidates(sender: sender, nodes: nodes, routes: routes)
+            var gotC: [String: String] = [:]
+            for r in result { gotC[names.name(r.id)] = r.refusal?.rawValue ?? "-" }
+            var wantC: [String: String] = [:]
+            for (k, v) in (q["expect"] as! [String: Any]) { wantC[k] = (v as? String) ?? "-" }
+            check("\(label) / send candidates for \(q["sender"] as! String)", gotC == wantC, "got \(gotC), wanted \(wantC)")
+        }
+
+        let sendIndex = BridgeScope.SendIndex(nodes: nodes)
+        for q in (c["near"] as? [[String: Any]] ?? []) {
+            let got = sendIndex.isNear(sender: names.id(q["sender"] as! String), aux: names.id(q["aux"] as! String))
+            check("\(label) / near \(q["sender"] as! String) -> \(q["aux"] as! String)", got == (q["expect"] as! Bool), "got \(got)")
+        }
+
+        // The per-pair door answers what the plan answers for every send of the case (the cycle apart).
+        for (i, r) in routes.enumerated() {
+            guard case .auxInput = r.consumer else { continue }
+            let pair = sendIndex.staticRefusal(sender: r.source, aux: r.host)
+            let planned = plan.refused[i]
+            let want: BridgeScope.Refusal? = planned == .cycle ? nil : planned
+            check("\(label) / the pair door for route \(i)", pair == want, "got \(String(describing: pair)), the plan said \(String(describing: planned))")
+        }
 
         for q in (c["candidates"] as? [[String: Any]] ?? []) {
             let host = names.id(q["host"] as! String)
