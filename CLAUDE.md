@@ -35,10 +35,10 @@ name until 3 September 2026 (`tracktion_engine-3.2.0/`, wrong since the 3.5 bump
 longer does, so it can no longer go stale. The fork's branch is at `43f32a1e866` since 29 September 2026 (a REVERT of an
 unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6855565a9` from 17 September, `f7fd2e9fd45` before that, when its own history was rewritten on 4 September);
 `494e91d2ff5` is still its ancestor.
-An engine series of **35** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0037` with two
+An engine series of **37** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0038` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). `0037`, the audio bridge, came in with the sidechain merge of 6 October 2026 (see its
-entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); the next one will be `0038` on `main` (it already exists, unmerged, on the branch `feature/ara-melodyne`, see its entry below). (`0035` and `0036`, the FX link state fixes of
+entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); `0038` (the ARA source, see its entry below) followed it; **`0039` (sends on the audio bridge) exists on the branch `feature/sends-inc1-scope`, not yet on `main`, and the next one after it will be `0040`** (so the series is 38 patches once `0039` is merged). (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2507,6 +2507,28 @@ What has landed since mid-August, in order:
   keeps its exact gain in its own math. Authority: `plan_spectral_editor.md` §12.5. **NOT seen:** the row of buttons in the window
   (width in the 300 pt sidebar, the selected look), the click heard live in Selection.
 
+- **Sends on the audio bridge — INC 1 of the sends rework** (9 October 2026, branch
+  `feature/sends-inc1-scope`, **nothing merged, nothing pushed**, engine patch `0039` on the fork branch
+  `objekat-sends-0039`). A send is no longer an `ObjAuxSendPlugin` read through a delay line: it is a ROUTE of the audio
+  bridge (`ObjBridgeSendPlugin` at the end of the sender's chain, tap in COPY mode, level applied once per block on the
+  copy, read by `ObjAuxReturnNode` through the same `BridgeReader`s as a sidechain). The legacy path survives ONLY behind
+  `OBJ_SENDS_LEGACY=1` (read once), as the null-test oracle; it goes away in INC 2. Rule of the scope, in
+  `Shared/BridgeScope.swift` (`hostNotAux`, `stemSource`, `outOfStem`, `ancestorSource`, `cycle`): any aux of the sender's
+  stem or of the Main, at any depth; sibling stems do not see each other; one send per (object, aux); a send that the
+  rule refuses STAYS in the model (status `refused`, reason shown, silent) and sounds again when the situation allows
+  it; sends once silent for scope in an old project are left to sound; orphan sends are purged with their automation at
+  one undo point. A group's mute cuts its children's sends to an aux outside the group (`sendIsGated`); the group's
+  fader, FX and fades do not act on it. A new send starts at −inf. Session format **21**. UI: the Aux tool, the signal
+  view's sends zone and the multi-selection inspector show all reachable auxes (order: same group, rest of the stem,
+  the Main), inactive rows greyed with the reason, wires drawn to the visible group when the aux is in a closed group.
+  API: `send.list` (`status`, `refusal`, `reachable_auxes`), `send.candidates`, `send.remove`, `debug.bridge_report`
+  (`sends_path`, `send_routes`, `send_refused`). Authority: `docs/plan_sends_rework.md` (decisions, journal, numbers).
+  **Measured (Debug, headless, WITH audio):** `scenario_bridge_sends.py` sections A to T 223 / 0; Q8 (level automated)
+  was −6 dB under its curve with a ±1.5 dB wobble on `main`, now 0.00 dB (flat) and within 0.19 dB (ramp, lag 45 ms);
+  legacy-vs-bridge null test 0.00 LSB on the six in-scope cases; 200 send readers, one build pass; a stem change costs
+  one rebuild. **NOT heard / seen:** the wires and the greyed rows on screen, the group mute by ear, the Q8 automation
+  curve by ear (procedure in `plan_sends_rework.md` C.5).
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
@@ -2532,14 +2554,17 @@ a second one elsewhere. The most exposed points:
   as a clip (`ObjGain` then `ObjWindowFade`). A bus that must let its tail ring declares itself
   **infinite**. A corollary: the fades OF a container's CLIP are held at zero, otherwise they
   would apply twice.
-- **The scope of a top-level send: the same stem, OR an aux of the Main.** A send goes UP, it does not go
-  down, and two sibling stems cannot see each other. That is what makes a single reverb shared by
-  several stems possible — at the Main and there only. An accepted cost: the wet leaves its
-  stem, so "Σ stems = mix" assumes the Main is delivered as a stem. The complete rule is
-  commented above `canRouteSend` (`EditViewModel+Aux.swift`).
-- **What will never cross a container's boundary**: a child of a sub-group does not reach
-  the parent group's aux (the way round: put the send on the sub-group, which IS a sibling).
-- Sends out of scope stay in the model, silent. We merely stop offering them.
+- **The scope of a send** (sends rework, INC 1 — on `feature/sends-inc1-scope`, see its entry): an
+  object reaches ANY aux of its own stem or of the Main, at ANY group depth (an aux inside another group
+  too: the return then comes out in that group and goes through its fader and FX). Two sibling stems still
+  do not see each other; an aux, a stem and the Main do not send; one send per (object, aux). The rule is
+  ONE pure unit, `Shared/BridgeScope.swift` (`SendIndex`), read by every site — the engine keeps no copy.
+  Accepted costs: the wet of an aux OUTSIDE the sender's group does not obey that group's fader, FX or
+  fades (the tap is upstream of them) but does obey its MUTE; the wet leaves its stem, so "Σ stems = mix"
+  assumes the Main is delivered as a stem.
+- Sends that are refused (another stem, a scheduling loop between two groups, a group to an aux it
+  contains) stay in the model, silent, shown inactive with their reason. Nothing is deleted by a scope
+  change; only a send whose aux was deleted is purged (with its automation, in the same undo point).
 
 ### A parked project
 

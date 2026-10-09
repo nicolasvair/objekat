@@ -790,6 +790,30 @@ the host: its group, or its stem), `auxSource`, `mainSource`, `cycle` (a chain o
 loop, decided per scheduling unit — the rule lives in `BridgeScope`). A key whose source is refused is
 written in the model and silent in the engine.
 
+### Sends (since the sends rework, INC 1)
+
+A send is a route on the same bridge (`plan_sends_rework.md`): an object reaches ANY aux of its own stem
+or of the Main, at any group depth — including an aux stored inside another group, whose return then comes
+out in that group and goes through its fader and FX. Two sibling stems still do not see each other; an aux,
+a stem and the Main do not send; ONE send per (object, aux). A group's MUTE silences the sends its children
+make to an aux OUTSIDE that group; the group's fader, FX and fades do not act on them (the tap is upstream).
+
+| | |
+|---|---|
+| `send.list` | `id` → `{sends: [{aux, level_db, enabled, routed, status, refusal, automated}], reachable_auxes, available_auxes}`. `status` is `off` (not alive: disabled or at -inf with no curve), `active` (the bridge lays it) or `refused`; `refusal` is the raw reason when refused (`outOfStem`, `hostNotAux`, `ancestorSource`, `selfSource`, `auxSource`, `stemSource`, `mainSource`, `cycle`, `unknownSource`, `unknownHost`). `routed` = `status == active`. `reachable_auxes` = the static rule (any time); `available_auxes` = what the tools offer (reachable AND overlapping in time), ordered same group, then rest of the stem, then the Main |
+| `send.candidates` | `id` → `{candidates: [{aux, name, group_path, stem, overlaps, refusal}]}` — every aux of the project seen from the sender; `refusal` null = a send would be accepted now (a scheduling loop with the keys already laid included) |
+| `send.remove` | `id` + `aux` → deletes the entry and its automation lane (one undo step). There was no other way to take an entry out of the model |
+| `send.set_level` / `send.adjust_level` / `send.enable` | unchanged contracts. `set_level` and `enable` are the machine's doors: they store a send even when it is refused (it stays in the model, silent, `status: refused`); the HAND's doors (the Aux tool, the signal view's rows, the inspector) beep and lay nothing |
+
+A send created by a hand starts at -inf. A send whose aux is deleted is purged with its automation, in the
+same undo point (and at load). An older session opens with its sends exactly as they were: the ones once
+silent because out of scope now SOUND (nothing is disabled at migration).
+
+DEBUG: `debug.bridge_report` also answers `sends_path` (`"bridge"`, or `"legacy"` under the environment
+variable `OBJ_SENDS_LEGACY=1`, read once at launch — the old plugin path, kept for INC 1 only as the null
+test's oracle), and `model.send_routes` / `model.send_refused`. In `engine.readers`, a send's reader has
+`consumer: "auxInput"` and carries `aux` and the group's `declared` latency.
+
 DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
 (`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,
 source, rank, age, cached_age, ring_capacity, ring_generation, latest_end, runs}], `readers` [{plugin,
@@ -2230,8 +2254,8 @@ A few points of vocabulary that save mistakes:
   one). The first free lane under a root object is `display_lane + expanded_span`.
 - **An FX chain host is indifferently an object or a stem.** "A reverb on the Voice
   stem" and "on this clip" are the same gesture, with the same host identifier.
-- **A send can be laid out of scope**: the model keeps it, silent, until a
-  change of stem makes it routable. So `send.*` returns `routed` beside `enabled` — and
+- **A send can be refused**: the model keeps it, silent, until a change (of stem, of
+  grouping) makes it acceptable. So `send.*` returns `routed` and `status`/`refusal` beside `enabled` — and
   `automated`, which says a curve holds the level and no hand may move it.
 - **MIDI notes are counted in beats**, never in seconds: it is the only unit that survives
   a change of tempo.

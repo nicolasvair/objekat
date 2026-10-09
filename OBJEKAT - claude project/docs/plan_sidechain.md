@@ -33,7 +33,7 @@ destination is a plugin in ANY chain (an object's, an aux's, a stem bus's, the M
 | D5 | Bake / consolidate | **Include the key sources** (built key-only, never mixed into the render) — phase 3. |
 | D6 | UI | **From the plugin**: a "Sidechain" menu on the card of a plugin that has a sidechain input. |
 | D7 | Rank tiers (extra hidden pool tracks) | **Accepted** (4 October): pool slot `(stem, lane, rank)`, bounded by stems × lanes × ranks, rebuild on a rank change. |
-| D8 | Sends across boundaries | **The same bridge**, generic from phase 1: a tap, a reader, ranks, cycle detection, latency — with two consumers, a plugin's sidechain input (phase 1) and an aux's input (phase 2). In-scope sends (`canRouteSend`) STAY on their current mechanism; the bridge serves only routes outside today's scope. |
+| D8 | Sends across boundaries | **SUPERSEDED (9 October 2026, `plan_sends_rework.md` §A.2): EVERY send is a bridge route, no two paths.** Was: **The same bridge**, generic from phase 1: a tap, a reader, ranks, cycle detection, latency — with two consumers, a plugin's sidechain input (phase 1) and an aux's input (phase 2). In-scope sends (`canRouteSend`) STAY on their current mechanism; the bridge serves only routes outside today's scope. |
 | D9 | Latency | **First-class in phase 1**: the key is sample-aligned with the destination's main input whether the key is younger OR older (§4). |
 
 Consequences of D1 worth knowing BEFORE using it, since mute is −96 dB on the fader
@@ -1144,6 +1144,12 @@ what was NOT seen/heard; "the next engine patch is `0038`"), this plan's status 
 
 ### Phase 2 — sends over the bridge (engine patch `0038`)
 
+> **SUPERSEDED** by `docs/plan_sends_rework.md` (INC 1 shipped as engine patch `0039`, since `0038` went to
+> the ARA source). The mechanism below survives in what was built — a copy-mode tap, an aux return of N
+> readers sharing one declared latency — but the plan around it changed: every send moves to the bridge
+> (not only the out-of-scope routes), the aux clip carries `objBridgeSends` written by the app, and the
+> legacy `ObjAuxSendPlugin` path is kept only behind `OBJ_SENDS_LEGACY=1` for one increment.
+
 **2.1 — Engine.** `objbridge` group resolution in the core (+ tests in `test_bridge_core.cpp`);
 `BridgeTapNode` tap processing (§5.4, phase-2 bullet); `ObjAuxReturnNode`
 (`tracktion_ContainerClipNode.h:109-176`, `.cpp:280-525`) gains bridge readers: `createAuxReturns`
@@ -1441,8 +1447,13 @@ ear and the eye (§7).
   mutes into each tap's gain.
 - **Q7 — `blockLengthScaleFactor ≠ 1`** (I2): keys with `D > 0` go silent. Whether OBJEKAT ever runs
   with speed compensation was not established.
-- **Q8 — the automated-send sub-block defect** of §1 (existing sends, not the bridge): to be confirmed
-  by an export and reported as its own task.
+- **Q8 — the automated-send sub-block defect** of §1 (existing sends, not the bridge): **CLOSED
+  (9 October 2026).** Confirmed on `main` by export + difference: with the level automated flat at -6 dB the
+  wet sat 6.05 dB UNDER its curve on average (min -6.99, max -5.52 over 360 windows of 10 ms), and a -30 -> 0
+  dB ramp was 6.3 dB under on average. The send on the bridge (patch `0039`) applies the level once per block
+  on its copy: the same flat curve now measures 0.00 dB in every window, and the ramp sits at -0.30 dB on average
+  (min -1.41 dB where the 50 ms smoother lags the curve; once the best-fit lag of 45 ms is allowed for,
+  the worst error is 0.19 dB), no hole. See `plan_sends_rework.md` section M.
 - **Q9 — `dest_instance` as proof of "no reload"** is a pointer: a rebuilt plugin could reuse the
   address. Good enough for a scenario (combined with the undo log `[UNDO] … patched`), not a proof.
 - **Q10 — UI listing on huge projects**: the menu shows the selection, at most 40 overlapping objects

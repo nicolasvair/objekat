@@ -1,6 +1,6 @@
 # Plan — the sends rework: wider scope, a tap anywhere on the trunk, plugins on the send
 
-Status (9 October 2026): INC 1 IN PROGRESS on `feature/sends-inc1-scope` (see the recorded numbers and the journal at the end of section B). INC 2 and INC 3 are not started.
+Status (9 October 2026): INC 1 IMPLEMENTED and MEASURED on `feature/sends-inc1-scope` (nothing merged, nothing pushed; engine patch `0039` on the fork branch `objekat-sends-0039`, `fb0ae39e631`). Remains: the eye and the ear (section C.5). INC 2 and INC 3 are not started.
 Written against `main` at `f3c805c4` and the engine fork at `efff893e684` (branch `objekat-ara-0038`,
 i.e. `17215d464fb` + patches `0037` + `0038`). Every line number below is that checkout's. "Inferred"
 marks what was reasoned and not read; "to verify" marks what the executor must check before leaning
@@ -566,6 +566,38 @@ Step 1.0 answers (code read, nothing run):
   (never 1e9) and it is skipped by the envelope, so it never inflates its group's span.
 - (c) `linkTarget(for:)` resolves through `laneEntry(forID:)`, which is `nil` for an object with no lane
   entry: step 1.8 must therefore draw the wire to the visible ancestor group when the aux is hidden.
+
+### INC 1 — what was done, step by step (9 October 2026, Debug, headless, WITH audio)
+
+| Step | State | Commit |
+|---|---|---|
+| 1.0 preliminaries | done (answers above) | `ca012e27`, `b8ea4a45` |
+| 1.1 scenario, written before the change | done: sections A to T (223 checks), `--ref` against `main` for the numbers above | `b8ea4a45`, `90d07759` |
+| 1.2 pure rules `BridgeScope.swift` | done | `4d1eadd3` |
+| 1.3 engine patch `0039` | done; patch equals fork commit `fb0ae39e631` | `f7573ca9` (app side), fork `objekat-sends-0039` |
+| 1.4 app, engine side (`ObjBridgeSendPlugin`, `ensureBridgeSend`, `setSendGated`, `OBJ_SENDS_LEGACY`) | done | `f7573ca9` |
+| 1.5 view-model: topology and sync | done | `03f308ef` |
+| 1.6 audibility gate (group mute) | done, measured in section L | `03f308ef` |
+| 1.7 load migration, dangling sends, format 21 | done | `03f308ef` |
+| 1.8 UI, the minimum | done; wires to the visible group, greyed rows with the reason (Aux tool, signal view, multi-selection inspector), tier ordering. Seen on screen: NOT | `7332891a` |
+| 1.9 API | done (`send.list`, `send.candidates`, `send.remove`, `debug.bridge_report`) | `03f308ef` |
+| 1.10 documentation | done (`CLAUDE.md`, `architecture_decisions.md`, `command_api.md`, `plan_sidechain.md`, `engine-patches/3.5/README.md`) | this commit |
+
+Numbers (all executed):
+- pure tests: `test_bridge_scope_reference.py` 95 / 0; `test_bridge_scope.swift` 101 / 0; `test_bridge_core.cpp` 74 / 0.
+- `scenario_bridge_sends.py` A to T: **223 OK, 0 FAILED**.
+- Q8: M1 (flat −6 dB) min / mean / max of (wet − dry) − curve = 0.00 / 0.00 / 0.00 dB (was −6.99 / −6.05 / −5.52 on `main`);
+  M2 (ramp −30 → 0 dB) min −1.41, mean −0.30, max +0.02 dB, best lag 45 ms, worst error 0.19 dB, no hole (was −8.26 / −6.29 / −4.96).
+- null test `OBJ_SENDS_LEGACY=1` vs bridge, six in-scope cases (A1, A2, A3, D sender / aux / sibling): **0.00 LSB**.
+- 200 send readers: one build pass; a stem change: one rebuild.
+- non-regression, each against its own fresh instance: `scenario_sidechain.py` 55 / 0, `scenario_bridge_latency.py` 66 / 0,
+  `scenario_families.py` 261 / 0, `scenario_selection_send_scope.py` 345 / 0, markers, plugin_state_undo (5), plugin_selection (58),
+  export_preview 83 / 0, fxlink, tabs 106, cross_paste 31, relink: all pass; `tools/smoke.jsonl` 15 / 15 ok.
+- the scenarios `consolidate`, `channel_mode`, `ara`, `spectral_editor` pinned session format 20: pins moved to 21 (`9b98ad67`).
+- `xcstrings.py check`: 642 keys, 3 languages, nothing missing.
+
+Deviations and open points: see the report to the architect; the two known ones are that the legacy null test is run from
+the same Debug build with `OBJ_SENDS_LEGACY=1` (not from a `main` build), and that no mutant of C.3 was run by hand.
 
 ---
 

@@ -674,6 +674,49 @@ plugins from the archives.
 
 ---
 
+## Sends on the audio bridge: one path, one rule (October 2026)
+
+### Decision: every send is a bridge route — a tap per send, read by the aux's return
+
+A send used to be a plugin (`ObjAuxSendPlugin`) writing into ITS OWN buffer, read by the aux's return
+node: it worked for siblings of one container or one stem, and nowhere else. Widening the scope (any
+object reaches any aux of its stem or of the Main, at any group depth) needs what the sidechain already
+has — a buffer that outlives the graph, an order between graphs, a declared latency — so a send became a
+route on the same bridge: an engine-only `ObjBridgeSendPlugin` at the end of the sender's chain, turned
+into a `BridgeTapNode` in COPY mode (the node runs the plugin on its copy once per block, then writes the
+ring; the signal passing through is never touched); the aux's return reads one `BridgeReader` per send, all
+sharing one declared latency (`X = max(reference, oldest cached age)`, each reader delaying by `X - age`).
+The aux clip lists its sends in `objBridgeSends`, written by the APP in the bridge transaction — the engine
+scans nothing. Engine patch `0039`.
+
+Why not two paths (in-scope sends on the old plugin, only the new routes on the bridge): a container's
+local player splits a block at a loop end, so the old plugin's block-relative buffer is overwritten by the
+last fragment (the same family as the automated-send defect, measured at -6 dB on `main`); two plugin types,
+two registries and a send that CHANGES mechanism when a regrouping moves it across the old boundary would
+have doubled every later increment. The price — every existing session's sends move to a new path — was
+paid with a null test: the same sessions exported with `OBJ_SENDS_LEGACY=1` and normally subtract to 0 LSB.
+The legacy path is deleted in INC 2.
+
+### Decision: the scope rule lives in one pure unit, and the engine keeps no copy of it
+
+`Shared/BridgeScope.swift` (static refusals for an `auxInput` route: `hostNotAux`, `selfSource`,
+`auxSource`, `mainSource`/`stemSource`, `ancestorSource`, `outOfStem`; then the scheduling-cycle check shared
+with the sidechain's keys) is read by every site through one cached index (`SendIndex`): the tools' offer,
+`canRouteSend`, the inspector, the solo closure, the API. Sends and keys share ONE plan, so a send can be
+refused `cycle` because of a key and the reverse. A refused send STAYS in the model (level, curve), shown
+inactive with its reason; nothing is deleted by a scope change. Dangling sends (the aux was deleted) are the
+one exception: purged with their automation, in the same undo point.
+
+### Decisions of the user that shaped it
+
+An older session's sends once silent because out of scope are LEFT TO SOUND (no migration, no
+`enabled = false`). A group's mute silences its children's sends to an aux outside the group (the send's
+gate is folded from the audibility composition); the group's fader, FX and fades do not act on them — the
+tap is upstream, the classic "post-fader send to a subgroup". The tools offer ALL reachable auxes (still
+filtered by time overlap), same group first, then the rest of the stem, then the Main. A new send starts
+at -inf. A scheduling loop between two groups is refused, the reason shown. A stem detached from the Main
+still feeds a Main aux.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
