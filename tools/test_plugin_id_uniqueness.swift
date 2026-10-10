@@ -2,22 +2,27 @@
 // their repair on demand, and the report for a language model (1 October 2026), asserted with no screen. Same model dependencies as `test_cross_project_import.swift`, minus the
 // import itself; run from `tools/`:
 //
-//     swiftc -parse-as-library \
+//     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/Marker.swift \
+//         ../objekat/SoundObject/ChannelMode.swift \
+//         ../objekat/Shared/LaneEntryIndex.swift \
+//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
 //         ../objekat/SoundObject/ConsolidateDefinition.swift \
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
-//         ../objekat/SoundObject/ChannelMode.swift \
 //         ../objekat/SoundObject/FXLink.swift \
+//         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
+//         ../objekat/Shared/BridgeScope.swift \
+//         ../objekat/Shared/ScriptCanvasMemory.swift \
 //         ../objekat/SoundObject/PluginIDUniqueness.swift \
 //         ../objekat/SoundObject/PluginIDReport.swift \
 //         test_plugin_id_uniqueness.swift \
@@ -430,6 +435,141 @@ enum PluginIDUniquenessTest {
             check("the report is strictly ASCII apart from typed names", ours.unicodeScalars.allSatisfy { $0.isASCII })
             check("a typed newline cannot break the layout",
                   !PluginIDReport.text(filePath: "/tmp/a\nb.objekat", details: details).contains("a\nb"))
+        }
+
+        // MARK: 14. The THIRD root: the plugins of a send (INC 3)
+
+        func sender(id: UUID = UUID(), plugins: [ObjectPlugin] = [], sends: [AuxSend],
+                    automation: [AutomationLane] = [], touch: [ParamRef] = []) -> SoundObject {
+            var o = clip(id: id, plugins: plugins, automation: automation, touch: touch)
+            o.sends = sends
+            return o
+        }
+
+        do {
+            // A trunk plugin and a send plugin of the SAME object share an id.
+            let shared = UUID(), aux = UUID()
+            let o = sender(plugins: [plugin(id: shared, name: "trunk")],
+                           sends: [AuxSend(auxID: aux, plugins: [plugin(id: shared, name: "on send")])],
+                           automation: [lane(shared)])
+            let dups = PluginIDUniqueness.duplicates(items: [o], stems: [])
+            check("send root: a trunk plugin and a send plugin sharing an id are detected",
+                  dups.count == 1 && dups[0].id == shared && dups[0].hosts == [o.id, o.id])
+            let fixed = PluginIDUniqueness.deduplicated(items: [o], stems: [])
+            check("send root: the trunk occurrence keeps the id, the send's is re-keyed",
+                  fixed.items[0].plugins[0].id == shared && fixed.items[0].sends[0].plugins[0].id != shared
+                  && fixed.repairs.count == 1 && fixed.repairs[0].hostID == o.id)
+            check("send root: the curve stays on the first occurrence (the trunk's)",
+                  fixed.items[0].automation[0].param == .plugin(pluginKey: shared, paramID: "p"))
+            check("send root: repaired = no duplicate left",
+                  PluginIDUniqueness.duplicates(items: fixed.items, stems: []).isEmpty)
+        }
+
+        do {
+            // Two objects, each with a send, whose plugins share an id (the by-value copy of `sends`).
+            let shared = UUID(), aux = UUID()
+            let a = sender(sends: [AuxSend(auxID: aux, plugins: [plugin(id: shared)])], automation: [lane(shared)])
+            let b = sender(sends: [AuxSend(auxID: aux, plugins: [plugin(id: shared)])], automation: [lane(shared)],
+                           touch: [.plugin(pluginKey: shared, paramID: "p")])
+            let dups = PluginIDUniqueness.duplicates(items: [a, b], stems: [])
+            check("send root: two sends' plugins sharing an id are detected, with both senders",
+                  dups.count == 1 && dups[0].hosts == [a.id, b.id])
+            let fixed = PluginIDUniqueness.deduplicated(items: [a, b], stems: [])
+            let newID = fixed.items[1].sends[0].plugins[0].id
+            check("send root: the first sender keeps the id, the second is re-keyed",
+                  fixed.items[0].sends[0].plugins[0].id == shared && newID != shared)
+            check("send root: the second sender's curve and touch memory follow its new id",
+                  fixed.items[1].automation[0].param == .plugin(pluginKey: newID, paramID: "p")
+                  && fixed.items[1].automationTouchOrder == [.plugin(pluginKey: newID, paramID: "p")])
+            check("send root: the first sender's curve is untouched",
+                  fixed.items[0].automation[0].param == .plugin(pluginKey: shared, paramID: "p"))
+            let details = PluginIDUniqueness.duplicateDetails(items: [a, b], stems: [], fxLinks: [])
+            check("send root: the detail's path names the send and its plugin",
+                  details.first?.sites.map(\.jsonPath) == ["items[0].sends[0].plugins[0]", "items[1].sends[0].plugins[0]"],
+                  "\(details.first?.sites.map(\.jsonPath) ?? [])")
+            check("send root: a sound project with send plugins is left alone",
+                  PluginIDUniqueness.deduplicated(items: [a], stems: []).repairs.isEmpty)
+            check("send root: occurrences count the send plugins",
+                  allIDs([a], []).count == 1 && allIDs([a, b], []).count == 2)
+            // In a group child, and against a stem's chain.
+            let g = group(children: [a])
+            let st = stem(plugins: [plugin(id: shared)])
+            check("send root: a child's send plugin against a stem's plugin is detected",
+                  PluginIDUniqueness.duplicates(items: [g], stems: [st]).first?.hosts == [a.id, st.id])
+        }
+
+        do {
+            // The copies: no id shared with the original, the curves follow.
+            let aux = UUID(), aux2 = UUID()
+            let s1 = plugin(name: "lp"), s2 = plugin(name: "sat"), s3 = plugin(name: "other"), t = plugin(name: "trunk")
+            let o = sender(plugins: [t],
+                           sends: [AuxSend(auxID: aux, levelDb: -6, plugins: [s1, s2]), AuxSend(auxID: aux2, plugins: [s3])],
+                           automation: [lane(s2.id), lane(t.id), AutomationLane(param: .send(auxID: aux), points: [AutomationPoint(t: 0, v: -6)])],
+                           touch: [.plugin(pluginKey: s3.id, paramID: "p")])
+            let tCopy = plugin(name: "trunk")
+            let copy = o.derivedCopy(startTime: 4, duration: 4, lane: 0, fadeIn: 0, fadeOut: 0,
+                                     plugins: [tCopy], kind: o.kind)
+            let origIDs = Set(SendChain.allRoots(of: o).map(\.id))
+            let copyIDs = SendChain.allRoots(of: copy).map(\.id)
+            check("derivedCopy: the copy has its mini-chains (2 + 1 plugins)",
+                  copy.sends.map { $0.plugins.count } == [2, 1] && copy.sends.map(\.auxID) == [aux, aux2])
+            check("derivedCopy: NO plugin id shared with the original", origIDs.isDisjoint(with: copyIDs), "\(copyIDs)")
+            check("derivedCopy: original + copy pass the id audit",
+                  PluginIDUniqueness.duplicates(items: [o, copy], stems: []).isEmpty)
+            check("derivedCopy: the curve on a send plugin follows the copy's id",
+                  copy.automation.contains { $0.param == .plugin(pluginKey: copy.sends[0].plugins[1].id, paramID: "p") })
+            check("derivedCopy: the trunk's curve and the send level's curve follow too",
+                  copy.automation.contains { $0.param == .plugin(pluginKey: tCopy.id, paramID: "p") }
+                  && copy.automation.contains { $0.param == .send(auxID: aux) } && copy.automation.count == 3)
+            check("derivedCopy: the touch memory follows",
+                  copy.automationTouchOrder == [.plugin(pluginKey: copy.sends[1].plugins[0].id, paramID: "p")])
+            check("derivedCopy: states, names and order are the original's",
+                  copy.sends[0].plugins.map(\.name) == ["lp", "sat"] && copy.sends[0].plugins.map(\.stateXML) == [s1.stateXML, s2.stateXML])
+            // The caller's own copy of the sends (live states) is taken as given.
+            let given = SendChain.mapPluginIDs(in: o.sends) { _ in UUID() }
+            let copy2 = o.derivedCopy(startTime: 4, duration: 4, lane: 0, fadeIn: 0, fadeOut: 0,
+                                      plugins: [tCopy], sends: given, kind: o.kind)
+            check("derivedCopy(sends:): the given sends are used, and the curves follow THEM",
+                  copy2.sends == given
+                  && copy2.automation.contains { $0.param == .plugin(pluginKey: given[0].plugins[1].id, paramID: "p") })
+
+            // The split of an aux: the second send is a copy, never the same ids.
+            let auxB = UUID()
+            let dup = o.duplicatingSend(from: aux, to: auxB)
+            check("duplicatingSend: the new send carries copies under fresh ids",
+                  dup.sends.count == 3 && dup.sends[2].auxID == auxB && dup.sends[2].plugins.count == 2
+                  && Set(dup.sends[2].plugins.map(\.id)).isDisjoint(with: origIDs))
+            check("duplicatingSend: the object still passes the id audit",
+                  PluginIDUniqueness.duplicates(items: [dup], stems: []).isEmpty)
+            let handed = [plugin(name: "live copy")]
+            check("duplicatingSend(plugins:): the caller's copies are used",
+                  o.duplicatingSend(from: aux, to: auxB, plugins: handed).sends[2].plugins == handed)
+
+            // Deleting a send takes its plugins and their curves.
+            let cut = o.removingSends([aux])
+            check("removingSends: the send, its plugins and the curves aimed at them are gone",
+                  cut.sends.map(\.auxID) == [aux2]
+                  && cut.automation.map(\.param) == [.plugin(pluginKey: t.id, paramID: "p")])
+            check("removingSends: the other send's touch memory stays", cut.automationTouchOrder == o.automationTouchOrder)
+            check("removingSends: nothing to remove = the same object", o.removingSends([UUID()]) == o)
+
+            // Automation targets, and what a bake carries.
+            check("a curve aimed at a send plugin resolves", o.resolvesAutomationTarget(.plugin(pluginKey: s2.id, paramID: "p")))
+            check("a curve aimed at an unknown plugin does not", !o.resolvesAutomationTarget(.plugin(pluginKey: UUID(), paramID: "p")))
+            check("a send plugin's curve is NOT baked into the render (the send stays on the placement)",
+                  !o.automationTargetIsBakedIntoRender(.plugin(pluginKey: s2.id, paramID: "p"))
+                  && o.automationTargetIsBakedIntoRender(.plugin(pluginKey: t.id, paramID: "p")))
+            check("so it survives the bake, with the send's level curve",
+                  Set(o.automationSurvivingBake.map(\.param)) == [.plugin(pluginKey: s2.id, paramID: "p"), .send(auxID: aux)])
+            let def = o.asConsolidateDefinition
+            check("the consolidation sidecar keeps the root's sends WITHOUT their plugins",
+                  def.sends.map(\.auxID) == [aux, aux2] && def.sends.allSatisfy { $0.plugins.isEmpty })
+            check("and only the baked curves", def.automation.map(\.param) == [.plugin(pluginKey: t.id, paramID: "p")])
+            let child = sender(sends: [AuxSend(auxID: aux, plugins: [plugin()])])
+            let gdef = group(children: [child]).asConsolidateDefinition
+            if case .group(let kids, _) = gdef.kind {
+                check("a CHILD's send plugins are content: the sidecar keeps them", kids[0].sends[0].plugins.count == 1)
+            } else { check("a CHILD's send plugins are content: the sidecar keeps them", false) }
         }
 
         print("\n\(total - fails.count)/\(total) passed")

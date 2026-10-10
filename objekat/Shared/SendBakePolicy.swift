@@ -10,8 +10,10 @@ import Foundation
 // the chain, and its `input` would silently become the baked signal. So it is CONCERNED, and the
 // operation must first be told what to do with it:
 //
-//     fold     the send goes to post-fader (its marker, if any, goes; its level and its curve stay)
-//     remove   the send is deleted (entry, marker, automation lane aimed at it)
+//     fold     the send goes to post-fader (its marker, if any, goes; its level, its curve and its
+//              PLUGINS stay: a fold changes where the send is taken, not what it is)
+//     remove   the send is deleted (entry, marker, automation lane aimed at it, its plugins and the
+//              lanes aimed at them)
 //     refuse   nothing is changed and the operation does not start (the default of the API)
 //
 // A send at `pre_fader` is NOT one of those: it is a BLOCKER (decided 10 October 2026, "for the moment").
@@ -99,11 +101,8 @@ enum SendBakePolicy {
         case .fold:
             for aux in targets { o = o.settingSendPosition(auxID: aux, .postFader) }
         case .remove:
-            let gone = Set(targets)
-            o.sends.removeAll { gone.contains($0.auxID) }
-            o.plugins = ObjectPlugin.removingSendMarkers(from: o.plugins) { gone.contains($0.auxID) }
-            o.automation.removeAll { if case .send(let a) = $0.param { return gone.contains(a) } else { return false } }
-            o.automationTouchOrder.removeAll { if case .send(let a) = $0 { return gone.contains(a) } else { return false } }
+            // Entry, marker, the level's lane — and the send's PLUGINS with the lanes aimed at them.
+            o = o.removingSends(Set(targets))
         }
         return o
     }

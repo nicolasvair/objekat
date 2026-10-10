@@ -162,6 +162,33 @@ enum SendBakePolicyTest {
         check("the choices carry the API's names",
               SendBakePolicy.Choice.allCases.map(\.rawValue) == ["refuse", "fold", "remove"])
 
+        // The plugins ON a send (INC 3)
+        do {
+            let lp = plugin("lp"), sat = plugin("sat")
+            func lane(_ p: ParamRef) -> AutomationLane { AutomationLane(param: p, points: [AutomationPoint(t: 0, v: 1)]) }
+            let src = clip(plugins: [g1, g2], sends: [AuxSend(auxID: auxB, levelDb: -6, plugins: [lp, sat])],
+                           automation: [lane(.plugin(pluginKey: sat.id, paramID: "p")), lane(.send(auxID: auxB)),
+                                        lane(.plugin(pluginKey: g1.id, paramID: "p"))])
+                .settingSendPosition(auxID: auxB, .chain(1))
+            check("a chain send WITH plugins is concerned like any other", SendBakePolicy.concerned(in: src).map(\.auxID) == [auxB])
+            let folded = SendBakePolicy.resolve(src, choice: .fold)
+            check("fold: the send goes post-fader and KEEPS its plugins",
+                  folded.sendPosition(auxID: auxB) == .postFader && folded.sends[0].plugins == [lp, sat])
+            check("fold: every lane stays (the send's plugins live on)", folded.automation == src.automation)
+            let removed = SendBakePolicy.resolve(src, choice: .remove)
+            check("remove: the send goes with its plugins, their lanes and its level's lane",
+                  removed.sends.isEmpty && !ObjectPlugin.containsSendMarker(in: removed.plugins, where: { _ in true })
+                  && removed.automation.map(\.param) == [.plugin(pluginKey: g1.id, paramID: "p")])
+            check("refuse: nothing changes", SendBakePolicy.resolve(src, choice: .refuse) == src)
+            let pre = clip(plugins: [g1], sends: [AuxSend(auxID: auxD, plugins: [lp])]).settingSendPosition(auxID: auxD, .preFader)
+            check("a pre-fader send WITH plugins blocks the bake just the same",
+                  SendBakePolicy.preFaderBlockers(in: pre).map(\.auxID) == [auxD])
+            check("... and no choice touches it", SendBakePolicy.resolve(pre, choice: .remove) == pre)
+            let post = clip(plugins: [g1], sends: [AuxSend(auxID: auxA, plugins: [lp])])
+            check("a post-fader send with plugins: neither concerned nor blocking",
+                  SendBakePolicy.concerned(in: post).isEmpty && SendBakePolicy.preFaderBlockers(in: post).isEmpty)
+        }
+
         print("\n\(total - fails.count)/\(total) passed")
         if !fails.isEmpty { print("FAILED: \(fails)"); exit(1) }
     }

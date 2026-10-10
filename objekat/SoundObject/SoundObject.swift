@@ -951,7 +951,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case .plugin(let pluginKey, _):
             return Self.containsPlugin(pluginKey, in: plugins)
                 || Self.containsPlugin(pluginKey, in: instruments)
+                || holdsSendPlugin(pluginKey)
         }
+    }
+
+    /// True if `pluginKey` is a plugin of one of this object's SENDS (the third root, @see SendChain).
+    func holdsSendPlugin(_ pluginKey: UUID) -> Bool {
+        sends.contains { $0.plugins.contains { $0.id == pluginKey } }
     }
 
     /// True if this automation target, carried by the ROOT of this subtree, is BAKED IN when the
@@ -969,7 +975,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// laid on a plugin BELONGING to the instance (added over the baked content) while its content
     /// is open for editing — it belongs to the instance and has to follow it.
     func automationTargetIsBakedIntoRender(_ ref: ParamRef) -> Bool {
-        guard case .plugin = ref else { return false }
+        guard case .plugin(let pluginKey, _) = ref else { return false }
+        // A plugin laid ON A SEND is not rendered: the send is carried over to the placement with its
+        // plugins, and a curve driving one of them stays alive there, like the send's level curve.
+        if holdsSendPlugin(pluginKey) { return false }
         return resolvesAutomationTarget(ref)
     }
 
@@ -991,8 +1000,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// The invariant that follows, and which has to be preserved: re-editing then re-baking a
     /// definition does not wipe out a rendered instance's own automation.
     var asConsolidateDefinition: SoundObject {
-        guard !automation.isEmpty || !automationTouchOrder.isEmpty else { return self }
+        let rootSendsCarryPlugins = sends.contains { !$0.plugins.isEmpty }
+        guard !automation.isEmpty || !automationTouchOrder.isEmpty || rootSendsCarryPlugins else { return self }
         var copy = self
+        // The ROOT's sends belong to the instance (the placement keeps them, @see restoredSubtree):
+        // the definition must not hold a second copy of their plugins — same ids as the placement's,
+        // which a re-bake materialising the sidecar beside it would hand to the engine twice.
+        if rootSendsCarryPlugins { copy.sends = SendChain.strippingPlugins(sends) }
         copy.automation = automation.filter { automationTargetIsBakedIntoRender($0.param) }
         // The 'last parameter touched' memory: pure interface convenience, and belonging to whoever
         // touched it. It has no business in a shared definition.
@@ -1168,12 +1182,19 @@ struct SoundObject: Identifiable, Codable, Equatable {
                      fadeIn: Double, fadeOut: Double,
                      fadeInCurve: FadeCurve? = nil, fadeOutCurve: FadeCurve? = nil,
                      plugins: [ObjectPlugin], instruments: [ObjectPlugin] = [],
+                     sends: [AuxSend]? = nil,
                      automation: [AutomationLane]? = nil,
                      markers: [Marker]? = nil,
                      araSource: ARASource?? = nil,
                      kind: Kind) -> SoundObject {
         var remap = Self.pluginIDRemap(from: self.plugins,     to: plugins)
         remap.merge(Self.pluginIDRemap(from: self.instruments, to: instruments)) { a, _ in a }
+        // The THIRD root (INC 3): the copy keeps its sends, and their plugins are COPIES under fresh
+        // ids like the chain's. `sends` = the caller's copy (`copiedSends(of:)`, which re-reads the
+        // live states); nil = a cold copy made here — never the by-value one, which would give two
+        // objects the same plugin ids.
+        let derivedSends = sends ?? SendChain.mapPluginIDs(in: self.sends) { _ in UUID() }
+        remap.merge(SendChain.pluginIDRemap(from: self.sends, to: derivedSends)) { a, _ in a }
         let inherited = automation ?? self.automation
         // Markers travel exactly like the curves: inherited as they are unless the caller, which
         // has just cut or fragmented, hands over the half that belongs to this copy.
@@ -1193,7 +1214,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     isMuted: isMuted, stemID: stemID,
                     plugins: plugins, instruments: instruments,
                     label: label, colorIndex: colorIndex,
-                    sends: sends, baseBPM: baseBPM,
+                    sends: derivedSends, baseBPM: baseBPM,
                     consolidateID: consolidateID,
                     independentAttrs: independentAttrs,
                     chainInGainDb: chainInGainDb, chainOutGainDb: chainOutGainDb,

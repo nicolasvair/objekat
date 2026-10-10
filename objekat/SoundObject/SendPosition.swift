@@ -221,17 +221,45 @@ extension SoundObject {
     /// of an aux: both halves stay fed the same way): same level, on/off and position — `tap` by value,
     /// and for a send taken in the chain a marker for `new` laid immediately after `old`'s (two taps at the
     /// same point are equivalent, their order is cosmetic). Unchanged if there is no send to `old` or if
-    /// `new` already has one. Pure; what the copy holds besides is the caller's business.
-    func duplicatingSend(from old: UUID, to new: UUID) -> SoundObject {
+    /// `new` already has one. Pure.
+    /// `plugins`: the new send's mini-chain — COPIES of the original's, under fresh ids (the caller's
+    /// `copiedSendPlugins`, which reads the live states). nil = a cold copy made here (fresh ids, the
+    /// states the model holds): two sends never share a plugin id. The automation lanes aimed at the
+    /// original's level or plugins are NOT duplicated (the new send starts without curves, as before).
+    func duplicatingSend(from old: UUID, to new: UUID, plugins: [ObjectPlugin]? = nil) -> SoundObject {
         guard old != new, let source = sends.first(where: { $0.auxID == old }),
               !sends.contains(where: { $0.auxID == new }) else { return self }
         var o = self
         var copy = source                 // by value: every field of the send, present and future
         copy.auxID = new
+        copy.plugins = SendChain.sanitised(plugins ?? source.plugins.map { p in var q = p; q.id = UUID(); return q })
         o.sends.append(copy)
         if let k = o.plugins.firstIndex(where: { $0.sendMarker?.auxID == old }) {
             o.plugins.insert(ObjectPlugin.makeSendMarker(for: new), at: k + 1)
         }
+        return o
+    }
+
+    /// The object WITHOUT its sends towards `gone`: the entries, their markers (at any depth), the lanes
+    /// aimed at their level, their PLUGINS and the lanes aimed at those, and the touch memory of all of
+    /// it. The ONE pure definition of "a send is deleted" (the card's ×, `send.remove`, an aux
+    /// deleted, the orphan purge, the bake's "remove"). Unchanged if it has none of them.
+    func removingSends(_ gone: Set<UUID>) -> SoundObject {
+        guard sends.contains(where: { gone.contains($0.auxID) })
+              || ObjectPlugin.containsSendMarker(in: plugins, where: { gone.contains($0.auxID) }) else { return self }
+        var o = self
+        let pluginIDs = Set(o.sends.filter { gone.contains($0.auxID) }.flatMap(\.plugins).map(\.id))
+        o.sends.removeAll { gone.contains($0.auxID) }
+        o.plugins = ObjectPlugin.removingSendMarkers(from: o.plugins) { gone.contains($0.auxID) }
+        func dies(_ ref: ParamRef) -> Bool {
+            switch ref {
+            case .send(let a):          return gone.contains(a)
+            case .plugin(let key, _):   return pluginIDs.contains(key)
+            default:                    return false
+            }
+        }
+        o.automation.removeAll { dies($0.param) }
+        o.automationTouchOrder.removeAll(where: dies)
         return o
     }
 
@@ -243,6 +271,7 @@ extension SoundObject {
     ///   • a marker without a send entry is removed (an orphan);
     ///   • two markers for one aux: the first is kept;
     ///   • on an aux object (aux and Main do not send) every marker is removed;
+    ///   • a send's `plugins` hold plain plugins only (a block, a bin, a marker there is dropped);
     ///   • a send that has its marker holds `tap == .postFader` (the marker wins; the canonical form).
     /// `instruments` never hold a marker and are left alone.
     func sanitisingSends() -> SoundObject {
@@ -273,6 +302,13 @@ extension SoundObject {
             return true
         }
         o.plugins = top
+
+        // 2b. A send's own plugins: plain plugins only (@see SendChain.sanitised); an aux never sends,
+        // its `sends` are left as they are (the load's purge owns that rule).
+        for i in o.sends.indices where !o.sends[i].plugins.isEmpty {
+            let clean = SendChain.sanitised(o.sends[i].plugins)
+            if clean.count != o.sends[i].plugins.count { o.sends[i].plugins = clean }
+        }
 
         // 3. Canonical form: the marker wins, `tap` says post-fader.
         for i in o.sends.indices where kept.contains(o.sends[i].auxID) && o.sends[i].tap != .postFader {

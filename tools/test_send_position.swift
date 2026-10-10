@@ -395,6 +395,55 @@ enum SendPositionTest {
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))
         }
 
+        // MARK: - The plugins ON a send (INC 3): the sanitiser, the duplicate, the removal
+
+        do {
+            let auxA = UUID(), auxB = UUID()
+            let lp = plugin("lp"), sat = plugin("sat"), g = plugin("G")
+            let dirty = clip(plugins: [g],
+                             sends: [AuxSend(auxID: auxA, plugins: [lp, rackOf([[plugin("x")]]), binOf([plugin("y")]),
+                                                                    ObjectPlugin.makeSendMarker(for: auxB), sat])])
+            let clean = dirty.sanitisingSends()
+            check("sanitise: a block, a bin and a marker in a send's plugins are dropped, the plain ones kept in order",
+                  names(clean.sends[0].plugins) == ["lp", "sat"], "\(names(clean.sends[0].plugins))")
+            check("sanitise: idempotent on a send's plugins", clean.sanitisingSends() == clean)
+            let sound = clip(plugins: [g], sends: [AuxSend(auxID: auxA, plugins: [lp, sat])])
+            check("sanitise: a sound mini-chain is left alone", sound.sanitisingSends() == sound)
+            check("sanitise: the trunk is untouched by the send's cleaning", names(clean.plugins) == ["G"])
+
+            // The mini-chain follows the send when its position changes (it is the SEND's, not the tap point's).
+            for pos in [SendPosition.input, .chain(1), .preFader, .postFader] {
+                let moved = sound.settingSendPosition(auxID: auxA, pos)
+                check("position \(pos.name): the send keeps its plugins",
+                      moved.sends[0].plugins == [lp, sat] && moved.sendPosition(auxID: auxA) == pos)
+            }
+
+            let dup = sound.settingSendPosition(auxID: auxA, .chain(1)).duplicatingSend(from: auxA, to: auxB)
+            check("duplicate: the copy's plugins are the same, under fresh ids",
+                  names(dup.sends[1].plugins) == ["lp", "sat"]
+                  && Set(dup.sends[1].plugins.map(\.id)).isDisjoint(with: [lp.id, sat.id]))
+            check("duplicate: the original's plugins are untouched", dup.sends[0].plugins == [lp, sat])
+            check("duplicate: the trunk holds both markers and no send plugin", names(dup.plugins) == ["G", "m", "m"])
+
+            var curved = sound.settingSendPosition(auxID: auxA, .chain(0))
+            curved.automation = [AutomationLane(param: .plugin(pluginKey: sat.id, paramID: "p"), points: [AutomationPoint(t: 0, v: 1)]),
+                                 AutomationLane(param: .send(auxID: auxA), points: [AutomationPoint(t: 0, v: -6)]),
+                                 AutomationLane(param: .plugin(pluginKey: g.id, paramID: "p"), points: [AutomationPoint(t: 0, v: 1)])]
+            curved.automationTouchOrder = [.plugin(pluginKey: lp.id, paramID: "p"), .plugin(pluginKey: g.id, paramID: "p")]
+            let cut = curved.removingSends([auxA])
+            check("remove: the entry, its marker, its plugins' lanes and its level's lane are gone",
+                  cut.sends.isEmpty && names(cut.plugins) == ["G"]
+                  && cut.automation.map(\.param) == [.plugin(pluginKey: g.id, paramID: "p")]
+                  && cut.automationTouchOrder == [.plugin(pluginKey: g.id, paramID: "p")])
+            check("remove: an orphan marker alone is removed too",
+                  clip(plugins: [g, ObjectPlugin.makeSendMarker(for: auxB)], sends: []).removingSends([auxB]).plugins == [g])
+
+            // On disk: `plugins` is written only when the send has some.
+            check("encode: a send without plugin writes no `plugins` key", !json(AuxSend(auxID: auxA)).contains("plugins"))
+            let round = decode(AuxSend.self, json(AuxSend(auxID: auxA, levelDb: -3, plugins: [lp, sat])))
+            check("encode: a send's plugins round-trip", round?.plugins == [lp, sat] && round?.levelDb == -3)
+        }
+
         print("\n\(total - fails.count)/\(total) passed")
         if !fails.isEmpty { print("FAILED: \(fails)"); exit(1) }
     }

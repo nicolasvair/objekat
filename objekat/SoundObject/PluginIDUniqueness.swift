@@ -42,7 +42,8 @@ enum PluginIDUniqueness {
 
     // MARK: Audit (read-only)
 
-    /// Every plugin id in the project — leaves, carriers, blocks, block instances, instruments — with
+    /// Every plugin id in the project — leaves, carriers, blocks, block instances, instruments, ARA
+    /// sources, the plugins of the sends — with
     /// the host that holds it, in the order `deduplicated` walks them.
     static func occurrences(items: [SoundObject], stems: [Stem]) -> [Occurrence] {
         var out: [Occurrence] = []
@@ -59,6 +60,10 @@ enum PluginIDUniqueness {
                 // An ARA source (Melodyne) is a plugin of its own: two objects sharing its id would
                 // share an editor key. Walked right after the instruments, in all three traversals.
                 if let ara = obj.araSource { walk([ara.plugin], host: obj.id) }
+                // The THIRD root: each send's plugins (INC 3). Their host is the SENDER, whose engine
+                // chain carries them. Walked last, in all three traversals: adding the root never
+                // changes which occurrence of an older duplicate keeps its id.
+                for send in obj.sends { walk(send.plugins, host: obj.id) }
                 if case .group(let children, _) = obj.kind { walkItems(children) }
             }
         }
@@ -104,7 +109,7 @@ enum PluginIDUniqueness {
         let fxLinkName: String?
         /// From the root of the document, with the real array indexes and the real Codable keys:
         /// `items[3].kind.children[1].plugins[0].fxBlock.plugins[2]`, `items[0].plugins[1].rack.voices[0][2]`,
-        /// `items[5].instruments[0]`, `stems[2].plugins[4]`.
+        /// `items[5].instruments[0]`, `items[5].sends[0].plugins[1]`, `stems[2].plugins[4]`.
         let jsonPath: String
     }
 
@@ -169,6 +174,10 @@ enum PluginIDUniqueness {
                         Site(hostID: obj.id, hostKind: .object, hostName: name(), pluginName: ara.plugin.name,
                              fxLinkID: nil, fxLinkName: nil, jsonPath: "\(here).araSource.plugin"))
                 }
+                for (j, send) in obj.sends.enumerated() {
+                    walk(send.plugins, path: "\(here).sends[\(j)].plugins", hostID: obj.id, hostKind: .object,
+                         hostName: name, link: nil)
+                }
                 if case .group(let children, _) = obj.kind { walkItems(children, path: "\(here).kind.children") }
             }
         }
@@ -184,7 +193,8 @@ enum PluginIDUniqueness {
 
     /// Re-keys every plugin id already seen. Walk order — the FIRST occurrence keeps its id: `items`
     /// in order; for each object its chain (a leaf; a container's own id, then its series — a rack's
-    /// branches, or a block's instances), then its instruments, then, for a group, its children;
+    /// branches, or a block's instances), then its instruments, its ARA source, each send's plugins,
+    /// then, for a group, its children;
     /// then the stems' chains.
     ///
     /// For each re-keyed occurrence, the automation of its HOST (`automation[].param`,
@@ -239,6 +249,9 @@ enum PluginIDUniqueness {
                 if var ara = o.araSource {
                     ara.plugin = rekey([ara.plugin], host: o.id, scan: &scan)[0]
                     o.araSource = ara
+                }
+                for j in o.sends.indices where !o.sends[j].plugins.isEmpty {
+                    o.sends[j].plugins = rekey(o.sends[j].plugins, host: o.id, scan: &scan)
                 }
                 if !scan.table.isEmpty {
                     for i in o.automation.indices { o.automation[i].param = remap(o.automation[i].param, scan.table) }

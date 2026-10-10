@@ -265,7 +265,8 @@ enum CrossProjectImport {
             no.id = objectIDMap[o.id] ?? UUID()
             no.stemID = nil
 
-            let (newPlugins, pluginIDMap) = clonePlugins(o.plugins)
+            let (newPlugins, trunkIDMap) = clonePlugins(o.plugins)
+            var pluginIDMap = trunkIDMap
             no.plugins = newPlugins
 
             // An ARA source (Melodyne): a brand-new plugin id (never shared, never linked), the archive
@@ -283,10 +284,19 @@ enum CrossProjectImport {
                             sidechain: remapSidechain(inst.sidechain))
             }
 
+            // A send follows its aux into the batch or is dropped — WITH its plugins (INC 3): the third
+            // root is cloned cold like the chain (fresh ids, a link kept inside the batch only), and its
+            // old → new ids join the table, so that the curves aimed at a send plugin follow. A send
+            // that is dropped leaves its plugins out of the table: their curves are dropped below.
             no.sends = o.sends.compactMap { send -> AuxSend? in
                 guard let newAux = objectIDMap[send.auxID] else { return nil }
                 var s = send
                 s.auxID = newAux
+                if !send.plugins.isEmpty {
+                    let (cloned, sendIDMap) = clonePlugins(SendChain.sanitised(send.plugins))
+                    s.plugins = cloned
+                    pluginIDMap.merge(sendIDMap) { a, _ in a }
+                }
                 return s
             }
 

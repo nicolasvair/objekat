@@ -64,6 +64,18 @@ enum SendMarkerAudit {
                         out.append(Violation(host: o.id, path: "instruments[\(i)]", rule: "phantom"))
                     }
                 }
+                // The plugins of a send (INC 3): plain plugins only — a marker there would be a send of a
+                // send, a block or a bin is not allowed in v1 (@see SendChain.sanitised).
+                for (j, send) in o.sends.enumerated() {
+                    for (k, p) in send.plugins.enumerated() {
+                        let here = "sends[\(j)].plugins[\(k)]"
+                        if p.sendMarker != nil { out.append(Violation(host: o.id, path: here, rule: "in_send_plugins")) }
+                        else if p.isContainer { out.append(Violation(host: o.id, path: here, rule: "send_chain_not_leaf")) }
+                        else if p.identifier.isEmpty && p.formatName.isEmpty {
+                            out.append(Violation(host: o.id, path: here, rule: "phantom"))
+                        }
+                    }
+                }
                 if case .group(let children, _) = o.kind { visit(children) }
             }
         }
