@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 22
+    static let formatVersion = 23
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -81,6 +81,17 @@ enum SessionSchema {
         "  NOT the default, so a session of format 21 re-encodes without the key. The fourth place, IN THE",
         "  CHAIN, is not a `tap` value: it is an entry of `plugins` carrying a `sendMarker` key (below).",
         "  A pre-fader or in-chain send still follows the object's fades and window, not its volume or pan.",
+        "  PLUGINS ON a send (format 23): `plugins` on a send entry is a mini-chain of plugin entries (the",
+        "  same shape as an entry of the object's `plugins`), processed in order on what THIS object sends",
+        "  to THIS aux — after the object's fades and window, BEFORE `levelDb` — and on nothing else: the",
+        "  object's direct sound and the other senders' sends are untouched. Plain plugins only: no rack,",
+        "  no `fxBlock`, no `sendMarker`, no instrument (the app drops such an entry at load). WRITTEN ONLY",
+        "  WHEN NOT EMPTY. A plugin id there is as unique in the file as any other plugin's, and its",
+        "  parameters are automated by the SENDING object's `automation` ({type:plugin, pluginKey, paramID}).",
+        "  They are processed while the object plays (a delay or a reverb on a send stops with the object;",
+        "  to let it ring, put it on the aux). A send switched off or at -inf keeps its plugins. A build",
+        "  from before format 23 ignores the key: the send plays without its plugins, and saving from that",
+        "  build loses them (their automation rows stay written, aimed at nothing).",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
         "  An entry with an `fxBlock` key is neither: it is the place an FX LINK (a bin of shared",

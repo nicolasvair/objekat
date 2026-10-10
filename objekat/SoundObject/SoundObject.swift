@@ -331,6 +331,13 @@ struct AuxSend: Codable, Equatable, Identifiable {
     /// Where the signal is taken when the chain holds no marker for this send. Encoded ONLY when it is
     /// not `.postFader`: a session of format 21 re-encodes without the key.
     var tap: SendTapPoint = .postFader
+    /// The send's PLUGINS (INC 3, session format 23): a mini-chain processed on the send's copy, in
+    /// this order, after the sender's window and fades and BEFORE `levelDb`. Leaves only
+    /// (@see SendChain.sanitised). Encoded ONLY when non-empty: a session without any send plugin
+    /// differs from its format-22 self by the version number alone. A copy of the object must
+    /// freshen these ids like the chain's (@see SendChain.mapping) — never copy `sends` by value
+    /// into a NEW object.
+    var plugins: [ObjectPlugin] = []
     var id: UUID { auxID }
 
     /// True if the level is -∞ (≤ sendMinDb).
@@ -338,22 +345,30 @@ struct AuxSend: Codable, Equatable, Identifiable {
     /// True if the send really has to be routed to the engine.
     var isRouted: Bool { enabled && !isSilent }
 
-    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true, tap: SendTapPoint = .postFader) {
+    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true, tap: SendTapPoint = .postFader,
+         plugins: [ObjectPlugin] = []) {
         self.auxID = auxID
         self.levelDb = levelDb
         self.enabled = enabled
         self.tap = tap
+        self.plugins = plugins
     }
 
     // Backwards-compatible decoding: `enabled` absent (old projects) ⇒ true; `tap` absent (or a value
-    // this build does not know) ⇒ post-fader.
-    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled, tap }
+    // this build does not know) ⇒ post-fader; `plugins` absent (every session before format 23) ⇒ none.
+    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled, tap, plugins }
     init(from decoder: Decoder) throws {
         let c   = try decoder.container(keyedBy: CodingKeys.self)
         auxID   = try c.decode(UUID.self, forKey: .auxID)
         levelDb = try c.decodeIfPresent(Float.self, forKey: .levelDb) ?? 0.0
         enabled = try c.decodeIfPresent(Bool.self,  forKey: .enabled) ?? true
         tap     = ((try? c.decodeIfPresent(SendTapPoint.self, forKey: .tap)) ?? nil) ?? .postFader
+        let read = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []
+        plugins  = SendChain.sanitised(read)
+        if plugins.count != read.count {
+            NSLog("[SENDS] %d entry(ies) dropped from a send's plugins: a block, a bin or a marker may not sit on a send",
+                  read.count - plugins.count)
+        }
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -361,6 +376,7 @@ struct AuxSend: Codable, Equatable, Identifiable {
         try c.encode(levelDb, forKey: .levelDb)
         try c.encode(enabled, forKey: .enabled)
         if tap != .postFader { try c.encode(tap, forKey: .tap) }
+        if !plugins.isEmpty { try c.encode(plugins, forKey: .plugins) }
     }
 }
 

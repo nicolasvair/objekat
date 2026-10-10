@@ -7,6 +7,7 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/Marker.swift \
@@ -388,7 +389,7 @@ enum SendPositionTest {
             check("named() inverts them", SendPosition.named("pre_fader") == .preFader
                   && SendPosition.named("chain", index: 2) == .chain(2)
                   && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
-            check("the session format is 22", SessionSchema.formatVersion == 22)
+            check("the session format is 23", SessionSchema.formatVersion == 23)
             check("the notice mentions both new keys",
                   SessionSchema.note.joined(separator: "\n").contains("sendMarker")
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))

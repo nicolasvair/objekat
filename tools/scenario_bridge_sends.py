@@ -973,7 +973,7 @@ def section_P(c):
     level_and_index("P the old-session send now sounds", dry, wet, -6.0)
     c.send("project.save")
     d2 = json.load(open(path))
-    check("P: saved again as format 22", d2.get("version") == 22, d2.get("version"))
+    check("P: saved again as format 23", d2.get("version") == 23, d2.get("version"))
     blob = json.dumps(d2)
     check("P: neither the ghost send nor its curve survive the save", ghost not in blob, "")
 
@@ -2326,7 +2326,7 @@ def section_Z2(c):
     c.send("project.save")
     path = out("Z2/project.objekat")
     d1 = json.load(open(path))
-    check("Z2 file: saved as format 22", d1.get("version") == 22, d1.get("version"))
+    check("Z2 file: saved as format 23", d1.get("version") == 23, d1.get("version"))
     ox = find_obj(d1["items"], x)
     ow = find_obj(d1["items"], w)
     markers = [p_ for p_ in ox.get("plugins", []) if "sendMarker" in p_]
@@ -2402,7 +2402,7 @@ def section_PF(c):
     c.send("project.save")
     d2 = json.load(open(path))
     blob2 = json.dumps(d2["items"])
-    check("PF1: saved as format 22, and still without marker or tap", d2.get("version") == 22 and "sendMarker" not in blob2 and '"tap"' not in blob2,
+    check("PF1: saved as format 23, and still without marker or tap", d2.get("version") == 23 and "sendMarker" not in blob2 and '"tap"' not in blob2,
           d2.get("version"))
 
     # ---- (2) format 22 that breaks the rules: marker + tap, a duplicate marker, an orphan marker
