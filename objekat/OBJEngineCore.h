@@ -452,7 +452,7 @@
 // Retourne la liste des pluginKeys NON RÉSOLUS (introuvables) — le caller les retire du modèle.
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
-                                       sendChains:(NSArray<NSDictionary*>*)sendChains
+                                       sendChains:(NSArray<NSDictionary*>* _Nonnull)sendChains
                                         chainInDb:(float)chainInDb
                                        chainOutDb:(float)chainOutDb;
 

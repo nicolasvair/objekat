@@ -843,6 +843,37 @@ makes it (`sections` [{tier, title_key, entries [{aux, name, enabled, reason}]}]
 drives the timeline's "choose an object" mode without a screen (`begin_send` with `id` and a position,
 `refusal`, `commit`, `end`, `state`; the mode is `none` | `sidechain` | `send`).
 
+**Plugins ON a send (INC 3, session format 23).** A send carries a mini-chain of its own: plain plugins that
+process the SENT signal only, between the tap and the send's level (the level acts AFTER them; the dry signal is
+never touched; a latency in the mini-chain ages the tap, it does not delay the dry). The mini-chain is a third kind
+of CHAIN HOST beside an object and a stem: `send.list` rows carry **`chain_host`** (a derived id, stable for a
+(sender, aux) pair, present even when the send has no plugin, so a script can lay the first one) and **`plugins`**
+(`[{id, name, enabled}]`, processing order). Every `plugin.*` command takes that id as `host` / `from` / `to`:
+`plugin.add`, `plugin.remove`, `plugin.toggle`, `plugin.move`, `plugin.copy`, `plugin.drop`, `plugin.drop_at`
+(`series: "root"` only), `plugin.select` / `selection` / `duplicate_selected` / `copy_selected` / `paste` /
+`remove_selected` / `toggle_selected`, `plugin.set_param` / `get_params`, `plugin.sidechain_sources` /
+`plugin.set_sidechain` (the key is aligned to the sample with the sent signal, measured). `plugin.list` on such a
+host answers `is_send_chain: true`, `sender` and `aux`. `object.get` and the runtime counts gain
+`plugins_on_sends` (the existing plugin counts are unchanged). `debug.add_test_plugin` accepts a send host, and the
+type `clipTester` (+ `ceiling_db`).
+
+What a send's chain refuses, always `invalid_state` with `details.reason`:
+- `send_chain_leaves_only` — an instrument, a parallel block, an FX link bin or a send marker (a send takes plain
+  plugins only; `plugin.drop_at` answers it as `refused` / `reason`);
+- `chainFull` — more than 20 plugins on one send (its own limit, apart from the 20 entries of the trunk);
+- `send_plugins_never_linked` — `plugin.link` with a send on either side, `fxlink.create` with a send as `host`,
+  `fxlink.attach` to a send. **A plugin on a send is never linked**: `plugin.drop` with `mode: "link"` to or from a
+  send is a plain copy, and every copy of a sender (duplicate, split, paste, cross-project paste, consolidation,
+  the split of an aux) gives the send's plugins fresh ids and independent states.
+An unknown host (a removed send's `chain_host` included) is `not_found`. `send.retarget` keeps the plugins and their
+live instances (the `chain_host` changes with the aux); `send.remove` forgets them and their automation in the same
+undo point; `send.set_position` does not touch them. A send that carries plugins exists in the engine even when it
+is at -inf or disabled (a silent carrier), so its plugins can be opened and set before the level is raised.
+`debug.send_marker_audit` also answers `send_plugins` (count) and `linked_send_plugins` (must be empty);
+`debug.bridge_report`'s `engine.sends` rows gain `enabled`, `chain_plugins`, `chain_keys` and
+`chain_latency_samples`. Known gap, measured (scenario section T3): an effect with a tail laid on a send rings past
+the sender's end, unlike the same effect on the sender's chain — see `plan_sends_rework.md` D.2.G.
+
 DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
 (`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,
 source, rank, age, cached_age, ring_capacity, ring_generation, latest_end, runs}], `readers` [{plugin,

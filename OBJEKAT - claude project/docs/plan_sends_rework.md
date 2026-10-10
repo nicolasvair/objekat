@@ -2270,6 +2270,164 @@ wrapper: a MOVE, ids kept), 742 / 775 / 1076 (the placement takes `live.sends`: 
   third root exists in `bridgeTopology` (step 3.6), measured there as section K3 before the door is
   opened; refused in v1 if not aligned, as the plan says.
 
+#### 3.1 — The ear first (`c6a264d2`)
+
+Sections A3 (level and alignment with a plugin on the send), L3 (latency in the mini-chain), O3 (order:
+level after the plugins, read with a clipper), P3 (every export of the run against the INC 2 reference,
+sample for sample) written BEFORE the feature: 6 assertions failing for want of a door, as intended.
+Two premises of L3 / O3 were corrected once the feature existed (`991f6f8d`): the export's -0.733 dB
+offset is an impulse's (the resampler's band limit), not a tone's, so the clipper's ceiling is read off
+the sine's peak; and the reader of ANOTHER sender delayed by P has a delay line's warm-up at every stream
+start — measured identical with the same plugin on the trunk (the INC 2 path), so it is bridge behaviour
+and L3 asserts zero uncovered blocks for the mini-chain's own reader only.
+
+#### 3.2 — Model and format 23 (`a7359d1c`)
+
+`AuxSend.plugins` (key absent when empty), `SessionSchema.formatVersion = 23` with its notice,
+`Shared/SendChain.swift`: `hostID(sender:aux:)`, `capacity` 20, `sanitised`, `allRoots`, the refusals.
+**Deviation:** `sanitised` drops the non-leaves AND clears both link memberships (the NO-LINK decision
+arrived after the plan was written; the plan's text said leaves only).
+
+#### 3.3 — The third root in the pure walkers and copiers (`e6a94d98`)
+
+`derivedCopy` re-keys the mini-chains and the curves follow; `PluginIDUniqueness` / `PluginIDReport` walk
+`sends[j].plugins`; `CrossProjectImport` clones them with the send; `removingSends` is the one pure
+definition of a deleted send; `asConsolidateDefinition` strips the ROOT's send plugins (probe c);
+`SendMarkerAudit` knows the root. **Found by reading, not in the plan's inventory:**
+`resolvesAutomationTarget` (a lane aimed at a send plugin resolves; `automationTargetIsBakedIntoRender`
+answers NO for it). **Not done:** `duplicatingSend` does not duplicate the automation lanes of the send's
+plugins on the split of an aux (the copy's plugins start without curves).
+
+#### 3.4 — Engine patch `0040` (`bd173be9`; fork `2cd66f2668f` on `objekat-sends-0040`, local only)
+
+`BridgeTapSource::getTapChain()` / `processTapHead()`, `BridgeTapHeadNode` -> the mini-chain -> the
+priming branch; the tap's age is L + P. Validated ALONE on INC 2's app sources: sections A..PF + P3
+**947 OK / 0 FAILED**, every INC 2 export identical to the reference sample for sample;
+`scenario_bridge_latency` 66 / 0; `scenario_sidechain` 55 / 0.
+
+#### 3.5-3.7 — Engine bridge, view-model, doors (`65740285`, ONE commit)
+
+**Deviation:** three steps in one commit — 3.5 alone does not build (Objective-C signatures changed).
+The send's engine plugin exists when the send is alive OR carries plugins (a disabled carrier
+otherwise); compile owns the content, sync the route; retarget in place; `sendChainHosts`,
+`engineHostKey`, `chainOwnerObjectID`; state capture, undo patching, automation, sidechain topology,
+project load, consolidate and bake walk the third root; every copy re-keys.
+Deviations and notes: `needsChainCompile` extended to the send's plugins; a compile that runs before the
+first bridge sync may instantiate for a moment the plugins of a send that will be refused;
+`closeEditorsAndPurgePluginsForObjectID:` parks the send-chain plugins with the sender's; the consolidate
+sites read the LIVE states of the send plugins; the retarget is done in place ONLY when the send carries
+plugins (a plain send keeps INC 2's remove + lay); no `PluginDropSite.sendChain` case was needed (the
+host id carries it); **no link**: `rewireLinkGroups` does not walk the third root, a ⌘-drag to or from
+a send is a plain copy (`SendChain` answers `.copy`), the audit reports `send_plugin_linked`.
+The stale `tools/test_ara_model.swift` (does not compile since before INC 3) was left untouched.
+
+#### 3.8 — The command API (`c6a72db5`)
+
+`send.list` rows: `chain_host`, `plugins`; every `plugin.*` command accepts a send host; refusals
+`send_chain_leaves_only`, `chainFull`, `send_plugins_never_linked`; `plugin.list` answers
+`is_send_chain` / `sender` / `aux`; `debug.add_test_plugin` on a send host + `clipTester`;
+`debug.send_marker_audit`: `send_plugins`, `linked_send_plugins`; `plugins_on_sends` in `object.get`
+and the runtime counts.
+
+#### 3.9-3.10 — The send's box, pure then drawn (`627bf9e2`, `d1a15e15`)
+
+Q-U19: plugins ON TOP, the line aux / level / switch at the BOTTOM, the wire entering at the top
+(`SendCardPlacement` with variable heights). Rows (bypass dot, name, cross on hover), the "+" (the picker
+aimed at the send's chain host), selection with the send as host, drag from and onto a box with an
+insertion line. `test_synoptic_send_cards` 104, `test_send_drop` 26.
+Deviations, all VISIBLE and therefore questions: the aux head's mark is an ICON with a tooltip, not the
+literal "fx" of A.l; the "+" of a send WITHOUT plugins appears on hover in an 18-pt strip above the card
+(and as a menu entry); two refusal lines speak on the band (leaves only, full). 3.9 was committed without
+a build of its own (built with 3.10). Nothing of 3.9-3.10 has been SEEN: no screen.
+
+#### 3.11 — The scenario's remaining sections, and what they found (`dea92756`, `f3ff006a`)
+
+Sections G3, M3, X3, U3, Z3, C3, R3, T3, B3, K3, H3 written; one mini-chain case added to
+`scenario_cross_paste.py` (37 assertions) and to `scenario_plugin_selection.py` (64).
+
+**Complete run** (`scenario_bridge_sends.py`, Debug, headless, audio ON, `INC2_REF_DIR` = the 3.0
+reference; 20 min): **1436 OK, 2 FAILED** — the two are T3's, below. P3: 517 exports have a reference,
+0 differ. Measured on the way: A3 the sender's wet -12.000 dB with the dry and the other sender
+untouched, at the four positions; L3 tap `age` 1920 samples at 96 kHz for 20 ms (L + P), wet peak on the
+dry peak; O3 wet peak -18.000 dBFS (clip -12, then level -6; the other order would give -12); R3 the
+retarget keeps the instance and its LIVE state (-15.000 dB with the plugin at -9 live against the
+model's -12), the four positions give Q2's level minus 9 dB (-50 / -9 / -15 / -27 / -30); K3 the sent
+signal AND the key at sample 48000 in the three latency cases (nothing; 10 ms on the key's source;
+20 ms in the mini-chain before the keyed plugin), at `post_fader` and at `input` — **the key on a
+send's plugin is aligned, so it stays allowed** (the plan's fallback "refused in v1" is not applied).
+
+**Three things the sections found in the product:**
+
+1. **A crash (fixed, `dea92756`).** The mini-chain's nested `PluginList` kept the RAW owner track given
+   at its creation. A rank change of the sender (a sidechain key laid on one of its plugins, trunk or
+   send) moves its clip to another pool track and the old one is pruned: the next plugin added on the
+   send crashed in `PluginList::insertPlugin` (`dynamic_cast` on the dead track). Now
+   `ObjBridgeSendPlugin::refreshChainOwners()` at every access and from `moveClipToOwner`. Reproduced
+   before, gone after (two probes). **Outside the plan's step list**, app-side only (no engine patch).
+   `OBJParallelBlockPlugin.h` sets its owners once in the same way: NOT touched, to be decided.
+2. **`fxlink.create` with a send as host, and `fxlink.attach` to a send, were accepted (fixed,
+   `dea92756`)** — a bin inside a send, against "leaves only" and "never linked". Refused in the model
+   (`createFXLink`, `attachFXLink`) and by the API with `send_plugins_never_linked`.
+3. **T3 — the tail of an effect on a send is NOT cut (NOT fixed; the two failing assertions are left
+   red on purpose).** A built-in Delay on a send, impulse at 1 s, object cropped to end at 1.1 s: the
+   echoes keep coming after the end (max 0.130 after 1.15 s, the same echoes as with the whole object:
+   -17.7 dBFS at 1.2 s, -23.7 at 1.4 s...), at `post_fader` and `input` (and `pre_fader`, by hand);
+   the same Delay on the TRUNK is cut (last non-zero sample at 1.0009 s). A.e assumed the wet branch
+   was inside the clip's window; it is not gated. Contradicts Q-U18. The remedy is an audible choice
+   (a gate or the envelope after the mini-chain; at `post_fader` the fades would apply twice) in the
+   wet branch of `0040`: the architect's and the user's. What does hold: an impulse OUTSIDE the
+   window sends nothing and no echo (wet max 0).
+
+**Premises of the scenario corrected while writing it** (the product was right each time):
+X3 — with a send the trunk takes 15 plugins, the 16th is turned away (`engine_error`), exactly as in
+INC 2 without any send plugin: the plan's "16 + 1 send" was wrong; U3 — a wet measured against an
+"off" export is void once trunk plugins change the dry (sender's fader at -96 dB for an `input`
+send), `plugin.move` / `plugin.copy` mint a FRESH id, the undo of a bypass rebuilds and a state-only
+difference patches (0 rebuilt, 1 patched); G3 — +24 dB on a lit send clips the export (asserted at
+-inf only, as the plan says); K3 — the 0.9 impulse clipped the export and the "peak" slid onto the
+resampler's ripple (sender at -12 dB); C3 — a duplicate lands AFTER its source; B3 — the children of
+a folded group are not listed.
+
+**Not covered:** U3's "a curve on a send plugin's parameter" (no `automation.*` door in the API, and
+`gainTester` exposes no parameter); the ⌥-drag copy of an OBJECT (no API door; `object.duplicate` and
+the clipboard are covered); M3 "full": a plugin laid on a refused send loses its engine-only test gain
+(a limit of the debug door, printed). Z3 reopens in the same process, and its "format 22" file is made
+by rewriting `version` in a saved file (the reference run kept no project file).
+
+**Mutants** (each built, run, then the source restored — `git diff` empty in the repo and the fork):
+A, the builder ignores `getTapChain()`: A3 (2) ×4, L3 ×4, O3 ×3 red (11), P3 green (9 / 9 identical);
+B, `registerTap` given L instead of L + P: L3 red (10: wet peak 48960 against 48000 = P, `passes` 8,
+not converged), A3 green; C, `deepFreshCopy` / `derivedCopy` copy the sends by value:
+`test_plugin_id_uniqueness` red (3), C3 red (14: same id on the copy, audit count 1).
+
+**Non-regression, each on its own fresh headless instance:** `scenario_bridge_latency` 66 / 0,
+`scenario_sidechain` 55 / 0 (audio ON); no audio: `selection_send_scope --seed 7 --selections 200`
+345, `families` 261, `markers`, `plugin_state_undo` 5, `plugin_selection` 64, `export_preview` 83,
+`fxlink` 132, `consolidate`, `tabs` 106, `cross_paste` 37, `relink`, `channel_mode` 50, `ara` 173,
+`smoke.jsonl` (no error) — all pass. Pure tests: `test_send_chain` 68, `test_send_position` 133,
+`test_send_bake_policy` 43, `test_send_drop` 26, `test_send_columns` 110, `test_send_target_menu` 14,
+`test_synoptic_send_cards` 104, `test_synoptic_fxblock` 246, `test_plugin_id_uniqueness` 100,
+`test_cross_project_import` 65. On a trial project with two plugins on a send:
+`debug.plugin_id_audit` count 0, `debug.send_marker_audit` ok (2 send plugins, none linked),
+`CGWindowListCopyWindowInfo`: 0 window owned by the headless pid. No headless instance left running.
+
+#### 3.12 — Documentation
+
+`CLAUDE.md` (the INC 3 entry, the permanent rule of the THREE roots, the raw owner pointers of a nested
+list), `command_api.md` (plugins on a send: `chain_host`, the three refusals, the known gap),
+`architecture_decisions.md` (P6 revised, the materialisation rule, the host, no link, the owner-track
+defect, the open tail), the `SessionSchema` notice (format 23, written at 3.2),
+`engine-patches/3.5/README.md` (`0040`, written at 3.4). `xcstrings.py check`: 697 keys, 3 languages,
+nothing missing; `orphans`: none.
+
+**Warnings.** Clean Debug build (`-derivedDataPath` empty) at `f3ff006a`: 1548 `warning:` lines against
+the 1541 of INC 2's clean build; compared by (file, message): 3 new — two in `SendChain.swift`
+(`sanitised` passing main-actor static methods as function values) and one more of the header's
+nullability family on the new `sendChains:` parameter of `OBJEngineCore.h` (counted 3 times + 2
+continuation lines). The three are removed (closures; `_Nonnull`), and the rebuild in the same derived
+data shows no new (file, message) pair and no count above the baseline. The figure 1541 itself was NOT
+re-measured by a second clean build.
+
 ---
 
 # E. Open questions

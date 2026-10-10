@@ -50,7 +50,7 @@ enum SendChain {
     /// a copy of an object copies its sends' plugins INDEPENDENT. Enforced HERE, so that no door, no
     /// copier and no file can keep or create one (`rewireLinkGroups` then has nothing to wire).
     static func sanitised(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
-        plugins.filter(accepts).map(unlinked)
+        plugins.filter { accepts($0) }.map { unlinked($0) }
     }
 
     /// `plugin` without any link membership, active or detached.

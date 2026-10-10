@@ -2597,6 +2597,26 @@ a second one elsewhere. The most exposed points:
   Accepted costs: the wet of an aux OUTSIDE the sender's group does not obey that group's fader, FX or
   fades (the tap is upstream of them) but does obey its MUTE; the wet leaves its stem, so "Σ stems = mix"
   assumes the Main is delivered as a stem.
+- **Plugins on a send — INC 3 of the sends rework** (10 October 2026, branch `feature/sends-inc3-plugins`, stacked
+  on `feature/sends-inc2-position`, **nothing merged, nothing pushed**; engine patch **`0040`**, fork branch
+  `objekat-sends-0040` LOCAL ONLY — `engine-patches/3.5/0040-*.patch` is its only backup; the next free number is
+  `0041`). A send carries a mini-chain of plain plugins that process the SENT signal only, between the tap and the
+  send's level (level AFTER the plugins); a latency there ages the tap and never delays the dry. Session format
+  **23** (`sends[].plugins`). Authority: `docs/plan_sends_rework.md` D.2 (design, steps 3.0-3.12, journal with every
+  deviation); decisions: `architecture_decisions.md`; API: `command_api.md` (`chain_host`, the three refusals).
+  In the signal view a send's box has its PLUGINS ON TOP and the line aux / level / switch AT THE BOTTOM.
+  **NO LINK of any kind on a send's plugins** (no manual link, no FX link bin; ⌘-drag to or from a send = plain
+  copy; every copy of a sender re-keys them). Leaves only (no instrument, parallel block, bin, marker), 20 per send.
+  **Known gap, measured, NOT fixed:** an effect's tail on a send rings past the object's end (the user decided it
+  must stop with the object) — scenario section T3 fails on it, on purpose.
+- **PERMANENT RULE — an object's plugins have THREE roots**: `plugins`, `instruments`, and each send's `plugins`.
+  Walk them through `SendChain.allRoots`, never by hand: a walker that names two roots silently forgets the third
+  (state capture, undo patching, id audit, automation targets, sidechain topology, copies). A send's mini-chain is
+  a chain HOST (`SendChain.hostID`), and the engine knows it by its SENDER (`engineHostKey`): every engine call
+  `forObjectID:` that receives a chain host passes through `engineHostKey`.
+- **A nested `PluginList` keeps RAW owner pointers** (`setTrackAndClip`): a clip changes pool track when its rank
+  changes (a sidechain key, a stem or lane change), so `ObjBridgeSendPlugin::refreshChainOwners` runs at every
+  access and in `moveClipToOwner`. `OBJParallelBlockPlugin` has the same set-once pattern, untouched so far.
 - **A send's position is part of its identity** (sends rework, INC 2 - see its entry): moving a send, retargeting it,
   copying or deleting its sender all carry the position and the marker with it; a send never changes position by a
   scope change. A sender silenced by mute / solo / a stem mute feeds no aux whatever its position.

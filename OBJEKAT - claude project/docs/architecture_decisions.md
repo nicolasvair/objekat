@@ -788,6 +788,61 @@ The "choose an object" mode (sidechain source) became `RoutePick { sidechain, se
 `sidechainPick` is a computed shim so the sidechain strip did not move. The timeline's readers (tap, Esc, hover
 veil, HUD) switch on the case. One mode, one place that arms it, one that ends it.
 
+## Plugins on a send: a wet branch between the tap and its level (sends rework, INC 3)
+
+Authority: `plan_sends_rework.md` D.2 (design, steps 3.0-3.12, journal). Engine patch `0040`, session format 23.
+
+### Decision: the mini-chain lives INSIDE the send's engine plugin, and its latency ages the tap (P6 revised)
+
+A send's plugins process the sent signal only. They are a nested `PluginList` owned by the sender's
+`ObjBridgeSendPlugin`, played by a side branch of the node builder (`BridgeTapHeadNode` -> the plugins -> the
+priming of the tap) between the tap and the send's level: the level acts after them (Q-U17). The dry signal passes
+through the send plugin untouched, so a latent plugin on a send does NOT delay its object: the branch's latency P
+is added to the tap's age (`registerTap` receives L + P) and the aux's reader, like any bridge reader, catches up.
+Measured at step 3.0 (probe b) before anything else was written: with 20 ms in the mini-chain the whole export is
+identical sample for sample to the export without it. A tap without a chain builds exactly INC 2's node — the
+parity of every INC 2 export is section P3 of the scenario.
+Why not delay the dry to match (the first sketch): every sender with a latent send plugin would have shifted its
+whole stem's compensation for a signal that is not even its own.
+
+### Decision: a send that carries plugins is materialised even when silent
+
+INC 2 lays a send in the engine only when it is alive (enabled, above -inf or automated). A plugin needs an
+instance to open its editor and hold its state, so a send that carries plugins is laid whatever its level, as a
+disabled carrier that writes nothing on the bridge. Compile owns the content (which plugins, in which order), the
+bridge sync owns the route; a retarget re-keys the engine plugin in place when the send carries plugins, so the
+instances and their live state survive it.
+
+### Decision: a third chain HOST, and a third ROOT walked in one place
+
+A send's mini-chain is addressed like an object's or a stem's chain: `SendChain.hostID(sender:aux:)` is a derived,
+stable id, and `chainPlugins` / `updateChainPlugins` / the selection / the drop resolver / the command API accept
+it. The engine never sees it: `engineHostKey` maps it back to the SENDER, which owns the instances. An object's
+plugins therefore have THREE roots — `plugins`, `instruments`, each send's `plugins` — and every walker (state
+capture, undo patching, id audit and repair, automation targets, sidechain topology, copies) goes through
+`SendChain.allRoots` rather than naming the roots by hand.
+
+### Decision: leaves only, never linked, twenty
+
+A send takes plain plugins: no instrument, no parallel block (Q-U9), no FX link bin, no send marker;
+`SendChain.sanitised` enforces it at load and at every write. A send's plugin is NEVER linked (user decision of
+10 October 2026): no manual link, no bin, a ⌘-drag to or from a send is a plain copy, `rewireLinkGroups` does not
+walk the third root, and every copy of a sender re-keys the send's plugins. Twenty plugins per send, its own limit.
+
+### A defect of ownership found on the way: the nested list's owner track
+
+`PluginList::setTrackAndClip` keeps RAW owner pointers. The pool track of a clip changes when its rank changes (a
+sidechain key laid on it, a stem or lane change): the mini-chain's list kept the old, pruned track and the next
+insertion crashed (`dynamic_cast` on a dead pointer). `ObjBridgeSendPlugin::refreshChainOwners` is called at every
+access and by `moveClipToOwner`. `OBJParallelBlockPlugin` sets its owners once in the same way and was NOT touched.
+
+### Open: the tail of an effect on a send (Q-U18) is NOT cut today
+
+Decided: the tail of an effect laid on a send stops with the object, as on the object's chain. Measured (T3): it
+does not — a delay on a send rings its whole tail after the object's end, at every position, whereas the same delay
+on the trunk is cut. The wet branch is not gated by the clip's window as the plan assumed. Left as is and reported:
+the remedy is an audible choice (where the gate sits, and whether fades apply twice at `post_fader`).
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
