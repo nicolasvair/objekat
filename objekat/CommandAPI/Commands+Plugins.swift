@@ -71,6 +71,12 @@ extension CommandRegistry {
                 "chain_in_db": .number(Double(gains.inDb)),
                 "chain_out_db": .number(Double(gains.outDb)),
             ]
+            // A send's mini-chain (INC 3): who it belongs to.
+            if vm.find(id: host) == nil, let key = vm.sendChainKey(host) {
+                payload["is_send_chain"] = .bool(true)
+                payload["sender"] = .string(key.sender.uuidString)
+                payload["aux"] = .string(key.aux.uuidString)
+            }
             if let object = vm.find(id: host) {
                 payload["instruments"] = .array(object.instruments.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) })
             }
@@ -162,6 +168,9 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
             let available = try CommandAdapters.resolvePlugin(p, in: vm)
+            // A send's mini-chain: plain plugins only (no instrument, no ARA source), its own limit.
+            try CommandAdapters.requireRoomOnSend(adding: 1, to: host,
+                                                  instrument: available.isInstrument || available.isARA, in: vm)
             // An ARA plugin (Melodyne VST3) is not a chain insert: on an audio object it becomes the
             // clip's SOURCE (`slot: "ara_source"`), and a host that cannot take one refuses.
             if available.isARA {
@@ -246,6 +255,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: (from == to) ? 0 : ids.count, to: to, in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .move)
             return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -267,6 +277,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: (from == to) ? 0 : ids.count, to: to, in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .copy)
             return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -290,6 +301,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.refuseLinkOnSend([from, to], in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .link)
             return .object(["links": .int(vm.linkSiblings(of: ids[0]).count),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -492,6 +504,9 @@ extension CommandRegistry {
                         + "and in its own series. The copies become the selection.",
                  params: [], undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            if let host = vm.selectedPluginHostID {
+                try CommandAdapters.requireRoomOnSend(adding: vm.selectedPluginIDs.count, to: host, in: vm)
+            }
             let made = vm.duplicateSelectedPlugins()
             guard !made.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no card selected")
@@ -527,6 +542,7 @@ extension CommandRegistry {
             guard !vm.pluginClipboard.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "plugin clipboard empty")
             }
+            try CommandAdapters.requireRoomOnSend(adding: vm.pluginClipboard.count, to: host, in: vm)
             let made = vm.pastePlugins(into: host)
             return .object(["host": .string(host.uuidString),
                             "plugins": .array(made.map { .string($0.uuidString) }),
@@ -894,6 +910,11 @@ extension CommandRegistry {
                 "engine_layouts": .object(layouts),
                 "ok": .bool(violations.isEmpty),
                 "markers": .int(SendMarkerAudit.markerCount(items: vm.items)),
+                // INC 3: how many plugins the sends carry, and those of them that hold a link
+                // membership — always empty (a send's plugin is never linked; each is a violation too).
+                "send_plugins": .int(vm.items.reduce(0) { n, o in n + o.sends.reduce(0) { $0 + $1.plugins.count } }),
+                "linked_send_plugins": .array(violations.filter { $0.rule == "send_plugin_linked" }
+                    .map { .string("\($0.host.uuidString):\($0.path)") }),
                 "violations": .array(violations.map {
                     .object(["host": .string($0.host.uuidString), "path": .string($0.path), "rule": .string($0.rule)])
                 })])
@@ -904,24 +925,28 @@ extension CommandRegistry {
                  DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \
                  `objKeyProbe` (its output left = the direct signal, its right = the sidechain key, so an \
                  export shows whether the key is aligned), `latencyTester` (declares and applies a delay, \
-                 `latency_ms`) or `gainTester` (a fixed gain, `gain_db`: the identifiable plugin of the \
-                 send-position proof). Answers `{plugin}`.
+                 `latency_ms`), `gainTester` (a fixed gain, `gain_db`: the identifiable plugin of the \
+                 send-position proof) or `clipTester` (a hard clip at `ceiling_db`: a NON-LINEAR plugin, \
+                 which tells "before the level" from "after it"). The host may be a send's mini-chain \
+                 (`chain_host` of `send.list`). Answers `{plugin}`.
                  """,
-                 params: [ParamSpec("host", "uuid", "Receiving object or stem."),
-                          ParamSpec("type", "string", "`objKeyProbe`, `latencyTester` or `gainTester`."),
+                 params: [ParamSpec("host", "uuid", "Receiving object, stem or send chain host."),
+                          ParamSpec("type", "string", "`objKeyProbe`, `latencyTester`, `gainTester` or `clipTester`."),
                           ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay."),
-                          ParamSpec("gain_db", "number", required: false, "gainTester only: the gain, in dB.")],
+                          ParamSpec("gain_db", "number", required: false, "gainTester only: the gain, in dB."),
+                          ParamSpec("ceiling_db", "number", required: false, "clipTester only: the ceiling, in dBFS.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
             let host = try p.uuid("host")
             let type = try p.string("type")
-            guard type == "objKeyProbe" || type == "latencyTester" || type == "gainTester" else {
-                throw CommandError(code: .bad_params, message: "type must be objKeyProbe, latencyTester or gainTester")
+            guard ["objKeyProbe", "latencyTester", "gainTester", "clipTester"].contains(type) else {
+                throw CommandError(code: .bad_params, message: "type must be objKeyProbe, latencyTester, gainTester or clipTester")
             }
             guard let before = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: 1, to: host, in: vm)
             // A TracktionInternal identifier is resolved by type name (resolvedPluginTreeForInfo:).
             let available = AvailablePlugin(name: type, manufacturer: "Tracktion", identifier: type,
                                             formatName: "TracktionInternal")
@@ -934,6 +959,9 @@ extension CommandRegistry {
             }
             if type == "gainTester", let db = try p.optionalDouble("gain_db") {
                 _ = engine.debugSetPluginProperty("gainDb", value: db, forPlugin: added.id.uuidString)
+            }
+            if type == "clipTester", let db = try p.optionalDouble("ceiling_db") {
+                _ = engine.debugSetPluginProperty("ceilingDb", value: db, forPlugin: added.id.uuidString)
             }
             return .object(["plugin": .string(added.id.uuidString)])
         }

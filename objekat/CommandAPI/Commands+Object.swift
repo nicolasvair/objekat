@@ -69,8 +69,10 @@ extension CommandRegistry {
             payload["sends"] = .array(item.sends.map { send in
                 .object(["aux": .string(send.auxID.uuidString),
                          "level_db": .number(Double(send.levelDb)),
-                         "enabled": .bool(send.enabled)])
+                         "enabled": .bool(send.enabled),
+                         "plugins": .array(send.plugins.map { CommandAdapters.pluginPayload($0) })])
             })
+            payload["plugins_on_sends"] = .int(item.sends.reduce(0) { $0 + $1.plugins.count })
             if item.isMIDI {
                 payload["midi_notes"] = .int(item.midiNotes.count)
                 payload["midi_length_beats"] = .number(item.midiLengthBeats)

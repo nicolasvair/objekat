@@ -85,7 +85,9 @@ extension CommandRegistry {
                          // (@see EditViewModel.selectedSendersWithFreeLevel). Here so that the lock
                          // can be asserted with no screen.
                          "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))]
-                         .merging(CommandAdapters.sendPositionFields(of: object, send: send)) { _, new in new })
+                         .merging(CommandAdapters.sendPositionFields(of: object, send: send)) { _, new in new }
+                         // The plugins the send CARRIES (INC 3) and the host id to address them by.
+                         .merging(CommandAdapters.sendChainFields(sender: id, send: send)) { _, new in new })
             }
             return .object(["id": .string(id.uuidString),
                             "sends": .array(sends),

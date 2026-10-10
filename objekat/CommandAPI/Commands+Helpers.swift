@@ -153,6 +153,37 @@ extension CommandAdapters {
         return plugin
     }
 
+    /// A SEND's mini-chain as a host (INC 3): plain plugins only, up to its own limit, never linked.
+    /// Throws `invalid_state` with the machine's reason (`send_chain_leaves_only`, `chainFull`,
+    /// `send_plugins_never_linked`) when `hostID` names a send's mini-chain and the gesture cannot
+    /// land there; nothing for an object or a stem.
+    static func requireRoomOnSend(adding: Int, to hostID: UUID, instrument: Bool = false,
+                                  in vm: EditViewModel) throws {
+        guard let why = vm.sendChainRefusal(adding: adding, to: hostID, instrument: instrument) else { return }
+        throw CommandError(code: .invalid_state,
+                           message: why == .full
+                               ? "the send's chain is full (\(SendChain.capacity) plugins)"
+                               : "a send takes plain plugins only (no instrument, parallel block, FX link or send)",
+                           details: .object(["reason": .string(why.rawValue)]))
+    }
+
+    /// `plugin.link` and a send's mini-chain: refused on either side (a send's plugin is never linked).
+    static func refuseLinkOnSend(_ hosts: [UUID], in vm: EditViewModel) throws {
+        guard hosts.contains(where: { vm.isSendChainHost($0) && vm.find(id: $0) == nil }) else { return }
+        throw CommandError(code: .invalid_state,
+                           message: "a plugin on a send is never linked: use plugin.copy",
+                           details: .object(["reason": .string(SendChain.Refusal.neverLinked.rawValue)]))
+    }
+
+    /// What `send.list` / `send.get` say of the plugins a send carries: the derived chain host (always
+    /// there, so that a script can lay the first plugin) and the plugins in processing order.
+    static func sendChainFields(sender: UUID, send: AuxSend) -> [String: JSONValue] {
+        ["chain_host": .string(SendChain.hostID(sender: sender, aux: send.auxID).uuidString),
+         "plugins": .array(send.plugins.map { p in
+             .object(["id": .string(p.id.uuidString), "name": .string(p.name), "enabled": .bool(p.isEnabled)])
+         })]
+    }
+
     /// The ARA source of an object (Melodyne) is NOT a card of its chain: it is the clip's source, with
     /// one verb of its own — `plugin.remove`. Every other command that names a plugin (toggle, move,
     /// copy, link, drop, parameters, sidechain…) refuses its id with `invalid_state`, rather than
