@@ -198,4 +198,15 @@ struct SynopticSend: Identifiable, Equatable {
     var refusal: String? = nil
     /// Where the card hangs (outgoing sends only; a received row ignores it).
     var slot: SynopticSendSlot = .postFader
+    /// The plugins ON this send (INC 3), in processing order: the rows of its box, above the send's
+    /// own line. For a received row only their presence matters (a small mark).
+    var plugins: [SynopticSendPlugin] = []
+}
+
+/// One plugin of a send's mini-chain, as the box draws it: a compact row. Never linked (a send's
+/// plugin carries no link), so the row has no link pastille.
+struct SynopticSendPlugin: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    var enabled: Bool = true
 }

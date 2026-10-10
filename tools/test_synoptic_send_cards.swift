@@ -133,6 +133,64 @@ struct Main {
         let bus = layout(trunk, sends: [send("b", .postFader)], mix: false)
         check(bus.sendCards.count == 1 && bus.sendCards[0].frame.maxY <= bus.canvasSize.height, "no mix: still laid")
 
+        // 10. INC 3 — the BOX of a send that carries plugins (Q-U19: plugins on top, the line at the bottom).
+        func fx(_ name: String) -> SynopticSendPlugin { SynopticSendPlugin(id: UUID(), name: name) }
+        func boxed(_ name: String, _ slot: SynopticSendSlot, _ n: Int) -> SynopticSend {
+            var s = send(name, slot); s.plugins = (0..<n).map { fx("p\($0)") }; return s
+        }
+        let H = SynopticLayout.sendCardH, R = SynopticLayout.sendPluginRowH, P = SynopticLayout.sendPlusRowH
+        check(SynopticLayout.sendBoxHeight(plugins: 0) == H, "no plugin: the box IS today's card")
+        check(SynopticLayout.sendBoxHeight(plugins: 3) == 3 * R + P + H, "3 plugins: 3 rows + the '+' row + the line")
+        let plain = send("plain", .chain(1)), two = boxed("two", .chain(1), 2)
+        let bp = layout(trunk, sends: [plain]), b2 = layout(trunk, sends: [two])
+        let cPlain = card(bp, plain)!, c2b = card(b2, two)!
+        check(cPlain.frame.height == H && cPlain.headerRect == cPlain.frame && cPlain.pluginRows.isEmpty,
+              "a send without plugin: frame = line, no row")
+        check(cPlain.entry == CGPoint(x: cPlain.frame.minX, y: cPlain.frame.midY) && cPlain.entry.y == cPlain.anchor.y,
+              "no plugin: the wire arrives at the line's centre, level with the anchor (as in INC 2)")
+        check(cPlain.plusRect.maxY == cPlain.frame.minY, "no plugin: the hover '+' sits just above the line")
+        check(c2b.frame.height == 2 * R + P + H, "two plugins: the box's height")
+        check(c2b.headerRect.maxY == c2b.frame.maxY && c2b.headerRect.height == H, "the send's line is at the BOTTOM")
+        check(c2b.pluginRows.count == 2 && c2b.pluginRows[0].minY == c2b.frame.minY
+              && c2b.pluginRows[1].minY == c2b.pluginRows[0].maxY, "rows on top, in order, contiguous")
+        check(c2b.plusRect.minY == c2b.pluginRows[1].maxY && c2b.plusRect.maxY == c2b.headerRect.minY,
+              "the '+' row: after the last plugin, just above the line")
+        check(c2b.entry.y == c2b.pluginRows[0].midY && c2b.entry.y == c2b.anchor.y && c2b.entry.x == c2b.frame.minX,
+              "the wire arrives at the TOP of the box: its first row, level with the anchor")
+        check(b2.placement.cards.map(\.frame) == bp.placement.cards.map(\.frame) && b2.outPill == bp.outPill,
+              "a box does not move the trunk")
+        check(b2.canvasSize.width == bp.canvasSize.width, "the column's width does not change")
+        // Stacking: two boxes at neighbouring slots never overlap, and the canvas grows to hold them.
+        let big = [boxed("b1", .chain(0), 4), boxed("b2", .chain(1), 3), send("b3", .chain(1)), boxed("b4", .postFader, 2)]
+        let bs = layout(trunk, sends: big)
+        let boxes = big.map { card(bs, $0)! }
+        for (a, b) in zip(boxes, boxes.dropFirst()) {
+            check(a.frame.maxY + SynopticLayout.sendCardGap <= b.frame.minY + 0.001, "\(a.send.name)/\(b.send.name): stacked without overlap")
+        }
+        check(boxes[0].entry.y == boxes[0].anchor.y, "the first box hangs level with its anchor")
+        check(boxes[1].entry.y > boxes[1].anchor.y, "a box pushed down by the one above: its entry is below its anchor")
+        for b in boxes { check(b.frame.maxY <= bs.canvasSize.height, "\(b.send.name) inside the canvas") }
+        if let btn = bs.addSendButton { check(btn.minY >= boxes[3].frame.maxY, "'+ Send to...' after the last box") }
+        // Insertion slots, counted from the top.
+        let three = boxed("three", .postFader, 3)
+        let c3 = card(layout(trunk, sends: [three]), three)!
+        let x = c3.frame.midX
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.frame.minY + 1)) == 0, "top of the first row: slot 0")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.pluginRows[0].maxY - 1)) == 1, "bottom of the first row: slot 1")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.pluginRows[1].midY + 2)) == 2, "lower half of the second row: slot 2")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.pluginRows[2].maxY - 1)) == 3, "bottom of the last row: slot N")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.plusRect.midY)) == 3, "on the '+' row: the end")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.headerRect.midY)) == 3, "on the send's line: the end")
+        check(c3.insertIndex(at: CGPoint(x: x, y: c3.frame.maxY + 5)) == nil, "outside the box: no slot")
+        check(c3.insertIndex(at: CGPoint(x: c3.frame.minX - 5, y: c3.frame.midY)) == nil, "left of the box: no slot")
+        check(c3.insertLineY(0) == c3.frame.minY && c3.insertLineY(3) == c3.pluginRows[2].maxY && c3.insertLineY(9) == c3.insertLineY(3),
+              "the insertion line: above the first row … under the last, clamped")
+        check(cPlain.insertIndex(at: CGPoint(x: cPlain.frame.midX, y: cPlain.frame.midY)) == 0
+              && cPlain.insertIndex(at: CGPoint(x: cPlain.frame.midX, y: cPlain.plusRect.midY)) == 0,
+              "a send without plugin: a drop on its line or on its hover '+' is slot 0")
+        // The fixed slots keep their card-sized preview (a dragged send, not a box).
+        check(bs.sendSlotDrops.allSatisfy { $0.previewFrame.height == H }, "slot previews stay one line high")
+
         print("\(total - failures)/\(total) send card checks passed")
         exit(failures == 0 ? 0 : 1)
     }

@@ -26,18 +26,26 @@ struct Main {
         check(SendDrop.decide(.fxBlock) == .refuse(.refusedFXLink), "an FX link refuses")
         check(SendDrop.decide(.elsewhere) == .refuse(.refusedElsewhere), "another object / strip / timeline / aux / Main refuses")
 
+        check(SendDrop.decide(.sendBox) == .refuse(.refusedSendBox), "another send's box refuses a send card (INC 3)")
+
         // Every refusal is a refusal and says so; every acceptance is not.
         let aims: [SendDropAim] = [.trunk(index: 1), .slot(.input), .slot(.preFader), .slot(.postFader),
-                                   .parallelBranch, .fxBlock, .elsewhere]
+                                   .parallelBranch, .fxBlock, .sendBox, .elsewhere]
         for a in aims {
             let d = SendDrop.decide(a)
             check(d.isRefusal == d.banner.isRefusal, "decision and banner agree for \(a)")
         }
-        // Five acceptance lines, three refusal lines (the plan's banners), each with its own key.
+        // Four acceptance lines, four refusal lines (INC 3 added the send box), each with its own key.
         let all: [SendDropBanner] = [.takenHere, .takenAtInput, .takenBeforeFader, .takenAfterFader,
-                                     .refusedParallel, .refusedFXLink, .refusedElsewhere]
+                                     .refusedParallel, .refusedFXLink, .refusedElsewhere, .refusedSendBox]
         check(Set(all.map(\.titleKey)).count == all.count, "one catalogue key per banner")
-        check(all.filter(\.isRefusal).count == 3, "three refusal banners")
+        check(all.filter(\.isRefusal).count == 4, "four refusal banners")
+
+        // INC 3: a PLUGIN refused by a send's box. Two reasons have a line; any other has none.
+        check(SendBoxPluginRefusal.titleKey(reason: "send_chain_leaves_only") == "hud.pluginDrop.send.leavesOnly",
+              "leaves only: its line")
+        check(SendBoxPluginRefusal.titleKey(reason: "chainFull") == "hud.pluginDrop.send.full", "full: its line")
+        check(SendBoxPluginRefusal.titleKey(reason: "dropped on itself") == nil, "any other refusal: the cursor alone")
 
         // The payload round-trips and is NOT a plugin payload (the doors that take plugins ignore it).
         struct PluginLike: Codable { let sourceObjectID: UUID; let pluginID: UUID }

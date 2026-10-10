@@ -6119,6 +6119,52 @@
         }
       }
     },
+    "hud.pluginDrop.send.full": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This send's chain is full"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La cadena de este envío está llena"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La chaîne de cet envoi est pleine"
+          }
+        }
+      }
+    },
+    "hud.pluginDrop.send.leavesOnly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send takes plain plugins only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío solo admite plugins simples"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi ne reçoit que des plugins simples"
+          }
+        }
+      }
+    },
     "hud.selection.samples": {
       "extractionState": "manual",
       "localizations": {
@@ -6253,6 +6299,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Un envoi ne peut pas être pris dans un bloc parallèle"
+          }
+        }
+      }
+    },
+    "hud.sendDrop.noSendBox": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send cannot be dropped on another send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío no se suelta sobre otro envío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi ne se dépose pas sur un autre envoi"
           }
         }
       }
@@ -14468,6 +14537,29 @@
         }
       }
     },
+    "synoptic.send.hasPlugins.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This send goes through plugins"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este envío pasa por plugins"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cet envoi passe par des plugins"
+          }
+        }
+      }
+    },
     "synoptic.send.incoming": {
       "extractionState": "manual",
       "localizations": {
@@ -14487,6 +14579,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Envoi reçu de cet objet"
+          }
+        }
+      }
+    },
+    "synoptic.send.level.afterPlugins": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send level, applied after the send's plugins"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nivel del envío, aplicado después de sus plugins"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveau de l'envoi, appliqué après ses plugins"
+          }
+        }
+      }
+    },
+    "synoptic.send.menu.addPlugin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a plugin…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir un plugin…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un plugin…"
           }
         }
       }
@@ -14625,6 +14763,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Send vers aux"
+          }
+        }
+      }
+    },
+    "synoptic.send.plugin.add.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a plugin on this send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir un plugin en este envío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un plugin sur cet envoi"
+          }
+        }
+      }
+    },
+    "synoptic.send.plugin.remove.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this plugin from the send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar este plugin del envío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer ce plugin de l'envoi"
           }
         }
       }
@@ -14832,6 +15016,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ajouter un plugin"
+          }
+        }
+      }
+    },
+    "synoptic.sheet.addPluginOnSend": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a plugin on the send to %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir un plugin en el envío hacia %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un plugin sur l'envoi vers %@"
           }
         }
       }

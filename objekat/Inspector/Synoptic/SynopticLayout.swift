@@ -515,11 +515,57 @@ enum SynopticLayout {
     /// trunk the send is taken at: the card's wire leaves it sideways. Cards never sit in a branch of a
     /// parallel block nor in an FX link: the anchors are the ROOT series' own insert points and the
     /// three fixed slots.
+    ///
+    /// INC 3 — a send that carries plugins is a BOX, read top to bottom as the signal goes (Q-U19): one
+    /// row per plugin in processing order, then the "+" row, then, at the BOTTOM, the send's own line
+    /// (today's card: aux, level, on/off). A send without plugin is today's card and nothing else; its
+    /// "+" shows on hover just above the line (`plusRect` then lies outside `frame`).
     struct SendCardPlacement: Identifiable {
         var id: UUID { send.id }
         let send: SynopticSend
+        /// The whole box (the card alone when the send carries no plugin).
         let frame: CGRect
         let anchor: CGPoint
+
+        var hasPlugins: Bool { !send.plugins.isEmpty }
+        /// The send's own line, at the bottom of the box.
+        var headerRect: CGRect {
+            CGRect(x: frame.minX, y: frame.maxY - SynopticLayout.sendCardH,
+                   width: frame.width, height: SynopticLayout.sendCardH)
+        }
+        /// One rect per plugin, top to bottom in processing order.
+        var pluginRows: [CGRect] {
+            send.plugins.indices.map { i in
+                CGRect(x: frame.minX, y: frame.minY + CGFloat(i) * SynopticLayout.sendPluginRowH,
+                       width: frame.width, height: SynopticLayout.sendPluginRowH)
+            }
+        }
+        /// The "+": the row between the last plugin and the line; with no plugin, a strip just ABOVE
+        /// the card (shown on hover only).
+        var plusRect: CGRect {
+            let h = SynopticLayout.sendPlusRowH
+            return CGRect(x: frame.minX, y: headerRect.minY - h, width: frame.width, height: h)
+        }
+        /// Where the wire from the trunk arrives: the left edge, at the TOP of the box — its first
+        /// row, or the line itself when there is no plugin.
+        var entry: CGPoint {
+            CGPoint(x: frame.minX, y: frame.minY + SynopticLayout.sendBoxFirstRowH(plugins: send.plugins.count) / 2)
+        }
+        /// The y of insertion slot `index` (0 = above the first row … N = under the last row).
+        func insertLineY(_ index: Int) -> CGFloat {
+            frame.minY + CGFloat(min(max(0, index), send.plugins.count)) * SynopticLayout.sendPluginRowH
+        }
+        /// The insertion slot a plugin let go at `point` lands in, counted from the top: the nearest
+        /// boundary between two rows; anywhere on the "+" row or on the send's line = the end. nil when
+        /// the point is outside the box.
+        func insertIndex(at point: CGPoint) -> Int? {
+            let zone = hasPlugins ? frame : frame.union(plusRect)
+            guard zone.contains(point) else { return nil }
+            let n = send.plugins.count
+            guard n > 0 else { return 0 }
+            let k = Int(((point.y - frame.minY) / SynopticLayout.sendPluginRowH).rounded())
+            return min(max(0, k), n)
+        }
     }
 
     /// A fixed slot of the sends (`.input`, `.preFader`, `.postFader`): where a dragged send card is
@@ -574,6 +620,16 @@ enum SynopticLayout {
     static let sendAddW: CGFloat = 120      // the "+ Send to…" button
     static let sendAddH: CGFloat = 24
     static let sendSlotHalfH: CGFloat = 12  // half the height of a fixed slot's detection band
+    // A send's BOX (INC 3): its plugins' rows above the line, and the "+" row between them and the line.
+    static let sendPluginRowH: CGFloat = 22
+    static let sendPlusRowH: CGFloat = 18
+
+    /// The height of a send's box: today's card with no plugin; rows + "+" + the line otherwise.
+    static func sendBoxHeight(plugins n: Int) -> CGFloat {
+        n <= 0 ? sendCardH : CGFloat(n) * sendPluginRowH + sendPlusRowH + sendCardH
+    }
+    /// The height of the box's FIRST row — where the trunk's wire arrives.
+    static func sendBoxFirstRowH(plugins n: Int) -> CGFloat { n <= 0 ? sendCardH : sendPluginRowH }
 
     /// The height of a titled box holding `rows` send rows.
     static func rowsZoneH(_ rows: Int) -> CGFloat {
@@ -721,8 +777,11 @@ enum SynopticLayout {
             }
             var nextY = -CGFloat.infinity
             for item in ordered {
-                let y = max(item.anchor.y - sendCardH / 2, nextY)
-                let frame = CGRect(x: columnX, y: y, width: sendCardW, height: sendCardH)
+                // The box hangs by its TOP row: that row's centre sits at the anchor (pushed down by a
+                // box above), and the box grows downwards with its plugins.
+                let n = item.send.plugins.count
+                let y = max(item.anchor.y - sendBoxFirstRowH(plugins: n) / 2, nextY)
+                let frame = CGRect(x: columnX, y: y, width: sendCardW, height: sendBoxHeight(plugins: n))
                 sendCards.append(SendCardPlacement(send: item.send, frame: frame, anchor: item.anchor))
                 nextY = frame.maxY + sendCardGap
                 columnBottom = max(columnBottom, frame.maxY)

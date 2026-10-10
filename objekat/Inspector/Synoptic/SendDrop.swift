@@ -20,6 +20,8 @@ enum SendDropAim: Equatable {
     case parallelBranch
     /// An FX link's block (a send is never taken inside a bin).
     case fxBlock
+    /// Another send's box — its plugins' rows, its "+", its line (INC 3): a box takes plugins, not sends.
+    case sendBox
     /// Anything that is not the sender's own signal view: another object, a stem's strip, the timeline,
     /// an aux's bus head, the Main (an aux, a stem and the Main do not send).
     case elsewhere
@@ -28,11 +30,11 @@ enum SendDropAim: Equatable {
 /// The line the band at the bottom of the timeline says while a send card is dragged (`PluginDropHint`).
 enum SendDropBanner: Hashable {
     case takenHere, takenAtInput, takenBeforeFader, takenAfterFader
-    case refusedParallel, refusedFXLink, refusedElsewhere
+    case refusedParallel, refusedFXLink, refusedElsewhere, refusedSendBox
 
     var isRefusal: Bool {
         switch self {
-        case .refusedParallel, .refusedFXLink, .refusedElsewhere: return true
+        case .refusedParallel, .refusedFXLink, .refusedElsewhere, .refusedSendBox: return true
         default: return false
         }
     }
@@ -47,6 +49,7 @@ enum SendDropBanner: Hashable {
         case .refusedParallel:   return "hud.sendDrop.noParallel"
         case .refusedFXLink:     return "hud.sendDrop.noFXLink"
         case .refusedElsewhere:  return "hud.sendDrop.stays"
+        case .refusedSendBox:    return "hud.sendDrop.noSendBox"
         }
     }
 }
@@ -81,7 +84,23 @@ enum SendDrop {
             }
         case .parallelBranch: return .refuse(.refusedParallel)
         case .fxBlock:        return .refuse(.refusedFXLink)
+        case .sendBox:        return .refuse(.refusedSendBox)
         case .elsewhere:      return .refuse(.refusedElsewhere)
+        }
+    }
+}
+
+// A PLUGIN let go on a send's box (INC 3). What it does is the plugin resolver's business
+// (@see EditViewModel.pluginDropOutcome: move / copy, the refusals); what the band says of a REFUSAL
+// is here, pure: the two reasons a hand can meet on a box each have their line.
+enum SendBoxPluginRefusal {
+    /// The catalogue key of the line for a refusal reason of the resolver; nil = no line (the cursor
+    /// alone refuses, as everywhere else for a plugin).
+    static func titleKey(reason: String) -> String? {
+        switch reason {
+        case "send_chain_leaves_only": return "hud.pluginDrop.send.leavesOnly"
+        case "chainFull":              return "hud.pluginDrop.send.full"
+        default:                       return nil
         }
     }
 }
