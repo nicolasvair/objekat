@@ -2544,7 +2544,9 @@ What has landed since mid-August, in order:
   (`applySendPositionsForKey:`). `chain(i)` counts top-level NON-marker entries. A send before the fader follows the
   sender's window and fades (envelope on the node's COPY of the signal) but not its volume or pan; a sender silenced by
   mute, solo or a stem mute feeds no aux wherever it taps (Q-U12). Consolidating asks about the sends that tap
-  `input` or inside the chain (fold to post-fader / delete / cancel; `mid_chain_sends` on the API, default refuse).
+  `input` or inside the chain (fold to post-fader / delete / cancel; `mid_chain_sends` on the API, default refuse);
+  a `pre_fader` send makes it REFUSE outright instead, "for the moment" (alert with one OK; API `invalid_state`
+  `pre_fader_send`, whatever `mid_chain_sends` is; wins over the question; decided 10 October 2026).
   The engine plugin list holds 20 entries: 16 user plugins without a send, 15 with one (`chainFull` refusal, no more
   silent absence). UI: every outgoing send is a card in a column beside the trunk of the signal view (drag to move,
   "Send to..." menu, "+" in the post-fader slot, "Change target...", timeline "choose an object" mode = `RoutePick`).
@@ -2557,9 +2559,10 @@ What has landed since mid-August, in order:
   `applySendPositionsForKey:` -> 40 failures in Q2 R2 V2; `setEnvelopeSource` never called -> 6 in S2), every other
   scenario of the plan's list green, a clean Debug build with no new warning. Note: the machine's output device may run at
   96 kHz, the live graph follows it (ages in samples double), the exports stay 48 kHz. **NOT seen, NOT heard:** the cards, the drag, the insertion bands, the menus and the
-  cursors on screen; the 50 ms gate ramp of a muted sender by ear; the pre-fader wet by ear. **Open decision:** a
-  pre-fader send's wet changes at consolidate by the clip's fader (-21 to -41 dB with a -20 dB fader), the plan
-  said it would not.
+  cursors on screen; the 50 ms gate ramp of a muted sender by ear; the pre-fader wet by ear. **Settled "for the moment"
+  (10 October 2026):** a pre-fader send's wet changed at consolidate by the clip's fader (-21 to -41 dB with a -20 dB
+  fader), the plan said it would not; consolidating an object that carries a pre-fader send is now refused (cause of
+  the gap not investigated).
 
 ### What is owed
 

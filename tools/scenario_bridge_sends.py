@@ -1856,7 +1856,7 @@ def y2_placement(c, before_ids):
 
 
 def section_Y2(c):
-    print("\n--- Y2  consolidate: the sends that tap inside the chain (default refuse, fold, remove; pre-fader not concerned)")
+    print("\n--- Y2  consolidate: the sends that tap inside the chain (default refuse, fold, remove) and the pre-fader refusal")
     if REF:
         print("       (skipped in --ref)")
         return
@@ -1952,30 +1952,76 @@ def section_Y2(c):
     except ObjekatError as e:
         check("Y2 input: refused by default", e.code == "invalid_state" and (e.details or [{}])[0].get("position") == "input", e)
 
-    # --- a pre-fader send is NOT concerned: accepted without the parameter, the wet unchanged
-    x, a = y2_build(c, "Y2pre", {"position": "pre_fader"})
-    _, _, db0 = measure_wet_db(c, "Y2_pre_before", x, a)
-    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
-    y2_consolidate(c, x)
-    pl = y2_placement(c, ids0)
-    check("Y2 pre-fader: accepted with no parameter, a placement was made", pl is not None, pl)
-    if pl:
-        rows = c.send("send.list", {"id": pl})["sends"]
-        check("Y2 pre-fader: the placement's send is still pre-fader", len(rows) == 1 and rows[0]["position"] == "pre_fader", rows)
-        _, _, db1 = measure_wet_db(c, "Y2_pre_after", pl, a)
-        check("Y2 pre-fader: wet unchanged within 0.05 dB (%s -> %s)" % (db0, db1),
-              db0 is not None and db1 is not None and abs(db1 - db0) <= 0.05, (db0, db1))
-        audit(c, "Y2 pre")
+    # --- a pre-fader send is REFUSED (decided 10 October 2026, "for the moment"): no choice offered,
+    #     whatever mid_chain_sends says, with or without a fader on the clip; nothing changed, nothing baked
+    def refused_pre(label, x, a, **extra):
+        try:
+            c.send("consolidate.make", dict({"id": x}, **extra))
+            check("Y2 %s: refused" % label, False, "it was accepted")
+        except ObjekatError as e:
+            check("Y2 %s: invalid_state, message names pre_fader_send" % label,
+                  e.code == "invalid_state" and e.message.startswith("pre_fader_send"), "%s %s" % (e.code, e.message))
+            rows = e.details or []
+            check("Y2 %s: the error lists the send (object, aux, position)" % label,
+                  len(rows) == 1 and rows[0].get("aux") == a and rows[0].get("position") == "pre_fader", rows)
 
-    # --- the same with a fader on the clip: documents what the plan did not foresee
-    x, a = y2_build(c, "Y2preF", {"position": "pre_fader"}, fader_db=-20.0)
-    _, _, db0 = measure_wet_db(c, "Y2_preF_before", x, a)
-    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
-    y2_consolidate(c, x)
-    pl = y2_placement(c, ids0)
-    if pl:
-        _, _, db1 = measure_wet_db(c, "Y2_preF_after", pl, a)
-        print("       Y2 pre-fader WITH a -20 dB fader on the clip: wet %s -> %s dB (the clip's fader is baked into the wave)" % (db0, db1))
+    for tag, fader in (("pre", None), ("preF", -20.0)):
+        x, a = y2_build(c, "Y2" + tag, {"position": "pre_fader"}, fader_db=fader)
+        before = y2_fingerprint(c, x)
+        for label, extra in (("%s default" % tag, {}), ("%s mid_chain_sends=refuse" % tag, {"mid_chain_sends": "refuse"}),
+                             ("%s mid_chain_sends=fold" % tag, {"mid_chain_sends": "fold"}),
+                             ("%s mid_chain_sends=remove" % tag, {"mid_chain_sends": "remove"})):
+            refused_pre(label, x, a, **extra)
+        check("Y2 %s: the model is unchanged (fingerprint)" % tag, y2_fingerprint(c, x) == before)
+        check("Y2 %s: no render was started" % tag, c.send("consolidate.state").get("renders") == [],
+              c.send("consolidate.state"))
+        rows = c.send("send.list", {"id": x})["sends"]
+        check("Y2 %s: the send is still pre-fader" % tag, len(rows) == 1 and rows[0]["position"] == "pre_fader", rows)
+
+    # --- the hand's path, headless: one message, journalled as reported, nothing changed
+    x, a = y2_build(c, "Y2preHand", {"position": "pre_fader"})
+    before = y2_fingerprint(c, x)
+    c.send("app.dialogs", {"clear": True})
+    c.send("selection.set", {"ids": [x]})
+    c.send("selection.context_action", {"action": "consolidate_clip", "id": x})
+    wait(c)
+    dl = c.send("app.dialogs", {})
+    mine = [d for d in dl.get("dialogs", []) if d.get("answer") == "reported"]
+    check("Y2 pre hand path: ONE message, journalled as reported (a single OK, no choice)",
+          len(mine) == 1 and len(dl.get("dialogs", [])) == 1, dl)
+    check("Y2 pre hand path: the message names the object's pre-fader send's aux (en)",
+          len(mine) == 1 and "pre-fader" in (mine[0].get("info") or "") and "before the fader" in (mine[0].get("info") or ""), mine)
+    check("Y2 pre hand path: the model is unchanged", y2_fingerprint(c, x) == before)
+    check("Y2 pre hand path: no render was started", c.send("consolidate.state").get("renders") == [])
+    audit(c, "Y2 pre")
+
+    # --- an object with BOTH a chain send and a pre-fader send: the pre-fader refusal wins
+    x, a = y2_build(c, "Y2both", chain)
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 9})["id"]
+    c.send("send.create", {"id": x, "aux": a2, "position": "pre_fader"})
+    settle(c)
+    before = y2_fingerprint(c, x)
+    for label, extra in (("both default", {}), ("both fold", {"mid_chain_sends": "fold"})):
+        try:
+            c.send("consolidate.make", dict({"id": x}, **extra))
+            check("Y2 %s: refused" % label, False, "it was accepted")
+        except ObjekatError as e:
+            rows = e.details or []
+            check("Y2 %s: the PRE-FADER refusal wins (message, one row = the pre-fader send)" % label,
+                  e.code == "invalid_state" and e.message.startswith("pre_fader_send")
+                  and len(rows) == 1 and rows[0].get("aux") == a2 and rows[0].get("position") == "pre_fader",
+                  "%s %s %s" % (e.code, e.message, rows))
+    check("Y2 both: nothing was folded (fingerprint)", y2_fingerprint(c, x) == before)
+    audit(c, "Y2 both")
+
+    # --- a group's OWN pre-fader send blocks the group, and the lone clip inside is not the group's concern
+    x, a = y2_build(c, "Y2grp", {"position": "post_fader"})
+    g = grp(c, [x])
+    c.send("send.create", {"id": g, "aux": a, "position": "pre_fader"})
+    settle(c)
+    before = y2_fingerprint(c, g)
+    refused_pre("group own", g, a)
+    check("Y2 group own: the model is unchanged (fingerprint)", y2_fingerprint(c, g) == before)
 
 
 # --------------------------------------------------------------------------------------------------

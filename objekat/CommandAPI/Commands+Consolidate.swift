@@ -47,11 +47,13 @@ extension CommandRegistry {
                                     "Other objects to replace with a linked instance."),
                           ParamSpec("mid_chain_sends", "string", required: false,
                                     "What to do with the sends that tap INSIDE the chain being baked "
-                                  + "(`input` or `chain` position; `pre_fader` and `post_fader` are "
-                                  + "not concerned): `refuse` (default) fails with invalid_state and "
+                                  + "(`input` or `chain` position; `post_fader` is not concerned): "
+                                  + "`refuse` (default) fails with invalid_state and "
                                   + "lists them, nothing changed; `fold` puts them back to post-fader; "
                                   + "`remove` deletes them. Both other choices are one undo point of "
-                                  + "their own, taken before the bake.")],
+                                  + "their own, taken before the bake. A `pre_fader` send is NOT a "
+                                  + "choice: whatever this parameter says, an object that carries one "
+                                  + "is refused (invalid_state, nothing changed), for now.")],
                  // The bake pushes its own undo when it commits (`finishConsolidate`).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -77,6 +79,21 @@ extension CommandRegistry {
             guard let policy = SendBakePolicy.Choice(rawValue: policyName) else {
                 throw CommandError(code: .bad_params,
                                    message: "mid_chain_sends: refuse, fold or remove (got '\(policyName)')")
+            }
+            // A pre-fader send forbids the bake whatever `mid_chain_sends` says (decided 10 Oct 2026,
+            // "for the moment"); it comes first when the object has both kinds.
+            let blockers = vm.preFaderBlockers(of: [id] + alsoLink)
+            if !blockers.isEmpty {
+                throw CommandError(
+                    code: .invalid_state,
+                    message: "pre_fader_send: consolidation is not possible for now, \(blockers.count) send(s) "
+                           + "tap before the fader (the bake renders the fader into the wave); move them to "
+                           + "post_fader or delete them first",
+                    details: .array(blockers.map { b in
+                        .object(["object": .string(b.objectID.uuidString),
+                                 "aux": .string(b.auxID.uuidString),
+                                 "position": .string(b.position.name)])
+                    }))
             }
             let concerned = vm.midChainSends(of: [id] + alsoLink)
             if policy == .refuse, !concerned.isEmpty {

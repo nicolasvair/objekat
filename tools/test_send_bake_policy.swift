@@ -124,6 +124,40 @@ enum SendBakePolicyTest {
             check("a group: folding leaves the children alone", kids == [child])
         } else { check("a group stays a group", false) }
 
+        // pre-fader: a BLOCKER, never a choice (decided 10 October 2026, "for the moment")
+        let blk = SendBakePolicy.preFaderBlockers(in: o)
+        check("blockers: only the pre-fader send (not input, not chain, not post-fader)",
+              blk.map(\.auxID) == [auxD] && blk.first?.position == .preFader && blk.first?.objectID == o.id, "\(blk)")
+        check("blocksBake names the four positions",
+              SendBakePolicy.blocksBake(.preFader) && !SendBakePolicy.blocksBake(.input)
+              && !SendBakePolicy.blocksBake(.chain(0)) && !SendBakePolicy.blocksBake(.postFader))
+        check("the pre-fader send is neither concerned nor resolved: fold and remove leave it (the caller refuses)",
+              !SendBakePolicy.concerned(in: o).contains { $0.auxID == auxD }
+              && SendBakePolicy.resolve(o, choice: .fold).sendPosition(auxID: auxD) == .preFader
+              && SendBakePolicy.resolve(o, choice: .remove).sends.contains { $0.auxID == auxD })
+        check("an object with both kinds is reported by both lists (the blocker wins in the caller)",
+              !SendBakePolicy.concerned(in: o).isEmpty && !SendBakePolicy.preFaderBlockers(in: o).isEmpty)
+        let onlyPost = clip(plugins: [g1], sends: [AuxSend(auxID: auxA)])
+        check("no pre-fader send: no blocker", SendBakePolicy.preFaderBlockers(in: onlyPost).isEmpty)
+        let onlyPre = clip(plugins: [g1], sends: [AuxSend(auxID: auxA)]).settingSendPosition(auxID: auxA, .preFader)
+        check("a lone pre-fader send is a blocker and not a concerned send",
+              SendBakePolicy.preFaderBlockers(in: onlyPre).map(\.auxID) == [auxA] && SendBakePolicy.concerned(in: onlyPre).isEmpty)
+        check("the list form concatenates, in order",
+              SendBakePolicy.preFaderBlockers(in: [onlyPost, onlyPre, o]).map(\.auxID) == [auxA, auxD])
+        check("an aux never blocks", SendBakePolicy.preFaderBlockers(in: aux).isEmpty)
+        var inst = onlyPre
+        inst.consolidateID = UUID()
+        check("a placement that is already an instance is not baked, so it never blocks",
+              SendBakePolicy.preFaderBlockers(in: inst).isEmpty)
+        let preChild = clip(plugins: [g1], sends: [AuxSend(auxID: auxA)]).settingSendPosition(auxID: auxA, .preFader)
+        var grpPre = SoundObject(id: UUID(), startTime: 0, duration: 4, lane: 0,
+                                 kind: .group(children: [preChild], isExpanded: false))
+        grpPre.sends = [AuxSend(auxID: auxB)]
+        check("a group: a pre-fader send on a CHILD is not the group's concern (same rule as the chain sends)",
+              SendBakePolicy.preFaderBlockers(in: grpPre).isEmpty)
+        grpPre = grpPre.settingSendPosition(auxID: auxB, .preFader)
+        check("a group: its OWN pre-fader send blocks", SendBakePolicy.preFaderBlockers(in: grpPre).map(\.auxID) == [auxB])
+
         check("the choices carry the API's names",
               SendBakePolicy.Choice.allCases.map(\.rawValue) == ["refuse", "fold", "remove"])
 

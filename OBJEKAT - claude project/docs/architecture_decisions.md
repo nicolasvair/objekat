@@ -757,7 +757,18 @@ tap (Q-U12): the mute is a -96 dB push onto the fader, which sits downstream of 
 A bake renders the chain: a send at `input` or in the chain would be silently destroyed. `SendBakePolicy` (pure)
 names the concerned sends; the hand gets an alert (Fold to post-fader / Delete / Cancel), the API a
 `mid_chain_sends` parameter (`refuse` by default). Fold and delete are an undo point of their own, taken before the
-first mutation. Pre- and post-fader sends are not concerned.
+first mutation. Post-fader sends are not concerned.
+
+**Exception, decided 10 October 2026 ("for the moment"): a PRE-FADER send forbids the bake.** The bake renders the
+object's fader into the wave, so the level of a pre-fader send's wet changes after consolidating (measured: -21 ->
+-41 dB with the fader at -20 dB; cause not investigated). Until that is settled, consolidating or baking an object
+that carries one is refused outright: the hand gets an alert with a single OK that names the object, the aux and
+"before the fader"; the API gets `invalid_state` (message `pre_fader_send...`, details listing the sends) whatever
+`mid_chain_sends` is. It comes before the question about the other sends (an object with both is refused), and it
+covers the same paths as the question (clip, group, multiple selection, linked instances). Same scope as the
+question: the object itself, not the children of a group, and a placement that is already an instance never blocks.
+`SendBakePolicy.preFaderBlockers` names the sends; the refusal is in `EditViewModel+SendBake` and
+`Commands+Consolidate`.
 
 ### Decision: every outgoing send is a card in the signal view, in a side column
 

@@ -12421,6 +12421,29 @@
         }
       }
     },
+    "sendBake.at.preFader": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "before the fader"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "antes del fader"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "avant le fader"
+          }
+        }
+      }
+    },
     "sendBake.fold": {
       "extractionState": "manual",
       "localizations": {
@@ -12486,6 +12509,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ → %@ (%@)"
+          }
+        }
+      }
+    },
+    "sendBake.preFader.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidation is not possible for now: the object has a pre-fader send.\n\n%@\n\nMove the send to post-fader or delete it, then try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La consolidación no es posible por ahora: el objeto tiene un envío pre-fader.\n\n%@\n\nColocar el envío después del fader o eliminarlo, y volver a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La consolidation n'est pas possible pour le moment : l'objet a un envoi pré-fader.\n\n%@\n\nReplacer cet envoi après le fader ou le supprimer, puis recommencer."
+          }
+        }
+      }
+    },
+    "sendBake.preFader.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidation not possible"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidación no posible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consolidation impossible"
           }
         }
       }

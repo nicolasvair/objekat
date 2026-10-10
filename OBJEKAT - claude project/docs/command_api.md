@@ -827,6 +827,12 @@ and not listed; `pluginCount` counts plugins only. `consolidate.make` takes `mid
 (`refuse` default | `fold` | `remove`): the sends that tap `input` or `chain` would be destroyed by the bake, so
 `refuse` fails with `invalid_state` and lists them, `fold` puts them back to post-fader, `remove` deletes them
 (entry, marker, curve) — both as one undo point of their own, taken before the bake.
+A send at `pre_fader` is not part of that choice: for now (decision of 10 October 2026) an object that carries one
+is REFUSED whatever `mid_chain_sends` says — `invalid_state`, message starting `pre_fader_send`, `details` = one row
+per pre-fader send (`object`, `aux`, `position: "pre_fader"`), nothing changed, no render started. It wins over the
+`mid_chain_sends` refusal when the object has both kinds. Scope as for the other sends: the object itself and the
+`also_link` ones, not the children of a group. To consolidate, move the send to `post_fader` (`send.set_position`) or
+delete it first.
 
 DEBUG, INC 2: `debug.send_marker_audit {}` -> `{violations, markers, engine_senders_checked, engine_layouts, ok}`
 (model rules: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`; engine rule: the

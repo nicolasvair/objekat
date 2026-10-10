@@ -4,6 +4,11 @@ import AppKit
 // Q-U6). The rule and the model transformation are `SendBakePolicy` (pure); this is the view-model's
 // side: the question, the write, the engine.
 //
+// A PRE-FADER send is not a question but a refusal (decided 10 October 2026, "for the moment"): the bake
+// renders the object's fader into the wave and the send would no longer hear the same level. The
+// operation does not start, an alert says why (one OK button), and it comes BEFORE the question about
+// the other sends: an object that has both is refused.
+//
 // Hooked at the ENTRY of every operation that bakes an object: `consolidate(groupID:)`,
 // `consolidateWrappingClip`, `consolidateEachInSelection`, `consolidateSelectionAsLinkedInstances`.
 // It runs BEFORE the first mutation of the operation, so a "Cancel" leaves the project untouched, and
@@ -19,6 +24,13 @@ extension EditViewModel {
         return SendBakePolicy.concerned(in: objects)
     }
 
+    /// The pre-fader sends of these objects, which forbid their bake (same scope as `midChainSends`).
+    func preFaderBlockers(of ids: [UUID]) -> [SendBakePolicy.Concerned] {
+        var seen = Set<UUID>()
+        let objects = ids.filter { seen.insert($0).inserted }.compactMap { find(id: $0) }
+        return SendBakePolicy.preFaderBlockers(in: objects)
+    }
+
     /// Settles the concerned sends of `ids` before they are baked. True if the operation may go on:
     /// nothing was concerned, or the choice was applied. False if the operation must NOT start
     /// (refused, cancelled, or no way to ask) — nothing has been changed then.
@@ -32,6 +44,12 @@ extension EditViewModel {
     /// which is pushed when the render lands.
     @discardableResult
     func resolveMidChainSends(for ids: [UUID], choice: SendBakePolicy.Choice? = nil) -> Bool {
+        // A pre-fader send forbids the bake whatever the choice (the API refuses earlier, with details).
+        let blockers = preFaderBlockers(of: ids)
+        if !blockers.isEmpty {
+            refuseBakeForPreFaderSends(blockers, withAlert: choice == nil)
+            return false
+        }
         let concerned = midChainSends(of: ids)
         guard !concerned.isEmpty else { return true }
 
@@ -61,6 +79,20 @@ extension EditViewModel {
         scheduleBridgeSync()
         isDirty = true
         return true
+    }
+
+    /// The refusal: nothing is changed. The hand gets an alert with a single OK (journalled "reported"
+    /// under an automatic dialogue policy); an API caller has already been answered with an error.
+    private func refuseBakeForPreFaderSends(_ blockers: [SendBakePolicy.Concerned], withAlert: Bool) {
+        NSLog("[BAKE] refused: %d pre-fader send(s) (bake not possible for now)", blockers.count)
+        guard withAlert else { return }
+        let maxLines = 8
+        var lines = blockers.prefix(maxLines).map { b -> String in
+            let aux = find(id: b.auxID)?.displayName ?? "?"
+            return "\u{2022} " + L("sendBake.line", b.objectName, aux, L("sendBake.at.preFader"))
+        }
+        if blockers.count > maxLines { lines.append("\u{2026}") }
+        notify(L("sendBake.preFader.title"), L("sendBake.preFader.info", lines.joined(separator: "\n")))
     }
 
     /// The hand's question. nil = cancel (or: nobody can answer).
