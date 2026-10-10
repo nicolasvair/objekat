@@ -24,7 +24,7 @@ Options:
                      report (`passes`, `gate_edges`, aligned readers…) and the sections that need the
                      new scope are skipped, every measured number is printed as a REFERENCE.
     --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
-                     Y2, Z2, P2 and K2 — INC 1 already used the letters P to T).
+                     Y2, Z2, RT2, PF and K2 — INC 1 already used the letters P to T).
 
 T2 (4) compares a post-fader send's export with the one an INC 1 build made of the same project:
 set INC1_REF_DIR=<dir>; `--only T2REF` on the INC 1 app writes the reference there (it is NOT part of a
@@ -2170,6 +2170,177 @@ def section_U2(c):
         check("U2 %s: stem un-muted: the wet is back (0.05 dB)" % name, abs(back - lit) <= 0.05, (back, lit))
         audit(c, "U2 %s end" % name)
 
+
+# --------------------------------------------------------------------------------------------------
+# Z2 — save and reopen: the position, the marker and the wet come back
+# PF — files that are not what the app wrote: format 21, and a format-22 file that breaks the marker rules
+# --------------------------------------------------------------------------------------------------
+
+def find_obj(items, oid):
+    """An object of a saved session, wherever it nests."""
+    for it in items:
+        if it.get("id") == oid:
+            return it
+        r = find_obj((it.get("kind") or {}).get("children") or [], oid)
+        if r is not None:
+            return r
+    return None
+
+
+def section_Z2(c):
+    print("\n--- Z2  save / reopen: every position, its marker and its wet come back; the file is clean")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    x, a1 = cast_siblings(c, "Z2")
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2})["id"]
+    a3 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 4})["id"]
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    w = c.send("object.add", {"path": out("imp.wav"), "lane": 6, "start": 0.0})["id"]
+    c.send("send.create", {"id": x, "aux": a1, "position": "chain", "index": 1})
+    c.send("send.create", {"id": x, "aux": a2, "position": "input"})
+    c.send("send.create", {"id": x, "aux": a3, "position": "pre_fader"})
+    c.send("send.create", {"id": w, "aux": a1, "position": "post_fader"})
+    for snd, aux, db in ((x, a1, 0.0), (x, a2, 0.0), (x, a3, 0.0), (w, a1, -6.0)):
+        lay_send(c, snd, aux, db)
+    audit(c, "Z2 before save", want_senders=2)
+
+    cases = (("X chain(1)", x, a1, "chain", -18.0), ("X input", x, a2, "input", 0.0),
+             ("X pre", x, a3, "pre_fader", -21.0), ("W post", w, a1, "post_fader", -6.0 - 0.0))
+    before = {}
+    for name, snd, aux, pos, expect in cases:
+        dry, wet = measure(c, "Z2 %s" % name, snd, aux, 0.0)
+        db = wet_db(wet)
+        row = position_row(c, snd, aux)
+        before[name] = (db, row)
+        print("       Z2 before %-10s wet %s dB re source (position %s)" % (name, None if db is None else "%.3f" % db, row.get("position")))
+        check("Z2 before: %s is %s" % (name, pos), row.get("position") == pos, row)
+        check("Z2 before: %s wet %.0f dB (0.05)" % (name, expect), db is not None and abs(db - expect) <= 0.05, db)
+
+    c.send("project.save")
+    path = out("Z2/project.objekat")
+    d1 = json.load(open(path))
+    check("Z2 file: saved as format 22", d1.get("version") == 22, d1.get("version"))
+    ox = find_obj(d1["items"], x)
+    ow = find_obj(d1["items"], w)
+    markers = [p_ for p_ in ox.get("plugins", []) if "sendMarker" in p_]
+    check("Z2 file: exactly one marker on X, for the chain send", len(markers) == 1 and markers[0]["sendMarker"]["auxID"].lower() == a1.lower(),
+          markers)
+    taps = {sd["auxID"].lower(): sd.get("tap") for sd in ox.get("sends", [])}
+    check("Z2 file: the input send carries tap=input, the pre-fader one tap=preFader, the chain one NO tap",
+          taps.get(a2.lower()) == "input" and taps.get(a3.lower()) == "preFader" and taps.get(a1.lower()) is None, taps)
+    check("Z2 file: W's post-fader send has no tap and W has no marker",
+          all(sd.get("tap") is None for sd in ow.get("sends", [])) and not any("sendMarker" in p_ for p_ in ow.get("plugins", [])),
+          ow.get("sends"))
+
+    c.send("project.open", {"path": path})
+    wait(c)
+    audit(c, "Z2 after reopen", want_senders=2)
+    for name, snd, aux, pos, expect in cases:
+        b_db, b_row = before[name]
+        row = position_row(c, snd, aux)
+        same = all(row.get(k) == b_row.get(k) for k in ("position", "index", "after_plugin", "before_plugin", "follows_window", "status"))
+        check("Z2 reopen: %s comes back at the same place with the same neighbours and status" % name, same, (row, b_row))
+        dry, wet = measure(c, "Z2 reopen %s" % name, snd, aux, 0.0)
+        db = wet_db(wet)
+        print("       Z2 reopen %-10s wet %s dB re source" % (name, None if db is None else "%.3f" % db))
+        check("Z2 reopen: %s wet %.3f dB, as before the save (0.05)" % (name, b_db if b_db is not None else float('nan')),
+              db is not None and b_db is not None and abs(db - b_db) <= 0.05, (db, b_db))
+    rds = send_readers(bridge_report(c))
+    check("Z2 reopen: 4 send readers, all aligned to the sample", len(rds) == 4 and all(r.get("alignment_error_samples") == 0 for r in rds), rds)
+
+    # a second save with nothing touched writes the same sends and the same chain skeleton
+    c.send("project.save")
+    d2 = json.load(open(path))
+    ox2 = find_obj(d2["items"], x)
+
+    def skeleton(o):
+        return ([(p_.get("id"), "sendMarker" in p_) for p_ in o.get("plugins", [])],
+                sorted((sd["auxID"].lower(), sd.get("tap"), sd.get("levelDb"), sd.get("enabled")) for sd in o.get("sends", [])))
+    check("Z2 file: a second save writes the same chain skeleton and the same sends", skeleton(ox) == skeleton(ox2),
+          (skeleton(ox), skeleton(ox2)))
+    audit(c, "Z2 end")
+
+
+def section_PF(c):
+    print("\n--- PF  a format-21 file opens as post-fader; a format-22 file that breaks the marker rules is repaired")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    # ---- (1) format 21: no tap, no marker
+    x, a = cast_siblings(c, "PF1")
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, -6.0)
+    dry, wet = measure(c, "PF1 before", x, a, -6.0)
+    v1 = wet_db(wet)
+    print("       PF1 post-fader wet before: %s dB re source" % (None if v1 is None else "%.3f" % v1))
+    c.send("project.save")
+    path = out("PF1/project.objekat")
+    d = json.load(open(path))
+    blob = json.dumps(d["items"])      # not the _readme, which names both keys in prose
+    check("PF1: the post-fader file this build writes holds neither a marker nor a tap (it IS a format-21 shape)",
+          "sendMarker" not in blob and '"tap"' not in blob, "")
+    d["version"] = 21
+    json.dump(d, open(path, "w"), indent=1)
+    c.send("project.open", {"path": path})
+    wait(c)
+    row = position_row(c, x, a)
+    check("PF1: opened at post_fader, not following the window", row.get("position") == "post_fader" and row.get("follows_window") is False, row)
+    dry, wet = measure(c, "PF1 after", x, a, -6.0)
+    v2 = wet_db(wet)
+    check("PF1: the wet is what it was (0.05 dB)", v1 is not None and v2 is not None and abs(v1 - v2) <= 0.05, (v1, v2))
+    audit(c, "PF1", want_senders=1)
+    c.send("project.save")
+    d2 = json.load(open(path))
+    blob2 = json.dumps(d2["items"])
+    check("PF1: saved as format 22, and still without marker or tap", d2.get("version") == 22 and "sendMarker" not in blob2 and '"tap"' not in blob2,
+          d2.get("version"))
+
+    # ---- (2) format 22 that breaks the rules: marker + tap, a duplicate marker, an orphan marker
+    x, a = cast_siblings(c, "PF2")
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 0})
+    lay_send(c, x, a, 0.0)
+    dry, wet = measure(c, "PF2 before", x, a, 0.0)
+    v1 = wet_db(wet)
+    print("       PF2 chain(0) wet before: %s dB re source (the tap before the chain: only the IN gain, -6)" % (None if v1 is None else "%.3f" % v1))
+    check("PF2: chain(0) taps after the chain's in gain only (-6 dB, 0.05)", v1 is not None and abs(v1 + 6.0) <= 0.05, v1)
+    c.send("project.save")
+    path = out("PF2/project.objekat")
+    d = json.load(open(path))
+    ox = find_obj(d["items"], x)
+    mk = [p_ for p_ in ox["plugins"] if "sendMarker" in p_]
+    check("PF2: the saved file holds the marker", len(mk) == 1, ox["plugins"])
+    dup = json.loads(json.dumps(mk[0]))
+    dup["id"] = "00000000-0000-4000-8000-0000000000D1"
+    orphan = json.loads(json.dumps(mk[0]))
+    orphan["id"] = "00000000-0000-4000-8000-0000000000D2"
+    orphan["sendMarker"]["auxID"] = "00000000-0000-4000-8000-00000000DEAD"
+    ox["plugins"] = ox["plugins"] + [dup, orphan]
+    for sd in ox["sends"]:
+        sd["tap"] = "preFader"                 # the marker must win over this
+    json.dump(d, open(path, "w"), indent=1)
+    c.send("project.open", {"path": path})
+    wait(c)
+    row = position_row(c, x, a)
+    check("PF2: the marker wins over the tap: position chain, index 0", row.get("position") == "chain" and row.get("index") == 0, row)
+    r = audit(c, "PF2 after open", want_senders=1)
+    check("PF2: ONE marker is left (the duplicate and the orphan were dropped)", r.get("markers") == 1, r.get("markers"))
+    dry, wet = measure(c, "PF2 after", x, a, 0.0)
+    v2 = wet_db(wet)
+    check("PF2: the wet is the chain(0) one, not a pre-fader one (-6 dB, 0.05)", v2 is not None and abs(v2 + 6.0) <= 0.05, v2)
+    c.send("project.save")
+    d3 = json.load(open(path))
+    ox3 = find_obj(d3["items"], x)
+    check("PF2: saved again: one marker, no tap on the send", sum(1 for p_ in ox3["plugins"] if "sendMarker" in p_) == 1
+          and all(sd.get("tap") is None for sd in ox3["sends"]), (ox3["plugins"], ox3["sends"]))
+
 # --------------------------------------------------------------------------------------------------
 
 fixtures()
@@ -2183,6 +2354,7 @@ with ObjekatClient(SOCK) as c:
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
                     ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2), ("RT2", section_RT2),
+                    ("Z2", section_Z2), ("PF", section_PF),
                     ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
