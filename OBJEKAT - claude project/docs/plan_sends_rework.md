@@ -1463,18 +1463,32 @@ level, its switch, its curve.
 
 ```
 tap (a COPY of the signal at the send's position; the direct signal passes through untouched)
-  → envelope (the sender's fades and window — only when the tap is not post-fader, Q-U5)
   → the send's plugins, in order
+  → envelope (the sender's fades and window, laid ONCE — see below)
   → the send's level (smoothed, automated) and its gate (mute / solo, Q-U1 / Q-U12)
   → the ring → the aux return
 ```
 
-- **Envelope BEFORE the plugins.** A post-fader send has the window and the fades upstream of its
-  tap by construction (they are in the main path). Putting the envelope first at the other three
-  positions makes the four positions the same thing to the plugins: with the fader at 0 dB and the
-  pan centred, moving a send from post-fader to pre-fader changes nothing in what is heard,
-  mini-chain included. The other order would make a compressor on a send react differently
-  according to where the send is taken.
+- **Envelope AFTER the plugins (revised on 10 October, Q-U18 made precise — journal, "Lot 1").** The
+  first design laid the envelope BEFORE the plugins and counted on the clip's window to cut the
+  tail; measured (T3), the wet branch is not gated by the clip, and the user decided that the tail of
+  an effect on a send must FOLLOW the object's fade-out and die at the window's end, like a plugin
+  of the object's chain (whose plugins sit before the fader and the window-fade). So the envelope is
+  the LAST thing before the level, at the edit time the signal was made (the mini-chain's latency
+  included: `block time - (L + P)`).
+  - *Once, never twice.* A pre-fader / input / in-chain copy is taken before the object's
+    window-fade: the envelope is the send's to lay. A post-fader send WITHOUT plugins is taken after
+    the window-fade (end of the list) and lays nothing — INC 2, to the sample. A post-fader send
+    that CARRIES plugins (its list is not empty, enabled or not) is laid between the fader and the
+    window-fade (`-applySendPositionsForKey:`) and lays the envelope itself, after its plugins: one
+    envelope on every path. `tap_position` stays 0 and the send is still "post-fader" for the model,
+    the API and the cards — only its index in the engine's list differs.
+  - *The four positions are still the same thing to the plugins*: with the fader at 0 dB and the pan
+    centred, moving a send from post-fader to pre-fader changes nothing in what is heard, mini-chain
+    included (O3).
+  - *Consequence, audible:* a send's plugins see the object's signal BEFORE its fades (as the
+    object's own plugins do). A compressor or a clipper on a send is driven by the un-faded signal;
+    O3's fade assertion reads -12 dB (clip, then fade) where the first design read -6.
 - **Level and gate AFTER the plugins.** (1) `-inf`, a mute and a solo give EXACT silence at the
   ring whatever the plugins do (P8, Q-U12) — a delay with feedback on a muted sender's send does not
   leak. (2) One automated stage, at the place where it is already aligned (P3). (3) It is the
@@ -1496,24 +1510,26 @@ All in the fork, on top of `0039`; no file of the fork other than these three is
    ```cpp
    /// The plugins this tap runs on its COPY before recording it (a send's mini-chain). nullptr = none.
    virtual PluginList* getTapChain()                                   { return nullptr; }
-   /// What the tap applies to its copy BEFORE the chain (a send: its sender's window and fades),
-   /// at the edit time the signal was made. Called once per block, in both modes.
-   virtual void processTapHead (juce::AudioBuffer<float>&, int start, int numSamples,
-                                TimeRange editTime)                    {}
+   /// The envelope the tap lays on its copy AFTER the chain and before the level (a send: its
+   /// sender's window and fades), at the edit time the signal was made. Once per block, both modes.
+   /// (Was `processTapHead`, called BEFORE the chain, until the 10 October revision.)
+   virtual void processTapEnvelope (juce::AudioBuffer<float>&, int start, int numSamples,
+                                    TimeRange editTime)                {}
    ```
 2. `playback/graph/tracktion_ObjBridgeNodes.h/.cpp`
-   - `BridgeTapHeadNode` (new, ~60 lines): one input, an OWNED 2-channel buffer; copies its input,
-     calls `source.processTapHead` at `editTime − input latency` (the adjustment the tap node does
-     today), reports its input's properties. It is the fan-out's second consumer.
+   - `BridgeTapHeadNode` (new, ~50 lines): one input, an OWNED 2-channel buffer; copies its input
+     and nothing else (revised: the envelope moved to the tap node, after the chain), reports its
+     input's properties. It is the fan-out's second consumer.
    - `BridgeTapNode` gains an optional second input, `wet`. `input` becomes a `std::shared_ptr`
      (the dry is shared with the head node). `getDirectInputNodes()` returns both;
      `getNodeProperties()` still returns the DRY input's (the node's output IS the dry, untouched —
      that is what it declares). Copy mode, per block:
-     - no `wet` input (no chain): copy the dry into the scratch, `processTapHead`, then
+     - no `wet` input (no chain): copy the dry into the scratch, `processTapEnvelope`, then
        `applyToBufferWithAutomation` (level + gate) — the same operations in the same order as
        INC 2, the envelope simply called from the node instead of from inside `applyToBuffer`;
-     - a `wet` input: copy the WET into the scratch, then level + gate, with the automation time
-       moved back by the WET's latency (`L + P`), not the dry's.
+     - a `wet` input: copy the WET into the scratch, then `processTapEnvelope` and level + gate,
+       with the envelope's and the automation's time moved back by the WET's latency (`L + P`), not
+       the dry's.
      Ring write unchanged (`referenceSampleRange.start`, `didPlayheadJump`).
 3. `playback/graph/tracktion_EditNodeBuilder.cpp`, `createPluginNodeForList`, the
    `BridgeTapSource` branch (today ~l.1900):
@@ -1598,13 +1614,13 @@ rebuild as on the trunk.
 
 #### A.e Tails
 
-The mini-chain runs while the sender's clip is active — its window plus its head / tail. A reverb
-or a delay laid ON a send is therefore cut at the object's end, exactly as it is when laid on the
-object's chain ("an object's window cuts its chain"); at the next activation the residue is gagged
-like a trunk plugin's. To let an effect ring: put it on the aux (that is what an aux is for), or
-send from an infinite bus. Audible, and therefore asked (Q-U18); hypothesis: accepted, same rule as
-the chain. The alternative (keeping the wet branch alive after the clip) needs the branch OUT of
-the clip's `TimedNode` — another architecture, not planned.
+**Revised on 10 October (journal, "Lot 1").** The first text said the mini-chain ran only while the
+sender's clip was active and that the tail was therefore cut. Measured: the mini-chain is processed
+past the clip's end (a Delay's echoes kept coming, T3). The rule is now carried by the ENVELOPE, laid
+on the copy after the send's plugins (A.a): the tail of a reverb or a delay laid ON a send follows
+the object's fade-out and is exactly zero past the window's end, as when the effect is laid on the
+object's chain. Without a fade-out the tail is cut dead at the window's end — as on the chain. To
+let an effect ring: put it on the aux (that is what an aux is for), or send from an infinite bus.
 
 #### A.f Where the plugins live; limits; who owns what
 
@@ -2017,7 +2033,7 @@ with the aux, export with the aux muted), levels read against a reference taken 
   green.
 - **C. `deepFreshCopy` / `derivedCopy` copy `sends` by value again** → `test_plugin_id_uniqueness`
   and C3 fail (shared ids).
-- (D, optional: `processTapHead` called after the chain → O3's fade assertion fails.)
+- (D, optional, OBSOLETE since the 10 October revision: the envelope IS after the chain; the mutant that removes it is in the journal, "Lot 1".)
 
 **Non-regression — each against its OWN fresh instance** (the list of C.4, plus what INC 2 added):
 
@@ -2428,6 +2444,57 @@ continuation lines). The three are removed (closures; `_Nonnull`), and the rebui
 data shows no new (file, message) pair and no count above the baseline. The figure 1541 itself was NOT
 re-measured by a second clean build.
 
+#### After INC 3 — the three lots of 10 October (the user's decisions on the report above)
+
+**Lot 1 — the tail of a send's effect FOLLOWS THE OBJECT'S FADE (Q-U18 made precise).**
+
+*Design retained.* The order on a send's copy becomes plugins → envelope → level / gate → ring (A.a,
+A.b, A.e revised above).
+- Fork (`0040` REGENERATED — the fork commit was amended, `2cd66f2668f` → `e69b952520a`, no `0041`;
+  the old commit is kept reachable by the local tag `objekat-sends-0040-v1`, because the app commits
+  `bd173be9`..`4a1221fd` point at it): `processTapHead` becomes `processTapEnvelope`, called by
+  `BridgeTapNode` in BOTH modes on its scratch — the wet branch's output or the plain copy — before
+  `applyToBufferWithAutomation`, at `block time − age` (age = `L + P` with a wet branch, `L` without).
+  `BridgeTapHeadNode` is now a plain copy. Without a mini-chain the node does what it did, in the same
+  order.
+- App: `ObjBridgeSendPlugin::processTapEnvelope` (same body); `-applySendPositionsForKey:` lays a
+  post-fader send that CARRIES plugins (list not empty, enabled or not) between the fader and the
+  window-fade and gives it the envelope source; a post-fader send without plugins is untouched (end
+  of the list, no envelope source). `chainLayoutForObjectID:` rows gain `chain_plugins`;
+  `SendMarkerAudit.engineViolations` expects a post-fader send before the window-fade when it
+  carries plugins, after it otherwise.
+
+*Why not "always lay the envelope on the wet" at post-fader:* the post-fader copy is already
+post-window — that would be the fade squared. Moving the send before the window-fade when (and only
+when) it carries plugins gives one envelope on every path and leaves the plugin-less path alone.
+
+*Measured (section T3, rewritten: 139 assertions with O3; Debug, headless, audio on, exports 48 kHz):*
+- Tail and fade, built-in Delay (200 ms, 50 %, feedback −6 dB), impulse at 1 s, window [0, 1.5],
+  fade-out 0.5 s, at the FOUR positions: direct −17.72 dBFS, echo at 1.2 s −22.16 (fade −4.44 dB),
+  echo at 1.4 s −37.70 (fade −13.98 dB), max after 1.5 s 0. The same Delay in the object's own chain
+  (the yardstick): −17.72 / −22.16 / −37.70, 0 after 1.5 s — echo re direct −4.437 / −19.979 dB on
+  both sides: the fade once (twice would read −8.9 / −28).
+- Object ending at 1.1 s WITHOUT fade: max in [1.10, 1.15] 0, after 1.15 s 0, four positions (was
+  0.130). The trunk's Delay is cut dead in the same way: a tail without fade-out ends on a step, on
+  a send as on the chain — reported to the user as an observation, it is the decision's own rule.
+- One fade, steady tone, `gainTester` −12 dB on the send, 1 s fade-in, four positions: wet − dry =
+  −12.000 dB at 0.1 / 0.3 / 0.6 / 0.9 / 1.5 s (the fade is 19.6 dB deep at 0.1 s).
+- Latency: `latencyTester` 20 ms on the send, window [0.5, 2.0], fades of 20 ms at both ends, four
+  positions: max |wet − level × dry| = 1.75e-07 (−129 dB re the dry's peak, i.e. the 24-bit step),
+  0 outside the window; `chain_latency_samples` = 20 ms.
+- O3 (2), assertion INVERTED as the decision implies: clipper at −12 dBFS on a pre-fader send in a
+  fade-in: wet − dry = −11.996 dB (clip, then fade); it read −6 with the envelope first. A send's
+  plugins see the UN-faded signal, like the object's own.
+- A send without plugin: P3 on the full run (figures at the end of this section).
+
+*Is the mini-chain still processed past the clip's end?* Yes — the mutant below rings echoes at
+0.130 after 1.15 s for an object ending at 1.1 s: the plugins run on, the envelope is what silences
+the copy (exact zeros).
+
+*Mutant* (the call of `processTapEnvelope` removed from `BridgeTapNode`, built, run, restored — fork
+diff empty against `e69b952520a`): T3 + O3 = 25 FAILED (every tail / once / latency assertion at the
+four positions, and O3's fade: −2.1 dB), 114 OK.
+
 ---
 
 # E. Open questions
@@ -2453,7 +2520,7 @@ re-measured by a second clean build.
 | Q-U8b | (INC 3) Duplicating / cutting / copy-pasting an object: are its send plugins linked to the original's by default? | ANSWERED 10 Oct: NO — always independent copies (fresh ids, state copied, no link), unlike the chain's default, which is unchanged. |
 | Q-U9 | (INC 3) A parallel block inside a send's plugins. | Not in v1: series only. |
 | Q-U17 | (INC 3) The send's LEVEL acts after the send's plugins or before? Inaudible for a filter; audible for a compressor / saturator (driven or not by the send level) and for a delay (its tail drops at once or not). | ANSWERED 10 Oct: AFTER the plugins (D.2.A.a), as planned. |
-| Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | ANSWERED 10 Oct: YES, the tail stops with the object (D.2.A.e), as planned. |
+| Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | ANSWERED 10 Oct: YES, the tail stops with the object. **Made precise the same day:** the tail FOLLOWS the object's fade-out and dies at the window's end, like a plugin of the object's chain — the window and the fades are laid on the send's copy AFTER its plugins (D.2.A.a / A.e revised; journal "Lot 1"). Done, T3 green. |
 | Q-U19 | (INC 3) The send's card becomes a box: header (aux, level, switch) on top, one row per plugin under it — or the rows above the header (literal signal order)? | ANSWERED 10 Oct, DIFFERENT from the plan's hypothesis: the PLUGINS are ON TOP and the header line (aux, level, on/off) is AT THE BOTTOM — the literal order of the signal. The "+" stays after the last plugin, i.e. just above the level line. A send without plugins keeps today's card. The wire to the tap point and the drop zones follow that orientation (D.2.A.l, revised). |
 | Q-U10 | Two groups each sending into an aux of the other is refused (a scheduling loop, no signal loop). Acceptable, with the reason shown? | ANSWERED 9 Oct: accepted, reason shown. |
 | Q-U11 | A stem DETACHED from the Main still feeds a Main aux today (unchanged by this plan). Wanted? | ANSWERED 9 Oct: unchanged. |

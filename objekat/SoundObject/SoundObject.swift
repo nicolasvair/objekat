@@ -332,7 +332,7 @@ struct AuxSend: Codable, Equatable, Identifiable {
     /// not `.postFader`: a session of format 21 re-encodes without the key.
     var tap: SendTapPoint = .postFader
     /// The send's PLUGINS (INC 3, session format 23): a mini-chain processed on the send's copy, in
-    /// this order, after the sender's window and fades and BEFORE `levelDb`. Leaves only
+    /// this order, BEFORE the sender's window and fades (laid on the copy after them) and BEFORE `levelDb`. Leaves only
     /// (@see SendChain.sanitised). Encoded ONLY when non-empty: a session without any send plugin
     /// differs from its format-22 self by the version number alone. A copy of the object must
     /// freshen these ids like the chain's (@see SendChain.mapping) — never copy `sends` by value

@@ -116,10 +116,13 @@ enum SendMarkerAudit {
         let key: String?            // fx: the model plugin id
         let aux: String?            // send: the aux id
         let tapPosition: Int?       // send: the code the plugin was told (0 post, 1 pre, 2 input, 3 chain)
+        /// send: how many plugins the ENGINE's send carries (nil = not told: the model's count is used).
+        var chainPlugins: Int? = nil
     }
 
     /// Where the engine put each of `object`'s sends against where the model asks (PURE: the layout is
-    /// data). `rule` strings: `index_before_<role>` / `index_after_<role>`, `tap_position`. Only sends
+    /// data). `rule` strings: `index_before_<role>` / `index_after_<role>`, `tap_position`. A post-fader
+    /// send is expected after the window-fade when it carries no plugin, BEFORE it when it does. Only sends
     /// that are in the layout are judged (a send the plan did not lay has no plugin).
     static func engineViolations(object: SoundObject, layout: [LayoutEntry]) -> [Violation] {
         var out: [Violation] = []
@@ -140,7 +143,13 @@ enum SendMarkerAudit {
             switch position {
             case .postFader:
                 code = 0
-                after(fader, "fader"); after(window, "windowFade")
+                // A post-fader send that CARRIES plugins sits between the fader and the window-fade:
+                // the object's window and fades are laid on its copy AFTER its plugins, so that an
+                // effect's tail follows the fade-out and dies at the window's end (Q-U18). Without
+                // plugins it stays at the end of the list, as in INC 2.
+                let carries = (entry.chainPlugins ?? (object.sends.first { $0.auxID == aux }?.plugins.count ?? 0)) > 0
+                after(fader, "fader")
+                if carries { before(window, "windowFade") } else { after(window, "windowFade") }
             case .preFader:
                 code = 1
                 after(trimOut, "trimOut"); before(fader, "fader")

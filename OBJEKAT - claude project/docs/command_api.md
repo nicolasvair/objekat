@@ -871,8 +871,11 @@ undo point; `send.set_position` does not touch them. A send that carries plugins
 is at -inf or disabled (a silent carrier), so its plugins can be opened and set before the level is raised.
 `debug.send_marker_audit` also answers `send_plugins` (count) and `linked_send_plugins` (must be empty);
 `debug.bridge_report`'s `engine.sends` rows gain `enabled`, `chain_plugins`, `chain_keys` and
-`chain_latency_samples`. Known gap, measured (scenario section T3): an effect with a tail laid on a send rings past
-the sender's end, unlike the same effect on the sender's chain — see `plan_sends_rework.md` D.2.G.
+`chain_latency_samples`. The sender's window and fades are laid on the send's copy AFTER its plugins (an effect's tail follows the
+fade-out and is silent past the window's end, scenario section T3). In the engine's list a post-fader send that
+carries plugins therefore sits between the fader and the window-fade (`list_index`, and `follows_envelope` true),
+one without plugins after the window-fade; `tap_position` is 0 in both cases, and `debug.send_marker_audit`'s
+`layouts` rows give `chain_plugins` for each send.
 
 DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
 (`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,

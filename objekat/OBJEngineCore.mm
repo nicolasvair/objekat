@@ -4947,7 +4947,8 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 // WHERE each send of `key` sits in the sender's plugin list — the one owner of that question
 // (docs/plan_sends_rework.md §D.1.A.d). The list is
 //     [ channel mode? | instrument? | trimIn | FX… | trimOut | fader | window-fade | sends… ]
-// and the model asks, per send: post-fader (the end, after the window-fade: today's place), pre-fader
+// and the model asks, per send: post-fader (the end, after the window-fade — or, when the send CARRIES
+// PLUGINS, between the fader and the window-fade, the envelope then coming on its copy), pre-fader
 // (after trimOut, before the fader), input (before trimIn; before the fader when no chain is
 // materialised — the same signal) or in the chain (between the plugins, as the last compile recorded the
 // root order, `@sender|aux` tokens included). A send is moved ONLY when it is not where it should be
@@ -5000,6 +5001,14 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         return s ? s->getTapPosition() : (int)te::ObjBridgeSendPlugin::postFader;
     };
 
+    // A send that CARRIES plugins (enabled or not: the place must not depend on a bypass, which does not
+    // pass through here). @see ObjBridgeSendPlugin::setEnvelopeSource
+    auto carriesPlugins = [](const te::Plugin::Ptr& p) {
+        auto* s = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
+        auto* list = s ? s->getChainList() : nullptr;
+        return list != nullptr && list->size() > 0;
+    };
+
     // The three places that do not depend on the chain's content.
     for (auto& [mk, raw] : mine) {
         te::Plugin::Ptr p = inList(raw);
@@ -5017,8 +5026,14 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             }
             case te::ObjBridgeSendPlugin::chain:
                 break;                                                      // below
-            default: {                                                      // post-fader: the end
-                const int floor = juce::jmax(window ? idx(window) : -1, fader ? idx(fader) : -1);
+            default: {                                                      // post-fader
+                if (carriesPlugins(p) && window) {
+                    // With plugins: after the fader, BEFORE the window-fade — the envelope is laid on
+                    // the send's copy after its plugins, once (the tap must not carry it already).
+                    if (!(idx(p) < idx(window) && (!fader || idx(p) > idx(fader)))) moveBefore(p, window);
+                    break;
+                }
+                const int floor = juce::jmax(window ? idx(window) : -1, fader ? idx(fader) : -1);   // the end
                 if (!(idx(p) > floor)) moveBefore(p, te::Plugin::Ptr());
                 break;
             }
@@ -5068,13 +5083,16 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     }
 
     // The envelope: a send that taps BEFORE the fader follows the sender's window and fades on its copy
-    // (Q-U5); a post-fader one has them upstream already. Set here, with the place, because both change
-    // together and every event that moves a send or rebuilds the tail passes through this function.
+    // (Q-U5); a post-fader one has them upstream already — UNLESS it carries plugins: it was laid before
+    // the window-fade above, and the envelope comes on its copy, after its plugins (Q-U18: an effect's
+    // tail on a send follows the fade-out and stops with the object). Never both: one envelope per send.
+    // Set here, with the place, because both change together and every event that moves a send, fills or
+    // empties its plugins, or rebuilds the tail passes through this function.
     auto* windowPlugin = dynamic_cast<te::ObjWindowFadePlugin*>(window.get());
     for (auto& [mk, raw] : mine) {
         auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(raw.get());
         if (!bs) continue;
-        const bool follows = bs->getTapPosition() != te::ObjBridgeSendPlugin::postFader;
+        const bool follows = bs->getTapPosition() != te::ObjBridgeSendPlugin::postFader || carriesPlugins(raw);
         bs->setEnvelopeSource(follows ? te::ObjWindowFadePlugin::Ptr(windowPlugin) : te::ObjWindowFadePlugin::Ptr());
     }
     return moved;
@@ -5346,7 +5364,14 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         else if (auto sit = sendKey.find(p); sit != sendKey.end()) {
             e[@"role"] = @"send";
             e[@"aux"] = [NSString stringWithUTF8String:sit->second.substr(sit->second.find('|') + 1).c_str()];
-            if (auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(p)) e[@"tap_position"] = @(bs->getTapPosition());
+            if (auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(p)) {
+                e[@"tap_position"] = @(bs->getTapPosition());
+                // How many plugins the send CARRIES: a post-fader send that carries any sits between
+                // the fader and the window-fade (the envelope comes after its plugins), the audit
+                // needs the engine's own count to judge the place.
+                auto* list = bs->getChainList();
+                e[@"chain_plugins"] = @(list ? list->size() : 0);
+            }
         } else if (auto uit = userKey.find(p); uit != userKey.end()) {
             e[@"role"] = @"fx";
             e[@"key"] = [NSString stringWithUTF8String:uit->second.c_str()];

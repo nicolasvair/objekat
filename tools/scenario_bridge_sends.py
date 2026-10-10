@@ -2666,11 +2666,11 @@ def section_L3(c):
 
 
 # --------------------------------------------------------------------------------------------------
-# O3 — the order on the copy: envelope, then the plugins, then the level
+# O3 — the order on the copy: the plugins, then the envelope, then the level
 # --------------------------------------------------------------------------------------------------
 
 def section_O3(c):
-    print("\n--- O3  order on the send's copy: envelope -> plugins -> level")
+    print("\n--- O3  order on the send's copy: plugins -> envelope -> level")
     if REF:
         print("       (skipped in --ref: plugins on a send are INC 3)")
         return
@@ -2698,9 +2698,11 @@ def section_O3(c):
     check("O3: post-fader with the fader at 0 dB = pre-fader (0.05 dB), clipper laid",
           abs(levels["post_fader"] - levels["pre_fader"]) <= 0.05, levels)
 
-    # (2) the envelope comes BEFORE the plugins: a pre-fader send, a 1 s fade-in. Read where the fade
-    # is well under the ceiling: the clipper sees the FADED signal, lets it through, and the wet is the
-    # dry minus the send level. The other order (clip, then fade) would give 6 dB less.
+    # (2) the envelope comes AFTER the plugins (Q-U18, decided on 10 October: an effect's tail follows
+    # the object's fade): a pre-fader send, a 1 s fade-in. Read where the fade is well under the
+    # ceiling: the clipper sees the UN-faded signal and bites it (-12 dBFS), THEN the fade and the
+    # level are laid: the wet is 12 dB under the dry. The other order (fade, then clip) would give
+    # 6 dB; a fade laid TWICE would give 12 dB plus the fade once more (20 or so).
     fresh(c, "O3b")
     x = c.send("object.add", {"path": out("sine_m6.wav"), "lane": 0, "start": 0.0})["id"]
     a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
@@ -2723,9 +2725,10 @@ def section_O3(c):
     if t_read is not None:
         e = seg_peak_db(dry, t_read, t_read + 0.01) - full
         got = seg_peak_db(wet, t_read, t_read + 0.01) - seg_peak_db(dry, t_read, t_read + 0.01)
-        print("       O3 fade: at %.2f s the fade is %.2f dB; wet - dry = %.3f dB (envelope first: -6; clip first: -12)"
+        print("       O3 fade: at %.2f s the fade is %.2f dB; wet - dry = %.3f dB (clip first: -12; envelope first: -6)"
               % (t_read, e, got))
-        check("O3 fade: the clipper sees the FADED signal (wet = dry - 6 dB, 0.3)", abs(got + 6.0) <= 0.3, "%.3f" % got)
+        check("O3 fade: the clipper sees the UN-faded signal, the fade is laid after it, ONCE (wet = dry - 12 dB, 0.3)",
+              abs(got + 12.0) <= 0.3, "%.3f" % got)
     steady = seg_peak_db(wet, 1.5, 2.5) - k
     check("O3 fade: past the fade the clipper bites (-18 dBFS, 0.1)", abs(steady + 18.0) <= 0.1, "%.3f" % steady)
 
@@ -3459,14 +3462,56 @@ def section_R3(c):
 # T3 — window and tails (A.e, Q-U18): an effect on a send stops with the object
 # --------------------------------------------------------------------------------------------------
 
+def t3_delay(c, name, host):
+    """The engine's built-in Delay (200 ms, 50 % wet, feedback -6 dB) on `host`. Returns its id."""
+    r = step(name + ": the built-in Delay is laid", lambda: c.send("plugin.add", {"host": host, "identifier": "delay"}))
+    dl = ((r or {}).get("plugin") or {}).get("id")
+    if dl is None:
+        return None
+    settle(c)
+    c.send("debug.set_plugin_property", {"plugin": dl, "property": "length", "value": 200.0})
+    c.send("plugin.set_param", {"plugin": dl, "index": 1, "value": 0.5})
+    settle(c)
+    return dl
+
+
+def t3_echoes(w):
+    """(direct, echo at 1.2 s, echo at 1.4 s) peaks of an impulse at 1 s through the Delay, in dBFS."""
+    return seg_peak_db(w, 0.95, 1.05), seg_peak_db(w, 1.15, 1.25), seg_peak_db(w, 1.35, 1.45)
+
+
 def section_T3(c):
-    print("\n--- T3  a delay ON a send: its echoes stop with the object; nothing is sent from outside the window")
+    print("\n--- T3  a delay ON a send: its tail follows the object's fade and stops with the object")
     if REF:
         print("       (skipped in --ref: plugins on a send are INC 3)")
         return
     # (The plan's `latencyTester` cannot show a tail: its delay is DECLARED, hence compensated. The
     # engine's built-in Delay is used instead: 200 ms, 50 % wet, feedback -6 dB.)
-    for pos in ("post_fader", "input"):
+
+    # THE YARDSTICK: the same Delay in the object's OWN chain (trunk). Q-U18: the tail of a send's
+    # effect behaves like the tail of a plugin of the object: it follows the fade-out, it dies at the
+    # window's end. Measured once, on the dry.
+    fresh(c, "T3_trunk")
+    xt = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    trunk = None
+    if t3_delay(c, "T3 trunk", xt) is not None:
+        c.send("object.trim", {"id": xt, "start": 0.0, "duration": 1.5})
+        c.send("object.set_fade", {"id": xt, "out": 0.5})
+        settle(c)
+        d = render(c, "T3_trunk_fade.wav")
+        trunk = t3_echoes(d)
+        print("       T3 trunk (the Delay in the object's chain), window [0, 1.5], fade-out 0.5 s: direct %.2f dBFS, "
+              "echo at 1.2 s %.2f, at 1.4 s %.2f; max after 1.5 s %.2e" % (trunk + (maxabs(seg(d, 1.5, 3.0)),)))
+        c.send("object.trim", {"id": xt, "start": 0.0, "duration": 1.1})
+        c.send("object.set_fade", {"id": xt, "out": 0.0})
+        settle(c)
+        d = render(c, "T3_trunk_cut.wav")
+        print("       T3 trunk, object ending at 1.1 s WITHOUT fade: max after 1.1 s %.2e (the trunk's tail is cut "
+              "at the window's end too)" % maxabs(seg(d, 1.1, 3.0)))
+        check("T3 trunk: a plugin of the object's chain rings nothing past the window's end (the yardstick)",
+              maxabs(seg(d, 1.1, 3.0)) <= 1e-6, "%.3e" % maxabs(seg(d, 1.1, 3.0)))
+
+    for pos in POSITIONS3:
         name = "T3_" + pos
         pipeline_offset_db(c)
         x, a = cast_siblings(c, name)
@@ -3474,19 +3519,39 @@ def section_T3(c):
         lay_send(c, x, a, 0.0)
         set_position(c, x, a, pos)
         h = need_host(c, name, x, a)
-        r = step(name + ": the built-in Delay is laid on the send", lambda: c.send("plugin.add", {"host": h, "identifier": "delay"}))
-        dl = ((r or {}).get("plugin") or {}).get("id")
-        if dl is None:
+        if t3_delay(c, name, h) is None:
             continue
-        settle(c)
-        c.send("debug.set_plugin_property", {"plugin": dl, "property": "length", "value": 200.0})
-        c.send("plugin.set_param", {"plugin": dl, "index": 1, "value": 0.5})
-        settle(c)
         _, w = wet3(c, name + "_whole", a)
-        direct, echo1, echo2 = seg_peak_db(w, 0.95, 1.05), seg_peak_db(w, 1.15, 1.25), seg_peak_db(w, 1.35, 1.45)
+        direct, echo1, echo2 = t3_echoes(w)
         print("       %s whole object: direct %.1f dBFS, echo at 1.2 s %.1f, at 1.4 s %.1f" % (name, direct, echo1, echo2))
         check(name + ": whole object (3 s): the echoes at 1.2 s and 1.4 s are in the wet", echo1 > -40.0 and echo2 > -50.0, (direct, echo1, echo2))
-        # the object ends at 1.1 s: the echo of 1.2 s would ring after it
+        whole = (direct, echo1, echo2)
+
+        # the object ends at 1.5 s after a 0.5 s fade-out: the echoes of 1.2 s and 1.4 s are IN the
+        # fade. They follow it — once: the same figures as the Delay in the object's own chain.
+        c.send("object.trim", {"id": x, "start": 0.0, "duration": 1.5})
+        c.send("object.set_fade", {"id": x, "out": 0.5})
+        settle(c)
+        _, w = wet3(c, name + "_fade", a)
+        f = t3_echoes(w)
+        g1, g2 = f[1] - whole[1], f[2] - whole[2]
+        after = maxabs(seg(w, 1.5, 3.0))
+        print("       %s window [0, 1.5], fade-out 0.5 s: direct %.2f dBFS, echo at 1.2 s %.2f (fade %.2f dB), "
+              "at 1.4 s %.2f (fade %.2f dB); max after 1.5 s %.2e" % (name, f[0], f[1], g1, f[2], g2, after))
+        check(name + ": fade-out: the direct part (at the fade's start) is untouched (0.05 dB)", abs(f[0] - whole[0]) <= 0.05, (f[0], whole[0]))
+        check(name + ": fade-out: the tail FOLLOWS the fade (each echo lower than without fade, the later the lower)",
+              g1 < -1.0 and g2 < g1 - 1.0, (g1, g2))
+        check(name + ": fade-out: NOTHING after the window's end", after <= 1e-6, "%.3e" % after)
+        if trunk is not None:
+            t1_, t2_ = trunk[1] - trunk[0], trunk[2] - trunk[0]
+            s1_, s2_ = f[1] - f[0], f[2] - f[0]
+            print("       %s echo re direct: send %.3f / %.3f dB, trunk %.3f / %.3f dB (a fade laid twice would "
+                  "double %.2f and %.2f)" % (name, s1_, s2_, t1_, t2_, g1, g2))
+            check(name + ": fade-out: the tail is the one of a plugin of the object's chain: the fade ONCE, not squared (0.1 dB)",
+                  abs(s1_ - t1_) <= 0.1 and abs(s2_ - t2_) <= 0.1, (s1_, t1_, s2_, t2_))
+
+        # the object ends at 1.1 s, no fade: the echo of 1.2 s would ring after it
+        c.send("object.set_fade", {"id": x, "out": 0.0})
         c.send("object.trim", {"id": x, "start": 0.0, "duration": 1.1})
         settle(c)
         _, w = wet3(c, name + "_cut", a)
@@ -3496,12 +3561,75 @@ def section_T3(c):
         print("       %s object ending at 1.1 s: direct %.1f dBFS, max in [1.10, 1.15] %.2e, max after 1.15 s %.2e" % (name, direct, edge, after))
         check(name + ": object ending at 1.1 s: the direct part is still sent", direct > -40.0, direct)
         check(name + ": ... and NOTHING rings after the object's end (the tail stops with the object)", after <= 1e-6, "%.3e" % after)
+        check(name + ": ... not even in the 50 ms that follow the end", edge <= 1e-6, "%.3e" % edge)
         # the window starts AFTER the impulse: nothing may reach the aux, not even an echo
         c.send("object.trim", {"id": x, "start": 1.1, "duration": 1.5})
         settle(c)
         _, w = wet3(c, name + "_late", a)
         print("       %s window [1.1, 2.6] (the impulse at 1 s is outside): wet max %.2e" % (name, maxabs(w)))
         check(name + ": the impulse is outside the window: nothing is sent, no echo of it either", maxabs(w) <= 1e-6, "%.3e" % maxabs(w))
+        audits3(c, name)
+
+    # ONE fade, not two, on a steady tone, at the four positions: a 1 s fade-in, a gain of -12 dB on
+    # the send. wet - dry is -12 dB all along the fade; a fade laid twice would add the fade's own
+    # depth (10 dB and more at the start).
+    for pos in POSITIONS3:
+        name = "T3once_" + pos
+        fresh(c, name)
+        x = c.send("object.add", {"path": out("sine_m6.wav"), "lane": 0, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
+        c.send("object.set_fade", {"id": x, "in": 1.0})
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, 0.0)
+        set_position(c, x, a, pos)
+        h, pid = add_on_send(c, name, x, a, "gainTester", gain_db=-12.0)
+        if pid is None:
+            continue
+        dry, wet = measure(c, name, x, a, 0.0)
+        got = [seg_db(wet, t, t + 0.01) - seg_db(dry, t, t + 0.01) for t in (0.1, 0.3, 0.6, 0.9, 1.5)]
+        depth = seg_db(dry, 0.1, 0.11) - seg_db(dry, 1.5, 1.51)
+        print("       %s: wet - dry at 0.1 / 0.3 / 0.6 / 0.9 / 1.5 s = %s dB (the fade is %.1f dB deep at 0.1 s)"
+              % (name, " / ".join("%.3f" % g for g in got), depth))
+        check(name + ": the fade is laid ONCE on the wet (wet - dry = -12 dB all along the fade, 0.05)",
+              all(abs(g + 12.0) <= 0.05 for g in got), got)
+        rep = bridge_report(c)
+        row = engine_send_row(rep, x, a)
+        check(name + ": the engine's send follows the envelope", row.get("follows_envelope") is True, row)
+        audits3(c, name)
+
+    # LATENCY: the envelope is laid at the mini-chain's OUTPUT, on the object's time. A declared latency
+    # of 20 ms on the send, a window [0.5, 2.0] with fades of 20 ms at both ends: the wet is the dry
+    # times the level, to the SAMPLE (an envelope late or early by one sample leaves 1/960 of the
+    # amplitude, -60 dB; by the 20 ms of the latency, the whole amplitude).
+    for pos in POSITIONS3:
+        name = "T3lat_" + pos
+        fresh(c, name)
+        x = c.send("object.add", {"path": out("sine_m6.wav"), "lane": 0, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
+        c.send("object.trim", {"id": x, "start": 0.5, "duration": 1.5})
+        c.send("object.set_fade", {"id": x, "in": 0.02, "out": 0.02})
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, -6.0)
+        set_position(c, x, a, pos)
+        h, pid = add_on_send(c, name, x, a, "latencyTester", latency_ms=20.0)
+        if pid is None:
+            continue
+        time.sleep(0.6)
+        settle(c)
+        dry, wet = measure(c, name, x, a, -6.0)
+        g = 10.0 ** (-6.0 / 20.0)
+        res = maxabs([wet[i] - g * dry[i] for i in range(min(len(dry), len(wet)))])
+        pk = maxabs(dry)
+        rel = B.db(res / pk) if res > 0.0 and pk > 0.0 else -200.0
+        outside = max(maxabs(seg(wet, 0.0, 0.5)), maxabs(seg(wet, 2.0, 3.0)))
+        print("       %s: 20 ms of latency on the send, fades of 20 ms: max |wet - level x dry| = %.2e (%.1f dB re the dry's peak); "
+              "wet outside the window %.2e" % (name, res, rel, outside))
+        check(name + ": the wet is the dry times the level to the sample, fades included (residue <= -80 dB)", rel <= -80.0, "%.1f" % rel)
+        check(name + ": nothing outside the window", outside <= 1e-6, "%.3e" % outside)
+        rep = bridge_report(c)
+        row = engine_send_row(rep, x, a)
+        rate = ((rep.get("engine") or {}).get("build") or {}).get("sample_rate") or 0
+        check(name + ": the mini-chain declares its 20 ms", row.get("chain_latency_samples") == int(round(0.020 * rate)), row)
         audits3(c, name)
 
 

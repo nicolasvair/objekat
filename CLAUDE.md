@@ -2607,8 +2607,12 @@ a second one elsewhere. The most exposed points:
   In the signal view a send's box has its PLUGINS ON TOP and the line aux / level / switch AT THE BOTTOM.
   **NO LINK of any kind on a send's plugins** (no manual link, no FX link bin; ⌘-drag to or from a send = plain
   copy; every copy of a sender re-keys them). Leaves only (no instrument, parallel block, bin, marker), 20 per send.
-  **Known gap, measured, NOT fixed:** an effect's tail on a send rings past the object's end (the user decided it
-  must stop with the object) — scenario section T3 fails on it, on purpose.
+  **Order on a send's copy: plugins → envelope (the object's window and fades) → level / gate → ring** (10 October,
+  Q-U18): an effect's tail on a send follows the object's fade-out and is silent past the window's end, like a
+  plugin of the object's chain; the envelope is laid ONCE (a post-fader send that CARRIES plugins sits between the
+  fader and the window-fade in the engine's list and lays it itself; without plugins it stays last and is INC 2 to
+  the sample). The send's plugins see the UN-faded signal. Patch `0040` was REGENERATED for it (fork commit
+  amended, `e69b952520a`).
 - **PERMANENT RULE — an object's plugins have THREE roots**: `plugins`, `instruments`, and each send's `plugins`.
   Walk them through `SendChain.allRoots`, never by hand: a walker that names two roots silently forgets the third
   (state capture, undo patching, id audit, automation targets, sidechain topology, copies). A send's mini-chain is

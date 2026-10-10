@@ -433,20 +433,25 @@ Checked as still biting: `develop` still had the linear `std::find`.
   patch of its own, not worth a fork commit on its own.
 - `0040` — **plugins on a send (docs/plan_sends_rework.md §D.2, INC 3).** `BridgeTapSource` gains two
   virtuals: `getTapChain()` (the send's mini-chain, a `PluginList`; null by default) and
-  `processTapHead()` (what the send does to its copy BEFORE its plugins — the sender's window and fades;
-  a no-op by default). When the chain holds at least one ENABLED plugin (and the tap plugin itself is
-  enabled), `createPluginNodeForList` shares the tapped node between the `BridgeTapNode` (the dry, passed
-  through untouched, as before) and a WET branch: `BridgeTapHeadNode` (a 2-channel copy +
-  `processTapHead`), the chain's nodes (`createPluginNodeForList` on the mini-chain, so the same priming
-  rules as any chain), then a `LatencyPrimingNode` for the branch's whole latency. The tap's age — what
-  `registerTap` receives and what the aux's readers align on — is the WET's latency (upstream + the
+  `processTapEnvelope()` (the envelope the send lays on its copy AFTER its plugins and before its level —
+  the sender's window and fades; a no-op by default). When the chain holds at least one ENABLED plugin
+  (and the tap plugin itself is enabled), `createPluginNodeForList` shares the tapped node between the
+  `BridgeTapNode` (the dry, passed through untouched, as before) and a WET branch: `BridgeTapHeadNode`
+  (a plain 2-channel copy), the chain's nodes (`createPluginNodeForList` on the mini-chain, so the same
+  priming rules as any chain), then a `LatencyPrimingNode` for the branch's whole latency. The tap's age —
+  what `registerTap` receives and what the aux's readers align on — is the WET's latency (upstream + the
   mini-chain's): a latent plugin on a send ages the tap at the aux return and never delays the signal
-  that passes through. `BridgeTapNode` then applies the plugin's `applyToBuffer` (the level) to the wet
-  branch's output instead of its own copy. Without a chain the builder makes the exact node of `0039`
-  (the only addition on that path is the call of `processTapHead`, empty unless the app overrides it).
-  Local branch `objekat-sends-0040`, commit `2cd66f2668f`, **published nowhere**: this file is the only
-  copy of that code. Files: `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`,
-  `tracktion_EditNodeBuilder.cpp`. The next number is `0041`.
+  that passes through. `BridgeTapNode` then calls `processTapEnvelope` and the plugin's `applyToBuffer`
+  (the level) on the wet branch's output instead of its own copy, both at `block time - the wet's
+  latency`: an effect's tail follows the owner's fade-out and dies at its window's end, and a latent
+  mini-chain keeps the envelope on the sample. Without a chain the builder makes the exact node of
+  `0039` (the only addition on that path is the call of `processTapEnvelope`, empty unless the app
+  overrides it). **Regenerated on 10 October** (the fork commit was AMENDED, not followed by a `0041`:
+  the first version, `2cd66f2668f`, called the hook `processTapHead` and ran it in the head node, BEFORE
+  the plugins — a tail rang past the owner's end). Local branch `objekat-sends-0040`, commit
+  `e69b952520a`, **published nowhere**: this file is the only copy of that code. Files:
+  `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`, `tracktion_EditNodeBuilder.cpp`. The next
+  number is `0041`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

@@ -3,7 +3,7 @@ import CryptoKit
 
 // The PLUGINS of a send — INC 3 of the sends rework (docs/plan_sends_rework.md §D.2.A, session
 // format 23). A send can carry a mini-chain (`AuxSend.plugins`): processed on the send's copy of the
-// signal, after the sender's window and fades, BEFORE the send's level. The plugins act on what THIS
+// signal, BEFORE the sender's window and fades (which are laid on the copy after them), BEFORE the send's level. The plugins act on what THIS
 // object sends to THIS aux, and on nothing else.
 //
 // THE PERMANENT RULE. An object's plugins have THREE roots: `plugins` (the trunk), `instruments`, and

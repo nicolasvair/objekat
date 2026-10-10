@@ -836,12 +836,24 @@ sidechain key laid on it, a stem or lane change): the mini-chain's list kept the
 insertion crashed (`dynamic_cast` on a dead pointer). `ObjBridgeSendPlugin::refreshChainOwners` is called at every
 access and by `moveClipToOwner`. `OBJParallelBlockPlugin` sets its owners once in the same way and was NOT touched.
 
-### Open: the tail of an effect on a send (Q-U18) is NOT cut today
+### The tail of an effect on a send follows the object's fade (Q-U18, 10 October)
 
-Decided: the tail of an effect laid on a send stops with the object, as on the object's chain. Measured (T3): it
-does not — a delay on a send rings its whole tail after the object's end, at every position, whereas the same delay
-on the trunk is cut. The wet branch is not gated by the clip's window as the plan assumed. Left as is and reported:
-the remedy is an audible choice (where the gate sits, and whether fades apply twice at `post_fader`).
+Decided: the tail of an effect laid on a send behaves as on the object's chain — it follows the fade-out and is
+silent past the window's end. The first build did not do it (the wet branch is processed past the clip's end and
+the envelope was laid BEFORE the send's plugins: a delay rang its whole tail). The order on a send's copy is now
+**plugins → envelope → level / gate → ring**, the envelope (`ObjWindowFade`'s, the one definition) being laid by the
+tap node at the time the signal was made (the mini-chain's latency included).
+
+*One envelope on every path.* Pre-fader, input and in-chain copies are taken before the object's window-fade: the
+send lays the envelope. A post-fader send WITHOUT plugins stays at the end of the list, after the window-fade, and
+lays nothing (INC 2 to the sample: 517 reference exports, 0 difference). A post-fader send that CARRIES plugins is
+laid by `-applySendPositionsForKey:` between the fader and the window-fade and lays the envelope itself. "Carries"
+= the engine's list is not empty, enabled or not: bypassing the last plugin does not go through the positioning
+and must not leave a copy without envelope. `debug.send_marker_audit` knows the rule (`chain_plugins` in the layout).
+
+*What it costs:* a send's plugins see the signal BEFORE the object's fades, like the object's own plugins (a
+compressor on a send is driven by the un-faded signal). Without a fade-out the tail is cut dead at the window's
+end, exactly as a trunk plugin's is — a fade-out is what makes it die smoothly.
 
 ## The phases to come — decisions to take
 
