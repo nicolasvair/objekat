@@ -106,6 +106,11 @@ with ObjekatClient(SOCK, timeout=180) as c:
 
     aux_inside = cmd("aux.create", start=0, end=4, lane=2)["id"]
     cmd("send.set_level", id=oa, aux=aux_inside, db=-3)
+    # INC 3: the send carries a plugin of its own (the THIRD root of an object's plugins).
+    send_host = next(s_ for s_ in cmd("send.list", id=oa)["sends"] if s_["aux"] == aux_inside)["chain_host"]
+    sp = cmd("plugin.add", host=send_host, identifier="lowpass")["plugin"]["id"]
+    SP_ORIG, SP_TARGET = 2000.0, 5000.0
+    cmd("plugin.set_param", plugin=sp, index=0, value=SP_ORIG)
 
     aux_outside = cmd("aux.create", start=0, end=4, lane=6)["id"]
     cmd("send.set_level", id=ob, aux=aux_outside, db=-5)
@@ -159,6 +164,7 @@ with ObjekatClient(SOCK, timeout=180) as c:
     check("V2 is active", active_tab_id() == tab_v2)
     V_TARGET = lo + (hi - lo) * 0.9
     cmd("plugin.set_param", plugin=p1, index=0, value=V_TARGET)
+    cmd("plugin.set_param", plugin=sp, index=0, value=SP_TARGET)
 
     objects_before = {o["id"] for o in cmd("object.list")["objects"]}
 
@@ -223,6 +229,25 @@ with ObjekatClient(SOCK, timeout=180) as c:
         new_sends = new_oa.get("sends", [])
         check("the send to the INSIDE aux was remapped onto the pasted aux",
               any(s["aux"] == new_aux["id"] for s in new_sends))
+
+        # INC 3: the remapped send brought its own plugin, re-keyed, with the SOURCE's frozen state.
+        row = next((s_ for s_ in cmd("send.list", id=new_oa["id"])["sends"] if s_["aux"] == new_aux["id"]), {})
+        carried = [p_["id"] for p_ in row.get("plugins", [])]
+        check("the remapped send carries its ONE plugin, under a fresh id",
+              len(carried) == 1 and carried[0] != sp, str(row))
+        check("...on a chain host of its own (the pasted sender's, not the source's)",
+              row.get("chain_host") not in (None, send_host), str(row.get("chain_host")))
+        if len(carried) == 1:
+            got = cmd("plugin.get_params", plugin=carried[0])["params"][0]["value"]
+            check("the send's plugin carries the SOURCE's frozen value, not the target's live one",
+                  abs(got - SP_ORIG) < 1.0, "got %s" % got)
+            listed = cmd("plugin.list", host=row["chain_host"])["plugins"]
+            check("...and it is not linked to anything", all(not p_.get("link_group") for p_ in listed), str(listed))
+        still = cmd("plugin.get_params", plugin=sp)["params"][0]["value"]
+        check("the target's own send plugin (same id as the source's) kept ITS OWN value",
+              abs(still - SP_TARGET) < 1.0, "got %s" % still)
+        audit = cmd("debug.plugin_id_audit")
+        check("plugin_id_audit is clean after the paste", audit.get("count") == 0, str(audit)[:300])
 
     # ── the send to the aux OUTSIDE the batch was dropped entirely ──────────────────────────
     if new_ob:

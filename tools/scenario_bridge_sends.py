@@ -25,7 +25,10 @@ Options:
                      new scope are skipped, every measured number is printed as a REFERENCE.
     --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
                      Y2, Z2, RT2, PF and K2 — INC 1 already used the letters P to T). INC 3's carry a 3
-                     (plugins ON a send): A3, L3, O3, P3…
+                     (plugins ON a send): A3, L3, O3 (the ear), G3, M3 (the gates and the
+                     refusals), X3 (limits), U3 (undo), Z3 (the file), C3 (copies), R3 (retarget and
+                     positions), T3 (tails), B3 (consolidation), K3 (a key on a send's plugin), H3 (every
+                     plugin command on a send host), P3 (parity with INC 2).
 
 P3 compares every export of THIS run with the same-named export of an INC 2 reference run (the build
 before plugins on sends existed): set INC2_REF_DIR=<dir of that run's exports>. Without it P3 is skipped.
@@ -2731,6 +2734,1080 @@ def section_O3(c):
 # P3 — no plugin on a send = INC 2, to the sample
 # --------------------------------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------------------------------
+# The cast of the sections below: X (an impulse at 1 s) sends to the aux A, a gainTester ON the send.
+# The wet is read re the SOURCE (pipeline offset removed): it is the sum of the gains it went through.
+# --------------------------------------------------------------------------------------------------
+
+def cast3(c, name, gain_db=-12.0, level=-6.0, pos="post_fader"):
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, name)
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, level)
+    if pos != "post_fader":
+        set_position(c, x, a, pos)
+    h, pid = add_on_send(c, name, x, a, "gainTester", gain_db=gain_db)
+    return x, a, h, pid
+
+
+def wet3(c, name, aux, t1=3.0):
+    """(wet level re source or None when silent, wet) of everything that reaches `aux`."""
+    _, w = aux_wet(c, name, aux, t1)
+    return (wet_db(w) if maxabs(w) > 0.0 else None), w
+
+
+def near(label, got, want_db, tol=0.05):
+    print("       %s: %s dB (wanted %.2f)" % (label, None if got is None else "%.3f" % got, want_db))
+    check("%s is %.2f dB (%.2f)" % (label, want_db, tol), got is not None and abs(got - want_db) <= tol, got)
+
+
+def set_gain3(c, pid, db):
+    """A gainTester's gain, set on the LIVE instance (the engine's door: the model does not know)."""
+    c.send("debug.set_plugin_property", {"plugin": pid, "property": "gainDb", "value": db})
+    settle(c)
+
+
+def send_plugins3(c, x, a):
+    return [p_["id"] for p_ in (send_entry(c, x, a) or {}).get("plugins", [])]
+
+
+def audits3(c, label):
+    r = c.send("debug.plugin_id_audit")
+    check(label + ": plugin_id_audit is clean", r.get("count") == 0 and r.get("engine_foreign_refusals", 0) == 0, r)
+    m = audit(c, label)
+    check(label + ": no send plugin is linked", m.get("linked_send_plugins") == [], m.get("linked_send_plugins"))
+    return m
+
+
+def in_engine(c, pid):
+    """True if the engine holds an instance under this key."""
+    try:
+        c.send("debug.set_plugin_property", {"plugin": pid, "property": "objProbe", "value": 1.0})
+        return True
+    except ObjekatError:
+        return False
+
+
+def refused(label, fn, code="invalid_state", reason=None):
+    try:
+        r = fn()
+        check(label + ": refused", False, "accepted: %s" % (r,))
+    except ObjekatError as e:
+        why = (e.details or {}).get("reason") if isinstance(e.details, dict) else None
+        check(label + ": refused (%s%s)" % (code, ", " + reason if reason else ""),
+              e.code == code and (reason is None or why == reason), "%s %s %s" % (e.code, e.message, e.details))
+
+
+# --------------------------------------------------------------------------------------------------
+# G3 — the level, the switch, mute, solo and the gates still give silence, plugin laid
+# --------------------------------------------------------------------------------------------------
+
+def section_G3(c):
+    print("\n--- G3  -inf, off, mute, solo, stem mute, group mute: silence, with a plugin on the send")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    x, a, h, pid = cast3(c, "G3", gain_db=6.0, level=0.0)
+    if pid is None:
+        return
+    db, _ = wet3(c, "G3_lit", a)
+    near("G3: lit: the wet", db, 6.0)
+    set_gain3(c, pid, 24.0)             # not measured lit: 0.2 x 15.8 is above the export's ceiling (it clips)
+    r = c.send("send.set_level", {"id": x, "aux": a, "db": -200.0})
+    settle(c)
+    check("G3: the send is at -inf (not routed)", r.get("routed") is False, r)
+    _, w = wet3(c, "G3_inf", a)
+    check("G3: -inf with a +24 dB plugin on the send: the wet is exactly 0", maxabs(w) == 0.0, maxabs(w))
+    set_gain3(c, pid, 6.0)
+    lay_send(c, x, a, 0.0)
+    c.send("send.enable", {"id": x, "aux": a, "enabled": False})
+    settle(c)
+    _, w = wet3(c, "G3_off", a)
+    check("G3: send switched off: the wet is exactly 0", maxabs(w) == 0.0, maxabs(w))
+    row = engine_send_row(bridge_report(c), x, a)
+    check("G3: switched off: the engine still holds the send's plugin", row.get("chain_plugins") == 1
+          and pid in (row.get("chain_keys") or []) and in_engine(c, pid), row)
+    step("G3: switched off: plugin.get_params still answers", lambda: c.send("plugin.get_params", {"plugin": pid}))
+    c.send("send.enable", {"id": x, "aux": a, "enabled": True})
+    settle(c)
+    db, _ = wet3(c, "G3_on", a)
+    near("G3: switched on again: the wet", db, 6.0)
+
+    for pos in POSITIONS3:
+        name = "G3_" + pos
+        pipeline_offset_db(c)
+        fresh(c, name)
+        x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+        k = with_other(c, lane=1)
+        o = with_other(c, lane=3)
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 5})["id"]
+        g = grp(c, [x, k])
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, 0.0)
+        set_position(c, x, a, pos)
+        h, pid = add_on_send(c, name, x, a, "gainTester", gain_db=6.0)
+        if pid is None:
+            continue
+        lit, _ = wet3(c, name + "_lit", a)
+        near("G3 %s: lit: the wet" % pos, lit, 6.0)
+
+        def gated(label, on, off):
+            on()
+            settle(c)
+            _, w = wet3(c, "%s_%s" % (name, label.replace(" ", "_")), a)
+            m = maxabs(seg(w, 0.9, 1.2))
+            check("G3 %s: %s: the wet is silent (1e-6)" % (pos, label), m <= 1e-6, "%.3e" % m)
+            off()
+            settle(c)
+
+        gated("sender muted", lambda: c.send("object.set_mute", {"ids": [x], "muted": True}),
+              lambda: c.send("object.set_mute", {"ids": [x], "muted": False}))
+        gated("another object soloed", lambda: c.send("solo.set", {"ids": [o], "on": True}),
+              lambda: c.send("solo.clear", {}))
+        gated("parent group muted", lambda: c.send("object.set_mute", {"ids": [g], "muted": True}),
+              lambda: c.send("object.set_mute", {"ids": [g], "muted": False}))
+        st = c.send("stem.add", {"name": "S"})["id"]
+        c.send("stem.assign", {"stem": st, "ids": [g, a]})
+        settle(c)
+        gated("stem muted", lambda: c.send("stem.mute", {"id": st, "muted": True}),
+              lambda: c.send("stem.mute", {"id": st, "muted": False}))
+        back, _ = wet3(c, name + "_back", a)
+        near("G3 %s: every gate lifted: the wet" % pos, back, 6.0)
+        audits3(c, "G3 " + pos)
+
+
+# --------------------------------------------------------------------------------------------------
+# M3 — materialisation: the plugins of a send that is not alive exist, keep their state, cost no reader
+# --------------------------------------------------------------------------------------------------
+
+def section_M3(c):
+    print("\n--- M3  a send at -inf / off keeps its plugins alive; nothing is re-instantiated; removal leaves no key")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "M3")
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})          # a new send: -inf
+    settle(c)
+    h, pid = add_on_send(c, "M3 (send at -inf)", x, a, "gainTester", gain_db=-12.0)
+    if pid is None:
+        return
+    step("M3: plugin.get_params answers for a plugin of a send at -inf", lambda: c.send("plugin.get_params", {"plugin": pid}))
+    check("M3: the engine holds the instance", in_engine(c, pid))
+    rep = bridge_report(c)
+    row = engine_send_row(rep, x, a)
+    print("       M3: engine row at -inf: %s" % row)
+    check("M3: at -inf the bridge lays NO reader for it", len(send_readers(rep)) == 0, send_readers(rep))
+    check("M3: at -inf the engine's send is a disabled carrier holding the plugin",
+          row.get("enabled") is False and row.get("chain_plugins") == 1, row)
+    set_gain3(c, pid, -9.0)                    # a state only the live instance knows
+    lay_send(c, x, a, 0.0)
+    settle(c)
+    db, _ = wet3(c, "M3_raised", a)
+    near("M3: level raised: the wet reads the state set while at -inf (same instance)", db, -9.0)
+    for label, on, off in (("-inf and back", lambda: lay_send(c, x, a, -200.0), lambda: lay_send(c, x, a, 0.0)),
+                           ("off and on", lambda: c.send("send.enable", {"id": x, "aux": a, "enabled": False}),
+                            lambda: c.send("send.enable", {"id": x, "aux": a, "enabled": True}))):
+        on()
+        settle(c)
+        check("M3 %s: the instance stays while the send is silent" % label, in_engine(c, pid))
+        off()
+        settle(c)
+        db, _ = wet3(c, "M3_" + label.replace(" ", "_"), a)
+        near("M3 %s: the wet (state intact)" % label, db, -9.0)
+    audits3(c, "M3 alive")
+    c.send("send.remove", {"id": x, "aux": a})
+    settle(c)
+    check("M3: send removed: no engine key is left for its plugin", not in_engine(c, pid))
+    audits3(c, "M3 removed")
+    c.send("edit.undo", {})
+    settle(c)
+    check("M3: undo of the removal: the send is back with its plugin (same id)", send_plugins3(c, x, a) == [pid],
+          send_entry(c, x, a))
+    db, _ = wet3(c, "M3_undone", a)
+    near("M3: undo of the removal: the wet, with the state the plugin had", db, -9.0)
+    audits3(c, "M3 undone")
+
+    # the object's chain full: the send is refused, its plugins are NOT instantiated; a slot freed lays them
+    x, a = cast_siblings(c, "M3full")
+    plugs = []
+    for _ in range(16):
+        plugs.append(add_test(c, x, "gainTester", gain_db=0.0)["plugin"])
+    wait(c)
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    settle(c)
+    hh = need_host(c, "M3 full", x, a)
+    r = step("M3 full: a plugin is laid on the refused send (the model takes it)",
+             lambda: c.send("debug.add_test_plugin", {"host": hh, "type": "gainTester", "gain_db": -12.0}))
+    settle(c)
+    p2 = (r or {}).get("plugin")
+    row = send_entry(c, x, a) or {}
+    check("M3 full: the send is refused chainFull", row.get("refusal") == "chainFull" and row.get("status") == "refused", row)
+    check("M3 full: its plugin is NOT instantiated", p2 is not None and not in_engine(c, p2))
+    _, w = wet3(c, "M3full_refused", a)
+    check("M3 full: the refused send is silent", maxabs(w) == 0.0, maxabs(w))
+    c.send("plugin.remove", {"host": x, "plugin": plugs[-1]})
+    settle(c)
+    time.sleep(0.5)
+    settle(c)
+    row = send_entry(c, x, a) or {}
+    check("M3 full: one slot freed: the send is active", row.get("status") == "active", row)
+    check("M3 full: ... and its plugin is instantiated", p2 is not None and in_engine(c, p2))
+    db, _ = wet3(c, "M3full_laid", a)
+    print("       M3 full: wet once laid: %s dB re source (the plugin's gain is the model's: the instance is new)" % db)
+    check("M3 full: once laid the send sounds", db is not None, db)
+    audits3(c, "M3 full")
+
+
+# --------------------------------------------------------------------------------------------------
+# X3 — limits: 20 plugins on a send, its own count; the object's chain is not charged for them
+# --------------------------------------------------------------------------------------------------
+
+def section_X3(c):
+    print("\n--- X3  a send takes 20 plugins (its own limit); the object's chain still counts the send as ONE entry")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "X3")
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    h = need_host(c, "X3", x, a)
+    if h is None:
+        return
+    for _ in range(20):
+        c.send("debug.add_test_plugin", {"host": h, "type": "gainTester", "gain_db": -1.0})
+    settle(c)
+    check("X3: 20 plugins sit on the send", len(send_plugins3(c, x, a)) == 20, len(send_plugins3(c, x, a)))
+    refused("X3: the 21st", lambda: c.send("debug.add_test_plugin", {"host": h, "type": "gainTester"}), reason="chainFull")
+    check("X3: the object's own chain is empty", c.send("plugin.list", {"host": x})["plugins"] == [])
+    row = engine_send_row(bridge_report(c), x, a)
+    check("X3: the engine's mini-chain holds 20", row.get("chain_plugins") == 20, row)
+    db, _ = wet3(c, "X3_20", a)
+    near("X3: twenty -1 dB plugins: the wet", db, -20.0, tol=0.1)
+    trunk = []
+    for _ in range(15):
+        trunk.append(add_test(c, x, "gainTester", gain_db=0.0)["plugin"])
+    settle(c)
+    row = send_entry(c, x, a) or {}
+    check("X3: 15 plugins on the object + the send carrying 20: the send is active", row.get("status") == "active", row)
+    db, _ = wet3(c, "X3_15", a)
+    near("X3: ... and its wet is unchanged", db, -20.0, tol=0.1)
+    # The engine caps a list at 20 and the send holds one slot of the object's list: with a send, the
+    # object takes 15 plugins and the 16th is the one turned away (INC 2's behaviour, unchanged — the
+    # send's own twenty plugins are NOT on that list).
+    try:
+        add_test(c, x, "gainTester", gain_db=0.0)
+        took16 = True
+    except ObjekatError as e:
+        took16 = False
+        print("       X3: a 16th plugin on the object: %s" % e)
+    settle(c)
+    n = len(c.send("plugin.list", {"host": x})["plugins"])
+    row = send_entry(c, x, a) or {}
+    print("       X3: after the 16th: the object holds %d, the send is %s (refusal %s)" % (n, row.get("status"), row.get("refusal")))
+    check("X3: a 16th plugin on the object is turned away exactly as with a plain send (15 stay, the send stays active)",
+          not took16 and n == 15 and row.get("status") == "active", (took16, n, row))
+    db, _ = wet3(c, "X3_16", a)
+    near("X3: ... and the wet is still the twenty plugins'", db, -20.0, tol=0.1)
+    audits3(c, "X3")
+
+
+# --------------------------------------------------------------------------------------------------
+# U3 — undo / redo of every gesture on a send's plugins
+# --------------------------------------------------------------------------------------------------
+
+def section_U3(c):
+    print("\n--- U3  undo / redo: add, move trunk -> send, copy (alt and cmd alike), reorder, bypass, remove, parameter")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "U3")
+    c.send("send.create", {"id": x, "aux": a, "position": "input"})
+    lay_send(c, x, a, 0.0)
+    # The object's fader at the floor: an INPUT send does not hear it, and the dry (which the plugins
+    # moved to and from the trunk would change) weighs nothing in the export (-96 dB).
+    c.send("object.set_gain", {"ids": [x], "db": -96.0})
+    settle(c)
+    h = need_host(c, "U3", x, a)
+    if h is None:
+        return
+    # The reference WITHOUT the aux, once, up front (muting is an undo point).
+    c.send("object.set_mute", {"ids": [a], "muted": True})
+    settle(c)
+    off_ref = render(c, "U3_off_ref.wav", 0.0, 3.0)
+    c.send("object.set_mute", {"ids": [a], "muted": False})
+    settle(c)
+    count = [0]
+
+    def wet_now():
+        count[0] += 1
+        w = sub(render(c, "U3_%02d.wav" % count[0], 0.0, 3.0), off_ref)
+        return wet_db(w) if maxabs(w) > 0.0 else None
+
+    def undo_redo(label, before_db, after_db, patched=False):
+        near("U3 %s: the wet" % label, wet_now(), after_db)
+        log0 = app_log_lines()
+        c.send("edit.undo", {})
+        settle(c)
+        tr = undo_trace_since(log0)
+        if tr:
+            print("       U3 %s: undo trace: %s" % (label, tr[-1].strip()[-60:]))
+            if patched:
+                check("U3 %s: the undo patches in place (0 rebuilt)" % label, "0 rebuilt" in tr[-1], tr[-1])
+        near("U3 %s: undone: the wet" % label, wet_now(), before_db)
+        c.send("edit.redo", {})
+        settle(c)
+        near("U3 %s: redone: the wet" % label, wet_now(), after_db)
+        audits3(c, "U3 " + label)
+
+    near("U3: start (input send, 0 dB): the wet", wet_now(), 0.0)
+    # 1. add
+    pid = c.send("debug.add_test_plugin", {"host": h, "type": "gainTester", "gain_db": -12.0})["plugin"]
+    settle(c)
+    c.send("edit.undo", {})
+    settle(c)
+    check("U3 add: undone: the send carries nothing", send_plugins3(c, x, a) == [], send_plugins3(c, x, a))
+    near("U3 add: undone: the wet", wet_now(), 0.0)
+    c.send("edit.redo", {})
+    settle(c)
+    check("U3 add: redone: the plugin is back, same id", send_plugins3(c, x, a) == [pid], send_plugins3(c, x, a))
+    set_gain3(c, pid, -12.0)          # the gain was laid after the add's undo point: lay it again
+    near("U3 add: redone: the wet", wet_now(), -12.0)
+    # 2. move trunk -> send (an input send does not hear the trunk: the wet changes only by the move)
+    t1 = add_test(c, x, "gainTester", gain_db=-6.0)["plugin"]
+    settle(c)
+    near("U3: a -6 dB plugin on the TRUNK does not reach an input send: the wet", wet_now(), -12.0)
+    r = c.send("plugin.move", {"from": x, "to": h, "plugin": t1})
+    settle(c)
+    moved = (r.get("plugins") or [None])[0]
+    check("U3 move: the plugin is on the send (a move mints a fresh id, as between two objects) and off the trunk",
+          moved is not None and send_plugins3(c, x, a) == [pid, moved] and c.send("plugin.list", {"host": x})["plugins"] == [],
+          (send_plugins3(c, x, a), c.send("plugin.list", {"host": x})))
+    t1 = moved
+    undo_redo("move trunk -> send", -12.0, -18.0)
+    # 3. copy: alt, then cmd — the same plain copy
+    t2 = add_test(c, x, "gainTester", gain_db=-3.0)["plugin"]
+    settle(c)
+    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "copy"})
+    settle(c)
+    ids = send_plugins3(c, x, a)
+    check("U3 alt copy: outcome copy, a third plugin on the send with a FRESH id, the original stays on the trunk",
+          r.get("outcome") == "copy" and len(ids) == 3 and t2 not in ids
+          and [p_["id"] for p_ in c.send("plugin.list", {"host": x})["plugins"]] == [t2], (r, ids))
+    undo_redo("alt copy trunk -> send", -18.0, -21.0)
+    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "link", "dry_run": True})
+    check("U3 cmd: the resolver answers a plain COPY (no link on a send)", r.get("outcome") == "copy", r)
+    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "link"})
+    settle(c)
+    ids4 = send_plugins3(c, x, a)
+    lst = c.send("plugin.list", {"host": h})["plugins"]
+    check("U3 cmd copy: a fourth plugin, fresh id, NOT linked; the trunk's original not linked either",
+          len(ids4) == 4 and t2 not in ids4 and all(not p_.get("linked") for p_ in lst)
+          and all(not p_.get("linked") for p_ in c.send("plugin.list", {"host": x})["plugins"]), (ids4, lst))
+    undo_redo("cmd copy trunk -> send", -21.0, -24.0)
+    refused("U3: plugin.link towards a send", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": t2}),
+            reason="send_plugins_never_linked")
+    refused("U3: plugin.link from a send", lambda: c.send("plugin.link", {"from": h, "to": x, "plugin": pid}),
+            reason="send_plugins_never_linked")
+    # 4. reorder inside the box
+    order0 = send_plugins3(c, x, a)
+    c.send("plugin.drop_at", {"from": h, "host": h, "plugin": order0[-1], "series": "root", "at": 0})
+    settle(c)
+    order1 = send_plugins3(c, x, a)
+    check("U3 reorder: the last row is now the first", order1 == [order0[-1]] + order0[:-1], (order0, order1))
+    c.send("edit.undo", {})
+    settle(c)
+    check("U3 reorder: undone: the order is back", send_plugins3(c, x, a) == order0, send_plugins3(c, x, a))
+    c.send("edit.redo", {})
+    settle(c)
+    check("U3 reorder: redone", send_plugins3(c, x, a) == order1, send_plugins3(c, x, a))
+    near("U3 reorder: the wet does not move", wet_now(), -24.0)
+    # 5. bypass
+    c.send("plugin.toggle", {"host": h, "plugin": pid})
+    settle(c)
+    undo_redo("bypass of the -12 dB plugin", -24.0, -12.0)
+    c.send("plugin.toggle", {"host": h, "plugin": pid})
+    settle(c)
+    # 6. remove
+    c.send("plugin.remove", {"host": h, "plugin": pid})
+    settle(c)
+    undo_redo("remove the -12 dB plugin", -24.0, -12.0)
+    c.send("edit.undo", {})
+    settle(c)
+    near("U3: back with the four plugins: the wet", wet_now(), -24.0)
+    # 7. a parameter (@see scenario_plugin_state_undo.py for the order): the state is set, an unrelated
+    #    gesture takes the undo snapshot, the state moves again OUTSIDE any snapshot; the undo finds a
+    #    difference confined to a send plugin's state and puts it back on the LIVE instance.
+    set_gain3(c, pid, -2.0)                       # -24 + 10
+    near("U3 parameter: -2 dB on the first plugin: the wet", wet_now(), -14.0)
+    c.send("object.move", {"id": x, "start": 0.25})           # the snapshot is taken HERE
+    settle(c)
+    set_gain3(c, pid, -20.0)
+    near("U3 parameter: changed again to -20, outside any undo point: the wet", wet_now(), -32.0)
+    log0 = app_log_lines()
+    c.send("edit.undo", {})
+    settle(c)
+    tr = undo_trace_since(log0)
+    print("       U3 parameter: undo trace: %s" % (tr[-1].strip()[-60:] if tr else None))
+    check("U3 parameter: the undo does NOT rebuild the object (0 rebuilt, patched in place)",
+          bool(tr) and "0 rebuilt" in tr[-1] and "1 patched" in tr[-1], tr[-1:] )
+    check("U3 parameter: the unrelated gesture is undone", abs(c.send("object.get", {"id": x})["start"]) < 1e-6)
+    near("U3 parameter: undone: the send plugin's state of the undo point is back (-2 dB)", wet_now(), -14.0)
+    check("U3 parameter: the instance is still the engine's", in_engine(c, pid))
+    audits3(c, "U3 end")
+
+
+def wet_of(c, name, snd, aux, others=()):
+    """The wet ONE sender lays in `aux`: the other senders muted for the measure."""
+    others = [o for o in others if o and o != snd]
+    if others:
+        c.send("object.set_mute", {"ids": others, "muted": True})
+        settle(c)
+    db, w = wet3(c, name, aux)
+    if others:
+        c.send("object.set_mute", {"ids": others, "muted": False})
+        settle(c)
+    return db, w
+
+
+def send_instance(c, x, a):
+    """The engine's send plugin of x -> a (its instance pointer), from the audit's layouts."""
+    lay = (c.send("debug.send_marker_audit").get("engine_layouts") or {}).get(x, [])
+    rows = [e for e in lay if e.get("aux") == a]
+    return rows[0].get("instance") if rows else None
+
+
+# --------------------------------------------------------------------------------------------------
+# Z3 — save / reopen
+# --------------------------------------------------------------------------------------------------
+
+def section_Z3(c):
+    print("\n--- Z3  save / reopen: the send's plugins, their ids and states come back; format 23; a hand-written file is sanitised")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    x, a, h, pid = cast3(c, "Z3", gain_db=-12.0, level=-6.0)
+    if pid is None:
+        return
+    lp = step("Z3: plugin.add lowpass on the send host", lambda: c.send("plugin.add", {"host": h, "identifier": "lowpass"}))
+    lp = ((lp or {}).get("plugin") or {}).get("id")
+    settle(c)
+    c.send("plugin.set_param", {"plugin": lp, "index": 0, "value": 9000.0})
+    w = with_other(c, lane=3)
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    c.send("send.create", {"id": w, "aux": a2, "position": "post_fader"})
+    lay_send(c, w, a2, -6.0)
+    settle(c)
+    db0, _ = wet3(c, "Z3_before", a)
+    ids0 = send_plugins3(c, x, a)
+    print("       Z3 before: wet %s dB re source, plugins %s" % (db0, ids0))
+    check("Z3 before: two plugins on the send", ids0 == [pid, lp], ids0)
+    c.send("project.save")
+    path = out("Z3/project.objekat")
+    d1 = json.load(open(path))
+    check("Z3 file: saved as format 23", d1.get("version") == 23, d1.get("version"))
+    ox, ow = find_obj(d1["items"], x), find_obj(d1["items"], w)
+    fp = [p_["id"].upper() for p_ in (ox["sends"][0].get("plugins") or [])]
+    check("Z3 file: the send carries its two plugins, same ids, in order", fp == [pid.upper(), lp.upper()], fp)
+    check("Z3 file: a send without plugins has NO `plugins` key", all("plugins" not in sd for sd in ow["sends"]), ow["sends"])
+    check("Z3 file: the gainTester's state is in the file", "gainDb=\"-12" in ox["sends"][0]["plugins"][0].get("stateXML", ""),
+          ox["sends"][0]["plugins"][0].get("stateXML"))
+    c.send("project.open", {"path": path})
+    wait(c)
+    settle(c)
+    check("Z3 reopen: the same plugin ids, in order", send_plugins3(c, x, a) == ids0, send_plugins3(c, x, a))
+    db1, _ = wet3(c, "Z3_after", a)
+    print("       Z3 reopen: wet %s dB re source" % db1)
+    check("Z3 reopen: the wet is what it was (0.01 dB)", db0 is not None and db1 is not None and abs(db0 - db1) <= 0.01, (db0, db1))
+    v = c.send("plugin.get_params", {"plugin": lp})["params"][0]["value"]
+    check("Z3 reopen: the lowpass's state is read back (9000 Hz)", abs(v - 9000.0) < 1.0, v)
+    audits3(c, "Z3 reopen")
+
+    # ---- a format-22 project (no send plugin anywhere) reopened and re-saved: items identical
+    x, a = cast_siblings(c, "Z3b")
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    a3 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 9})["id"]
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 0})
+    c.send("send.create", {"id": x, "aux": a2, "position": "input"})
+    c.send("send.create", {"id": x, "aux": a3, "position": "pre_fader"})
+    for aux in (a, a2, a3):
+        lay_send(c, x, aux, -6.0)
+    settle(c)
+    c.send("project.save")
+    path = out("Z3b/project.objekat")
+    d = json.load(open(path))
+    items0 = json.dumps(d["items"], sort_keys=True)
+    check("Z3b: a project without send plugins writes no `plugins` key on any send", '"plugins": [{' not in json.dumps(find_obj(d["items"], x)["sends"]),
+          find_obj(d["items"], x)["sends"])
+    d["version"] = 22
+    json.dump(d, open(path, "w"), indent=1)
+    c.send("project.open", {"path": path})
+    wait(c)
+    settle(c)
+    audit(c, "Z3b reopened as 22")
+    c.send("project.save")
+    d2 = json.load(open(path))
+    check("Z3b: the format-22 file is re-saved as 23 with `items` identical",
+          d2.get("version") == 23 and json.dumps(d2["items"], sort_keys=True) == items0, d2.get("version"))
+
+    # ---- a hand-written 23 file: a bin, a marker and a LINKED leaf inside a send's plugins
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "Z3h")
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    g1 = add_test(c, x, "gainTester", gain_db=0.0)["plugin"]
+    g2 = add_test(c, x, "gainTester", gain_db=0.0)["plugin"]
+    settle(c)
+    step("Z3h: a bin on the trunk", lambda: c.send("fxlink.create", {"host": x, "plugins": [g1, g2], "name": "Bin"}))
+    c.send("send.create", {"id": x, "aux": a2, "position": "chain", "index": 0})
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    h, pid = add_on_send(c, "Z3h", x, a, "gainTester", gain_db=-12.0)
+    settle(c)
+    c.send("project.save")
+    path = out("Z3h/project.objekat")
+    d = json.load(open(path))
+    ox = find_obj(d["items"], x)
+    bins = [p_ for p_ in ox["plugins"] if "fxBlock" in p_]
+    mks = [p_ for p_ in ox["plugins"] if "sendMarker" in p_]
+    check("Z3h file: the trunk holds one bin and one marker to move", len(bins) == 1 and len(mks) == 1, [list(p_.keys()) for p_ in ox["plugins"]])
+    if len(bins) == 1 and len(mks) == 1:
+        sd = [s_ for s_ in ox["sends"] if s_["auxID"].lower() == a.lower()][0]
+        sd["plugins"][0]["linkGroupID"] = "11111111-2222-4333-8444-555555555555"
+        sd["plugins"] = [mks[0], sd["plugins"][0], bins[0]]
+        ox["plugins"] = [p_ for p_ in ox["plugins"] if "fxBlock" not in p_ and "sendMarker" not in p_]
+        ox["sends"] = [s_ for s_ in ox["sends"] if s_["auxID"].lower() == a.lower()]
+        json.dump(d, open(path, "w"), indent=1)
+        log0 = app_log_lines()
+        r = step("Z3h: the hand-written file opens (no crash)", lambda: c.send("project.open", {"path": path}))
+        wait(c)
+        settle(c)
+        ids = send_plugins3(c, x, a)
+        lst = c.send("plugin.list", {"host": send_host(c, x, a)})["plugins"]
+        check("Z3h: the send keeps its ONE leaf (same id); the bin and the marker are dropped", ids == [pid], (ids, lst))
+        check("Z3h: the leaf is no longer linked", all(not p_.get("linked") for p_ in lst), lst)
+        now = app_log_lines()
+        if now is not None and log0 is not None:
+            lines = [l for l in now[len(log0):] if "[SENDS]" in l and "dropped from a send's plugins" in l]
+            print("       Z3h: log: %s" % (lines[-1][-110:] if lines else None))
+            check("Z3h: the sanitising is logged (2 entries dropped)", bool(lines) and "2 entry" in lines[-1], lines)
+        db, _ = wet3(c, "Z3h", a)
+        near("Z3h: the wet goes through the leaf", db, -12.0)
+        audits3(c, "Z3h")
+
+
+# --------------------------------------------------------------------------------------------------
+# C3 — copies: every copy has its own mini-chain, fresh ids, never linked
+# --------------------------------------------------------------------------------------------------
+
+def section_C3(c):
+    print("\n--- C3  duplicate, copy / paste, split of the sender, split of the aux: independent copies, fresh ids, no link")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    x, a, h, pid = cast3(c, "C3", gain_db=-12.0, level=0.0)
+    if pid is None:
+        return
+    seen = {pid}
+
+    def fresh_copy(label, obj, aux=None):
+        ids = send_plugins3(c, obj, aux or a)
+        ok = len(ids) == 1 and ids[0] not in seen
+        check("C3 %s: the copy has ONE send plugin with a FRESH id" % label, ok, (ids, sorted(seen)))
+        lst = c.send("plugin.list", {"host": send_host(c, obj, aux or a)})["plugins"] if ids else []
+        check("C3 %s: it is not linked" % label, bool(ids) and all(not p_.get("linked") for p_ in lst), lst)
+        if ids:
+            seen.add(ids[0])
+            check("C3 %s: the engine holds its instance" % label, in_engine(c, ids[0]))
+        return ids[0] if ids else None
+
+    # --- duplicate
+    d = c.send("object.duplicate", {"ids": [x]})["ids"]
+    settle(c)
+    dup = d[0] if d else None
+    c.send("object.move", {"id": dup, "lane": 6, "start": 0.0})      # a duplicate lands AFTER its source: bring it under the aux
+    settle(c)
+    dp = fresh_copy("duplicate", dup)
+    audits3(c, "C3 duplicate")
+    db, _ = wet_of(c, "C3_dup", dup, a, others=[x])
+    near("C3 duplicate: its wet (state copied)", db, -12.0)
+    set_gain3(c, pid, -3.0)
+    db, _ = wet_of(c, "C3_orig", x, a, others=[dup])
+    near("C3: the ORIGINAL's plugin changed to -3: its wet", db, -3.0)
+    db, _ = wet_of(c, "C3_dup2", dup, a, others=[x])
+    near("C3: ... the duplicate's wet does NOT follow", db, -12.0)
+
+    # --- copy / paste (the live state travels: -3)
+    c.send("selection.set", {"ids": [x]})
+    c.send("clipboard.copy", {})
+    c.send("timesel.set", {"start": 0.0, "end": 3.0, "lane": 4, "lane_count": 1})
+    pasted = c.send("clipboard.paste", {})["ids"]
+    settle(c)
+    pst = pasted[0] if pasted else None
+    check("C3 paste: one object pasted", len(pasted) == 1, pasted)
+    fresh_copy("paste", pst)
+    audits3(c, "C3 paste")
+    db, _ = wet_of(c, "C3_paste", pst, a, others=[x, dup])
+    near("C3 paste: its wet (the state at the copy: -3)", db, -3.0)
+    set_gain3(c, pid, -12.0)
+    db, _ = wet_of(c, "C3_paste2", pst, a, others=[x, dup])
+    near("C3: the original changed back to -12: the pasted copy does NOT follow", db, -3.0)
+    db, _ = wet_of(c, "C3_orig2", x, a, others=[dup, pst])
+    near("C3: ... and the original's wet", db, -12.0)
+
+    # --- split of the sender, at 0.5 s: the impulse (1 s) is in the RIGHT half, which is the new object
+    pieces = c.send("object.split_at", {"seconds": 0.5, "ids": [x]})["ids"]
+    settle(c)
+    right = [i for i in pieces if i != x]
+    check("C3 cut: two pieces, the left one keeps the object's id", len(pieces) == 2 and len(right) == 1, pieces)
+    rt = right[0] if right else None
+    check("C3 cut: the left half keeps the original plugin", send_plugins3(c, x, a) == [pid], send_plugins3(c, x, a))
+    rp = fresh_copy("cut, right half", rt)
+    audits3(c, "C3 cut")
+    db, _ = wet_of(c, "C3_right", rt, a, others=[x, dup, pst])
+    near("C3 cut: the right half's wet", db, -12.0)
+    set_gain3(c, pid, -30.0)
+    db, _ = wet_of(c, "C3_right2", rt, a, others=[x, dup, pst])
+    near("C3 cut: the left half's plugin changed: the right half does NOT follow", db, -12.0)
+
+    # --- split of the aux: every sender gets a send to the new half, with its own copies
+    halves = c.send("object.split_at", {"seconds": 1.5, "ids": [a]})["ids"]
+    settle(c)
+    nb = [i for i in halves if i != a]
+    check("C3 aux cut: two halves", len(halves) == 2 and len(nb) == 1, halves)
+    if nb:
+        b = nb[0]
+        for label, obj in (("duplicate", dup), ("pasted", pst), ("right half", rt)):
+            fresh_copy("aux cut, %s -> new half" % label, obj, aux=b)
+        m = audits3(c, "C3 aux cut")
+        print("       C3: send plugins in the project: %s (all distinct: %s)" % (m.get("send_plugins"), len(seen)))
+        db, _ = wet_of(c, "C3_auxcut", rt, a, others=[x, dup, pst])
+        near("C3 aux cut: the wet into the first half (the impulse is at 1 s) is unchanged", db, -12.0)
+    print("       C3: the alt-drag copy of an OBJECT has no API door: not run here (object.duplicate takes the same copy path)")
+
+
+# --------------------------------------------------------------------------------------------------
+# R3 — retarget and position: the plugins, their state and their instances follow
+# --------------------------------------------------------------------------------------------------
+
+def section_R3(c):
+    print("\n--- R3  send.retarget and send.set_position keep the plugins, their LIVE state and their instances")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    x, a, h, pid = cast3(c, "R3", gain_db=-12.0, level=-6.0)
+    if pid is None:
+        return
+    b = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    settle(c)
+    set_gain3(c, pid, -9.0)                   # live only: the model still says -12
+    db, _ = wet3(c, "R3_a", a)
+    near("R3: before: the wet into A (plugin -9 live, level -6)", db, -15.0)
+    inst0 = send_instance(c, x, a)
+    r = c.send("send.retarget", {"id": x, "aux": a, "to": b})
+    settle(c)
+    row = send_entry(c, x, b) or {}
+    check("R3 retarget: the send to B carries the plugin (same id), the level", [p_["id"] for p_ in row.get("plugins", [])] == [pid]
+          and row.get("level_db") == -6 and send_entry(c, x, a) is None, (row, r))
+    inst1 = send_instance(c, x, b)
+    print("       R3 retarget: engine send instance before %s, after %s" % (inst0, inst1))
+    check("R3 retarget: the engine's send plugin is the SAME object (re-keyed in place)", inst0 is not None and inst0 == inst1, (inst0, inst1))
+    check("R3 retarget: the plugin's instance is still the engine's", in_engine(c, pid))
+    db, _ = wet3(c, "R3_b", b)
+    near("R3 retarget: the wet arrives in B with the LIVE state (not re-instantiated from the model's -12)", db, -15.0)
+    _, wa = wet3(c, "R3_a2", a)
+    check("R3 retarget: nothing reaches A any more", maxabs(wa) == 0.0, maxabs(wa))
+    audits3(c, "R3 retarget")
+    c.send("edit.undo", {})          # the mutes of the measures are undo points: undo back to the retarget
+    for _ in range(12):
+        if send_entry(c, x, a) is not None:
+            break
+        c.send("edit.undo", {})
+    settle(c)
+    row = send_entry(c, x, a) or {}
+    check("R3 retarget undone: the send is back on A with its plugin", [p_["id"] for p_ in row.get("plugins", [])] == [pid], row)
+    audits3(c, "R3 retarget undone")
+
+    # --- the four positions, against Q2's table minus the plugin's gain
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "R3pos")
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    h, pid = add_on_send(c, "R3pos", x, a, "gainTester", gain_db=-12.0)
+    if pid is None:
+        return
+    set_gain3(c, pid, -9.0)
+    inst0 = send_instance(c, x, a)
+    for name, prm, expect in (("post", {"position": "post_fader"}, -41.0), ("input", {"position": "input"}, 0.0),
+                              ("chain0", {"position": "chain", "index": 0}, -6.0), ("chain1", {"position": "chain", "index": 1}, -18.0),
+                              ("pre", {"position": "pre_fader"}, -21.0), ("post again", {"position": "post_fader"}, -41.0)):
+        c.send("send.set_position", dict({"id": x, "aux": a}, **prm))
+        settle(c)
+        check("R3 %s: the plugin stays on the send, same id" % name, send_plugins3(c, x, a) == [pid], send_plugins3(c, x, a))
+        check("R3 %s: same engine send instance" % name, send_instance(c, x, a) == inst0, (send_instance(c, x, a), inst0))
+        db, _ = wet3(c, "R3pos_" + name.replace(" ", "_"), a)
+        near("R3 %s: the wet = Q2's %.0f dB + the plugin's LIVE -9" % (name, expect), db, expect - 9.0)
+        audits3(c, "R3 " + name)
+
+
+# --------------------------------------------------------------------------------------------------
+# T3 — window and tails (A.e, Q-U18): an effect on a send stops with the object
+# --------------------------------------------------------------------------------------------------
+
+def section_T3(c):
+    print("\n--- T3  a delay ON a send: its echoes stop with the object; nothing is sent from outside the window")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    # (The plan's `latencyTester` cannot show a tail: its delay is DECLARED, hence compensated. The
+    # engine's built-in Delay is used instead: 200 ms, 50 % wet, feedback -6 dB.)
+    for pos in ("post_fader", "input"):
+        name = "T3_" + pos
+        pipeline_offset_db(c)
+        x, a = cast_siblings(c, name)
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, 0.0)
+        set_position(c, x, a, pos)
+        h = need_host(c, name, x, a)
+        r = step(name + ": the built-in Delay is laid on the send", lambda: c.send("plugin.add", {"host": h, "identifier": "delay"}))
+        dl = ((r or {}).get("plugin") or {}).get("id")
+        if dl is None:
+            continue
+        settle(c)
+        c.send("debug.set_plugin_property", {"plugin": dl, "property": "length", "value": 200.0})
+        c.send("plugin.set_param", {"plugin": dl, "index": 1, "value": 0.5})
+        settle(c)
+        _, w = wet3(c, name + "_whole", a)
+        direct, echo1, echo2 = seg_peak_db(w, 0.95, 1.05), seg_peak_db(w, 1.15, 1.25), seg_peak_db(w, 1.35, 1.45)
+        print("       %s whole object: direct %.1f dBFS, echo at 1.2 s %.1f, at 1.4 s %.1f" % (name, direct, echo1, echo2))
+        check(name + ": whole object (3 s): the echoes at 1.2 s and 1.4 s are in the wet", echo1 > -40.0 and echo2 > -50.0, (direct, echo1, echo2))
+        # the object ends at 1.1 s: the echo of 1.2 s would ring after it
+        c.send("object.trim", {"id": x, "start": 0.0, "duration": 1.1})
+        settle(c)
+        _, w = wet3(c, name + "_cut", a)
+        direct = seg_peak_db(w, 0.95, 1.05)
+        after = maxabs(seg(w, 1.15, 3.0))
+        edge = maxabs(seg(w, 1.1, 1.15))
+        print("       %s object ending at 1.1 s: direct %.1f dBFS, max in [1.10, 1.15] %.2e, max after 1.15 s %.2e" % (name, direct, edge, after))
+        check(name + ": object ending at 1.1 s: the direct part is still sent", direct > -40.0, direct)
+        check(name + ": ... and NOTHING rings after the object's end (the tail stops with the object)", after <= 1e-6, "%.3e" % after)
+        # the window starts AFTER the impulse: nothing may reach the aux, not even an echo
+        c.send("object.trim", {"id": x, "start": 1.1, "duration": 1.5})
+        settle(c)
+        _, w = wet3(c, name + "_late", a)
+        print("       %s window [1.1, 2.6] (the impulse at 1 s is outside): wet max %.2e" % (name, maxabs(w)))
+        check(name + ": the impulse is outside the window: nothing is sent, no echo of it either", maxabs(w) <= 1e-6, "%.3e" % maxabs(w))
+        audits3(c, name)
+
+
+# --------------------------------------------------------------------------------------------------
+# B3 — consolidate / bake
+# --------------------------------------------------------------------------------------------------
+
+def section_B3(c):
+    print("\n--- B3  consolidate: fold / remove / pre-fader refusal with a plugin on the send; a group's child; un-bake")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+
+    def sends_of(i):
+        try:
+            return c.send("send.list", {"id": i}).get("sends")
+        except ObjekatError:
+            return None
+
+    # --- fold
+    x, a = y2_build(c, "B3fold", {"position": "input"})
+    h, pid = add_on_send(c, "B3 fold", x, a, "gainTester", gain_db=-12.0)
+    if pid is None:
+        return
+    db, _ = wet3(c, "B3fold_before", a)
+    near("B3 fold: before: the input send through its plugin", db, -12.0)
+    refused("B3: consolidate with an input send carrying a plugin, default", lambda: c.send("consolidate.make", {"id": x}))
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x, mid_chain_sends="fold")
+    pl = y2_placement(c, ids0)
+    check("B3 fold: a placement was made", pl is not None, pl)
+    if pl:
+        rows = sends_of(pl) or []
+        check("B3 fold: the placement's send is post-fader and carries the plugin (same id)",
+              len(rows) == 1 and rows[0]["position"] == "post_fader" and [p_["id"] for p_ in rows[0].get("plugins", [])] == [pid], rows)
+        check("B3 fold: the plugin's instance is the engine's", in_engine(c, pid))
+        audits3(c, "B3 fold")
+        db, _ = wet3(c, "B3fold_after", a)
+        near("B3 fold: the wet is the BAKED signal (-6 -12 -3) through the plugin (-12)", db, -33.0)
+
+    # --- remove: the send and its plugin go; undo brings both back
+    x, a = y2_build(c, "B3remove", {"position": "input"})
+    h, pid = add_on_send(c, "B3 remove", x, a, "gainTester", gain_db=-12.0)
+    ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
+    y2_consolidate(c, x, mid_chain_sends="remove")
+    pl = y2_placement(c, ids0)
+    check("B3 remove: a placement was made, with no send", pl is not None and sends_of(pl) == [], (pl, sends_of(pl) if pl else None))
+    check("B3 remove: no engine key is left for the send's plugin", not in_engine(c, pid))
+    m = audits3(c, "B3 remove")
+    check("B3 remove: no send plugin is left in the project", m.get("send_plugins") in (0, [], None), m.get("send_plugins"))
+    n = 0
+    while n < 4 and not (sends_of(x) and (sends_of(x)[0].get("plugins"))):
+        c.send("edit.undo", {})
+        settle(c)
+        n += 1
+    rr = sends_of(x) or []
+    print("       B3 remove: %d undo(s) to get the send back on the clip" % n)
+    check("B3 remove: undone: the send is back at input WITH its plugin (same id)",
+          len(rr) == 1 and rr[0]["position"] == "input" and [p_["id"] for p_ in rr[0].get("plugins", [])] == [pid], rr)
+    audits3(c, "B3 remove undone")
+    db, _ = wet3(c, "B3remove_undone", a)
+    near("B3 remove: undone: the wet", db, -12.0)
+
+    # --- pre-fader: refused, plugin or not
+    x, a = y2_build(c, "B3pre", {"position": "pre_fader"})
+    h, pid = add_on_send(c, "B3 pre", x, a, "gainTester", gain_db=-12.0)
+    before = y2_fingerprint(c, x)
+    for extra in ({}, {"mid_chain_sends": "fold"}, {"mid_chain_sends": "remove"}):
+        try:
+            c.send("consolidate.make", dict({"id": x}, **extra))
+            check("B3 pre %s: refused" % extra, False, "accepted")
+        except ObjekatError as e:
+            check("B3 pre %s: refused pre_fader_send" % extra, e.code == "invalid_state" and e.message.startswith("pre_fader_send"), e)
+    check("B3 pre: nothing changed (fingerprint, the send's plugins included)", y2_fingerprint(c, x) == before)
+
+    # --- a group whose CHILD carries a mini-chain: baked, then un-baked
+    fresh(c, "B3grp")
+    x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    o = with_other(c, lane=1)
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 8})["id"]
+    g = grp(c, [x, o])
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    h, pid = add_on_send(c, "B3 group", x, a, "gainTester", gain_db=-12.0)
+    db0, _ = wet3(c, "B3grp_before", a)
+    near("B3 group: before the bake: the child's wet", db0, -12.0)
+    ids0 = {o_["id"] for o_ in c.send("object.list", {})["objects"]}
+    r = step("B3 group: the group is consolidated", lambda: y2_consolidate(c, g))
+    objs = c.send("object.list", {})["objects"]
+    pl = g if any(o_["id"] == g for o_ in objs) else y2_placement(c, ids0)
+    m = audits3(c, "B3 group baked")
+    dbb, wb = wet3(c, "B3grp_baked", a)
+    print("       B3 group baked: placement %s; wet into the aux %s dB; send plugins in the model: %s"
+          % (pl, dbb, m.get("send_plugins")))
+    r = step("B3 group: consolidate.unmake", lambda: c.send("consolidate.unmake", {"placement": pl}))
+    settle(c)
+    for o_ in c.send("object.list", {})["objects"]:                  # the children of a folded group are not listed
+        if o_.get("kind") == "group":
+            c.send("group.expand", {"id": o_["id"], "expanded": True})
+    wait(c)
+    kids = [o_["id"] for o_ in c.send("object.list", {})["objects"] if o_.get("kind") == "clip"]
+    carriers = [(k, send_plugins3(c, k, a)) for k in kids if send_entry(c, k, a)]
+    print("       B3 group un-baked: senders %s" % carriers)
+    check("B3 group un-baked: ONE child sends to the aux with ONE plugin, a FRESH id",
+          len(carriers) == 1 and len(carriers[0][1]) == 1 and carriers[0][1][0] != pid, carriers)
+    audits3(c, "B3 group un-baked")
+    db1, _ = wet3(c, "B3grp_unbaked", a)
+    near("B3 group un-baked: the wet is as before the bake", db1, -12.0)
+
+
+# --------------------------------------------------------------------------------------------------
+# K3 — a sidechain key on a plugin of a mini-chain
+# --------------------------------------------------------------------------------------------------
+
+def section_K3(c):
+    print("\n--- K3  a keyed plugin ON a send: left = the sent signal, right = the key, aligned to the sample")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    B.make_impulse_left(out("imp_left.wav"))
+
+    def stereo_wet(label, a):
+        on = render_st(c, label + "_on.wav")
+        c.send("object.set_mute", {"ids": [a], "muted": True})
+        settle(c)
+        off = render_st(c, label + "_off.wav")
+        c.send("object.set_mute", {"ids": [a], "muted": False})
+        settle(c)
+        return [sub(on[k], off[k]) for k in range(2)]
+
+    for pos in ("post_fader", "input"):
+        name = "K3_" + pos
+        fresh(c, name)
+        x = c.send("object.add", {"path": out("imp_left.wav"), "lane": 0, "start": 0.0})["id"]
+        k = c.send("object.add", {"path": out("imp.wav"), "lane": 2, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 5})["id"]
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, -12.0)                # the source peaks at 0.9 and the export clips at 1.0: a clipped
+        c.send("object.set_gain", {"ids": [x], "db": -12.0})    # sample subtracts to ZERO and the "peak" slides onto the ripple beside it
+        set_position(c, x, a, pos)
+        h, probe = add_on_send(c, name, x, a, "objKeyProbe")
+        if probe is None:
+            continue
+        src = step(name + ": plugin.sidechain_sources answers on a send host",
+                   lambda: c.send("plugin.sidechain_sources", {"host": h, "plugin": probe}))
+        r = step(name + ": plugin.set_sidechain on the send's plugin", lambda: c.send("plugin.set_sidechain", {"host": h, "plugin": probe, "source": k}))
+        if r is None:
+            continue
+        settle(c)
+        time.sleep(0.4)
+        settle(c)
+
+        def aligned(label):
+            wl, wr = stereo_wet(label, a)
+            il, ir = B.peak_index(wl), B.peak_index(wr)
+            print("       %s: wet peak L (the sent signal) @%s, R (the key) @%s" % (label, il, ir))
+            check("%s: the sent signal is at the source's sample (48000)" % label, il == SR, il)
+            check("%s: the key is there, aligned to the sample" % label, ir is not None and ir == il, (il, ir))
+
+        aligned(name + " nothing anywhere")
+        try:
+            lk = c.send("debug.add_test_plugin", {"host": k, "type": "latencyTester", "latency_ms": 10.0})["plugin"]
+        except ObjekatError as e:
+            check(name + ": a latency on the key source", False, e)
+        settle(c)
+        time.sleep(0.6)
+        settle(c)
+        aligned(name + " key OLDER (10 ms on the source)")
+        try:
+            lm = c.send("debug.add_test_plugin", {"host": h, "type": "latencyTester", "latency_ms": 20.0})["plugin"]
+            c.send("plugin.drop_at", {"from": h, "host": h, "plugin": lm, "series": "root", "at": 0})
+        except ObjekatError as e:
+            check(name + ": a latency in the mini-chain before the probe", False, e)
+        settle(c)
+        time.sleep(0.6)
+        settle(c)
+        check(name + ": the mini-chain is [latency, probe]", send_plugins3(c, x, a)[-1:] == [probe] and len(send_plugins3(c, x, a)) == 2,
+              send_plugins3(c, x, a))
+        aligned(name + " key YOUNGER (20 ms in the mini-chain before the probe)")
+        b = build_of(c)
+        check(name + ": the build converged", b.get("converged") is True, b)
+        audits3(c, name)
+
+
+# --------------------------------------------------------------------------------------------------
+# H3 — addressing: every plugin command on a send host
+# --------------------------------------------------------------------------------------------------
+
+def section_H3(c):
+    print("\n--- H3  a send's mini-chain is a chain host: every plugin.* command, the refusals, an unknown host")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "H3")
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    c.send("send.create", {"id": x, "aux": a2, "position": "post_fader"})          # stays at -inf
+    settle(c)
+    h, h2 = need_host(c, "H3", x, a), need_host(c, "H3 (second send, -inf)", x, a2)
+    if h is None or h2 is None:
+        return
+    check("H3: two sends, two distinct hosts, neither is the object", len({h, h2, x}) == 3, (h, h2))
+    r = step("H3: plugin.add (built-in lowpass) on a send at -inf", lambda: c.send("plugin.add", {"host": h2, "identifier": "lowpass"}))
+    lp2 = ((r or {}).get("plugin") or {}).get("id")
+    settle(c)
+    step("H3: plugin.get_params on it", lambda: c.send("plugin.get_params", {"plugin": lp2}))
+    r = step("H3: plugin.add on the live send", lambda: c.send("plugin.add", {"host": h, "identifier": "lowpass"}))
+    lp = ((r or {}).get("plugin") or {}).get("id")
+    g = c.send("debug.add_test_plugin", {"host": h, "type": "gainTester", "gain_db": -12.0})["plugin"]
+    settle(c)
+    lst = c.send("plugin.list", {"host": h})
+    check("H3 plugin.list: is_send_chain, the sender, the aux, the two plugins in order",
+          lst.get("is_send_chain") is True and lst.get("sender") == x and lst.get("aux") == a
+          and [p_["id"] for p_ in lst["plugins"]] == [lp, g], lst)
+    row = send_entry(c, x, a) or {}
+    check("H3 send.list: chain_host and plugins", row.get("chain_host") == h and [p_["id"] for p_ in row.get("plugins", [])] == [lp, g], row)
+    og = c.send("object.get", {"id": x})
+    check("H3 object.get: plugins_on_sends counts them (3)", og.get("plugins_on_sends") == 3, og.get("plugins_on_sends"))
+    c.send("plugin.set_param", {"plugin": lp, "index": 0, "value": 2000.0})
+    v = c.send("plugin.get_params", {"plugin": lp})["params"][0]["value"]
+    check("H3 plugin.set_param / get_params", abs(v - 2000.0) < 1.0, v)
+    c.send("plugin.toggle", {"host": h, "plugin": lp})
+    settle(c)
+    check("H3 plugin.toggle: the lowpass is bypassed", [p_["enabled"] for p_ in c.send("plugin.list", {"host": h})["plugins"]] == [False, True])
+    db, _ = wet3(c, "H3_toggle", a)
+    near("H3: the lowpass bypassed, the gain active: the wet", db, -12.0)
+    r = c.send("plugin.copy", {"from": h, "to": h2, "plugin": g})
+    settle(c)
+    cp = (r.get("plugins") or [None])[0]
+    check("H3 plugin.copy send -> send: a fresh id on the other send, the source kept",
+          cp not in (None, g) and send_plugins3(c, x, a2) == [lp2, cp] and send_plugins3(c, x, a) == [lp, g], (r, send_plugins3(c, x, a2)))
+    r = c.send("plugin.move", {"from": h2, "to": x, "plugin": cp})
+    settle(c)
+    tk = (r.get("plugins") or [None])[0]
+    check("H3 plugin.move send -> trunk", send_plugins3(c, x, a2) == [lp2] and [p_["id"] for p_ in c.send("plugin.list", {"host": x})["plugins"]] == [tk], r)
+    c.send("plugin.select", {"host": h, "plugins": [lp, g]})
+    sel = c.send("plugin.selection")
+    check("H3 plugin.select / selection on a send host", sel.get("host") == h and sorted(p_["id"] for p_ in sel.get("plugins", [])) == sorted([lp, g]), sel)
+    c.send("plugin.toggle_selected")
+    settle(c)
+    check("H3 plugin.toggle_selected", [p_["enabled"] for p_ in c.send("plugin.list", {"host": h})["plugins"]] in ([True, False], [False, False], [True, True]),
+          c.send("plugin.list", {"host": h})["plugins"])
+    c.send("edit.undo", {})
+    settle(c)
+    c.send("plugin.select", {"host": h, "plugins": [g]})
+    c.send("plugin.duplicate_selected")
+    settle(c)
+    ids = send_plugins3(c, x, a)
+    check("H3 plugin.duplicate_selected: three plugins, the copy right after its source, fresh id, not linked",
+          len(ids) == 3 and ids[:2] == [lp, g] and ids[2] not in (lp, g)
+          and all(not p_.get("linked") for p_ in c.send("plugin.list", {"host": h})["plugins"]), c.send("plugin.list", {"host": h})["plugins"])
+    c.send("plugin.select", {"host": h, "plugins": [g]})
+    c.send("plugin.copy_selected")
+    r = step("H3 plugin.paste on the other send", lambda: c.send("plugin.paste", {"host": h2}))
+    settle(c)
+    check("H3 plugin.paste: the other send holds two plugins", len(send_plugins3(c, x, a2)) == 2, send_plugins3(c, x, a2))
+    c.send("plugin.select", {"host": h, "plugins": [ids[2]]})
+    c.send("plugin.remove_selected")
+    settle(c)
+    check("H3 plugin.remove_selected", send_plugins3(c, x, a) == [lp, g], send_plugins3(c, x, a))
+    c.send("plugin.deselect")
+    c.send("plugin.remove", {"host": h, "plugin": lp})
+    settle(c)
+    check("H3 plugin.remove", send_plugins3(c, x, a) == [g], send_plugins3(c, x, a))
+    audits3(c, "H3 commands")
+
+    # --- refusals
+    g1 = add_test(c, x, "gainTester", gain_db=0.0)["plugin"]
+    g2 = add_test(c, x, "gainTester", gain_db=0.0)["plugin"]
+    settle(c)
+    blk = step("H3: a bin on the trunk", lambda: c.send("fxlink.create", {"host": x, "plugins": [g1, g2], "name": "Bin"}))
+    settle(c)
+    bins = [e for e in c.send("plugin.list", {"host": x})["plugins"] if e.get("is_fx_block")]
+    if bins:
+        r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": bins[0]["id"], "dry_run": True})
+        check("H3: a bin dropped on a send is refused send_chain_leaves_only", r.get("refused") is True and r.get("reason") == "send_chain_leaves_only", r)
+        r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": bins[0]["id"]})
+        check("H3: ... and the real drop places nothing", r.get("placed") is False and send_plugins3(c, x, a) == [g], (r, send_plugins3(c, x, a)))
+        r = c.send("plugin.drop_at", {"from": h, "host": x, "plugin": g, "series": {"block": bins[0]["id"]}, "dry_run": True})
+        print("       H3: a send plugin dropped INTO a bin of the trunk: %s" % r)
+    else:
+        check("H3: a bin exists on the trunk", False, c.send("plugin.list", {"host": x}))
+    refused("H3: fxlink.create on a send host", lambda: c.send("fxlink.create", {"host": h, "plugins": [g], "name": "No"}),
+            reason="send_plugins_never_linked")
+    if bins and blk:
+        refused("H3: fxlink.attach on a send host", lambda: c.send("fxlink.attach", {"link": blk["id"], "host": h}),
+                reason="send_plugins_never_linked")
+    check("H3: the send's chain is untouched by the refusals", send_plugins3(c, x, a) == [g], send_plugins3(c, x, a))
+    refused("H3: plugin.link from a send", lambda: c.send("plugin.link", {"from": h, "to": x, "plugin": g}), reason="send_plugins_never_linked")
+    refused("H3: plugin.link to a send", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": tk}), reason="send_plugins_never_linked")
+    ghost = "00000000-0000-4000-8000-00000000BEEF"
+    for cmd, prm in (("plugin.list", {"host": ghost}), ("plugin.add", {"host": ghost, "identifier": "lowpass"}),
+                     ("plugin.move", {"from": h, "to": ghost, "plugin": g}), ("plugin.copy", {"from": h, "to": ghost, "plugin": g}),
+                     ("debug.add_test_plugin", {"host": ghost, "type": "gainTester"})):
+        refused("H3: %s with an unknown host" % cmd, lambda: c.send(cmd, prm), code="not_found")
+    # a removed send: its host is gone
+    c.send("send.remove", {"id": x, "aux": a2})
+    settle(c)
+    refused("H3: plugin.list on the host of a removed send", lambda: c.send("plugin.list", {"host": h2}), code="not_found")
+    m = audits3(c, "H3 end")
+    check("H3 end: the linked list of the audit is empty and the bin's members are the trunk's only", m.get("linked_send_plugins") == [], m)
+
+
 def wav_data(path):
     """The raw bytes of a WAV's `data` chunk (the header carries a date: files are never compared whole)."""
     with open(path, "rb") as f:
@@ -2776,6 +3853,9 @@ with ObjekatClient(SOCK) as c:
                     ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2), ("RT2", section_RT2),
                     ("Z2", section_Z2), ("PF", section_PF),
                     ("A3", section_A3), ("L3", section_L3), ("O3", section_O3),
+                    ("G3", section_G3), ("M3", section_M3), ("X3", section_X3), ("U3", section_U3),
+                    ("Z3", section_Z3), ("C3", section_C3), ("R3", section_R3), ("T3", section_T3),
+                    ("B3", section_B3), ("K3", section_K3), ("H3", section_H3),
                     ("P3", section_P3),
                     ("T2REF", section_T2REF)):
         if want(sec):
