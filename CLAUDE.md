@@ -38,7 +38,7 @@ unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6
 An engine series of **37** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0038` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). `0037`, the audio bridge, came in with the sidechain merge of 6 October 2026 (see its
-entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); `0038` (the ARA source, see its entry below) followed it; **`0039` (sends on the audio bridge) exists on the branch `feature/sends-inc1-scope`, not yet on `main`, and the next one after it will be `0040`** (so the series is 38 patches once `0039` is merged). (`0035` and `0036`, the FX link state fixes of
+entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); `0038` (the ARA source, see its entry below) followed it; **`0039` (sends on the audio bridge) exists on the branch `feature/sends-inc1-scope`, not yet on `main`, and the next one after it will be `0040`** (INC 2 adds no engine patch) (so the series is 38 patches once `0039` is merged). (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2529,6 +2529,34 @@ What has landed since mid-August, in order:
   one rebuild. **NOT heard / seen:** the wires and the greyed rows on screen, the group mute by ear, the Q8 automation
   curve by ear (procedure in `plan_sends_rework.md` C.5).
 
+- **A positionable send, and the send card — INC 2 of the sends rework** (9-10 October 2026, branch
+  `feature/sends-inc2-position`, stacked on `feature/sends-inc1-scope`, **nothing merged, nothing pushed, no engine
+  patch**: `0039` stays the last one, the next free number is `0040`). A send taps its sender at `input`, in the
+  `chain` (between two plugins of the trunk), `pre_fader` or `post_fader` (default). Session format **22**. The
+  pre-bridge send path (`ObjAuxSendPlugin`, `OBJ_SENDS_LEGACY`) is DELETED. Authority: `docs/plan_sends_rework.md`
+  D.1 (design, steps 2.0-2.12, journal with every deviation); decisions: `architecture_decisions.md`; API:
+  `command_api.md` (`send.create`, `send.set_position`, `send.retarget`, `consolidate.make` `mid_chain_sends`).
+  **Permanent point: the trunk position is a MARKER, not a plugin.** `SendMarker {auxID}` is a third container kind of
+  `ObjectPlugin` (`isContainer`, no child series, no plugin identity, top level only); it is NOT an engine plugin.
+  Any hand-rolled walk of a chain (`if rack ... else if fxBlock ... else LEAF`) that rebuilds an `ObjectPlugin`
+  field by field MUST keep or deliberately drop the marker with its send, or the marker comes back as an EMPTY plugin
+  (`debug.send_marker_audit` reports it as `phantom`). The engine places each send in ONE function
+  (`applySendPositionsForKey:`). `chain(i)` counts top-level NON-marker entries. A send before the fader follows the
+  sender's window and fades (envelope on the node's COPY of the signal) but not its volume or pan; a sender silenced by
+  mute, solo or a stem mute feeds no aux wherever it taps (Q-U12). Consolidating asks about the sends that tap
+  `input` or inside the chain (fold to post-fader / delete / cancel; `mid_chain_sends` on the API, default refuse).
+  The engine plugin list holds 20 entries: 16 user plugins without a send, 15 with one (`chainFull` refusal, no more
+  silent absence). UI: every outgoing send is a card in a column beside the trunk of the signal view (drag to move,
+  "Send to..." menu, "+" in the post-fader slot, "Change target...", timeline "choose an object" mode = `RoutePick`).
+  **Measured (Debug, headless, WITH audio):** `scenario_bridge_sends.py` sections Q2 R2 V2 K2 S2 T2 U2 W2 (212 checks)
+  X2 Y2 RT2 (42) on top of A to T; position proof: the wet equals the sum of the gains upstream of the tap; undo / redo
+  of a move patched in place (0 rebuilt, 1 patched); a post-fader send's export equals INC 1's bit for bit. Pure tests:
+  `test_send_position` 83, `test_send_bake_policy`, `test_synoptic_send_cards` 71, `test_send_drop` 21,
+  `test_send_target_menu` 14. **NOT seen, NOT heard:** the cards, the drag, the insertion bands, the menus and the
+  cursors on screen; the 50 ms gate ramp of a muted sender by ear; the pre-fader wet by ear. **Open decision:** a
+  pre-fader send's wet changes at consolidate by the clip's fader (-21 to -41 dB with a -20 dB fader), the plan
+  said it would not.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been
@@ -2562,6 +2590,9 @@ a second one elsewhere. The most exposed points:
   Accepted costs: the wet of an aux OUTSIDE the sender's group does not obey that group's fader, FX or
   fades (the tap is upstream of them) but does obey its MUTE; the wet leaves its stem, so "Σ stems = mix"
   assumes the Main is delivered as a stem.
+- **A send's position is part of its identity** (sends rework, INC 2 - see its entry): moving a send, retargeting it,
+  copying or deleting its sender all carry the position and the marker with it; a send never changes position by a
+  scope change. A sender silenced by mute / solo / a stem mute feeds no aux whatever its position.
 - Sends that are refused (another stem, a scheduling loop between two groups, a group to an aux it
   contains) stay in the model, silent, shown inactive with their reason. Nothing is deleted by a scope
   change; only a send whose aux was deleted is purged (with its automation, in the same undo point).

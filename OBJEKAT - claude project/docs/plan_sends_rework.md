@@ -1330,6 +1330,71 @@ families 261, fxlink ALL PASS, consolidate ALL PASS, plugin_selection 58, cross_
 
 Totals: 33 lines construct an `ObjectPlugin(` in the app (tools tests excluded). Field-by-field COPIES of an existing entry that can meet a marker: `copiedPlugins` (`copyLeaf`, the rack branch), `CrossProjectImport` (`cloneLeaf`, the rack branch), `Bake.freshPlugins` — these are the constructions to teach; every other one is built from a catalogue entry, from a selected leaf, from an instrument, or is a container. The pure test per family in 2.2 proves each row.
 
+#### 2.1 to 2.12 — what was done, commit by commit (all local, nothing pushed, no engine patch)
+
+| Step | Commit | What it is | Proof actually run |
+|---|---|---|---|
+| 2.0 | `a2ec19b1`, `a379786e` | legacy deleted; inventory; `chainFull` refusal | above |
+| 2.1 | `51695ae3` | model: `SendTapPoint`, `AuxSend.tap`, `SendMarker`, `sendPosition` / `settingSendPosition` / `sanitisingSends`, format 22 | `test_send_position.swift` 55 at the commit (83 at the end of INC 2) |
+| 2.2 | `ef6bce72` | the chain walks taught the marker, family by family; `debug.send_marker_audit` (model half) | `test_send_position` 70, `test_cross_project_import` 51 |
+| 2.3 | `2345708b` | the engine places each send (`applySendPositionsForKey:`), `send.create` / `send.set_position`, sections Q2 R2 V2 K2 | measured in the table below |
+| 2.4 | `71cc3c35` | pre-fader / in-chain / input sends follow the window and fades (envelope on the copy) | sections S2 and T2 (+ T2REF on the INC 1 app) |
+| 2.5 | `55659120` | a silenced sender feeds no aux wherever its send taps (Q-U12) | section U2 |
+| 2.6 | `09d9f6a6` | duplicate, cut, paste, group, cross-project keep position, marker and wet | section W2, 212 checks, 0 failed (no code fix needed) |
+| 2.7 | `6dc4e6f9` | undo / redo of a position is PATCHED in place | section X2: five moves, five undos, five redos, each "0 rebuilt, 1 patched" |
+| 2.8 | `67f26c24` | consolidating asks about mid-chain sends (Q-U6): `SendBakePolicy`, alert, `mid_chain_sends` | section Y2, `test_send_bake_policy.swift` |
+| 2.9 | `fd536202` (+`ff2fdbc5`) | signal view: every outgoing send is a card in a side column | `test_synoptic_send_cards.swift` 71, `test_synoptic_fxblock.swift` 246 (unchanged) |
+| 2.10 | `bbbbb9e4` | drag a card to move it (insertion points and the three fixed slots; refusals with their line) | `test_send_drop.swift` 21 |
+| 2.11 | `83a26886` | "Send to..." (pure builder + NSMenu), "+" button, `RoutePick`, "Change target...", `send.retarget` | `test_send_target_menu.swift` 14; section RT2 42 / 0; `scenario_sidechain` 55 / 0 |
+| 2.12 | this commit | docs | `xcstrings.py check` 685 keys, nothing missing; orphans none |
+
+**Measured values that differ from the plan's expectations**
+
+- R2 (the marker keeps its array place, the wet of a position stacked on measuring gains): the wet reads -19, -12 and 0 dB
+  at the three tested places, not the plan's round figures; each equals the sum of the gains UPSTREAM of the tap, which is
+  the property the section asserts (the plan's figures were illustrative). A constant -0.733 dB pipeline offset is present
+  in every reading of the bridge (same on INC 1).
+- T2REF: a post-fader send's export equals the INC 1 build's bit for bit (the reference was rendered with `--only T2REF` on
+  the INC 1 app, the INC 2 build compared to it): the default position changed nothing.
+- RT2: wet -18.000 dB at the old and at the new aux after a retarget; the "Send to..." menu tiers are [0, 2] on the fixture
+  (same group, the Main).
+
+**Deviations from the plan and why**
+
+1. **Cards in a side column, not stacked on the trunk axis.** The plan said "a card per send on the axis"; with four
+   anchors and N cards the axis has no room, and a send is a branch, not a step. The column is to the right of the
+   trunk at `columnX = margin + contentW + sendColumnGap`, packed top to bottom without overlap, wired to the anchor.
+2. **No `.send` node kind in `SynopticNode`.** Sends are passed to `SynopticLayout.diagram` beside the nodes
+   (`SynopticSend`, `SynopticSendSlot`), because a send is not a node of the series tree: it is a branch hung on it.
+3. **The trunk "+" entry is a right-click context menu**, "Send to... (taken here)", only for the root series. A left-click
+   "+" already opens the plugin picker; overloading it was worse. The user's Q-U14 hypothesis said "an entry in the + of
+   each trunk insertion point": the entry is there, through the secondary click.
+4. **The "Send to..." menu is an imperative `NSMenu` built at the click** (`SendTargetMenuPresenter`), because a SwiftUI
+   `Menu` evaluates its content eagerly and the candidate list is not free on a big project. The builder
+   (`SendTargetMenu`) is pure and tested.
+5. **The slot drop bands overlap the card column**, cards on top. Needs the eye.
+6. **Slot drops inside an FX group** are disabled on a closed consolidated object (its chain is a wave).
+7. **Two debug doors added**: `debug.route_pick`, `debug.send_target_menu` (the pick and the menu could not be driven
+   headless otherwise). `send.create` / `send.set_position` exist from 2.3.
+8. **Fold costs an extra undo point**: on the clip path a consolidate with "fold" takes three undos to come back
+   (the fold point, then the bake's own two). Accepted: the fold is a deliberate, separate edit.
+9. **`rackSpec` marker token** is `{kind: "send", aux}` (the plan said "nothing for now" in 2.2; 2.3 gave the compile an
+   ordering token so the engine knows the root order).
+10. **Cap**: the engine list holds 20 entries; every send costs one slot whatever its position, and a marker costs none (it is not an engine entry).
+
+**Findings to decide (not fixed on purpose)**
+
+- **Pre-fader and the consolidate fader.** The plan says a pre-fader send's wet is unchanged by a consolidate. Measured:
+  it is only true when the clip's fader is at 0 dB. With the fader at -20 dB the wet goes -21 -> -41 dB, (cause not
+  investigated further; the likely reading is that the bake renders the clip's fader into the wave, so a "pre-fader" send of
+  the instance taps a signal that is already faded). Needs a decision (fold the fader out of the bake? warn?). Not changed.
+- `tab.new` empties the clipboard (observed in W2); a paste after a new tab finds nothing. Pre-existing.
+- `pruneOrphanSends` does not trigger a chain recompile when the marker of a deleted send disappears: harmless
+  (the next sync fixes it), noted.
+
+**Not verified** (and why): the 50 ms gate-ramp "no click" claim of U2 (a ramp, not heard); every signal-view drag, drop,
+menu, cursor, band and veil (a headless instance has no window); the card's look in three languages; `OBJ_GRAPH_CENSUS`.
+
 ## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-chain`, format 23, engine patch `0040`)
 
 **Steps.**

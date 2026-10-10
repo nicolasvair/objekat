@@ -425,6 +425,12 @@ Checked as still biting: `develop` still had the linear `std::find`.
   container holding only auxes used to produce NO node (`createNodeForContainerClip` returned `{}`):
   it now gets a `SilentNode` as its content. Files: `tracktion_ObjBridgeCore.h`, `tracktion_ObjBridge.*`,
   `tracktion_ObjBridgeNodes.*`, `tracktion_ContainerClipNode.*`, `tracktion_EditNodeBuilder.cpp`.
+  **INC 2 of the sends rework (positionable sends, session format 22) adds NO patch**: where a send taps is decided by
+  the app (`applySendPositionsForKey:` in `OBJEngineCore.mm` moves the engine-only send plugin in the sender's list,
+  the envelope of a pre-fader send is applied by the plugin itself on the node's copy); the fork needed nothing new.
+  The code of `0037` / `0039` that served the deleted pre-bridge path (the `ContainerAuxSend` scan in the aux return)
+  is left in place, DORMANT: it is a type test that no plugin of the app satisfies any more. Removing it is a
+  patch of its own (the next number is `0040`), not worth a fork commit on its own.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

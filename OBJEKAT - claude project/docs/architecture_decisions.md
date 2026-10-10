@@ -717,6 +717,66 @@ filtered by time overlap), same group first, then the rest of the stem, then the
 at -inf. A scheduling loop between two groups is refused, the reason shown. A stem detached from the Main
 still feeds a Main aux.
 
+## A send is positionable, and its place is a MARKER, not a plugin (sends rework, INC 2)
+
+Branch `feature/sends-inc2-position` (stacked on `feature/sends-inc1-scope`, session format 22, no engine
+patch). A send taps its sender's signal at one of four places: `input`, `chain` (between two plugins of the
+trunk), `pre_fader`, `post_fader` (the default, and the INC 1 behaviour). Authority for the numbers:
+`plan_sends_rework.md` D.1.
+
+### Decision: a position is a marker in the chain, and the engine plugin is an anchor it follows
+
+The trunk position is held in the MODEL by a `SendMarker {auxID}` entry in `ObjectPlugin`s (a third container
+kind beside the parallel block and the FX link bin: `isContainer`, no child series, no rack, no plugin identity).
+It is not an engine plugin: the engine's list holds `[channelMode?|instrument?|trimIn|FX...|trimOut|fader|
+ObjWindowFade|sends...]` and the one place that decides where a send plugin sits is
+`applySendPositionsForKey:` (OBJEngineCore), told a position code per send (0 post, 1 pre, 2 input, 3 chain).
+Why a marker and not a field on the neighbouring plugin ("after plugin X"): a marker rides every transformation of
+the array (drag, delete a neighbour, copy, split, group, undo) for free, where an id reference dangles the day
+the neighbour is deleted or re-keyed; and the array order IS the signal order the user sees. The price is that
+every hand-rolled walk of a chain must be taught the marker (inventory in the plan, 2.0; `SendMarkerAudit` is the
+net that reports an orphan, a duplicate, a nested one or one rebuilt as a phantom plugin).
+`AuxSend.tap` (`SendTapPoint`) says the three fixed slots; a marker wins over `tap`; `chain(i)` counts top-level
+non-marker entries; `sanitisingSends()` makes the pair consistent at load and after a delete. `tap` is encoded only
+when it is not post-fader, so a format-21 object re-encodes without the new keys. A marker is top-level only: never
+inside a parallel block or a bin (the bins split around it; it is not FX-link eligible).
+
+### Decision: one owner for the position, and the envelope goes on the COPY
+
+The position is decided in ONE place on each side (Swift `setSendPosition` / `SendPosition`; engine
+`applySendPositionsForKey:`); a plugin is moved only when it is not where it should be, so a re-sync is free.
+A send that taps before the fader must follow the sender's window and fades (Q-U5) but not its volume or pan: the
+`ObjBridgeSendPlugin` gets an envelope source (`ObjWindowFadePlugin::applyEnvelope`, the same function, the same
+sample rounding) and applies it to the node's COPY of the signal before the level; the direct signal is never
+written. A rebuilt chain tail re-arms it. A sender silenced by mute, solo or a stem mute feeds no aux whatever its
+tap (Q-U12): the mute is a -96 dB push onto the fader, which sits downstream of a non-post-fader tap, so
+`sendIsGated` also fires for the sender itself.
+
+### Decision: consolidating asks about the sends that tap inside the chain (Q-U6)
+
+A bake renders the chain: a send at `input` or in the chain would be silently destroyed. `SendBakePolicy` (pure)
+names the concerned sends; the hand gets an alert (Fold to post-fader / Delete / Cancel), the API a
+`mid_chain_sends` parameter (`refuse` by default). Fold and delete are an undo point of their own, taken before the
+first mutation. Pre- and post-fader sends are not concerned.
+
+### Decision: every outgoing send is a card in the signal view, in a side column
+
+Q-U7/Q-U13: the signal view draws only EXISTING sends as cards; the others are reached by "Send to..." (a menu at
+a trunk insertion point, a "+" button in the post-fader slot, the timeline's "choose an object" mode). The cards
+sit in a column to the right of the trunk (not stacked on the axis: three positions plus N cards would otherwise
+fight for the trunk's vertical room), each wired to its anchor (input wire, a root insertion point, the pre-fader
+wire, the post-fader wire). Layout is a pure function (`SynopticLayout`, tested), cards packed top to bottom
+without overlap. A move is a drag of the card onto an insertion point or one of the three fixed slots; the
+decision table is pure (`SendDrop`) and feeds the cursor, the band and the drop through the same
+`PluginDropOutcome`. A card whose aux no longer overlaps in time stays, greyed with the reason (Q-U15). "Change
+target..." re-aims a card (`send.retarget`: level, switch, position, marker, curve all move).
+
+### Decision: the timeline's pick mode is a `RoutePick`, the sidechain pick being one case
+
+The "choose an object" mode (sidechain source) became `RoutePick { sidechain, send }`, stored on the view-model;
+`sidechainPick` is a computed shim so the sidechain strip did not move. The timeline's readers (tap, Esc, hover
+veil, HUD) switch on the case. One mode, one place that arms it, one that ends it.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

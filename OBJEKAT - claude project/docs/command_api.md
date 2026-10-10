@@ -800,19 +800,42 @@ make to an aux OUTSIDE that group; the group's fader, FX and fades do not act on
 
 | | |
 |---|---|
-| `send.list` | `id` → `{sends: [{aux, level_db, enabled, routed, status, refusal, automated}], reachable_auxes, available_auxes}`. `status` is `off` (not alive: disabled or at -inf with no curve), `active` (the bridge lays it) or `refused`; `refusal` is the raw reason when refused (`outOfStem`, `hostNotAux`, `ancestorSource`, `selfSource`, `auxSource`, `stemSource`, `mainSource`, `cycle`, `unknownSource`, `unknownHost`). `routed` = `status == active`. `reachable_auxes` = the static rule (any time); `available_auxes` = what the tools offer (reachable AND overlapping in time), ordered same group, then rest of the stem, then the Main |
+| `send.list` | `id` → `{sends: [{aux, level_db, enabled, routed, status, refusal, automated, position, index, after_plugin, before_plugin, follows_window}], reachable_auxes, available_auxes}`. `status` is `off` (not alive: disabled or at -inf with no curve), `active` (the bridge lays it) or `refused`; `refusal` is the raw reason when refused (`outOfStem`, `hostNotAux`, `ancestorSource`, `selfSource`, `auxSource`, `stemSource`, `mainSource`, `cycle`, `unknownSource`, `unknownHost`). `routed` = `status == active`. `reachable_auxes` = the static rule (any time); `available_auxes` = what the tools offer (reachable AND overlapping in time), ordered same group, then rest of the stem, then the Main | **Position (INC 2).** `position` is `input` / `chain` / `pre_fader` / `post_fader`; for `chain`, `index` is the number of top-level plugins before the send and `after_plugin` / `before_plugin` name its two neighbours (null at an end); `follows_window` is true when the send taps before the fader (it then follows the sender's window and fades, not its volume or pan). `refusal` may now also be `chainFull` (the engine's plugin list holds 20 entries: 16 user plugins without a send, 15 with one).|
 | `send.candidates` | `id` → `{candidates: [{aux, name, group_path, stem, overlaps, refusal}]}` — every aux of the project seen from the sender; `refusal` null = a send would be accepted now (a scheduling loop with the keys already laid included) |
 | `send.remove` | `id` + `aux` → deletes the entry and its automation lane (one undo step). There was no other way to take an entry out of the model |
+| `send.create` | `id` + `aux` [+ `position`, `index` / `before_plugin` / `after_plugin`] → creates a send at -inf (silent; raise it with `send.set_level`), already at the requested position (default `post_fader`). Refused like the hand refuses it (`invalid_state`, `send refused: <reason>`: scope, loop, stem, an aux does not send). One send per (object, aux): an existing one is MOVED, not duplicated. Answers `level_db` and the position fields of `send.list`. One undo step |
+| `send.set_position` | `id` + `aux` + `position` (`input` / `chain` / `pre_fader` / `post_fader`) [+ `index` — before the i-th top-level plugin, clamped past the end — or `before_plugin` / `after_plugin` = a top-level plugin id]. `chain` is the place BETWEEN two plugins of the trunk; `before_plugin` / `after_plugin` must name a TOP-LEVEL plugin of the chain (`not_found` otherwise: the marker rides at the top level, never inside a parallel block or an FX link bin); `chain` needs one of `index` / `before_plugin` / `after_plugin` (`bad_params`). `not_found` when no send exists. One undo step; undo and redo of the move are PATCHED in place (no rebuild, the plugin instances stay) |
+| `send.retarget` | `id` + `aux` + `to` → re-aims the send at another aux (the card's "Change target..."): same level, switch, position (marker included), automation lane and touch order. Refused with the reason when the sender has no send to `aux` (`not_found`), when `to` is not an aux, when `to` already has a send from this object, or when the scope / the plan refuses it (`invalid_state`) |
 | `send.set_level` / `send.adjust_level` / `send.enable` | unchanged contracts. `set_level` and `enable` are the machine's doors: they store a send even when it is refused (it stays in the model, silent, `status: refused`); the HAND's doors (the Aux tool, the signal view's rows, the inspector) beep and lay nothing |
 
 A send created by a hand starts at -inf. A send whose aux is deleted is purged with its automation, in the
 same undo point (and at load). An older session opens with its sends exactly as they were: the ones once
 silent because out of scope now SOUND (nothing is disabled at migration).
 
-DEBUG: `debug.bridge_report` also answers `sends_path` (`"bridge"`, or `"legacy"` under the environment
-variable `OBJ_SENDS_LEGACY=1`, read once at launch — the old plugin path, kept for INC 1 only as the null
-test's oracle), and `model.send_routes` / `model.send_refused`. In `engine.readers`, a send's reader has
-`consumer: "auxInput"` and carries `aux` and the group's `declared` latency.
+DEBUG: `debug.bridge_report` also answers `sends_path` (always `"bridge"` since INC 2: the pre-bridge path and
+`OBJ_SENDS_LEGACY` were deleted), and `model.send_routes` / `model.send_refused`. In `engine.readers`, a send's
+reader has `consumer: "auxInput"` and carries `aux` and the group's `declared` latency; `engine.sends` lists, per laid send, `sender`, `aux`, `list_index` (its place in the sender's engine list),
+`tap_position` (0 post-fader, 1 pre-fader, 2 input, 3 in the chain), `follows_envelope` and `age_samples` (the tap's age).
+
+**Position of a send (INC 2).** A send taps where its position says: `input` (before the chain, after the
+instrument of a MIDI object), `chain` (between two plugins of the trunk, held in the model by a MARKER entry,
+`sendMarker`, that has no plugin identity and is not an engine plugin), `pre_fader` (after the chain, before the
+fader) or `post_fader` (the default, the INC 1 behaviour). A send that taps before the fader carries the sender's
+window and fades but NOT its volume or pan, and it is silent whenever the sender itself is (mute, a solo elsewhere,
+a stem mute): the mute sits downstream of such a tap. In `plugin.list` / `plugin.add` answers, a marker is not counted
+and not listed; `pluginCount` counts plugins only. `consolidate.make` takes `mid_chain_sends`
+(`refuse` default | `fold` | `remove`): the sends that tap `input` or `chain` would be destroyed by the bake, so
+`refuse` fails with `invalid_state` and lists them, `fold` puts them back to post-fader, `remove` deletes them
+(entry, marker, curve) — both as one undo point of their own, taken before the bake.
+
+DEBUG, INC 2: `debug.send_marker_audit {}` -> `{violations, markers, engine_senders_checked, engine_layouts, ok}`
+(model rules: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`; engine rule: the
+index of each laid send plugin against the model; call after `wait_idle`); `debug.set_chain_gain {host, in_db?,
+out_db?}` (a measuring gain on a chain's ends); `debug.add_test_plugin` also takes `gainTester` (+ `gain_db`);
+`debug.send_target_menu {id, retargeting?}` -> the data of the signal view's "Send to..." menu as the pure builder
+makes it (`sections` [{tier, title_key, entries [{aux, name, enabled, reason}]}]); `debug.route_pick {action,...}`
+drives the timeline's "choose an object" mode without a screen (`begin_send` with `id` and a position,
+`refusal`, `commit`, `end`, `state`; the mode is `none` | `sidechain` | `send`).
 
 DEBUG builds add `debug.bridge_report {}` → `{engine, model}`: `engine` is the newest graph build
 (`build` {id, passes, converged, sample_rate, block_size, gate_edges, gate_refused}, `taps` [{tap,
