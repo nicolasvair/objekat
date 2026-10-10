@@ -223,19 +223,52 @@ extension SoundObject {
     /// same point are equivalent, their order is cosmetic). Unchanged if there is no send to `old` or if
     /// `new` already has one. Pure.
     /// `plugins`: the new send's mini-chain — COPIES of the original's, under fresh ids (the caller's
-    /// `copiedSendPlugins`, which reads the live states). nil = a cold copy made here (fresh ids, the
-    /// states the model holds): two sends never share a plugin id. The automation lanes aimed at the
-    /// original's level or plugins are NOT duplicated (the new send starts without curves, as before).
+    /// `copiedSends`, which reads the live states), IN THE ORIGINAL'S ORDER, one for one. nil = a cold
+    /// copy made here (fresh ids, the states the model holds): two sends never share a plugin id.
+    ///
+    /// AUTOMATION: the curves follow the copy (user decision of 10 October 2026 — both halves of a cut
+    /// aux sound the same). The lane of the original's LEVEL (`.send(auxID: old)`) is copied for
+    /// `.send(auxID: new)`, and every lane aimed at one of the original's plugins is copied for the
+    /// plugin that is its copy — the NEW id, never a shared one, never a link (@see SendChain.sanitised).
+    /// The points are the same (they are in the SENDER's time, which a cut of the aux does not move);
+    /// the touch memory lists each copy right after its original. A lane whose plugin has no copy (the
+    /// caller passed a list of another length, or `sanitised` turned the copy away) is not copied.
     func duplicatingSend(from old: UUID, to new: UUID, plugins: [ObjectPlugin]? = nil) -> SoundObject {
         guard old != new, let source = sends.first(where: { $0.auxID == old }),
               !sends.contains(where: { $0.auxID == new }) else { return self }
         var o = self
         var copy = source                 // by value: every field of the send, present and future
         copy.auxID = new
-        copy.plugins = SendChain.sanitised(plugins ?? source.plugins.map { p in var q = p; q.id = UUID(); return q })
+        let fresh = plugins ?? source.plugins.map { p in var q = p; q.id = UUID(); return q }
+        copy.plugins = SendChain.sanitised(fresh)
         o.sends.append(copy)
         if let k = o.plugins.firstIndex(where: { $0.sendMarker?.auxID == old }) {
             o.plugins.insert(ObjectPlugin.makeSendMarker(for: new), at: k + 1)
+        }
+
+        // original plugin id -> its copy's id (by rank; only the copies that survived `sanitised`)
+        var idMap: [UUID: UUID] = [:]
+        if fresh.count == source.plugins.count {
+            let kept = Set(copy.plugins.map(\.id))
+            for (a, b) in zip(source.plugins, fresh) where kept.contains(b.id) && a.id != b.id { idMap[a.id] = b.id }
+        }
+        func twin(_ ref: ParamRef) -> ParamRef? {
+            switch ref {
+            case .send(let a) where a == old:   return .send(auxID: new)
+            case .plugin(let key, let paramID): return idMap[key].map { .plugin(pluginKey: $0, paramID: paramID) }
+            default:                            return nil
+            }
+        }
+        var added: [AutomationLane] = []
+        for lane in o.automation {
+            guard let t = twin(lane.param), !o.automation.contains(where: { $0.param == t }) else { continue }
+            added.append(AutomationLane(param: t, points: lane.points))
+        }
+        o.automation += added
+        let born = Set(added.map(\.param))
+        o.automationTouchOrder = o.automationTouchOrder.flatMap { ref -> [ParamRef] in
+            if let t = twin(ref), born.contains(t) { return [ref, t] }
+            return [ref]
         }
         return o
     }

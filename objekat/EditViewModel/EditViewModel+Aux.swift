@@ -549,7 +549,10 @@ extension EditViewModel {
     /// Copies onto `newAuxID` every send that targeted `origAuxID`: the same level, on/off AND position
     /// (@see SoundObject.duplicatingSend — the send used to be rebuilt field by field here, and came out
     /// post-fader whatever the original's position). Used by the aux split: both halves stay fed by the
-    /// same senders, taken at the same place.
+    /// same senders, taken at the same place, through COPIES of the same plugins, under the same curves
+    /// (the level's and the plugins' — @see SoundObject.duplicatingSend). The curves reach the engine
+    /// with the sync that lays the new send (a brand-new send plugin pushes every curve again, and the
+    /// compile that fills its mini-chain pushes the sender's). No undo point of its own: the cut's.
     func duplicateSendsTarget(from origAuxID: UUID, to newAuxID: UUID) {
         func walk(_ arr: [SoundObject]) {
             for o in arr {

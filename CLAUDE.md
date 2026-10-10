@@ -2613,6 +2613,8 @@ a second one elsewhere. The most exposed points:
   fader and the window-fade in the engine's list and lays it itself; without plugins it stays last and is INC 2 to
   the sample). The send's plugins see the UN-faded signal. Patch `0040` was REGENERATED for it (fork commit
   amended, `e69b952520a`).
+  **The cut of an aux duplicates the send WITH its curves** (`SoundObject.duplicatingSend`: the level's lane and
+  the lanes of the send's plugins, re-aimed at the COPIES' ids; one undo point with the cut).
 - **PERMANENT RULE — an object's plugins have THREE roots**: `plugins`, `instruments`, and each send's `plugins`.
   Walk them through `SendChain.allRoots`, never by hand: a walker that names two roots silently forgets the third
   (state capture, undo patching, id audit, automation targets, sidechain topology, copies). A send's mini-chain is

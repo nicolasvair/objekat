@@ -752,6 +752,137 @@ def section_I4(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# I5 — the split of an aux duplicates the CURVES of the send: its level's and its plugins'
+# --------------------------------------------------------------------------------------------------
+
+def write_lanes(c, proj_dir, x_id, lanes):
+    """Writes automation lanes on `x_id` in the saved session and reopens it (no `automation.*`
+    command exists; the undo history starts empty after the reopen)."""
+    c.send("project.save")
+    path = out(proj_dir + "/project.objekat")
+    d = json.load(open(path))
+    o = find_obj(d["items"], x_id)
+    o["automation"] = [{"param": prm, "points": [{"t": t, "v": v, "c": 0} for t, v in pts]} for prm, pts in lanes]
+    json.dump(d, open(path, "w"), indent=1)
+    c.send("project.open", {"path": path})
+    wait(c)
+    settle(c)
+
+
+def saved_object(c, proj_dir, x_id):
+    c.send("project.save")
+    return find_obj(json.load(open(out(proj_dir + "/project.objekat")))["items"], x_id)
+
+
+def section_I5(c):
+    print("\n--- I5  the split of an aux: the new send gets the CURVES too (level and send plugins), under the copies' ids, in one undo")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    level_pts = [(0.0, -6.0), (3.0, -30.0)]
+    freq_pts = [(0.0, 0.2), (3.0, 0.0)]          # normalised: 4408 Hz -> 10 Hz over the 3 s
+    times = (0.5, 1.0, 1.4, 1.6, 2.0, 2.5, 2.8)
+    for name, pos, with_plugin in (("level", "post_fader", False), ("plugin_post", "post_fader", True), ("plugin_input", "input", True)):
+        tag = "I5_" + name
+        fresh(c, tag)
+        x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 5})["id"]
+        c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+        lay_send(c, x, a, 0.0)
+        set_position(c, x, a, pos)
+        lp = None
+        lanes = [({"type": "send", "auxID": a}, level_pts)]
+        if with_plugin:
+            h = need_host(c, tag, x, a)
+            r = step(tag + ": the built-in Low Pass is laid on the send", lambda: c.send("plugin.add", {"host": h, "identifier": "lowpass"}))
+            lp = ((r or {}).get("plugin") or {}).get("id")
+            if lp is None:
+                continue
+            settle(c)
+            lanes = [({"type": "plugin", "pluginKey": lp, "paramID": "frequency"}, freq_pts)] + (lanes if name == "plugin_input" else [])
+        write_lanes(c, tag, x, lanes)
+        n_lanes = len(lanes)
+        o0 = saved_object(c, tag, x)
+        check(tag + ": the lanes were read back (%d)" % n_lanes, len(o0.get("automation", [])) == n_lanes, o0.get("automation"))
+
+        # before the cut
+        on0 = render(c, tag + "_before_on.wav")
+        c.send("send.enable", {"id": x, "aux": a, "enabled": False})
+        off = render(c, tag + "_off.wav")
+        c.send("send.enable", {"id": x, "aux": a, "enabled": True})
+        settle(c)
+        wet0 = sub(on0, off)
+        l0 = [seg_db(wet0, t, t + 0.05) for t in times]
+        print("       %s before the cut: wet at %s s = %s dBFS" % (tag, "/".join("%.1f" % t for t in times), " / ".join("%.2f" % v for v in l0)))
+        check(tag + ": the curve is heard (the wet falls by more than 6 dB between 0.5 s and 2.8 s)", l0[0] - l0[-1] > 6.0, (l0[0], l0[-1]))
+
+        # the cut
+        c.send("object.split_at", {"seconds": 1.5, "ids": [a]})
+        settle(c)
+        auxes = [h_["id"] for h_ in c.send("aux.list")["auxes"]]
+        check(tag + ": the aux is two halves", len(auxes) == 2 and a in auxes, auxes)
+        new = [h_ for h_ in auxes if h_ != a]
+        if len(new) != 1:
+            continue
+        b = new[0]
+        o1 = saved_object(c, tag, x)
+        lanes1 = o1.get("automation", [])
+        pts = lambda l: [(q["t"], q["v"]) for q in l["points"]]
+        def lane_of(prm):
+            for l in lanes1:
+                if all(str(l["param"].get(k)).lower() == str(v).lower() for k, v in prm.items()):
+                    return l
+            return None
+        check(tag + ": the object holds twice the lanes (%d)" % (2 * n_lanes), len(lanes1) == 2 * n_lanes, [l["param"] for l in lanes1])
+        if name != "plugin_post":
+            la, lb = lane_of({"type": "send", "auxID": a}), lane_of({"type": "send", "auxID": b})
+            check(tag + ": the LEVEL's lane exists for both halves, same points",
+                  la is not None and lb is not None and pts(la) == pts(lb), (la, lb))
+        if with_plugin:
+            ids_a, ids_b = send_plugins3(c, x, a), send_plugins3(c, x, b)
+            check(tag + ": each half's send has its own plugin (fresh id)", len(ids_a) == 1 and len(ids_b) == 1 and ids_a[0] == lp and ids_b[0] != lp, (ids_a, ids_b))
+            if len(ids_b) == 1:
+                pa = lane_of({"type": "plugin", "pluginKey": lp, "paramID": "frequency"})
+                pb = lane_of({"type": "plugin", "pluginKey": ids_b[0], "paramID": "frequency"})
+                check(tag + ": the plugin's lane exists for the original AND for the COPY's id, same points",
+                      pa is not None and pb is not None and pts(pa) == pts(pb), (pa, pb))
+                rows = (send_entry(c, x, b) or {}).get("plugins", [])
+                check(tag + ": the copy is not linked", all(not r_.get("linked") for r_ in rows), rows)
+                links = [q for s_ in o1.get("sends", []) for q in s_.get("plugins", []) if q.get("linkGroupID")]
+                check(tag + ": no `linkGroupID` on a send plugin in the file", links == [], links)
+        audits3(c, tag)
+
+        on1 = render(c, tag + "_after_on.wav")
+        wet1 = sub(on1, off)
+        l1 = [seg_db(wet1, t, t + 0.05) for t in times]
+        print("       %s after the cut:  wet at the same times     = %s dBFS" % (tag, " / ".join("%.2f" % v for v in l1)))
+        check(tag + ": both halves sound as before the cut (0.1 dB at every reading)",
+              all(abs(u - v) <= 0.1 for u, v in zip(l0, l1)), [round(v - u, 3) for u, v in zip(l0, l1)])
+
+        # ONE undo point: the cut, its sends and their curves
+        c.send("edit.undo", {})
+        settle(c)
+        auxes_u = [h_["id"] for h_ in c.send("aux.list")["auxes"]]
+        o2 = saved_object(c, tag, x)
+        check(tag + ": ONE undo: one aux, one send, the original lanes only",
+              auxes_u == [a] and len(o2.get("sends", [])) == 1 and len(o2.get("automation", [])) == n_lanes,
+              (auxes_u, len(o2.get("sends", [])), [l["param"] for l in o2.get("automation", [])]))
+        on2 = render(c, tag + "_undone_on.wav")
+        l2 = [seg_db(sub(on2, off), t, t + 0.05) for t in times]
+        check(tag + ": undone: the wet is the one before the cut (0.1 dB)", all(abs(u - v) <= 0.1 for u, v in zip(l0, l2)), l2)
+        c.send("edit.redo", {})
+        settle(c)
+        o3 = saved_object(c, tag, x)
+        check(tag + ": redo: two halves again, twice the lanes",
+              len(c.send("aux.list")["auxes"]) == 2 and len(o3.get("automation", [])) == 2 * n_lanes,
+              [l["param"] for l in o3.get("automation", [])])
+        on3 = render(c, tag + "_redone_on.wav")
+        l3 = [seg_db(sub(on3, off), t, t + 0.05) for t in times]
+        check(tag + ": redone: both halves sound as before the cut (0.1 dB)", all(abs(u - v) <= 0.1 for u, v in zip(l0, l3)), l3)
+        audits3(c, tag + " redone")
+
+
+# --------------------------------------------------------------------------------------------------
 # J — regrouping
 # --------------------------------------------------------------------------------------------------
 
@@ -3974,7 +4105,7 @@ with ObjekatClient(SOCK) as c:
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})
     print("mode: %s" % ("REFERENCE (main, pre-bridge engine)" if REF else "bridge"))
     for sec, fn in (("A", section_A), ("B", section_B), ("C", section_C), ("D", section_D), ("D2", section_D2),
-                    ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("I4", section_I4), ("J", section_J),
+                    ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("I4", section_I4), ("I5", section_I5), ("J", section_J),
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),

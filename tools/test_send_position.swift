@@ -438,6 +438,96 @@ enum SendPositionTest {
             check("remove: an orphan marker alone is removed too",
                   clip(plugins: [g, ObjectPlugin.makeSendMarker(for: auxB)], sends: []).removingSends([auxB]).plugins == [g])
 
+            // The split of an aux duplicates the CURVES with the send (10 October): the level's lane
+            // and the lanes of the send's plugins, re-aimed at the COPIES' ids; the trunk's are not.
+            do {
+                let pts1 = [AutomationPoint(t: 0, v: 0.2), AutomationPoint(t: 1.5, v: 0.9, c: 0.5)]
+                let pts2 = [AutomationPoint(t: 0, v: -6), AutomationPoint(t: 2, v: -24)]
+                var src = sound.settingSendPosition(auxID: auxA, .chain(0))
+                src.automation = [AutomationLane(param: .plugin(pluginKey: sat.id, paramID: "drive"), points: pts1),
+                                  AutomationLane(param: .send(auxID: auxA), points: pts2),
+                                  AutomationLane(param: .plugin(pluginKey: g.id, paramID: "p"), points: pts1),
+                                  AutomationLane(param: .volume, points: pts2)]
+                src.automationTouchOrder = [.send(auxID: auxA), .volume, .plugin(pluginKey: sat.id, paramID: "drive"),
+                                            .plugin(pluginKey: lp.id, paramID: "never")]
+                let d = src.duplicatingSend(from: auxA, to: auxB)
+                let newSat = d.sends[1].plugins[1].id, newLp = d.sends[1].plugins[0].id
+                func lane(_ r: ParamRef) -> [AutomationPoint]? { d.automation.first { $0.param == r }?.points }
+                check("duplicate curves: the level's lane is copied for the new aux, same points",
+                      lane(.send(auxID: auxB)) == pts2 && lane(.send(auxID: auxA)) == pts2)
+                check("duplicate curves: the plugin's lane is copied for the COPY's id, same points",
+                      lane(.plugin(pluginKey: newSat, paramID: "drive")) == pts1
+                      && lane(.plugin(pluginKey: sat.id, paramID: "drive")) == pts1 && newSat != sat.id)
+                check("duplicate curves: exactly two lanes were added (the trunk's and the fader's are not copied)",
+                      d.automation.count == src.automation.count + 2
+                      && Array(d.automation.prefix(src.automation.count)) == src.automation)
+                check("duplicate curves: no lane aims at an id the object does not hold, none is shared",
+                      Set(d.automation.map(\.param)).count == d.automation.count
+                      && d.automation.allSatisfy { l in
+                          if case .plugin(let k, _) = l.param {
+                              return ([g.id] + d.sends.flatMap(\.plugins).map(\.id)).contains(k)
+                          }
+                          return true })
+                check("duplicate curves: the touch memory lists each copy right after its original (and only born lanes)",
+                      d.automationTouchOrder == [.send(auxID: auxA), .send(auxID: auxB), .volume,
+                                                 .plugin(pluginKey: sat.id, paramID: "drive"),
+                                                 .plugin(pluginKey: newSat, paramID: "drive"),
+                                                 .plugin(pluginKey: lp.id, paramID: "never")],
+                      "\(d.automationTouchOrder)")
+                check("duplicate curves: no copy is linked", d.sends[1].plugins.allSatisfy { $0.linkGroupID == nil })
+                _ = newLp
+                // the caller's own copies (live states): the lanes follow THOSE ids, by rank
+                let mine = [plugin("lp"), plugin("sat")]
+                let d2 = src.duplicatingSend(from: auxA, to: auxB, plugins: mine)
+                check("duplicate curves: with the caller's copies the lane aims at the caller's id",
+                      d2.automation.contains { $0.param == .plugin(pluginKey: mine[1].id, paramID: "drive") && $0.points == pts1 })
+                // a list of another length: no guess, the plugin lanes are not copied (the level's is)
+                let d3 = src.duplicatingSend(from: auxA, to: auxB, plugins: [plugin("only")])
+                check("duplicate curves: a list of another length copies the level's lane only",
+                      d3.automation.count == src.automation.count + 1 && d3.automation.last?.param == .send(auxID: auxB))
+                check("duplicate curves: the result stays sane, and a second call does nothing",
+                      d.sanitisingSends() == d && d.duplicatingSend(from: auxA, to: auxB) == d)
+                // and the removal of the new half takes its curves away, leaving the original's
+                let back = d.removingSends([auxB])
+                check("duplicate curves: removing the new send restores the object", back == src, "\(back.automationTouchOrder)")
+                // a send WITHOUT plugins: the level's lane alone
+                var plain = clip(plugins: [g], sends: [AuxSend(auxID: auxA, levelDb: -3)])
+                plain.automation = [AutomationLane(param: .send(auxID: auxA), points: pts2)]
+                let dp = plain.duplicatingSend(from: auxA, to: auxB)
+                check("duplicate curves: a send without plugins copies its level's lane",
+                      dp.automation.map(\.param) == [.send(auxID: auxA), .send(auxID: auxB)] && dp.automation[1].points == pts2)
+            }
+
+            // The engine's half of the audit: where a POST-FADER send sits depends on what it carries.
+            do {
+                let host = clip(plugins: [g], sends: [AuxSend(auxID: auxA, plugins: [lp])])
+                func layout(sendAt k: Int, carries: Int?) -> [SendMarkerAudit.LayoutEntry] {
+                    var roles = ["trimIn", "fx", "trimOut", "fader", "windowFade"]
+                    roles.insert("send", at: k)
+                    return roles.enumerated().map { i, r in
+                        SendMarkerAudit.LayoutEntry(index: i, role: r, key: r == "fx" ? g.id.uuidString : nil,
+                                                    aux: r == "send" ? auxA.uuidString : nil,
+                                                    tapPosition: r == "send" ? 0 : nil,
+                                                    chainPlugins: r == "send" ? carries : nil)
+                    }
+                }
+                func rules(_ l: [SendMarkerAudit.LayoutEntry], _ o: SoundObject) -> [String] {
+                    SendMarkerAudit.engineViolations(object: o, layout: l).map(\.rule)
+                }
+                let bare = clip(plugins: [g], sends: [AuxSend(auxID: auxA)])
+                check("audit: post-fader WITH plugins sits between the fader and the window-fade",
+                      rules(layout(sendAt: 4, carries: 1), host) == [])
+                check("audit: post-fader with plugins AFTER the window-fade is a violation",
+                      rules(layout(sendAt: 5, carries: 1), host) == ["index_before_windowFade"])
+                check("audit: post-fader with plugins BEFORE the fader is a violation",
+                      rules(layout(sendAt: 3, carries: 1), host) == ["index_after_fader"])
+                check("audit: post-fader WITHOUT plugins stays after the window-fade",
+                      rules(layout(sendAt: 5, carries: 0), bare) == [] && rules(layout(sendAt: 4, carries: 0), bare) == ["index_after_windowFade"])
+                check("audit: the engine's count wins over the model's; without it the model's is used",
+                      rules(layout(sendAt: 5, carries: 0), host) == [] && rules(layout(sendAt: 4, carries: nil), host) == []
+                      && rules(layout(sendAt: 5, carries: nil), bare) == [])
+            }
+
             // On disk: `plugins` is written only when the send has some.
             check("encode: a send without plugin writes no `plugins` key", !json(AuxSend(auxID: auxA)).contains("plugins"))
             let round = decode(AuxSend.self, json(AuxSend(auxID: auxA, levelDb: -3, plugins: [lp, sat])))

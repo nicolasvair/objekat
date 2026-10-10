@@ -2495,6 +2495,31 @@ the copy (exact zeros).
 diff empty against `e69b952520a`): T3 + O3 = 25 FAILED (every tail / once / latency assertion at the
 four positions, and O3's fade: −2.1 dB), 114 OK.
 
+**Lot 2 — the cut of an aux duplicates the CURVES of the send.**
+
+`SoundObject.duplicatingSend` (pure, `SendPosition.swift`) now copies, with the send: the lane of its
+LEVEL (`.send(auxID: old)` → `.send(auxID: new)`) and every lane aimed at one of its plugins, re-aimed
+at the plugin that is its COPY (by rank between the original list and the copies — the caller's
+`copiedSends`, fresh ids, live states; never a shared id, never a link). Same points (the sender's
+time is not moved by a cut of the aux); the touch memory lists each copy right after its original. A
+list of another length copies the level's lane only (no guess). Nothing else changed in
+`duplicateSendsTarget`: the curves reach the engine by the existing paths (a brand-new send plugin
+makes the sync push every curve again; the compile that fills the new mini-chain pushes the
+sender's), and the whole is in the cut's undo point.
+
+*The hole was double, as suspected:* the LEVEL's lane was not duplicated either (INC 1 / INC 2
+behaviour). Measured on the pre-fix model with the new section (16 FAILED): after the cut the second
+half heard the send at its static level, −15.0 dBFS against −33.6 … −43.2 with the curve.
+
+*Tests.* `test_send_position` 149 / 149 (16 new: the curves — ids, points, touch order, the caller's
+copies, another length, `removingSends` of the new half restores the object, a send without
+plugins — and the audit's new post-fader rule). Scenario section **I5** (59 assertions): level curve
+alone (post-fader), a curve on the built-in Low Pass of the send (`frequency`, post-fader), both
+(input); for each: the saved file holds twice the lanes, the copy's lane aims at the copy's id, no
+`linkGroupID`, the wet at 0.5 … 2.8 s after the cut = before the cut (differences 0.00 dB at the 7
+readings: e.g. −24.82 / −28.86 / −32.15 / −33.85 / −37.70 / −47.75 / −65.88 dBFS on both sides for
+"both"), ONE `edit.undo` gives back one aux, one send and the original lanes, redo the two halves.
+
 ---
 
 # E. Open questions
