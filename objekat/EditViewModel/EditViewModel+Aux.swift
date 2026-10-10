@@ -542,18 +542,18 @@ extension EditViewModel {
         pushAllAutomation()
     }
 
-    /// Copies onto `newAuxID` every send that targeted `origAuxID` (the same level).
-    /// Used by the aux split: both halves stay fed by the same senders.
+    /// Copies onto `newAuxID` every send that targeted `origAuxID`: the same level, on/off AND position
+    /// (@see SoundObject.duplicatingSend — the send used to be rebuilt field by field here, and came out
+    /// post-fader whatever the original's position). Used by the aux split: both halves stay fed by the
+    /// same senders, taken at the same place.
     func duplicateSendsTarget(from origAuxID: UUID, to newAuxID: UUID) {
         func walk(_ arr: [SoundObject]) {
             for o in arr {
-                if let s = o.sends.first(where: { $0.auxID == origAuxID }) {
-                    update(id: o.id) { obj in
-                        if !obj.sends.contains(where: { $0.auxID == newAuxID }) {
-                            obj.sends.append(AuxSend(auxID: newAuxID,
-                                                     levelDb: s.levelDb, enabled: s.enabled))
-                        }
-                    }
+                if o.sends.contains(where: { $0.auxID == origAuxID }) {
+                    let hadMarker = ObjectPlugin.sendMarkerChainIndex(auxID: origAuxID, in: o.plugins) != nil
+                    update(id: o.id) { obj in obj = obj.duplicatingSend(from: origAuxID, to: newAuxID) }
+                    // A marker is an ordering token of the compile: a new one means a new root order.
+                    if hadMarker { recompileForSendMarker(o.id) }
                     syncSendEngine(objectID: o.id, auxID: newAuxID)
                 }
                 if case .group(let children, _) = o.kind { walk(children) }

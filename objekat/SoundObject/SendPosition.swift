@@ -217,6 +217,24 @@ extension SoundObject {
         return o
     }
 
+    /// The object with a SECOND send, towards `new`, that is the copy of its send towards `old` (the split
+    /// of an aux: both halves stay fed the same way): same level, on/off and position — `tap` by value,
+    /// and for a send taken in the chain a marker for `new` laid immediately after `old`'s (two taps at the
+    /// same point are equivalent, their order is cosmetic). Unchanged if there is no send to `old` or if
+    /// `new` already has one. Pure; what the copy holds besides is the caller's business.
+    func duplicatingSend(from old: UUID, to new: UUID) -> SoundObject {
+        guard old != new, let source = sends.first(where: { $0.auxID == old }),
+              !sends.contains(where: { $0.auxID == new }) else { return self }
+        var o = self
+        var copy = source                 // by value: every field of the send, present and future
+        copy.auxID = new
+        o.sends.append(copy)
+        if let k = o.plugins.firstIndex(where: { $0.sendMarker?.auxID == old }) {
+            o.plugins.insert(ObjectPlugin.makeSendMarker(for: new), at: k + 1)
+        }
+        return o
+    }
+
     /// The object with its markers and its sends made consistent (idempotent, pure). Run on load, after
     /// every paste / import, and asserted by the audit:
     ///   • a marker NESTED in a rack branch or a bin's block is HOISTED to the top level, just after its

@@ -696,6 +696,53 @@ def section_I(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# I4 — the split of an AUX keeps the POSITION of the senders' send (an INC 2 gap, fixed at the head of INC 3)
+# --------------------------------------------------------------------------------------------------
+
+def section_I4(c):
+    print("\n--- I4  the split of an aux: the senders' new send keeps the original's position")
+    if REF:
+        print("       (skipped in --ref: positions are INC 2)")
+        return
+    # [G -12], fader -20: the level proves the place (the sum of the gains upstream of the tap).
+    for name, params, expect in (("pre_fader", {"position": "pre_fader"}, -12.0),
+                                 ("chain", {"position": "chain", "index": 0}, 0.0),
+                                 ("input", {"position": "input"}, 0.0),
+                                 ("post_fader", {"position": "post_fader"}, -32.0)):
+        fresh(c, "I4_" + name)
+        x = c.send("object.add", {"path": out("imp_two.wav"), "lane": 0, "start": 0.0})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 5})["id"]
+        add_test(c, x, "gainTester", gain_db=-12.0)
+        c.send("object.set_gain", {"ids": [x], "db": -20.0})
+        c.send("send.create", dict({"id": x, "aux": a}, **params))
+        lay_send(c, x, a, 0.0)
+        settle(c)
+        c.send("object.split_at", {"seconds": 1.5, "ids": [a]})
+        settle(c)
+        auxes = [h["id"] for h in c.send("aux.list")["auxes"]]
+        check("I4 %s: the aux is two halves" % name, len(auxes) == 2 and a in auxes, auxes)
+        rows = {r["aux"]: r for r in c.send("send.list", {"id": x})["sends"]}
+        for h in auxes:
+            row = rows.get(h) or {}
+            check("I4 %s: the send to %s half is at %s" % (name, "the original" if h == a else "the NEW", params["position"]),
+                  row.get("position") == params["position"] and row.get("index") == params.get("index"), row)
+        audit(c, "I4 " + name, want_senders=1)
+        on = render(c, "I4_%s_on.wav" % name)
+        for h in auxes:
+            c.send("send.enable", {"id": x, "aux": h, "enabled": False})
+        off = render(c, "I4_%s_off.wav" % name)
+        wet = sub(on, off)
+        win = lambda sig, t: max(abs(v) for v in sig[int((t - 0.1) * SR):int((t + 0.1) * SR)])
+        # re the SOURCE impulse: the dry is 20 dB down (fader) and through the -12 dB tester
+        k = B.db(win(off, 1.0)) + 32.0
+        for t, which in ((1.0, "first"), (2.0, "second")):
+            got = B.db(max(win(wet, t), 1e-12)) - k
+            print("       I4 %s: wet in the %s half: %.3f dB re source" % (name, which, got))
+            check("I4 %s: the %s half hears the send at its position (%.0f dB, 0.05)" % (name, which, expect),
+                  abs(got - expect) <= 0.05, got)
+
+
+# --------------------------------------------------------------------------------------------------
 # J — regrouping
 # --------------------------------------------------------------------------------------------------
 
@@ -2399,7 +2446,7 @@ with ObjekatClient(SOCK) as c:
     c.send("app.set_dialog_policy", {"policy": "assume_yes"})
     print("mode: %s" % ("REFERENCE (main, pre-bridge engine)" if REF else "bridge"))
     for sec, fn in (("A", section_A), ("B", section_B), ("C", section_C), ("D", section_D), ("D2", section_D2),
-                    ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("J", section_J),
+                    ("E", section_E), ("F", section_F), ("GH", section_GH), ("I", section_I), ("I4", section_I4), ("J", section_J),
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),

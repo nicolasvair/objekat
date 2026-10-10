@@ -351,6 +351,35 @@ enum SendPositionTest {
             check("retarget: a tap-only send keeps its tap", pre.retargetingSend(from: auxA, to: newAux).sendPosition(auxID: newAux) == .preFader)
         }
 
+        // MARK: - The split of an aux: the senders' send is duplicated WITH its position
+
+        do {
+            let auxA = UUID(), half = UUID()
+            for position: SendPosition in [.input, .chain(0), .chain(1), .chain(2), .preFader, .postFader] {
+                let base = clip(plugins: [plugin("A"), plugin("B")], sends: [AuxSend(auxID: auxA, levelDb: -7, enabled: false)])
+                    .settingSendPosition(auxID: auxA, position)
+                let d = base.duplicatingSend(from: auxA, to: half)
+                check("duplicate \(position): two sends", d.sends.map(\.auxID) == [auxA, half])
+                check("duplicate \(position): the copy has the original's position",
+                      d.sendPosition(auxID: half) == position && d.sendPosition(auxID: auxA) == position,
+                      "\(String(describing: d.sendPosition(auxID: half)))")
+                check("duplicate \(position): level and on/off copied",
+                      d.sends[1].levelDb == -7 && d.sends[1].enabled == false)
+                check("duplicate \(position): stays sane", d.sanitisingSends() == d)
+                check("duplicate \(position): the real plugins did not move",
+                      d.plugins.filter { !$0.isSendMarker }.map(\.id) == base.plugins.filter { !$0.isSendMarker }.map(\.id))
+            }
+            let base = clip(plugins: [plugin("A")], sends: [AuxSend(auxID: auxA, levelDb: 0)])
+                .settingSendPosition(auxID: auxA, .chain(0))
+            let d = base.duplicatingSend(from: auxA, to: half)
+            check("duplicate: the new marker sits right after the original's",
+                  d.plugins.map { $0.sendMarker?.auxID } == [auxA, half, nil])
+            check("duplicate: fresh marker id", Set(d.plugins.map(\.id)).count == 3)
+            check("duplicate: a second call does nothing", d.duplicatingSend(from: auxA, to: half) == d)
+            check("duplicate: no send to the source does nothing", base.duplicatingSend(from: UUID(), to: half) == base)
+            check("duplicate: onto itself does nothing", base.duplicatingSend(from: auxA, to: auxA) == base)
+        }
+
         // MARK: - Names
 
         do {
