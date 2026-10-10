@@ -50,6 +50,15 @@ extension CommandRegistry {
             } else {
                 payload["channels"] = .null
             }
+            // The FILE's own format, read from its header: what a script needs to hand a render
+            // back at the source's rate and depth. `source_format` is pcm_int | pcm_float |
+            // compressed (a compressed file has no depth: null). All three are null for anything
+            // that is not a clip, and for a file that cannot be read.
+            var sourceInfo: ClipSourceFormat.Info? = nil
+            if case .clip(let path, _, _, _, _) = item.kind { sourceInfo = ClipSourceFormat.info(atPath: path) }
+            payload["source_sample_rate"] = sourceInfo.map { JSONValue.number($0.sampleRate) } ?? JSONValue.null
+            payload["source_bit_depth"] = sourceInfo?.bitDepth.map { JSONValue.int($0) } ?? JSONValue.null
+            payload["source_format"] = JSONValue.stringOrNull(sourceInfo?.kind.rawValue)
             payload["source_offset"] = .number(item.sourceOffset)
             payload["file_duration"] = .number(item.fileDuration)
             payload["speed"] = .number(item.speedRatio)

@@ -1078,6 +1078,28 @@ the `lr` export of the same clip** and not against absolute levels: `l` and `r` 
 on both sides at the level that side had in `lr`, and `c` sits 6 dB under `l` for a signal that lives
 in one channel only. `tools/scenario_channel_mode.py` is the reference.
 
+### The format of a clip's source file, and naming an object as it is created
+
+**`object.get` answers three more fields on a clip: `source_sample_rate`, `source_bit_depth` and
+`source_format`** — read from the audio FILE's own header (`ClipSourceFormat`, cached per path like
+`channels`), so they say what is on the disk and not what the engine decodes it to. A script that
+renders an object back to a file needs them to hand the result back at the source's rate and depth.
+
+| field | value |
+|---|---|
+| `source_sample_rate` | the file's rate in Hz (a number: `44100`, `48000`, …) |
+| `source_bit_depth` | `mBitsPerChannel` of a linear-PCM file (`16`, `24`, `32`), `null` for a compressed one |
+| `source_format` | `"pcm_int"`, `"pcm_float"`, or `"compressed"` (MP3, AAC, FLAC, ALAC…: anything that is not linear PCM) |
+
+All three are `null` for anything that is not a clip (a group, an aux, a MIDI clip) and for a file
+that cannot be opened (missing, unsupported) — the same convention as `channels`.
+
+**`object.add` takes an optional `name`**: the object's label, set BEFORE the clip is placed, so it
+costs no undo step of its own. That is what lets one `batch` create an object AND name it (a
+sub-command cannot use the result of an earlier one, so `object.rename` after `object.add` could not
+be in the same batch): `batch [object.add {path, start, group | lane, name}, object.set_mute {…}]`
+is ONE undo. An empty or absent `name` leaves the default name (the file's).
+
 ### Exploding an object into sub-lanes
 
 **`object.explode {id, cuts:[…], lanes:[…], names?:[…], group_name?, group_lanes?, fade_ms?}`** cuts a plain audio clip at

@@ -563,7 +563,11 @@ extension CommandRegistry {
                                   + "instead of at the root. 'lane' then names the SUB-lane in the "
                                   + "group (the child's own `lane`, not a display row; default = a "
                                   + "new sub-lane after the last one) and 'start' is absolute, "
-                                  + "unclamped — a child may start before 0.")],
+                                  + "unclamped — a child may start before 0."),
+                          ParamSpec("name", "string", required: false,
+                                    "The object's name (its label); empty or absent = the default "
+                                  + "name. Set before the clip is placed, so it adds no undo step "
+                                  + "— which is what lets a `batch` create AND name an object.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let path = try p.string("path")
@@ -604,6 +608,7 @@ extension CommandRegistry {
             // the two doors an EXTERNAL file comes in by — the internal waves of a consolidated object
             // are relinked by their relative path and never go missing.
             object.fileSize = EditViewModel.fileSize(atPath: path)
+            if let name = try p.optionalString("name"), !name.isEmpty { object.label = name }
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
             // target lane falls INSIDE an expanded group, and `resolveOverlaps` settles overlaps.
             let placed: SoundObject
