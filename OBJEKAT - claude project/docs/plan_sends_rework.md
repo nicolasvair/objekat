@@ -1,6 +1,7 @@
 # Plan — the sends rework: wider scope, a tap anywhere on the trunk, plugins on the send
 
 Status (9 October 2026): INC 1 IMPLEMENTED and MEASURED on `feature/sends-inc1-scope` (nothing merged, nothing pushed; engine patch `0039` on the fork branch `objekat-sends-0039`, `fb0ae39e631`). Remains: the eye and the ear (section C.5). INC 2 and INC 3 are not started.
+Status (10 October 2026): INC 2 IMPLEMENTED, MEASURED and tried on screen by the user ("works very well") on `feature/sends-inc2-position` (journal D.1.F; nothing merged, nothing pushed), plus the refusal to consolidate an object carrying a pre-fader send (`2fc674e5`). INC 3 is DESIGNED in section D.2 (design, steps, tests, questions) and NOT started; D.2 supersedes decision P6 and the "INC 3 (P6)" paragraph of §A.2.
 Written against `main` at `f3c805c4` and the engine fork at `efff893e684` (branch `objekat-ara-0038`,
 i.e. `17215d464fb` + patches `0037` + `0038`). Every line number below is that checkout's. "Inferred"
 marks what was reasoned and not read; "to verify" marks what the executor must check before leaning
@@ -55,6 +56,15 @@ confirm" is superseded by this table:**
 | Q-U6 | Consolidate / bake with a mid-chain send | CONFIRMED as planned: an alert at the moment of consolidating (fold to post-fader / delete the send / cancel); API parameter `mid_chain_sends` = `refuse` (default) / `fold` / `remove`. | Step 2.8 stands as written. |
 | Q-U13 | Which sends the signal view draws | CONFIRMED: only the sends that exist are drawn as cards; the other reachable auxes are reached through "Send to…". | Steps 2.9–2.11 stand as written. |
 
+**Fourth round (10 October 2026, after INC 2 was tried on screen):**
+
+| # | Subject | Decision | Consequence |
+|---|---|---|---|
+| Q-U7b | Where the send cards are drawn | ACCEPTED as built: a column to the RIGHT of the trunk, each card wired to the trunk at its position. | D.1.F's deviation from A.j is the reference; INC 3 builds on that column (D.2.A.l). |
+| Q-U14 | Where "Send to…" is reached | ACCEPTED as built: the right-click on a "+" of the trunk. | Nothing to do. |
+| Q-U6b | Consolidating an object that carries a `pre_fader` send | REFUSED, with an alert, "for the moment" (the bake renders the fader into the wave, so the send would not hear the same level afterwards). `input` / `chain` sends keep the alert Fold / Delete / Cancel. | Built in `2fc674e5` (`SendBakePolicy.preFaderBlockers`; API `invalid_state` `pre_fader_send`, whatever `mid_chain_sends`). Supersedes "a `pre_fader` send is not concerned" in D.1.A.i and in Q-U6 of section E. Only the object's OWN sends count (not a baked group's children); a placement that is already an instance never blocks. |
+| — | Limit observed | 20 entries per object chain: 16 plugins without a send, each send takes one entry; beyond, the send is refused (`chainFull`). | Known and accepted; a send's plugins (INC 3) do not count in it (D.2.A.f). |
+
 ## Decisions taken in this plan (the architect's, each justified below)
 
 | # | Subject | Decision |
@@ -64,7 +74,7 @@ confirm" is superseded by this table:**
 | P3 | Where the level is applied | At the TAP (on the copy, once per block), never at the reader: an automated level must be aligned with the material it scales. Settles Q8 for every send. |
 | P4 | The scope rule | ONE pure definition in `Shared/BridgeScope.swift` (static refusals for an `auxInput` route + the cycle check), read by every site through one cached index. The engine keeps NO copy of the rule. |
 | P5 | Model, target | `AuxSend` stays THE store, keyed by `auxID`. INC 2 adds `tap` (`postFader` / `preFader` / `input`) and a thin MARKER entry in the chain array for an in-chain tap; INC 3 adds `plugins` (the mini-chain) on `AuxSend`. INC 1 changes no field. |
-| P6 | INC 3 branch | The send's mini-chain is a real graph branch: fan-out through a `ConnectedNode`, the mini-chain as `PluginNode`s, the tap at its end, the branch SUNK and summed with the dry (`SummingNode { dry, SinkNode (wet) }`). Its latency delays the sender's dry locally and is compensated by the ordinary PDC. |
+| P6 | INC 3 branch | **REVISED 10 October 2026 — see D.2.A.b–A.d: the mini-chain is a side (wet) input of the tap node, its latency ages the TAP and never delays the sender's direct signal. The text that follows is the original decision, kept as the documented FALLBACK.** The send's mini-chain is a real graph branch: fan-out through a `ConnectedNode`, the mini-chain as `PluginNode`s, the tap at its end, the branch SUNK and summed with the dry (`SummingNode { dry, SinkNode (wet) }`). Its latency delays the sender's dry locally and is compensated by the ordinary PDC. |
 | P7 | Dangling sends | Purged with their automation when their aux is deleted (same undo point) and at load. |
 | P8 | dB floor | The new send plugin treats `≤ −60 dB` as exact silence, as the model already says (`sendMinDb`). |
 | P9 | Session format | 21 at INC 1 (migration marker, §A.5), 22 at INC 2, 23 at INC 3. |
@@ -168,7 +178,8 @@ session's sends move to a new path.
 - INC 2: `createPluginNodeForList` builds a `BridgeTapNode` wherever a `BridgeTapSource` sits in a
   list (`tracktion_EditNodeBuilder.cpp:1858-1873`) and records the age of ITS input. A send plugin
   moved to another index of the sender's top-level list needs no engine change.
-- INC 3 (P6): the send plugin gains one `PluginList` (its mini-chain), declared through a small
+- INC 3 (P6) — **SUPERSEDED by D.2.A.b–A.d (10 October 2026): the dry is NOT delayed; what follows
+  is the fallback only.** The send plugin gains one `PluginList` (its mini-chain), declared through a small
   interface next to `ParallelPluginBlock`. The builder, at that plugin:
 
   ```
@@ -1431,32 +1442,703 @@ menu, cursor, band and veil (a headless instance has no window); the card's look
 
 **Two test-side findings of the gate.** (1) V2 counted the tap age in 48 kHz samples; the machine's output device is now at **96 kHz** (the live graph follows the device, the exports stay 48 kHz), so every age doubled and five checks failed. The test now reads the graph's rate from `debug.bridge_report`; the app was right. (2) A section checking "no `tap`/`sendMarker` in the file" must read the `items`, not the whole file: the `_readme` names both keys in prose.
 
-## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-chain`, format 23, engine patch `0040`)
+## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-plugins`, format 23, engine patch `0040`)
 
-**Steps.**
-1. Engine `0040`: `BridgeSendBranch { PluginList* getSendChain(); }` beside `ParallelPluginBlock`;
-   the unfolding of §A.2 in `createPluginNodeForList`; no mini-chain → the INC 1 node, unchanged.
-2. App: `ObjBridgeSendPlugin` owns one `PluginList` (a `<BRANCH>` child, as
-   `ObjParallelBlockPlugin`); `compileSeries` recurses into it with the send plugin's own level as
-   the anchor (plugins before the level, like a branch's gain).
-3. Model: `AuxSend.plugins`; the third root in every "all plugins of an object" walk (state capture,
-   id audit, link groups, sidechain routes, `checkLatencyAndRebuild`'s map, cross-project import,
-   copies with fresh ids).
-4. Signal view: the card unfolds its mini-chain (a short series, the bin's drawing reused); drop a
-   plugin on the card; the picker's "+" on it; editors open as usual.
-5. Tests: a −12 dB gain in the mini-chain lowers the wet by 12 dB and the dry by 0; a 20 ms
-   `latencyTester` in it keeps `idx(wet) == idx(dry)` and raises the object's declared latency; two
-   senders to one aux, a filter on one only (the other's wet unchanged — the point of the feature);
-   undo, save / reopen, duplicate, cut; a keyed (sidechain) plugin inside a mini-chain.
+Detailed on 10 October 2026 against `feature/sends-inc2-position` at `2fc674e5` (INC 2 + the
+pre-fader consolidation refusal) and the fork at `objekat-sends-0039`. NOTHING of this section is
+coded. It REPLACES the sketch that stood here and SUPERSEDES decision P6 and the "INC 3 (P6)"
+paragraph of §A.2 (see D.2.A.d for the proof). The branch name of the sketch
+(`feature/sends-inc3-chain`) is replaced by `feature/sends-inc3-plugins`, taken from
+`feature/sends-inc2-position`; the fork branch is `objekat-sends-0040`, taken from
+`objekat-sends-0039`.
 
-**Risks.** A mini-chain with latency delays its sender's dry (compensated, but the session's total
-latency rises — to say in the UI?); a reverb's tail in a mini-chain is cut at the object's end like
-any chain plugin's; plugin count per clip; an AU instantiated per sender (a mini-chain is not
-shared — sharing would be an FX link bin, excluded in v1).
+What the user gets: plugins that process ONLY what one object sends to one aux — a low-pass on the
+signal going to the reverb — without touching the object's direct signal, nor the aux as heard by
+the other senders. The send keeps its identity (one per (object, aux)), its four positions, its
+level, its switch, its curve.
 
-**Open questions (the user's).** Q-U8 can a mini-chain plugin be LINKED (⌘) to the same plugin on
-another sender's send, or be an FX link bin, so that "the same low-pass on every send to this reverb"
-is one setting? Q-U9 a parallel block inside a mini-chain: allowed or series only?
+### D.2.A Design
+
+#### A.a The signal order of a send, once and for all
+
+```
+tap (a COPY of the signal at the send's position; the direct signal passes through untouched)
+  → envelope (the sender's fades and window — only when the tap is not post-fader, Q-U5)
+  → the send's plugins, in order
+  → the send's level (smoothed, automated) and its gate (mute / solo, Q-U1 / Q-U12)
+  → the ring → the aux return
+```
+
+- **Envelope BEFORE the plugins.** A post-fader send has the window and the fades upstream of its
+  tap by construction (they are in the main path). Putting the envelope first at the other three
+  positions makes the four positions the same thing to the plugins: with the fader at 0 dB and the
+  pan centred, moving a send from post-fader to pre-fader changes nothing in what is heard,
+  mini-chain included. The other order would make a compressor on a send react differently
+  according to where the send is taken.
+- **Level and gate AFTER the plugins.** (1) `-inf`, a mute and a solo give EXACT silence at the
+  ring whatever the plugins do (P8, Q-U12) — a delay with feedback on a muted sender's send does not
+  leak. (2) One automated stage, at the place where it is already aligned (P3). (3) It is the
+  console's convention: inserts before the fader.
+- **Audible, and therefore asked (Q-U17):** the order is inaudible for a linear plugin (a filter, an
+  EQ) and audible for a non-linear or time-based one. Level last means that a compressor or a
+  saturator on the send is NOT driven by the send's level, and that lowering the send lowers a
+  delay's tail at once. Hypothesis: level last. The other order is a 10-line change in the patch;
+  step 3.4 keeps it in one place.
+- **Proof.** Section O3 of the scenario, with a hard clipper (`clipTester`, new, app-side): the two
+  orders differ by 6 dB (D.2.C).
+
+#### A.b Engine: patch `0040` — what it contains
+
+All in the fork, on top of `0039`; no file of the fork other than these three is touched.
+
+1. `plugins/tracktion_ObjBridge.h` — `BridgeTapSource` gains two virtuals, both with a neutral
+   default so that `ObjBridgeTapPlugin` (the sidechain tap) is untouched:
+   ```cpp
+   /// The plugins this tap runs on its COPY before recording it (a send's mini-chain). nullptr = none.
+   virtual PluginList* getTapChain()                                   { return nullptr; }
+   /// What the tap applies to its copy BEFORE the chain (a send: its sender's window and fades),
+   /// at the edit time the signal was made. Called once per block, in both modes.
+   virtual void processTapHead (juce::AudioBuffer<float>&, int start, int numSamples,
+                                TimeRange editTime)                    {}
+   ```
+2. `playback/graph/tracktion_ObjBridgeNodes.h/.cpp`
+   - `BridgeTapHeadNode` (new, ~60 lines): one input, an OWNED 2-channel buffer; copies its input,
+     calls `source.processTapHead` at `editTime − input latency` (the adjustment the tap node does
+     today), reports its input's properties. It is the fan-out's second consumer.
+   - `BridgeTapNode` gains an optional second input, `wet`. `input` becomes a `std::shared_ptr`
+     (the dry is shared with the head node). `getDirectInputNodes()` returns both;
+     `getNodeProperties()` still returns the DRY input's (the node's output IS the dry, untouched —
+     that is what it declares). Copy mode, per block:
+     - no `wet` input (no chain): copy the dry into the scratch, `processTapHead`, then
+       `applyToBufferWithAutomation` (level + gate) — the same operations in the same order as
+       INC 2, the envelope simply called from the node instead of from inside `applyToBuffer`;
+     - a `wet` input: copy the WET into the scratch, then level + gate, with the automation time
+       moved back by the WET's latency (`L + P`), not the dry's.
+     Ring write unchanged (`referenceSampleRange.start`, `didPlayheadJump`).
+3. `playback/graph/tracktion_EditNodeBuilder.cpp`, `createPluginNodeForList`, the
+   `BridgeTapSource` branch (today ~l.1900):
+   ```
+   chain = tap->getTapChain()
+   if p->isEnabled() and chain and chain has at least one enabled plugin:
+       shared = node                                   (std::shared_ptr)
+       wet    = BridgeTapHeadNode (ConnectedNode-style reader of shared, *tap)
+       wet    = createPluginNodeForList (*chain, …, wet)          (ordinary PluginNodes)
+       if wet latency > 0: wet = LatencyPrimingNode (wet)         (gags the residue, as a clip's)
+       age    = wet->getNodeProperties().latencyNumSamples        (L + P)
+       registerTap (*p, *tap, age, rank)
+       node   = BridgeTapNode (shared, wet, …)
+   else:
+       the INC 1 / INC 2 construction, unchanged (age = L)
+   ```
+   plus the `initialiseFully` recursion into the chain's plugins (as `ObjParallelBlockPlugin` does
+   for its branches) and the Debug assertion I1 unchanged.
+
+No change to `BridgeBuild`, to the readers, to `createAuxReturns`, to `PluginList` (the mini-chain
+is a `PluginList` over a `<BRANCH>` child, which `PluginList::initialise` already accepts).
+
+**No mini-chain, or a disabled send = exactly the INC 2 node.** Proved by section P3 (a reference
+export recorded at step 3.0, compared sample for sample after the patch).
+
+#### A.c The node inside a `TimedNode` — why a side input is legitimate (read, not inferred)
+
+A clip's chain is processed by `CombiningNode::TimedNode`: a de-duplicated post-order walk over
+`getDirectInputNodes()`; as soon as the chain is not linear it goes through `transformNodes` and
+gives each node its own buffer; only SUMMING nodes equalise their inputs' latency
+(`createLatencyNodes`). `createNodeForParallelBlock` already relies on all three (a shared input,
+one `ConnectedNode` per branch). A `BridgeTapNode` with a dry and a wet input is therefore processed
+after both, and its wet is NOT padded, because the node is not a sum. **To verify first** (step
+3.0, probe b): that `transformNodes` leaves a non-summing two-input node alone, with a throwaway
+build of the patch and a 20 ms `latencyTester` in the mini-chain. If the probe fails, the fallback
+is P6 as originally written (`SummingNode { dry, SinkNode (wet) }`): same model, same UI, same
+tests except the three assertions marked "hide only" in D.2.C.
+
+#### A.d Latency of the mini-chain: it ages the TAP, it does not delay the dry (P6 revised)
+
+Question asked: can the mini-chain's latency `P` be added at the return only, without delaying the
+object's direct signal? **Yes — and that is what is built.** Read in the bridge:
+
+1. The age of a tap is a FREE argument of `BridgeBuild::registerTap (plugin, source, age, rank)`;
+   the tap node itself reports its input's properties. Nothing ties the age to the node's own
+   declared latency.
+2. `registerAuxReaders (auxClipID, sendIDs, referenceLatency)` computes the return's group latency
+   `X = max (R, every tap's cached age)`, and each reader delays its ring by `X − age`. A tap OLDER
+   than the content of the aux's level (`age > R`) is the existing "case B": the content is padded
+   by `X − R` at the return's sum. `finalise()` re-passes (at most 8) when a reader turns out late
+   or over-declared. Exercised today by `scenario_bridge_latency` B / H and by INC 1's across
+   routes.
+3. So with `age = L + P`: when `L + P ≤ R` (the aux's level already carries that much latency)
+   nothing moves anywhere; when `L + P > R`, the aux return — and only it — declares `L + P`, and
+   the ordinary PDC of its level follows. The sender's lane, its direct signal, its declared
+   latency, its own sidechain tap's age, its bake: untouched.
+
+Compared with P6 (the dry delayed by `P`): the session's latency is `max (R, L + P)` here against
+`max (R', L + P + M)` there (`M` = what follows the send in the sender's chain) — never worse. P6's
+rejection of this option ("a node that lies about its inputs") does not hold: the node declares
+its OUTPUT, which is the dry; the wet leaves the graph through the ring with its true age, which is
+exactly what a bridge tap is.
+
+Costs, stated:
+- **One more build pass, sometimes.** `cachedAgeNumSamples` is not state: the first build after a
+  mini-chain's latency changes, and EVERY export (a clone), starts with the previous or a zero age;
+  when `L + P > R` the reader is found late and `finalise` runs one more pass. Assertion of the
+  scenario: `passes ≤ 2`, `converged`, `blocks_uncovered == 0`.
+- **The wet's activation.** A clip's nodes run only on `[start − head, end + tail]`, and
+  `Clip::getHead()` / `getTail()` sum `getLatencySeconds()` over the clip's list. So
+  `ObjBridgeSendPlugin::getLatencySeconds()` returns its mini-chain's series latency: the clip
+  starts `P` earlier and stops `2P` later, which is what the wet needs. The only readers of that
+  number are head / tail and `primeSamples` (read, `tracktion_Clip.cpp:420-439`,
+  `createNodeForClips`): the lane's equalisation uses NODE latencies, where `P` does not appear.
+- **Known limit.** A child whose send's mini-chain has latency `P`, ending exactly at the hard end
+  of its PARENT group: the last `P` of its wet is not flushed (the parent's tail ignores a hidden
+  latency). `P` is milliseconds; noted, not fixed.
+
+`checkLatencyAndRebuild` already sums `getLatencySeconds()` over `_pluginMap`; the mini-chain's
+plugins are `_pluginMap` entries, so a plugin that changes its latency on a send provokes the same
+rebuild as on the trunk.
+
+#### A.e Tails
+
+The mini-chain runs while the sender's clip is active — its window plus its head / tail. A reverb
+or a delay laid ON a send is therefore cut at the object's end, exactly as it is when laid on the
+object's chain ("an object's window cuts its chain"); at the next activation the residue is gagged
+like a trunk plugin's. To let an effect ring: put it on the aux (that is what an aux is for), or
+send from an infinite bus. Audible, and therefore asked (Q-U18); hypothesis: accepted, same rule as
+the chain. The alternative (keeping the wet branch alive after the clip) needs the branch OUT of
+the clip's `TimedNode` — another architecture, not planned.
+
+#### A.f Where the plugins live; limits; who owns what
+
+- **Owner.** `ObjBridgeSendPlugin` owns ONE `PluginList` over a `<BRANCH>` child of its state
+  (`ParallelPluginBlock::branchTreeType`, reused as a tree type only — the send plugin does NOT
+  implement `ParallelPluginBlock`, or the builder would unfold it as a parallel block). Built as
+  `ObjParallelBlockPlugin::rebuildBranchLists` does: `setTrackAndClip (getOwnerTrack(),
+  getOwnerClip())`, `initialise (branch)`; `initialiseFully` recurses; `getTapChain()` returns it.
+- **Limits.** `PluginList::canInsertPlugin` counts per LIST: the mini-chain has its own limit, and
+  its plugins do NOT count in the 20 entries of the object's chain. The send itself still costs one
+  entry there, with or without plugins. The number for a `<BRANCH>` list owned by a clip is to be
+  read by probe (step 3.0, probe a: expected 20, could be 45 — `OBJEngineBehaviour::getEditLimits`).
+  Beyond it the door answers `chainFull`, as the trunk does.
+- **Bookkeeping.** A mini-chain plugin is an ordinary keyed instance: `_pluginMap[pluginKey]`,
+  `_pluginOwnerHost[pluginKey] = sender`, listed in the SENDER's `_objectChainMap[key].pluginKeys`.
+  Editors, parameter doors, state capture, `OBJParamMirror` links, VU and `checkLatencyAndRebuild`
+  all work by key and need nothing new. It is NOT in `rootOrder` (that is the trunk's).
+- **Rebuild.** Adding, removing or reordering a mini-chain plugin is a compile of the sender's
+  chain: `restartPlayback` once, with `_latencyResyncPending`, exactly as for a trunk plugin. An AU
+  instantiated on the main thread stays the slow gesture; nothing is made worse.
+
+#### A.g The materialisation rule (new — a consequence the sketch did not see)
+
+Today a DEAD send (switched off, or at `-inf` with no curve, or refused) has NO engine plugin:
+`syncBridge` lays only `isSendAlive` sends and `commitBridgeSync` removes every send it did not
+confirm. With a mini-chain that is wrong twice: dragging the level to `-inf` would destroy the
+send's AU instances (and their un-captured state), and a NEW send starts at `-inf` (Q-U4), so the
+plugin just laid on it could not open its editor.
+
+**Rule: a send's engine plugin exists iff the send is alive OR carries plugins.** Its engine
+`enabled` flag = alive. Consequences, each in one place:
+- `ensureBridgeSendFrom:toAux:levelDb:gated:position:` gains `alive:`; a not-alive send is laid
+  (confirmed, positioned), disabled, and NOT listed in `objBridgeSends` (no reader, ring null).
+- The builder builds no wet branch for a disabled tap (A.b): the instances exist, loaded, with
+  their editors, and are not processed. Becoming alive is a change of the graph's shape: one
+  restart, no instantiation.
+- `isSendAlive` keeps its meaning for `BridgeScope` (a not-alive send is no route, blocks nothing).
+- A send REFUSED by the scope or by `chainFull` while carrying plugins: the plugin is not laid, its
+  mini-chain is not instantiated (the model keeps the states), the cards are greyed with the
+  refusal's reason. Same thing as a plugin whose host is not in the engine.
+- A not-alive send with plugins costs one entry of the object's 20, like an alive one.
+- Every site that REMOVES a send plugin first purges its mini-chain's keys (`teardownPluginLink`,
+  `_editorWindows`, `_pluginMap`, `_pluginOwnerHost`, the sender's `pluginKeys`): the unconfirmed
+  loop of `commitBridgeSync`, `removeAux` (which removes the sends aimed at it),
+  `forgetObjectBookkeeping`, `closeEditorsAndPurgePluginsForObjectID:`. One helper,
+  `-purgeSendChainOf:`, called by the four.
+
+#### A.h Compile and sync: who owns what
+
+- **The compile owns the CONTENT.** `rackSpec` gains, beside the trunk tree, one entry per send
+  that carries plugins, whatever its position:
+  `compileUserRackForObjectID:tree:sendChains:chainInDb:chainOutDb:` with
+  `sendChains = [{ "aux": <uuid>, "plugins": [<series tokens>] }]`. For each, the compile makes sure
+  the send plugin exists (the helper it shares with `ensureBridgeSend`: created disabled, at the
+  end, if the sync has not laid it yet) and runs the reentrant
+  `compileSeries:into:anchor:order:failed:` INTO the send's list with a nil anchor — instances
+  reused by key, parked when they leave, state re-asserted, reordered only when needed: the same
+  code as a parallel branch. A send whose model chain is empty gets its list emptied.
+- **The sync owns the ROUTE**: existence for an alive send, target, level, gate, liveness,
+  position, `objBridgeSends`. It never touches a mini-chain's content, and after INC 3 it never
+  removes a send that carries plugins in the model (it is always confirmed).
+- **Order of the two** does not matter (each creates the send plugin if the other has not), which
+  is the property the INC 2 marker rule already needed.
+- **Retarget** (`send.retarget`, "Change target…"): the plugins STAY (given). The engine re-keys in
+  place — a new `-retargetBridgeSendFrom:oldAux:newAux:` renames `_bridgeSendMap["sender|aux"]` and
+  calls `setTargetAuxClip` — BEFORE the sync, so that no instance is destroyed and re-created. To
+  verify at 3.0 (probe d) how INC 2's retarget reaches the engine today (expected: remove + lay
+  again, which would re-instantiate every AU of the mini-chain).
+
+#### A.i Model and session format 23
+
+```swift
+struct AuxSend {
+    var auxID: UUID
+    var levelDb: Float
+    var enabled: Bool
+    var tap: SendTapPoint
+    var plugins: [ObjectPlugin] = []     // INC 3: the mini-chain, in processing order
+}
+```
+- `init` gains `plugins:` with a default; `decodeIfPresent`; ENCODED ONLY WHEN NON-EMPTY — a
+  session without any send plugin differs from its format-22 self by the version number only.
+- **Format 23.** A format-21 / 22 file reads identically (absent key = no plugin). An OLDER build
+  opening a 23 file ignores the key: the send plays without its plugins, and saving from that build
+  loses them (and leaves the automation lanes aimed at them orphaned — probe e at 3.0 says what the
+  loader does with a lane whose plugin id is unknown; expected: kept, inert). Said in the
+  `SessionSchema` notice.
+- **v1 content rule, enforced by ONE pure function** (`SendChain.sanitised`, called at decode and
+  by `updateChainPlugins`): leaves only. Dropped with a log: a parallel block, an FX link bin, a
+  send marker, an instrument, an ARA source. Technical reasons: a marker in a mini-chain would be a
+  send of a send; a bin's instances belong to a definition shared across HOSTS and every bin site
+  resolves `fxDefinition(ofInstance:on:)` by object or stem; an instrument needs MIDI at its input.
+  A parallel block would work in the engine (the builder recurses) but not in the card (Q-U9).
+- **Ids.** A mini-chain plugin's id is as unique as any plugin's: `PluginIDUniqueness` (walk,
+  detection, repair) and `debug.plugin_id_audit` gain the third root.
+- **Automation.** A mini-chain plugin's parameters are `ParamRef.plugin(id:param:)` lanes of the
+  SENDER object, as for a trunk plugin: the automation targets list and the push learn the third
+  root; nothing else changes.
+- **⌘ link** (`linkGroupID`): technically free — a link is a mirror between two keyed instances —
+  so it is ALLOWED in v1 between any two plugins of the same type, mini-chain or not
+  (`rewireLinkGroups` learns the third root). It is the cheap answer to "the same low-pass on every
+  send to this reverb" (Q-U8). What remains the user's is the DEFAULT on copies (below).
+- **Sidechain key on a mini-chain plugin**: the reader sits in a `PluginNode` of the wet branch, in
+  the sender's clip — the same case as a keyed leaf of the trunk, with an input latency of `L + P'`
+  instead of `L`. `bridgeTopology`, `bridgeLeafExists`, `settingSidechain` learn the third root (the
+  route's host is the SENDER). Allowed in v1 IF probe f (step 3.0) and section K3 measure the key
+  aligned; otherwise refused with a reason in v1. Not a user question.
+
+#### A.j Addressing: a send's mini-chain is a third kind of CHAIN HOST
+
+Every plugin gesture of the app is written against a chain host — an object or a stem — through
+four primitives (`chainPlugins`, `updateChainPlugins`, `chainGains`, the engine key). A mini-chain
+becomes the third kind, so that selection, drag and drop, copy / paste, the doors and the whole
+`plugin.*` API work on it WITHOUT a parallel family of functions:
+
+- `Shared/SendChain.swift` (new, pure): `SendChain.hostID(sender:aux:)` — a UUID DERIVED from the
+  pair (SHA-256 of `"objekat.sendchain|<sender>|<aux>"`, truncated, version / variant bits set).
+  Nothing is persisted; a copy of the object, a retarget, an undo all get the right host for free.
+- `EditViewModel.sendChainHosts: [UUID: SendKey]` — a lazy index, invalidated by `items.didSet`
+  (the same pattern as `sendScopeIndexCache`), giving the reverse lookup.
+- `chainPlugins(hostID)` answers the send's `plugins`; `updateChainPlugins(hostID)` writes them
+  through `update(id: sender)`, sanitised; `chainGains` answers `(0, 0)`; `isStemHost` false;
+  **`engineHostKey(hostID)`** (new) answers the SENDER's id for a send host and the host itself
+  otherwise — every `forObjectID:` call that receives a host goes through it; `compileRack(send
+  host)` compiles the sender; `scheduleChainCompile(send host)` schedules the sender's.
+- What a send host is NOT: it is not found by `find(id:)`. That is the danger of the approach, and
+  the reason for the audit of step 3.6: every site that takes a host and then assumes "object or
+  stem" (a nil `find` falling through to a stem branch, a silent return) is listed and tested.
+
+The alternative (an explicit `enum ChainRef { object, stem, send }` threaded through every
+signature) is cleaner on paper and touches ~120 call sites for the same behaviour; rejected for
+v1, kept as the natural clean-up if a fourth host ever appears.
+
+#### A.k Copies, split, paste, consolidate, deletion, retarget
+
+The trap is the same everywhere: `sends` is copied BY VALUE at a dozen sites, which until now was
+right (a send held no identity of its own). With `plugins` inside, a by-value copy duplicates
+plugin ids — two objects claiming one engine instance, the defect of the "duplicate plugin ids"
+incident. Rule: **a copy of an object copies its sends' plugins through the same primitive as its
+chain's** (`copiedPlugins(of:)` for a live copy, the cold clone of `CrossProjectImport` for a
+frozen one), with the same id remap feeding the automation lanes.
+
+| Operation | What happens to the send's plugins |
+|---|---|
+| Duplicate, copy / paste, ⌥ drag, time-selection copy | Fresh ids, states captured, automation lanes remapped. Link by default exactly as the trunk's plugins are for the same gesture (Q-U8b). |
+| Cut / split of the object | Both halves keep the send; the right half's plugins are copies, linked by default as the trunk's are. |
+| Split of an AUX (`duplicateSendsTarget`) | The senders gain a send to the new half: position and plugins COPIED (fresh ids, linked by default). Today this site drops the position — see D.2.F, deviation 1, fixed in step 3.7. |
+| Cross-project paste | Cold clone from the frozen `stateXML`, fresh ids, links kept inside the batch only; a send whose aux is not in the batch is dropped with its plugins (existing rule). |
+| Bake of a group (`deepFreshCopy`) / un-bake | Fresh ids through `freshPlugins`, `pluginRemap` extended; the restore takes the wrapper's sends (existing). |
+| Consolidate, `input` / `chain` send, choice **Fold** | The send goes post-fader WITH its plugins, level and curves (a fold changes where the send is taken, not what it is). |
+| Consolidate, choice **Delete** | The send goes with its plugins and every automation lane aimed at them or at its level; one undo point. |
+| Consolidate, `pre_fader` send | Refused (decision of 10 October), plugins or not. |
+| Consolidate, `post_fader` send | Carried onto the placement as today, plugins included (the placement has no chain but keeps its sends; its mini-chains are compiled like any object's). The sidecar must NOT keep a second copy of those plugins — probe c, step 3.0. |
+| Delete the send (card ×, `send.remove`, aux deleted, orphan purge) | Plugins, their editors and their automation lanes go with it; states captured first so that undo brings back the same sound. |
+| Retarget | Plugins, level, position, curves stay (given); no instance is re-created (A.h). |
+| Move the send to another position | Plugins stay; the envelope rule of A.a follows the position. |
+| Switch off / `-inf` | Plugins stay loaded, unprocessed (A.g). |
+
+**Undo.** A plugin gesture on a mini-chain is the plugin doors' own point (pushUndo before the
+first modification, as everywhere). `isPatchable` / `adoptingPluginStates` / `changedPluginStates`
+learn the third root: without it a parameter undo on a send plugin rebuilds the whole object (D.2.F,
+deviation 2). `withCapturedPluginStates` / `capturingPluginStates` capture the third root, or a
+save would write stale states.
+
+#### A.l Signal view — ONE layout recommended
+
+Today an outgoing send is a 28-pt card in a column to the right of the trunk, wired to the trunk at
+its position. Recommended, and built unless the user says otherwise (Q-U19):
+
+```
+ trunk ──┐
+         ├──▶ ┌───────────────────────────────┐
+              │ ↳ Reverb A        -12 dB  (●) │   the send's header: today's card, unchanged
+              ├───────────────────────────────┤
+              │ ● Low-pass              ⛓  × │   one compact row per plugin, in processing order
+              │ ● Saturator                 × │
+              │ +                             │   visible when the box is hovered or holds a selection
+              └───────────────────────────────┘
+```
+
+- **The card becomes a box**: the header (today's card, same height, same controls) and, under it,
+  one row per plugin (22 pt): bypass dot, name, the link pastille when linked, the × on hover.
+  A send without plugins is drawn exactly as today (plus the "+" on hover).
+- **Reading order**: the rows are processed top to bottom, then the level of the header. The header
+  is on top because it is the box's identity (which aux). Said by the tooltip of the "+" and of the
+  level ("applied after the send's plugins"). This is the one place where the drawing does not
+  follow the signal literally; the alternative (rows ABOVE the header) is the other half of Q-U19.
+- **Variable height**: `SendCardPlacement` (pure) takes each box's height instead of a constant;
+  stacking, wire anchors and the canvas height follow. The column's width does not change.
+- **Gestures**, all through the existing chain-host code (A.j):
+  - "+" → the plugin picker, targeted at the send host; right-click on the box → the same entry.
+  - Drag a plugin card FROM the trunk (or from another object, or from the explorer) ONTO a box or
+    between two of its rows: nothing = move, ⌥ = copy, ⌘ = copy + link — the three gestures of
+    every plugin drag. Drag a row out to the trunk, to another send's box, to another object: same.
+    `PluginDropSite` gains `.sendChain(aux:index:)`; `PluginDropHint` draws the insertion line in
+    the box. Refused with a hint: an instrument, a parallel block, a bin's card, a send card.
+  - Reorder by dragging a row inside its box.
+  - Click selects a row (plugin selection, host = the send host; ⇧ / ⌘ extend inside the box);
+    ⌫ deletes; ⌘C / ⌘V as on the trunk; double-click opens the editor; the dot bypasses.
+  - Dragging the HEADER still moves the send along the trunk (INC 2), rows following.
+- **A greyed box** (send refused, or host not in the engine): rows greyed, editors not openable,
+  the refusal's reason as tooltip (existing string).
+- **VU**: none per row in v1 (the trunk's cards have none either beyond what exists); the send has
+  no meter today and gains none.
+- **The aux's head** (received sends): the row gains a small "fx" mark when the sender's send
+  carries plugins; nothing editable there.
+- Not in v1: collapsing a box; the multi-selection inspector and the Aux tool show nothing of the
+  mini-chain (they set levels).
+
+#### A.m API
+
+No new family: the mini-chain is a host.
+
+- `send.list` / `send.get` entries gain `chain_host` (the derived host id — always present, so a
+  script can lay the first plugin) and `plugins` (`[{id, name, enabled, link_group?}]`).
+- Every `plugin.*` command that takes `host` accepts a send host: `plugin.list`, `plugin.add`,
+  `plugin.remove`, `plugin.toggle`, `plugin.move`, `plugin.copy`, `plugin.link`, `plugin.unlink`,
+  `plugin.drop`, `plugin.drop_at`, `plugin.paste`, `plugin.get_params`, `plugin.set_param`,
+  `plugin.get_state`, the selection commands. Refusals are `invalid_state` with a reason:
+  `send_chain_leaves_only` (block, bin, instrument, marker), `chainFull`.
+- `debug.add_test_plugin` accepts a send host, and gains `clipTester` (`ceiling_db`).
+- `debug.send_marker_audit` and `debug.plugin_id_audit` count the third root;
+  `debug.bridge_report` gains, per send tap, `chain_plugins` and `chain_latency_samples`.
+- `object.get` / `runtime` plugin counts: stated explicitly whether they include send plugins
+  (they do: `plugins_on_sends` beside the existing count, the existing number unchanged).
+
+#### A.n i18n, documentation
+
+- Strings (symbolic keys, three languages, through `L()`): the "+" tooltip, "applied after the
+  send's plugins", the three drop refusals, the "fx" mark's tooltip, the picker's title for a send
+  ("Add a plugin on the send to %@"). No sentence is assembled from pieces.
+- `CLAUDE.md`: the INC 3 entry; the PERMANENT rule "an object's plugins have THREE roots —
+  `plugins`, `instruments`, and each send's `plugins` — walk them through `SendChain.allRoots`,
+  never by hand" beside the marker rule.
+- `docs/command_api.md` (send and plugin sections), `docs/architecture_decisions.md` (P6 revised,
+  the materialisation rule, the host), `SessionSchema` notice (format 23),
+  `engine-patches/3.5/README.md` (`0040`), this document's journal (D.2.G, to be opened).
+
+#### A.o Settled here (technical, reversible) — not questions
+
+The hide design of A.d, with P6 as its fallback; envelope before the plugins; the mini-chain's own
+entry limit; the materialisation rule; compile = content, sync = route; the derived host id; leaves
+only in v1; ⌘ link allowed, bins refused; a sidechain key allowed if measured aligned; automation
+lanes on the sender; fold keeps the plugins; no per-row VU; plugins of a refused send not
+instantiated.
+
+### D.2.B Implementation plan
+
+One commit per step at least; nothing pushed; the fork branch pushed only at the end, with the
+patch file regenerated into `engine-patches/3.5/` (the patch is the only backup of the engine code).
+
+**3.0 — Preliminaries (no product code).** Branches. A full run of `scenario_bridge_sends.py` on
+`feature/sends-inc2-position`, its exports kept as the P3 reference. The real inventory (table
+below) by `grep`, counts written in the journal. Six probes, each a few lines, results in the
+journal before anything is designed around them:
+  a. the entry limit of a `<BRANCH>` list owned by a clip (20 or 45);
+  b. a non-summing two-input node inside a `TimedNode` (A.c) — throwaway patch;
+  c. what the consolidation sidecar and the `ConsolidateDefinition` keep of `sends`, and whether
+     `PluginIDUniqueness` walks them;
+  d. how INC 2's retarget reaches the engine (remove + lay, or in place);
+  e. what the loader does with an automation lane aimed at an unknown plugin id;
+  f. a `objKeyProbe` in a hand-built wet branch: is the key aligned (A.i).
+
+**3.1 — The scenario first.** Sections A3, L3, O3, P3 of D.2.C written and FAILING (or skipped with
+the reason "no door yet") before the feature exists.
+
+**3.2 — Pure model.** `AuxSend.plugins` (init, Codable, `==`); format 23 in `SessionSchema`;
+`Shared/SendChain.swift`: `hostID(sender:aux:)`, `sanitised(_:)`, `allRoots(of:)` (the ONE walker:
+trunk leaves, instruments, each send's plugins), `mapPluginIDs`. `tools/test_send_chain.swift`.
+
+**3.3 — The third root in every pure walker and copier.** `PluginIDUniqueness` (:58, :165, :238),
+`PluginIDReport` (:68), `SendMarkerAudit` (:61), `CrossProjectImport` (:278 and the `sends` map at
+:286), `SoundObject.derivedCopy` (`pluginIDRemap`, :1160), `SendPosition.swift` (retarget keeps
+`plugins`; `sanitisingSends` calls `SendChain.sanitised`), `SendBakePolicy.resolve` (fold keeps,
+remove returns the plugin ids whose lanes must go). Tests extended:
+`test_plugin_id_uniqueness`, `test_cross_project_import`, `test_send_position`,
+`test_send_bake_policy`.
+
+**3.4 — Engine patch `0040`** (A.b), on `objekat-sends-0040`. Built alone first; `scenario_bridge_
+latency.py`, `scenario_sidechain.py` and section P3 green BEFORE the app uses the new virtuals.
+
+**3.5 — App, engine side** (`OBJBridgeSendPlugin.h`, `OBJEngineCore.mm`, `OBJGainTesterPlugin.h`).
+The send plugin owns its list (`rebuildChainList`, `valueTreeChildAdded/Removed`,
+`initialiseFully`, `getTapChain`, `getLatencySeconds`); the envelope moves from `applyToBuffer`
+into `processTapHead`; `ensureBridgeSend…alive:` and the materialisation rule; `-purgeSendChainOf:`
+and its four callers; `-retargetBridgeSendFrom:oldAux:newAux:`; `parseCompileSeries` /
+`compileUserRackForObjectID:tree:sendChains:…`; `debug.bridge_report` fields; `clipTester`.
+
+**3.6 — View-model: the third host.** `sendChainHosts` index; `chainPlugins` /
+`updateChainPlugins` / `chainGains` / `engineHostKey`; `rackSpec` + `compileRack`;
+`syncBridge` (lays alive-or-carrying sends, passes `alive:`); `collectPluginRefs`;
+`withCapturedPluginStates` / `capturingPluginStates`; `isPatchable` / `adoptingPluginStates` /
+`changedPluginStates`; `rewireLinkGroups`; automation targets and push; `bridgeTopology` /
+`bridgeLeafExists` / `settingSidechain`; `copiedPlugins(of:)` callers; `deepFreshCopy`. THE AUDIT
+of this step: every row of the inventory below, each closed by a named test.
+
+**3.7 — The doors.** `addPlugin`, remove, move, toggle, `transferPlugins`, `performPluginDrop`
+(`.sendChain`), plugin paste, on a send host; the refusals of A.i; `removeSend` (states captured,
+lanes removed, same undo point); retarget; `duplicateSendsTarget` rewritten on a value copy +
+`copiedPlugins` (fixes deviation 1); `pruneOrphanSends`.
+
+**3.8 — API** (A.m) and the scenario helpers (`add_test(c, host=send_host, …)`).
+
+**3.9 — Signal view, pure.** `SynopticSend.plugins`, `SynopticSendMapping`, `SendCardPlacement`
+with heights, the box's row rects and insertion slots in `SynopticLayout`, `SendDrop`.
+`test_synoptic_send_cards`, `test_send_drop` extended.
+
+**3.10 — Signal view, drawn.** The box, the rows, "+", selection, drag sources and targets,
+`PluginDropHint`, the picker's target, the "fx" mark at the aux's head. i18n keys.
+
+**3.11 — The rest of the scenario, the mutants, the non-regression** (D.2.C).
+
+**3.12 — Documentation** (A.n), patch file, README, journal D.2.G; `debug.plugin_id_audit` = 0 and
+`debug.send_marker_audit` ok on the trial project; warning recount.
+
+**The inventory — every site that must learn where a send's plugins live.** Same method as INC 2's
+marker inventory: the count is taken by `grep` at 3.0, each line is classified (concerned / not,
+with the reason), and each concerned family is closed by a test that proves the plugins SURVIVE the
+transformation (or die with it, when that is the rule). Counts below are those of `2fc674e5`.
+
+| Family | How to find it | Sites (lines / files) | What it must learn | Closed by |
+|---|---|---|---|---|
+| The second root (`instruments`) — the template of the third | `grep -rn '\.instruments' --include='*.swift'` | 56 / 19 | Wherever the instruments are walked beside `plugins`, the sends' plugins are too — through `SendChain.allRoots` | `test_send_chain` + each row below |
+| Sends copied by value | `grep -rn '\.sends' --include='*.swift'` | 85 / 28 | A copy that creates a NEW object freshens the ids; a move does not | C3, `test_plugin_id_uniqueness` |
+| `AuxSend(` built field by field | `grep -rn 'AuxSend('` | 3 (all `+Aux.swift`: 390, 425, 553) | :553 must copy, not rebuild | section C3 (aux split) |
+| Chain-host readers | `chainPlugins(` | 82 / 15 | Works on a send host; no "object or stem" assumption after it | H3 |
+| Chain-host writers | `updateChainPlugins(` | 36 / 7 | Sanitised write through the sender | H3, `test_send_chain` |
+| Engine calls keyed by host | `forObjectID:` | 42 / 10 | `engineHostKey` | H3 (editor opens, param set) |
+| Leaf walks | `flattenLeaves(` | 26 / 10 | Third root where the walk means "all plugins of the object" | audit + U3 |
+| State capture | `withCapturedPluginStates(`, `capturingPluginStates` | 21 / 6 | Third root | Z3 (save), U3 (undo) |
+| Undo patching | `isPatchable`, `adoptingPluginStates`, `changedPluginStates` | `+UndoRedo.swift` 272–403 | Third root | U3 ("state undo does not rebuild") |
+| Live copies | `copiedPlugins(of` | 25 / 6 | Called for each send's plugins | C3 |
+| Links | `linkGroupID`, `rewireLinkGroups` | 81 / 16 | Third root; link across trunk and send | C3, section K of `scenario_plugin_selection` |
+| Cold copies | `CrossProjectImport`, `deepFreshCopy.freshPlugins / rebuild`, `derivedCopy` | 3 files | Fresh ids + remap | `test_cross_project_import`, B3 |
+| Id audit / repair | `PluginIDUniqueness`, `PluginIDReport` | 2 files | Third root | `test_plugin_id_uniqueness` |
+| Automation | `+Automation.swift` 116 / 365, `+AutomationTargets.swift` 161 | 3 | Targets list and push include send plugins | U3 (a curve on a send plugin's parameter, measured) |
+| Sidechain | `+Bridge.swift` 86 / 280 / 353 | 3 | Third root, host = sender | K3 |
+| Consolidate / bake | `+Consolidate.swift` 559–579, 658–674, 742, 775, 1076; `+Bake.swift` 126–170, 212; `SendBakePolicy` | 3 files | The table of A.k | B3 |
+| Engine removal sites | `commitBridgeSync`, `removeAux`, `forgetObjectBookkeeping`, `closeEditorsAndPurgePluginsForObjectID:` | 4 | Purge the mini-chain first | M3 (no dangling key: `debug.plugin_id_audit` + editor count) |
+| Engine latency watch | `checkLatencyAndRebuild` | 1 | Nothing (by `_pluginMap`) — verified by test | L3 |
+| API payloads and counts | `Commands+Plugins` 75 / 1043 / 1060, `Commands+Object` 68, `Commands+Runtime` 183, `Commands+Aux` | 4 files | A.m | H3 |
+| Signal view | `SynopticView.swift` (7 `instruments` sites), `SynopticSendMapping`, `SynopticLayout`, `SendDrop` | 4 files | A.l | `test_synoptic_send_cards`, the eye |
+| Project load | `+ProjectLoad.swift` 136 / 368 | 2 | Sanitise, instantiate, re-assert states | Z3 |
+
+A line classified "not concerned" is written with its reason in the journal (INC 2 found 6 real
+omissions out of ~40 sites this way).
+
+### D.2.C Test plan
+
+Conventions unchanged (C.3, D.1.C): Debug build, headless, `--no-recent`, audio ON, one fresh
+instance per scenario, exports re-read in 24-bit at 48 kHz, the wet measured BY DIFFERENCE (export
+with the aux, export with the aux muted), levels read against a reference taken in the same section
+(the pipeline's constant offset cancels), the live graph's rate read from `debug.bridge_report`.
+
+**Pure (any machine).**
+- `tools/test_send_chain.swift` (new): `hostID` deterministic, distinct for distinct pairs, never
+  equal to either id; `sanitised` drops a block, a bin, a marker, an instrument, keeps leaves in
+  order; `allRoots` yields trunk leaves, instruments and every send's plugins exactly once;
+  Codable — no `plugins` key when empty, round trip when not, a format-22 payload decodes to empty
+  chains; a retarget keeps `plugins`; `settingSendPosition` keeps them at the four positions.
+- `test_plugin_id_uniqueness`: a duplicate between a trunk plugin and a send plugin, and between
+  two sends' plugins, is detected and repaired; a `derivedCopy` and a `deepFreshCopy` of an object
+  with a mini-chain share NO id with the original, and the automation lanes follow the remap.
+- `test_cross_project_import`: an object with a mini-chain and its aux in the batch (plugins cloned,
+  fresh ids, link inside the batch kept); aux outside the batch (send and plugins dropped, no
+  orphan lane).
+- `test_send_bake_policy`: fold keeps the plugins and their lanes; remove names the lanes to
+  delete; a pre-fader send with plugins still blocks.
+- `test_synoptic_send_cards`, `test_send_drop`: box heights, stacking of two boxes at neighbouring
+  slots without overlap, insertion index from a point, the refusals.
+
+**`tools/scenario_bridge_sends.py`, new sections** (suffix 3; `--only` works as today).
+
+| Section | What it proves | Measure |
+|---|---|---|
+| P3 | No mini-chain = INC 2, to the sample | The INC 2 sections' exports against the reference of step 3.0: `maxabs(diff) == 0`. |
+| A3 | THE feature: a send plugin acts on this sender's wet only | X1 (0–1 s) and X2 (1.5–2.5 s) both send to aux A at -6 dB. `gainTester -12 dB` on X1's send. (1) dry export (aux muted) identical to the dry export before the plugin: `maxabs == 0` — "hide only": with the P6 fallback, "identical after alignment". (2) wet in X1's window: -12.00 ± 0.05 dB against the reference. (3) wet in X2's window: `maxabs(diff) == 0` against the reference. (4) the same plugin on X1's TRUNK instead lowers the dry too (the control). Repeated at the four positions. |
+| L3 | Sample alignment with latency on the send | A click source; `latencyTester 20 ms` on the send. `idx(wet peak) == idx(dry peak)` in the export; `bridge_report`: tap `age_samples == L + P` at the graph's rate, `chain_latency_samples == P`, `passes ≤ 2`, `converged`, `blocks_uncovered == 0`; the dry export bit-exact with the one without the plugin ("hide only"); with a 30 ms latency plugin on the AUX (`R > L + P`): one pass, nothing padded. Then the latency changed to 5 ms while laid: realigned after `checkLatencyAndRebuild`. A second sender to the same aux without mini-chain: its wet still aligned. |
+| O3 | Order: envelope → plugins → level | Sine at -6 dBFS peak, `clipTester` ceiling -12 dBFS on the send, send level -6 dB: wet peak -18.0 ± 0.1 dB relative (the other order gives -12). Pre-fader send, 1 s fade-in, read where the envelope is -6 dB: -12 - 6 (level) relative, i.e. the clipper sees the FADED signal (the other order gives 6 dB less). Post-fader with fader 0 dB = pre-fader, to 0.05 dB, clipper laid. |
+| G3 | Level, mute, solo, gate still give silence | Send at `-inf` with a `gainTester +24 dB` on it: wet `maxabs == 0`. Sender muted / silenced by another's solo / stem muted / parent group muted (Q-U1, Q-U12), at each position: wet `≤ 1e-6` after the 50 ms smoother. Send switched off: silence, and the plugins still answer `plugin.get_state`. |
+| M3 | Materialisation | A new send (`-inf`): `plugin.add` on its host succeeds, `plugin.get_params` answers, `bridge_report` lists no reader for it. Level raised: one build, no new instance (state set before is read back). Level back to `-inf`, switch off, on: state intact each time. Send removed: `debug.plugin_id_audit` 0, no engine key left for its plugins. Object chain filled to its limit: a send with plugins refused `chainFull`, its plugins not instantiated, laid again when a slot frees. |
+| X3 | Limits | The mini-chain accepts plugins up to its own limit (the number of probe a) while the object's chain is unchanged; the object's chain still takes 16 plugins + 1 send carrying N plugins. |
+| U3 | Undo / redo | Add, remove, reorder, bypass, parameter change, move trunk → send, ⌥ copy, ⌘ link: each one undo point, the wet measured before / after / undone / redone. A parameter undo on a send plugin does NOT rebuild the object (`debug` build counter unchanged). A curve on a send plugin's parameter: measured in the wet, survives undo of an unrelated gesture. |
+| Z3 | Save / reopen | Save, `--no-recent` fresh instance, reopen: wet identical to 0.01 dB, states read back, ids unchanged, `"version": 23`, no `plugins` key on sends without plugins. A format-22 project of INC 2 (the Z2 fixture) reopened and re-saved: `items` identical. A 23 file with a block, a bin, a marker inside a send's `plugins` (hand-written): sanitised at load, logged, no crash, audit ok. |
+| C3 | Copies | Duplicate, copy / paste, split of the sender, split of the aux, ⌥ drag: every copy has its mini-chain, NO shared id (`debug.plugin_id_audit` 0), each wet measured; a parameter changed on the original after an unlinked copy does not change the copy's wet; with the default link, it does. |
+| R3 | Retarget and position | `send.retarget` to aux B: the plugins, their state, the level and the curve are on the new send; wet arrives in B and no longer in A; no instance re-created (state set through the editor door, not saved in the model, is still there). The send moved across the four positions: plugins kept, wet level per position as in INC 2's Q2 minus the plugin's gain. |
+| T3 | Window and tails | A `latencyTester` used as a 200 ms delay on the send of an object ending at 1 s: the wet stops at the object's end (+ tail) — the documented rule of A.e, measured so that a change of it is seen. A cropped object: nothing is sent from outside its window, plugin laid. |
+| B3 | Consolidate / bake | `input` send with a plugin, `mid_chain_sends: fold`: the placement's send is post-fader, carries the plugin, the wet is the baked signal through the plugin. `remove`: send, plugin and lanes gone, one undo restores the three. `pre_fader`: refused. Bake of a group whose child has a mini-chain, then un-bake: ids fresh, audit 0, wet as before. |
+| K3 | Sidechain key inside a mini-chain (if kept, A.i) | `objKeyProbe` on the send: left = the sent signal, right = the key, aligned to the sample. |
+| H3 | Addressing | Every `plugin.*` command of A.m on a send host; `send.list` gives `chain_host` and `plugins`; a block / bin / instrument refused with `send_chain_leaves_only`; an unknown host `not_found`. |
+
+**Mutants** (by hand on the Debug build, source restored, `git diff` empty), three run:
+- **A. the builder ignores `getTapChain()`** → A3 (2), L3, O3 fail; P3 stays green (it must — that
+  is what shows the mutant hits the mini-chain only).
+- **B. `registerTap` given `L` instead of `L + P`** → L3 fails by exactly `P` samples, A3 stays
+  green.
+- **C. `deepFreshCopy` / `derivedCopy` copy `sends` by value again** → `test_plugin_id_uniqueness`
+  and C3 fail (shared ids).
+- (D, optional: `processTapHead` called after the chain → O3's fade assertion fails.)
+
+**Non-regression — each against its OWN fresh instance** (the list of C.4, plus what INC 2 added):
+
+```sh
+APP=<Debug>/objekat.app/Contents/MacOS/objekat
+# audio ON (they exit 2 otherwise):
+$APP --headless --api --no-recent --language=en --socket=/tmp/o.sock &
+python3 tools/scenario_bridge_sends.py /tmp/o.sock /tmp/trial_sends            # everything, INC 1 + 2 + 3
+python3 tools/scenario_bridge_latency.py /tmp/o.sock /tmp/trial/project.objekat
+python3 tools/scenario_sidechain.py /tmp/o.sock /tmp/trial/project.objekat
+# audio OFF is fine for these:
+$APP --headless --api --no-recent --no-audio --language=en --socket=/tmp/o.sock &
+python3 tools/scenario_selection_send_scope.py /tmp/o.sock /tmp/trial_sendscope --seed 7 --selections 200
+python3 tools/scenario_families.py /tmp/o.sock /tmp/trial/project.objekat.json
+python3 tools/scenario_markers.py /tmp/o.sock
+python3 tools/scenario_plugin_state_undo.py /tmp/o.sock /tmp/trial/project.objekat.json
+python3 tools/scenario_plugin_selection.py /tmp/o.sock
+python3 tools/scenario_export_preview.py /tmp/o.sock /tmp/trial/project.objekat.json
+python3 tools/scenario_fxlink.py /tmp/o.sock
+python3 tools/scenario_consolidate.py /tmp/oc.sock
+python3 tools/scenario_tabs.py /tmp/o.sock /tmp/trial_tabs
+python3 tools/scenario_cross_paste.py /tmp/o.sock /tmp/trial_cross_paste
+python3 tools/scenario_relink.py /tmp/o.sock
+python3 tools/scenario_channel_mode.py <Debug>/objekat.app
+python3 tools/scenario_ara.py <Debug>/objekat.app
+$APP --headless --no-recent --no-audio --language=en --exec=tools/smoke.jsonl
+# standalone Swift tests (compile line in each header):
+tools/test_send_chain.swift  tools/test_send_position.swift  tools/test_send_bake_policy.swift
+tools/test_send_drop.swift   tools/test_send_columns.swift   tools/test_send_target_menu.swift
+tools/test_synoptic_send_cards.swift  tools/test_synoptic_fxblock.swift
+tools/test_plugin_id_uniqueness.swift tools/test_cross_project_import.swift
+```
+The exact socket and project arguments are those of the INC 2 gate (D.1.F); a script whose
+invocation differs from this list is run as ITS header says, and the difference is written in the
+journal. Then `debug.plugin_id_audit` (0), `debug.send_marker_audit` (ok), the i18n audit (0), the
+warning recount (0 new), and `CGWindowListCopyWindowInfo` on the headless pid (no window).
+`scenario_cross_paste.py` and `scenario_plugin_selection.py` each gain one case with a mini-chain.
+
+**What only a person verifies.**
+- A low-pass on ONE object's send to a real reverb: the reverb darkens for that object only; the
+  object's direct sound and the other senders' reverb do not move.
+- The box: rows, "+", the picker's title, the insertion line while dragging, the three gestures
+  (move, ⌥, ⌘) from the trunk to a send, from a send to the trunk, between two sends, between two
+  objects; reorder; the link pastille; bypass; ⌫; ⌘C / ⌘V.
+- An AU editor opened from a row, on a send at `-inf`, on a send switched off; closed and reopened.
+- A compressor on a send while the send's level is ridden (Q-U17), a delay on a send at the
+  object's end (Q-U18): is it what is wanted.
+- Stacked boxes at neighbouring positions; a long plugin name; a greyed box.
+- Play / stop / loop / seek with a latency plugin on a send: no click, the reverb in time.
+- An old project (format 22) opened and saved; the same project reopened.
+- The three languages.
+
+### D.2.D Open questions for INC 3 (the user's) — see section E for the table
+
+Only what is heard or seen and cannot be deduced. Each has the hypothesis the plan is built on, so
+that work can start before the answers.
+
+- **Q-U17** The send's LEVEL acts after the send's plugins (a compressor on the send is not driven
+  by the send level; lowering the send lowers a delay's tail at once). Or before?
+  *Hypothesis: after.*
+- **Q-U18** A reverb or a delay laid on a send stops with the object, like a plugin of its chain
+  (to ring, the effect goes on the aux). Accepted? *Hypothesis: yes.*
+- **Q-U19** The drawing: the send's card becomes a box, header on top (aux, level, switch), one row
+  per plugin under it. Or the rows above the header (literal signal order)? *Hypothesis: header on
+  top.*
+- **Q-U8** (restated) "The same low-pass on every send to this reverb": v1 offers the ⌘ LINK
+  between send plugins (and between a send plugin and any other of the same type); an FX link bin
+  on a send is NOT in v1. Enough for v1? *Hypothesis: yes.*
+- **Q-U8b** When an object is duplicated, cut or copy-pasted, its send plugins follow the same
+  default as its chain's plugins (linked by default on cut / split / copy-paste). Or always
+  independent on a send? *Hypothesis: same default as the chain.*
+- **Q-U9** A parallel block inside a send's plugins: not in v1 (series only). *Hypothesis: not in
+  v1.*
+
+Not asked, because given or deducible: retarget keeps the plugins; folding at consolidation keeps
+them; deleting a send deletes them (undoable, no confirmation — a send is deleted today without
+one); a send at `-inf` or switched off keeps its plugins loaded.
+
+### D.2.E Risks, frankly
+
+1. **The side input in a `TimedNode`** (A.c) is read, not run. Probe b decides at 3.0; the fallback
+   (P6) is known and costs the dry's bit-exactness with a latency plugin, nothing else.
+2. **The third root is the INC 2 marker problem again, larger**: ~20 families of sites, and a
+   miss is SILENT (a state not saved, an id shared, an undo that rebuilds). The inventory and the
+   "survives the transformation" tests are the only defence; the id audit catches the worst
+   (shared ids) but not a lost state.
+3. **The derived host id** makes a send host invisible to `find(id:)`. A site that takes a host and
+   silently returns on nil will "work" by doing nothing. H3 calls every command; the UI paths are
+   the eye's.
+4. **The materialisation rule changes INC 1's invariant** "a dead send has no engine plugin": one
+   more entry in the 20 for a switched-off send that carries plugins, and `commitBridgeSync`'s
+   removal loop now has a precondition (purge). A miss = an AU destroyed with its editor open (the
+   `~AudioProcessor` crash already met once in this project).
+5. **Retarget in place** is new engine bookkeeping (`_bridgeSendMap` re-keyed); if probe d shows
+   INC 2 removes and re-lays, the level's automation path must be re-checked after the change.
+6. **An extra build pass on every export** when `L + P > R` (the cached age is not state). Counted
+   by the scenario; if it weighs, the age can be seeded from the list's latency before the first
+   pass — not planned.
+7. **CPU**: a mini-chain is per sender. Twenty objects each with a low-pass on their send = twenty
+   instances (the link keeps them in step, it does not share them). Sharing = a bin, not in v1.
+8. **The sidecar of a consolidated object** may keep a second copy of the send plugins (probe c):
+   harmless while cold, a duplicate id if anything ever reads it back beside the placement.
+9. **Box heights** make the send column's layout variable; stacked boxes at neighbouring trunk
+   positions can push each other far from their anchor. Pure tests cover overlap, not legibility.
+10. **Not measurable headless**: every gesture of A.l, the editors, the picker. INC 2 had the same
+    gap and it held; it is still a gap.
+
+### D.2.F What the delivered code (INC 1 + INC 2 + the 10 October fix) leaves for INC 3
+
+1. `duplicateSendsTarget(from:to:)` (`EditViewModel+Aux.swift:547`) rebuilds `AuxSend(auxID:
+   levelDb:enabled:)` field by field: after an AUX split the senders' new send is POST-FADER
+   whatever the original's position (an INC 2 gap, not covered by a test), and it would drop
+   `plugins`. Fixed in 3.7; the position half could be fixed today, independently.
+2. `isPatchable` (`+UndoRedo.swift:280`) neutralises only `tap` when it compares sends.
+3. `deepFreshCopy.rebuild` (`+Bake.swift:158`) and `CrossProjectImport` (:286) copy `sends` by
+   value — correct today, a duplicate-id factory the day `plugins` exists.
+4. A dead send has no engine plugin, and a new send is dead (Q-U4) — hence A.g.
+5. P6 and §A.2's INC 3 paragraph are superseded by A.d; §A.4's sketch of `plugins` stands.
+6. `SendBakePolicy` looks at the object's OWN sends only; the children of a baked group are not
+   inspected, neither for `chain` nor for `pre_fader` (the 10 October fix kept that). With
+   mini-chains, a child's send plugins are baked away or lost with the child exactly like its
+   sends are today — unchanged, but now it is plugins that silently go. Listed in B3.
+7. A send at a level above `-inf` whose aux is silent still processes its copy; with a mini-chain
+   it processes its plugins too. No change planned.
+8. `pruneOrphanSends` removes sends in the model without scheduling a chain compile: with plugins
+   on the pruned send, their engine instances would stay until the next compile. Step 3.7 makes it
+   call the same door as `removeSend`.
+9. §D.1.A.d says the list's cap is 45; the measured cap is 20 entries (D.1.F). The number that
+   matters for a mini-chain is probe a's.
+10. The compile line in the header of `tools/test_plugin_id_uniqueness.swift` is stale (to refresh
+    when the test is extended in 3.3).
+
+### D.2.G Journal of INC 3
+
+(To be opened by the executor: probes of 3.0 first.)
 
 ---
 
@@ -1472,20 +2154,25 @@ is one setting? Q-U9 a parallel block inside a mini-chain: allowed or series onl
 | Q-U3 | The Aux tool (A) and the inspector: one knob per REACHABLE aux (possibly dozens per block) or only the near ones plus the sends that already exist, the far ones being created from the signal view? | ANSWERED 9 Oct: ALL reachable auxes (time-overlap filtered), ordered same group / rest of the stem / Main. Menu and pick postponed to INC 2. |
 | Q-U4 | A send created by the menu or the pick mode starts at 0 dB, or at −∞ waiting for the knob? | ANSWERED 9 Oct: -inf (silent). |
 | Q-U5 | (INC 2) A mid-chain tap is before the object's fades: follow the fades anyway? | ANSWERED 9 Oct: YES, fades and window apply to the send at every position; volume and pan do not apply pre-fader. |
-| Q-U6 | (INC 2) Bake / consolidate with an in-chain send. | ANSWERED 9 Oct: "ask the user". **To confirm:** is it an alert at the moment of the operation with fold to post-fader / delete the send / cancel? And for the API, which cannot ask: the plan REFUSES by default (`mid_chain_sends: refuse`) and takes `fold` / `remove` explicitly. A `pre_fader` send is not concerned (the baked wave is the pre-fader signal). |
+| Q-U6 | (INC 2) Bake / consolidate with an in-chain send. | ANSWERED 9 Oct: "ask the user". **To confirm:** is it an alert at the moment of the operation with fold to post-fader / delete the send / cancel? And for the API, which cannot ask: the plan REFUSES by default (`mid_chain_sends: refuse`) and takes `fold` / `remove` explicitly. A `pre_fader` send is not concerned (the baked wave is the pre-fader signal). **CONFIRMED (third round); and since 10 Oct a `pre_fader` send is no longer "not concerned": it makes the consolidation REFUSED (Q-U6b).** |
 | Q-U7 | (INC 2) The card: where a post-fader send is drawn. | ANSWERED 9 Oct: every send is a card; post-fader = a card under the pan / volume zone; the foot zone disappears for outgoing sends. |
 | Q-U12 | (INC 2) An object is MUTED (or silenced by another's solo, or by its stem's mute) and has a send taken BEFORE its fader. Mute is the fader today, so that send would keep feeding the reverb. Should it? | NO: a muted or solo-silenced object sends nothing, wherever the send is taken (consistent with Q-U1). Step 2.5, isolated. |
 | Q-U13 | (INC 2) Consequence of Q-U7: the foot zone listed EVERY reachable aux as a row, send or not. With cards, only the sends that exist are drawn; the other auxes are reached through "Send to…". Acceptable? | Yes. (The Aux tool and the inspector still list all reachable auxes.) |
-| Q-U14 | (INC 2) Where "Send to…" is reached in the signal view. | A "+ Send to…" button in the post-fader slot (creates post-fader), and the same entry in the "+" of each trunk insert point (creates the send right there). |
+| Q-U14 | (INC 2) Where "Send to…" is reached in the signal view. | ANSWERED 10 Oct: accepted as built — the right-click on a "+" of the trunk (and the "+ Send to…" button of the column). |
 | Q-U15 | (INC 2) A send exists but its aux no longer overlaps the object in time (or the send is refused by the scope). The foot zone used to hide a non-overlapping aux. | The card stays, greyed, with the reason; nothing disappears from the chain by moving an object. |
 | Q-U16 | (INC 2) "Change target…" on a card (same position, level and automation, another aux): in INC 2, or delete-and-recreate is enough? | In INC 2 (card menu + `send.retarget`), droppable without consequence. |
-| Q-U8, Q-U9 | (INC 3) Linking / bins and parallel blocks in a mini-chain. | Neither in v1. |
+| Q-U8 | (INC 3) "The same low-pass on every send to this reverb" as one setting. | The ⌘ LINK is allowed between send plugins (and with any plugin of the same type); an FX link bin on a send is NOT in v1. |
+| Q-U8b | (INC 3) Duplicating / cutting / copy-pasting an object: are its send plugins linked to the original's by default? | Same default as the plugins of its chain for the same gesture. |
+| Q-U9 | (INC 3) A parallel block inside a send's plugins. | Not in v1: series only. |
+| Q-U17 | (INC 3) The send's LEVEL acts after the send's plugins or before? Inaudible for a filter; audible for a compressor / saturator (driven or not by the send level) and for a delay (its tail drops at once or not). | AFTER the plugins (D.2.A.a). |
+| Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | Yes (D.2.A.e). |
+| Q-U19 | (INC 3) The send's card becomes a box: header (aux, level, switch) on top, one row per plugin under it — or the rows above the header (literal signal order)? | Header on top (D.2.A.l). |
 | Q-U10 | Two groups each sending into an aux of the other is refused (a scheduling loop, no signal loop). Acceptable, with the reason shown? | ANSWERED 9 Oct: accepted, reason shown. |
 | Q-U11 | A stem DETACHED from the Main still feeds a Main aux today (unchanged by this plan). Wanted? | ANSWERED 9 Oct: unchanged. |
 
 ## Settled by this plan (reversible, listed so they can be contested)
 
-P1–P9 above; the wet is measured by difference; the legacy path survives INC 1 only; the hand's
+P1–P9 above (P6 revised by D.2.A.d); for INC 3, the list of D.2.A.o; the wet is measured by difference; the legacy path survives INC 1 only; the hand's
 doors refuse a cycle-closing send while the machine's door stores it; refused sends are shown
 inactive rather than hidden; `send.remove` exists.
 
