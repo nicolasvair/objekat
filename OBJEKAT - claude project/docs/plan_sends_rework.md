@@ -1772,26 +1772,30 @@ save would write stale states.
 #### A.l Signal view — ONE layout recommended
 
 Today an outgoing send is a 28-pt card in a column to the right of the trunk, wired to the trunk at
-its position. Recommended, and built unless the user says otherwise (Q-U19):
+its position. **Decided by the user on 10 October (Q-U19) — the literal order of the signal: the
+plugins ON TOP, the header line AT THE BOTTOM** (the first version of this section had the header on
+top; it is superseded):
 
 ```
  trunk ──┐
          ├──▶ ┌───────────────────────────────┐
-              │ ↳ Reverb A        -12 dB  (●) │   the send's header: today's card, unchanged
-              ├───────────────────────────────┤
               │ ● Low-pass              ⛓  × │   one compact row per plugin, in processing order
               │ ● Saturator                 × │
-              │ +                             │   visible when the box is hovered or holds a selection
+              │ +                             │   after the last plugin, just above the level line
+              ├───────────────────────────────┤
+              │ ↳ Reverb A        -12 dB  (●) │   the send's line: today's card (aux, level, on/off)
               └───────────────────────────────┘
 ```
 
-- **The card becomes a box**: the header (today's card, same height, same controls) and, under it,
-  one row per plugin (22 pt): bypass dot, name, the link pastille when linked, the × on hover.
-  A send without plugins is drawn exactly as today (plus the "+" on hover).
-- **Reading order**: the rows are processed top to bottom, then the level of the header. The header
-  is on top because it is the box's identity (which aux). Said by the tooltip of the "+" and of the
-  level ("applied after the send's plugins"). This is the one place where the drawing does not
-  follow the signal literally; the alternative (rows ABOVE the header) is the other half of Q-U19.
+- **The card becomes a box**: one row per plugin (22 pt) — bypass dot, name, the link pastille when
+  linked, the × on hover — then the "+", then, at the BOTTOM, the header line (today's card, same
+  height, same controls). A send without plugins is drawn exactly as today (plus the "+" on hover,
+  above the line).
+- **Reading order**: top to bottom is the signal — the tap, the rows in processing order, then the
+  level of the bottom line, then the aux. The wire from the trunk's tap point therefore arrives at
+  the TOP of the box (its first row; the line itself when there is no plugin), and the insertion
+  slots of a drop are counted from the top: slot 0 above the first row, slot N between the last row
+  and the "+" / the level line.
 - **Variable height**: `SendCardPlacement` (pure) takes each box's height instead of a constant;
   stacking, wire anchors and the canvas height follow. The column's width does not change.
 - **Gestures**, all through the existing chain-host code (A.j):
@@ -2063,12 +2067,13 @@ that work can start before the answers.
 
 - **Q-U17** The send's LEVEL acts after the send's plugins (a compressor on the send is not driven
   by the send level; lowering the send lowers a delay's tail at once). Or before?
-  *Hypothesis: after.*
+  *Hypothesis: after.* **ANSWERED 10 Oct: after.**
 - **Q-U18** A reverb or a delay laid on a send stops with the object, like a plugin of its chain
-  (to ring, the effect goes on the aux). Accepted? *Hypothesis: yes.*
+  (to ring, the effect goes on the aux). Accepted? *Hypothesis: yes.* **ANSWERED 10 Oct: yes.**
 - **Q-U19** The drawing: the send's card becomes a box, header on top (aux, level, switch), one row
   per plugin under it. Or the rows above the header (literal signal order)? *Hypothesis: header on
-  top.*
+  top.* **ANSWERED 10 Oct: the other half — plugins on top, the header line at the bottom, the "+"
+  after the last plugin (just above the level line); a send without plugins keeps today's card.**
 - **Q-U8** (restated) "The same low-pass on every send to this reverb": v1 offers the ⌘ LINK
   between send plugins (and between a send plugin and any other of the same type); an FX link bin
   on a send is NOT in v1. Enough for v1? *Hypothesis: yes.*
@@ -2164,9 +2169,9 @@ one); a send at `-inf` or switched off keeps its plugins loaded.
 | Q-U8 | (INC 3) "The same low-pass on every send to this reverb" as one setting. | The ⌘ LINK is allowed between send plugins (and with any plugin of the same type); an FX link bin on a send is NOT in v1. |
 | Q-U8b | (INC 3) Duplicating / cutting / copy-pasting an object: are its send plugins linked to the original's by default? | Same default as the plugins of its chain for the same gesture. |
 | Q-U9 | (INC 3) A parallel block inside a send's plugins. | Not in v1: series only. |
-| Q-U17 | (INC 3) The send's LEVEL acts after the send's plugins or before? Inaudible for a filter; audible for a compressor / saturator (driven or not by the send level) and for a delay (its tail drops at once or not). | AFTER the plugins (D.2.A.a). |
-| Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | Yes (D.2.A.e). |
-| Q-U19 | (INC 3) The send's card becomes a box: header (aux, level, switch) on top, one row per plugin under it — or the rows above the header (literal signal order)? | Header on top (D.2.A.l). |
+| Q-U17 | (INC 3) The send's LEVEL acts after the send's plugins or before? Inaudible for a filter; audible for a compressor / saturator (driven or not by the send level) and for a delay (its tail drops at once or not). | ANSWERED 10 Oct: AFTER the plugins (D.2.A.a), as planned. |
+| Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | ANSWERED 10 Oct: YES, the tail stops with the object (D.2.A.e), as planned. |
+| Q-U19 | (INC 3) The send's card becomes a box: header (aux, level, switch) on top, one row per plugin under it — or the rows above the header (literal signal order)? | ANSWERED 10 Oct, DIFFERENT from the plan's hypothesis: the PLUGINS are ON TOP and the header line (aux, level, on/off) is AT THE BOTTOM — the literal order of the signal. The "+" stays after the last plugin, i.e. just above the level line. A send without plugins keeps today's card. The wire to the tap point and the drop zones follow that orientation (D.2.A.l, revised). |
 | Q-U10 | Two groups each sending into an aux of the other is refused (a scheduling loop, no signal loop). Acceptable, with the reason shown? | ANSWERED 9 Oct: accepted, reason shown. |
 | Q-U11 | A stem DETACHED from the Main still feeds a Main aux today (unchanged by this plan). Wanted? | ANSWERED 9 Oct: unchanged. |
 
