@@ -1279,7 +1279,11 @@ def section_V2(c):
     add_test(c, x, "latencyTester", latency_ms=10.0)
     c.send("send.create", {"id": x, "aux": a, "position": "input"})
     lay_send(c, x, a, 0.0)
-    ms = lambda v: int(round(v * SR / 1000.0))
+    # The age is counted in samples of the LIVE graph, which runs at the DEVICE's rate (the exports are 48 kHz
+    # whatever it is): a machine whose output device sits at 96 kHz doubles every age. Read it, do not assume SR.
+    live_sr = (((bridge_report(c).get("engine") or {}).get("build") or {}).get("sample_rate")) or SR
+    print("       V2: the live graph runs at %s Hz (the ages are in its samples)" % live_sr)
+    ms = lambda v: int(round(v * live_sr / 1000.0))
     # (name, params, expected level re source, expected age in samples)
     steps = [("input",   {"position": "input"},                0.0,   0),
              ("chain 0", {"position": "chain", "index": 0},    0.0,   0),
