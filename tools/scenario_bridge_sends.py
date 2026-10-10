@@ -24,7 +24,11 @@ Options:
                      report (`passes`, `gate_edges`, aligned readers…) and the sections that need the
                      new scope are skipped, every measured number is printed as a REFERENCE.
     --only A,M,Q2    run only these sections (INC 2's sections carry a 2: Q2, R2, S2, T2, U2, V2, W2, X2,
-                     Y2, Z2, RT2, PF and K2 — INC 1 already used the letters P to T).
+                     Y2, Z2, RT2, PF and K2 — INC 1 already used the letters P to T). INC 3's carry a 3
+                     (plugins ON a send): A3, L3, O3, P3…
+
+P3 compares every export of THIS run with the same-named export of an INC 2 reference run (the build
+before plugins on sends existed): set INC2_REF_DIR=<dir of that run's exports>. Without it P3 is skipped.
 
 T2 (4) compares a post-fader send's export with the one an INC 1 build made of the same project:
 set INC1_REF_DIR=<dir>; `--only T2REF` on the INC 1 app writes the reference there (it is NOT part of a
@@ -88,6 +92,8 @@ def fixtures():
     B._write24(out("imp_small.wav"), [0.05 if i == 2 * SR else 0.0 for i in range(3 * SR)])
     B.make_sine(out("sine1k.wav"), seconds=4.0, hz=1000.0, dbfs=-12.0)
     B._write24(out("imp_two.wav"), [IMP_AMP if i in (SR, 2 * SR) else 0.0 for i in range(3 * SR)])
+    B.make_sine(out("sine1s.wav"), seconds=1.0, hz=1000.0, dbfs=-12.0)      # INC 3: a short tone per sender
+    B.make_sine(out("sine_m6.wav"), seconds=3.0, hz=1000.0, dbfs=-6.0)      # INC 3: what a clipper at -12 bites
 
 
 def wait(c):
@@ -2438,6 +2444,306 @@ def section_PF(c):
     check("PF2: saved again: one marker, no tap on the send", sum(1 for p_ in ox3["plugins"] if "sendMarker" in p_) == 1
           and all(sd.get("tap") is None for sd in ox3["sends"]), (ox3["plugins"], ox3["sends"]))
 
+# ==================================================================================================
+# INC 3 — plugins ON a send (docs/plan_sends_rework.md §D.2.C). The mini-chain of a send is a chain
+# HOST of its own (`send.list` gives its id, `chain_host`): every plugin command takes it.
+# ==================================================================================================
+
+def send_host(c, x, a):
+    """The chain host of the send x -> a, or None when the app has no such door."""
+    rows = [r for r in c.send("send.list", {"id": x})["sends"] if r["aux"] == a]
+    return rows[0].get("chain_host") if rows else None
+
+
+def need_host(c, label, x, a):
+    h = send_host(c, x, a)
+    check(label + ": send.list gives the send's chain_host", h is not None, "no door yet (INC 3, step 3.8)")
+    return h
+
+
+def add_on_send(c, label, x, a, kind, **kw):
+    """Lays a test plugin ON the send x -> a. Returns (host, plugin id) or (None, None)."""
+    h = need_host(c, label, x, a)
+    if h is None:
+        return None, None
+    params = {"host": h, "type": kind}
+    params.update(kw)
+    r = step(label + ": %s laid on the send" % kind, lambda: c.send("debug.add_test_plugin", params))
+    settle(c)
+    return h, (r or {}).get("plugin")
+
+
+def aux_wet(c, name, aux, t1=3.0):
+    """(dry, wet) of everything that reaches `aux`: the export with the aux, minus the export with the
+    aux muted. For the sections with SEVERAL senders, where switching one send off is not the wet."""
+    on = render(c, name + "_on.wav", 0.0, t1)
+    c.send("object.set_mute", {"ids": [aux], "muted": True})
+    settle(c)
+    off = render(c, name + "_off.wav", 0.0, t1)
+    c.send("object.set_mute", {"ids": [aux], "muted": False})
+    settle(c)
+    return off, sub(on, off)
+
+
+def seg(s, t0, t1):
+    return s[int(t0 * SR):int(t1 * SR)]
+
+
+def seg_db(s, t0, t1):
+    return B.db(B.rms(s, t0, t1))
+
+
+def seg_peak_db(s, t0, t1):
+    return B.db(maxabs(seg(s, t0, t1)))
+
+
+def engine_send_row(rep, x, a):
+    for e in ((rep.get("engine") or {}).get("sends") or []):
+        if e.get("sender") == x and e.get("aux") == a:
+            return e
+    return {}
+
+
+def set_position(c, x, a, pos):
+    prm = {"id": x, "aux": a, "position": pos}
+    if pos == "chain":
+        prm["index"] = 0
+    c.send("send.set_position", prm)
+    settle(c)
+
+
+POSITIONS3 = ("post_fader", "pre_fader", "input", "chain")
+
+
+# --------------------------------------------------------------------------------------------------
+# A3 — THE feature: a plugin on a send acts on THIS sender's wet, and on nothing else
+# --------------------------------------------------------------------------------------------------
+
+def section_A3(c):
+    print("\n--- A3  a plugin on a send acts on this sender's wet only (dry and the other sender untouched)")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    for pos in POSITIONS3:
+        name = "A3_" + pos
+        fresh(c, name)
+        x1 = c.send("object.add", {"path": out("sine1s.wav"), "lane": 0, "start": 0.0})["id"]
+        x2 = c.send("object.add", {"path": out("sine1s.wav"), "lane": 1, "start": 1.5})["id"]
+        a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2})["id"]
+        for x in (x1, x2):
+            c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+            lay_send(c, x, a, -6.0)
+            set_position(c, x, a, pos)
+        dry0, wet0 = aux_wet(c, name + "_ref", a)
+        ref1, ref2 = seg_db(wet0, 0.2, 0.8), seg_db(wet0, 1.7, 2.3)
+        check("A3 %s: reference: both senders reach the aux (%.1f / %.1f dB)" % (pos, ref1, ref2),
+              ref1 > -40.0 and ref2 > -40.0, (ref1, ref2))
+
+        h, pid = add_on_send(c, "A3 " + pos, x1, a, "gainTester", gain_db=-12.0)
+        if pid is None:
+            continue
+        dry1, wet1 = aux_wet(c, name + "_fx", a)
+        check("A3 %s (1): the direct signal is identical, sample for sample" % pos,
+              maxabs(sub(dry1, dry0)) == 0.0, maxabs(sub(dry1, dry0)))
+        got = seg_db(wet1, 0.2, 0.8) - ref1
+        print("       A3 %s: X1's wet %.3f dB against the reference (wanted -12.00)" % (pos, got))
+        check("A3 %s (2): X1's wet is 12 dB down (0.05)" % pos, abs(got + 12.0) <= 0.05, "%.3f" % got)
+        d2 = maxabs(seg(sub(wet1, wet0), 1.4, 3.0))
+        check("A3 %s (3): X2's wet is identical, sample for sample" % pos, d2 == 0.0, d2)
+
+        # (4) the control: the same plugin on X1's TRUNK lowers the direct signal too.
+        step("A3 %s: the plugin leaves the send" % pos, lambda: c.send("plugin.remove", {"host": h, "plugin": pid}))
+        settle(c)
+        dryb, wetb = aux_wet(c, name + "_back", a)
+        check("A3 %s: plugin removed: wet and dry are the reference again" % pos,
+              maxabs(sub(dryb, dry0)) == 0.0 and maxabs(sub(wetb, wet0)) == 0.0,
+              (maxabs(sub(dryb, dry0)), maxabs(sub(wetb, wet0))))
+        add_test(c, x1, "gainTester", gain_db=-12.0)
+        settle(c)
+        dry2, _ = aux_wet(c, name + "_trunk", a)
+        gd = seg_db(dry2, 0.2, 0.8) - seg_db(dry0, 0.2, 0.8)
+        check("A3 %s (4): control: on the TRUNK the same plugin lowers the direct signal by 12 dB" % pos,
+              abs(gd + 12.0) <= 0.05, "%.3f" % gd)
+        audit(c, "A3 " + pos)
+
+
+# --------------------------------------------------------------------------------------------------
+# L3 — a latency plugin on a send ages the TAP: the wet stays on the dry, the dry does not move
+# --------------------------------------------------------------------------------------------------
+
+def set_latency(c, plugin, ms):
+    c.send("debug.set_plugin_property", {"plugin": plugin, "property": "time", "value": ms / 1000.0})
+    wait(c)
+    time.sleep(0.6)          # the latency watch rebuilds on its own timer
+    wait(c)
+
+
+def section_L3(c):
+    print("\n--- L3  latency ON a send: the wet stays on the dry to the sample, the dry is untouched")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    x, a = cast_siblings(c, "L3")
+    # A second sender, WITHOUT mini-chain, to the same aux: a small impulse at 2 s.
+    y = c.send("object.add", {"path": out("imp_small.wav"), "lane": 3, "start": 0.0})["id"]
+    lay_send(c, x, a, -6.0)
+    lay_send(c, y, a, -6.0)
+    dry0, wet0 = aux_wet(c, "L3_ref", a)
+    p0x, p0y = B.peak_index(seg(wet0, 0.5, 1.5)), B.peak_index(seg(wet0, 1.5, 2.5))
+    check("L3: reference: both wets are on their dry", p0x == int(0.5 * SR) and p0y == int(0.5 * SR), (p0x, p0y))
+
+    h, pid = add_on_send(c, "L3", x, a, "latencyTester", latency_ms=20.0)
+    if pid is None:
+        return
+    set_latency(c, pid, 20.0)
+    dry1, wet1 = aux_wet(c, "L3_lat", a)
+    check("L3: the direct signal is identical with a 20 ms plugin on the send",
+          maxabs(sub(dry1, dry0)) == 0.0, maxabs(sub(dry1, dry0)))
+    check("L3: the wet is identical too (a pure delay, compensated to the sample)",
+          maxabs(sub(wet1, wet0)) == 0.0, maxabs(sub(wet1, wet0)))
+    pd, pw = B.peak_index(dry1), B.peak_index(wet1)
+    check("L3: idx(wet peak) == idx(dry peak)", pd == pw, "%s vs %s" % (pd, pw))
+    py = B.peak_index(seg(wet1, 1.5, 2.5))
+    check("L3: the second sender (no mini-chain) is still on its dry", py == int(0.5 * SR), py)
+
+    rep = bridge_report(c)
+    eng = rep.get("engine") or {}
+    build = eng.get("build") or {}
+    rate = build.get("sample_rate") or 0
+    P = int(round(0.020 * rate))
+    row = engine_send_row(rep, x, a)
+    print("       L3: graph at %s Hz, send row %s" % (rate, row))
+    check("L3: the tap's age is L + P (%d samples at the graph's rate)" % P, row.get("age_samples") == P, row)
+    check("L3: chain_latency_samples == P", row.get("chain_latency_samples") == P, row)
+    check("L3: chain_plugins == 1", row.get("chain_plugins") == 1, row)
+    check("L3: converged in at most 2 passes", build.get("converged") is True and (build.get("passes") or 9) <= 2, build)
+    rds = send_readers(rep)
+    check("L3: two send readers, aligned, nothing uncovered",
+          len(rds) == 2 and all(r.get("alignment_error_samples") == 0 and r.get("blocks_uncovered", 0) == 0
+                                and r.get("status") == "aligned" for r in rds), rds)
+    check("L3: the return declares L + P (the aux, and only it, carries the mini-chain's latency)",
+          all(r.get("declared") == P for r in rds), rds)
+
+    # A 30 ms plugin on the AUX: R > L + P, nothing is padded, one pass.
+    r30 = add_test(c, a, "latencyTester", 30.0)
+    set_latency(c, r30["plugin"], 30.0)
+    dry2, wet2 = aux_wet(c, "L3_aux30", a)
+    pd, pw = B.peak_index(dry2), B.peak_index(wet2)
+    check("L3: with 30 ms on the aux: idx(wet peak) == idx(dry peak)", pd == pw, "%s vs %s" % (pd, pw))
+    rep = bridge_report(c)
+    build = (rep.get("engine") or {}).get("build") or {}
+    check("L3: with 30 ms on the aux: one pass, converged", build.get("converged") is True and build.get("passes") == 1, build)
+    c.send("plugin.remove", {"host": a, "plugin": r30["plugin"]})
+    settle(c)
+
+    # The latency changed while laid: realigned by the latency watch.
+    set_latency(c, pid, 5.0)
+    dry3, wet3 = aux_wet(c, "L3_5ms", a)
+    check("L3: latency changed to 5 ms: the direct signal still identical", maxabs(sub(dry3, dry0)) == 0.0, maxabs(sub(dry3, dry0)))
+    check("L3: latency changed to 5 ms: the wet still identical", maxabs(sub(wet3, wet0)) == 0.0, maxabs(sub(wet3, wet0)))
+    rep = bridge_report(c)
+    row = engine_send_row(rep, x, a)
+    rate = ((rep.get("engine") or {}).get("build") or {}).get("sample_rate") or 0
+    check("L3: the tap's age follows (5 ms)", row.get("age_samples") == int(round(0.005 * rate)), row)
+    audit(c, "L3")
+
+
+# --------------------------------------------------------------------------------------------------
+# O3 — the order on the copy: envelope, then the plugins, then the level
+# --------------------------------------------------------------------------------------------------
+
+def section_O3(c):
+    print("\n--- O3  order on the send's copy: envelope -> plugins -> level")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    k = pipeline_offset_db(c)
+
+    # (1) the level comes AFTER the plugins: a clipper at -12 dBFS on a -6 dBFS sine, send at -6 dB.
+    fresh(c, "O3a")
+    x = c.send("object.add", {"path": out("sine_m6.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
+    lay_send(c, x, a, -6.0)
+    h, pid = add_on_send(c, "O3", x, a, "clipTester", ceiling_db=-12.0)
+    if pid is None:
+        return
+    levels = {}
+    for pos in ("post_fader", "pre_fader"):
+        set_position(c, x, a, pos)
+        dry, wet = measure(c, "O3a_" + pos, x, a, 0.0)
+        levels[pos] = seg_peak_db(wet, 1.0, 2.0) - k
+        print("       O3 %s: wet peak %.3f dBFS (clip -12, then level -6: -18; the other order: -12)" % (pos, levels[pos]))
+        check("O3 %s: wet peak -18.0 dBFS (0.1): the level acts AFTER the plugins" % pos,
+              abs(levels[pos] + 18.0) <= 0.1, "%.3f" % levels[pos])
+    check("O3: post-fader with the fader at 0 dB = pre-fader (0.05 dB), clipper laid",
+          abs(levels["post_fader"] - levels["pre_fader"]) <= 0.05, levels)
+
+    # (2) the envelope comes BEFORE the plugins: a pre-fader send, a 1 s fade-in. Read where the fade
+    # is well under the ceiling: the clipper sees the FADED signal, lets it through, and the wet is the
+    # dry minus the send level. The other order (clip, then fade) would give 6 dB less.
+    fresh(c, "O3b")
+    x = c.send("object.add", {"path": out("sine_m6.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
+    c.send("object.set_fade", {"id": x, "in": 1.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "pre_fader"})
+    lay_send(c, x, a, -6.0)
+    h, pid = add_on_send(c, "O3 fade", x, a, "clipTester", ceiling_db=-12.0)
+    if pid is None:
+        return
+    dry, wet = measure(c, "O3b", x, a, 0.0)
+    full = seg_peak_db(dry, 1.5, 2.5)
+    t_read = None
+    for i in range(5, 95):
+        t = i / 100.0
+        e = seg_peak_db(dry, t, t + 0.01) - full
+        if -10.0 <= e <= -8.0:
+            t_read = t
+            break
+    check("O3 fade: a 10 ms window where the fade is 8 to 10 dB down exists", t_read is not None, "none")
+    if t_read is not None:
+        e = seg_peak_db(dry, t_read, t_read + 0.01) - full
+        got = seg_peak_db(wet, t_read, t_read + 0.01) - seg_peak_db(dry, t_read, t_read + 0.01)
+        print("       O3 fade: at %.2f s the fade is %.2f dB; wet - dry = %.3f dB (envelope first: -6; clip first: -12)"
+              % (t_read, e, got))
+        check("O3 fade: the clipper sees the FADED signal (wet = dry - 6 dB, 0.3)", abs(got + 6.0) <= 0.3, "%.3f" % got)
+    steady = seg_peak_db(wet, 1.5, 2.5) - k
+    check("O3 fade: past the fade the clipper bites (-18 dBFS, 0.1)", abs(steady + 18.0) <= 0.1, "%.3f" % steady)
+
+
+# --------------------------------------------------------------------------------------------------
+# P3 — no plugin on a send = INC 2, to the sample
+# --------------------------------------------------------------------------------------------------
+
+def wav_data(path):
+    """The raw bytes of a WAV's `data` chunk (the header carries a date: files are never compared whole)."""
+    with open(path, "rb") as f:
+        blob = f.read()
+    if blob[:4] != b"RIFF" or blob[8:12] != b"WAVE":
+        return None
+    i = 12
+    while i + 8 <= len(blob):
+        cid, size = blob[i:i + 4], int.from_bytes(blob[i + 4:i + 8], "little")
+        if cid == b"data":
+            return blob[i + 8:i + 8 + size]
+        i += 8 + size + (size & 1)
+    return None
+
+
+def section_P3(c):
+    print("\n--- P3  no plugin on a send = the INC 2 build, sample for sample (INC2_REF_DIR)")
+    ref_dir = os.environ.get("INC2_REF_DIR")
+    if REF or not ref_dir:
+        print("       (skipped: set INC2_REF_DIR to the exports of the INC 2 reference run, step 3.0)")
+        return
+    names = sorted(n for n in os.listdir(ref_dir) if n.endswith(".wav") and os.path.isfile(out(n)))
+    fixtures_ = {"imp.wav", "imp_small.wav", "sine1k.wav", "imp_two.wav"}
+    names = [n for n in names if n not in fixtures_]
+    differing = [n for n in names if wav_data(os.path.join(ref_dir, n)) != wav_data(out(n))]
+    print("       P3: %d exports of this run have a reference; %d differ" % (len(names), len(differing)))
+    check("P3: this run made exports the reference has (%d)" % len(names), len(names) > 0, "nothing to compare")
+    check("P3: every INC 2 export is identical to the reference, sample for sample", not differing, differing[:12])
+
+
 # --------------------------------------------------------------------------------------------------
 
 fixtures()
@@ -2452,6 +2758,8 @@ with ObjekatClient(SOCK) as c:
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
                     ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2), ("RT2", section_RT2),
                     ("Z2", section_Z2), ("PF", section_PF),
+                    ("A3", section_A3), ("L3", section_L3), ("O3", section_O3),
+                    ("P3", section_P3),
                     ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)
