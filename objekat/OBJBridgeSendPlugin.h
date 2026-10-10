@@ -138,7 +138,18 @@ public:
             state.appendChild (juce::ValueTree (ParallelPluginBlock::branchTreeType), nullptr);   // → rebuildChainList
 
         jassert (chainList != nullptr);
+        refreshChainOwners();
         return *chainList;
+    }
+
+    /// Re-seats the mini-chain's owners on the send plugin's CURRENT track and clip. The list keeps
+    /// raw pointers (`PluginList::setTrackAndClip`) taken when it was built; a clip that changes
+    /// pool track afterwards (a rank or a stem change: `moveClipToOwner`) would leave the old
+    /// track there, freed once its pool slot is pruned — and `PluginList::insertPlugin` reads it.
+    void refreshChainOwners()
+    {
+        if (chainList != nullptr)
+            chainList->setTrackAndClip (getOwnerTrack(), getOwnerClip());
     }
 
     /// The series latency of the mini-chain. The clip's head and tail read it (Clip::getHead /

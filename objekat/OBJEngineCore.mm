@@ -3212,6 +3212,11 @@ static bool moveClipToOwner(te::Clip& clip, te::ClipOwner& dest) {
     auto* um = clip.getUndoManager();
     clip.state.getParent().removeChild(clip.state, um);
     dest.getClipOwnerState().addChild(clip.state, -1, um);
+    // A send's mini-chain is a nested list that remembers its owner TRACK: it follows the clip.
+    if (auto* pl = clip.getPluginList())
+        for (auto p : *pl)
+            if (auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(p))
+                bs->refreshChainOwners();
     return true;
 }
 
