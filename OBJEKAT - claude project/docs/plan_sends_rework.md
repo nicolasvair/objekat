@@ -2578,6 +2578,27 @@ instance address") so that "the same instance" is a compared pointer, not an inf
    after. The unit's state (the Hz) is saved and restored exactly. What it may touch: a NORMALISED
    automation lane on such a parameter. The reopen scenario plays a moment before it sets or compares.
 
+**Final gate of the three lots (10 October, Debug, headless; sound card at 96 kHz, exports 48 kHz).**
+`scenario_bridge_sends.py`, ALL sections, audio on, `INC2_REF_DIR` set: **1764 OK / 0 FAILED** (was
+1436 / 2); **P3: 517 exports have a reference, 0 differ** — a send without plugin is INC 2 to the
+sample, at every position. T3 then gained 12 assertions (post-fader: plugin BYPASSED, then REMOVED —
+wet − dry = 0 dB along the fade, the send back at the end of the list without envelope) and was run
+again with O3: 151 / 0 (the full run was not repeated for these 12).
+`scenario_send_plugins_reopen.py` 53 / 0. Each on its own fresh instance: `scenario_bridge_latency`
+66 / 0, `scenario_sidechain` 55 / 0 (audio on); without audio: `selection_send_scope` 345, `families`
+261, `markers`, `plugin_state_undo` 5, `plugin_selection` 64, `export_preview` 83, `fxlink` 132,
+`consolidate`, `tabs` 106, `cross_paste` 37, `relink`, `smoke.jsonl`, `channel_mode` 50, `ara` 173 —
+all pass. Pure: `test_send_chain` 68, `test_send_position` 149, `test_send_bake_policy` 43,
+`test_send_drop` 26, `test_send_columns` 110, `test_send_target_menu` 14, `test_synoptic_send_cards`
+104, `test_synoptic_fxblock` 246, `test_plugin_id_uniqueness` 100, `test_cross_project_import` 65.
+Debug build: no warning on a line added by the three lots (app and fork). No string touched
+(`xcstrings.py check` not needed). No headless instance left running. Nothing pushed, nothing merged.
+
+**For the user's eye and ear (not testable here):** the sound of a reverb / delay tail on a send
+dying in a fade-out, and the dead cut when there is no fade-out; a compressor or saturator on a send
+now driven by the UN-faded signal; the send's box in the signal view (drawing, "+" on hover,
+drag-and-drop, pastilles, alerts); a retarget with the plugin's editor open.
+
 ---
 
 # E. Open questions

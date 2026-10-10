@@ -3731,6 +3731,33 @@ def section_T3(c):
         row = engine_send_row(rep, x, a)
         check(name + ": the engine's send follows the envelope", row.get("follows_envelope") is True, row)
         audits3(c, name)
+        if pos != "post_fader":
+            continue
+        # post-fader is the position whose PLACE depends on what the send carries. Bypassed: the place
+        # does not move (a bypass does not pass through the positioning), no wet branch is built, and
+        # the envelope is still laid once. Emptied: the send goes back after the window-fade and lays
+        # nothing — INC 2.
+        c.send("plugin.toggle", {"host": h, "plugin": pid})
+        settle(c)
+        dry, wet = measure(c, name + "_bypassed", x, a, 0.0)
+        got = [seg_db(wet, t, t + 0.01) - seg_db(dry, t, t + 0.01) for t in (0.1, 0.3, 0.6, 0.9, 1.5)]
+        print("       %s, the plugin BYPASSED: wet - dry = %s dB" % (name, " / ".join("%.3f" % g for g in got)))
+        check(name + ": bypassed: the wet is the dry, the fade ONCE (0 dB all along, 0.05)", all(abs(g) <= 0.05 for g in got), got)
+        row = engine_send_row(bridge_report(c), x, a)
+        check(name + ": bypassed: the send still follows the envelope (it still carries a plugin)", row.get("follows_envelope") is True, row)
+        audits3(c, name + " bypassed")
+        c.send("plugin.remove", {"host": h, "plugin": pid})
+        settle(c)
+        dry, wet = measure(c, name + "_emptied", x, a, 0.0)
+        got = [seg_db(wet, t, t + 0.01) - seg_db(dry, t, t + 0.01) for t in (0.1, 0.3, 0.6, 0.9, 1.5)]
+        print("       %s, the plugin REMOVED: wet - dry = %s dB" % (name, " / ".join("%.3f" % g for g in got)))
+        check(name + ": emptied: the wet is the dry, the fade ONCE (0 dB all along, 0.05)", all(abs(g) <= 0.05 for g in got), got)
+        row = engine_send_row(bridge_report(c), x, a)
+        lay = (c.send("debug.send_marker_audit").get("engine_layouts") or {}).get(x, [])
+        check(name + ": emptied: the send is back at the END of the list and lays no envelope (INC 2's place)",
+              row.get("follows_envelope") is False and where_in_list(lay, a) == "post"
+              and row.get("list_index") == max(e["index"] for e in lay), (row, [(e["index"], e["role"]) for e in lay]))
+        audits3(c, name + " emptied")
 
     # LATENCY: the envelope is laid at the mini-chain's OUTPUT, on the object's time. A declared latency
     # of 20 ms on the send, a window [0.5, 2.0] with fades of 20 ms at both ends: the wet is the dry
