@@ -1395,6 +1395,42 @@ Totals: 33 lines construct an `ObjectPlugin(` in the app (tools tests excluded).
 **Not verified** (and why): the 50 ms gate-ramp "no click" claim of U2 (a ramp, not heard); every signal-view drag, drop,
 menu, cursor, band and veil (a headless instance has no window); the card's look in three languages; `OBJ_GRAPH_CENSUS`.
 
+#### The final gate of INC 2 (10 October 2026, Debug, headless, WITH audio on the built-in output, one fresh instance per scenario)
+
+| Run | Result |
+|---|---|
+| Debug build, clean (`-derivedDataPath` empty) | BUILD SUCCEEDED, 1541 `warning:` lines; 230 distinct file:line, 3 of them on a line the INC 2 diff touched: `consolidate(groupID groupID:` (the same warning at the same signature, base line 484, the line only gained a parameter) and `decode(PluginDragPayload.self` (base line 1516, moved by the 2.10 refactor): **0 new warning**, the two are the pre-existing ones |
+| `scenario_bridge_sends.py`, all sections | **881 OK, 0 FAILED** (INC 1's A to T = 223; INC 2's F2 8, Q2 54, R2 20, V2 42, K2 17, S2 25, T2 18, U2 68, W2 212, X2 67, Y2 32, RT2 42, Z2 35, PF 18). X2's 10 undo / redo trace checks read the app log, so they run only with `APP_LOG` set: the first full run (with it) had them pass. |
+| `test_send_position` | 83/83 |
+| `test_send_bake_policy` | 24/24 |
+| `test_synoptic_send_cards` | 71/71 |
+| `test_send_drop` | 21/21 |
+| `test_send_target_menu` | 14/14 |
+| `test_synoptic_fxblock` | ALL PASS (246) |
+| `test_synoptic_marquee` / `test_send_columns` | 28 / 110 |
+| `test_cross_project_import` | 51/51 |
+| `test_plugin_id_uniqueness` | 67/67 (its header's compile line is stale: it needs the same 22 files as `test_cross_project_import`) |
+| `test_bridge_scope.swift` / `test_bridge_core.cpp` / `test_bridge_scope_reference.py` | 101 / 74 / 95 checks, all pass |
+| `scenario_sidechain` / `scenario_bridge_latency` | 55 / 66, 0 failed (the latency one with the live graph at 96 kHz) |
+| `scenario_families` | 261 OK |
+| `scenario_fxlink` | 132 assertions, ALL PASS |
+| `scenario_consolidate` | ALL PASS (139 `ok` lines) |
+| `scenario_plugin_selection` | 58 |
+| `scenario_cross_paste` | 31 |
+| `scenario_selection_send_scope` | 345 assertions, ALL PASS |
+| `scenario_tabs` | 106 |
+| `scenario_markers`, `scenario_relink`, `scenario_plugin_state_undo` (5), `scenario_export_preview` (83), `scenario_channel_mode` (50), `smoke.jsonl` (15 of 15 ok) | all pass |
+| `xcstrings.py check` / `orphans` | 685 keys, 3 languages, nothing missing / none |
+| `scenario_navigation.py` | NOT run: it needs a UI instance (a window), never `--headless` |
+
+**Mutants (run once by hand on the Debug build, source restored afterwards, `git diff` empty).**
+
+- **A. `applySendPositionsForKey:` made a no-op** (`return NO` at its entry): `--only Q2,R2,V2` = 76 OK, **40 FAILED** (Q2 19, R2 5, V2 16). Signature: every send stays at the END of the list (index 5, after the window fade), the wet reads -41.0 dB for input, chain 0, chain 1 and pre-fader instead of 0 / -6 / -18 / -21, the audit reports `index_before_*` violations, and `age_samples` is 2880 at every position.
+- **B. `setEnvelopeSource` never called**: `--only S2` = 19 OK, **6 FAILED** (for pre-fader, chain and input: "wet = dry +20 dB in every window, fades included" measured 38.752 dB off, and "envelope source set" false).
+- C (a third mutant): not run, the plan lists two.
+
+**Two test-side findings of the gate.** (1) V2 counted the tap age in 48 kHz samples; the machine's output device is now at **96 kHz** (the live graph follows the device, the exports stay 48 kHz), so every age doubled and five checks failed. The test now reads the graph's rate from `debug.bridge_report`; the app was right. (2) A section checking "no `tap`/`sendMarker` in the file" must read the `items`, not the whole file: the `_readme` names both keys in prose.
+
 ## D.2 INC 3 — plugins on the send (branch `feature/sends-inc3-chain`, format 23, engine patch `0040`)
 
 **Steps.**

@@ -2552,7 +2552,11 @@ What has landed since mid-August, in order:
   X2 Y2 RT2 (42) on top of A to T; position proof: the wet equals the sum of the gains upstream of the tap; undo / redo
   of a move patched in place (0 rebuilt, 1 patched); a post-fader send's export equals INC 1's bit for bit. Pure tests:
   `test_send_position` 83, `test_send_bake_policy`, `test_synoptic_send_cards` 71, `test_send_drop` 21,
-  `test_send_target_menu` 14. **NOT seen, NOT heard:** the cards, the drag, the insertion bands, the menus and the
+  `test_send_target_menu` 14. **Final gate, 10 October 2026:** `scenario_bridge_sends.py` 881 OK / 0 FAILED (all sections, with the
+  save / reopen section Z2 and the format-21 / broken-marker file section PF), two mutants caught (no-op
+  `applySendPositionsForKey:` -> 40 failures in Q2 R2 V2; `setEnvelopeSource` never called -> 6 in S2), every other
+  scenario of the plan's list green, a clean Debug build with no new warning. Note: the machine's output device may run at
+  96 kHz, the live graph follows it (ages in samples double), the exports stay 48 kHz. **NOT seen, NOT heard:** the cards, the drag, the insertion bands, the menus and the
   cursors on screen; the 50 ms gate ramp of a muted sender by ear; the pre-fader wet by ear. **Open decision:** a
   pre-fader send's wet changes at consolidate by the clip's fader (-21 to -41 dB with a -20 dB fader), the plan
   said it would not.
