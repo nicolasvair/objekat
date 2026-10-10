@@ -28,7 +28,11 @@ Options:
                      (plugins ON a send): A3, L3, O3 (the ear), G3, M3 (the gates and the
                      refusals), X3 (limits), U3 (undo), Z3 (the file), C3 (copies), R3 (retarget and
                      positions), T3 (tails), B3 (consolidation), K3 (a key on a send's plugin), H3 (every
-                     plugin command on a send host), P3 (parity with INC 2).
+                     plugin command on a send host), P3 (parity with INC 2). Added on 10 October: I5 (the cut
+                     of an aux duplicates the send's curves), AU3 (a REAL Apple Audio Unit on a send — skipped
+                     with a line when AULowpass is not installed), SC3 (the rank-change crash, kept), D3
+                     (copies are independent, from the copy's side), PL3 (positions changed while playing).
+                     The reopening in a NEW PROCESS is a scenario of its own: scenario_send_plugins_reopen.py.
 
 P3 compares every export of THIS run with the same-named export of an INC 2 reference run (the build
 before plugins on sends existed): set INC2_REF_DIR=<dir of that run's exports>. Without it P3 is skipped.
@@ -3765,6 +3769,413 @@ def section_T3(c):
 
 
 # --------------------------------------------------------------------------------------------------
+# AU3 — a REAL Audio Unit (Apple's AULowpass) on a send
+# --------------------------------------------------------------------------------------------------
+
+APPLE_AU = "aufx,lpas,appl"          # AULowpass: ships with macOS, no licence, no window needed
+AU_LOW = 0.003                       # its Cutoff, normalised: about 150 Hz (0.6: wide open)
+
+
+def au_available(c, ident=APPLE_AU):
+    av = c.send("plugin.list_available", {})
+    rows = av.get("plugins", av) if isinstance(av, dict) else av
+    return any(p_.get("identifier") == ident for p_ in rows)
+
+
+def chain_instances(c, x, a):
+    """The identities of the plugins the engine's send x -> a carries ("plugin address/hosted instance")."""
+    return engine_send_row(c.send("debug.bridge_report"), x, a).get("chain_instances")
+
+
+def au_cutoff_index(c, pid):
+    for prm in c.send("plugin.get_params", {"plugin": pid}).get("params", []):
+        if "cutoff" in prm["name"].lower():
+            return prm["index"]
+    return None
+
+
+def alive(c, label):
+    try:
+        info = c.send("app.info")
+        check(label + ": the app is alive and answers", bool(info), info)
+        return True
+    except Exception as e:                       # a dead socket is not an ObjekatError
+        check(label + ": the app is alive and answers", False, repr(e))
+        return False
+
+
+def section_AU3(c):
+    print("\n--- AU3  a REAL Audio Unit on a send (Apple AULowpass): effect, dry untouched, undo of a parameter, retarget, positions while playing, duplicate, removal")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    if not au_available(c):
+        print("       (skipped: %s is not in this machine's plugin list)" % APPLE_AU)
+        return
+    fresh(c, "AU3")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 5})["id"]
+    b = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 7})["id"]
+    z = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 9})["id"]     # only there to be moved (an unrelated gesture)
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    settle(c)
+    dry0, wet0 = measure(c, "AU3_ref", x, a, 0.0)
+    ref = seg_db(wet0, 1.0, 2.0)
+    wet_level = lambda name: seg_db(sub(render(c, name), dry0), 1.0, 2.0) - ref      # no state touched: no undo point
+
+    h = need_host(c, "AU3", x, a)
+    r = step("AU3: plugin.add AULowpass on the send", lambda: c.send("plugin.add", {"host": h, "identifier": APPLE_AU}))
+    pid = ((r or {}).get("plugin") or {}).get("id")
+    if pid is None:
+        return
+    settle(c)
+    time.sleep(1.0)
+    settle(c)
+    check("AU3: it is an AudioUnit by Apple", r["plugin"].get("format") == "AudioUnit" and r["plugin"].get("manufacturer") == "Apple", r["plugin"])
+    k = au_cutoff_index(c, pid)
+    prms = c.send("plugin.get_params", {"plugin": pid})
+    check("AU3: the live instance answers its parameters (a Cutoff among them)", k is not None and prms.get("count", 0) >= 3, prms)
+    if k is None:
+        return
+    c.send("plugin.set_param", {"plugin": pid, "index": k, "value": AU_LOW})
+    settle(c)
+    shown = [q for q in c.send("plugin.get_params", {"plugin": pid})["params"] if q["index"] == k][0]
+    dry1, wet1 = measure(c, "AU3_low", x, a, 0.0)
+    low = seg_db(wet1, 1.0, 2.0) - ref
+    print("       AU3: cutoff at 0.003 (the AU shows %s Hz): the wet of a 1 kHz tone is %.2f dB under the wet without plugin" % (shown.get("display"), low))
+    check("AU3: the AU acts on the WET (more than 10 dB down)", low < -10.0, low)
+    check("AU3: the DRY is untouched, sample for sample", maxabs(sub(dry1, dry0)) == 0.0, maxabs(sub(dry1, dry0)))
+    inst0 = chain_instances(c, x, a)
+    check("AU3: the engine reports ONE hosted instance on the send", isinstance(inst0, list) and len(inst0) == 1 and not inst0[0].endswith("/0x0"), inst0)
+    audits3(c, "AU3 laid")
+
+    # --- undo / redo of a parameter: the state is put back on the LIVE instance, nothing is reloaded
+    c.send("object.move", {"id": z, "start": 0.5})            # the undo snapshot is taken HERE (cutoff low)
+    settle(c)
+    c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.6})
+    settle(c)
+    high = wet_level("AU3_high.wav")
+    print("       AU3: cutoff at 0.6, outside any undo point: wet %.2f dB re no plugin" % high)
+    check("AU3: the parameter is heard (the wet comes back up by more than 10 dB)", high - low > 10.0, (low, high))
+    log0 = app_log_lines()
+    c.send("edit.undo", {})
+    settle(c)
+    tr = undo_trace_since(log0)
+    print("       AU3: undo trace: %s" % (tr[-1].strip()[-60:] if tr else None))
+    if tr is not None:
+        check("AU3 undo: the object is NOT rebuilt (0 rebuilt, patched in place)", bool(tr) and "0 rebuilt" in tr[-1], tr[-1:])
+    got = wet_level("AU3_undone.wav")
+    check("AU3 undo: the AU's state of the undo point is back (wet %.2f dB, 0.2)" % low, abs(got - low) <= 0.2, got)
+    check("AU3 undo: the SAME hosted instance (no reload)", chain_instances(c, x, a) == inst0, (chain_instances(c, x, a), inst0))
+    c.send("edit.redo", {})
+    settle(c)
+    got = wet_level("AU3_redone.wav")
+    check("AU3 redo: the state at the undo is back (wet %.2f dB, 0.2)" % high, abs(got - high) <= 0.2, got)
+    check("AU3 redo: the SAME hosted instance", chain_instances(c, x, a) == inst0, (chain_instances(c, x, a), inst0))
+    c.send("plugin.set_param", {"plugin": pid, "index": k, "value": AU_LOW})
+    settle(c)
+
+    # --- retarget: the instance is kept, with its live state
+    c.send("send.retarget", {"id": x, "aux": a, "to": b})
+    settle(c)
+    check("AU3 retarget: the send to B carries the AU (same id)", send_plugins3(c, x, b) == [pid] and send_entry(c, x, a) is None, send_plugins3(c, x, b))
+    check("AU3 retarget: the SAME hosted instance", chain_instances(c, x, b) == inst0, (chain_instances(c, x, b), inst0))
+    got = wet_level("AU3_retargeted.wav")
+    check("AU3 retarget: the wet into B is the one into A (%.2f dB, 0.2)" % low, abs(got - low) <= 0.2, got)
+    audits3(c, "AU3 retarget")
+
+    # --- the four positions WHILE PLAYING
+    c.send("transport.play", {})
+    time.sleep(0.4)
+    for pos in ("pre_fader", "input", "chain", "post_fader", "input", "post_fader"):
+        prm = {"id": x, "aux": b, "position": pos}
+        if pos == "chain":
+            prm["index"] = 0
+        c.send("send.set_position", prm)
+        time.sleep(0.35)
+    c.send("transport.stop")
+    settle(c)
+    if not alive(c, "AU3 positions while playing"):
+        return
+    check("AU3 positions while playing: the SAME hosted instance", chain_instances(c, x, b) == inst0, (chain_instances(c, x, b), inst0))
+    got = wet_level("AU3_after_play.wav")
+    check("AU3 positions while playing: the wet is right afterwards (%.2f dB, 0.2)" % low, abs(got - low) <= 0.2, got)
+    audits3(c, "AU3 positions while playing")
+
+    # --- duplicate the object: an independent instance
+    d = c.send("object.duplicate", {"ids": [x]})["ids"]
+    settle(c)
+    dup = d[0] if d else None
+    c.send("object.move", {"id": dup, "lane": 6, "start": 0.0})
+    settle(c)
+    time.sleep(1.0)
+    settle(c)
+    ids = send_plugins3(c, dup, b)
+    check("AU3 duplicate: the copy's send carries ONE AU under a fresh id", len(ids) == 1 and ids[0] != pid, ids)
+    if len(ids) == 1:
+        inst_d = chain_instances(c, dup, b)
+        check("AU3 duplicate: another hosted instance", isinstance(inst_d, list) and len(inst_d) == 1 and inst_d != inst0
+              and inst_d[0].split("/")[1] != inst0[0].split("/")[1], (inst_d, inst0))
+        _, w = wet_of(c, "AU3_dup", dup, b, others=[x])
+        dl = seg_db(w, 1.0, 2.0) - ref
+        check("AU3 duplicate: its wet has the original's state (%.2f dB, 0.2)" % low, abs(dl - low) <= 0.2, dl)
+        kd = au_cutoff_index(c, ids[0])
+        c.send("plugin.set_param", {"plugin": ids[0], "index": kd, "value": 0.6})
+        settle(c)
+        _, w = wet_of(c, "AU3_dup2", dup, b, others=[x])
+        dl2 = seg_db(w, 1.0, 2.0) - ref
+        _, w = wet_of(c, "AU3_orig2", x, b, others=[dup])
+        ol = seg_db(w, 1.0, 2.0) - ref
+        print("       AU3 duplicate: the COPY's cutoff changed to 0.6: copy %.2f dB, original %.2f dB (re no plugin)" % (dl2, ol))
+        check("AU3 duplicate: the copy's parameter moves the copy (more than 10 dB up)", dl2 - dl > 10.0, (dl, dl2))
+        check("AU3 duplicate: ... and NOT the original (%.2f dB, 0.2)" % low, abs(ol - low) <= 0.2, ol)
+    audits3(c, "AU3 duplicate")
+
+    # --- removing the send purges the instance
+    before = audits3(c, "AU3 before removal").get("send_plugins")
+    c.send("send.remove", {"id": x, "aux": b})
+    settle(c)
+    if not alive(c, "AU3 send removed"):
+        return
+    gone = True
+    try:
+        gone = c.send("plugin.get_params", {"plugin": pid}).get("count", 0) == 0
+    except ObjekatError:
+        gone = True
+    check("AU3 send removed: the engine holds no instance under the AU's key", gone)
+    check("AU3 send removed: no engine send row is left for it", engine_send_row(c.send("debug.bridge_report"), x, b) == {})
+    after = audits3(c, "AU3 send removed").get("send_plugins")
+    check("AU3 send removed: one send plugin less in the project", isinstance(before, int) and after == before - 1, (before, after))
+    if dup:
+        check("AU3 send removed: the duplicate keeps its own AU", len(send_plugins3(c, dup, b)) == 1 and chain_instances(c, dup, b) is not None)
+    c.send("edit.undo", {})
+    settle(c)
+    time.sleep(1.0)
+    settle(c)
+    check("AU3 removal undone: the send and its AU are back (same id)", send_plugins3(c, x, b) == [pid], send_plugins3(c, x, b))
+    inst_back = chain_instances(c, x, b)
+    check("AU3 removal undone: the engine hosts an instance again", isinstance(inst_back, list) and len(inst_back) == 1 and not inst_back[0].endswith("/0x0"), inst_back)
+    _, w = wet_of(c, "AU3_back", x, b, others=[dup] if dup else [])
+    bl = seg_db(w, 1.0, 2.0) - ref
+    check("AU3 removal undone: with the state it had (%.2f dB, 0.2)" % low, abs(bl - low) <= 0.2, bl)
+    audits3(c, "AU3 end")
+
+
+# --------------------------------------------------------------------------------------------------
+# SC3 — the crash of 10 October, kept: a sender changes RANK, then a plugin is added on its send
+# --------------------------------------------------------------------------------------------------
+
+def section_SC3(c):
+    print("\n--- SC3  a sidechain key moves the sender to another rank, THEN a plugin is added on its send (the old crash)")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    for variant in ("trunk", "send"):
+        name = "SC3_" + variant
+        pipeline_offset_db(c)
+        x, a = cast_siblings(c, name)
+        k = c.send("object.add", {"path": out("imp_small.wav"), "lane": 2, "start": 0.0})["id"]
+        c.send("send.create", {"id": x, "aux": a, "position": "input"})
+        lay_send(c, x, a, 0.0)
+        settle(c)
+        h = need_host(c, name, x, a)
+        if h is None:
+            continue
+        if variant == "trunk":
+            probe = (step(name + ": a key probe in the sender's chain", lambda: add_test(c, x, "objKeyProbe")) or {}).get("plugin")
+            key_host = x
+        else:
+            _, probe = add_on_send(c, name, x, a, "objKeyProbe")
+            key_host = h
+        if probe is None:
+            continue
+        settle(c)
+        rank0 = (bridge_report(c).get("model") or {}).get("root_ranks", {}).get(x)
+        r = step(name + ": plugin.set_sidechain (keyed by another object)",
+                 lambda: c.send("plugin.set_sidechain", {"host": key_host, "plugin": probe, "source": k}))
+        if r is None:
+            continue
+        settle(c)
+        time.sleep(0.5)
+        settle(c)
+        rank1 = (bridge_report(c).get("model") or {}).get("root_ranks", {}).get(x)
+        print("       %s: the sender's rank: %s before the key, %s after" % (name, rank0, rank1))
+        check(name + ": the key changed the sender's rank (the clip moved to another pool track)",
+              rank1 is not None and rank1 != (rank0 or 0), (rank0, rank1))
+        # THE moment: the mini-chain's list used to point at the pruned track
+        _, g = add_on_send(c, name + " after the rank change", x, a, "gainTester", gain_db=-12.0)
+        if not alive(c, name + " plugin added on the send after the rank change"):
+            return
+        r = step(name + ": plugin.add (built-in Low Pass) on the send too", lambda: c.send("plugin.add", {"host": h, "identifier": "lowpass"}))
+        lp = ((r or {}).get("plugin") or {}).get("id")
+        settle(c)
+        if not alive(c, name + " second plugin added"):
+            return
+        if lp:
+            c.send("plugin.remove", {"host": h, "plugin": lp})
+            settle(c)
+        want_n = 1 if variant == "trunk" else 2
+        check(name + ": the send carries what was laid (%d)" % want_n, len(send_plugins3(c, x, a)) == want_n, send_plugins3(c, x, a))
+        db, w = wet3(c, name, a)
+        near(name + ": the wet (input send, 0 dB, through the -12 dB plugin)", db, -12.0)
+        check(name + ": ... on the source's sample", B.peak_index(w) == SR, B.peak_index(w))
+        # and back: the key is cleared, the rank returns, one more plugin
+        c.send("plugin.set_sidechain", {"host": key_host, "plugin": probe, "source": None})
+        settle(c)
+        time.sleep(0.5)
+        settle(c)
+        _, g2 = add_on_send(c, name + " after the key is cleared", x, a, "gainTester", gain_db=-6.0)
+        if not alive(c, name + " plugin added after the key is cleared"):
+            return
+        db, _ = wet3(c, name + "_cleared", a)
+        near(name + ": key cleared, one more plugin (-6): the wet", db, -18.0)
+        audits3(c, name)
+
+
+# --------------------------------------------------------------------------------------------------
+# D3 — copies are INDEPENDENT, read from the copy's side: a parameter moved on the copy
+# --------------------------------------------------------------------------------------------------
+
+def section_D3(c):
+    print("\n--- D3  duplicate / cut / copy-paste: a parameter changed on the COPY's send plugin does not move the original")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    fresh(c, "D3")
+    x = c.send("object.add", {"path": out("sine1k.wav"), "lane": 0, "start": 0.0})["id"]
+    a = c.send("aux.create", {"start": 0.0, "end": 4.0, "lane": 5})["id"]
+    c.send("send.create", {"id": x, "aux": a, "position": "pre_fader"})
+    lay_send(c, x, a, 0.0)
+    settle(c)
+    h = need_host(c, "D3", x, a)
+    r = step("D3: the built-in Low Pass on the send", lambda: c.send("plugin.add", {"host": h, "identifier": "lowpass"}))
+    pid = ((r or {}).get("plugin") or {}).get("id")
+    if pid is None:
+        return
+    settle(c)
+    c.send("plugin.set_param", {"plugin": pid, "index": 0, "value": 8000.0})        # the real parameter door (the one a link mirrors)
+    settle(c)
+    everyone = [x]
+
+    def level(name, obj, t0=0.2, t1=0.8):
+        _, w = wet_of(c, name, obj, a, others=everyone)
+        return seg_db(w, t0, t1)
+
+    base = level("D3_base", x)
+    print("       D3: the original's wet, Low Pass at 8 kHz: %.2f dBFS" % base)
+
+    def judge(label, copy, t0=0.2, t1=0.8):
+        ids = send_plugins3(c, copy, a)
+        check("D3 %s: the copy's send has ONE plugin, a fresh id" % label, len(ids) == 1 and ids[0] != pid, ids)
+        if len(ids) != 1:
+            return
+        everyone.append(copy)
+        rows = (send_entry(c, copy, a) or {}).get("plugins", [])
+        check("D3 %s: not linked" % label, all(not q.get("linked") for q in rows), rows)
+        before = level("D3_%s_copy0" % label, copy, t0, t1)
+        check("D3 %s: the copy sounds like the original (0.1 dB)" % label, abs(before - base) <= 0.1, (before, base))
+        c.send("plugin.set_param", {"plugin": ids[0], "index": 0, "value": 150.0})
+        settle(c)
+        after = level("D3_%s_copy1" % label, copy, t0, t1)
+        orig = level("D3_%s_orig" % label, x)
+        print("       D3 %s: the COPY's Low Pass to 150 Hz: copy %.2f -> %.2f dBFS, original %.2f dBFS" % (label, before, after, orig))
+        check("D3 %s: the parameter moves the COPY (more than 20 dB down)" % label, before - after > 20.0, (before, after))
+        check("D3 %s: ... and NOT the original (0.05 dB)" % label, abs(orig - base) <= 0.05, (orig, base))
+        prm = c.send("plugin.get_params", {"plugin": pid})["params"][0]["value"]
+        check("D3 %s: the original's live parameter still reads 8000 Hz" % label, abs(prm - 8000.0) < 1.0, prm)
+        m = audits3(c, "D3 " + label)
+
+    # duplicate
+    d = c.send("object.duplicate", {"ids": [x]})["ids"]
+    settle(c)
+    if d:
+        c.send("object.move", {"id": d[0], "lane": 6, "start": 0.0})
+        settle(c)
+        judge("duplicate", d[0])
+    # copy / paste
+    c.send("selection.set", {"ids": [x]})
+    c.send("clipboard.copy", {})
+    c.send("timesel.set", {"start": 0.0, "end": 4.0, "lane": 3, "lane_count": 1})
+    pasted = c.send("clipboard.paste", {})["ids"]
+    settle(c)
+    check("D3 paste: one object pasted", len(pasted) == 1, pasted)
+    if pasted:
+        judge("paste", pasted[0])
+    # cut: the right half is the new object (2 s .. 4 s)
+    pieces = c.send("object.split_at", {"seconds": 2.0, "ids": [x]})["ids"]
+    settle(c)
+    right = [i for i in pieces if i != x]
+    check("D3 cut: two pieces, the left one keeps the id", len(pieces) == 2 and len(right) == 1, pieces)
+    if right:
+        judge("cut", right[0], 2.2, 2.8)
+    # the file: no id twice, no link on a send plugin
+    c.send("project.save")
+    d1 = json.load(open(out("D3/project.objekat")))
+    found = []
+    def walk(items):
+        for it in items:
+            for s_ in it.get("sends", []):
+                found.extend(s_.get("plugins", []))
+            walk((it.get("kind") or {}).get("children") or [])
+    walk(d1["items"])
+    ids_ = [q["id"] for q in found]
+    check("D3 file: %d send plugins, every id once" % len(ids_), len(ids_) == len(everyone) and len(set(ids_)) == len(ids_), ids_)
+    check("D3 file: no `linkGroupID` on any send plugin", all(not q.get("linkGroupID") for q in found), [q for q in found if q.get("linkGroupID")])
+    r = c.send("debug.plugin_id_audit")
+    check("D3: debug.plugin_id_audit count is 0", r.get("count") == 0, r)
+
+
+# --------------------------------------------------------------------------------------------------
+# PL3 — the position of a send that carries plugins, changed WHILE PLAYING
+# --------------------------------------------------------------------------------------------------
+
+def section_PL3(c):
+    print("\n--- PL3  send.set_position on a send that carries plugins, during playback: no crash, the wet is right afterwards")
+    if REF:
+        print("       (skipped in --ref: plugins on a send are INC 3)")
+        return
+    pipeline_offset_db(c)
+    x, a = cast_siblings(c, "PL3")
+    c.send("object.set_gain", {"ids": [x], "db": -20.0})
+    c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
+    lay_send(c, x, a, 0.0)
+    h, pid = add_on_send(c, "PL3", x, a, "gainTester", gain_db=-12.0)
+    if pid is None:
+        return
+    r = step("PL3: a built-in Delay on the send too (a tail, a state)", lambda: c.send("plugin.add", {"host": h, "identifier": "delay"}))
+    dl = ((r or {}).get("plugin") or {}).get("id")
+    settle(c)
+    if dl:
+        c.send("plugin.set_param", {"plugin": dl, "index": 1, "value": 0.0})        # mix 0: the delay passes the signal, it only has to survive
+        settle(c)
+    inst0 = chain_instances(c, x, a)
+    expect = {"post_fader": -32.0, "pre_fader": -12.0, "input": -12.0, "chain": -12.0}
+    for final in ("pre_fader", "post_fader", "chain", "input"):
+        c.send("transport.play", {})
+        time.sleep(0.3)
+        seq = [p_ for p_ in ("input", "chain", "post_fader", "pre_fader", "post_fader", "input") if p_ != final] + [final]
+        for pos in seq:
+            prm = {"id": x, "aux": a, "position": pos}
+            if pos == "chain":
+                prm["index"] = 0
+            c.send("send.set_position", prm)
+            time.sleep(0.2)
+        time.sleep(0.3)
+        c.send("transport.stop")
+        settle(c)
+        if not alive(c, "PL3 %d moves while playing, ending at %s" % (len(seq), final)):
+            return
+        row = send_entry(c, x, a) or {}
+        check("PL3 ending at %s: the model says so, the plugins are on the send" % final,
+              row.get("position") == final and len(row.get("plugins", [])) == (2 if dl else 1), row)
+        check("PL3 ending at %s: the same plugin instances" % final, chain_instances(c, x, a) == inst0, (chain_instances(c, x, a), inst0))
+        db, _ = wet3(c, "PL3_" + final, a)
+        near("PL3 ending at %s: the wet" % final, db, expect[final])
+        audits3(c, "PL3 " + final)
+
+
+# --------------------------------------------------------------------------------------------------
 # B3 — consolidate / bake
 # --------------------------------------------------------------------------------------------------
 
@@ -4114,6 +4525,7 @@ with ObjekatClient(SOCK) as c:
                     ("A3", section_A3), ("L3", section_L3), ("O3", section_O3),
                     ("G3", section_G3), ("M3", section_M3), ("X3", section_X3), ("U3", section_U3),
                     ("Z3", section_Z3), ("C3", section_C3), ("R3", section_R3), ("T3", section_T3),
+                    ("AU3", section_AU3), ("SC3", section_SC3), ("D3", section_D3), ("PL3", section_PL3),
                     ("B3", section_B3), ("K3", section_K3), ("H3", section_H3),
                     ("P3", section_P3),
                     ("T2REF", section_T2REF)):

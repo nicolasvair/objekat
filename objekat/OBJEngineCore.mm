@@ -5073,12 +5073,15 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             }
         }
         // A chain send whose marker has not been compiled yet: the end of the chain, where it taps the
-        // whole of it, until the compile that carries the marker arrives.
+        // whole of it, until the compile that carries the marker arrives. "In the chain" is AFTER the IN
+        // trim as well: a send that comes from the input place sits before it, and an object whose chain
+        // is empty but whose SEND carries plugins has trims and no compile to come (the marker is alone
+        // in the chain: `recompileForSendMarker` has nothing to compile).
         for (auto& [mk, raw] : mine) {
             if (placed.count(mk)) continue;
             te::Plugin::Ptr p = inList(raw);
             if (!p || kindOf(p) != te::ObjBridgeSendPlugin::chain || !endAnchor) continue;
-            if (!(idx(p) < idx(endAnchor))) moveBefore(p, endAnchor);
+            if (!(idx(p) < idx(endAnchor) && (!trimIn || idx(p) > idx(trimIn)))) moveBefore(p, endAnchor);
         }
     }
 
@@ -5305,10 +5308,18 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             // The plugins the send carries (INC 3): their model keys in processing order, and the
             // latency they add — to the TAP's age, never to the signal that passes through.
             NSMutableArray* chainKeys = [NSMutableArray array];
+            // ... and their IDENTITY, in the same order: the engine plugin's address and, for an
+            // external plugin (AU / VST), the address of the hosted instance — what a scenario compares
+            // before and after a retarget, a move or an undo to prove nothing was re-instantiated.
+            NSMutableArray* chainInstances = [NSMutableArray array];
             if (bs)
                 if (auto* list = bs->getChainList())
-                    for (auto* cp : *list)
+                    for (auto* cp : *list) {
                         [chainKeys addObject:pluginKeyFor(cp->itemID)];
+                        auto* ext = dynamic_cast<te::ExternalPlugin*>(cp);
+                        [chainInstances addObject:[NSString stringWithFormat:@"%p/%p", (void*)cp,
+                                                   (void*)(ext ? ext->getAudioPluginInstance() : nullptr)]];
+                    }
             const double chainLatency = bs ? bs->getLatencySeconds() : 0.0;
             [sends addObject:@{ @"sender": [NSString stringWithUTF8String:sender.c_str()],
                                 @"aux": [NSString stringWithUTF8String:aux.c_str()],
@@ -5318,6 +5329,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
                                 @"enabled": @(sp->isEnabled() ? YES : NO),
                                 @"chain_plugins": @((int)chainKeys.count),
                                 @"chain_keys": chainKeys,
+                                @"chain_instances": chainInstances,
                                 @"chain_latency_samples": @((long long) std::llround(chainLatency * r.build.sampleRate)),
                                 @"age_samples": age }];
         }

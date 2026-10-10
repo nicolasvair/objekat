@@ -855,6 +855,13 @@ and must not leave a copy without envelope. `debug.send_marker_audit` knows the 
 compressor on a send is driven by the un-faded signal). Without a fade-out the tail is cut dead at the window's
 end, exactly as a trunk plugin's is — a fade-out is what makes it die smoothly.
 
+### The cut of an aux duplicates the send's curves (10 October)
+
+Both halves of a cut aux must sound the same: `SoundObject.duplicatingSend` copies, with the send and its plugins,
+the lane of the send's LEVEL and the lanes aimed at its plugins, re-aimed at the COPIES' ids (by rank; never a
+shared id, never a link). Pure; inside the cut's undo point. Before, the new half was fed at the static level and
+through un-automated copies.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

@@ -870,8 +870,9 @@ live instances (the `chain_host` changes with the aux); `send.remove` forgets th
 undo point; `send.set_position` does not touch them. A send that carries plugins exists in the engine even when it
 is at -inf or disabled (a silent carrier), so its plugins can be opened and set before the level is raised.
 `debug.send_marker_audit` also answers `send_plugins` (count) and `linked_send_plugins` (must be empty);
-`debug.bridge_report`'s `engine.sends` rows gain `enabled`, `chain_plugins`, `chain_keys` and
-`chain_latency_samples`. The sender's window and fades are laid on the send's copy AFTER its plugins (an effect's tail follows the
+`debug.bridge_report`'s `engine.sends` rows gain `enabled`, `chain_plugins`, `chain_keys`, `chain_instances`
+(same order as the keys: "engine plugin address/hosted AU-VST instance address" — compared by the scenario to prove
+that a retarget, a move or an undo re-instantiated nothing) and `chain_latency_samples`. The sender's window and fades are laid on the send's copy AFTER its plugins (an effect's tail follows the
 fade-out and is silent past the window's end, scenario section T3). In the engine's list a post-fader send that
 carries plugins therefore sits between the fader and the window-fade (`list_index`, and `follows_envelope` true),
 one without plugins after the window-fade; `tap_position` is 0 in both cases, and `debug.send_marker_audit`'s

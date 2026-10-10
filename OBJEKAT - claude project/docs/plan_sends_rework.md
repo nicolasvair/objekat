@@ -2520,6 +2520,64 @@ alone (post-fader), a curve on the built-in Low Pass of the send (`frequency`, p
 readings: e.g. −24.82 / −28.86 / −32.15 / −33.85 / −37.70 / −47.75 / −65.88 dBFS on both sides for
 "both"), ONE `edit.undo` gives back one aux, one send and the original lanes, redo the two halves.
 
+**Lot 3 — the headless tests, kept as PERMANENT scenarios.**
+
+In `tools/scenario_bridge_sends.py` (one process): **AU3**, **SC3**, **D3**, **PL3**. A scenario of its
+own, which launches and KILLS its instances: **`tools/scenario_send_plugins_reopen.py <objekat.app>`**.
+`debug.bridge_report`'s send rows gain `chain_instances` ("engine plugin address / hosted AU-VST
+instance address") so that "the same instance" is a compared pointer, not an inference.
+
+- **(a) A real new process** (`scenario_send_plugins_reopen.py`, 53 / 0). Process A: four senders at
+  post-fader / pre-fader / input / chain(1), each send carrying a built-in Low Pass tuned to 300 / 500
+  / 800 / 1200 Hz, the pre-fader and chain ones also Apple's AULowpass (cutoff 485.1 and 960.2 Hz);
+  wets −48.983 / −42.058 / −23.384 / −20.098 dBFS; saved (format 23); the process is KILLED (SIGKILL).
+  Process B (another pid) opens the file: same positions, levels, plugin ids, order, parameters (value
+  and displayed text), AU state size; wets identical (+0.000 dB ×4) and the WHOLE export identical to
+  process A's, sample for sample (max |B − A| = 0). B then changes the AU's cutoff on the pre-fader
+  send (485.1 → 152.53 Hz: wet −42.058 → −62.923), saves, is killed. Process C: the parameter and the
+  wet (−62.923) are there.
+- **(b) A real Audio Unit on a send** — Apple **AULowpass** (`aufx,lpas,appl`), section AU3 (skipped
+  with a line if the machine does not list it): loads headless; cutoff at 152.53 Hz → the wet of a
+  1 kHz tone is 32.59 dB under the wet without plugin, the DRY is identical sample for sample; a
+  parameter changed outside an undo point then `edit.undo`: "0 rebuilt, 2 patched", the state of the
+  undo point is back (wet −32.59), the SAME hosted instance (pointer); redo likewise; `send.retarget`:
+  same id, same hosted instance, same wet; the four positions changed WHILE PLAYING (6 moves): app
+  alive, same instance, same wet; `object.duplicate`: another id, another hosted instance, the copy's
+  cutoff opened (wet 0.00 dB) does not move the original (−32.59); `send.remove`: no instance under
+  the key, no engine row, one send plugin less, the duplicate keeps its own; undo: the send, the AU
+  and its state are back. State across processes: (a).
+- **(c) The crash of 10 October, kept** (SC3): a key probe on the sender's TRUNK, then on a plugin of
+  the SEND; `plugin.set_sidechain` moves the sender from rank 0 to rank 1; THEN `debug.add_test_plugin`
+  and `plugin.add` on the send: the app answers, the wet is −12.000 dB on the source's sample; key
+  cleared, one more plugin: −18.000 dB.
+- **(d) Copies seen from the copy's side** (D3): duplicate / copy-paste / cut of an object whose
+  pre-fader send carries a built-in Low Pass at 8 kHz; the COPY's parameter set to 150 Hz through
+  `plugin.set_param` (the door a link would mirror): copy −15.01 → −47.99 dBFS, original −15.01 and
+  its live parameter still 8000 Hz, three times; `debug.plugin_id_audit` count 0; the saved file holds
+  4 send plugins, 4 ids, no `linkGroupID`.
+- **(e) Retarget with the plugin's EDITOR open: NOT testable without a screen.** No command opens or
+  lists a plugin editor (`Commands+Plugins.swift` says so: no window, no graphics context in headless).
+  What is asserted instead is the precondition of "neither closed nor destroyed": the hosted instance
+  is the same pointer after a retarget (AU3). The editor itself is for the user's eye.
+- **(f) Positions changed during playback** (PL3; and AU3 with the real AU): a send carrying a
+  `gainTester` and a built-in Delay, four rounds of 6 moves while playing, each ending at another
+  position: app alive, same instances, wet −12 / −32 / −12 / −12 dB (pre / post / chain / input), audits
+  clean.
+
+*Found by these tests.*
+1. **A defect, fixed** (`-applySendPositionsForKey:`, the fallback of a chain send whose marker is not
+   compiled): a send moved from `input` to `chain` on an object whose own chain is EMPTY but whose
+   send carries plugins (so the object has trims and no compile to come) stayed BEFORE the IN trim —
+   the audit said `index_after_trimIn`. The fallback now also requires the place to be after the IN
+   trim. Inaudible unless the chain's IN gain is not 0 dB; seen by PL3.
+2. **An observation, NOT fixed, not specific to sends:** the playback graph is allocated at the first
+   play; until then a hosted Audio Unit sits at 44.1 kHz, and Apple's AULowpass derives the RANGE of
+   its cutoff from its sample rate. The same cutoff therefore reads as another normalised value before
+   and after the first play (228.195 Hz = 0.01000 before, 0.00459 after, at 96 kHz; on a send and in
+   an object's chain alike), and `plugin.set_param 0.01` gives 228 Hz before the first play and 485 Hz
+   after. The unit's state (the Hz) is saved and restored exactly. What it may touch: a NORMALISED
+   automation lane on such a parameter. The reopen scenario plays a moment before it sets or compares.
+
 ---
 
 # E. Open questions

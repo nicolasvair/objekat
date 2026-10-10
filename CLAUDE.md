@@ -2615,6 +2615,9 @@ a second one elsewhere. The most exposed points:
   amended, `e69b952520a`).
   **The cut of an aux duplicates the send WITH its curves** (`SoundObject.duplicatingSend`: the level's lane and
   the lanes of the send's plugins, re-aimed at the COPIES' ids; one undo point with the cut).
+  Permanent tests added the same day: scenario sections I5, AU3 (a REAL Apple AULowpass on a send), SC3 (the
+  rank-change crash), D3, PL3, and `tools/scenario_send_plugins_reopen.py <objekat.app>` (save, KILL, reopen in a
+  new process — it launches its own headless instances).
 - **PERMANENT RULE — an object's plugins have THREE roots**: `plugins`, `instruments`, and each send's `plugins`.
   Walk them through `SendChain.allRoots`, never by hand: a walker that names two roots silently forgets the third
   (state capture, undo patching, id audit, automation targets, sidechain topology, copies). A send's mini-chain is
