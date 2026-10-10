@@ -27,12 +27,17 @@ final class PluginDragSession {
     static let shared = PluginDragSession()
 
     private var payload: PluginDragPayload?
+    private var sourceIsSend = false
 
-    /// A plugin drag has just begun: this is what it carries.
-    func begin(_ p: PluginDragPayload) { payload = p }
+    /// A plugin drag has just begun: this is what it carries. `fromSend`: the cards come from a SEND's
+    /// box (INC 3) — such a drag never links, which the band needs to know before any target answers.
+    func begin(_ p: PluginDragPayload, fromSend: Bool = false) { payload = p; sourceIsSend = fromSend }
 
     /// The drag is over (a drop was made, or it was abandoned).
-    func end() { payload = nil }
+    func end() { payload = nil; sourceIsSend = false }
+
+    /// The drag in flight left a send's box (false when there is none).
+    var fromSend: Bool { current != nil && sourceIsSend }
 
     /// What the drag in flight carries; nil when there is none — or when no mouse button is down any
     /// more, which means the session died without telling anyone.

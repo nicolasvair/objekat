@@ -4141,6 +4141,20 @@ struct TimelineView: View {
                 .strokeBorder((line.isRefusal ? Color.red : Color.accentColor).opacity(0.4), lineWidth: 1))
             .padding(.bottom, 12)
             .allowsHitTesting(false)
+        } else if let s = PluginDropHint.shared.state, case .refusal(let key) = s.context {
+            // A plugin a send's box refuses: why (the same red line as a refused send).
+            HStack(spacing: 7) {
+                Image(systemName: "nosign")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.red)
+                Text(L(key))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.red.opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
         } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
                 Image(systemName: s.isLink ? "link"
@@ -4159,6 +4173,11 @@ struct TimelineView: View {
                 case .blockMove:
                     // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
                     modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .sendChain:
+                    // To or from a send's box ⌘ is a plain copy: a send's plugin is never linked.
+                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .refusal:
+                    EmptyView()    // drawn by the branch above
                 case .intoBin, .outOfBin:
                     Text(L("hud.pluginDrop.binNoCmd"))
                         .font(.system(size: 10))
@@ -4183,8 +4202,10 @@ struct TimelineView: View {
     /// The band's title for what a release would do (@see PluginDropHint.Context).
     private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
         switch s.context {
-        case .host, .sameChain:
+        case .host, .sameChain, .sendChain:
             return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .refusal(let key):
+            return L(key)
         case .intoBin:
             return s.alt ? L("hud.pluginDrop.intoBin.copy") : L("hud.pluginDrop.intoBin")
         case .outOfBin:

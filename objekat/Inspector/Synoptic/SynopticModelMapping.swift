@@ -137,6 +137,12 @@ extension EditViewModel {
             }
             return
         }
+        // A send's mini-chain (the "+" of its box) takes plain plugins only, up to its own limit.
+        if let why = sendChainRefusal(adding: 1, to: objectID, instrument: available.isInstrument) {
+            NSLog("[SENDS] plugin not added to a send: %@", why.rawValue)
+            NSSound.beep()
+            return
+        }
         let newPlug = makeObjectPlugin(available)
         pushUndo()
         updateChainPlugins(objectID) { $0 = Self.inserting(newPlug, into: location, at: index, plugins: plugins) }

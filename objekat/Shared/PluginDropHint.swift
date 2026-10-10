@@ -34,7 +34,12 @@ final class PluginDropHint {
     ///    the source keeps its own, still on the same bin).
     ///  • `.send` — a SEND card is in the hand (not a plugin): the band says where it would be taken, or
     ///    why it cannot (@see SendDrop). No modifier: one send per pair, so no copy.
-    enum Context: Hashable { case host, sameChain, intoBin, outOfBin, blockMove, send(SendDropBanner) }
+    ///  • `.sendChain` — a plugin going onto, or coming from, a SEND's box (INC 3): nothing = move,
+    ///    ⌥ = copy, and ⌘ is a plain copy too — a send's plugin is never linked, so the band never
+    ///    shows the link's glyph there (@see EditViewModel.effectiveTransferMode).
+    ///  • `.refusal(key)` — a plugin a send's box refuses, with the catalogue key of the reason
+    ///    (@see SendBoxPluginRefusal). The only plugin refusal that speaks: elsewhere the cursor alone does.
+    enum Context: Hashable { case host, sameChain, intoBin, outOfBin, blockMove, sendChain, refusal(String), send(SendDropBanner) }
 
     struct State: Equatable {
         var context: Context
@@ -47,7 +52,7 @@ final class PluginDropHint {
         var isLink: Bool { context == .host && cmd }
         /// A copy is what the release makes: ⌥, except where ⌘ is a copy too (a block's second
         /// gesture — it is never an independent one, the copy stays on the bin).
-        var isCopy: Bool { !isLink && (alt || (context == .blockMove && cmd)) }
+        var isCopy: Bool { !isLink && (alt || ((context == .blockMove || context == .sendChain) && cmd)) }
     }
 
     private(set) var state: State?
@@ -85,12 +90,19 @@ final class PluginDropHint {
         // (a neighbour's late exit must not hide where the card would land).
         var sendLines: [SendDropBanner] = []
         for case .send(let b) in present { sendLines.append(b) }
-        let context: Context
+        var context: Context
         if let line = sendLines.first(where: { !$0.isRefusal }) ?? sendLines.first {
             context = .send(line)
+        } else if let place = [Context.blockMove, .intoBin, .outOfBin, .sendChain, .sameChain].first(where: present.contains) {
+            context = place
+        } else if let refused = present.first(where: { if case .refusal = $0 { return true } else { return false } }) {
+            context = refused
         } else {
-            context = [Context.blockMove, .intoBin, .outOfBin, .sameChain].first(where: present.contains) ?? .host
+            context = .host
         }
+        // A plugin taken FROM a send's box never links, wherever it lands: the band of a host or of a
+        // chain must not light a ⌘ that would only copy.
+        if PluginDragSession.shared.fromSend, context == .host || context == .sameChain { context = .sendChain }
         let f = NSEvent.modifierFlags
         let next = State(context: context, alt: f.contains(.option), cmd: f.contains(.command))
         // Reassigned only if it changes: the timeline reads it, and rewriting the same value on
