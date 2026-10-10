@@ -158,6 +158,9 @@ extension EditViewModel {
             n.sends = o.sends.map { s in
                 var ns = s
                 if let mapped = idMap[s.auxID] { ns.auxID = mapped }  // an aux internal to the sub-tree
+                // The plugins the send CARRIES (INC 3) are copies like the chain's: fresh ids, fresh
+                // link groups — a by-value copy would give two sub-trees the same plugin ids.
+                ns.plugins = SendChain.sanitised(freshPlugins(SendChain.sanitised(s.plugins)))
                 return ns
             }
             // The curves name their targets BY IDENTIFIER: a plugin that has just changed
@@ -168,6 +171,10 @@ extension EditViewModel {
             // what does not pair up is dropped rather than kept dangling.
             var pluginRemap = SoundObject.pluginIDRemap(from: o.plugins, to: n.plugins)
             pluginRemap.merge(SoundObject.pluginIDRemap(from: o.instruments, to: n.instruments)) { a, _ in a }
+            // The third root, paired by POSITION (the aux of a send may itself have been remapped).
+            for (a, b) in zip(o.sends, n.sends) where a.plugins.count == b.plugins.count {
+                for (x, y) in zip(a.plugins, b.plugins) { pluginRemap[x.id] = y.id }
+            }
             n.automation = o.automation.compactMap { lane in
                 guard let ref = SoundObject.remapping(lane.param, with: pluginRemap) else { return nil }
                 return AutomationLane(param: ref.remappingAux(using: idMap), points: lane.points)

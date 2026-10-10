@@ -1357,6 +1357,12 @@ struct OBJRenderChain {
 - (void)dumpChainOrderForKey:(const std::string&)key in:(te::PluginList&)pl;
 // Où chaque envoi de `key` se tient dans la liste de son émetteur. YES si quelque chose a bougé.
 - (BOOL)applySendPositionsForKey:(const std::string&)key;
+// The send plugin of (sender, aux): the registry's, one adopted from the list, or — `create` — a new
+// one laid at the end, DISABLED and silent. `outcome`: 0 none, 1 was there, 2 new or adopted, -1 list full.
+- (te::ObjBridgeSendPlugin*)bridgeSendFrom:(const std::string&)sKey toAux:(const std::string&)aKey
+                                    create:(BOOL)create outcome:(NSInteger*)outcome;
+// Forgets what the engine keeps of the plugins a send CARRIES, before the send leaves its list.
+- (void)purgeSendChainOf:(te::Plugin*)sendPlugin;
 // Helper générique de rendu offline en tâche de fond (clone d'Edit + EditRenderer async). `prepare`
 // applique le bypass spécifique (fader/fenêtre/fades) sur la piste clonée détachée à la racine.
 // `allowedClipIDs` restreint le rendu à ces clips (vide = toute la piste) : c'est ce qui ISOLE
@@ -1729,6 +1735,7 @@ static BOOL gOBJAudioDisabled = NO;
         _engine->getPluginManager().createBuiltInType<te::ObjBridgeSendPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjKeyProbePlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjGainTesterPlugin>();
+        _engine->getPluginManager().createBuiltInType<te::ObjClipTesterPlugin>();
         _engine->getPluginManager().createBuiltInType<te::LatencyPlugin>();
         // `--no-audio` : on initialise le gestionnaire de périphériques avec ZÉRO sortie plutôt
         // que de sauter l'appel — Tracktion s'attend à un device manager initialisé, et le
@@ -3055,10 +3062,12 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // émettrice, elle, est bien vivante.)
     for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
         if (it->first.compare(0, key.size(), key) == 0 && it->first.size() > key.size()
-            && it->first[key.size()] == '|')
+            && it->first[key.size()] == '|') {
+            [self purgeSendChainOf:it->second.get()];     // its plugins' keys first (INC 3)
             it = _bridgeSendMap.erase(it);
-        else
+        } else {
             ++it;
+        }
     }
 }
 
@@ -3121,6 +3130,20 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // AVANT de lâcher les Ptr : mettre en consigne. Beaucoup de gestes retirent un objet pour le
     // réajouter identique dans la foulée, et sans ça chaque aller-retour recharge ses AU.
     [self parkPluginsForObjectID:uuid];
+
+    // The plugins its SENDS carry (INC 3) live in the send plugins' own lists, which the loops below do
+    // not walk: parked like the others, then forgotten — editors closed, links torn down, keys dropped —
+    // before anything is destroyed.
+    {
+        const std::string prefix = key + "|";
+        for (auto& [mk, sp] : _bridgeSendMap) {
+            if (!sp || mk.compare(0, prefix.size(), prefix) != 0) continue;
+            if (auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(sp.get()))
+                if (auto* list = bs->getChainList())
+                    for (auto* cp : *list) if (cp) [self parkPlugin:*cp];
+            [self purgeSendChainOf:sp.get()];
+        }
+    }
 
     // Chaîne linéaire : les plugins user vivent dans la plugin-list hôte, donc la boucle
     // ci-dessous les couvre déjà. On ne garde ici que l'oubli des clés de la chaîne.
@@ -4520,6 +4543,7 @@ static std::string sendMapKey(const std::string& senderKey, const std::string& a
         const std::string& k = it->first;
         const auto sep = k.find('|');
         if (sep != std::string::npos && k.compare(sep + 1, std::string::npos, key) == 0) {
+            [self purgeSendChainOf:it->second.get()];     // the plugins it carries go with it (INC 3)
             if (it->second) it->second->removeFromParent();
             it = _bridgeSendMap.erase(it);
         } else {
@@ -4760,72 +4784,159 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 
 // A SEND on the bridge (patch 0039, docs/plan_sends_rework.md §A.2): an engine-only plugin at the END
 // of the sender's chain (post-fader, post-window — what is heard is what is sent) that carries the
-// level and names the aux. Idempotent: called by every sync for every alive send. The level and the
-// gate are the HOT part (no rebuild); the plugin itself, or its aux, changing is what marks the
-// transaction dirty. The aux lists its sends in `objBridgeSends` (@see commitBridgeSync).
+// level and names the aux. Idempotent: called by every sync for every send that is alive OR carries
+// plugins. The level and the gate are the HOT part (no rebuild); the plugin itself, its aux or its
+// liveness changing is what marks the transaction dirty. The aux lists its ALIVE sends in
+// `objBridgeSends` (@see commitBridgeSync).
+//
+// `alive` (INC 3, the materialisation rule — plan §D.2.A.g): a send that is NOT alive (switched off, at
+// -inf without a curve) but carries plugins is laid all the same, DISABLED: its plugins stay loaded,
+// their editors open, and nothing is processed (the builder makes no wet branch for a disabled tap, the
+// aux has no reader for it). Becoming alive is a change of the graph's shape — one restart, no
+// instantiation.
 // Returns 0 = not laid (aux not born yet, sender without a chain), 1 = laid and already there,
-// 2 = laid with a NEW plugin (its curve is gone: the caller pushes the automation again).
+// 2 = laid with a NEW plugin (its curve is gone: the caller pushes the automation again), -1 = list full.
 - (NSInteger)ensureBridgeSendFrom:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb gated:(BOOL)gated
-                        position:(NSInteger)position {
+                        position:(NSInteger)position alive:(BOOL)alive {
     if (!_edit || !senderID || !auxID) return 0;
     std::string sKey([senderID UTF8String]), aKey([auxID UTF8String]);
 
+    NSInteger outcome = 0;
+    auto* send = [self bridgeSendFrom:sKey toAux:aKey create:YES outcome:&outcome];
+    if (!send) {
+        if (outcome == -1)
+            // The list is full (the engine's limit counts the chain's fixed entries): not a transient
+            // state, the model shows it as the send's refusal.
+            NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée, liste pleine (%@ → %@)", senderID, auxID);
+        return outcome;
+    }
+    _bridgeTouchedSends.insert(sendMapKey(sKey, aKey));
+
+    if (std::fabs(send->getLevelDb() - levelDb) > 1.0e-4f) send->setLevelDb(levelDb);
+    send->setGated(gated);
+    send->setTapPosition((int)position);       // placed by the commit (-applySendPositionsForKey:)
+    if (send->isEnabled() != (bool)alive) {
+        send->setEnabled(alive);
+        _bridgeDirty = true;
+    }
+    return outcome;
+}
+
+- (te::ObjBridgeSendPlugin*)bridgeSendFrom:(const std::string&)sKey toAux:(const std::string&)aKey
+                                    create:(BOOL)create outcome:(NSInteger*)outcome {
+    *outcome = 0;
     // An aux not born yet (a rebuild in progress): the next sync will come back when it is.
     auto ait = _containerClipMap.find(aKey);
-    if (ait == _containerClipMap.end() || !_auxKeys.count(aKey)) return 0;
+    if (ait == _containerClipMap.end() || !_auxKeys.count(aKey)) return nullptr;
 
     te::PluginList* pl = [self userPluginListForKey:sKey];
-    if (!pl) { logRoutingDisabledOnce("Send depuis un objet sans chaîne"); return 0; }
+    if (!pl) { logRoutingDisabledOnce("Send depuis un objet sans chaîne"); return nullptr; }
 
     const std::string mk = sendMapKey(sKey, aKey);
-    _bridgeTouchedSends.insert(mk);
-
-    auto applyHot = [&](te::Plugin* p) {
-        auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p);
-        if (!send) return;
-        if (send->getBridgeTargetAuxClipID() != ait->second->itemID) {
-            send->setTargetAuxClip(ait->second->itemID);      // the aux clip was remade (an undo)
-            _bridgeDirty = true;
-        }
-        if (std::fabs(send->getLevelDb() - levelDb) > 1.0e-4f) send->setLevelDb(levelDb);
-        send->setGated(gated);
-        send->setTapPosition((int)position);       // placed by the commit (-applySendPositionsForKey:)
-    };
+    const te::EditItemID auxItemID = ait->second->itemID;
 
     if (auto it = _bridgeSendMap.find(mk); it != _bridgeSendMap.end()) {
         // Still in the list? A recompile of the sender's chain can have remade it.
         bool stillInList = false;
         for (auto* p : *pl) if (p == it->second.get()) { stillInList = true; break; }
-        if (stillInList) { applyHot(it->second.get()); return 1; }
+        if (stillInList) {
+            if (auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(it->second.get())) {
+                if (send->getBridgeTargetAuxClipID() != auxItemID) {
+                    send->setTargetAuxClip(auxItemID);            // the aux clip was remade (an undo)
+                    _bridgeDirty = true;
+                }
+                *outcome = 1;
+                return send;
+            }
+        }
+        [self purgeSendChainOf:it->second.get()];
         _bridgeSendMap.erase(it);
     }
 
     // Adopt a send already present in the chain but absent from the registry, never double it.
     for (auto* p : *pl) {
         auto* existing = dynamic_cast<te::ObjBridgeSendPlugin*>(p);
-        if (existing && existing->getBridgeTargetAuxClipID() == ait->second->itemID) {
+        if (existing && existing->getBridgeTargetAuxClipID() == auxItemID) {
             _bridgeSendMap[mk] = te::Plugin::Ptr(p);
-            applyHot(p);
             _bridgeDirty = true;
-            return 2;
+            *outcome = 2;
+            return existing;
         }
     }
+    if (!create) return nullptr;
 
     te::Plugin::Ptr p = pl->insertPlugin(te::ObjBridgeSendPlugin::create(), pl->size());
     auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(p.get());
-    if (!send) {
-        // The list is full (the engine's limit counts the chain's fixed entries): not a transient
-        // state, the model shows it as the send's refusal.
-        NSLog(@"[BRIDGE] ensureBridgeSend: insertion refusée, liste pleine (%@ → %@)", senderID, auxID);
-        return -1;
-    }
-    send->setTargetAuxClip(ait->second->itemID);
-    send->setLevelDb(levelDb);
-    send->setGated(gated);
-    send->setTapPosition((int)position);
+    if (!send) { *outcome = -1; return nullptr; }
+    send->setTargetAuxClip(auxItemID);
+    // Born DISABLED and silent: whoever lays it says what it is — the sync its level, gate, position
+    // and liveness; the compile only needs it to exist, to hold the plugins it carries.
+    send->setEnabled(false);
     _bridgeSendMap[mk] = p;
     _bridgeDirty = true;
-    return 2;
+    *outcome = 2;
+    return send;
+}
+
+// The plugins a send CARRIES are ordinary keyed instances (`_pluginMap`, `_pluginOwnerHost`, the SENDER's
+// `pluginKeys`) living in the send plugin's own list. Whoever removes a send plugin calls this FIRST:
+// links torn down, editors closed (an AudioProcessor destroyed with its editor open is a crash), keys
+// forgotten. The instances die with the send plugin's tree. Idempotent. Four callers: the unconfirmed
+// loop of commitBridgeSync, removeAux:, forgetObjectBookkeeping:, closeEditorsAndPurgePluginsForObjectID:.
+- (void)purgeSendChainOf:(te::Plugin*)sendPlugin {
+    auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(sendPlugin);
+    if (!send) return;
+    te::PluginList* list = send->getChainList();
+    if (!list || list->size() == 0) return;
+
+    std::vector<std::string> keys;
+    for (auto* cp : *list)
+        for (auto& [pk, p] : _pluginMap)
+            if (p.get() == cp) keys.push_back(pk);
+
+    for (auto& pk : keys) {
+        [self teardownPluginLink:pk];
+        _editorWindows.erase(pk);
+        _bridgeKeyedPlugins.erase(pk);
+        _bridgePendingWires.erase(pk);
+        if (auto oit = _pluginOwnerHost.find(pk); oit != _pluginOwnerHost.end()) {
+            if (auto cit = _objectChainMap.find(oit->second); cit != _objectChainMap.end()) {
+                auto& v = cit->second.pluginKeys;
+                v.erase(std::remove(v.begin(), v.end(), pk), v.end());
+            }
+            _pluginOwnerHost.erase(oit);
+        }
+        _pluginMap.erase(pk);
+    }
+}
+
+// A send changes its AUX and keeps everything else — its plugin, its level curve, the plugins it
+// carries (docs/plan_sends_rework.md §D.2.A.h): the registry is re-keyed IN PLACE, before the sync that
+// follows, so that no instance is destroyed and re-created. NO = nothing to re-key (no such send in the
+// engine, the new aux not born, or a send to the new aux already there): the sync then does what it
+// always did (the old one is removed, the new one laid).
+- (BOOL)retargetBridgeSendFrom:(NSString*)senderID oldAux:(NSString*)oldAuxID newAux:(NSString*)newAuxID {
+    if (!_edit || !senderID || !oldAuxID || !newAuxID) return NO;
+    const std::string sKey([senderID UTF8String]), oKey([oldAuxID UTF8String]), nKey([newAuxID UTF8String]);
+    if (oKey == nKey) return NO;
+    auto ait = _containerClipMap.find(nKey);
+    if (ait == _containerClipMap.end() || !_auxKeys.count(nKey)) return NO;
+    const std::string oldMk = sendMapKey(sKey, oKey), newMk = sendMapKey(sKey, nKey);
+    auto it = _bridgeSendMap.find(oldMk);
+    if (it == _bridgeSendMap.end() || _bridgeSendMap.count(newMk)) return NO;
+    auto* send = dynamic_cast<te::ObjBridgeSendPlugin*>(it->second.get());
+    if (!send) return NO;
+
+    te::Plugin::Ptr keep = it->second;
+    _bridgeSendMap.erase(it);
+    _bridgeSendMap[newMk] = keep;
+    send->setTargetAuxClip(ait->second->itemID);
+    if (_bridgeTouchedSends.erase(oldMk)) _bridgeTouchedSends.insert(newMk);
+    if (auto cit = _objectChainMap.find(sKey); cit != _objectChainMap.end())
+        for (auto& e : cit->second.rootOrder)
+            if (e == "@" + oldMk) e = "@" + newMk;
+    _bridgeDirty = true;      // both auxes' lists change: the sync's commit rebuilds once
+    return YES;
 }
 
 // WHERE each send of `key` sits in the sender's plugin list — the one owner of that question
@@ -4978,6 +5089,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     for (auto& [k, p] : _bridgeSendMap) {
         const auto sep = k.find('|');
         if (sep == std::string::npos || !p) continue;
+        // A send that is laid but NOT alive (it only carries plugins — the materialisation rule,
+        // docs/plan_sends_rework.md §D.2.A.g) has no reader: the aux does not list it.
+        if (!p->isEnabled()) continue;
         byAux[k.substr(sep + 1)].push_back(p->itemID);
     }
 
@@ -5052,6 +5166,10 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     // each aux's list of sends. Before the rebuild below, so that ONE restartPlayback carries both.
     for (auto it = _bridgeSendMap.begin(); it != _bridgeSendMap.end(); ) {
         if (_bridgeTouchedSends.count(it->first)) { ++it; continue; }
+        // The plugins it carries first (INC 3): their editors, links and keys, or an AU would be destroyed
+        // with its editor open. The model never asks this for a send that still carries plugins and is
+        // not refused (the sync confirms every send that is alive OR carries plugins).
+        [self purgeSendChainOf:it->second.get()];
         if (it->second) it->second->removeFromParent();
         it = _bridgeSendMap.erase(it);
         _bridgeDirty = true;
@@ -5161,11 +5279,23 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             id age = [NSNull null];
             for (auto& rd : r.readers) if (rd.plugin == sp->itemID) { age = @(rd.sourceAge); break; }
             auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(sp.get());
+            // The plugins the send carries (INC 3): their model keys in processing order, and the
+            // latency they add — to the TAP's age, never to the signal that passes through.
+            NSMutableArray* chainKeys = [NSMutableArray array];
+            if (bs)
+                if (auto* list = bs->getChainList())
+                    for (auto* cp : *list)
+                        [chainKeys addObject:pluginKeyFor(cp->itemID)];
+            const double chainLatency = bs ? bs->getLatencySeconds() : 0.0;
             [sends addObject:@{ @"sender": [NSString stringWithUTF8String:sender.c_str()],
                                 @"aux": [NSString stringWithUTF8String:aux.c_str()],
                                 @"list_index": @(pl ? pl->indexOf(sp.get()) : -1),
                                 @"tap_position": @(bs ? bs->getTapPosition() : -1),
                                 @"follows_envelope": @(bs ? bs->hasEnvelopeSource() : false),
+                                @"enabled": @(sp->isEnabled() ? YES : NO),
+                                @"chain_plugins": @((int)chainKeys.count),
+                                @"chain_keys": chainKeys,
+                                @"chain_latency_samples": @((long long) std::llround(chainLatency * r.build.sampleRate)),
                                 @"age_samples": age }];
         }
     }
@@ -8456,8 +8586,16 @@ static void objDumpPluginList(te::PluginList& pl,
 // L'instrument (clip MIDI) et la queue (fader + fenêtre) sont posés ailleurs ; ici on ne
 // touche qu'au segment [trimIn … trimOut], qu'on réconcilie par pluginKey pour préserver les
 // instances vivantes (état, éditeurs ouverts, paramètres, link), puis qu'on remet dans l'ordre.
+//
+// `sendChains` (INC 3, docs/plan_sends_rework.md §D.2.A.h): the plugins each SEND of this object
+// carries — `[{ "aux": <uuid>, "plugins": [<leaves>] }]`, one entry per send that carries some and is
+// not refused. The compile owns that CONTENT (the bridge sync owns the route): it makes sure the send
+// plugin exists (laid disabled if the sync has not come yet) and compiles the series INTO the send's
+// own list, with the same reentrant code as a parallel branch. A send absent from `sendChains` has its
+// list emptied by the clean-up pass (its keys are no longer wanted).
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
+                                       sendChains:(NSArray<NSDictionary*>*)sendChains
                                         chainInDb:(float)chainInDb
                                        chainOutDb:(float)chainOutDb {
     NSMutableArray<NSString*>* failed = [NSMutableArray array];  // pluginKeys non résolus
@@ -8471,8 +8609,21 @@ static void objDumpPluginList(te::PluginList& pl,
 
     CompileSeries root = parseCompileSeries(tree);
 
+    // The sends' own plugins: leaves only (the model's rule — SendChain.sanitised; enforced here too,
+    // a block in a send's list would be unfolded by the builder and nothing above knows it).
+    std::vector<std::pair<std::string, CompileSeries>> sendSeries;
+    for (NSDictionary* d in sendChains) {
+        NSString* aux = d[@"aux"];
+        if (![aux isKindOfClass:[NSString class]] || aux.length == 0) continue;
+        CompileSeries leaves;
+        for (auto& n : parseCompileSeries(d[@"plugins"] ?: @[]))
+            if (!n.isRack && !n.isGain && !n.isSend && !n.key.empty()) leaves.push_back(n);
+        sendSeries.emplace_back(std::string([aux UTF8String]), std::move(leaves));
+    }
+
     std::unordered_set<std::string> wantedKeys;
     collectCompileKeys(root, wantedKeys);
+    for (auto& [aux, series] : sendSeries) collectCompileKeys(series, wantedKeys);
 
     // 1) Retirer les plugins qui ont disparu du modèle.
     for (auto& pk : chain.pluginKeys) {
@@ -8502,6 +8653,21 @@ static void objDumpPluginList(te::PluginList& pl,
     std::vector<std::string> newOrder;
     _compilingHostKey = key;
     [self compileSeries:root into:*pl anchor:chain.trimOut order:newOrder failed:failed];
+    for (auto& [aux, series] : sendSeries) {
+        if (series.empty()) continue;
+        NSInteger outcome = 0;
+        auto* send = [self bridgeSendFrom:key toAux:aux create:YES outcome:&outcome];
+        if (!send) {
+            // Not laid (the aux is not born yet, or the sender's list is full): nothing is
+            // instantiated and nothing is reported as failed — the model keeps the plugins, the next
+            // compile lays them. Instances that already exist keep their bookkeeping.
+            NSLog(@"[FX] compile: send '%s' → '%s' not laid (%ld) — its %lu plugin(s) wait",
+                  key.c_str(), aux.c_str(), (long)outcome, (unsigned long)series.size());
+            for (auto& n : series) if (_pluginMap.count(n.key)) newOrder.push_back(n.key);
+            continue;
+        }
+        [self compileSeries:series into:send->ensureChainList() anchor:te::Plugin::Ptr() order:newOrder failed:failed];
+    }
     _compilingHostKey.clear();
     chain.pluginKeys = newOrder;
     for (auto& pk : newOrder) _pluginOwnerHost[pk] = key;

@@ -50,6 +50,9 @@ public:
         addAutomatableParameter (levelParam = new ObjGainDbParameter ("level", TRANS("Send Level"),
                                                                       *this, { silenceDb, 12.0f }));
         levelParam->attachToCurrentValue (levelDb);
+
+        // No state.addListener: Plugin is registered already, valueTreeChildAdded/Removed are overridden.
+        rebuildChainList();
     }
 
     ~ObjBridgeSendPlugin() override
@@ -119,9 +122,65 @@ public:
     bool isGated() const noexcept                           { return gated.load (std::memory_order_relaxed); }
 
     //==============================================================================
+    // The send's PLUGINS (INC 3, docs/plan_sends_rework.md §D.2.A): a mini-chain processed on the
+    // send's copy, between the tap (and the envelope) and the level. It is ONE PluginList over a
+    // <BRANCH> child of this plugin's state — the tree type PluginList::initialise accepts (patch 0018);
+    // this plugin does NOT implement ParallelPluginBlock, or the builder would unfold it as a block.
+    // The list has its own entry limit: its plugins do not count in the sender's chain.
+
+    /// The mini-chain, or nullptr while the send has never carried a plugin. Message thread.
+    PluginList* getChainList() const                        { return chainList.get(); }
+
+    /// The mini-chain, its <BRANCH> created if need be (the compile is about to fill it).
+    PluginList& ensureChainList()
+    {
+        if (chainList == nullptr)
+            state.appendChild (juce::ValueTree (ParallelPluginBlock::branchTreeType), nullptr);   // → rebuildChainList
+
+        jassert (chainList != nullptr);
+        return *chainList;
+    }
+
+    /// The series latency of the mini-chain. The clip's head and tail read it (Clip::getHead /
+    /// getTail), so that the wet branch is fed before the window and flushed after it; the lane's
+    /// equalisation reads NODE latencies, where it does not appear: it ages the tap, never the dry.
+    double getLatencySeconds() override
+    {
+        double latency = 0.0;
+
+        if (chainList != nullptr)
+            for (auto p : *chainList)
+                latency += std::max (0.0, p->getLatencySeconds());
+
+        return latency;
+    }
+
+    /// The mini-chain's plugins are in no host list: nobody else would initialise them, and their
+    /// latency would read 0 at the first build of the graph (as for a parallel block's branches).
+    void initialiseFully() override
+    {
+        Plugin::initialiseFully();
+
+        if (chainList != nullptr)
+            for (auto p : *chainList)
+                p->initialiseFully();
+    }
+
+    //==============================================================================
     // BridgeTapSource
     EditItemID getBridgeTargetAuxClipID() const override    { return EditItemID::fromString (auxClipID.get()); }
     bool processesTapCopy() const override                  { return true; }
+    PluginList* getTapChain() override                      { return chainList.get(); }
+
+    /// What the send does to its copy BEFORE its plugins: the sender's window and fades (Q-U5), so
+    /// that a compressor on the send sees the faded signal. `editTime` is the time the signal was
+    /// made at — the same time the window fade of the sender's main path reads for the same samples.
+    /// Called by the tap node (no mini-chain) or by the head of the wet branch, once per block.
+    void processTapHead (juce::AudioBuffer<float>& buffer, int start, int numSamples, TimeRange editTime) override
+    {
+        if (auto* env = envelopeRaw.load (std::memory_order_acquire))
+            env->applyEnvelope (buffer, start, numSamples, editTime);
+    }
 
     //==============================================================================
     juce::String getName() const override                   { return TRANS("Bridge Send"); }
@@ -142,8 +201,9 @@ public:
     void deinitialise() override {}
 
     /// Called by BridgeTapNode on ITS COPY of the signal, once per block (the node moves the edit time
-    /// back by the input's age, so a level curve is read where the signal was made). The buffer is the
-    /// send's output: it is scaled in place.
+    /// back by the copy's age, so a level curve is read where the signal was made), AFTER the envelope
+    /// (processTapHead) and after the send's plugins: the LEVEL and the gate come last (Q-U17). The
+    /// buffer is the send's output: it is scaled in place.
     void applyToBuffer (const PluginRenderContext& fc) override
     {
         SCOPED_REALTIME_CHECK
@@ -160,12 +220,6 @@ public:
             buffer->clear (fc.bufferStartSample, fc.bufferNumSamples);
             return;
         }
-
-        // The sender's window and fades, THEN the level: both on this copy. `fc.editTime` is the block's
-        // time moved back by the input's age (BridgeTapNode), i.e. the time the signal was made at —
-        // the same time the window fade of the sender's main path reads for the same samples.
-        if (auto* env = envelopeRaw.load (std::memory_order_acquire))
-            env->applyEnvelope (*buffer, fc.bufferStartSample, fc.bufferNumSamples, fc.editTime);
 
         auto level = smoothedLevel;
 
@@ -195,10 +249,43 @@ public:
 private:
     //==============================================================================
     juce::SmoothedValue<float> smoothedLevel;
+    std::unique_ptr<PluginList> chainList;      // a view on the <BRANCH> child, null without one
     std::atomic<bool> gated { false };
     int tapPosition = postFader;       // message thread only
     ObjWindowFadePlugin::Ptr envelope, retired;                 // message thread only
     std::atomic<ObjWindowFadePlugin*> envelopeRaw { nullptr };  // the audio thread's mirror
+
+    // The list is only a view on the <BRANCH> subtree: rebuilt whole when that child comes or goes
+    // (an edit of the structure, never during playback; the graph is rebuilt behind it anyway).
+    void rebuildChainList()
+    {
+        chainList.reset();
+
+        auto branch = state.getChildWithName (ParallelPluginBlock::branchTreeType);
+
+        if (! branch.isValid())
+            return;
+
+        chainList = std::make_unique<PluginList> (edit);
+        chainList->setTrackAndClip (getOwnerTrack(), getOwnerClip());
+        chainList->initialise (branch);
+    }
+
+    void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override
+    {
+        if (parent == state && child.hasType (ParallelPluginBlock::branchTreeType))
+            rebuildChainList();
+
+        Plugin::valueTreeChildAdded (parent, child);
+    }
+
+    void valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int index) override
+    {
+        if (parent == state && child.hasType (ParallelPluginBlock::branchTreeType))
+            rebuildChainList();
+
+        Plugin::valueTreeChildRemoved (parent, child, index);
+    }
 
     float currentGain() const
     {

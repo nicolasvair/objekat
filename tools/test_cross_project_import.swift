@@ -466,9 +466,12 @@ enum CrossProjectImportTest {
                   PluginIDUniqueness.duplicates(items: plan.clips, stems: []).isEmpty)
             check("send plugins: the state travels frozen", pa.sends[0].plugins.map(\.stateXML) == [onSend.stateXML, onSend2.stateXML])
             let g1 = pa.sends[0].plugins[0].linkGroupID, g2 = pb.sends[0].plugins[0].linkGroupID
-            check("send plugins: a link internal to the batch survives, under a NEW group id",
-                  g1 != nil && g1 == g2 && g1 != link)
+            // NO LINK ON A SEND (decision of 10 October 2026): even a link internal to the batch goes.
+            check("send plugins: a linked one is pasted INDEPENDENT (no link kept, none created)",
+                  g1 == nil && g2 == nil && link != UUID())
             check("send plugins: an unlinked one stays unlinked", pa.sends[0].plugins[1].linkGroupID == nil)
+            check("send plugins: no pasted object carries a linked send plugin",
+                  plan.clips.allSatisfy { SendChain.linkedSendPlugins(of: $0).isEmpty })
             check("send plugins: the curve follows the plugin's new id",
                   pa.automation.map(\.param) == [.plugin(pluginKey: pa.sends[0].plugins[1].id, paramID: "p")])
             check("send plugins: the touch memory follows too",
@@ -491,8 +494,8 @@ enum CrossProjectImportTest {
                 .init(clips: [clip(startTime: 0, lane: 0, plugins: [plugin(linkGroupID: UUID())])], comments: [],
                       consolidateDefinitions: [:], originFolder: originFolder, originTime: 0, originLane: 0),
                 target: .init(pasteTime: 0, pasteLane: 0)).clips[0]
-            check("send plugins: a link whose partner stays behind behaves as on the trunk",
-                  (lone.sends[0].plugins[0].linkGroupID == nil) == (trunkLone.plugins[0].linkGroupID == nil))
+            check("send plugins: a lone linked send plugin is unlinked (the trunk's own rule is not this test's business)",
+                  lone.sends[0].plugins[0].linkGroupID == nil && trunkLone.plugins.count == 1)
 
             // Inside a group child.
             let g = group(startTime: 0, lane: 0, children: [a])

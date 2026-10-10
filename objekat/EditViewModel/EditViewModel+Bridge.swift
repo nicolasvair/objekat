@@ -71,10 +71,13 @@ extension EditViewModel {
                 else { out.append(p) }
             }
         }
-        func addRoutes(host: UUID, chain: [ObjectPlugin], instruments: [ObjectPlugin]) {
+        func addRoutes(host: UUID, chain: [ObjectPlugin], instruments: [ObjectPlugin], onSends: [ObjectPlugin] = []) {
             var leaves: [ObjectPlugin] = []
             collectLeaves(chain, into: &leaves)
             collectLeaves(instruments, into: &leaves)
+            // A keyed plugin a SEND carries (INC 3): its reader sits in the sender's clip like a
+            // trunk leaf's — the route's host is the SENDER.
+            collectLeaves(onSends, into: &leaves)
             for p in leaves {
                 guard let key = p.sidechain else { continue }
                 routes.append(BridgeScope.Route(source: key.sourceID, host: host, consumer: .sidechain(plugin: p.id)))
@@ -83,7 +86,8 @@ extension EditViewModel {
         }
         func walk(_ array: [SoundObject]) {
             for o in array {
-                addRoutes(host: o.id, chain: o.plugins, instruments: o.instruments)
+                addRoutes(host: o.id, chain: o.plugins, instruments: o.instruments,
+                          onSends: o.isAux ? [] : SendChain.sendPlugins(of: o))
                 if !o.isAux {
                     for send in o.sends where isSendAlive(send, on: o) {
                         routes.append(BridgeScope.Route(source: o.id, host: send.auxID, consumer: .auxInput(sender: o.id)))
@@ -143,7 +147,11 @@ extension EditViewModel {
 
         pruneOrphanSends()     // an aux deleted since the last sync: the sends that named it go with it
         let topology = bridgeTopology()
-        if topology.routes.isEmpty && !bridgeEngineHasTaps {
+        // The MATERIALISATION rule (INC 3, docs/plan_sends_rework.md §D.2.A.g): a send that is not
+        // alive but CARRIES plugins is laid all the same — disabled, no route, no reader — so that its
+        // plugins stay loaded with their editors. Not a route of the plan: it blocks nothing.
+        let carriers = deadSendCarriers()
+        if topology.routes.isEmpty && carriers.isEmpty && !bridgeEngineHasTaps {
             if bridgePlan != BridgeScope.Plan() { bridgePlan = BridgeScope.Plan() }
             if !bridgeRouteStatus.isEmpty { bridgeRouteStatus = [:] }
             if !sendRouteStatus.isEmpty { sendRouteStatus = [:] }
@@ -199,24 +207,65 @@ extension EditViewModel {
         // the automation is pushed again below.
         var laid: Set<SendKey> = []
         var bornAgain = false
+        // A send plugin that is NEW in the engine and carries plugins in the model has an empty
+        // mini-chain: its sender's chain is compiled again (the compile owns that content).
+        var refill: [UUID] = []
         for i in plan.sendRoutes where topology.routeOwners.indices.contains(i) {
             guard let key = topology.routeOwners[i].sendKey else { continue }
-            let level = sendEntry(from: key.sender, to: key.aux)?.levelDb ?? sendMinDb
+            let entry = sendEntry(from: key.sender, to: key.aux)
+            let level = entry?.levelDb ?? sendMinDb
             let gated = sendIsGated(sender: key.sender, aux: key.aux)
             let result = engine.ensureBridgeSend(from: key.sender.uuidString, toAux: key.aux.uuidString,
                                                  levelDb: level, gated: gated,
-                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)))
+                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)),
+                                                 alive: true)
             if result > 0 { laid.insert(key) }
             if result == 2 { bornAgain = true }
+            if result == 2, entry?.plugins.isEmpty == false, !refill.contains(key.sender) { refill.append(key.sender) }
             if result < 0 { sendStatus[key] = .chainFull }      // the engine's own verdict
+        }
+        var laidCarriers = 0
+        for key in carriers {
+            let entry = sendEntry(from: key.sender, to: key.aux)
+            let result = engine.ensureBridgeSend(from: key.sender.uuidString, toAux: key.aux.uuidString,
+                                                 levelDb: entry?.levelDb ?? sendMinDb,
+                                                 gated: sendIsGated(sender: key.sender, aux: key.aux),
+                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)),
+                                                 alive: false)
+            if result > 0 { laidCarriers += 1 }
+            if result == 2, !refill.contains(key.sender) { refill.append(key.sender) }
         }
         engine.commitBridgeSync()
         if sendStatus != sendRouteStatus { sendRouteStatus = sendStatus }
 
-        bridgeEngineHasTaps = !plan.taps.isEmpty || !laid.isEmpty
+        bridgeEngineHasTaps = !plan.taps.isEmpty || !laid.isEmpty || laidCarriers > 0
         bridgeLaidSends = laid
         bridgeLastTopology = (topology.nodes, topology.routes, plan)
+        // Not during a load: the deferred queue compiles every chain itself, after this.
+        if deferredChainCompiles == nil {
+            for sender in refill { compileRack(objectID: sender) }
+        }
         if bornAgain && pushingAutomation { pushAllAutomation() }
+    }
+
+    /// The sends that are NOT alive but carry plugins, and that the static scope allows — in tree
+    /// order (@see the materialisation rule in `syncBridge`). `bridgeLaidSends` never holds them: it
+    /// means "laid AND alive" (the hot level path, the gate).
+    func deadSendCarriers() -> [SendKey] {
+        var out: [SendKey] = []
+        func walk(_ array: [SoundObject]) {
+            for o in array {
+                if !o.isAux {
+                    for send in o.sends where !send.plugins.isEmpty && !isSendAlive(send, on: o)
+                        && sendScopeIndex.staticRefusal(sender: o.id, aux: send.auxID) == nil {
+                        out.append(SendKey(sender: o.id, aux: send.auxID))
+                    }
+                }
+                if case .group(let children, _) = o.kind { walk(children) }
+            }
+        }
+        walk(items)
+        return out
     }
 
     /// The engine's code for a send's position (OBJBridgeSendPlugin::TapPosition): 0 post-fader,
@@ -278,6 +327,7 @@ extension EditViewModel {
         }
         if let chain = chainPlugins(host), has(chain) { return true }
         if let o = find(id: host), has(o.instruments) { return true }
+        if let o = find(id: host), has(SendChain.sendPlugins(of: o)) { return true }     // on one of its sends
         return false
     }
 
@@ -315,6 +365,9 @@ extension EditViewModel {
     /// belongs to the DEFINITION and is mirrored on every attached instance; on a detached one, only
     /// that instance.
     func setSidechain(host: UUID, plugin: UUID, source: UUID?) throws {
+        // A send's mini-chain named as the host: the route's host is the SENDER (the object whose clip
+        // the reader sits in); the write below finds the chain that holds the plugin.
+        let host = chainOwnerObjectID(host)
         guard bridgeLeafExists(plugin, host: host) else { throw BridgeSidechainError.notAPlugin }
 
         if let source {
@@ -352,6 +405,12 @@ extension EditViewModel {
             updateChainPlugins(host) { $0 = updated }
         } else if let o = find(id: host), let updated = Self.settingSidechain(key, on: plugin, in: o.instruments) {
             update(id: host) { $0.instruments = updated }
+        } else {
+            // On one of the object's sends (INC 3).
+            let sendHost = chainHost(holding: plugin, on: host)
+            if sendHost != host, let updated = chainPlugins(sendHost).flatMap({ Self.settingSidechain(key, on: plugin, in: $0) }) {
+                updateChainPlugins(sendHost) { $0 = updated }
+            }
         }
         isDirty = true
         syncBridge()

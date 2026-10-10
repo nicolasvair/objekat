@@ -277,9 +277,17 @@ extension EditViewModel {
         // on the trunk (ignored by `adoptingPluginStates`, `pushPatch` recompiles the chain for it)
         // and its `tap` reaches the engine with the bridge sync that closes every restore. Only the
         // `tap` — a send born, removed, retargeted or re-levelled still rebuilds, as before.
+        // The STATE of the plugins a send carries (INC 3) is recoverable like the chain's: the same
+        // mini-chain (same ids, same order) wearing other states is handed back to the live instances
+        // by `pushPatch`. A plugin added to, removed from or reordered on a send still rebuilds.
         if old.sends.count == new.sends.count {
             var sends = old.sends
-            for i in sends.indices where sends[i].auxID == new.sends[i].auxID { sends[i].tap = new.sends[i].tap }
+            for i in sends.indices where sends[i].auxID == new.sends[i].auxID {
+                sends[i].tap = new.sends[i].tap
+                if let adopted = adoptingPluginStates(sends[i].plugins, new.sends[i].plugins) {
+                    sends[i].plugins = adopted
+                }
+            }
             probe.sends = sends
         }
         probe.startTime     = new.startTime
@@ -400,7 +408,14 @@ extension EditViewModel {
     /// re-applying a state to an AU for nothing is a `setStateInformation` for nothing, and on
     /// some plugins that is audible.
     static func changedPluginStates(_ old: SoundObject, _ new: SoundObject) -> [(id: UUID, xml: String)] {
-        changedPluginStates(old.plugins, new.plugins) + changedPluginStates(old.instruments, new.instruments)
+        var out = changedPluginStates(old.plugins, new.plugins) + changedPluginStates(old.instruments, new.instruments)
+        // The third root (INC 3): each send's plugins, paired by aux.
+        for send in new.sends where !send.plugins.isEmpty {
+            if let before = old.sends.first(where: { $0.auxID == send.auxID }) {
+                out += changedPluginStates(before.plugins, send.plugins)
+            }
+        }
+        return out
     }
 
     /// The same for two chains (an object's, or a bus's: @see `applySnapshot`).

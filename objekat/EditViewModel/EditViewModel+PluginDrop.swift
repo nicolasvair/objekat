@@ -199,6 +199,16 @@ extension EditViewModel {
         let cmd = flags.contains(.command)
         let alt = flags.contains(.option)
         guard let targetChain = chainPlugins(targetID) else { return .refuse("unknown target host") }
+        // A SEND's mini-chain (INC 3) on either side: plain plugins only, in ONE series, never linked.
+        let targetIsSend = isSendChainHost(targetID) && find(id: targetID) == nil
+        let sourceIsSend = isSendChainHost(sourceID) && find(id: sourceID) == nil
+        if targetIsSend {
+            if isInstrument(payload.pluginID, of: sourceID) { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }
+            switch site {
+            case .hostEnd, .series(.root, _): break
+            default: return .refuse(SendChain.Refusal.leavesOnly.rawValue)
+            }
+        }
 
         // AN INSTRUMENT lives in its object's slot, not in a chain.
         if isInstrument(payload.pluginID, of: sourceID) {
@@ -221,6 +231,7 @@ extension EditViewModel {
 
         // A WHOLE BLOCK, grabbed by its header.
         if let block = Self.findBlock(payload.pluginID, in: sourceChain), let fb = block.fxBlock {
+            if targetIsSend { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }     // no bin on a send
             guard payload.ids.count == 1 else { return .refuse("a block travels alone") }
             switch binSite {
             case .outside: break
@@ -244,6 +255,13 @@ extension EditViewModel {
         guard !found.isEmpty, found.count == payload.ids.count else { return .refuse("unknown plugin") }
         let definitions = payload.ids.map { fxDefinition(ofInstance: $0, on: sourceID) }
         let binned = definitions.compactMap { $0 }
+        // A parallel block's carrier never enters a send (its leaves may, one by one).
+        if targetIsSend {
+            if found.contains(where: { !SendChain.accepts($0) }) { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }
+            // An FX link's instance: only its independent copy (⌥, and ⌘ which cannot link here).
+            if !binned.isEmpty { return (alt || cmd) ? sendCapacity(found.count, targetID) ?? .copy
+                                                    : .refuse("an FX link's plugin does not move to a send (⌥ copies it)") }
+        }
 
         // — instances of an ATTACHED bin —
         if !binned.isEmpty {
@@ -292,11 +310,22 @@ extension EditViewModel {
             return .adoptIntoBin(siteLink)
         }
         if sameHost {
-            if alt { return .copy }
+            if alt { return sendCapacity(found.count, targetID) ?? .copy }
             guard case .series = site else { return .refuse("source and target are the same host") }
             return .move      // ⌘ inside one chain is a plain move
         }
+        // NO LINK ON A SEND: ⌘ to or from a mini-chain is the plain copy (@see effectiveTransferMode)
+        // — answered HERE, so that the cursor and the band never promise a link.
+        if targetIsSend || sourceIsSend {
+            return sendCapacity(found.count, targetID) ?? ((cmd || alt) ? .copy : .move)
+        }
         return cmd ? .link : (alt ? .copy : .move)
+    }
+
+    /// `.refuse(chainFull)` if `adding` more plugins do not fit in the send's mini-chain `hostID`
+    /// names; nil for any other host, or when they fit.
+    private func sendCapacity(_ adding: Int, _ hostID: UUID) -> PluginDropOutcome? {
+        sendChainRefusal(adding: adding, to: hostID).map { .refuse($0.rawValue) }
     }
 
     /// Lays a dragged payload down on a chain HOST — a timeline object or a bus, which are the

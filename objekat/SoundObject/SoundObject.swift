@@ -626,10 +626,14 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// A send's marker alone does NOT count: with no plugin and no trim there is no chain to order a
     /// send in, and a send placed "in the chain" of an empty chain taps exactly the signal the fader
     /// receives (docs/plan_sends_rework.md §A.d).
+    ///
+    /// A send that CARRIES plugins does (INC 3): the compile owns the content of every mini-chain,
+    /// and an object whose only plugins sit on a send would otherwise never instantiate them.
     var needsChainCompile: Bool {
         plugins.contains(where: { !$0.isSendMarker }) || chainInGainDb != 0 || chainOutGainDb != 0
             || automation.contains { ($0.param == .chainInGain || $0.param == .chainOutGain)
                                      && !$0.points.isEmpty }
+            || (!isAux && sends.contains { !$0.plugins.isEmpty })
     }
 
     // MARK: Kind

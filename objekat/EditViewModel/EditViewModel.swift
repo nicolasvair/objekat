@@ -51,6 +51,7 @@ final class EditViewModel {
             parentLookupsSinceMutation = 0
             allAuxesCache = nil
             sendScopeIndexCache = nil
+            sendChainHostsCache = nil
             multiSelectionCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
@@ -79,6 +80,8 @@ final class EditViewModel {
     @ObservationIgnored var allAuxesCache: [SoundObject]? = nil
     /// The send rules over the current tree (@see `sendScopeIndex`), invalidated with `items` and `stems`.
     @ObservationIgnored var sendScopeIndexCache: BridgeScope.SendIndex? = nil
+    /// Derived chain-host id → send (@see `sendChainHosts`, INC 3), invalidated with `items`.
+    @ObservationIgnored var sendChainHostsCache: [UUID: SendKey]? = nil
     /// @see multiSelectionSnapshot — everything the inspector reads about a MULTIPLE selection,
     /// computed once per (items, selectedIDs) instead of once per SwiftUI pass. Dropped by `items`,
     /// `selectedIDs` and `rebuildLaneEntries` (the lane order of the sends comes from there).

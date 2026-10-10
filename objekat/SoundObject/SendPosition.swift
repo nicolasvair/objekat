@@ -271,7 +271,8 @@ extension SoundObject {
     ///   • a marker without a send entry is removed (an orphan);
     ///   • two markers for one aux: the first is kept;
     ///   • on an aux object (aux and Main do not send) every marker is removed;
-    ///   • a send's `plugins` hold plain plugins only (a block, a bin, a marker there is dropped);
+    ///   • a send's `plugins` hold plain plugins only (a block, a bin, a marker there is dropped), and
+    ///     none of them is linked (a link membership there is cleared);
     ///   • a send that has its marker holds `tap == .postFader` (the marker wins; the canonical form).
     /// `instruments` never hold a marker and are left alone.
     func sanitisingSends() -> SoundObject {
@@ -303,11 +304,11 @@ extension SoundObject {
         }
         o.plugins = top
 
-        // 2b. A send's own plugins: plain plugins only (@see SendChain.sanitised); an aux never sends,
+        // 2b. A send's own plugins: plain plugins only, never linked (@see SendChain.sanitised); an aux never sends,
         // its `sends` are left as they are (the load's purge owns that rule).
         for i in o.sends.indices where !o.sends[i].plugins.isEmpty {
             let clean = SendChain.sanitised(o.sends[i].plugins)
-            if clean.count != o.sends[i].plugins.count { o.sends[i].plugins = clean }
+            if clean != o.sends[i].plugins { o.sends[i].plugins = clean }
         }
 
         // 3. Canonical form: the marker wins, `tap` says post-fader.

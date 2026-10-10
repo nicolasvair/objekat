@@ -219,6 +219,56 @@ enum SendChainTest {
                   && SendChain.strippingPlugins(sends).allSatisfy { $0.plugins.isEmpty })
         }
 
+        // MARK: - NO LINK ON A SEND (user decision of 10 October 2026, replacing Q-U8 / Q-U8b)
+
+        do {
+            let g = UUID(), d = UUID()
+            var linked = plugin("linked");   linked.linkGroupID = g
+            var detached = plugin("detached"); detached.detachedLinkGroupID = d
+            let plain = plugin("plain")
+            let clean = SendChain.sanitised([linked, detached, plain])
+            check("no link: sanitised drops an active link", clean[0].linkGroupID == nil)
+            check("no link: sanitised drops a detached membership", clean[1].detachedLinkGroupID == nil)
+            check("no link: ids, order and the plain plugin untouched",
+                  clean.map(\.id) == [linked.id, detached.id, plain.id] && clean[2] == plain)
+            check("no link: idempotent", SendChain.sanitised(clean) == clean)
+            let auxA = UUID()
+            let sends = [AuxSend(auxID: auxA, plugins: [linked, detached, plain])]
+            check("no link: mapping (every copy) unlinks, even with an identity transform",
+                  SendChain.mapping(sends) { $0 }.flatMap(\.plugins).allSatisfy { $0.linkGroupID == nil && $0.detachedLinkGroupID == nil })
+            check("no link: mapPluginIDs (a cold copy) unlinks",
+                  SendChain.mapPluginIDs(in: sends) { _ in UUID() }.flatMap(\.plugins).allSatisfy { $0.linkGroupID == nil })
+            check("no link: a transform that ADDS a link cannot make it stick",
+                  SendChain.mapping(sends) { $0.map { var q = $0; q.linkGroupID = UUID(); return q } }
+                      .flatMap(\.plugins).allSatisfy { $0.linkGroupID == nil })
+            // The object-level sanitiser (decode, every write of the model).
+            var trunk = plugin("trunk"); trunk.linkGroupID = g
+            let dirty = clip(plugins: [trunk], sends: sends)
+            check("no link: linkedSendPlugins names the offenders of a dirty object",
+                  SendChain.linkedSendPlugins(of: dirty).map(\.id) == [linked.id, detached.id])
+            let healed = dirty.sanitisingSends()
+            check("no link: sanitisingSends unlinks the send plugins",
+                  SendChain.linkedSendPlugins(of: healed).isEmpty && healed.sends[0].plugins.count == 3)
+            check("no link: the TRUNK's link is left exactly as it was", healed.plugins[0].linkGroupID == g)
+            // A file that carries a link on a send plugin: gone at decode.
+            let reread = decode(SoundObject.self, json(dirty))
+            check("no link: a linked send plugin read from a file is unlinked at decode",
+                  SendChain.linkedSendPlugins(of: reread).isEmpty && reread.plugins[0].linkGroupID == g)
+            // A derived copy (split, duplicate, paste) given the original's sends by value.
+            let copy = dirty.derivedCopy(startTime: 1, duration: 2, lane: 0, fadeIn: 0, fadeOut: 0,
+                                         plugins: dirty.plugins,
+                                         sends: SendChain.mapPluginIDs(in: dirty.sends) { _ in UUID() },
+                                         kind: dirty.kind)
+            check("no link: a derived copy's send plugins are independent",
+                  SendChain.linkedSendPlugins(of: copy).isEmpty
+                  && Set(copy.sends[0].plugins.map(\.id)).isDisjoint(with: dirty.sends[0].plugins.map(\.id)))
+            // The audit (`debug.send_marker_audit`) names a link that got past every door.
+            let rules = SendMarkerAudit.violations(items: [dirty], stems: []).filter { $0.rule == "send_plugin_linked" }
+            check("no link: the audit reports each linked send plugin", rules.count == 2 && rules.allSatisfy { $0.host == dirty.id })
+            check("no link: the audit is silent once healed",
+                  !SendMarkerAudit.violations(items: [healed], stems: []).contains { $0.rule == "send_plugin_linked" })
+        }
+
         print("\n\(total - fails.count)/\(total) passed")
         if !fails.isEmpty { print("FAILED: \(fails)"); exit(1) }
     }

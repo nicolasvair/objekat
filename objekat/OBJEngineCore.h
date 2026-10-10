@@ -187,7 +187,16 @@
 // 3 in the chain (placed per the order of the last compile, @see OBJBridgeSendPlugin.h). The actual move
 // is made by the transaction's commit and by every compile of the sender's chain, so that a recompile and
 // a sync cannot fight over the order.
-- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated position:(NSInteger)position;
+//
+// INC 3 — a send can CARRY plugins (docs/plan_sends_rework.md §D.2.A). The materialisation rule: a
+// send's engine plugin exists iff the send is ALIVE or carries plugins; `alive:NO` lays it disabled
+// (its plugins stay loaded with their editors, nothing is processed, the aux has no reader for it). The
+// CONTENT of a send (its plugins) is the compile's (`compileUserRackForObjectID:tree:sendChains:…`);
+// this transaction owns the ROUTE only. retargetBridgeSend re-keys a send onto another aux IN PLACE
+// (plugin, level curve and carried plugins kept, no instance re-created); call it BEFORE the sync that
+// follows the model change. NO = nothing to re-key, the sync removes and lays as before.
+- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated position:(NSInteger)position alive:(BOOL)alive;
+- (BOOL)retargetBridgeSendFrom:(NSString* _Nonnull)senderID oldAux:(NSString* _Nonnull)oldAuxID newAux:(NSString* _Nonnull)newAuxID;
 - (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
 
 // MARK: - Bake — rendu offline
@@ -437,9 +446,13 @@
 //   bloc // : @{@"kind":@"rack", @"voices":@[ @[<entrées série>], … ]}
 //   bac FX  : @{@"id":…, @"kind":@"fxlink", @"plugins":@[<feuilles>], @"enabled":@(BOOL),
 //              @"gainDb":…, @"pan":…} — déplié en feuilles + un ObjGain de sortie
+// `sendChains` : les plugins que PORTE chaque envoi de l'objet — @[ @{@"aux":…, @"plugins":@[<feuilles>]} ]
+// (INC 3) ; compilés dans la liste propre du plugin d'envoi, posé désactivé si le pont ne l'a pas
+// encore posé. @[] = aucun envoi ne porte de plugin.
 // Retourne la liste des pluginKeys NON RÉSOLUS (introuvables) — le caller les retire du modèle.
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
+                                       sendChains:(NSArray<NSDictionary*>*)sendChains
                                         chainInDb:(float)chainInDb
                                        chainOutDb:(float)chainOutDb;
 

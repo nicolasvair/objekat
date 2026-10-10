@@ -279,6 +279,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: child.fadeOut,
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
+                sends: copiedSends(of: child),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: child)),
@@ -304,6 +305,7 @@ extension EditViewModel {
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
                 instruments: copiedInstruments(of: child),
+                sends: copiedSends(of: child),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: child)),
@@ -332,6 +334,7 @@ extension EditViewModel {
                     fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                     fadeInCurve: Self.freshCutCurve,
                     plugins: copiedPlugins(of: child),
+                    sends: copiedSends(of: child),
                     automation: autoR,
                     markers: markR,
                     araSource: .some(copiedARASource(of: child)),
@@ -364,6 +367,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
+                sends: copiedSends(of: child),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: child)),
@@ -502,6 +506,7 @@ extension EditViewModel {
                 fadeOut: rightFadeOut,
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: original),
+                sends: copiedSends(of: original),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: original)),
@@ -578,6 +583,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(child.fadeOut, child.startTime + child.duration - splitTime),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: captured),
+                sends: copiedSends(of: captured),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: captured)),
@@ -700,6 +706,7 @@ extension EditViewModel {
             // `left` AFTER. The right instrument = a new instance (its state captured live).
             let rightPlugins     = copiedPlugins(of: original)
             let rightInstruments = copiedInstruments(of: original)
+            let rightSends       = copiedSends(of: original)     // the plugins its sends carry (INC 3)
             let (autoL, autoR)   = original.automation.splitInTime(at: splitRel)
             let (markL, markR)   = original.markers.splitInTime(at: splitRel)
             guard var left = find(id: id) else { return nil }
@@ -719,6 +726,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: rightPlugins, instruments: rightInstruments,
+                sends: rightSends,
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: original)),
@@ -828,6 +836,7 @@ extension EditViewModel {
                 fadeIn: min(original.fadeIn, splitRel), fadeOut: 0,
                 fadeOutCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
+                sends: copiedSends(of: capturedOriginal),
                 automation: autoL,
                 markers: markL,
                 araSource: .some(copiedARASource(of: capturedOriginal)),
@@ -839,6 +848,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
+                sends: copiedSends(of: capturedOriginal),
                 automation: autoR,
                 markers: markR,
                 araSource: .some(copiedARASource(of: capturedOriginal)),

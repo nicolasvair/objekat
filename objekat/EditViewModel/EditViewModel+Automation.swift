@@ -114,6 +114,7 @@ extension EditViewModel {
             return nil
         }
         return search(object.plugins) ?? search(object.instruments)
+            ?? search(SendChain.sendPlugins(of: object))      // a plugin one of its sends carries (INC 3)
     }
 }
 
@@ -364,6 +365,7 @@ extension EditViewModel {
         -> [(plugin: ObjectPlugin, params: [(ref: ParamRef, name: String)])] {
         let leaves = SoundObject.pluginLeaves(object.instruments)
                    + SoundObject.pluginLeaves(object.plugins)
+                   + SendChain.sendPlugins(of: object)         // the plugins its sends carry (INC 3)
         return leaves.compactMap { plug in
             let params = pluginParamInfos(plug.id)
                 .sorted { $0.value.index < $1.value.index }

@@ -36,10 +36,14 @@ extension EditViewModel {
         func purged(_ array: [SoundObject]) -> [SoundObject] {
             array.map { o in
                 var o = o
-                if o.sends.contains(where: { !alive.contains($0.auxID) }) {
-                    let before = o.sends.count
-                    o.sends.removeAll { !alive.contains($0.auxID) }
+                // ONE definition of "a send is deleted" (@see SoundObject.removingSends): the entry, its
+                // marker, the PLUGINS it carries (INC 3) and every lane aimed at its level or at them.
+                let dead = Set(o.sends.map(\.auxID).filter { !alive.contains($0) })
+                if !dead.isEmpty {
+                    let before = o.sends.count, lanesBefore = o.automation.count
+                    o = o.removingSends(dead)
                     sends += before - o.sends.count
+                    lanes += lanesBefore - o.automation.count
                 }
                 func dangling(_ ref: ParamRef) -> Bool {
                     if case .send(let auxID) = ref { return !alive.contains(auxID) }
@@ -109,6 +113,16 @@ extension EditViewModel {
         sendPrunePending = false
         let result = Self.purgingDanglingSends(items)
         guard result.sends > 0 || result.lanes > 0 else { return }
+        // The plugins those sends carried: their touch watches and parameter infos go with them (the
+        // engine side went with the aux, @see removeAux).
+        let alive = Self.auxIDs(in: items)
+        func forget(_ array: [SoundObject]) {
+            for o in array {
+                for s in o.sends where !alive.contains(s.auxID) { forgetSendPlugins(sender: o.id, aux: s.auxID) }
+                if case .group(let children, _) = o.kind { forget(children) }
+            }
+        }
+        forget(items)
         // The markers of the sends that went with the aux go too (a marker needs its send).
         items = Self.sanitisingSendMarkers(result.items).items
         isDirty = true

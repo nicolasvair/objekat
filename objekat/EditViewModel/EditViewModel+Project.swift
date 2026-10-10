@@ -613,6 +613,10 @@ extension EditViewModel {
         if !obj.instruments.isEmpty {
             o.instruments = capturingPluginStates(obj.instruments)
         }
+        // The plugins its sends carry (INC 3): the third root, or a save would write stale states.
+        for i in o.sends.indices where !o.sends[i].plugins.isEmpty {
+            o.sends[i].plugins = capturingPluginStates(o.sends[i].plugins)
+        }
         // The ARA source's archive is read live (a retouch lives only in the engine's plugin).
         if let ara = obj.araSource {
             o.araSource = capturingARA(obj.id, ara)

@@ -17,7 +17,8 @@ enum SendMarkerAudit {
         let host: UUID
         /// Where, readable: `plugins[2]`, `plugins[1].rack.voices[0][3]`, `instruments[0]`.
         let path: String
-        /// The rule: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`.
+        /// The rule: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`,
+        /// `in_send_plugins`, `send_chain_not_leaf`, `send_plugin_linked`.
         let rule: String
     }
 
@@ -73,6 +74,10 @@ enum SendMarkerAudit {
                         else if p.isContainer { out.append(Violation(host: o.id, path: here, rule: "send_chain_not_leaf")) }
                         else if p.identifier.isEmpty && p.formatName.isEmpty {
                             out.append(Violation(host: o.id, path: here, rule: "phantom"))
+                        }
+                        // NO LINK ON A SEND (decision of 10 October 2026, @see SendChain.sanitised).
+                        if p.linkGroupID != nil || p.detachedLinkGroupID != nil {
+                            out.append(Violation(host: o.id, path: here, rule: "send_plugin_linked"))
                         }
                     }
                 }

@@ -78,4 +78,73 @@ private:
 
 inline const char* ObjGainTesterPlugin::xmlTypeName = "gainTester";
 
+//==============================================================================
+/** A second MEASURING tool (`debug.add_test_plugin`, type `clipTester`): a hard clipper at a fixed
+    ceiling, in dBFS, read from the state's `ceilingDb` property. It is NOT linear, which is the point:
+    the order of two operations around it is audible in a level — the proof that a send's envelope
+    comes BEFORE its plugins and its level AFTER (docs/plan_sends_rework.md §D.2.C, section O3).
+    Registered in every build, never offered by the UI. No latency, no parameter, no editor. */
+class ObjClipTesterPlugin  : public Plugin
+{
+public:
+    ObjClipTesterPlugin (PluginCreationInfo info)
+        : Plugin (info)
+    {
+        ceilingDb.referTo (state, juce::Identifier ("ceilingDb"), getUndoManager(), 0.0f);
+    }
+
+    ~ObjClipTesterPlugin() override
+    {
+        notifyListenersOfDeletion();
+    }
+
+    static const char* getPluginName()                      { return NEEDS_TRANS("Clip Tester"); }
+    static const char* xmlTypeName;
+
+    static juce::ValueTree create()
+    {
+        juce::ValueTree v (IDs::PLUGIN);
+        v.setProperty (IDs::type, xmlTypeName, nullptr);
+        return v;
+    }
+
+    //==============================================================================
+    juce::String getName() const override                   { return TRANS("Clip Tester"); }
+    juce::String getPluginType() override                   { return xmlTypeName; }
+    juce::String getShortName (int) override                { return "Clip"; }
+    juce::String getSelectableDescription() override        { return getName(); }
+    bool shouldMeasureCpuUsage() const noexcept final       { return false; }
+
+    int getNumOutputChannelsGivenInputs (int) override      { return 2; }
+    BusLayout getBusses() const override                    { return BusLayout::singleStereoInOut(); }
+
+    void initialise (const PluginInitialisationInfo&) override {}
+    void deinitialise() override {}
+
+    void applyToBuffer (const PluginRenderContext& fc) override
+    {
+        if (fc.destBuffer == nullptr || fc.bufferNumSamples <= 0)
+            return;
+
+        const float ceiling = juce::Decibels::decibelsToGain (ceilingDb.get());
+
+        for (int c = 0; c < fc.destBuffer->getNumChannels(); ++c)
+            juce::FloatVectorOperations::clip (fc.destBuffer->getWritePointer (c, fc.bufferStartSample),
+                                               fc.destBuffer->getReadPointer (c, fc.bufferStartSample),
+                                               -ceiling, ceiling, fc.bufferNumSamples);
+    }
+
+    void restorePluginStateFromValueTree (const juce::ValueTree& v) override
+    {
+        copyPropertiesToCachedValues (v, ceilingDb);
+    }
+
+private:
+    juce::CachedValue<float> ceilingDb;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ObjClipTesterPlugin)
+};
+
+inline const char* ObjClipTesterPlugin::xmlTypeName = "clipTester";
+
 }} // namespace tracktion { inline namespace engine }

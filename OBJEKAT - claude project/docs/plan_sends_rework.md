@@ -1703,10 +1703,21 @@ struct AuxSend {
 - **Automation.** A mini-chain plugin's parameters are `ParamRef.plugin(id:param:)` lanes of the
   SENDER object, as for a trunk plugin: the automation targets list and the push learn the third
   root; nothing else changes.
-- **⌘ link** (`linkGroupID`): technically free — a link is a mirror between two keyed instances —
-  so it is ALLOWED in v1 between any two plugins of the same type, mini-chain or not
-  (`rewireLinkGroups` learns the third root). It is the cheap answer to "the same low-pass on every
-  send to this reverb" (Q-U8). What remains the user's is the DEFAULT on copies (below).
+- **NO LINK ON A SEND — decided by the user on 10 October, REPLACING the hypotheses of Q-U8 and
+  Q-U8b** (he means to retire the FX links eventually): a plugin of a send's mini-chain NEVER carries
+  a `linkGroupID` (nor a detached one). No FX link bin (unchanged), and no ⌘ link either. A linked
+  plugin of the trunk that is moved or copied into a send arrives UNLINKED. Every copy of an object
+  (duplicate, cut, split, copy / paste inside a project or across two) copies its send plugins
+  INDEPENDENT: fresh ids, the state copied, no link created — unlike the trunk's own default, which
+  is NOT touched. Enforced in ONE pure place, `SendChain.sanitised` (decode, `sanitisingSends`,
+  `SendChain.mapping`, every write of a send host): it clears both memberships, so no door, copier
+  or file can keep or create one; `rewireLinkGroups` does not walk the third root, `setLinkGroups`
+  ignores a send plugin, `copiedSends` builds unlinked copies and the automatic FX link bins
+  (`copiedRun`) never see a send's plugins. The ⌘ gesture: dragging with ⌘ to or from a send falls
+  back on a PLAIN COPY (⌘ = "copy + link", minus the link) and the banner says "copy" there, never
+  the link's glyph; the explicit machine door `plugin.link` with a send host on either side is
+  refused (`invalid_state`, `send_plugins_never_linked`). Proved by `test_send_chain` ("no link"
+  block) and checked by `debug.send_marker_audit` (`linked_send_plugins`, always empty).
 - **Sidechain key on a mini-chain plugin**: the reader sits in a `PluginNode` of the wet branch, in
   the sender's clip — the same case as a keyed leaf of the trunk, with an input latency of `L + P'`
   instead of `L`. `bridgeTopology`, `bridgeLeafExists`, `settingSidechain` learn the third root (the
@@ -1749,10 +1760,10 @@ frozen one), with the same id remap feeding the automation lanes.
 
 | Operation | What happens to the send's plugins |
 |---|---|
-| Duplicate, copy / paste, ⌥ drag, time-selection copy | Fresh ids, states captured, automation lanes remapped. Link by default exactly as the trunk's plugins are for the same gesture (Q-U8b). |
-| Cut / split of the object | Both halves keep the send; the right half's plugins are copies, linked by default as the trunk's are. |
-| Split of an AUX (`duplicateSendsTarget`) | The senders gain a send to the new half: position and plugins COPIED (fresh ids, linked by default). Today this site drops the position — see D.2.F, deviation 1, fixed in step 3.7. |
-| Cross-project paste | Cold clone from the frozen `stateXML`, fresh ids, links kept inside the batch only; a send whose aux is not in the batch is dropped with its plugins (existing rule). |
+| Duplicate, copy / paste, ⌥ drag, time-selection copy | Fresh ids, states captured, automation lanes remapped. INDEPENDENT copies: never linked (decision of 10 October). |
+| Cut / split of the object | Both halves keep the send; the right half's plugins are INDEPENDENT copies. |
+| Split of an AUX (`duplicateSendsTarget`) | The senders gain a send to the new half: position and plugins COPIED (fresh ids, independent). Today this site drops the position — see D.2.F, deviation 1, fixed in step 3.7. |
+| Cross-project paste | Cold clone from the frozen `stateXML`, fresh ids, NO link (not even inside the batch); a send whose aux is not in the batch is dropped with its plugins (existing rule). |
 | Bake of a group (`deepFreshCopy`) / un-bake | Fresh ids through `freshPlugins`, `pluginRemap` extended; the restore takes the wrapper's sends (existing). |
 | Consolidate, `input` / `chain` send, choice **Fold** | The send goes post-fader WITH its plugins, level and curves (a fold changes where the send is taken, not what it is). |
 | Consolidate, choice **Delete** | The send goes with its plugins and every automation lane aimed at them or at its level; one undo point. |
@@ -1787,8 +1798,7 @@ top; it is superseded):
               └───────────────────────────────┘
 ```
 
-- **The card becomes a box**: one row per plugin (22 pt) — bypass dot, name, the link pastille when
-  linked, the × on hover — then the "+", then, at the BOTTOM, the header line (today's card, same
+- **The card becomes a box**: one row per plugin (22 pt) — bypass dot, name, the × on hover (no link pastille: a send's plugin is never linked) — then the "+", then, at the BOTTOM, the header line (today's card, same
   height, same controls). A send without plugins is drawn exactly as today (plus the "+" on hover,
   above the line).
 - **Reading order**: top to bottom is the signal — the tap, the rows in processing order, then the
@@ -1801,8 +1811,8 @@ top; it is superseded):
 - **Gestures**, all through the existing chain-host code (A.j):
   - "+" → the plugin picker, targeted at the send host; right-click on the box → the same entry.
   - Drag a plugin card FROM the trunk (or from another object, or from the explorer) ONTO a box or
-    between two of its rows: nothing = move, ⌥ = copy, ⌘ = copy + link — the three gestures of
-    every plugin drag. Drag a row out to the trunk, to another send's box, to another object: same.
+    between two of its rows: nothing = move, ⌥ = copy; ⌘ (copy + link elsewhere) is a PLAIN COPY
+    as soon as a send is the source or the target (no link on a send). Drag a row out to the trunk, to another send's box, to another object: same.
     `PluginDropSite` gains `.sendChain(aux:index:)`; `PluginDropHint` draws the insertion line in
     the box. Refused with a hint: an instrument, a parallel block, a bin's card, a send card.
   - Reorder by dragging a row inside its box.
@@ -1823,7 +1833,7 @@ top; it is superseded):
 No new family: the mini-chain is a host.
 
 - `send.list` / `send.get` entries gain `chain_host` (the derived host id — always present, so a
-  script can lay the first plugin) and `plugins` (`[{id, name, enabled, link_group?}]`).
+  script can lay the first plugin) and `plugins` (`[{id, name, enabled}]` — never a link group).
 - Every `plugin.*` command that takes `host` accepts a send host: `plugin.list`, `plugin.add`,
   `plugin.remove`, `plugin.toggle`, `plugin.move`, `plugin.copy`, `plugin.link`, `plugin.unlink`,
   `plugin.drop`, `plugin.drop_at`, `plugin.paste`, `plugin.get_params`, `plugin.set_param`,
@@ -1851,7 +1861,7 @@ No new family: the mini-chain is a host.
 
 The hide design of A.d, with P6 as its fallback; envelope before the plugins; the mini-chain's own
 entry limit; the materialisation rule; compile = content, sync = route; the derived host id; leaves
-only in v1; ⌘ link allowed, bins refused; a sidechain key allowed if measured aligned; automation
+only in v1; NO link of any kind on a send (10 October); a sidechain key allowed if measured aligned; automation
 lanes on the sender; fold keeps the plugins; no per-row VU; plugins of a refused send not
 instantiated.
 
@@ -1941,7 +1951,7 @@ transformation (or die with it, when that is the rule). Counts below are those o
 | State capture | `withCapturedPluginStates(`, `capturingPluginStates` | 21 / 6 | Third root | Z3 (save), U3 (undo) |
 | Undo patching | `isPatchable`, `adoptingPluginStates`, `changedPluginStates` | `+UndoRedo.swift` 272–403 | Third root | U3 ("state undo does not rebuild") |
 | Live copies | `copiedPlugins(of` | 25 / 6 | Called for each send's plugins | C3 |
-| Links | `linkGroupID`, `rewireLinkGroups` | 81 / 16 | Third root; link across trunk and send | C3, section K of `scenario_plugin_selection` |
+| Links | `linkGroupID`, `rewireLinkGroups` | 81 / 16 | NOT the third root: a send plugin is never linked (10 October) — `sanitised` clears, `rewireLinkGroups` skips | `test_send_chain` "no link", C3, the audit |
 | Cold copies | `CrossProjectImport`, `deepFreshCopy.freshPlugins / rebuild`, `derivedCopy` | 3 files | Fresh ids + remap | `test_cross_project_import`, B3 |
 | Id audit / repair | `PluginIDUniqueness`, `PluginIDReport` | 2 files | Third root | `test_plugin_id_uniqueness` |
 | Automation | `+Automation.swift` 116 / 365, `+AutomationTargets.swift` 161 | 3 | Targets list and push include send plugins | U3 (a curve on a send plugin's parameter, measured) |
@@ -1973,7 +1983,7 @@ with the aux, export with the aux muted), levels read against a reference taken 
   two sends' plugins, is detected and repaired; a `derivedCopy` and a `deepFreshCopy` of an object
   with a mini-chain share NO id with the original, and the automation lanes follow the remap.
 - `test_cross_project_import`: an object with a mini-chain and its aux in the batch (plugins cloned,
-  fresh ids, link inside the batch kept); aux outside the batch (send and plugins dropped, no
+  fresh ids, INDEPENDENT — a link is dropped even inside the batch); aux outside the batch (send and plugins dropped, no
   orphan lane).
 - `test_send_bake_policy`: fold keeps the plugins and their lanes; remove names the lanes to
   delete; a pre-fader send with plugins still blocks.
@@ -1991,9 +2001,9 @@ with the aux, export with the aux muted), levels read against a reference taken 
 | G3 | Level, mute, solo, gate still give silence | Send at `-inf` with a `gainTester +24 dB` on it: wet `maxabs == 0`. Sender muted / silenced by another's solo / stem muted / parent group muted (Q-U1, Q-U12), at each position: wet `≤ 1e-6` after the 50 ms smoother. Send switched off: silence, and the plugins still answer `plugin.get_state`. |
 | M3 | Materialisation | A new send (`-inf`): `plugin.add` on its host succeeds, `plugin.get_params` answers, `bridge_report` lists no reader for it. Level raised: one build, no new instance (state set before is read back). Level back to `-inf`, switch off, on: state intact each time. Send removed: `debug.plugin_id_audit` 0, no engine key left for its plugins. Object chain filled to its limit: a send with plugins refused `chainFull`, its plugins not instantiated, laid again when a slot frees. |
 | X3 | Limits | The mini-chain accepts plugins up to its own limit (the number of probe a) while the object's chain is unchanged; the object's chain still takes 16 plugins + 1 send carrying N plugins. |
-| U3 | Undo / redo | Add, remove, reorder, bypass, parameter change, move trunk → send, ⌥ copy, ⌘ link: each one undo point, the wet measured before / after / undone / redone. A parameter undo on a send plugin does NOT rebuild the object (`debug` build counter unchanged). A curve on a send plugin's parameter: measured in the wet, survives undo of an unrelated gesture. |
+| U3 | Undo / redo | Add, remove, reorder, bypass, parameter change, move trunk → send, ⌥ copy (⌘ = the same plain copy): each one undo point, the wet measured before / after / undone / redone. A parameter undo on a send plugin does NOT rebuild the object (`debug` build counter unchanged). A curve on a send plugin's parameter: measured in the wet, survives undo of an unrelated gesture. |
 | Z3 | Save / reopen | Save, `--no-recent` fresh instance, reopen: wet identical to 0.01 dB, states read back, ids unchanged, `"version": 23`, no `plugins` key on sends without plugins. A format-22 project of INC 2 (the Z2 fixture) reopened and re-saved: `items` identical. A 23 file with a block, a bin, a marker inside a send's `plugins` (hand-written): sanitised at load, logged, no crash, audit ok. |
-| C3 | Copies | Duplicate, copy / paste, split of the sender, split of the aux, ⌥ drag: every copy has its mini-chain, NO shared id (`debug.plugin_id_audit` 0), each wet measured; a parameter changed on the original after an unlinked copy does not change the copy's wet; with the default link, it does. |
+| C3 | Copies | Duplicate, copy / paste, split of the sender, split of the aux, ⌥ drag: every copy has its mini-chain, NO shared id (`debug.plugin_id_audit` 0), each wet measured; a parameter changed on the original after a copy NEVER changes the copy's wet (send plugins are copied independent, whatever the gesture); the audit's `linked_send_plugins` stays empty. |
 | R3 | Retarget and position | `send.retarget` to aux B: the plugins, their state, the level and the curve are on the new send; wet arrives in B and no longer in A; no instance re-created (state set through the editor door, not saved in the model, is still there). The send moved across the four positions: plugins kept, wet level per position as in INC 2's Q2 minus the plugin's gain. |
 | T3 | Window and tails | A `latencyTester` used as a 200 ms delay on the send of an object ending at 1 s: the wet stops at the object's end (+ tail) — the documented rule of A.e, measured so that a change of it is seen. A cropped object: nothing is sent from outside its window, plugin laid. |
 | B3 | Consolidate / bake | `input` send with a plugin, `mid_chain_sends: fold`: the placement's send is post-fader, carries the plugin, the wet is the baked signal through the plugin. `remove`: send, plugin and lanes gone, one undo restores the three. `pre_fader`: refused. Bake of a group whose child has a mini-chain, then un-bake: ids fresh, audit 0, wet as before. |
@@ -2051,7 +2061,7 @@ warning recount (0 new), and `CGWindowListCopyWindowInfo` on the headless pid (n
   object's direct sound and the other senders' reverb do not move.
 - The box: rows, "+", the picker's title, the insertion line while dragging, the three gestures
   (move, ⌥, ⌘) from the trunk to a send, from a send to the trunk, between two sends, between two
-  objects; reorder; the link pastille; bypass; ⌫; ⌘C / ⌘V.
+  objects (⌘ = a plain copy there, the banner saying "copy"); reorder; bypass; ⌫; ⌘C / ⌘V.
 - An AU editor opened from a row, on a send at `-inf`, on a send switched off; closed and reopened.
 - A compressor on a send while the send's level is ridden (Q-U17), a delay on a send at the
   object's end (Q-U18): is it what is wanted.
@@ -2076,10 +2086,12 @@ that work can start before the answers.
   after the last plugin (just above the level line); a send without plugins keeps today's card.**
 - **Q-U8** (restated) "The same low-pass on every send to this reverb": v1 offers the ⌘ LINK
   between send plugins (and between a send plugin and any other of the same type); an FX link bin
-  on a send is NOT in v1. Enough for v1? *Hypothesis: yes.*
+  on a send is NOT in v1. Enough for v1? *Hypothesis: yes.* **SUPERSEDED on 10 October: NO link at
+  all on a send's plugins, bin or ⌘ (D.2.A.i).**
 - **Q-U8b** When an object is duplicated, cut or copy-pasted, its send plugins follow the same
   default as its chain's plugins (linked by default on cut / split / copy-paste). Or always
-  independent on a send? *Hypothesis: same default as the chain.*
+  independent on a send? *Hypothesis: same default as the chain.* **ANSWERED 10 October: ALWAYS
+  INDEPENDENT on a send.**
 - **Q-U9** A parallel block inside a send's plugins: not in v1 (series only). *Hypothesis: not in
   v1.*
 
@@ -2108,7 +2120,7 @@ one); a send at `-inf` or switched off keeps its plugins loaded.
    by the scenario; if it weighs, the age can be seeded from the list's latency before the first
    pass — not planned.
 7. **CPU**: a mini-chain is per sender. Twenty objects each with a low-pass on their send = twenty
-   instances (the link keeps them in step, it does not share them). Sharing = a bin, not in v1.
+   instances, each set on its own (no link on a send since 10 October). Sharing = a bin, not in v1.
 8. **The sidecar of a consolidated object** may keep a second copy of the send plugins (probe c):
    harmless while cold, a duplicate id if anything ever reads it back beside the placement.
 9. **Box heights** make the send column's layout variable; stacked boxes at neighbouring trunk
@@ -2279,8 +2291,8 @@ wrapper: a MOVE, ids kept), 742 / 775 / 1076 (the placement takes `live.sends`: 
 | Q-U14 | (INC 2) Where "Send to…" is reached in the signal view. | ANSWERED 10 Oct: accepted as built — the right-click on a "+" of the trunk (and the "+ Send to…" button of the column). |
 | Q-U15 | (INC 2) A send exists but its aux no longer overlaps the object in time (or the send is refused by the scope). The foot zone used to hide a non-overlapping aux. | The card stays, greyed, with the reason; nothing disappears from the chain by moving an object. |
 | Q-U16 | (INC 2) "Change target…" on a card (same position, level and automation, another aux): in INC 2, or delete-and-recreate is enough? | In INC 2 (card menu + `send.retarget`), droppable without consequence. |
-| Q-U8 | (INC 3) "The same low-pass on every send to this reverb" as one setting. | The ⌘ LINK is allowed between send plugins (and with any plugin of the same type); an FX link bin on a send is NOT in v1. |
-| Q-U8b | (INC 3) Duplicating / cutting / copy-pasting an object: are its send plugins linked to the original's by default? | Same default as the plugins of its chain for the same gesture. |
+| Q-U8 | (INC 3) "The same low-pass on every send to this reverb" as one setting. | ANSWERED 10 Oct: NO link of any kind on a send's plugins — no bin, no ⌘ link (the FX links are meant to go eventually). ⌘-dragging to or from a send is a plain copy. |
+| Q-U8b | (INC 3) Duplicating / cutting / copy-pasting an object: are its send plugins linked to the original's by default? | ANSWERED 10 Oct: NO — always independent copies (fresh ids, state copied, no link), unlike the chain's default, which is unchanged. |
 | Q-U9 | (INC 3) A parallel block inside a send's plugins. | Not in v1: series only. |
 | Q-U17 | (INC 3) The send's LEVEL acts after the send's plugins or before? Inaudible for a filter; audible for a compressor / saturator (driven or not by the send level) and for a delay (its tail drops at once or not). | ANSWERED 10 Oct: AFTER the plugins (D.2.A.a), as planned. |
 | Q-U18 | (INC 3) A reverb / delay laid ON a send stops with the object, like a plugin of its chain (to ring, the effect goes on the aux). Accepted? | ANSWERED 10 Oct: YES, the tail stops with the object (D.2.A.e), as planned. |

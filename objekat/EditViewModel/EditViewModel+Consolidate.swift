@@ -556,7 +556,7 @@ extension EditViewModel {
         // wrapper group BEFORE the render: the placement will inherit a LIVE send from it (rewired by
         // syncSends in finishConsolidate). The wrapper's window matches the clip's →
         // the aux stays overlapped, and the send keeps its meaning.
-        let sends = clip.sends
+        let sends = sendsWithLiveStates(of: clip)   // the plugins a send carries go with it, states live
 
         // Wrapping in a group of one (an internal pushUndo, rebuilds the engine).
         createGroupFromSelection([clipID])
@@ -719,6 +719,9 @@ extension EditViewModel {
         }
 
         pushUndo()
+        // The plugins the sends carry stay ALIVE on the placement (the render bypasses the sends):
+        // their states are read before the object leaves the engine.
+        let liveSends = sendsWithLiveStates(of: live)
         removeFromEngine(live)
 
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
@@ -739,7 +742,7 @@ extension EditViewModel {
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: live.isMuted,
             stemID: live.stemID, plugins: [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
-            sends: live.sends, baseBPM: nil,
+            sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             automationTouchOrder: live.automationTouchOrder,
             kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
@@ -765,6 +768,7 @@ extension EditViewModel {
         var linked: [UUID] = [placement.id]
         for oid in alsoLinkIDs where oid != placement.id {
             guard let other = find(id: oid), !other.isConsolidateInstance else { continue }
+            let otherSends = sendsWithLiveStates(of: other)
             removeFromEngine(other)
             var inst = SoundObject(
                 id: other.id, startTime: other.startTime, duration: other.duration,
@@ -772,7 +776,7 @@ extension EditViewModel {
                 fadeIn: other.fadeIn, fadeOut: other.fadeOut, isMuted: other.isMuted,
                 stemID: other.stemID, plugins: [],
                 label: other.label ?? other.displayName, colorIndex: other.colorIndex,
-                sends: other.sends, baseBPM: nil,
+                sends: otherSends, baseBPM: nil,
                 consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,
                 kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
@@ -851,6 +855,9 @@ extension EditViewModel {
         // captured at the last bake of THIS definition (staleness) → it is reopened on the UP-TO-DATE
         // content for editing.
         var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
+        // The placement's sends arrive with it (@see restoredSubtree) — and the plugins they carry
+        // with their LIVE states: the placement leaves the engine below.
+        restored.sends = sendsWithLiveStates(of: placement)
 
         // The baked content may carry plugins absent from this machine: materialising it would
         // remove them (compileRack) and the object would be heard without its effects. We warn BEFORE
@@ -1059,6 +1066,7 @@ extension EditViewModel {
             isMuted: prev?.isMuted ?? live.isMuted,
             dependsOn: collectConsolidateDependencies(original))
 
+        let liveSends = sendsWithLiveStates(of: live)   // read before the object leaves the engine
         removeFromEngine(live)
         // The mix (volume/pan/mute), the state of the attribute links AND the plugins belonging to the
         // placement belong to the PLACEMENT, not to the content being edited: they are restored from
@@ -1073,7 +1081,7 @@ extension EditViewModel {
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: snap?.isMuted ?? live.isMuted,
             stemID: live.stemID, plugins: snap?.plugins ?? [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
-            sends: live.sends, baseBPM: nil,
+            sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             independentAttrs: snap?.independentAttrs ?? [],
             automationTouchOrder: live.automationTouchOrder,
@@ -1608,6 +1616,7 @@ extension EditViewModel {
         // result.
         var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
         restored.plugins = restored.plugins + wrapperPlugins
+        restored.sends = sendsWithLiveStates(of: placement)   // the sends' own plugins, states live
 
         removeFromEngine(placement)
         update(id: placementID) { $0 = restored }

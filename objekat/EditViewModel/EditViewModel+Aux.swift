@@ -438,13 +438,17 @@ extension EditViewModel {
         let hadMarker = find(id: objectID).map { $0.sendPosition(auxID: auxID) }.map { pos -> Bool in
             if case .chain = pos { return true } else { return false }
         } ?? false
-        update(id: objectID) { obj in
-            obj.sends.removeAll { $0.auxID == auxID }
-            obj.plugins = ObjectPlugin.removingSendMarkers(from: obj.plugins) { $0.auxID == auxID }
-            obj.automation.removeAll { $0.param == .send(auxID: auxID) }
-            obj.automationTouchOrder.removeAll { $0 == .send(auxID: auxID) }
-        }
+        // The plugins the send CARRIES go with it (INC 3) — and the lanes aimed at them: ONE pure
+        // definition of "a send is deleted" (@see SoundObject.removingSends). Their engine instances
+        // and editors are purged by the bridge sync that takes the send's plugin away; the undo point
+        // the caller pushed holds their live states (@see capturedPluginStates).
+        let carried = !(sendEntry(from: objectID, to: auxID)?.plugins.isEmpty ?? true)
+        forgetSendPlugins(sender: objectID, aux: auxID)
+        update(id: objectID) { obj in obj = obj.removingSends([auxID]) }
         if hadMarker { recompileForSendMarker(objectID) }
+        // A send that was NOT alive but carried plugins was laid all the same (the materialisation
+        // rule): the hot path below does not know it, the sync takes it away.
+        if carried { scheduleBridgeSync() }
         syncSendEngine(objectID: objectID, auxID: auxID)
         isDirty = true
     }
@@ -551,9 +555,14 @@ extension EditViewModel {
             for o in arr {
                 if o.sends.contains(where: { $0.auxID == origAuxID }) {
                     let hadMarker = ObjectPlugin.sendMarkerChainIndex(auxID: origAuxID, in: o.plugins) != nil
-                    update(id: o.id) { obj in obj = obj.duplicatingSend(from: origAuxID, to: newAuxID) }
+                    // The plugins the send carries are COPIED for the new half: fresh ids, the live
+                    // states, independent (no link on a send).
+                    let copied = copiedSends(of: o).first { $0.auxID == origAuxID }?.plugins
+                    update(id: o.id) { obj in obj = obj.duplicatingSend(from: origAuxID, to: newAuxID, plugins: copied) }
                     // A marker is an ordering token of the compile: a new one means a new root order.
-                    if hadMarker { recompileForSendMarker(o.id) }
+                    // And a mini-chain is the compile's content: the new send's plugins are laid by it.
+                    if copied?.isEmpty == false { compileRack(objectID: o.id) }
+                    else if hadMarker { recompileForSendMarker(o.id) }
                     syncSendEngine(objectID: o.id, auxID: newAuxID)
                 }
                 if case .group(let children, _) = o.kind { walk(children) }

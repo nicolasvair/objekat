@@ -99,6 +99,17 @@ extension EditViewModel {
         }
         var hadMarker = false
         if case .chain? = obj.sendPosition(auxID: old) { hadMarker = true }
+        // A send that CARRIES plugins is re-keyed IN PLACE in the engine, BEFORE the sync that follows
+        // the model: its plugins, their editors and their states stay (no instance re-created). A
+        // send without plugins keeps INC 2's path (the sync removes the old one and lays the new).
+        let carries = !(obj.sends.first { $0.auxID == old }?.plugins.isEmpty ?? true)
+        if carries {
+            _ = engine?.retargetBridgeSend(from: objectID.uuidString, oldAux: old.uuidString, newAux: new.uuidString)
+            // The plugin selection names the box by a host DERIVED from the pair: it follows.
+            if selectedPluginHostID == SendChain.hostID(sender: objectID, aux: old) {
+                selectedPluginHostID = SendChain.hostID(sender: objectID, aux: new)
+            }
+        }
         update(id: objectID) { $0 = $0.retargetingSend(from: old, to: new) }
         if hadMarker { recompileForSendMarker(objectID) }
         syncSendEngine(objectID: objectID, auxID: old)       // the old pair is gone: its tap is torn down

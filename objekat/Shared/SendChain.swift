@@ -40,10 +40,52 @@ enum SendChain {
     /// source — is not written on an `ObjectPlugin`: the doors refuse those from the catalogue entry.
     static func accepts(_ plugin: ObjectPlugin) -> Bool { !plugin.isContainer }
 
-    /// `plugins` as a send may hold them: the leaves, in order. Idempotent. Called at decode, by
-    /// `sanitisingSends` and by every write of a send host's chain.
+    /// `plugins` as a send may hold them: the leaves, in order, each UNLINKED. Idempotent. Called at
+    /// decode, by `sanitisingSends`, by every copy (`mapping`) and by every write of a send host's
+    /// chain.
+    ///
+    /// NO LINK ON A SEND (user decision, 10 October 2026, replacing Q-U8 / Q-U8b): a plugin of a
+    /// send's mini-chain never carries a `linkGroupID` nor a detached one — no FX link bin, no
+    /// manual link either. A linked trunk plugin that is moved or copied into a send arrives unlinked;
+    /// a copy of an object copies its sends' plugins INDEPENDENT. Enforced HERE, so that no door, no
+    /// copier and no file can keep or create one (`rewireLinkGroups` then has nothing to wire).
     static func sanitised(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
-        plugins.filter(accepts)
+        plugins.filter(accepts).map(unlinked)
+    }
+
+    /// `plugin` without any link membership, active or detached.
+    static func unlinked(_ plugin: ObjectPlugin) -> ObjectPlugin {
+        guard plugin.linkGroupID != nil || plugin.detachedLinkGroupID != nil else { return plugin }
+        var p = plugin
+        p.linkGroupID = nil
+        p.detachedLinkGroupID = nil
+        return p
+    }
+
+    /// The send plugins of `object` that carry a link membership — always empty in a sound model
+    /// (the audit's check, @see debug.send_marker_audit).
+    static func linkedSendPlugins(of object: SoundObject) -> [ObjectPlugin] {
+        sendPlugins(of: object).filter { $0.linkGroupID != nil || $0.detachedLinkGroupID != nil }
+    }
+
+    /// How many plugins a mini-chain holds: the entry limit of the engine list that owns them, its
+    /// OWN (measured, probe a of step 3.0) — the object's chain and its 20 entries are not concerned.
+    static let capacity = 20
+
+    /// Why a plugin gesture on a send's mini-chain is refused (the machine's reasons, English).
+    enum Refusal: String {
+        /// A parallel block, an FX link bin, an instrument, a send marker: plain plugins only.
+        case leavesOnly = "send_chain_leaves_only"
+        /// The mini-chain is full (`capacity`).
+        case full = "chainFull"
+        /// A send's plugin is never linked (decision of 10 October 2026).
+        case neverLinked = "send_plugins_never_linked"
+    }
+
+    /// The refusal, if any, of laying `adding` more plain plugins into a mini-chain that holds `count`.
+    static func refusal(count: Int, adding: Int, instrument: Bool = false) -> Refusal? {
+        if instrument { return .leavesOnly }
+        return count + adding > capacity ? .full : nil
     }
 
     // MARK: - The walk
@@ -82,7 +124,7 @@ enum SendChain {
     /// `sends` with every mini-chain plugin's id passed through `map` (a cold copy: the caller owns
     /// the table, so that the automation lanes aimed at those plugins follow).
     static func mapPluginIDs(in sends: [AuxSend], _ map: (UUID) -> UUID) -> [AuxSend] {
-        mapping(sends) { $0.map { p in var q = p; q.id = map(p.id); return q } }
+        mapping(sends) { $0.map { p in var q = p; q.id = map(p.id); return q } }   // `mapping` unlinks
     }
 
     /// Old id → new id for the mini-chains of two `sends` arrays, paired by aux then by position — the

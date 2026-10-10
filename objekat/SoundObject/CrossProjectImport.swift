@@ -285,7 +285,7 @@ enum CrossProjectImport {
             }
 
             // A send follows its aux into the batch or is dropped — WITH its plugins (INC 3): the third
-            // root is cloned cold like the chain (fresh ids, a link kept inside the batch only), and its
+            // root is cloned cold like the chain (fresh ids) but INDEPENDENT — a send's plugin is never linked — and its
             // old → new ids join the table, so that the curves aimed at a send plugin follow. A send
             // that is dropped leaves its plugins out of the table: their curves are dropped below.
             no.sends = o.sends.compactMap { send -> AuxSend? in
@@ -294,7 +294,7 @@ enum CrossProjectImport {
                 s.auxID = newAux
                 if !send.plugins.isEmpty {
                     let (cloned, sendIDMap) = clonePlugins(SendChain.sanitised(send.plugins))
-                    s.plugins = cloned
+                    s.plugins = SendChain.sanitised(cloned)   // unlinked, whatever clonePlugins remapped
                     pluginIDMap.merge(sendIDMap) { a, _ in a }
                 }
                 return s
