@@ -2143,7 +2143,120 @@ one); a send at `-inf` or switched off keeps its plugins loaded.
 
 ### D.2.G Journal of INC 3
 
-(To be opened by the executor: probes of 3.0 first.)
+**Start-up (10 October).** Branch `feature/sends-inc3-plugins` from `feature/sends-inc2-position`
+(`2fc674e5`); fork branch `objekat-sends-0040` from `objekat-sends-0039` (`fb0ae39e631`). Plan
+committed first (`e458e474`). The user's answers to Q-U17 / Q-U18 / Q-U19 arrived during 3.0 and are
+written in sections A.l, D.2.D and E (`9073ec9a`): level after the plugins, the tail stops with the
+object, and — different from the hypothesis — the box has its PLUGINS ON TOP and the level line at
+the bottom.
+
+**First fix, isolated (`7f4df032`) — D.2.F 1, the position half.** `duplicateSendsTarget` rebuilt the
+send field by field: after the split of an aux, the senders' send to the new half was post-fader
+whatever the original's position. Now a pure `SoundObject.duplicatingSend(from:to:)` (value copy, the
+marker laid just after the original's) + `recompileForSendMarker`. `test_send_position` 118/118;
+scenario section **I4** (aux split with the send at each of the four positions, `[gainTester -12]`,
+fader -20): wet -12.000 / 0.000 / 0.000 / -32.000 dB re source in BOTH halves, audit clean; I + I4 =
+39 OK. The "red before the fix" run was reasoned, not executed.
+
+#### 3.0 — Preliminaries
+
+**Reference run.** `scenario_bridge_sends.py`, complete, on the Debug build of `7f4df032`, headless,
+audio ON (device at 96 kHz, exports at 48 kHz): **945 OK, 0 FAILED** in 12 min 30 s. Its 521 exports
+are the P3 reference. Determinism checked on the way: the 25 exports of a second run of I / I4
+against the reference are identical SAMPLE FOR SAMPLE (the files differ byte for byte — a header
+field — so P3 compares samples, never bytes).
+
+**Inventory, counts at `7f4df032`** (the plan's were taken at `2fc674e5`; differences noted):
+
+| Family | Count (lines / files) | Plan said |
+|---|---|---|
+| `.instruments` | 56 / 19 | 56 / 19 |
+| `.sends` | 84 / 28 | 85 / 28 (one line gone with the first fix) |
+| `AuxSend(` | 2 / 1 (`+Aux.swift` 390, 425) | 3 (:553 is now the pure copy) |
+| `chainPlugins(` | 82 / 15 | 82 / 15 |
+| `updateChainPlugins(` | 36 / 7 | 36 / 7 |
+| `forObjectID:` (Swift) | 29 / 8 | 42 / 10 — the plan counted the `.mm` declarations too |
+| `flattenLeaves(` | 26 / 10 | 26 / 10 |
+| `withCapturedPluginStates(` / `capturingPluginStates` | 26 / 6 | 21 / 6 |
+| `copiedPlugins(of` | 25 / 6 | 25 / 6 |
+| `linkGroupID` / `rewireLinkGroups` | 95 / 18 | 81 / 16 |
+
+**Classification of the `.instruments` sites** (the template of the third root):
+
+| Site | Concerned? | Why / what |
+|---|---|---|
+| `PluginIDUniqueness` 58, 165, 238; `PluginIDReport` 68 | YES | detection, path, repair, the report's legend |
+| `SendMarkerAudit` 61 | YES | a marker inside a send's plugins is a defect to report |
+| `CrossProjectImport` 278 (and the `sends` map at 286) | YES | cold clone, fresh ids |
+| `SoundObject` 1160 (`derivedCopy` remap) | YES | the copy's automation follows the send plugins' new ids |
+| `SoundObject` 936 (`resolvesAutomationTarget`) — NOT in the plan's list, found by reading | YES | a lane aimed at a send plugin resolves; but `automationTargetIsBakedIntoRender` must answer NO for it (a send is not rendered: the curve stays on the placement) |
+| `SoundObject` 1098, 1261, 1306 | no | the `instruments` field itself (init, Codable) |
+| `+Plugins` 50 (`collectPluginRefs`) | YES | editors / engine keys of the object |
+| `+Plugins` 727 (`copiedPlugins`-side instrument copy), 889, 916 (`rewireLinkGroups`, link members) | YES | links and copies |
+| `+Plugins` 928, 936 (plugin lookup / write by id on a host) | YES | through the send host |
+| `+Plugins` 341–466 (instrument slot: set, clear, move) | no | the instrument slot only; a send's plugins are never an instrument |
+| `+Automation` 116, 365; `+AutomationTargets` 161 | YES | targets list, push, lookup |
+| `+UndoRedo` 272, 275, 403 | YES | `isPatchable`, `adoptingPluginStates`, `changedPluginStates` |
+| `+Clipboard` 245 (`remappingSidechain`) and 232 (`sends` aux remap) | YES | a keyed send plugin follows the paste's id map |
+| `+Bake` 157, 170 (`deepFreshCopy`) | YES | fresh ids + `pluginRemap` |
+| `+Project` 613–614 (`capturingPluginStates` at save) | YES | or a save writes stale states |
+| `+Bridge` 86, 280, 353–354 | YES | sidechain routes of a send plugin; host = sender |
+| `+Consolidate` 658 (eligibility of a batch of identical clips) | YES (through `a.sends == b.sends`, 674) | two clips whose sends carry plugins are never "identical" (distinct ids): the batch falls back to the ordinary path — nothing to write, noted |
+| `+ProjectLoad` 136, 368 (load weights and labels) | YES, weight only | send plugins count as plugin entries of the progress bar |
+| `SynopticView` 2838, 3045–3051 (instrument card) | no | the instrument card |
+| `SynopticView` 339, 3267, 3280 (plugin lookup for a selection / an editor) | YES | a row of a send box is selectable and opens its editor |
+| `Commands+Plugins` 75; `Commands+Object` 68; `Commands+Runtime` 183 | YES | payloads and counts (A.m) |
+| `Commands+Plugins` 1043, 1060 (instrument commands) | no | instrument-only commands |
+
+**`.sends` sites that COPY** (the others read a level, a switch or a target and are not concerned):
+`CrossProjectImport` 286; `SendPosition` 231 (`duplicatingSend`); `+Consolidate` 559–579 (clip →
+wrapper: a MOVE, ids kept), 742 / 775 / 1076 (the placement takes `live.sends`: a move); `+Bake` 158
+(`deepFreshCopy`: a COPY, fresh ids needed), 212 (`restoredSubtree`: takes the wrapper's, a move);
+`+Clipboard` 232; `+UndoRedo` 280–283 (`isPatchable` neutralises `tap` only); `+SendPurge` 39–42
+(removal: the plugins' lanes must go too); `SendBakePolicy` 63–103.
+
+**The six probes.**
+
+- **a. Entry limit of a `<BRANCH>` list owned by a clip: 20.** Run (throwaway hook, removed): a
+  list built as `ObjParallelBlockPlugin` does (`setTrackAndClip (getOwnerTrack(), getOwnerClip())`)
+  has BOTH owners set and accepted exactly 20 `gainTester`s, refused the 21st. The mini-chain's
+  limit is 20, its own.
+- **b. A non-summing two-input node inside a `TimedNode`: WORKS — no fallback, the hide design of
+  A.d stands.** Run with the patch of A.b written for real (working tree, not yet committed) and a
+  hand-built mini-chain laid by a throwaway hook on every new send, impulse at 1 s, send at -6 dB,
+  the four positions × a 0 / 10 ms `latencyTester` on the sender's trunk:
+  - `latencyTester 20 ms` in the mini-chain: the WHOLE export (dry + wet) is identical sample for
+    sample to the export of the same project without the mini-chain (`maxabs == 0`, 8 cases), and
+    so is the dry alone; wet peak at sample 48000 = dry peak; live graph (96 kHz): tap
+    `age == L + P` (1920 with nothing upstream, 2880 with the 10 ms plugin upstream of the tap,
+    1920 at `input` where the tap is before it), reader `aligned`, error 0, `passes == 1`,
+    `converged`, `blocks_uncovered == 0`.
+  - `gainTester -12 dB` in the mini-chain: wet -12.000 dB against the same project without it, at
+    the 8 cases; dry `maxabs == 0`.
+- **c. Consolidation and `sends` (read).** `ConsolidateDefinition` (the registry) keeps nothing of
+  the sends. The SIDECAR does: it encodes the whole root through `asConsolidateDefinition`, which
+  filters the automation only — so the root's sends, and tomorrow their plugins WITH THEIR IDS,
+  would be written a second time. `restoredSubtree` discards them on reopening
+  (`restored.sends = wrapper.sends`), but the HEADLESS RE-BAKE materialises the sidecar's subtree in
+  the engine beside the live placement: a send plugin there would claim the same engine key as the
+  placement's. `PluginIDUniqueness` deliberately does not walk sidecars. Consequence for 3.3:
+  `asConsolidateDefinition` drops the ROOT's send plugins (they belong to the instance, like the
+  root's own curves); the children's sends stay (they are content) and are freshened by
+  `deepFreshCopy`.
+- **d. INC 2's retarget reaches the engine by REMOVE + LAY** (read): `retargetSend` rewrites the
+  model, then `syncSendEngine(old)` / `syncSendEngine(new)` / `scheduleBridgeSync`; the engine's
+  registry is keyed `"sender|aux"`, so the old key is unconfirmed (removed by `commitBridgeSync`)
+  and a new plugin is inserted (`ensureBridgeSend` returns 2, the curve is pushed again). With a
+  mini-chain that would re-instantiate every plugin: the in-place re-key of A.h is needed.
+- **e. An automation lane aimed at an unknown plugin id (read): kept, inert.** The decoder keeps
+  every lane; nothing sanitises a `.plugin` lane at load (only `.send` lanes aimed at a deleted aux
+  are purged); the encoder writes every lane that has points. `automationTouchOrder` alone is
+  filtered by `resolvesAutomationTarget` at save. So a format-23 file saved by an older build loses
+  the send plugins and keeps their curves as dead rows.
+- **f. `objKeyProbe` in a wet branch: NOT hand-built at 3.0** — the key's route comes from the
+  model (`bridgeTopology`), which a throwaway engine hook cannot feed. Deferred to the moment the
+  third root exists in `bridgeTopology` (step 3.6), measured there as section K3 before the door is
+  opened; refused in v1 if not aligned, as the plan says.
 
 ---
 
