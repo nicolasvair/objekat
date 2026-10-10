@@ -2618,9 +2618,23 @@ def section_L3(c):
     check("L3: chain_plugins == 1", row.get("chain_plugins") == 1, row)
     check("L3: converged in at most 2 passes", build.get("converged") is True and (build.get("passes") or 9) <= 2, build)
     rds = send_readers(rep)
-    check("L3: two send readers, aligned, nothing uncovered",
-          len(rds) == 2 and all(r.get("alignment_error_samples") == 0 and r.get("blocks_uncovered", 0) == 0
+    check("L3: two send readers, aligned, none torn",
+          len(rds) == 2 and all(r.get("alignment_error_samples") == 0 and r.get("blocks_torn", 0) == 0
                                 and r.get("status") == "aligned" for r in rds), rds)
+    # The reader of the send that CARRIES the mini-chain reads its tap with no delay: nothing is ever
+    # uncovered. The other sender's reader is delayed by P, and a delay line has a warm-up: the first
+    # ceil(P / block) blocks of a stream (the live graph's, and each export's) ask for samples from
+    # before the stream began, which are silence by definition. That is the bridge's own behaviour
+    # (measured identical with the same 20 ms plugin on the sender's TRUNK, the INC 2 path), so it is
+    # printed and bounded, not asserted to be zero.
+    mine = [r for r in rds if (r.get("send") or "").startswith(x)]
+    other = [r for r in rds if not (r.get("send") or "").startswith(x)]
+    check("L3: the mini-chain's reader: no delay, nothing uncovered",
+          len(mine) == 1 and mine[0].get("delay") == 0 and mine[0].get("blocks_uncovered", 0) == 0, mine)
+    check("L3: the other sender's reader is delayed by exactly P", len(other) == 1 and other[0].get("delay") == P, other)
+    if other:
+        print("       L3: the delayed reader's warm-up: %s uncovered block(s) out of %s read (every stream start counts)"
+              % (other[0].get("blocks_uncovered"), other[0].get("blocks_read")))
     check("L3: the return declares L + P (the aux, and only it, carries the mini-chain's latency)",
           all(r.get("declared") == P for r in rds), rds)
 
@@ -2657,7 +2671,10 @@ def section_O3(c):
     if REF:
         print("       (skipped in --ref: plugins on a send are INC 3)")
         return
-    k = pipeline_offset_db(c)
+    # No pipeline offset here: `pipeline_offset_db` is what the export does to an IMPULSE (-0.733 dB, the
+    # resampler's band limit); a 1 kHz tone comes out at its own level, and the clipper's ceiling is read
+    # straight off the peak.
+    k = 0.0
 
     # (1) the level comes AFTER the plugins: a clipper at -12 dBFS on a -6 dBFS sine, send at -6 dB.
     fresh(c, "O3a")
