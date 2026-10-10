@@ -387,7 +387,7 @@ struct TimelineView: View {
     @State private var toolHoveredID: UUID? = nil
     /// The object "Choose object" (the Sidechain strip) is aiming at, with its verdict read once
     /// per change of target — not per mouse move. nil = nothing aimed at, or the mode is off.
-    @State private var sidechainPickHover: (id: UUID, refusal: BridgeScope.Refusal?)? = nil
+    @State private var sidechainPickHover: (id: UUID, refusal: String?)? = nil
     /// The rest of what the pointer is aiming at (the block's editing zone, the hovered cut position,
     /// the tooltip). A REFERENCE out of the view's state on purpose: read by leaf views alone, so a
     /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
@@ -1031,7 +1031,7 @@ struct TimelineView: View {
 
                 // "Choose object" (the Sidechain strip): the aimed block is veiled and says what the
                 // click will do — or, in orange, why it will not.
-                if viewModel.sidechainPick != nil, let aim = sidechainPickHover,
+                if viewModel.routePick != nil, let aim = sidechainPickHover,
                    let entry = viewModel.laneEntries.first(where: { $0.item.id == aim.id }) {
                     sidechainPickVeil(entry: entry, refusal: aim.refusal)
                         .allowsHitTesting(false)
@@ -1384,7 +1384,7 @@ struct TimelineView: View {
     private func updateCursor(at pos: CGPoint) {
         // "Choose object" armed: a pointing hand on an object, an arrow elsewhere — nothing else
         // the canvas could do under this click is offered.
-        if viewModel.sidechainPick != nil {
+        if viewModel.routePick != nil {
             TimelineCursorKeeper.set(stemPaintHitTest(at: pos) != nil ? NSCursor.pointingHand : NSCursor.arrow)
             hoverStore.clearZoneAndCut()
             return
@@ -1636,10 +1636,10 @@ struct TimelineView: View {
     // MARK: - Tool hover (Volume / Pan)
 
     private func updateToolHover(at pos: CGPoint) {
-        if viewModel.sidechainPick != nil {
+        if viewModel.routePick != nil {
             let id = rulerBandContains(pos) ? nil : stemPaintHitTest(at: pos)
             if sidechainPickHover?.id != id {
-                sidechainPickHover = id.map { ($0, viewModel.sidechainPickRefusal(for: $0)) }
+                sidechainPickHover = id.map { ($0, viewModel.routePickRefusalText(for: $0)) }
             }
             return
         } else if sidechainPickHover != nil {
@@ -4389,11 +4389,17 @@ struct TimelineView: View {
     /// two ways out (Esc, a click in empty space).
     @ViewBuilder
     private var sidechainPickHUD: some View {
-        if let pick = viewModel.sidechainPick {
+        if let route = viewModel.routePick {
             HStack(spacing: 7) {
-                Image(systemName: "scope")
+                Image(systemName: { if case .send = route { return "arrow.turn.down.right" } else { return "scope" } }())
                     .font(.system(size: 11, weight: .semibold))
-                Text(L("sidechain.pick.hud", viewModel.sidechainPickPluginName(pick)))
+                Text({ () -> String in
+                    switch route {
+                    case .sidechain(let pick): return L("sidechain.pick.hud", viewModel.sidechainPickPluginName(pick))
+                    case .send(let pick):      return L(pick.retargeting == nil ? "send.pick.hud" : "send.pick.hud.retarget",
+                                                        viewModel.sendPickSenderName(pick))
+                    }
+                }())
                     .font(.system(size: 11, weight: .semibold))
                 Text(L("sidechain.pick.hint"))
                     .font(.system(size: 10))
@@ -4408,12 +4414,14 @@ struct TimelineView: View {
 
     /// The veil "Choose object" lays on the block it aims at, in canvas coordinates. An infinite bus
     /// is its whole lane, as the hit-test reads it.
-    private func sidechainPickVeil(entry: LaneEntry, refusal: BridgeScope.Refusal?) -> some View {
+    private func sidechainPickVeil(entry: LaneEntry, refusal: String?) -> some View {
         let x = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
         let w = entry.item.isInfiniteBus ? contentWidth : max(entry.item.duration * pixelsPerSecond, 2)
         let y = rulerHeight + Double(entry.displayLane) * laneStep
-        let text = refusal.map { L("sidechain.pick.refused", EditViewModel.sidechainReasonText($0)) }
-            ?? L("sidechain.pick.assign", viewModel.displayName(of: entry.item))
+        var isSend = false
+        if case .send? = viewModel.routePick { isSend = true }
+        let text = refusal.map { L("sidechain.pick.refused", $0) }
+            ?? L(isSend ? "send.pick.assign" : "sidechain.pick.assign", viewModel.displayName(of: entry.item))
         return ZStack {
             RoundedRectangle(cornerRadius: entry.item.blockCornerRadius)
                 .fill(Color.black.opacity(0.72))

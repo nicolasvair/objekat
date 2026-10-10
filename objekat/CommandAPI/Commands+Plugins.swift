@@ -773,6 +773,83 @@ extension CommandRegistry {
             return .object(["engine": report, "model": model, "sends_path": .string("bridge")])
         }
 
+        register("debug.send_target_menu",
+                 summary: """
+                 DEBUG. The data of the signal view's "Send to..." menu for one sender, as the view-model \
+                 hands it to the pure builder: `sections` [{tier, title_key, entries [{aux, name, enabled, \
+                 reason}]}] in the order of Q-U3 (same group, rest of the stem, the Main), the refused and \
+                 the already-used auxes greyed with their reason. `retargeting` = the aux of the card whose \
+                 target is being changed (left out). Reads only.
+                 """,
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("retargeting", "uuid", required: false, "The aux of the card being re-aimed.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let retarget = p.raw["retargeting"] != nil ? try p.uuid("retargeting") : nil
+            let sections = vm.sendTargetSections(for: id, retargeting: retarget)
+            return .object(["sections": .array(sections.map { sec in
+                .object(["tier": .number(Double(sec.tier)), "title_key": .string(sec.titleKey),
+                         "entries": .array(sec.entries.map { e in
+                             .object(["aux": .string(e.id.uuidString), "name": .string(e.name),
+                                      "enabled": .bool(e.isEnabled),
+                                      "reason": e.disabledReason.map { .string($0) } ?? .null])
+                         })])
+            })])
+        }
+
+        register("debug.route_pick",
+                 summary: """
+                 DEBUG. Drives the timeline's "choose an object" mode (`RoutePick`) without a screen: \
+                 `action` = `begin_send` (id = the sender, position/index as in send.create; `retargeting` = \
+                 an aux whose send is re-aimed), `refusal` (object = the candidate: answers the sentence the \
+                 veil would say, or null), `commit` (object = the clicked object: the click's path), `end` \
+                 (Esc), `state`. Answers the mode (`mode`: none | sidechain | send). The sidechain strip's own \
+                 pick is armed by the strip; `state` and `end` see it too.
+                 """,
+                 params: [ParamSpec("action", "string", "begin_send | refusal | commit | end | state."),
+                          ParamSpec("id", "uuid", required: false, "begin_send: the sending object."),
+                          ParamSpec("position", "string", required: false, "begin_send: input | chain | pre_fader | post_fader."),
+                          ParamSpec("index", "int", required: false, "begin_send, chain: before the top-level plugin i."),
+                          ParamSpec("retargeting", "uuid", required: false, "begin_send: the aux whose send is re-aimed."),
+                          ParamSpec("object", "uuid", required: false, "refusal / commit: the object under the cursor.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            @MainActor func mode() -> JSONValue {
+                switch vm.routePick {
+                case .none: return .string("none")
+                case .sidechain?: return .string("sidechain")
+                case .send?: return .string("send")
+                }
+            }
+            switch try p.string("action") {
+            case "begin_send":
+                let id = try p.uuid("id")
+                guard let obj = vm.find(id: id), !obj.isAux else {
+                    throw CommandError(code: .invalid_state, message: "not a sender: \(id.uuidString)")
+                }
+                let position = try CommandAdapters.parseSendPosition(p, on: obj, fallback: .postFader)
+                let retarget = p.raw["retargeting"] != nil ? try p.uuid("retargeting") : nil
+                vm.routePick = nil
+                vm.beginSendPick(sender: id, position: position, retargeting: retarget)
+                return .object(["mode": mode()])
+            case "refusal":
+                let obj = try p.uuid("object")
+                return .object(["mode": mode(), "refusal": vm.routePickRefusalText(for: obj).map { .string($0) } ?? .null])
+            case "commit":
+                let obj = try p.uuid("object")
+                let done = vm.commitRoutePick(objectID: obj)
+                return .object(["committed": .bool(done), "mode": mode()])
+            case "end":
+                vm.endRoutePick()
+                return .object(["mode": mode()])
+            case "state":
+                return .object(["mode": mode()])
+            default:
+                throw CommandError(code: .bad_params, message: "unknown action")
+            }
+        }
+
         register("debug.send_marker_audit",
                  summary: """
                  DEBUG. The audit of send markers (docs/plan_sends_rework.md, INC 2): reads the model and \

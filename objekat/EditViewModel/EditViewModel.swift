@@ -338,7 +338,7 @@ final class EditViewModel {
     var stemAssignIndex: Int? = nil
     /// "Choose object" armed from a plugin editor's Sidechain strip: the next click on an object of
     /// the timeline becomes that plugin's key. nil = not armed. @see EditViewModel+SidechainStrip
-    var sidechainPick: SidechainPick? = nil
+    var routePick: RoutePick? = nil
     /// The host each native editor was opened FOR — the engine names a plugin by its key alone, and
     /// the Sidechain strip it asks for at the window's creation needs the host.
     @ObservationIgnored var nativeEditorHosts: [UUID: UUID] = [:]

@@ -23,11 +23,11 @@ extension TimelineView {
 
         // "Choose object" armed (a plugin editor's Sidechain strip): a click on an object sets the
         // key, a click anywhere else leaves the mode. It takes priority over every other reading.
-        if viewModel.sidechainPick != nil {
+        if viewModel.routePick != nil {
             if !rulerBandContains(point), let id = stemPaintHitTest(at: point) {
-                viewModel.commitSidechainPick(objectID: id)
+                viewModel.commitRoutePick(objectID: id)
             } else {
-                viewModel.endSidechainPick()
+                viewModel.endRoutePick()
             }
             return
         }

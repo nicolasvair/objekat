@@ -1978,6 +1978,147 @@ def section_Y2(c):
 # U2 — Q-U12: a silenced sender feeds no aux, wherever its send taps
 # --------------------------------------------------------------------------------------------------
 
+def section_RT2(c):
+    print("\n--- RT2  send.retarget: same level / position / wet at the new aux; refusals; undo; pick-mode doors")
+    if REF:
+        print("       (skipped in --ref)")
+        return
+    pipeline_offset_db(c)
+    fresh(c, "RT2")
+    x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    a1 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1})["id"]
+    a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2})["id"]
+    other = c.send("object.add", {"path": out("imp.wav"), "lane": 4, "start": 0.0})["id"]
+    add_test(c, x, "gainTester", gain_db=-12.0)
+    c.send("send.create", {"id": x, "aux": a1, "position": "chain", "index": 1})
+    lay_send(c, x, a1, -6.0)
+    audit(c, "RT2 before", want_senders=1)
+    _, _, db1 = measure_wet_db(c, "RT2_a1", x, a1)
+    check("RT2: the wet at a1 is -12 + -6 = -18 dB re source (+-0.05)", db1 is not None and abs(db1 + 18.0) <= 0.05, db1)
+
+    r = c.send("send.retarget", {"id": x, "aux": a1, "to": a2})
+    check("RT2: send.retarget answers the new aux, the old one, the level and the position",
+          r.get("aux") == a2 and r.get("was") == a1 and abs(r.get("level_db") + 6.0) < 1e-3
+          and r.get("position") == "chain" and r.get("index") == 1, r)
+    sends = c.send("send.list", {"id": x})["sends"]
+    check("RT2: send.list holds ONE send, towards a2, still chain 1, on",
+          len(sends) == 1 and sends[0]["aux"] == a2 and sends[0]["position"] == "chain"
+          and sends[0]["index"] == 1 and sends[0].get("enabled") is True, sends)
+    rep = audit(c, "RT2 after", want_senders=1)
+    lay = (rep.get("engine_layouts") or {}).get(x, [])
+    check("RT2: the engine's list puts the send (for a2) between the plugins",
+          where_in_list(lay, a2) == "chain1" and where_in_list(lay, a1) == "absent", [(e["index"], e["role"], e.get("aux")) for e in lay])
+    _, _, db2 = measure_wet_db(c, "RT2_a2", x, a2)
+    check("RT2: the wet at a2 is the same as it was at a1 (+-0.05 dB)", db2 is not None and abs(db2 - db1) <= 0.05, (db1, db2))
+    # --- refusals, each with its reason, and nothing changed
+    before = c.send("send.list", {"id": x})["sends"]
+    cases = [("no such send", {"id": x, "aux": a1, "to": a2}, "not_found"),
+             ("the target is not an aux", {"id": x, "aux": a2, "to": other}, "invalid_state"),
+             ("the same aux", {"id": x, "aux": a2, "to": a2}, "invalid_state")]
+    for label, params, code in cases:
+        try:
+            c.send("send.retarget", params)
+            check("RT2 %s: refused" % label, False, "accepted")
+        except ObjekatError as e:
+            check("RT2 %s: refused (%s) with a reason" % (label, code), e.code == code and "refused" in e.message, "%s %s" % (e.code, e.message))
+    a3 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 3})["id"]
+    c.send("send.create", {"id": x, "aux": a3, "position": "post_fader"})
+    try:
+        c.send("send.retarget", {"id": x, "aux": a2, "to": a3})
+        check("RT2 target already has a send: refused", False, "accepted")
+    except ObjekatError as e:
+        check("RT2 target already has a send: invalid_state", e.code == "invalid_state", "%s %s" % (e.code, e.message))
+    after_refusals = [s_ for s_ in c.send("send.list", {"id": x})["sends"] if s_["aux"] in (a2,)]
+    check("RT2: refusals changed nothing (the a2 send is as it was)",
+          len(after_refusals) == 1 and after_refusals[0]["position"] == "chain" and after_refusals[0]["index"] == 1,
+          after_refusals)
+    c.send("send.remove", {"id": x, "aux": a3})
+
+    # --- undo / redo: one point, and the marker comes back to a1
+    c.send("project.save")
+    n_before = len(c.send("send.list", {"id": x})["sends"])
+    c.send("send.retarget", {"id": x, "aux": a2, "to": a1})
+    c.send("edit.undo", {})
+    settle(c)
+    row = [s_ for s_ in c.send("send.list", {"id": x})["sends"]]
+    check("RT2: one undo puts the send back on a2, same position", len(row) == n_before and row[0]["aux"] == a2
+          and row[0]["position"] == "chain", row)
+    audit(c, "RT2 undone", want_senders=1)
+    c.send("edit.redo", {})
+    settle(c)
+    row = [s_ for s_ in c.send("send.list", {"id": x})["sends"]]
+    check("RT2: redo aims it at a1 again", row[0]["aux"] == a1 and row[0]["position"] == "chain", row)
+    audit(c, "RT2 redone", want_senders=1)
+
+    # --- the pick mode ("Choose an object on the timeline..."), through its debug door
+    c.send("send.remove", {"id": x, "aux": a1})
+    settle(c)
+    check("RT2 pick: idle at first", c.send("debug.route_pick", {"action": "state"}).get("mode") == "none")
+    r = c.send("debug.route_pick", {"action": "begin_send", "id": x, "position": "pre_fader"})
+    check("RT2 pick: armed for a send", r.get("mode") == "send", r)
+    r = c.send("debug.route_pick", {"action": "refusal", "object": other})
+    check("RT2 pick: a non-aux is refused, with a reason", isinstance(r.get("refusal"), str) and "aux" in r["refusal"], r)
+    r = c.send("debug.route_pick", {"action": "refusal", "object": a3})
+    check("RT2 pick: an aux in scope is not refused", r.get("refusal") is None, r)
+    r = c.send("debug.route_pick", {"action": "commit", "object": other})
+    check("RT2 pick: clicking a non-aux changes nothing and leaves the mode armed",
+          r.get("committed") is False and r.get("mode") == "send", r)
+    n0 = len(c.send("send.list", {"id": x})["sends"])
+    r = c.send("debug.route_pick", {"action": "commit", "object": a3})
+    check("RT2 pick: clicking an aux makes the send and leaves the mode", r.get("committed") is True and r.get("mode") == "none", r)
+    sends = c.send("send.list", {"id": x})["sends"]
+    row = [s_ for s_ in sends if s_["aux"] == a3]
+    check("RT2 pick: the send exists, at the position the pick was armed with, silent and on",
+          len(sends) == n0 + 1 and len(row) == 1 and row[0]["position"] == "pre_fader" and row[0]["level_db"] <= -59.0, sends)
+    audit(c, "RT2 picked")
+    c.send("edit.undo", {})
+    settle(c)
+    check("RT2 pick: ONE undo takes the new send away", len(c.send("send.list", {"id": x})["sends"]) == n0)
+    c.send("edit.redo", {})
+    settle(c)
+    # re-aim by pick
+    r = c.send("debug.route_pick", {"action": "begin_send", "id": x, "position": "post_fader", "retargeting": a3})
+    check("RT2 pick (retarget): armed", r.get("mode") == "send", r)
+    check("RT2 pick (retarget): the aux it already goes to is not a refusal (a no-op)",
+          c.send("debug.route_pick", {"action": "refusal", "object": a3}).get("refusal") is None)
+    r = c.send("debug.route_pick", {"action": "commit", "object": a2})
+    row = [s_ for s_ in c.send("send.list", {"id": x})["sends"]]
+    check("RT2 pick (retarget): the send now goes to a2 and a3 has none, position kept",
+          r.get("committed") is True and any(s_["aux"] == a2 and s_["position"] == "pre_fader" for s_ in row)
+          and not any(s_["aux"] == a3 for s_ in row), row)
+    c.send("debug.route_pick", {"action": "begin_send", "id": x, "position": "input"})
+    check("RT2 pick: Esc leaves the mode", c.send("debug.route_pick", {"action": "end"}).get("mode") == "none")
+    audit(c, "RT2 end")
+
+    # --- the "Send to..." menu's data: Q-U3 order, greyed with a reason
+    fresh(c, "RT2menu")
+    x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
+    y = c.send("object.add", {"path": out("imp.wav"), "lane": 5, "start": 0.0})["id"]
+    aux_main = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 1, "name": "MainAux"})["id"]
+    aux_sib = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2, "name": "SibAux"})["id"]
+    g = c.send("group.create", {"ids": [x, aux_sib]})["id"]       # x and SibAux now siblings inside a group
+    st = c.send("stem.add", {"name": "S"})["id"]
+    c.send("stem.assign", {"stem": st, "ids": [g]})
+    settle(c)
+    m = c.send("debug.send_target_menu", {"id": x})["sections"]
+    ids_ = [[e["aux"] for e in sec["entries"]] for sec in m]
+    print("       menu tiers %s: %d + %d entries" % ([sec["tier"] for sec in m], *[len(i) for i in ids_]))
+    check("RT2 menu: the aux of the sender's own group comes first (tier 0)", m and m[0]["tier"] == 0 and ids_[0] == [aux_sib], m)
+    check("RT2 menu: the Main's aux comes last (tier 2) and a stem-bound sender can reach it",
+          m and m[-1]["tier"] == 2 and ids_[-1] == [aux_main], m)
+    check("RT2 menu: sections are in tier order", [sec["tier"] for sec in m] == sorted(sec["tier"] for sec in m), m)
+    c.send("send.create", {"id": x, "aux": aux_sib})
+    m = c.send("debug.send_target_menu", {"id": x})["sections"]
+    sib = [e for sec in m for e in sec["entries"] if e["aux"] == aux_sib][0]
+    check("RT2 menu: an aux that already has a send is greyed, with the reason", sib["enabled"] is False and sib["reason"], sib)
+    m2 = c.send("debug.send_target_menu", {"id": x, "retargeting": aux_sib})["sections"]
+    check("RT2 menu: 'Change target...' leaves the card's own aux out",
+          not any(e["aux"] == aux_sib for sec in m2 for e in sec["entries"]), m2)
+    check("RT2 menu: an aux, a stem and the Main have no menu",
+          c.send("debug.send_target_menu", {"id": aux_main})["sections"] == [])
+
+
+
 def section_U2(c):
     print("\n--- U2  a muted / filtered-out / stem-muted sender feeds no aux, even before the fader")
     if REF:
@@ -2041,7 +2182,7 @@ with ObjekatClient(SOCK) as c:
                     ("K", section_K), ("L", section_L), ("M", section_M), ("N", section_N), ("P", section_P),
                     ("Q", section_Q), ("R", section_R), ("S", section_S), ("T", section_T),
                     ("F2", section_F2), ("Q2", section_Q2), ("R2", section_R2), ("V2", section_V2),
-                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2),
+                    ("K2", section_K2), ("S2", section_S2), ("T2", section_T2), ("U2", section_U2), ("W2", section_W2), ("X2", section_X2), ("Y2", section_Y2), ("RT2", section_RT2),
                     ("T2REF", section_T2REF)):
         if want(sec):
             fn(c)

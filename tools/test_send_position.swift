@@ -320,6 +320,37 @@ enum SendPositionTest {
                   ObjectPlugin.sendMarkerPlaces(in: [a, ma, mb, b]) == [auxA: 1, auxB: 1])
         }
 
+        // MARK: - Retargeting (step 2.11: "Change target…", send.retarget)
+
+        do {
+            let newAux = UUID()
+            var base = clip(plugins: [plugin("A"), plugin("B")],
+                            sends: [AuxSend(auxID: auxA, levelDb: -9, enabled: true), AuxSend(auxID: auxB, levelDb: -3)])
+            base = base.settingSendPosition(auxID: auxA, .chain(1))
+            base.automation = [AutomationLane(param: .send(auxID: auxA), points: []), AutomationLane(param: .volume, points: [])]
+            base.automationTouchOrder = [.volume, .send(auxID: auxA)]
+            let r = base.retargetingSend(from: auxA, to: newAux)
+            check("retarget: the send now aims at the new aux, level and on/off kept",
+                  r.sends.first(where: { $0.auxID == newAux })?.levelDb == -9
+                  && r.sends.first(where: { $0.auxID == newAux })?.enabled == true
+                  && !r.sends.contains(where: { $0.auxID == auxA }) && r.sends.count == 2)
+            check("retarget: the position is kept (same chain slot)", r.sendPosition(auxID: newAux) == .chain(1))
+            check("retarget: the marker follows, the old aux has none",
+                  ObjectPlugin.sendMarkerChainIndex(auxID: newAux, in: r.plugins) == 1
+                  && ObjectPlugin.sendMarkerChainIndex(auxID: auxA, in: r.plugins) == nil
+                  && r.plugins.count == base.plugins.count)
+            check("retarget: the marker keeps its id", r.plugins.first(where: \.isSendMarker)?.id == base.plugins.first(where: \.isSendMarker)?.id)
+            check("retarget: the automation lane and the touch order follow",
+                  r.automation.map(\.param) == [.send(auxID: newAux), .volume]
+                  && r.automationTouchOrder == [.volume, .send(auxID: newAux)])
+            check("retarget: stays sane (sanitisingSends is a no-op)", r.sanitisingSends() == r)
+            check("retarget: to an aux that already has a send does nothing", base.retargetingSend(from: auxA, to: auxB) == base)
+            check("retarget: from an aux with no send does nothing", base.retargetingSend(from: UUID(), to: newAux) == base)
+            check("retarget: to itself does nothing", base.retargetingSend(from: auxA, to: auxA) == base)
+            let pre = clip(plugins: [plugin("A")], sends: [AuxSend(auxID: auxA, levelDb: 0)]).settingSendPosition(auxID: auxA, .preFader)
+            check("retarget: a tap-only send keeps its tap", pre.retargetingSend(from: auxA, to: newAux).sendPosition(auxID: newAux) == .preFader)
+        }
+
         // MARK: - Names
 
         do {

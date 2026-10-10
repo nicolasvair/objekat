@@ -180,6 +180,34 @@ extension CommandRegistry {
             return .object(out)
         }
 
+        register("send.retarget",
+                 summary: "Re-aims an existing send at another aux (the card's \"Change target...\"): same level, "
+                        + "switch, position (marker included), automation lane and touch order. Refused, with the "
+                        + "reason, when the sender has no send to `aux`, when `to` is not an aux, when `to` already "
+                        + "has a send from this object (one per pair) or when the scope / the plan refuses it.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "The aux the send goes to now."),
+                          ParamSpec("to", "uuid", "The aux it must go to instead.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            let to = try p.uuid("to")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            if let why = vm.retargetSend(from: id, aux: auxID, to: to) {
+                let code: CommandError.Code = (why == .noSuchSend) ? .not_found : .invalid_state
+                throw CommandError(code: code, message: "send retarget refused: \(why.text)")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(to.uuidString),
+                                            "was": .string(auxID.uuidString),
+                                            "level_db": .number(Double(vm.sendLevel(from: id, to: to)))]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == to }!) { out[k] = v }
+            return .object(out)
+        }
+
         register("send.create",
                  summary: "Creates a send towards an aux at -inf (silent; raise it with `send.set_level`), "
                         + "already at the requested position (default post_fader). Refused like the hand "

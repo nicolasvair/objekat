@@ -151,6 +151,13 @@ extension EditViewModel {
         sidechainPick = nil
     }
 
+    /// The Sidechain strip's pick, seen through the generalised mode (@see RoutePick): nil when the mode
+    /// is idle or armed for a SEND. Kept so that the strip reads and writes it as it always did.
+    var sidechainPick: SidechainPick? {
+        get { if case .sidechain(let p)? = routePick { return p } else { return nil } }
+        set { routePick = newValue.map { .sidechain($0) } }
+    }
+
     /// Why the armed pick would refuse this object (nil = it would take it). Read on hover.
     func sidechainPickRefusal(for objectID: UUID) -> BridgeScope.Refusal? {
         guard let pick = sidechainPick else { return nil }

@@ -190,6 +190,33 @@ extension SoundObject {
         return o
     }
 
+    /// The object with the send towards `old` aimed at `new` instead ("Change target…", `send.retarget`):
+    /// same level, on/off, tap, marker place, automation lane and touch order. Pure and unconditional —
+    /// the caller has checked that `new` is free and allowed. Unchanged if there is no send to `old`
+    /// or if `new` already has one.
+    func retargetingSend(from old: UUID, to new: UUID) -> SoundObject {
+        guard old != new, let si = sends.firstIndex(where: { $0.auxID == old }),
+              !sends.contains(where: { $0.auxID == new }) else { return self }
+        var o = self
+        o.sends[si].auxID = new
+        func remap(_ series: [ObjectPlugin]) -> [ObjectPlugin] {
+            series.map { p in
+                if p.sendMarker?.auxID == old {
+                    var q = p
+                    q.sendMarker = SendMarker(auxID: new)
+                    return q
+                }
+                return p.mappingChildSeries(remap)
+            }
+        }
+        o.plugins = remap(o.plugins)
+        for i in o.automation.indices where o.automation[i].param == .send(auxID: old) {
+            o.automation[i].param = .send(auxID: new)
+        }
+        o.automationTouchOrder = o.automationTouchOrder.map { $0 == .send(auxID: old) ? .send(auxID: new) : $0 }
+        return o
+    }
+
     /// The object with its markers and its sends made consistent (idempotent, pure). Run on load, after
     /// every paste / import, and asserted by the audit:
     ///   • a marker NESTED in a rack branch or a bin's block is HOISTED to the top level, just after its

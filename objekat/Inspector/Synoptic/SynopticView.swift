@@ -19,6 +19,21 @@ enum SynopticSendTarget: Equatable {
     case slot(SynopticSendSlot)
 }
 
+extension SynopticActions {
+    /// Opens the "Send to…" menu at the mouse: for a NEW send taken at `slot`, or (`retargeting`) to change
+    /// the target of that card's send. The data is read now, at the click.
+    @MainActor
+    func presentSendMenu(slot: SynopticSendSlot, retargeting: UUID? = nil) {
+        guard let sections = sendTargetSections?(retargeting) else { return }
+        SendTargetMenuPresenter.present(
+            sections: sections,
+            onPick: { aux in
+                if let old = retargeting { onRetargetSend?(old, aux) } else { onCreateSend?(aux, slot) }
+            },
+            onChoose: { onPickSendTarget?(slot, retargeting) })
+    }
+}
+
 enum SynopticDropTarget: Equatable {
     /// A cable or a '+': the series `seriesID`, at `index`.
     case series(UUID, Int)
@@ -116,6 +131,15 @@ struct SynopticActions {
     var onMoveSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
     /// The card of the send towards `aux` is taken in the hand (nil = cards are not draggable).
     var sendDragProvider: ((UUID) -> NSItemProvider)? = nil
+    /// The sections of the "Send to…" menu for this object (`retargeting`: the aux of the card whose target is
+    /// being changed, left out). Asked when the menu is OPENED, never while rendering.
+    var sendTargetSections: ((_ retargeting: UUID?) -> [SendTargetMenu.Section])? = nil
+    /// A menu entry: make the send towards `aux` at `slot`.
+    var onCreateSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
+    /// "Choose an object on the timeline…": arms the pick for a send at `slot` (or re-aims `retargeting`).
+    var onPickSendTarget: ((_ slot: SynopticSendSlot, _ retargeting: UUID?) -> Void)? = nil
+    /// "Change target…": re-aims the send towards `old` at `new`.
+    var onRetargetSend: ((_ old: UUID, _ new: UUID) -> Void)? = nil
     /// A send card let go at `target` (a place of the chain or one of the three fixed slots).
     var onSendDrop: ((_ target: SynopticSendTarget, _ payload: SendDragPayload) -> Void)? = nil
     /// What a send card let go at `target` would do, for the cursor and the band (@see SendDrop). nil = no
@@ -506,6 +530,12 @@ struct SynopticView: View {
                 }
                 .buttonStyle(.plain)
                 .help(L("synoptic.addPluginSeries"))
+                // On the TRUNK's own insert points (not a branch's): right click = take a send right here.
+                .contextMenu {
+                    if z.seriesID == root.id, actions.sendTargetSections != nil {
+                        Button(L("send.menu.sendHere")) { actions.presentSendMenu(slot: .chain(z.insertIndex)) }
+                    }
+                }
                 // No `.onDrop` here: the drop is handled by the `CableDropView` (the preview
                 // rectangle) centred on this '+'. The '+' serves only for the click (insertion).
                 .position(z.center)
@@ -572,6 +602,13 @@ struct SynopticView: View {
                 SendCardView(send: c.send, actions: actions)
                     .frame(width: c.frame.width, height: c.frame.height)
                     .position(x: c.frame.midX, y: c.frame.midY)
+            }
+
+            // "+ Send to…", in the post-fader slot after its cards: a send made there is post-fader.
+            if let b = d.addSendButton, actions.sendTargetSections != nil {
+                AddSendButton { actions.presentSendMenu(slot: .postFader) }
+                    .frame(width: b.width, height: b.height)
+                    .position(x: b.midX, y: b.midY)
             }
 
             // The marquee under the hand. Drawn last and deaf to the mouse: it is a report of
@@ -2402,6 +2439,30 @@ struct SynopticSendRow: View {
     }
 }
 
+/// "+ Send to…": a dashed capsule at the foot of the card column.
+struct AddSendButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
+                Text(L("synoptic.send.add")).font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(hovering ? Color.accentColor : Color.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder((hovering ? Color.accentColor : Color.secondary).opacity(0.6),
+                              style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(L("synoptic.send.add.help"))
+    }
+}
+
 /// A send CARD: the branch arrow, the aux's name, a draggable level, the on/off switch, a menu and the
 /// cross. Greyed, with the reason as its tooltip, when the bridge refuses the send or its aux no longer
 /// overlaps the object in time (Q-U15) — a card never disappears because an object was moved.
@@ -2508,6 +2569,8 @@ struct SendCardView: View {
     /// The card's menu (the ellipsis and the right click). "Change target…" joins it in step 2.11.
     @ViewBuilder
     private var sendMenuItems: some View {
+        Button(L("synoptic.send.menu.retarget")) { actions.presentSendMenu(slot: send.slot, retargeting: send.id) }
+            .disabled(actions.sendTargetSections == nil)
         Button(L("synoptic.send.menu.fold")) { actions.onMoveSend?(send.id, .postFader) }
             .disabled(send.slot == .postFader || actions.onMoveSend == nil)
         Divider()
@@ -3058,6 +3121,15 @@ struct SynopticBoundView: View {
                 viewModel.setSendPositionFromHand(from: objectID, to: auxID, EditViewModel.sendPosition(of: slot))
             },
             sendDragProvider: { sendDragProvider($0) },
+            sendTargetSections: { viewModel.sendTargetSections(for: objectID, retargeting: $0) },
+            onCreateSend: { aux, slot in
+                viewModel.createSendFromHand(from: objectID, to: aux, at: EditViewModel.sendPosition(of: slot))
+            },
+            onPickSendTarget: { slot, retargeting in
+                viewModel.beginSendPick(sender: objectID, position: EditViewModel.sendPosition(of: slot),
+                                        retargeting: retargeting)
+            },
+            onRetargetSend: { old, new in viewModel.retargetSendFromHand(from: objectID, aux: old, to: new) },
             onSendDrop: { target, payload in
                 guard payload.sendSender == objectID,
                       case .move(let slot, _) = SendDrop.decide(sendAim(target)) else { return }
