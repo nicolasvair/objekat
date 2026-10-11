@@ -48,6 +48,7 @@ extension EditViewModel {
     private static func collectPluginRefs(in object: SoundObject, into out: inout [ObjectPlugin]) {
         collectPluginRefs(object.plugins, into: &out)
         collectPluginRefs(object.instruments, into: &out)
+        collectPluginRefs(SendChain.sendPlugins(of: object), into: &out)   // the third root (INC 3)
         if let ara = object.araSource { out.append(ara.plugin) }   // Melodyne missing ⇒ the object plays dry
         if case .group(let children, _) = object.kind {
             for c in children { collectPluginRefs(in: c, into: &out) }
@@ -80,15 +81,30 @@ extension EditViewModel {
     func isStemHost(_ hostID: UUID) -> Bool { stemIndex(hostID) != nil }
 
     /// The host's plugins (its FX chain). nil if the host does not exist.
+    /// A send's mini-chain is a host too (INC 3, @see EditViewModel+SendChain): its plugins.
     func chainPlugins(_ hostID: UUID) -> [ObjectPlugin]? {
         if let i = stemIndex(hostID) { return stems[i].plugins }
-        return find(id: hostID)?.plugins
+        if let o = find(id: hostID) { return o.plugins }
+        if let k = sendChainKey(hostID) { return sendEntry(from: k.sender, to: k.aux)?.plugins }
+        return nil
     }
 
-    /// Mutates the host's FX chain (object or bus). Returns true if the host exists.
+    /// Mutates the host's FX chain (object, bus or send). Returns true if the host exists.
+    /// A send's mini-chain is written through its SENDER and sanitised (leaves only).
     @discardableResult
     func updateChainPlugins(_ hostID: UUID, _ f: (inout [ObjectPlugin]) -> Void) -> Bool {
         if let i = stemIndex(hostID) { f(&stems[i].plugins); isDirty = true; return true }
+        if find(id: hostID) == nil, let k = sendChainKey(hostID) {
+            var written = false
+            update(id: k.sender) { o in
+                guard let i = o.sends.firstIndex(where: { $0.auxID == k.aux }) else { return }
+                var plugins = o.sends[i].plugins
+                f(&plugins)
+                o.sends[i].plugins = SendChain.sanitised(plugins)
+                written = true
+            }
+            return written
+        }
         return update(id: hostID) { f(&$0.plugins) }
     }
 
@@ -193,8 +209,15 @@ extension EditViewModel {
 
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
-    private func rackSpec(for plugins: [ObjectPlugin]) -> [[String: Any]] {
-        plugins.map { p in
+    private func rackSpec(for plugins: [ObjectPlugin], topLevel: Bool = false) -> [[String: Any]] {
+        plugins.compactMap { p in
+            // A send's marker is not a plugin: the engine has nothing to resolve for it. It travels as an
+            // ORDERING TOKEN, `{kind: "send", aux}`, at the root only (a marker lives nowhere else): the
+            // engine records the root order with it and -applySendPositionsForKey: reads the place of
+            // the send from there. It carries no `id` — nothing in the engine is created or erased for it.
+            if let m = p.sendMarker {
+                return topLevel ? ["kind": "send", "aux": m.auxID.uuidString] : nil
+            }
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
@@ -231,11 +254,19 @@ extension EditViewModel {
     /// (Re)compiles the object's engine rack from the `plugins` given, then removes from the model
     /// the plugins the engine could not resolve (not found). Returns those ids.
     @discardableResult
+    ///
+    /// `sends`: the object's sends, whose plugins are compiled into the send plugins' own lists (INC 3).
+    /// nil = read from the model (a bus has none); a caller that compiles BY VALUE (`syncPlugins`) hands
+    /// over the object's.
     func compileRack(objectID: UUID, plugins: [ObjectPlugin],
-                     chainInDb: Float, chainOutDb: Float) -> [UUID] {
+                     chainInDb: Float, chainOutDb: Float, sends: [AuxSend]? = nil) -> [UUID] {
         guard let engine else { return [] }
+        let owner = find(id: objectID)
+        let sendChains = sendChainSpec(sender: objectID, sends: sends ?? owner?.sends ?? [],
+                                       isAux: owner?.isAux ?? false) { rackSpec(for: $0) }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
-                                                tree: rackSpec(for: plugins),
+                                                tree: rackSpec(for: plugins, topLevel: true),
+                                                sendChains: sendChains,
                                                 chainInDb: chainInDb,
                                                 chainOutDb: chainOutDb) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
@@ -243,11 +274,17 @@ extension EditViewModel {
             // During a load, remembers the name of the plugins that cannot be found (before removing them from the
             // model) for the summary confirmation message — see applyProjectDocument.
             if missingPluginCapture != nil {
-                for name in Self.pluginDisplayNames(failed, in: plugins) {
+                for name in Self.pluginDisplayNames(failed, in: plugins + (sends ?? owner?.sends ?? []).flatMap(\.plugins)) {
                     missingPluginCapture?.insert(name)
                 }
             }
             updateChainPlugins(objectID) { p in p = Self.removingPlugins(failed, from: p) }
+            // A plugin a SEND carried and the engine could not resolve goes the same way.
+            if owner?.sends.contains(where: { s in s.plugins.contains { failed.contains($0.id) } }) == true {
+                update(id: objectID) { o in
+                    for i in o.sends.indices { o.sends[i].plugins.removeAll { failed.contains($0.id) } }
+                }
+            }
         }
         // The chain start/end trims carry the `chainInGain`/`chainOutGain` curves:
         // a compilation makes them anew. No effect for a BUS (stem or master), which is
@@ -262,6 +299,8 @@ extension EditViewModel {
     /// The variant that reads the plugins + chain gains from the current model (object OR bus).
     @discardableResult
     func compileRack(objectID: UUID) -> [UUID] {
+        // A send's mini-chain is compiled with its SENDER's chain (the engine owns it there).
+        if let k = sendChainKey(objectID), find(id: objectID) == nil { return compileRack(objectID: k.sender) }
         guard let plugins = chainPlugins(objectID) else { return [] }
         let g = chainGains(objectID)
         return compileRack(objectID: objectID, plugins: plugins,
@@ -305,6 +344,12 @@ extension EditViewModel {
         // submix, and stay proper to THAT instance. On opening as on detaching,
         // they are carried over AFTER the restored internal plugins (see openConsolidate / deconsolidate).
         guard chainPlugins(objectID) != nil, engine != nil else { return }
+        // A send's mini-chain takes plain plugins only, up to its own limit (@see SendChain.refusal).
+        if let why = sendChainRefusal(adding: 1, to: objectID, instrument: available.isInstrument) {
+            NSLog("[SENDS] plugin not added to a send: %@", why.rawValue)
+            NSSound.beep()
+            return
+        }
         let plug = ObjectPlugin(id: UUID(), name: available.name,
                                 manufacturer: available.manufacturer,
                                 identifier: available.identifier,
@@ -508,7 +553,7 @@ extension EditViewModel {
             return
         }
         pushUndo()
-        engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: objectID.uuidString)
+        engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: engineHostKey(objectID).uuidString)
         updateChainPlugins(objectID) { p in p = Self.settingEnabled(pluginID, newEnabled, in: p) }
         isDirty = true
     }
@@ -704,7 +749,7 @@ extension EditViewModel {
 
     /// The audio level measured (0..1) at the output of a plugin in the rack (the synoptic meter).
     func pluginAudioLevel(objectID: UUID, pluginID: UUID) -> Double {
-        Double(engine?.audioLevel(forPluginKey: pluginID.uuidString, forObjectID: objectID.uuidString) ?? 0)
+        Double(engine?.audioLevel(forPluginKey: pluginID.uuidString, forObjectID: engineHostKey(objectID).uuidString) ?? 0)
     }
 
     /// The transport playing (so as to poll the meter only during playback).
@@ -788,7 +833,11 @@ extension EditViewModel {
                     continue
                 }
                 i += 1
-                if let fb = p.fxBlock {
+                if p.isSendMarker {
+                    // The copy of an object keeps its sends (same auxes): its markers go with them, each
+                    // with an id of its own.
+                    out.append(p.copiedSendMarker())
+                } else if let fb = p.fxBlock {
                     out.append(copyBlock(p, fb))
                 } else if let rack = p.rack {
                     out.append(ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
@@ -875,6 +924,8 @@ extension EditViewModel {
             for obj in arr {
                 // Instruments included: they live outside the FX chain (`instruments`) but
                 // on the engine side they are in the same `_pluginMap`, hence linkable like the FX.
+                // NOT the plugins its SENDS carry (INC 3): a send's plugin is never linked
+                // (@see SendChain.sanitised) — this walk does not even look at them.
                 for p in Self.flattenLeaves(obj.plugins) + obj.instruments where p.linkGroupID != nil {
                     engine.setPluginLinkGroup(p.id.uuidString, groupID: p.linkGroupID!.uuidString)
                 }
@@ -902,7 +953,9 @@ extension EditViewModel {
                 // rack carriers). Without this, link/siblings would ignore the nested plugins.
                 // The INSTRUMENT slot counts as an instance: it links, unlinks and
                 // counts like an FX (@see transferInstrument).
-                for p in Self.flattenLeaves(obj.plugins) + obj.instruments { out.append((obj.id, p)) }
+                // And the plugins its SENDS carry (INC 3): `objectID` is the SENDER — to WRITE one of
+                // them, resolve its chain host first (@see chainHost(holding:on:)).
+                for p in SendChain.allRoots(of: obj) { out.append((obj.id, p)) }
                 if case .group(let children, _) = obj.kind { walk(children) }
             }
         }
@@ -914,7 +967,9 @@ extension EditViewModel {
     /// the two apart: on the engine side they are in the same `_pluginMap` (@see setInstrument:).
     func hostedPlugin(_ pluginID: UUID, of hostID: UUID) -> ObjectPlugin? {
         if let p = leafPlugins(objectID: hostID).first(where: { $0.id == pluginID }) { return p }
-        return find(id: hostID)?.instruments.first { $0.id == pluginID }
+        guard let o = find(id: hostID) else { return nil }
+        if let p = o.instruments.first(where: { $0.id == pluginID }) { return p }
+        return SendChain.sendPlugins(of: o).first { $0.id == pluginID }     // on one of its sends (INC 3)
     }
 
     /// Writes both link memberships of an instance in one go, wherever it lives:
@@ -931,7 +986,10 @@ extension EditViewModel {
                 }
             }
         } else {
-            updateChainPlugins(objectID) { p in
+            // A plugin on a SEND is never linked (@see SendChain.sanitised): nothing to write.
+            let host = chainHost(holding: pluginID, on: objectID)
+            guard !isSendChainHost(host) else { return }
+            updateChainPlugins(host) { p in
                 p = Self.settingLinkGroup(pluginID, link, in: p)
                 p = Self.settingDetachedLinkGroup(pluginID, detached, in: p)
             }
@@ -1023,7 +1081,8 @@ extension EditViewModel {
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
         // applied on the compiler side (setEnabled per leaf during the reconciliation).
         compileRack(objectID: object.id, plugins: chain,
-                    chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb)
+                    chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb,
+                    sends: object.sends)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
         if rewireLinks { rewireLinkGroups() }
     }

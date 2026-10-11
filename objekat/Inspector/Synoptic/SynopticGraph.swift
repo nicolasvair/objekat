@@ -168,3 +168,45 @@ extension SynopticNode {
         ])
     }
 }
+
+// MARK: - Sends (docs/plan_sends_rework.md §D.1.A.j)
+
+/// Where a send card hangs on its sender's signal path, as the LAYOUT needs it (the model's
+/// `SendPosition` without the model: this file knows neither `SoundObject` nor `ObjectPlugin`).
+/// `chain(i)`: before the top-level entry `i` of the trunk (`i == count` = after the last one, still
+/// before the OUT gain).
+enum SynopticSendSlot: Equatable, Hashable {
+    case input
+    case chain(Int)
+    case preFader
+    case postFader
+}
+
+/// One send in the signal view. At the foot of an object = a departure towards an aux (`id` = the
+/// aux), drawn as a CARD beside the trunk; at the head of an aux = a received send (`id` = the
+/// sending object), drawn as a row of the bus head.
+struct SynopticSend: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    /// The user's intent (the toggle) — independent of the level, which may stay at -∞.
+    let enabled: Bool
+    let levelDb: Float
+    /// An automation CURVE drives this level: the static setting is no longer heard.
+    var isAutomated: Bool = false
+    /// Why the bridge refuses (or would refuse) this send — the text of a tooltip; the card is greyed.
+    /// nil = the send is accepted.
+    var refusal: String? = nil
+    /// Where the card hangs (outgoing sends only; a received row ignores it).
+    var slot: SynopticSendSlot = .postFader
+    /// The plugins ON this send (INC 3), in processing order: the rows of its box, above the send's
+    /// own line. For a received row only their presence matters (a small mark).
+    var plugins: [SynopticSendPlugin] = []
+}
+
+/// One plugin of a send's mini-chain, as the box draws it: a compact row. Never linked (a send's
+/// plugin carries no link), so the row has no link pastille.
+struct SynopticSendPlugin: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    var enabled: Bool = true
+}

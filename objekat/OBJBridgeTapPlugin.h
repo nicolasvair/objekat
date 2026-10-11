@@ -13,7 +13,7 @@
 //
 //  It is NOT a model plugin: the model never sees it, never saves it, and gives it no id of its
 //  own — the engine mints the EditItemID, so the "a plugin id is unique in the project" rule is
-//  not concerned. Why a plugin and not a node, same reasoning as ObjAuxSendPlugin: a chain lives
+//  not concerned. Why a plugin and not a node, same reasoning as the send plugin: a chain lives
 //  on the plugin list of its clip, inside a TimedNode.
 //  @see tracktion_ObjBridge.h, docs/plan_sidechain.md §5.8
 //

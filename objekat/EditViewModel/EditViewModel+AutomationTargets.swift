@@ -159,6 +159,7 @@ extension EditViewModel {
         allObjectsFlat.first {
             SoundObject.containsPlugin(pluginKey, in: $0.plugins)
                 || SoundObject.containsPlugin(pluginKey, in: $0.instruments)
+                || $0.holdsSendPlugin(pluginKey)                // on one of its sends (INC 3)
         }?.id
     }
 

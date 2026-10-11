@@ -354,6 +354,32 @@ with ObjekatClient(SOCK) as c:
     except ObjekatError as e:
         check("an unknown mode is refused", "bad_params" in str(e), str(e))
 
+    # ── a send's mini-chain (INC 3): a host like the others, minus the link ─
+    AUX = cmd("aux.create", start=0, end=4, lane=4)["id"]
+    cmd("send.set_level", id=A, aux=AUX, db=-6)
+    SH = next(s_ for s_ in cmd("send.list", id=A)["sends"] if s_["aux"] == AUX)["chain_host"]
+    s1, s2 = fill(SH, ["4bandEq", "chorus"])
+    r = cmd("plugin.select", host=SH, plugins=[s2, s1])
+    check("a selection on a SEND's chain is read back in that chain's order",
+          r["plugins"] == [s1, s2], str(r["plugins"]))
+    sel = cmd("plugin.selection")
+    check("it names the send's chain as its host, not the sender", sel["host"] == SH and SH != A, str(sel["host"]))
+    cmd("plugin.duplicate_selected")
+    check("duplicating it stays on the send, the copies after the selection (as on a trunk)",
+          idents(SH) == ["4bandEq", "chorus", "4bandEq", "chorus"] and idents(A) == BUILTINS,
+          "%s / %s" % (idents(SH), idents(A)))
+    cmd("edit.undo")
+    check("one undo takes the copies back", idents(SH) == ["4bandEq", "chorus"], str(idents(SH)))
+    eq = chain(A)[0][0]
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": SH, "mode": "link"})
+    on_send = cmd("plugin.list", host=SH)["plugins"]
+    on_trunk = cmd("plugin.list", host=A)["plugins"]
+    check("⌘ onto a send is a plain COPY: the source stays, the send gains one",
+          len(on_send) == 3 and [p["identifier"] for p in on_trunk] == BUILTINS, str(on_send))
+    check("...and nothing is linked, on either side",
+          all(not p.get("link_group") for p in on_send + on_trunk), str(on_send + on_trunk))
+    cmd("plugin.deselect")
+
 print("")
 if fails:
     print("%d FAILED out of %d:\n  - %s" % (len(fails), total, "\n  - ".join(fails)))

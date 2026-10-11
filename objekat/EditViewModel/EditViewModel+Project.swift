@@ -537,6 +537,9 @@ extension EditViewModel {
         bridgeEngineHasTaps = false
         bridgePlan = BridgeScope.Plan()
         bridgeRouteStatus = [:]
+        sendRouteStatus = [:]
+        bridgeLaidSends = []
+        sendScopeIndexCache = nil
         // Solo (session state, not persisted): starts again from nothing on a new project / an opening,
         // otherwise orphan IDs would remain. No engine apply here (the graph is rebuilt).
         soloedIDs = []
@@ -609,6 +612,10 @@ extension EditViewModel {
         }
         if !obj.instruments.isEmpty {
             o.instruments = capturingPluginStates(obj.instruments)
+        }
+        // The plugins its sends carry (INC 3): the third root, or a save would write stale states.
+        for i in o.sends.indices where !o.sends[i].plugins.isEmpty {
+            o.sends[i].plugins = capturingPluginStates(o.sends[i].plugins)
         }
         // The ARA source's archive is read live (a retouch lives only in the engine's plugin).
         if let ara = obj.araSource {

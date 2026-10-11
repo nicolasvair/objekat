@@ -33,7 +33,48 @@ class World:
     def stem_of(self, id_):
         return self.index[self.top(id_)].get("stem")
 
+    def effective_stem(self, id_):
+        st = self.stem_of(id_)
+        return st if st is not None and st in self.index and self.index[st]["kind"] == "stem" else None
+
+    def send_refusal(self, sender, aux):
+        """docs/plan_sends_rework.md §A.3, in order, first hit wins."""
+        s, a = self.index.get(sender), self.index.get(aux)
+        if s is None:
+            return "unknownSource"
+        if a is None:
+            return "unknownHost"
+        if a["kind"] != "aux":
+            return "hostNotAux"
+        if s["id"] == a["id"]:
+            return "selfSource"
+        if s["kind"] == "aux":
+            return "auxSource"
+        if s["kind"] == "main":
+            return "mainSource"
+        if s["kind"] == "stem":
+            return "stemSource"
+        if s["id"] in self.path(a["id"])[:-1]:
+            return "ancestorSource"
+        a_stem = self.effective_stem(a["id"])
+        if a_stem is not None and a_stem != self.effective_stem(s["id"]):
+            return "outOfStem"
+        return None
+
+    def is_near(self, sender, aux):
+        s, a = self.index.get(sender), self.index.get(aux)
+        if s is None or a is None or a["kind"] != "aux" or s["id"] == a["id"]:
+            return False
+        if (s.get("parent") is None) != (a.get("parent") is None):
+            return False
+        if s.get("parent") is not None:
+            return s["parent"] == a["parent"]
+        a_stem = self.effective_stem(a["id"])
+        return a_stem is None or a_stem == self.effective_stem(s["id"])
+
     def static_refusal(self, r):
+        if r["consumer"]["kind"] == "auxInput":
+            return self.send_refusal(r["source"], r["host"])
         s = self.index.get(r["source"])
         if s is None:
             return "unknownSource"
@@ -164,7 +205,8 @@ class Graph:
 
 def plan(nodes, routes):
     world = World(nodes)
-    out = {"refused": {}, "rootRanks": {}, "auxRanks": {}, "innerRanks": {}, "stemRanks": {}, "readerRanks": {}, "taps": {}}
+    out = {"refused": {}, "rootRanks": {}, "auxRanks": {}, "innerRanks": {}, "stemRanks": {}, "readerRanks": {}, "taps": {},
+           "sendRoutes": []}
     ok = []
     for i, r in enumerate(routes):
         why = world.static_refusal(r)
@@ -210,6 +252,9 @@ def plan(nodes, routes):
                 out["auxRanks" if n["kind"] == "aux" else "rootRanks"][n["id"]] = r
     for i in accepted:
         r = routes[i]
+        if r["consumer"]["kind"] == "auxInput":
+            out["sendRoutes"].append(i)       # a send: no gate, no per-source tap
+            continue
         s, h = world.index[r["source"]], world.index[r["host"]]
         if s["kind"] == "stem":
             out["stemRanks"][s["id"]] = rank(s["id"], ROOT)
@@ -240,6 +285,18 @@ def candidates(nodes, routes, host, replacing):
     return res
 
 
+def send_candidates(nodes, routes, sender):
+    """One entry per aux: the plan with a send to it appended last, read as if it were the model's."""
+    res = {}
+    for n in nodes:
+        if n["kind"] != "aux":
+            continue
+        probe = {"source": sender, "host": n["id"], "consumer": {"kind": "auxInput", "id": sender}}
+        p = plan(nodes, list(routes) + [probe])
+        res[n["id"]] = p["refused"].get(str(len(routes)))
+    return res
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "fixtures", "bridge_scope_cases.json")) as f:
@@ -264,6 +321,33 @@ def main():
                 print("FAIL  %s / candidates for %s (replacing %s): expected %r, got %r" % (c["name"], q["host"], q["replacing"], q["expect"], g))
             else:
                 print("ok    %s / candidates for %s (replacing %s)" % (c["name"], q["host"], q["replacing"]))
+        for q in c.get("sendCandidates", []):
+            total += 1
+            g = send_candidates(c["nodes"], c["routes"], q["sender"])
+            if g != q["expect"]:
+                failed += 1
+                print("FAIL  %s / send candidates for %s: expected %r, got %r" % (c["name"], q["sender"], q["expect"], g))
+            else:
+                print("ok    %s / send candidates for %s" % (c["name"], q["sender"]))
+        for q in c.get("near", []):
+            total += 1
+            g = World(c["nodes"]).is_near(q["sender"], q["aux"])
+            if g != q["expect"]:
+                failed += 1
+                print("FAIL  %s / near %s -> %s: expected %r, got %r" % (c["name"], q["sender"], q["aux"], q["expect"], g))
+            else:
+                print("ok    %s / near %s -> %s" % (c["name"], q["sender"], q["aux"]))
+        # The per-pair door agrees with the plan on every send of the case (the cycle apart).
+        world = World(c["nodes"])
+        for i, r in enumerate(c["routes"]):
+            if r["consumer"]["kind"] != "auxInput":
+                continue
+            total += 1
+            pair = world.send_refusal(r["source"], r["host"])
+            want = c["expect"]["refused"].get(str(i))
+            if pair != (None if want == "cycle" else want):
+                failed += 1
+                print("FAIL  %s / the pair door for route %d: %r vs the plan's %r" % (c["name"], i, pair, want))
     print("\n%d checks, %d failed" % (total, failed))
     print("ALL PASS" if failed == 0 else "FAILED")
     return 1 if failed else 0

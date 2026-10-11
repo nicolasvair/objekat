@@ -201,6 +201,7 @@ extension EditViewModel {
     func createFXLink(from hostID: UUID, pluginIDs: [UUID], name: String? = nil,
                       undo: Bool = true) -> UUID? {
         guard engine != nil, let chain = chainPlugins(hostID), !pluginIDs.isEmpty else { return nil }
+        guard !(isSendChainHost(hostID) && find(id: hostID) == nil) else { return nil }   // a send holds no bin
         let leaves = Self.flattenLeaves(chain)
         var loc: SeriesLocation?
         var found: [(index: Int, plugin: ObjectPlugin)] = []
@@ -297,6 +298,7 @@ extension EditViewModel {
     func attachFXLink(_ linkID: UUID, to hostID: UUID, at place: (SeriesLocation, Int)? = nil,
                       undo: Bool = true) -> UUID? {
         guard engine != nil, let link = fxLink(linkID), let chain = chainPlugins(hostID) else { return nil }
+        guard !(isSendChainHost(hostID) && find(id: hostID) == nil) else { return nil }   // a send holds no bin
         if let existing = Self.fxBlocks(in: chain).first(where: { $0.fxBlock?.linkID == linkID }) {
             if existing.fxBlock?.isDetached == true {
                 return reattachFXBlock(hostID: hostID, blockID: existing.id, undo: undo) ? existing.id : nil

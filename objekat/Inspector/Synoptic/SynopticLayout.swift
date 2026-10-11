@@ -499,12 +499,84 @@ enum SynopticLayout {
         /// The 'stems' zone at the foot (replacing the Out pill): choosing the output stem.
         /// nil for a bus.
         var stemsZone: CGRect? = nil
-        /// The 'sends' zone at the foot (just before the stems): one row per targeted aux.
-        /// nil if the object has no reachable aux.
-        var sendsZone: CGRect? = nil
+        /// One card per outgoing send, in a column BESIDE the trunk (@see SendCardPlacement).
+        var sendCards: [SendCardPlacement] = []
+        /// The three fixed slots a send card can be dropped on (input, pre-fader, post-fader); a
+        /// position inside the chain is dropped on the trunk's own insert points.
+        var sendSlotDrops: [SendSlotDrop] = []
+        /// The "+ Send to…" button, in the post-fader slot, after its cards. nil = this object does not send.
+        var addSendButton: CGRect? = nil
         /// The head of a bus's chain (aux / group): a widened 'source' box carrying the infinite
         /// option and, for an aux, the sends it receives. nil when the head is the plain pill.
         var busHeadZone: CGRect? = nil
+    }
+
+    /// One outgoing send, laid as a card in the column beside the trunk. `anchor` is the point of the
+    /// trunk the send is taken at: the card's wire leaves it sideways. Cards never sit in a branch of a
+    /// parallel block nor in an FX link: the anchors are the ROOT series' own insert points and the
+    /// three fixed slots.
+    ///
+    /// INC 3 — a send that carries plugins is a BOX, read top to bottom as the signal goes (Q-U19): one
+    /// row per plugin in processing order, then the "+" row, then, at the BOTTOM, the send's own line
+    /// (today's card: aux, level, on/off). A send without plugin is today's card and nothing else; its
+    /// "+" shows on hover just above the line (`plusRect` then lies outside `frame`).
+    struct SendCardPlacement: Identifiable {
+        var id: UUID { send.id }
+        let send: SynopticSend
+        /// The whole box (the card alone when the send carries no plugin).
+        let frame: CGRect
+        let anchor: CGPoint
+
+        var hasPlugins: Bool { !send.plugins.isEmpty }
+        /// The send's own line, at the bottom of the box.
+        var headerRect: CGRect {
+            CGRect(x: frame.minX, y: frame.maxY - SynopticLayout.sendCardH,
+                   width: frame.width, height: SynopticLayout.sendCardH)
+        }
+        /// One rect per plugin, top to bottom in processing order.
+        var pluginRows: [CGRect] {
+            send.plugins.indices.map { i in
+                CGRect(x: frame.minX, y: frame.minY + CGFloat(i) * SynopticLayout.sendPluginRowH,
+                       width: frame.width, height: SynopticLayout.sendPluginRowH)
+            }
+        }
+        /// The "+": the row between the last plugin and the line; with no plugin, a strip just ABOVE
+        /// the card (shown on hover only).
+        var plusRect: CGRect {
+            let h = SynopticLayout.sendPlusRowH
+            return CGRect(x: frame.minX, y: headerRect.minY - h, width: frame.width, height: h)
+        }
+        /// Where the wire from the trunk arrives: the left edge, at the TOP of the box — its first
+        /// row, or the line itself when there is no plugin.
+        var entry: CGPoint {
+            CGPoint(x: frame.minX, y: frame.minY + SynopticLayout.sendBoxFirstRowH(plugins: send.plugins.count) / 2)
+        }
+        /// The y of insertion slot `index` (0 = above the first row … N = under the last row).
+        func insertLineY(_ index: Int) -> CGFloat {
+            frame.minY + CGFloat(min(max(0, index), send.plugins.count)) * SynopticLayout.sendPluginRowH
+        }
+        /// The insertion slot a plugin let go at `point` lands in, counted from the top: the nearest
+        /// boundary between two rows; anywhere on the "+" row or on the send's line = the end. nil when
+        /// the point is outside the box.
+        func insertIndex(at point: CGPoint) -> Int? {
+            let zone = hasPlugins ? frame : frame.union(plusRect)
+            guard zone.contains(point) else { return nil }
+            let n = send.plugins.count
+            guard n > 0 else { return 0 }
+            let k = Int(((point.y - frame.minY) / SynopticLayout.sendPluginRowH).rounded())
+            return min(max(0, k), n)
+        }
+    }
+
+    /// A fixed slot of the sends (`.input`, `.preFader`, `.postFader`): where a dragged send card is
+    /// taken to. `rect` is the detection band across the trunk and the card column; `previewFrame` the
+    /// card-sized rectangle shown on hover, at the slot's anchor.
+    struct SendSlotDrop: Identifiable {
+        var id: SynopticSendSlot { slot }
+        let slot: SynopticSendSlot
+        let anchor: CGPoint
+        let rect: CGRect
+        let previewFrame: CGRect
     }
 
     static let sourceW: CGFloat = 64
@@ -540,6 +612,25 @@ enum SynopticLayout {
     static let zoneTitleH: CGFloat = 20     // the height of the title row of a box holding rows
     static let zonePadV: CGFloat = 6
 
+    // The send CARDS (outgoing sends): a column beside the trunk, each wired to the trunk at its anchor.
+    static let sendCardW: CGFloat = 236
+    static let sendCardH: CGFloat = 28
+    static let sendCardGap: CGFloat = 6     // between two stacked cards
+    static let sendColumnGap: CGFloat = 34  // between the trunk's extent and the column (room for the wire)
+    static let sendAddW: CGFloat = 120      // the "+ Send to…" button
+    static let sendAddH: CGFloat = 24
+    static let sendSlotHalfH: CGFloat = 12  // half the height of a fixed slot's detection band
+    // A send's BOX (INC 3): its plugins' rows above the line, and the "+" row between them and the line.
+    static let sendPluginRowH: CGFloat = 22
+    static let sendPlusRowH: CGFloat = 18
+
+    /// The height of a send's box: today's card with no plugin; rows + "+" + the line otherwise.
+    static func sendBoxHeight(plugins n: Int) -> CGFloat {
+        n <= 0 ? sendCardH : CGFloat(n) * sendPluginRowH + sendPlusRowH + sendCardH
+    }
+    /// The height of the box's FIRST row — where the trunk's wire arrives.
+    static func sendBoxFirstRowH(plugins n: Int) -> CGFloat { n <= 0 ? sendCardH : sendPluginRowH }
+
     /// The height of a titled box holding `rows` send rows.
     static func rowsZoneH(_ rows: Int) -> CGFloat {
         zoneTitleH + CGFloat(rows) * sendRowH + zonePadV
@@ -548,14 +639,16 @@ enum SynopticLayout {
     /// - Parameters:
     ///   - araCardWidth: non-nil = the audio object carries an ARA source: its card (this wide) hangs under the
     ///     'audio file' frame, and the start gain and the chain move down by its height.
-    ///   - sendRows: how many outgoing sends are shown at the foot (0 = no 'sends' zone).
+    ///   - sends: the outgoing sends, one card each, each at its `slot` (@see SendCardPlacement).
+    ///   - sendsEnabled: this object can send (it gets the card column and the "+ Send to…" button even
+    ///     with no send yet).
     ///   - receivedRows: the sends an aux receives, listed in its chain head.
     ///   - infiniteOption: the head carries the 'infinite' checkbox (a top-level aux / group).
     static func diagram(for root: SynopticNode, chainInDb: Float = 0, chainOutDb: Float = 0,
                         midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         mixWide: Bool = false, stems: Bool = false,
-                        sendRows: Int = 0, receivedRows: Int = 0,
+                        sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
                         infiniteOption: Bool = false) -> Diagram {
         let chainSize = measure(root)
         // A bus's head: the 'Source' pill widens into a box as soon as it carries the infinite
@@ -568,8 +661,11 @@ enum SynopticLayout {
 
         // Everything is centred on a single vertical column.
         let contentW = max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0,
-                           sendRows > 0 ? sendsZoneW : 0, araCardWidth ?? 0)
+                           araCardWidth ?? 0)
         let centerX = margin + contentW / 2
+        // The send cards' column, to the right of everything the trunk's axis carries.
+        let hasSendColumn = sendsEnabled || !sends.isEmpty
+        let columnX = margin + contentW + sendColumnGap
 
         // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP.
         let leadRect = CGRect(x: centerX - leadW / 2, y: margin, width: leadW, height: leadH)
@@ -618,6 +714,7 @@ enum SynopticLayout {
 
         var clipZone: CGRect? = nil
         var afterGainY = placement.exit.y + chainGainGap   // the top of the element following the gain
+        let afterGainTop = afterGainY                      // (kept: the pre-fader send anchor lies on that wire)
         if mix {
             let clipRect = CGRect(x: centerX - clipW / 2, y: afterGainY,
                                   width: clipW, height: clipZoneH)
@@ -632,41 +729,92 @@ enum SynopticLayout {
                       to: CGPoint(x: centerX, y: afterGainY), style: .connector))
         }
 
-        // The 'sends' zone: branches towards the auxes, taken AFTER the object's mix and just
-        // before its output — hence its place at the foot, between the clip zone and the stems.
-        var sendsZone: CGRect? = nil
-        if sendRows > 0 {
-            let h = rowsZoneH(sendRows)
-            let r = CGRect(x: centerX - sendsZoneW / 2, y: afterGainY, width: sendsZoneW, height: h)
-            sendsZone = r
-            if mix {
-                placement.cables.append(
-                    Cable(from: CGPoint(x: centerX, y: r.minY - ioGap),
-                          to: CGPoint(x: centerX, y: r.minY), style: .connector))
-            }
-            afterGainY = r.maxY + ioGap
-        }
-
         // The foot box: the 'stems' zone (a selectable output) or the 'Out' pill.
         let bottomW = stems ? stemsZoneW : outW
         let bottomH = stems ? stemsZoneH : pillH
         let outPill = CGRect(x: centerX - bottomW / 2, y: afterGainY, width: bottomW, height: bottomH)
         let stemsZone: CGRect? = stems ? outPill : nil
-        if mix || sendsZone != nil {
-            // clip zone / sends → foot
+        if mix {
+            // clip zone → foot
             placement.cables.append(
                 Cable(from: CGPoint(x: centerX, y: outPill.minY - ioGap),
                       to: CGPoint(x: centerX, y: outPill.minY), style: .connector))
         }
 
-        let canvasW = contentW + 2 * margin
-        let canvasH = outPill.maxY + margin
+        // The send cards: each hangs at an ANCHOR of the trunk (the input wire, one of the root series'
+        // insert points, the wire between the OUT gain and the clip zone, the wire under the clip zone),
+        // in a column beside it, stacked top → bottom in anchor order without overlapping.
+        var sendCards: [SendCardPlacement] = []
+        var sendSlotDrops: [SendSlotDrop] = []
+        var addSendButton: CGRect? = nil
+        var columnBottom: CGFloat = 0
+        if hasSendColumn {
+            let inputY = (headBottomY + inGainCenter.y - gainHalfGap) / 2
+            let outWireTop = outGainCenter.y + gainHalfGap
+            let preY = (outWireTop + afterGainTop) / 2
+            let postY = outPill.minY - ioGap / 2
+            let rootInserts = placement.inserts.filter { $0.seriesID == root.id }
+            let lastIndex = rootInserts.map(\.insertIndex).max() ?? 0
+            func anchor(of slot: SynopticSendSlot) -> CGPoint {
+                switch slot {
+                case .input:     return CGPoint(x: centerX, y: inputY)
+                case .preFader:  return CGPoint(x: centerX, y: preY)
+                case .postFader: return CGPoint(x: centerX, y: postY)
+                case .chain(let i):
+                    let k = min(max(0, i), lastIndex)
+                    return rootInserts.first(where: { $0.insertIndex == k })?.center
+                        ?? CGPoint(x: centerX, y: placement.entry.y)
+                }
+            }
+            struct Item { let offset: Int; let send: SynopticSend; let anchor: CGPoint }
+            var items: [Item] = []
+            for (offset, send) in sends.enumerated() {
+                items.append(Item(offset: offset, send: send, anchor: anchor(of: send.slot)))
+            }
+            let ordered: [Item] = items.sorted { (l: Item, r: Item) -> Bool in
+                if l.anchor.y != r.anchor.y { return l.anchor.y < r.anchor.y }
+                return l.offset < r.offset
+            }
+            var nextY = -CGFloat.infinity
+            for item in ordered {
+                // The box hangs by its TOP row: that row's centre sits at the anchor (pushed down by a
+                // box above), and the box grows downwards with its plugins.
+                let n = item.send.plugins.count
+                let y = max(item.anchor.y - sendBoxFirstRowH(plugins: n) / 2, nextY)
+                let frame = CGRect(x: columnX, y: y, width: sendCardW, height: sendBoxHeight(plugins: n))
+                sendCards.append(SendCardPlacement(send: item.send, frame: frame, anchor: item.anchor))
+                nextY = frame.maxY + sendCardGap
+                columnBottom = max(columnBottom, frame.maxY)
+            }
+            if sendsEnabled {
+                let y = max(anchor(of: .postFader).y - sendAddH / 2, nextY)
+                let r = CGRect(x: columnX, y: y, width: sendAddW, height: sendAddH)
+                addSendButton = r
+                columnBottom = max(columnBottom, r.maxY)
+            }
+            if sendsEnabled {
+                let right = columnX + sendCardW
+                for slot in [SynopticSendSlot.input, .preFader, .postFader] {
+                    let a = anchor(of: slot)
+                    sendSlotDrops.append(SendSlotDrop(
+                        slot: slot, anchor: a,
+                        rect: CGRect(x: centerX - cardW / 2, y: a.y - sendSlotHalfH,
+                                     width: right - (centerX - cardW / 2), height: 2 * sendSlotHalfH),
+                        previewFrame: CGRect(x: columnX, y: a.y - sendCardH / 2,
+                                             width: sendCardW, height: sendCardH)))
+                }
+            }
+        }
+
+        let canvasW = contentW + 2 * margin + (hasSendColumn ? sendColumnGap + sendCardW : 0)
+        let canvasH = max(outPill.maxY, columnBottom) + margin
         return Diagram(canvasSize: CGSize(width: canvasW, height: canvasH),
                        sourcePill: leadRect, outPill: outPill, placement: placement,
                        chainInGain: ChainGain(dB: chainInDb, center: inGainCenter),
                        chainOutGain: ChainGain(dB: chainOutDb, center: outGainCenter),
                        midiZone: midiZone, instrumentSlot: instrumentSlot,
                        audioZone: audioZone, araCard: araCard, clipZone: clipZone, stemsZone: stemsZone,
-                       sendsZone: sendsZone, busHeadZone: busHead ? leadRect : nil)
+                       sendCards: sendCards, sendSlotDrops: sendSlotDrops, addSendButton: addSendButton,
+                       busHeadZone: busHead ? leadRect : nil)
     }
 }

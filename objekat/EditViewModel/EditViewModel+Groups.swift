@@ -102,12 +102,12 @@ extension EditViewModel {
 
         if group.needsChainCompile { scheduleChainCompile(.plugins(group)) }
         // The sends of the group ITSELF (a group can send towards an aux). Idempotent; if
-        // the target aux does not exist yet (a full rebuild), addSend is a no-op and
+        // the target aux does not exist yet (a full rebuild), the bridge sync skips it and
         // resyncAllSends rewires at the end of the load/undo.
         syncSends(group)
 
-        // A second pass over the children: a send is only wired between siblings, so a
-        // sender listed BEFORE the aux it aims at failed on the first round. Idempotent.
+        // A second pass over the children: a sender listed BEFORE the aux it aims at may have been
+        // skipped on the first round. Idempotent.
         for child in children where !child.sends.isEmpty { syncSends(child) }
     }
 

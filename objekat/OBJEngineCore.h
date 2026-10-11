@@ -161,14 +161,8 @@
 //                    envois qui le visent, puis passe sa chaîne de FX et ses fades.
 // updateAuxWindow  : bornes [start,end] + fadeIn (entrée) / fadeOut (queue, sortie).
 // removeAux        : supprime le container aux ET les envois qui le visaient.
-// addSend/removeSend/setSendLevel : ObjAuxSendPlugin en fin de chaîne de l'émetteur (donc
-//                    post-fader et post-fenêtre : ce qu'on entend est ce qu'on envoie).
-//
-// PORTÉE : émetteur et aux doivent être FRÈRES. Deux fratries : enfants directs d'un même
-// ContainerClip (le retour est monté dans le graphe local du groupe), ou tous deux TOP-LEVEL
-// (le retour est monté à la racine de l'Edit, au-dessus de la somme des pistes). Franchir la
-// frontière d'un container reste impossible — c'en est une, dans les deux sens. Tout appel
-// hors de ces cas est refusé (et journalisé une fois). @see EditViewModel.canRouteSend
+// Les ENVOIS sont posés par la transaction du pont (voir plus bas) ; la portée est celle du modèle
+// (@see EditViewModel.canRouteSend, BridgeScope).
 - (void)createAux:(NSString*)auxID lane:(NSInteger)lane;
 - (void)createAux:(NSString*)auxID;   // compat : lane 0
 - (void)updateAuxWindow:(NSString*)auxID
@@ -177,9 +171,33 @@
                  fadeIn:(double)fadeInSecs
                 fadeOut:(double)fadeOutSecs;
 - (void)removeAux:(NSString*)auxID;
-- (void)addSend:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb;
-- (void)removeSend:(NSString*)senderID toAux:(NSString*)auxID;
 - (void)setSendLevel:(NSString*)senderID toAux:(NSString*)auxID levelDb:(float)levelDb;
+
+// SENDS ON THE BRIDGE (patch 0039, docs/plan_sends_rework.md). Since INC 1 every send goes through
+// the audio bridge, in one transaction with the sidechain taps (beginBridgeSync … commitBridgeSync):
+// ensureBridgeSend lays (or confirms) ONE send — an engine-only plugin at the end of the sender's
+// chain carrying the level — and commitBridgeSync removes the ones that were not confirmed and
+// rewrites each aux's list of sends. The scope is the model's (BridgeScope): the engine lays what it is
+// told. ensureBridgeSend returns 0 = not laid (aux not born yet / no chain), 1 = laid and already
+// there, 2 = laid with a NEW plugin (the caller pushes the automation curves again), -1 = refused: the
+// sender's plugin list is full (the model shows it as `chainFull`).
+//   setSendLevel     : hot (the plugin smooths the ramp), no rebuild.
+//   setSendGated     : the audibility gate of a send (a group's mute acts downstream of the tap), hot.
+// `position`: where the send sits in its sender's list — 0 post-fader (the end), 1 pre-fader, 2 input,
+// 3 in the chain (placed per the order of the last compile, @see OBJBridgeSendPlugin.h). The actual move
+// is made by the transaction's commit and by every compile of the sender's chain, so that a recompile and
+// a sync cannot fight over the order.
+//
+// INC 3 — a send can CARRY plugins (docs/plan_sends_rework.md §D.2.A). The materialisation rule: a
+// send's engine plugin exists iff the send is ALIVE or carries plugins; `alive:NO` lays it disabled
+// (its plugins stay loaded with their editors, nothing is processed, the aux has no reader for it). The
+// CONTENT of a send (its plugins) is the compile's (`compileUserRackForObjectID:tree:sendChains:…`);
+// this transaction owns the ROUTE only. retargetBridgeSend re-keys a send onto another aux IN PLACE
+// (plugin, level curve and carried plugins kept, no instance re-created); call it BEFORE the sync that
+// follows the model change. NO = nothing to re-key, the sync removes and lays as before.
+- (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated position:(NSInteger)position alive:(BOOL)alive;
+- (BOOL)retargetBridgeSendFrom:(NSString* _Nonnull)senderID oldAux:(NSString* _Nonnull)oldAuxID newAux:(NSString* _Nonnull)newAuxID;
+- (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
 
 // MARK: - Bake — rendu offline
 // Rend la sortie complète du sous-mix d'un groupe (FolderTrack + sous-pistes : dry, bus FX,
@@ -428,9 +446,13 @@
 //   bloc // : @{@"kind":@"rack", @"voices":@[ @[<entrées série>], … ]}
 //   bac FX  : @{@"id":…, @"kind":@"fxlink", @"plugins":@[<feuilles>], @"enabled":@(BOOL),
 //              @"gainDb":…, @"pan":…} — déplié en feuilles + un ObjGain de sortie
+// `sendChains` : les plugins que PORTE chaque envoi de l'objet — @[ @{@"aux":…, @"plugins":@[<feuilles>]} ]
+// (INC 3) ; compilés dans la liste propre du plugin d'envoi, posé désactivé si le pont ne l'a pas
+// encore posé. @[] = aucun envoi ne porte de plugin.
 // Retourne la liste des pluginKeys NON RÉSOLUS (introuvables) — le caller les retire du modèle.
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
+                                       sendChains:(NSArray<NSDictionary*>* _Nonnull)sendChains
                                         chainInDb:(float)chainInDb
                                        chainOutDb:(float)chainOutDb;
 
@@ -568,6 +590,8 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)commitBridgeSync;
 // The newest published build, as plain data (plan §4.8): `build`, `taps`, `readers`. nil = none yet.
 - (NSDictionary<NSString*, id>* _Nullable)bridgeReport;
+// The sender's plugin list as roles, in order ({index, role, key?, aux?, tap_position?, type?}); nil if the host is unknown.
+- (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString* _Nonnull)uuid;
 // YES if the LIVE instance can take a sidechain (an AU still loading answers NO: not known yet).
 - (BOOL)pluginCanSidechain:(NSString* _Nonnull)pluginKey;
 // DEBUG tool: sets a numeric property on a live plugin's state (the latency tester's `time`).

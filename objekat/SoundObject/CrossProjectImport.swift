@@ -212,6 +212,12 @@ enum CrossProjectImport {
             }
             func cloneSeries(_ series: [ObjectPlugin]) -> [ObjectPlugin] {
                 series.flatMap { p -> [ObjectPlugin] in
+                    // A marker follows its send: remapped onto the pasted aux, or dropped with the send
+                    // when the aux is not in the lot (@see the `sends` remap below).
+                    if let m = p.sendMarker {
+                        guard let newAux = objectIDMap[m.auxID] else { return [] }
+                        return [ObjectPlugin.makeSendMarker(for: newAux)]
+                    }
                     if let fb = p.fxBlock { return cloneBlock(p, fb) }
                     if let rack = p.rack {
                         let newID = UUID()
@@ -259,7 +265,8 @@ enum CrossProjectImport {
             no.id = objectIDMap[o.id] ?? UUID()
             no.stemID = nil
 
-            let (newPlugins, pluginIDMap) = clonePlugins(o.plugins)
+            let (newPlugins, trunkIDMap) = clonePlugins(o.plugins)
+            var pluginIDMap = trunkIDMap
             no.plugins = newPlugins
 
             // An ARA source (Melodyne): a brand-new plugin id (never shared, never linked), the archive
@@ -277,10 +284,19 @@ enum CrossProjectImport {
                             sidechain: remapSidechain(inst.sidechain))
             }
 
+            // A send follows its aux into the batch or is dropped — WITH its plugins (INC 3): the third
+            // root is cloned cold like the chain (fresh ids) but INDEPENDENT — a send's plugin is never linked — and its
+            // old → new ids join the table, so that the curves aimed at a send plugin follow. A send
+            // that is dropped leaves its plugins out of the table: their curves are dropped below.
             no.sends = o.sends.compactMap { send -> AuxSend? in
                 guard let newAux = objectIDMap[send.auxID] else { return nil }
                 var s = send
                 s.auxID = newAux
+                if !send.plugins.isEmpty {
+                    let (cloned, sendIDMap) = clonePlugins(SendChain.sanitised(send.plugins))
+                    s.plugins = SendChain.sanitised(cloned)   // unlinked, whatever clonePlugins remapped
+                    pluginIDMap.merge(sendIDMap) { a, _ in a }
+                }
                 return s
             }
 

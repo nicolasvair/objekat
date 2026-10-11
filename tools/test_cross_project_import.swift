@@ -11,6 +11,7 @@
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/Marker.swift \
@@ -21,12 +22,18 @@
 //         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
 //         ../objekat/SoundObject/FXLink.swift \
+//         ../objekat/SoundObject/SendPosition.swift \
+//         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/CrossProjectImport.swift \
+//         ../objekat/SoundObject/PluginIDUniqueness.swift \
+//         ../objekat/SoundObject/PluginIDReport.swift \
+//         ../objekat/Shared/BridgeScope.swift \
+//         ../objekat/Shared/ScriptCanvasMemory.swift \
 //         test_cross_project_import.swift \
 //         -o /tmp/cpi && /tmp/cpi
 //
@@ -202,6 +209,49 @@ enum CrossProjectImportTest {
                   plan.clips[0].automation.isEmpty)
             check("its automationTouchOrder entry is dropped along with it",
                   plan.clips[0].automationTouchOrder.isEmpty)
+        }
+
+        // MARK: - Send positions travel with their send (INC 2 of the sends rework)
+
+        do {
+            let auxOld = UUID()
+            let auxObj = aux(id: auxOld, startTime: 0, lane: 5)
+            let marker = ObjectPlugin.makeSendMarker(for: auxOld)
+            let src = clip(startTime: 0, lane: 0,
+                          plugins: [plugin(), marker, plugin()],
+                          sends: [AuxSend(auxID: auxOld, levelDb: -3)])
+            let pre = clip(startTime: 0, lane: 1, sends: [AuxSend(auxID: auxOld, levelDb: -3, tap: .preFader)])
+            let cb = CrossProjectImport.Clipboard(clips: [src, pre, auxObj], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            let newAux = plan.clips[2].id
+            let p0 = plan.clips[0].plugins
+            check("the marker of a send inside the batch stays between its plugins",
+                  p0.count == 3 && p0[1].isSendMarker && !p0[0].isSendMarker && !p0[2].isSendMarker)
+            check("and names the PASTED aux", p0[1].sendMarker?.auxID == newAux)
+            check("with an id of its own", p0[1].id != marker.id)
+            check("the position reads chain(1) on the pasted object", plan.clips[0].sendPosition(auxID: newAux) == .chain(1))
+            check("a pre-fader tap travels with its send", plan.clips[1].sendPosition(auxID: newAux) == .preFader)
+            check("the audit finds nothing", SendMarkerAudit.violations(items: plan.clips).isEmpty,
+                  "\(SendMarkerAudit.violations(items: plan.clips))")
+        }
+
+        do {
+            let outside = UUID()   // an aux that is NOT in the lot
+            let src = clip(startTime: 0, lane: 0,
+                          plugins: [plugin(), ObjectPlugin.makeSendMarker(for: outside), plugin()],
+                          sends: [AuxSend(auxID: outside, levelDb: -3)])
+            let cb = CrossProjectImport.Clipboard(clips: [src], comments: [],
+                                                  consolidateDefinitions: [:],
+                                                  originFolder: originFolder,
+                                                  originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            check("a send to an aux OUTSIDE the batch is dropped, and its marker with it",
+                  plan.clips[0].sends.isEmpty && plan.clips[0].plugins.count == 2
+                  && !plan.clips[0].plugins.contains(where: \.isSendMarker))
+            check("the audit finds nothing", SendMarkerAudit.violations(items: plan.clips).isEmpty)
         }
 
         // MARK: - A consolidated object always becomes a new definition
@@ -386,6 +436,78 @@ enum CrossProjectImportTest {
             _ = CrossProjectImport.plan(cbBefore, target: .init(pasteTime: 100, pasteLane: 9))
             check("plan() leaves the clipboard argument itself unmodified (value semantics, pure function)",
                   cbAfter.clips == cbBefore.clips)
+        }
+
+        // MARK: - The plugins ON a send (INC 3): cloned with the send, dropped with it
+
+        do {
+            let auxObj = aux(startTime: 0, lane: 3)
+            let link = UUID()
+            let onSend = plugin(linkGroupID: link), onSend2 = plugin()
+            let partner = plugin(linkGroupID: link)
+            func lane(_ p: ParamRef) -> AutomationLane { AutomationLane(param: p, points: [AutomationPoint(t: 0, v: 1)]) }
+            let a = clip(startTime: 0, lane: 0, plugins: [plugin()],
+                         sends: [AuxSend(auxID: auxObj.id, levelDb: -6, plugins: [onSend, onSend2])],
+                         automation: [lane(.plugin(pluginKey: onSend2.id, paramID: "p"))],
+                         automationTouchOrder: [.plugin(pluginKey: onSend.id, paramID: "p")])
+            let b = clip(startTime: 0, lane: 1, sends: [AuxSend(auxID: auxObj.id, plugins: [partner])])
+
+            // The aux travels with the batch.
+            let cb = CrossProjectImport.Clipboard(clips: [a, b, auxObj], comments: [], consolidateDefinitions: [:],
+                                                  originFolder: originFolder, originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
+            let pa = plan.clips[0], pb = plan.clips[1], paux = plan.clips[2]
+            check("send plugins: the send is remapped to the pasted aux, with its mini-chain",
+                  pa.sends.count == 1 && pa.sends[0].auxID == paux.id && pa.sends[0].plugins.count == 2 && pa.sends[0].levelDb == -6)
+            let oldIDs: Set<UUID> = [onSend.id, onSend2.id, partner.id]
+            let newIDs = pa.sends[0].plugins.map(\.id) + pb.sends[0].plugins.map(\.id)
+            check("send plugins: every id is fresh and unique", oldIDs.isDisjoint(with: newIDs) && Set(newIDs).count == 3)
+            check("send plugins: the pasted batch passes the id audit",
+                  PluginIDUniqueness.duplicates(items: plan.clips, stems: []).isEmpty)
+            check("send plugins: the state travels frozen", pa.sends[0].plugins.map(\.stateXML) == [onSend.stateXML, onSend2.stateXML])
+            let g1 = pa.sends[0].plugins[0].linkGroupID, g2 = pb.sends[0].plugins[0].linkGroupID
+            // NO LINK ON A SEND (decision of 10 October 2026): even a link internal to the batch goes.
+            check("send plugins: a linked one is pasted INDEPENDENT (no link kept, none created)",
+                  g1 == nil && g2 == nil && link != UUID())
+            check("send plugins: an unlinked one stays unlinked", pa.sends[0].plugins[1].linkGroupID == nil)
+            check("send plugins: no pasted object carries a linked send plugin",
+                  plan.clips.allSatisfy { SendChain.linkedSendPlugins(of: $0).isEmpty })
+            check("send plugins: the curve follows the plugin's new id",
+                  pa.automation.map(\.param) == [.plugin(pluginKey: pa.sends[0].plugins[1].id, paramID: "p")])
+            check("send plugins: the touch memory follows too",
+                  pa.automationTouchOrder == [.plugin(pluginKey: pa.sends[0].plugins[0].id, paramID: "p")])
+
+            // The aux stays behind: the send goes, and so do its plugins and their curves.
+            let cb2 = CrossProjectImport.Clipboard(clips: [a], comments: [], consolidateDefinitions: [:],
+                                                   originFolder: originFolder, originTime: 0, originLane: 0)
+            let alone = CrossProjectImport.plan(cb2, target: .init(pasteTime: 0, pasteLane: 0)).clips[0]
+            check("send plugins: aux outside the batch = the send is dropped with its plugins", alone.sends.isEmpty)
+            check("... and no orphan lane or touch memory is left behind",
+                  alone.automation.isEmpty && alone.automationTouchOrder.isEmpty)
+            check("... the trunk's plugin is still there", alone.plugins.count == 1)
+
+            // A lone linked send plugin (its partner not copied) is unlinked, like a trunk plugin.
+            let cb3 = CrossProjectImport.Clipboard(clips: [b, auxObj], comments: [], consolidateDefinitions: [:],
+                                                   originFolder: originFolder, originTime: 0, originLane: 0)
+            let lone = CrossProjectImport.plan(cb3, target: .init(pasteTime: 0, pasteLane: 0)).clips[0]
+            let trunkLone = CrossProjectImport.plan(
+                .init(clips: [clip(startTime: 0, lane: 0, plugins: [plugin(linkGroupID: UUID())])], comments: [],
+                      consolidateDefinitions: [:], originFolder: originFolder, originTime: 0, originLane: 0),
+                target: .init(pasteTime: 0, pasteLane: 0)).clips[0]
+            check("send plugins: a lone linked send plugin is unlinked (the trunk's own rule is not this test's business)",
+                  lone.sends[0].plugins[0].linkGroupID == nil && trunkLone.plugins.count == 1)
+
+            // Inside a group child.
+            let g = group(startTime: 0, lane: 0, children: [a])
+            let cb4 = CrossProjectImport.Clipboard(clips: [g, auxObj], comments: [], consolidateDefinitions: [:],
+                                                   originFolder: originFolder, originTime: 0, originLane: 0)
+            let pg = CrossProjectImport.plan(cb4, target: .init(pasteTime: 0, pasteLane: 0))
+            if case .group(let kids, _) = pg.clips[0].kind {
+                check("send plugins: a group child's mini-chain is cloned too",
+                      kids[0].sends.first?.plugins.count == 2
+                      && oldIDs.isDisjoint(with: kids[0].sends[0].plugins.map(\.id))
+                      && kids[0].automation.map(\.param) == [.plugin(pluginKey: kids[0].sends[0].plugins[1].id, paramID: "p")])
+            } else { check("send plugins: a group child's mini-chain is cloned too", false) }
         }
 
         print("\n\(total - fails.count)/\(total) passed")

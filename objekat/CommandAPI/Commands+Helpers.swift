@@ -74,6 +74,67 @@ extension CommandAdapters {
         }
     }
 
+    // MARK: Sends — position
+
+    /// The position a command asked for: `position` (+ `index`), or `before_plugin` / `after_plugin`
+    /// (a top-level plugin id, which means `chain`). `fallback` answers when nothing was asked.
+    static func parseSendPosition(_ p: CommandParams, on object: SoundObject,
+                                  fallback: SendPosition? = nil) throws -> SendPosition {
+        func topLevel(_ key: String) throws -> Int? {
+            guard let raw = try p.optionalString(key) else { return nil }
+            guard let id = UUID(uuidString: raw) else {
+                throw CommandError(code: .bad_params, message: "parameter '\(key)': invalid UUID ('\(raw)')")
+            }
+            guard let i = ObjectPlugin.chainIndex(ofTopLevelPlugin: id, in: object.plugins) else {
+                throw CommandError(code: .not_found,
+                                   message: "'\(key)': \(raw) is not a top-level plugin of this object's chain")
+            }
+            return i
+        }
+        let before = try topLevel("before_plugin")
+        let after = try topLevel("after_plugin")
+        if before != nil && after != nil {
+            throw CommandError(code: .bad_params, message: "give either before_plugin or after_plugin, not both")
+        }
+        let named = try p.optionalString("position")
+        if let named, named != "chain", before != nil || after != nil {
+            throw CommandError(code: .bad_params, message: "before_plugin / after_plugin mean position 'chain'")
+        }
+        if let i = before { return .chain(i) }
+        if let i = after { return .chain(i + 1) }
+        guard let named else {
+            if let fallback { return fallback }
+            throw CommandError(code: .bad_params, message: "parameter 'position' required (input, chain, pre_fader, post_fader)")
+        }
+        let index = try p.optionalInt("index")
+        if named == "chain" && index == nil {
+            throw CommandError(code: .bad_params, message: "position 'chain' needs 'index', 'before_plugin' or 'after_plugin'")
+        }
+        guard let position = SendPosition.named(named, index: index) else {
+            throw CommandError(code: .bad_params,
+                               message: "unknown position '\(named)' (input, chain, pre_fader, post_fader)")
+        }
+        return position
+    }
+
+    /// The position fields of a send, as `send.list` / `send.set_position` / `send.create` answer them.
+    static func sendPositionFields(of object: SoundObject, send: AuxSend) -> [String: JSONValue] {
+        let position = object.sendPosition(auxID: send.auxID) ?? .postFader
+        var out: [String: JSONValue] = ["position": .string(position.name),
+                                        // A send that is not post-fader follows the object's fades and
+                                        // window but not its volume / pan (Q-U5).
+                                        "follows_window": .bool(position != .postFader),
+                                        "index": .null, "after_plugin": .null, "before_plugin": .null]
+        if case .chain(let i) = position {
+            out["index"] = .int(i)
+            if let n = ObjectPlugin.neighbours(ofMarkerFor: send.auxID, in: object.plugins) {
+                out["after_plugin"] = n.after.map { .string($0.uuidString) } ?? .null
+                out["before_plugin"] = n.before.map { .string($0.uuidString) } ?? .null
+            }
+        }
+        return out
+    }
+
     // MARK: Plugins
 
     /// A plugin can live inside a BRANCH of a parallel block: the search has to flatten the
@@ -90,6 +151,37 @@ extension CommandAdapters {
             throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)")
         }
         return plugin
+    }
+
+    /// A SEND's mini-chain as a host (INC 3): plain plugins only, up to its own limit, never linked.
+    /// Throws `invalid_state` with the machine's reason (`send_chain_leaves_only`, `chainFull`,
+    /// `send_plugins_never_linked`) when `hostID` names a send's mini-chain and the gesture cannot
+    /// land there; nothing for an object or a stem.
+    static func requireRoomOnSend(adding: Int, to hostID: UUID, instrument: Bool = false,
+                                  in vm: EditViewModel) throws {
+        guard let why = vm.sendChainRefusal(adding: adding, to: hostID, instrument: instrument) else { return }
+        throw CommandError(code: .invalid_state,
+                           message: why == .full
+                               ? "the send's chain is full (\(SendChain.capacity) plugins)"
+                               : "a send takes plain plugins only (no instrument, parallel block, FX link or send)",
+                           details: .object(["reason": .string(why.rawValue)]))
+    }
+
+    /// `plugin.link` and a send's mini-chain: refused on either side (a send's plugin is never linked).
+    static func refuseLinkOnSend(_ hosts: [UUID], in vm: EditViewModel) throws {
+        guard hosts.contains(where: { vm.isSendChainHost($0) && vm.find(id: $0) == nil }) else { return }
+        throw CommandError(code: .invalid_state,
+                           message: "a plugin on a send is never linked: use plugin.copy",
+                           details: .object(["reason": .string(SendChain.Refusal.neverLinked.rawValue)]))
+    }
+
+    /// What `send.list` / `send.get` say of the plugins a send carries: the derived chain host (always
+    /// there, so that a script can lay the first plugin) and the plugins in processing order.
+    static func sendChainFields(sender: UUID, send: AuxSend) -> [String: JSONValue] {
+        ["chain_host": .string(SendChain.hostID(sender: sender, aux: send.auxID).uuidString),
+         "plugins": .array(send.plugins.map { p in
+             .object(["id": .string(p.id.uuidString), "name": .string(p.name), "enabled": .bool(p.isEnabled)])
+         })]
     }
 
     /// The ARA source of an object (Melodyne) is NOT a card of its chain: it is the clip's source, with
@@ -256,6 +348,12 @@ extension CommandAdapters {
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).
         if plugin.isRack { payload["is_rack"] = .bool(true) }
+        // A send's marker is not a plugin either: it only says where the send towards `send_marker.aux`
+        // taps the chain (`send.list` gives the position as a person reads it).
+        if let marker = plugin.sendMarker {
+            payload["is_send_marker"] = .bool(true)
+            payload["send_marker"] = .object(["aux": .string(marker.auxID.uuidString)])
+        }
         // An FX link's block is not a plugin either: its instances are listed under `plugins`, and
         // `plugin.set_param` & co. address THEM (they are ordinary instances, mirrors of the bin).
         if let block = plugin.fxBlock {
@@ -264,7 +362,7 @@ extension CommandAdapters {
             payload["detached"] = .bool(block.isDetached)
             payload["plugins"] = .array(block.plugins.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
         }
-        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil {
+        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil, plugin.sendMarker == nil {
             if let key = plugin.sidechain {
                 let why = bridgeStatus[plugin.id]
                 payload["sidechain"] = .object(["source": .string(key.sourceID.uuidString),

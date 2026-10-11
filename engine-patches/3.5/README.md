@@ -410,6 +410,48 @@ Checked as still biting: `develop` still had the linear `std::find`.
   Six files; most of the 350 lines of `tracktion_EditNodeBuilder.cpp` in the diff are the
   re-indentation of the file branch of `createNodeForAudioClip` (`git diff -w` shows ~20). Written
   with `docs/ara_melodyne_plan.md` §3 step 2; the runtime proof comes with the app bridge (step 3).
+- `0039` — **sends on the audio bridge (docs/plan_sends_rework.md, INC 1).** A send is now an
+  engine-only plugin (`ObjBridgeSendPlugin`, app side) laid at the END of the sender's chain; the
+  builder turns it into a `BridgeTapNode` in **copy mode** (`BridgeTapSource::processesTapCopy()`):
+  the node runs the plugin's `applyToBuffer` on its COPY of the signal, ONCE per block (never in
+  128-sample sub-blocks), and writes that copy to the ring — the signal passing through is never
+  touched. That removes the "an automated send overwrites its own tap" defect of the legacy
+  `ObjAuxSendPlugin` (measured ~6 dB under the curve on `main`). The aux return
+  (`ObjAuxReturnNode`, `tracktion_ContainerClipNode.*`) reads the rings through ONE `BridgeReader` per
+  send, all sharing one declared latency X (`BridgeBuild::registerAuxReaders`, `resolveGroup` in
+  `tracktion_ObjBridgeCore.h`: `X = max(L_ref, max over the group of the cached tap ages)`, each reader
+  delaying by `X - age`), the aux clip listing its sends in the state property `objBridgeSends`
+  (comma-separated plugin ids, written by the app in the commit of the bridge transaction). A
+  container holding only auxes used to produce NO node (`createNodeForContainerClip` returned `{}`):
+  it now gets a `SilentNode` as its content. Files: `tracktion_ObjBridgeCore.h`, `tracktion_ObjBridge.*`,
+  `tracktion_ObjBridgeNodes.*`, `tracktion_ContainerClipNode.*`, `tracktion_EditNodeBuilder.cpp`.
+  **INC 2 of the sends rework (positionable sends, session format 22) adds NO patch**: where a send taps is decided by
+  the app (`applySendPositionsForKey:` in `OBJEngineCore.mm` moves the engine-only send plugin in the sender's list,
+  the envelope of a pre-fader send is applied by the plugin itself on the node's copy); the fork needed nothing new.
+  The code of `0037` / `0039` that served the deleted pre-bridge path (the `ContainerAuxSend` scan in the aux return)
+  is left in place, DORMANT: it is a type test that no plugin of the app satisfies any more. Removing it is a
+  patch of its own, not worth a fork commit on its own.
+- `0040` — **plugins on a send (docs/plan_sends_rework.md §D.2, INC 3).** `BridgeTapSource` gains two
+  virtuals: `getTapChain()` (the send's mini-chain, a `PluginList`; null by default) and
+  `processTapEnvelope()` (the envelope the send lays on its copy AFTER its plugins and before its level —
+  the sender's window and fades; a no-op by default). When the chain holds at least one ENABLED plugin
+  (and the tap plugin itself is enabled), `createPluginNodeForList` shares the tapped node between the
+  `BridgeTapNode` (the dry, passed through untouched, as before) and a WET branch: `BridgeTapHeadNode`
+  (a plain 2-channel copy), the chain's nodes (`createPluginNodeForList` on the mini-chain, so the same
+  priming rules as any chain), then a `LatencyPrimingNode` for the branch's whole latency. The tap's age —
+  what `registerTap` receives and what the aux's readers align on — is the WET's latency (upstream + the
+  mini-chain's): a latent plugin on a send ages the tap at the aux return and never delays the signal
+  that passes through. `BridgeTapNode` then calls `processTapEnvelope` and the plugin's `applyToBuffer`
+  (the level) on the wet branch's output instead of its own copy, both at `block time - the wet's
+  latency`: an effect's tail follows the owner's fade-out and dies at its window's end, and a latent
+  mini-chain keeps the envelope on the sample. Without a chain the builder makes the exact node of
+  `0039` (the only addition on that path is the call of `processTapEnvelope`, empty unless the app
+  overrides it). **Regenerated on 10 October** (the fork commit was AMENDED, not followed by a `0041`:
+  the first version, `2cd66f2668f`, called the hook `processTapHead` and ran it in the head node, BEFORE
+  the plugins — a tail rang past the owner's end). Local branch `objekat-sends-0040`, commit
+  `e69b952520a`, **published nowhere**: this file is the only copy of that code. Files:
+  `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`, `tracktion_EditNodeBuilder.cpp`. The next
+  number is `0041`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit

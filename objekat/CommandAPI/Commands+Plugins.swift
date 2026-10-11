@@ -71,6 +71,12 @@ extension CommandRegistry {
                 "chain_in_db": .number(Double(gains.inDb)),
                 "chain_out_db": .number(Double(gains.outDb)),
             ]
+            // A send's mini-chain (INC 3): who it belongs to.
+            if vm.find(id: host) == nil, let key = vm.sendChainKey(host) {
+                payload["is_send_chain"] = .bool(true)
+                payload["sender"] = .string(key.sender.uuidString)
+                payload["aux"] = .string(key.aux.uuidString)
+            }
             if let object = vm.find(id: host) {
                 payload["instruments"] = .array(object.instruments.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) })
             }
@@ -162,6 +168,9 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
             let available = try CommandAdapters.resolvePlugin(p, in: vm)
+            // A send's mini-chain: plain plugins only (no instrument, no ARA source), its own limit.
+            try CommandAdapters.requireRoomOnSend(adding: 1, to: host,
+                                                  instrument: available.isInstrument || available.isARA, in: vm)
             // An ARA plugin (Melodyne VST3) is not a chain insert: on an audio object it becomes the
             // clip's SOURCE (`slot: "ara_source"`), and a host that cannot take one refuses.
             if available.isARA {
@@ -185,7 +194,8 @@ extension CommandRegistry {
             let after = vm.chainPlugins(host) ?? []
             // `addPlugin` removes the entry if the engine cannot instantiate it: not checking
             // would have a command return "ok" while it laid nothing down.
-            guard after.count > before.count, let added = after.last else {
+            // `last(where:)`: a send's marker can sit at the end of the array (an append lands behind it).
+            guard after.count > before.count, let added = after.last(where: { !$0.isSendMarker }) else {
                 throw CommandError(code: .engine_error,
                                    message: "the engine could not instantiate '\(available.name)'")
             }
@@ -245,6 +255,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: (from == to) ? 0 : ids.count, to: to, in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .move)
             return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -266,6 +277,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: (from == to) ? 0 : ids.count, to: to, in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .copy)
             return .object(["from": .string(from.uuidString), "to": .string(to.uuidString),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -289,6 +301,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(to) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
             }
+            try CommandAdapters.refuseLinkOnSend([from, to], in: vm)
             let placed = vm.transferPlugins(ids, from: from, to: to, mode: .link)
             return .object(["links": .int(vm.linkSiblings(of: ids[0]).count),
                             "plugins": .array(placed.map { .string($0.uuidString) }),
@@ -491,6 +504,9 @@ extension CommandRegistry {
                         + "and in its own series. The copies become the selection.",
                  params: [], undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            if let host = vm.selectedPluginHostID {
+                try CommandAdapters.requireRoomOnSend(adding: vm.selectedPluginIDs.count, to: host, in: vm)
+            }
             let made = vm.duplicateSelectedPlugins()
             guard !made.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no card selected")
@@ -526,6 +542,7 @@ extension CommandRegistry {
             guard !vm.pluginClipboard.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "plugin clipboard empty")
             }
+            try CommandAdapters.requireRoomOnSend(adding: vm.pluginClipboard.count, to: host, in: vm)
             let made = vm.pastePlugins(into: host)
             return .object(["host": .string(host.uuidString),
                             "plugins": .array(made.map { .string($0.uuidString) }),
@@ -746,7 +763,7 @@ extension CommandRegistry {
                  latest_end, runs}], `readers` [{plugin, dest_instance, tap, consumer, rank, l_ref, declared, \
                  source_age, delay, status, alignment_error_samples, blocks_read, blocks_uncovered, \
                  blocks_torn}]. `model`: the plan — `refused` ({plugin: reason}), `root_ranks`, `aux_ranks`, \
-                 `inner_ranks`, `stem_ranks`, `taps`. The static numbers say what the graph BELIEVES; what the \
+                 `inner_ranks`, `stem_ranks`, `taps`, `send_routes` (the sends laid), `send_refused`; `sends_path` is always \"bridge\" (kept for scripts). The static numbers say what the graph BELIEVES; what the \
                  ear hears is measured by export. Reads only.
                  """,
                  undo: .none) { _ in
@@ -761,43 +778,211 @@ extension CommandRegistry {
                 "refused": .object(Dictionary(uniqueKeysWithValues: refused.map { ($0.key.uuidString, JSONValue.string($0.value.rawValue)) })),
                 "root_ranks": ranks(plan.rootRanks), "aux_ranks": ranks(plan.auxRanks),
                 "inner_ranks": ranks(plan.innerRanks), "stem_ranks": ranks(plan.stemRanks),
-                "taps": ranks(plan.taps)])
+                "taps": ranks(plan.taps),
+                // The sends the last sync laid (alive, accepted AND confirmed by the engine), and the
+                // alive ones the plan refused.
+                "send_routes": .array(vm.bridgeLaidSends.sorted { $0.sender.uuidString + $0.aux.uuidString < $1.sender.uuidString + $1.aux.uuidString }
+                    .map { .object(["sender": .string($0.sender.uuidString), "aux": .string($0.aux.uuidString)]) }),
+                "send_refused": .object(Dictionary(uniqueKeysWithValues: vm.sendRouteStatus.map {
+                    ("\($0.key.sender.uuidString)|\($0.key.aux.uuidString)", JSONValue.string($0.value.rawValue)) }))])
             let report = JSONValue.fromFoundation(engine.bridgeReport())
-            return .object(["engine": report, "model": model])
+            return .object(["engine": report, "model": model, "sends_path": .string("bridge")])
+        }
+
+        register("debug.send_target_menu",
+                 summary: """
+                 DEBUG. The data of the signal view's "Send to..." menu for one sender, as the view-model \
+                 hands it to the pure builder: `sections` [{tier, title_key, entries [{aux, name, enabled, \
+                 reason}]}] in the order of Q-U3 (same group, rest of the stem, the Main), the refused and \
+                 the already-used auxes greyed with their reason. `retargeting` = the aux of the card whose \
+                 target is being changed (left out). Reads only.
+                 """,
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("retargeting", "uuid", required: false, "The aux of the card being re-aimed.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let retarget = p.raw["retargeting"] != nil ? try p.uuid("retargeting") : nil
+            let sections = vm.sendTargetSections(for: id, retargeting: retarget)
+            return .object(["sections": .array(sections.map { sec in
+                .object(["tier": .number(Double(sec.tier)), "title_key": .string(sec.titleKey),
+                         "entries": .array(sec.entries.map { e in
+                             .object(["aux": .string(e.id.uuidString), "name": .string(e.name),
+                                      "enabled": .bool(e.isEnabled),
+                                      "reason": e.disabledReason.map { .string($0) } ?? .null])
+                         })])
+            })])
+        }
+
+        register("debug.route_pick",
+                 summary: """
+                 DEBUG. Drives the timeline's "choose an object" mode (`RoutePick`) without a screen: \
+                 `action` = `begin_send` (id = the sender, position/index as in send.create; `retargeting` = \
+                 an aux whose send is re-aimed), `refusal` (object = the candidate: answers the sentence the \
+                 veil would say, or null), `commit` (object = the clicked object: the click's path), `end` \
+                 (Esc), `state`. Answers the mode (`mode`: none | sidechain | send). The sidechain strip's own \
+                 pick is armed by the strip; `state` and `end` see it too.
+                 """,
+                 params: [ParamSpec("action", "string", "begin_send | refusal | commit | end | state."),
+                          ParamSpec("id", "uuid", required: false, "begin_send: the sending object."),
+                          ParamSpec("position", "string", required: false, "begin_send: input | chain | pre_fader | post_fader."),
+                          ParamSpec("index", "int", required: false, "begin_send, chain: before the top-level plugin i."),
+                          ParamSpec("retargeting", "uuid", required: false, "begin_send: the aux whose send is re-aimed."),
+                          ParamSpec("object", "uuid", required: false, "refusal / commit: the object under the cursor.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            @MainActor func mode() -> JSONValue {
+                switch vm.routePick {
+                case .none: return .string("none")
+                case .sidechain?: return .string("sidechain")
+                case .send?: return .string("send")
+                }
+            }
+            switch try p.string("action") {
+            case "begin_send":
+                let id = try p.uuid("id")
+                guard let obj = vm.find(id: id), !obj.isAux else {
+                    throw CommandError(code: .invalid_state, message: "not a sender: \(id.uuidString)")
+                }
+                let position = try CommandAdapters.parseSendPosition(p, on: obj, fallback: .postFader)
+                let retarget = p.raw["retargeting"] != nil ? try p.uuid("retargeting") : nil
+                vm.routePick = nil
+                vm.beginSendPick(sender: id, position: position, retargeting: retarget)
+                return .object(["mode": mode()])
+            case "refusal":
+                let obj = try p.uuid("object")
+                return .object(["mode": mode(), "refusal": vm.routePickRefusalText(for: obj).map { .string($0) } ?? .null])
+            case "commit":
+                let obj = try p.uuid("object")
+                let done = vm.commitRoutePick(objectID: obj)
+                return .object(["committed": .bool(done), "mode": mode()])
+            case "end":
+                vm.endRoutePick()
+                return .object(["mode": mode()])
+            case "state":
+                return .object(["mode": mode()])
+            default:
+                throw CommandError(code: .bad_params, message: "unknown action")
+            }
+        }
+
+        register("debug.send_marker_audit",
+                 summary: """
+                 DEBUG. The audit of send markers (docs/plan_sends_rework.md, INC 2): reads the model and \
+                 answers `violations` [{host, path, rule}] — `orphan` (a marker with no send), `duplicate` \
+                 (two markers for one aux), `nested` (inside a parallel block or a bin), `on_aux`, `on_stem`, \
+                 `in_instruments`, and `phantom` (an entry with no plugin identity that is neither a block \
+                 nor a marker: what a marker becomes when a copy rebuilds it as a plugin) — AND the engine's half: \
+                 for every sender whose sends are laid, `index_after_*` / `index_before_*` / `tap_position` \
+                 when the send plugin sits elsewhere in the list than the model asks (`engine_senders_checked` \
+                 says how many senders were judged; call it after `wait_idle`) — plus `markers` \
+                 (how many, top level) and `ok`. The scenario asserts `ok` after every phase. Reads only.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            var violations = SendMarkerAudit.violations(items: vm.items, stems: vm.stems)
+            // The engine's half: for every sender with a send plugin, where it sits in the list against
+            // where the model asks. Run after `wait_idle` (the bridge sync is coalesced).
+            var engineChecked = 0
+            var layouts: [String: JSONValue] = [:]
+            if let engine = try? CommandContext.shared.requireEngine() {
+                @MainActor func visit(_ array: [SoundObject]) {
+                    for o in array {
+                        if o.sends.contains(where: { s in vm.bridgeLaidSends.contains(SendKey(sender: o.id, aux: s.auxID)) }),
+                           let raw = engine.chainLayout(forObjectID: o.id.uuidString) as? [[String: Any]] {
+                            let layout = raw.compactMap { d -> SendMarkerAudit.LayoutEntry? in
+                                guard let i = d["index"] as? Int, let role = d["role"] as? String else { return nil }
+                                return SendMarkerAudit.LayoutEntry(index: i, role: role, key: d["key"] as? String,
+                                                                   aux: d["aux"] as? String, tapPosition: d["tap_position"] as? Int,
+                                                                   chainPlugins: d["chain_plugins"] as? Int)
+                            }
+                            engineChecked += 1
+                            layouts[o.id.uuidString] = JSONValue.fromFoundation(raw)
+                            violations += SendMarkerAudit.engineViolations(object: o, layout: layout)
+                        }
+                        if case .group(let children, _) = o.kind { visit(children) }
+                    }
+                }
+                visit(vm.items)
+            }
+            return .object([
+                "engine_senders_checked": .int(engineChecked),
+                // Each checked sender's list as roles, in order — what a scenario reads to assert an index.
+                "engine_layouts": .object(layouts),
+                "ok": .bool(violations.isEmpty),
+                "markers": .int(SendMarkerAudit.markerCount(items: vm.items)),
+                // INC 3: how many plugins the sends carry, and those of them that hold a link
+                // membership — always empty (a send's plugin is never linked; each is a violation too).
+                "send_plugins": .int(vm.items.reduce(0) { n, o in n + o.sends.reduce(0) { $0 + $1.plugins.count } }),
+                "linked_send_plugins": .array(violations.filter { $0.rule == "send_plugin_linked" }
+                    .map { .string("\($0.host.uuidString):\($0.path)") }),
+                "violations": .array(violations.map {
+                    .object(["host": .string($0.host.uuidString), "path": .string($0.path), "rule": .string($0.rule)])
+                })])
         }
 
         register("debug.add_test_plugin",
                  summary: """
                  DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \
                  `objKeyProbe` (its output left = the direct signal, its right = the sidechain key, so an \
-                 export shows whether the key is aligned) or `latencyTester` (declares and applies a delay, \
-                 `latency_ms`). Answers `{plugin}`.
+                 export shows whether the key is aligned), `latencyTester` (declares and applies a delay, \
+                 `latency_ms`), `gainTester` (a fixed gain, `gain_db`: the identifiable plugin of the \
+                 send-position proof) or `clipTester` (a hard clip at `ceiling_db`: a NON-LINEAR plugin, \
+                 which tells "before the level" from "after it"). The host may be a send's mini-chain \
+                 (`chain_host` of `send.list`). Answers `{plugin}`.
                  """,
-                 params: [ParamSpec("host", "uuid", "Receiving object or stem."),
-                          ParamSpec("type", "string", "`objKeyProbe` or `latencyTester`."),
-                          ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay.")],
+                 params: [ParamSpec("host", "uuid", "Receiving object, stem or send chain host."),
+                          ParamSpec("type", "string", "`objKeyProbe`, `latencyTester`, `gainTester` or `clipTester`."),
+                          ParamSpec("latency_ms", "number", required: false, "latencyTester only: the delay."),
+                          ParamSpec("gain_db", "number", required: false, "gainTester only: the gain, in dB."),
+                          ParamSpec("ceiling_db", "number", required: false, "clipTester only: the ceiling, in dBFS.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
             let host = try p.uuid("host")
             let type = try p.string("type")
-            guard type == "objKeyProbe" || type == "latencyTester" else {
-                throw CommandError(code: .bad_params, message: "type must be objKeyProbe or latencyTester")
+            guard ["objKeyProbe", "latencyTester", "gainTester", "clipTester"].contains(type) else {
+                throw CommandError(code: .bad_params, message: "type must be objKeyProbe, latencyTester, gainTester or clipTester")
             }
             guard let before = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
+            try CommandAdapters.requireRoomOnSend(adding: 1, to: host, in: vm)
             // A TracktionInternal identifier is resolved by type name (resolvedPluginTreeForInfo:).
             let available = AvailablePlugin(name: type, manufacturer: "Tracktion", identifier: type,
                                             formatName: "TracktionInternal")
             vm.addPlugin(objectID: host, available: available)
-            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last : nil }) else {
+            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last(where: { !$0.isSendMarker }) : nil }) else {
                 throw CommandError(code: .engine_error, message: "the engine could not instantiate '\(type)'")
             }
             if type == "latencyTester", let ms = try p.optionalDouble("latency_ms") {
                 _ = engine.debugSetPluginProperty("time", value: ms / 1000.0, forPlugin: added.id.uuidString)
             }
+            if type == "gainTester", let db = try p.optionalDouble("gain_db") {
+                _ = engine.debugSetPluginProperty("gainDb", value: db, forPlugin: added.id.uuidString)
+            }
+            if type == "clipTester", let db = try p.optionalDouble("ceiling_db") {
+                _ = engine.debugSetPluginProperty("ceilingDb", value: db, forPlugin: added.id.uuidString)
+            }
             return .object(["plugin": .string(added.id.uuidString)])
+        }
+
+        register("debug.set_chain_gain",
+                 summary: "DEBUG. Sets a host's chain IN and/or OUT gain (dB) through the normal model path — "
+                        + "the gains the position proof of a send stacks up (no public command sets them).",
+                 params: [ParamSpec("host", "uuid", "Object or stem."),
+                          ParamSpec("in_db", "number", required: false, "Chain start gain."),
+                          ParamSpec("out_db", "number", required: false, "Chain end gain.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard vm.chainPlugins(host) != nil else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            if let v = try p.optionalDouble("in_db") { vm.setChainGain(objectID: host, output: false, dB: Float(v)) }
+            if let v = try p.optionalDouble("out_db") { vm.setChainGain(objectID: host, output: true, dB: Float(v)) }
+            let g = vm.chainGains(host)
+            return .object(["host": .string(host.uuidString), "in_db": .number(Double(g.inDb)), "out_db": .number(Double(g.outDb))])
         }
 
         register("debug.set_plugin_property",

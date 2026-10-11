@@ -596,8 +596,8 @@ extension TimelineView {
                 }
             case 53:  // Escape
                 // "Choose object" armed (the Sidechain strip): Esc leaves THAT mode and nothing else.
-                if vm.sidechainPick != nil {
-                    DispatchQueue.main.async { vm.endSidechainPick() }
+                if vm.routePick != nil {
+                    DispatchQueue.main.async { vm.endRoutePick() }
                     return nil
                 }
                 // An open consolidated object → Esc = cancel with a rollback (a design decision),

@@ -467,6 +467,9 @@ struct ToolOverlaySendColumn: Equatable {
     /// A CURVE drives the level: the knob is faded and carries the lock's glyph, the level reads
     /// faded too. Under the Send tool only.
     let automated: Bool
+    /// The bridge refuses this send although it is alive (a scheduling loop, Q-U10): the whole column is
+    /// faded. The reason is said in the signal view's tooltip; a Canvas has none.
+    var refused: Bool = false
 }
 
 /// The Send tool's columns over a block of `size` — `ToolSendLayer`, redrawn value for value: a
@@ -492,7 +495,9 @@ func drawSendColumns(_ ctx: GraphicsContext, size: CGSize, columns: [ToolOverlay
     guard colW > 0 else { return }
     for (i, column) in columns.enumerated() {
         let rect = CGRect(x: lay.origin + Double(i) * colW, y: 0, width: colW, height: size.height)
-        drawSendColumn(ctx, column, in: rect, minDb: minDb, maxDb: maxDb)
+        var columnCtx = ctx
+        if column.refused { columnCtx.opacity = 0.4 }
+        drawSendColumn(columnCtx, column, in: rect, minDb: minDb, maxDb: maxDb)
     }
 }
 

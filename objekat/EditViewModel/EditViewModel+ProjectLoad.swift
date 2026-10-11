@@ -248,7 +248,19 @@ extension EditViewModel {
         // Arms the queue: from here on, every `syncAdd` below defers its chain/instrument compiles
         // instead of running them inline (@see EditViewModel+Plugins.scheduleChainCompile).
         deferredChainCompiles = []
-        items = fixed.items
+        // Dangling sends (their aux no longer exists) never reach the model (§1.7, Q-U2).
+        let sanitised = Self.purgingDanglingSends(fixed.items)
+        if sanitised.sends > 0 || sanitised.lanes > 0 {
+            NSLog("[LOAD] %d send(s) and %d automation lane(s) aimed at a deleted aux dropped",
+                  sanitised.sends, sanitised.lanes)
+        }
+        // Markers and sends made consistent (a retouched file: orphan, duplicate or nested marker).
+        let consistent = Self.sanitisingSendMarkers(sanitised.items, stems: stems)
+        if consistent.changed > 0 {
+            NSLog("[LOAD] send markers repaired on %d object(s) or stem(s)", consistent.changed)
+            stems = consistent.stems
+        }
+        items = consistent.items
         return (duplicates, fixed.repairs.count)
     }
 

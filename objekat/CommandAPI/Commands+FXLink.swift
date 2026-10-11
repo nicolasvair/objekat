@@ -158,6 +158,7 @@ extension CommandRegistry {
                 guard vm.chainPlugins(host) != nil else {
                     throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
                 }
+                try CommandAdapters.refuseLinkOnSend([host], in: vm)
                 linkID = vm.createFXLink(from: host, pluginIDs: try p.uuids("plugins"), name: name)
             }
             guard let linkID, let link = vm.fxLink(linkID) else {
@@ -326,6 +327,7 @@ extension CommandRegistry {
             guard vm.chainPlugins(host) != nil else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
+            try CommandAdapters.refuseLinkOnSend([host], in: vm)
             let place = try p.optionalInt("index").map { (SeriesLocation.root, $0) }
             guard let block = vm.attachFXLink(link.id, to: host, at: place) else {
                 throw self.refused("the host could not be attached to that link")

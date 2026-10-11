@@ -46,7 +46,9 @@ enum SynopticMapping {
                                     levels: [UUID: Double],
                                     fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)?) -> SynopticNode {
         locations[seriesID] = location
-        let children: [SynopticNode] = plugins.map { p in
+        // A send's marker is not a card of the chain (step 2.9 draws the sends as cards of their own).
+        let children: [SynopticNode] = plugins.compactMap { p in
+            if p.isSendMarker { return nil }
             if let rack = p.rack {
                 let gains = EditViewModel.paddedWetDb(rack.wetDb, count: rack.voices.count)
                 let mutes = EditViewModel.paddedMutes(rack.voiceMutes, count: rack.voices.count)
@@ -133,6 +135,12 @@ extension EditViewModel {
                 if inst.isBuiltIn { openBuiltInPluginEditor(plug: inst) }
                 else { openPluginEditor(objectID: objectID, pluginID: inst.id) }
             }
+            return
+        }
+        // A send's mini-chain (the "+" of its box) takes plain plugins only, up to its own limit.
+        if let why = sendChainRefusal(adding: 1, to: objectID, instrument: available.isInstrument) {
+            NSLog("[SENDS] plugin not added to a send: %@", why.rawValue)
+            NSSound.beep()
             return
         }
         let newPlug = makeObjectPlugin(available)
@@ -243,10 +251,14 @@ extension EditViewModel {
     }
 
     /// Locates a plugin in the tree: (the containing series, the index within that series).
+    /// The index is the one the VIEW uses: at the root, send markers do not count (`ObjectPlugin.visibleIndex`),
+    /// so that `locate` and `inserting` agree with the cards the signal view draws.
     static func locate(_ pluginID: UUID, in plugins: [ObjectPlugin],
                        location: SeriesLocation = .root) -> (SeriesLocation, Int)? {
         for (i, p) in plugins.enumerated() {
-            if p.id == pluginID { return (location, i) }
+            if p.id == pluginID {
+                return (location, location == .root ? ObjectPlugin.visibleIndex(ofModelIndex: i, in: plugins) : i)
+            }
             if let rack = p.rack {
                 for (vi, voice) in rack.voices.enumerated() {
                     if let found = locate(pluginID, in: voice,
@@ -328,12 +340,14 @@ extension EditViewModel {
         }
     }
 
+    /// `index` is the view's at the root (send markers do not count), the series' own elsewhere.
     static func inserting(_ newPlug: ObjectPlugin, into location: SeriesLocation,
                           at index: Int, plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         switch location {
         case .root:
+            // `index` counts the entries the view shows: the markers of the sends are not among them.
             var a = plugins
-            a.insert(newPlug, at: min(max(0, index), a.count))
+            a.insert(newPlug, at: ObjectPlugin.modelIndex(ofVisibleIndex: index, in: plugins))
             return a
         case .voice(let blockID, let vi):
             return plugins.map { p in

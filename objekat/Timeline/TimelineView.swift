@@ -387,7 +387,7 @@ struct TimelineView: View {
     @State private var toolHoveredID: UUID? = nil
     /// The object "Choose object" (the Sidechain strip) is aiming at, with its verdict read once
     /// per change of target — not per mouse move. nil = nothing aimed at, or the mode is off.
-    @State private var sidechainPickHover: (id: UUID, refusal: BridgeScope.Refusal?)? = nil
+    @State private var sidechainPickHover: (id: UUID, refusal: String?)? = nil
     /// The rest of what the pointer is aiming at (the block's editing zone, the hovered cut position,
     /// the tooltip). A REFERENCE out of the view's state on purpose: read by leaf views alone, so a
     /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
@@ -1031,7 +1031,7 @@ struct TimelineView: View {
 
                 // "Choose object" (the Sidechain strip): the aimed block is veiled and says what the
                 // click will do — or, in orange, why it will not.
-                if viewModel.sidechainPick != nil, let aim = sidechainPickHover,
+                if viewModel.routePick != nil, let aim = sidechainPickHover,
                    let entry = viewModel.laneEntries.first(where: { $0.item.id == aim.id }) {
                     sidechainPickVeil(entry: entry, refusal: aim.refusal)
                         .allowsHitTesting(false)
@@ -1126,6 +1126,8 @@ struct TimelineView: View {
                             if active { hoverStore.clearZoneAndCut() }
                         },
                         pluginOutcome: { loc, flags in
+                            // A send card never goes to the timeline: "a send stays on its object".
+                            if SendDragSession.shared.current != nil { return .sendRefused(.refusedElsewhere) }
                             guard let payload = PluginDragSession.shared.current else { return nil }
                             guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
                             return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
@@ -1382,7 +1384,7 @@ struct TimelineView: View {
     private func updateCursor(at pos: CGPoint) {
         // "Choose object" armed: a pointing hand on an object, an arrow elsewhere — nothing else
         // the canvas could do under this click is offered.
-        if viewModel.sidechainPick != nil {
+        if viewModel.routePick != nil {
             TimelineCursorKeeper.set(stemPaintHitTest(at: pos) != nil ? NSCursor.pointingHand : NSCursor.arrow)
             hoverStore.clearZoneAndCut()
             return
@@ -1634,10 +1636,10 @@ struct TimelineView: View {
     // MARK: - Tool hover (Volume / Pan)
 
     private func updateToolHover(at pos: CGPoint) {
-        if viewModel.sidechainPick != nil {
+        if viewModel.routePick != nil {
             let id = rulerBandContains(pos) ? nil : stemPaintHitTest(at: pos)
             if sidechainPickHover?.id != id {
-                sidechainPickHover = id.map { ($0, viewModel.sidechainPickRefusal(for: $0)) }
+                sidechainPickHover = id.map { ($0, viewModel.routePickRefusalText(for: $0)) }
             }
             return
         } else if sidechainPickHover != nil {
@@ -1741,6 +1743,19 @@ struct TimelineView: View {
         return linkTarget(for: entry)
     }
 
+    /// Where a WIRE to `id` lands: its own block, or — when it sits inside a group that is CLOSED, so
+    /// has no lane entry at all — the nearest enclosing group that is shown. A send reaches an aux at
+    /// any depth now (docs/plan_sends_rework.md, Q-U3), so an aux hidden in a closed group is the
+    /// ordinary case, and the wire still has to arrive somewhere the eye can follow.
+    private func wireTarget(for id: UUID) -> LinkTarget? {
+        var cursor = id
+        while true {
+            if let target = linkTarget(for: cursor) { return target }
+            guard let group = viewModel.parentGroup(for: cursor) else { return nil }
+            cursor = group.id
+        }
+    }
+
     /// The same, for an entry the caller already holds — what the link overlays use once they have
     /// resolved their ids in a single walk, instead of one scan of the entries per id.
     private func linkTarget(for entry: LaneEntry) -> LinkTarget {
@@ -1782,7 +1797,7 @@ struct TimelineView: View {
                 let isFocus = focus?.objectID == clipID && focus?.auxID == aux.id
                 let routed  = viewModel.isSendRouted(from: clipID, to: aux.id)
                 guard isFocus || routed else { continue }
-                guard let at = linkTarget(for: aux.id) else { continue }
+                guard let at = wireTarget(for: aux.id) else { continue }
                 let ar = at.rect
                 // The link sets off from the centre of that aux's on/off button (the
                 // bottom of its column), horizontally aligned on the knob.
@@ -3047,7 +3062,8 @@ struct TimelineView: View {
             guard let rows = tools.sendRows?[item.id], !rows.isEmpty else { return nil }
             let columns = rows.map {
                 ToolOverlaySendColumn(label: $0.label, level: $0.level, enabled: $0.enabled,
-                                      focused: $0.focused, automated: $0.automated)
+                                      focused: $0.focused, automated: $0.automated,
+                                      refused: $0.refusal != nil)
             }
             return CanvasToolOverlay(content: .sends(columns: columns,
                                                      leadingInset: crossfadeSharedPx(for: item).leading),
@@ -4110,7 +4126,36 @@ struct TimelineView: View {
     /// by a line saying where it does.
     @ViewBuilder
     private var pluginDropHUD: some View {
-        if let s = PluginDropHint.shared.state {
+        if let s = PluginDropHint.shared.state, case .send(let line) = s.context {
+            // A send card is in the hand: where it would be taken, or why it cannot be (no modifier).
+            HStack(spacing: 7) {
+                Image(systemName: line.isRefusal ? "nosign" : "arrow.turn.down.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(line.isRefusal ? Color.red : Color.accentColor)
+                Text(L(line.titleKey))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder((line.isRefusal ? Color.red : Color.accentColor).opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
+        } else if let s = PluginDropHint.shared.state, case .refusal(let key) = s.context {
+            // A plugin a send's box refuses: why (the same red line as a refused send).
+            HStack(spacing: 7) {
+                Image(systemName: "nosign")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.red)
+                Text(L(key))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.red.opacity(0.4), lineWidth: 1))
+            .padding(.bottom, 12)
+            .allowsHitTesting(false)
+        } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
                 Image(systemName: s.isLink ? "link"
                                   : s.isCopy ? "plus.square.on.square"
@@ -4128,6 +4173,11 @@ struct TimelineView: View {
                 case .blockMove:
                     // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
                     modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .sendChain:
+                    // To or from a send's box ⌘ is a plain copy: a send's plugin is never linked.
+                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
+                case .refusal:
+                    EmptyView()    // drawn by the branch above
                 case .intoBin, .outOfBin:
                     Text(L("hud.pluginDrop.binNoCmd"))
                         .font(.system(size: 10))
@@ -4136,6 +4186,8 @@ struct TimelineView: View {
                     Text(L("hud.pluginDrop.sameChainNoLink"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                case .send:
+                    EmptyView()    // drawn by the branch above
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -4150,14 +4202,18 @@ struct TimelineView: View {
     /// The band's title for what a release would do (@see PluginDropHint.Context).
     private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
         switch s.context {
-        case .host, .sameChain:
+        case .host, .sameChain, .sendChain:
             return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .refusal(let key):
+            return L(key)
         case .intoBin:
             return s.alt ? L("hud.pluginDrop.intoBin.copy") : L("hud.pluginDrop.intoBin")
         case .outOfBin:
             return s.alt ? L("hud.move.copy") : L("hud.pluginDrop.outOfBin")
         case .blockMove:
             return s.isCopy ? L("hud.pluginDrop.blockCopy") : L("hud.pluginDrop.blockMove")
+        case .send(let line):
+            return L(line.titleKey)
         }
     }
 
@@ -4354,11 +4410,17 @@ struct TimelineView: View {
     /// two ways out (Esc, a click in empty space).
     @ViewBuilder
     private var sidechainPickHUD: some View {
-        if let pick = viewModel.sidechainPick {
+        if let route = viewModel.routePick {
             HStack(spacing: 7) {
-                Image(systemName: "scope")
+                Image(systemName: { if case .send = route { return "arrow.turn.down.right" } else { return "scope" } }())
                     .font(.system(size: 11, weight: .semibold))
-                Text(L("sidechain.pick.hud", viewModel.sidechainPickPluginName(pick)))
+                Text({ () -> String in
+                    switch route {
+                    case .sidechain(let pick): return L("sidechain.pick.hud", viewModel.sidechainPickPluginName(pick))
+                    case .send(let pick):      return L(pick.retargeting == nil ? "send.pick.hud" : "send.pick.hud.retarget",
+                                                        viewModel.sendPickSenderName(pick))
+                    }
+                }())
                     .font(.system(size: 11, weight: .semibold))
                 Text(L("sidechain.pick.hint"))
                     .font(.system(size: 10))
@@ -4373,12 +4435,14 @@ struct TimelineView: View {
 
     /// The veil "Choose object" lays on the block it aims at, in canvas coordinates. An infinite bus
     /// is its whole lane, as the hit-test reads it.
-    private func sidechainPickVeil(entry: LaneEntry, refusal: BridgeScope.Refusal?) -> some View {
+    private func sidechainPickVeil(entry: LaneEntry, refusal: String?) -> some View {
         let x = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
         let w = entry.item.isInfiniteBus ? contentWidth : max(entry.item.duration * pixelsPerSecond, 2)
         let y = rulerHeight + Double(entry.displayLane) * laneStep
-        let text = refusal.map { L("sidechain.pick.refused", EditViewModel.sidechainReasonText($0)) }
-            ?? L("sidechain.pick.assign", viewModel.displayName(of: entry.item))
+        var isSend = false
+        if case .send? = viewModel.routePick { isSend = true }
+        let text = refusal.map { L("sidechain.pick.refused", $0) }
+            ?? L(isSend ? "send.pick.assign" : "sidechain.pick.assign", viewModel.displayName(of: entry.item))
         return ZStack {
             RoundedRectangle(cornerRadius: entry.item.blockCornerRadius)
                 .fill(Color.black.opacity(0.72))

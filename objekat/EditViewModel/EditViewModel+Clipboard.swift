@@ -156,6 +156,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                sends: copiedSends(of: item),
                 araSource: .some(copiedARASource(of: item)),
                 kind: .clip(filePath: fp, sourceOffset: so, fileDuration: fd,
                             speedRatio: sr, isReversed: rev)
@@ -166,6 +167,7 @@ extension EditViewModel {
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
                 instruments: copiedInstruments(of: item),
+                sends: copiedSends(of: item),
                 // Fresh note ids: without them, the copy and the original shared the identity
                 // of every note — selecting then transposing / deleting in one of them
                 // did it in ALL of them. @see EditViewModel.freshNoteIDs
@@ -177,6 +179,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                sends: copiedSends(of: item),
                 araSource: .some(copiedARASource(of: item)),
                 kind: .aux
             )
@@ -192,6 +195,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                sends: copiedSends(of: item),
                 araSource: .some(copiedARASource(of: item)),
                 kind: .group(children: copiedChildren, isExpanded: isExpanded)
             )
@@ -415,6 +419,7 @@ extension EditViewModel {
                     fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
                     fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
+                    sends: copiedSends(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
                     araSource: .some(copiedARASource(of: entry.item)),
@@ -440,6 +445,7 @@ extension EditViewModel {
                     fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
                     instruments: copiedInstruments(of: entry.item),
+                    sends: copiedSends(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
                     araSource: .some(copiedARASource(of: entry.item)),
@@ -455,6 +461,7 @@ extension EditViewModel {
                     fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
                     fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
+                    sends: copiedSends(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
                     araSource: .some(copiedARASource(of: entry.item)),
@@ -495,6 +502,7 @@ extension EditViewModel {
                     fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
                     fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
+                    sends: copiedSends(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,
                     araSource: .some(copiedARASource(of: entry.item)),
@@ -789,6 +797,7 @@ extension EditViewModel {
                         fadeIn: 0, fadeOut: child.fadeOut,
                         fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: child),
+                        sends: copiedSends(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
                         markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
                         araSource: .some(copiedARASource(of: child)),
@@ -862,6 +871,7 @@ extension EditViewModel {
                         fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: child),
                         instruments: copiedInstruments(of: child),
+                        sends: copiedSends(of: child),
                         automation: autoR.shiftedInTime(by: -(cutHi - cutLo)),
                         markers: markR.shiftedInTime(by: -(cutHi - cutLo)),
                         araSource: .some(copiedARASource(of: child)),

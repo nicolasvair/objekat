@@ -52,33 +52,200 @@ extension CommandRegistry {
         }
 
         register("send.list",
-                 summary: "Sends leaving an object: level, on/off, and what is actually wired.",
+                 summary: "Sends leaving an object: level, on/off, and what the bridge actually lays.",
                  params: [ParamSpec("id", "uuid", "Sending object.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
             guard let object = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
+            // Computed NOW from the model: an answer must not depend on whether the coalesced bridge
+            // sync has run yet (a scheduling loop is only known to the plan).
+            let live = vm.sendStatusNow()
             let sends = object.sends.map { send -> JSONValue in
-                .object(["aux": .string(send.auxID.uuidString),
+                let status = vm.sendStatus(from: id, to: send.auxID, using: live)
+                var refusal: JSONValue = .null
+                var statusName = "off"
+                switch status {
+                case .off:              statusName = "off"
+                case .active:           statusName = "active"
+                case .refused(let why): statusName = "refused"; refusal = .string(why.rawValue)
+                }
+                return .object(["aux": .string(send.auxID.uuidString),
                          "level_db": .number(Double(send.levelDb)),
                          "enabled": .bool(send.enabled),
-                         // `routed` = what the engine ACTUALLY wires. Different from `enabled`: a send that is
-                         // out of scope (another stem, another container) stays in the model and makes no
-                         // sound.
-                         "routed": .bool(vm.isSendRouted(from: id, to: send.auxID)),
+                         // `routed` = what the plan ACTUALLY lays: alive AND accepted. Different from
+                         // `enabled`: a send that is refused (another stem, a scheduling loop) stays in
+                         // the model and makes no sound — `status` and `refusal` say which and why.
+                         "routed": .bool(status == .active),
+                         "status": .string(statusName),
+                         "refusal": refusal,
                          // A CURVE drives the level: `level_db` is still what is written, but it is
                          // no longer what is heard, and no gesture of the hand may change it
                          // (@see EditViewModel.selectedSendersWithFreeLevel). Here so that the lock
                          // can be asserted with no screen.
-                         "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))])
+                         "automated": .bool(vm.isAutomated(.send(auxID: send.auxID), on: id))]
+                         .merging(CommandAdapters.sendPositionFields(of: object, send: send)) { _, new in new }
+                         // The plugins the send CARRIES (INC 3) and the host id to address them by.
+                         .merging(CommandAdapters.sendChainFields(sender: id, send: send)) { _, new in new })
             }
             return .object(["id": .string(id.uuidString),
                             "sends": .array(sends),
-                            // What this object CAN send to, scope included.
+                            // What this object CAN send to by the static rule (any time, any depth)...
+                            "reachable_auxes": .array(vm.allAuxes.filter { vm.canRouteSend(from: id, to: $0.id) }
+                                                        .map { .string($0.id.uuidString) }),
+                            // ...and what the tools OFFER: the reachable ones that overlap it in time.
                             "available_auxes": .array(vm.sendToolAuxes(for: id).map {
                                 .string($0.id.uuidString)
                             })])
+        }
+
+        register("send.candidates",
+                 summary: "Every aux in the project as seen from a sender: the plan's verdict "
+                        + "(`refusal` null = a send would be accepted; else why: outOfStem, hostNotAux, "
+                        + "ancestorSource, cycle…; `send.list` can also say chainFull: the sender's plugin list is full), whether it overlaps the sender in time, its group path "
+                        + "and stem.",
+                 params: [ParamSpec("id", "uuid", "Sending object.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let sender = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let auxes = vm.allAuxes
+            let refusals = vm.sendRefusals(from: id, among: Set(auxes.map(\.id)))
+            let rows = auxes.map { aux -> JSONValue in
+                var path: [JSONValue] = []
+                var cursor = aux.id
+                while let g = vm.parentGroup(for: cursor) { path.insert(.string(g.displayName), at: 0); cursor = g.id }
+                let stemID = aux.stemID ?? vm.mainStemID
+                let stemName = vm.stems.first { $0.id == stemID }.map { $0.id == vm.mainStemID ? "Main" : $0.name } ?? "Main"
+                return .object(["aux": .string(aux.id.uuidString),
+                                "name": .string(aux.displayName),
+                                "group_path": .array(path),
+                                "stem": .string(stemName),
+                                "overlaps": .bool(aux.isInfiniteBus
+                                                  || (aux.startTime < sender.startTime + sender.duration
+                                                      && aux.startTime + aux.duration > sender.startTime)),
+                                "refusal": refusals[aux.id].map { .string($0.rawValue) } ?? .null])
+            }
+            return .object(["id": .string(id.uuidString), "candidates": .array(rows)])
+        }
+
+        register("send.remove",
+                 summary: "Deletes a send entry (and the automation lane aimed at it). There was no "
+                        + "other way to take an entry out of the model.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            guard object.sends.contains(where: { $0.auxID == auxID }) else {
+                throw CommandError(code: .not_found, message: "no send from \(id.uuidString) to \(auxID.uuidString)")
+            }
+            vm.removeSend(from: id, to: auxID)
+            return .object(["id": .string(id.uuidString), "aux": .string(auxID.uuidString), "removed": .bool(true)])
+        }
+
+        register("send.set_position",
+                 summary: "Moves a send to another place on its sender's signal path: `input` (before the "
+                        + "chain), `chain` (between two plugins of the trunk: `index` = before the i-th "
+                        + "top-level plugin, or `before_plugin` / `after_plugin` = a top-level plugin id), "
+                        + "`pre_fader` (after the chain, before the fader) or `post_fader` (the default). "
+                        + "The send must exist (`send.create` makes one). `index` past the chain is clamped.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux."),
+                          ParamSpec("position", "string", required: false,
+                                    "input | chain | pre_fader | post_fader. Omit with before_plugin / after_plugin."),
+                          ParamSpec("index", "int", required: false, "chain: before the top-level plugin i (count = at the end)."),
+                          ParamSpec("before_plugin", "uuid", required: false, "chain: just before this top-level plugin."),
+                          ParamSpec("after_plugin", "uuid", required: false, "chain: just after this top-level plugin.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            try CommandAdapters.checkSendPair(id, auxID, in: vm)
+            let object = vm.find(id: id)!
+            guard object.sends.contains(where: { $0.auxID == auxID }) else {
+                throw CommandError(code: .not_found, message: "no send from \(id.uuidString) to \(auxID.uuidString)")
+            }
+            let position = try CommandAdapters.parseSendPosition(p, on: object)
+            guard vm.setSendPosition(from: id, to: auxID, position) else {
+                throw CommandError(code: .invalid_state, message: "this object cannot hold a send")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(auxID.uuidString)]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == auxID }!) { out[k] = v }
+            return .object(out)
+        }
+
+        register("send.retarget",
+                 summary: "Re-aims an existing send at another aux (the card's \"Change target...\"): same level, "
+                        + "switch, position (marker included), automation lane and touch order. Refused, with the "
+                        + "reason, when the sender has no send to `aux`, when `to` is not an aux, when `to` already "
+                        + "has a send from this object (one per pair) or when the scope / the plan refuses it.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "The aux the send goes to now."),
+                          ParamSpec("to", "uuid", "The aux it must go to instead.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            let to = try p.uuid("to")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            if let why = vm.retargetSend(from: id, aux: auxID, to: to) {
+                let code: CommandError.Code = (why == .noSuchSend) ? .not_found : .invalid_state
+                throw CommandError(code: code, message: "send retarget refused: \(why.text)")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(to.uuidString),
+                                            "was": .string(auxID.uuidString),
+                                            "level_db": .number(Double(vm.sendLevel(from: id, to: to)))]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == to }!) { out[k] = v }
+            return .object(out)
+        }
+
+        register("send.create",
+                 summary: "Creates a send towards an aux at -inf (silent; raise it with `send.set_level`), "
+                        + "already at the requested position (default post_fader). Refused like the hand "
+                        + "refuses it (scope, loops, stem): the answer carries the reason. One send per "
+                        + "(object, aux): an existing one is moved, not duplicated.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("aux", "uuid", "Receiving aux."),
+                          ParamSpec("position", "string", required: false,
+                                    "input | chain | pre_fader | post_fader (default post_fader)."),
+                          ParamSpec("index", "int", required: false, "chain: before the top-level plugin i."),
+                          ParamSpec("before_plugin", "uuid", required: false, "chain: just before this top-level plugin."),
+                          ParamSpec("after_plugin", "uuid", required: false, "chain: just after this top-level plugin.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            try CommandAdapters.checkSendPair(id, auxID, in: vm)
+            let object = vm.find(id: id)!
+            if object.isAux {
+                throw CommandError(code: .invalid_state, message: "an aux does not send")
+            }
+            let position = try CommandAdapters.parseSendPosition(p, on: object, fallback: .postFader)
+            if let why = vm.sendCreationRefusal(from: id, to: auxID) {
+                throw CommandError(code: .invalid_state, message: "send refused: \(why.rawValue)")
+            }
+            if !object.sends.contains(where: { $0.auxID == auxID }) {
+                vm.setSendEnabled(from: id, to: auxID, enabled: true)     // a silent entry, -inf
+            }
+            guard vm.setSendPosition(from: id, to: auxID, position) else {
+                throw CommandError(code: .invalid_state, message: "this object cannot hold a send")
+            }
+            let now = vm.find(id: id)!
+            var out: [String: JSONValue] = ["id": .string(id.uuidString), "aux": .string(auxID.uuidString),
+                                            "level_db": .number(Double(vm.sendLevel(from: id, to: auxID)))]
+            for (k, v) in CommandAdapters.sendPositionFields(of: now, send: now.sends.first { $0.auxID == auxID }!) { out[k] = v }
+            return .object(out)
         }
 
         register("send.set_level",
@@ -95,7 +262,7 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "aux": .string(auxID.uuidString),
                             "level_db": .number(Double(vm.sendLevel(from: id, to: auxID))),
-                            "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
+                            "routed": .bool(vm.sendStatus(from: id, to: auxID, using: vm.sendStatusNow()) == .active)])
         }
 
         register("send.adjust_level",
@@ -147,7 +314,7 @@ extension CommandRegistry {
             return .object(["id": .string(id.uuidString),
                             "aux": .string(auxID.uuidString),
                             "enabled": .bool(vm.isSendEnabled(from: id, to: auxID)),
-                            "routed": .bool(vm.isSendRouted(from: id, to: auxID))])
+                            "routed": .bool(vm.sendStatus(from: id, to: auxID, using: vm.sendStatusNow()) == .active)])
         }
 
         #if DEBUG

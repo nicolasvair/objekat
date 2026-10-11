@@ -102,8 +102,18 @@ enum PluginDropOutcome: Equatable {
     case extractFromBin(UUID)
     /// Nothing happens, and the cursor says so. The reason is for the machine (the API's dry run).
     case refuse(String)
+    // — a SEND card in the hand (INC 2, @see SendDrop): it travels through the same doors —
+    /// The send is taken at the slot the line names.
+    case sendTaken(SendDropBanner)
+    /// A send cannot go here; the line says why (the cursor is the refusing one).
+    case sendRefused(SendDropBanner)
 
-    var isRefusal: Bool { if case .refuse = self { return true } else { return false } }
+    var isRefusal: Bool {
+        switch self {
+        case .refuse, .sendRefused: return true
+        default: return false
+        }
+    }
 
     /// What the drop LINKS: the ⌘ maillon and the band's linked-copy line are shown for these, and
     /// only these.
@@ -119,7 +129,8 @@ enum PluginDropOutcome: Equatable {
     /// `.link` draws an alias arrow, which is not what a ⌘ drop means; the band and the maillon say it.
     var operation: DropOperation {
         switch self {
-        case .refuse: return .forbidden
+        case .refuse, .sendRefused: return .forbidden
+        case .sendTaken: return .move
         case .move, .moveBlock, .adoptIntoBin, .extractFromBin: return .move
         case .copy, .link, .joinBin, .copyBlock, .copyIntoBin: return .copy
         }
@@ -131,6 +142,7 @@ enum PluginDropOutcome: Equatable {
     func hintContext(plainContext: PluginDropHint.Context) -> PluginDropHint.Context? {
         switch self {
         case .refuse: return nil
+        case .sendTaken(let b), .sendRefused(let b): return .send(b)
         case .move, .copy: return plainContext
         case .link, .joinBin: return .host
         case .adoptIntoBin, .copyIntoBin: return .intoBin
@@ -155,6 +167,8 @@ enum PluginDropOutcome: Equatable {
         case .copyIntoBin: return "copy_into_bin"
         case .extractFromBin: return "extract_from_bin"
         case .refuse: return "refuse"
+        case .sendTaken: return "send_taken"
+        case .sendRefused: return "send_refused"
         }
     }
 }
@@ -185,6 +199,16 @@ extension EditViewModel {
         let cmd = flags.contains(.command)
         let alt = flags.contains(.option)
         guard let targetChain = chainPlugins(targetID) else { return .refuse("unknown target host") }
+        // A SEND's mini-chain (INC 3) on either side: plain plugins only, in ONE series, never linked.
+        let targetIsSend = isSendChainHost(targetID) && find(id: targetID) == nil
+        let sourceIsSend = isSendChainHost(sourceID) && find(id: sourceID) == nil
+        if targetIsSend {
+            if isInstrument(payload.pluginID, of: sourceID) { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }
+            switch site {
+            case .hostEnd, .series(.root, _): break
+            default: return .refuse(SendChain.Refusal.leavesOnly.rawValue)
+            }
+        }
 
         // AN INSTRUMENT lives in its object's slot, not in a chain.
         if isInstrument(payload.pluginID, of: sourceID) {
@@ -207,6 +231,7 @@ extension EditViewModel {
 
         // A WHOLE BLOCK, grabbed by its header.
         if let block = Self.findBlock(payload.pluginID, in: sourceChain), let fb = block.fxBlock {
+            if targetIsSend { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }     // no bin on a send
             guard payload.ids.count == 1 else { return .refuse("a block travels alone") }
             switch binSite {
             case .outside: break
@@ -230,6 +255,13 @@ extension EditViewModel {
         guard !found.isEmpty, found.count == payload.ids.count else { return .refuse("unknown plugin") }
         let definitions = payload.ids.map { fxDefinition(ofInstance: $0, on: sourceID) }
         let binned = definitions.compactMap { $0 }
+        // A parallel block's carrier never enters a send (its leaves may, one by one).
+        if targetIsSend {
+            if found.contains(where: { !SendChain.accepts($0) }) { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }
+            // An FX link's instance: only its independent copy (⌥, and ⌘ which cannot link here).
+            if !binned.isEmpty { return (alt || cmd) ? sendCapacity(found.count, targetID) ?? .copy
+                                                    : .refuse("an FX link's plugin does not move to a send (⌥ copies it)") }
+        }
 
         // — instances of an ATTACHED bin —
         if !binned.isEmpty {
@@ -278,11 +310,22 @@ extension EditViewModel {
             return .adoptIntoBin(siteLink)
         }
         if sameHost {
-            if alt { return .copy }
+            if alt { return sendCapacity(found.count, targetID) ?? .copy }
             guard case .series = site else { return .refuse("source and target are the same host") }
             return .move      // ⌘ inside one chain is a plain move
         }
+        // NO LINK ON A SEND: ⌘ to or from a mini-chain is the plain copy (@see effectiveTransferMode)
+        // — answered HERE, so that the cursor and the band never promise a link.
+        if targetIsSend || sourceIsSend {
+            return sendCapacity(found.count, targetID) ?? ((cmd || alt) ? .copy : .move)
+        }
         return cmd ? .link : (alt ? .copy : .move)
+    }
+
+    /// `.refuse(chainFull)` if `adding` more plugins do not fit in the send's mini-chain `hostID`
+    /// names; nil for any other host, or when they fit.
+    private func sendCapacity(_ adding: Int, _ hostID: UUID) -> PluginDropOutcome? {
+        sendChainRefusal(adding: adding, to: hostID).map { .refuse($0.rawValue) }
     }
 
     /// Lays a dragged payload down on a chain HOST — a timeline object or a bus, which are the
@@ -303,7 +346,8 @@ extension EditViewModel {
                            modifiers flags: NSEvent.ModifierFlags) -> Bool {
         let outcome = pluginDropOutcome(payload, toHost: targetID, at: site, flags: flags)
         switch outcome {
-        case .refuse:
+        case .refuse, .sendTaken, .sendRefused:
+            // (a send card never comes through here: @see SendDrop)
             return false
 
         case .move, .copy, .link:

@@ -27,31 +27,61 @@ extension EditViewModel {
 
     func _referenceAllAuxes() -> [SoundObject] { allClips.filter(\.isAux) }
 
-    /// `canRouteSend` as it was before the parent map: two `parentGroup` walks.
+    /// The stem a node lives in, by the top-level ancestor, as a plain walk: nil = the Main (also when
+    /// the recorded stem is not a stem of the project).
+    private func _referenceEffectiveStem(of id: UUID) -> UUID? {
+        var top = _referenceFind(id: id)
+        var cursor = id
+        while let p = referenceParentGroup(for: cursor) { top = p; cursor = p.id }
+        guard let sid = top?.stemID, sid != mainStemID, stems.contains(where: { $0.id == sid }) else { return nil }
+        return sid
+    }
+
+    /// `canRouteSend` for the wide scope (docs/plan_sends_rework.md §A.3), NAIVELY: no index, no node
+    /// table — plain walks of `items`. An object reaches any aux of its own stem or of the Main, at any
+    /// depth, except an aux inside itself (a group's own descendant) and an aux that is itself.
     func _referenceCanRouteSend(from objectID: UUID, to auxID: UUID) -> Bool {
         guard objectID != auxID,
               let sender = _referenceFind(id: objectID), !sender.isAux,
               let aux = _referenceFind(id: auxID), aux.isAux
         else { return false }
-        let senderGroup = referenceParentGroup(for: objectID)
-        guard senderGroup?.id == referenceParentGroup(for: auxID)?.id else { return false }
-        guard senderGroup == nil else { return true }
-        let auxStem = aux.stemID ?? mainStemID
-        return auxStem == mainStemID || auxStem == (sender.stemID ?? mainStemID)
+        // The aux is inside the sender: the walk up from the aux meets the sender.
+        var cursor = auxID
+        while let p = referenceParentGroup(for: cursor) {
+            if p.id == objectID { return false }
+            cursor = p.id
+        }
+        let auxStem = _referenceEffectiveStem(of: auxID)
+        return auxStem == nil || auxStem == _referenceEffectiveStem(of: objectID)
     }
 
-    /// `overlappingAuxes(for:)` as it was: a filter over every aux, one `canRouteSend` each.
+    /// The offer's tier (Q-U3), naively: 0 = same group and same stem, 1 = same stem, 2 = the Main's aux
+    /// seen from a sender that lives in a stem.
+    private func _referenceOfferTier(sender: UUID, aux: UUID) -> Int {
+        guard _referenceEffectiveStem(of: aux) == _referenceEffectiveStem(of: sender) else { return 2 }
+        return referenceParentGroup(for: sender)?.id == referenceParentGroup(for: aux)?.id ? 0 : 1
+    }
+
+    /// `overlappingAuxes(for:)` as it was: a filter over every aux, one `canRouteSend` each — then
+    /// ordered by (offer tier, start, position in the project's own list).
     func _referenceOverlappingAuxes(for objectID: UUID) -> [SoundObject] {
         guard let obj = _referenceFind(id: objectID) else { return [] }
         let oStart = obj.startTime
         let oEnd   = obj.startTime + obj.duration
-        return _referenceAllAuxes()
-            .filter { aux in
-                guard _referenceCanRouteSend(from: objectID, to: aux.id) else { return false }
-                if aux.isInfiniteBus { return true }
-                return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
-            }
-            .sorted { $0.startTime < $1.startTime }
+        let all = _referenceAllAuxes()
+        let kept = all.enumerated().filter { (_, aux) in
+            guard _referenceCanRouteSend(from: objectID, to: aux.id) else { return false }
+            if aux.isInfiniteBus { return true }
+            return aux.startTime < oEnd && (aux.startTime + aux.duration) > oStart
+        }
+        let sorted = kept.sorted { l, r in
+            let tl = _referenceOfferTier(sender: objectID, aux: l.element.id)
+            let tr = _referenceOfferTier(sender: objectID, aux: r.element.id)
+            if tl != tr { return tl < tr }
+            if l.element.startTime != r.element.startTime { return l.element.startTime < r.element.startTime }
+            return l.offset < r.offset
+        }
+        return sorted.map { $0.element }
     }
 
     /// `selectionSendAuxes()` as it was (sorted by display lane alone — a tie there was left to the
@@ -68,7 +98,18 @@ extension EditViewModel {
         func laneOf(_ id: UUID) -> Int {
             laneEntries.first { $0.item.id == id }?.displayLane ?? (_referenceFind(id: id)?.lane ?? 0)
         }
-        return result.sorted { laneOf($0.id) < laneOf($1.id) }
+        // The nearest tier any selected sender gives the aux (Q-U3), then the lane.
+        var offered: [UUID: Set<UUID>] = [:]    // sender → the auxes offered to it (time overlap too)
+        for s in senders { offered[s.id] = Set(_referenceOverlappingAuxes(for: s.id).map(\.id)) }
+        func tierOf(_ aux: SoundObject) -> Int {
+            senders.filter { offered[$0.id]?.contains(aux.id) ?? false }
+                .map { _referenceOfferTier(sender: $0.id, aux: aux.id) }.min() ?? 0
+        }
+        return result.sorted { l, r in
+            let tl = tierOf(l), tr = tierOf(r)
+            if tl != tr { return tl < tr }
+            return laneOf(l.id) < laneOf(r.id)
+        }
     }
 
     /// `selectedSenders(toAux:)` as it was.

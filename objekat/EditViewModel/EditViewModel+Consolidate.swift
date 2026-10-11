@@ -481,7 +481,8 @@ extension EditViewModel {
     /// OPENING the object (`openConsolidate`) re-edits.
     /// `alsoLinkIDs`: other objects (a multiple selection with IDENTICAL CONTENT) to turn into
     /// instances of the SAME definition, without re-baking them (see `consolidateSelectionAsLinkedInstances`).
-    func consolidate(groupID groupID: UUID, alsoLinkIDs: [UUID] = []) {
+    func consolidate(groupID groupID: UUID, alsoLinkIDs: [UUID] = [],
+                     midChainSends: SendBakePolicy.Choice? = nil) {
         guard let engine, let group = find(id: groupID), group.isGroup,
               !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
@@ -497,8 +498,11 @@ extension EditViewModel {
                         L("consolidate.error.folderFailed.info", error.localizedDescription))
             return
         }
+        // Q-U6: the sends that tap inside this chain are settled BEFORE the chain is baked.
+        guard resolveMidChainSends(for: [groupID] + alsoLinkIDs, choice: midChainSends) else { return }
 
-        let original = withCapturedPluginStates(group)
+        // Re-read: settling the sends may have rewritten the object.
+        let original = withCapturedPluginStates(find(id: groupID) ?? group)
         let defID = UUID()
         let base  = "\(bakeSafeName(group.displayName))_\(defID.uuidString.prefix(8))"
         let wav   = folder.appendingPathComponent("\(base).wav")
@@ -525,14 +529,19 @@ extension EditViewModel {
     /// ALWAYS a group. So the clip is first wrapped in a group of one (the existing grouping
     /// primitive, which preserves the nesting: a sub-group if the clip is already inside
     /// a group, a top-level group otherwise), and then that group is turned into a consolidated object.
-    func consolidateWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = []) {
-        guard let clip = find(id: clipID), (clip.isClip || clip.isMIDI),
-              !clip.isConsolidateInstance, !isBaking(clipID) else { return }
+    func consolidateWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = [],
+                                 midChainSends: SendBakePolicy.Choice? = nil) {
+        guard let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
+              !firstRead.isConsolidateInstance, !isBaking(clipID) else { return }
         guard consolidateFolder != nil else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
             return
         }
+        // Q-U6: BEFORE the sends are carried onto the wrapper and the chain is baked. A marker would
+        // be left behind on the baked clip otherwise (its send moves, its marker does not).
+        guard resolveMidChainSends(for: [clipID] + alsoLinkIDs, choice: midChainSends) else { return }
+        guard let clip = find(id: clipID) else { return }
         // A LONE object: its fade must live ON the consolidated object (group level, live/editable) and
         // not stay baked into the wav from the clip. Rendering the group bypasses the group's
         // window/fade (→ not baked, it stays live on the placement) but bakes the fade of a CHILD clip.
@@ -547,7 +556,7 @@ extension EditViewModel {
         // wrapper group BEFORE the render: the placement will inherit a LIVE send from it (rewired by
         // syncSends in finishConsolidate). The wrapper's window matches the clip's →
         // the aux stays overlapped, and the send keeps its meaning.
-        let sends = clip.sends
+        let sends = sendsWithLiveStates(of: clip)   // the plugins a send carries go with it, states live
 
         // Wrapping in a group of one (an internal pushUndo, rebuilds the engine).
         createGroupFromSelection([clipID])
@@ -564,10 +573,7 @@ extension EditViewModel {
         }
 
         if !sends.isEmpty {
-            // Removes the child clip's sends (the engine routing cut + the model emptied)…
-            for s in sends {
-                engine?.removeSend(clipID.uuidString, toAux: s.auxID.uuidString)
-            }
+            // Removes the child clip's sends (the model emptied; the bridge sync below takes the engine's away)…
             update(id: clipID) { $0.sends.removeAll() }
             // …and carries them over onto the wrapper group (model + engine wiring of the active sends).
             update(id: wrapper.id) { $0.sends = sends }
@@ -609,6 +615,9 @@ extension EditViewModel {
                         L("consolidate.error.saveFirst.info"))
             return
         }
+        // Q-U6: ONE question for the whole selection, asked before the first render starts (the
+        // per-object hooks below then find nothing left to ask about).
+        guard resolveMidChainSends(for: consolidateTargets()) else { return }
         for id in consolidateTargets() {
             // Re-resolved on each round: the previous round may have moved/wrapped the element.
             guard let o = find(id: id), !o.isConsolidateInstance, !isBaking(id) else { continue }
@@ -675,6 +684,9 @@ extension EditViewModel {
         }
         guard let source = ordered.first else { return }
         let others = ordered.dropFirst().map(\.id)
+        // Q-U6 for the WHOLE batch (the others become instances of the same definition and are
+        // folded or cleared the same way), then the existing path.
+        guard resolveMidChainSends(for: ordered.map(\.id)) else { return }
         consolidateWrappingClip(clipID: source.id, alsoLinkIDs: Array(others))
     }
 
@@ -707,6 +719,9 @@ extension EditViewModel {
         }
 
         pushUndo()
+        // The plugins the sends carry stay ALIVE on the placement (the render bypasses the sends):
+        // their states are read before the object leaves the engine.
+        let liveSends = sendsWithLiveStates(of: live)
         removeFromEngine(live)
 
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
@@ -727,7 +742,7 @@ extension EditViewModel {
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: live.isMuted,
             stemID: live.stemID, plugins: [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
-            sends: live.sends, baseBPM: nil,
+            sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             automationTouchOrder: live.automationTouchOrder,
             kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
@@ -753,6 +768,7 @@ extension EditViewModel {
         var linked: [UUID] = [placement.id]
         for oid in alsoLinkIDs where oid != placement.id {
             guard let other = find(id: oid), !other.isConsolidateInstance else { continue }
+            let otherSends = sendsWithLiveStates(of: other)
             removeFromEngine(other)
             var inst = SoundObject(
                 id: other.id, startTime: other.startTime, duration: other.duration,
@@ -760,7 +776,7 @@ extension EditViewModel {
                 fadeIn: other.fadeIn, fadeOut: other.fadeOut, isMuted: other.isMuted,
                 stemID: other.stemID, plugins: [],
                 label: other.label ?? other.displayName, colorIndex: other.colorIndex,
-                sends: other.sends, baseBPM: nil,
+                sends: otherSends, baseBPM: nil,
                 consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,
                 kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
@@ -839,6 +855,9 @@ extension EditViewModel {
         // captured at the last bake of THIS definition (staleness) → it is reopened on the UP-TO-DATE
         // content for editing.
         var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
+        // The placement's sends arrive with it (@see restoredSubtree) — and the plugins they carry
+        // with their LIVE states: the placement leaves the engine below.
+        restored.sends = sendsWithLiveStates(of: placement)
 
         // The baked content may carry plugins absent from this machine: materialising it would
         // remove them (compileRack) and the object would be heard without its effects. We warn BEFORE
@@ -1047,6 +1066,7 @@ extension EditViewModel {
             isMuted: prev?.isMuted ?? live.isMuted,
             dependsOn: collectConsolidateDependencies(original))
 
+        let liveSends = sendsWithLiveStates(of: live)   // read before the object leaves the engine
         removeFromEngine(live)
         // The mix (volume/pan/mute), the state of the attribute links AND the plugins belonging to the
         // placement belong to the PLACEMENT, not to the content being edited: they are restored from
@@ -1061,7 +1081,7 @@ extension EditViewModel {
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: snap?.isMuted ?? live.isMuted,
             stemID: live.stemID, plugins: snap?.plugins ?? [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex,
-            sends: live.sends, baseBPM: nil,
+            sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             independentAttrs: snap?.independentAttrs ?? [],
             automationTouchOrder: live.automationTouchOrder,
@@ -1596,6 +1616,7 @@ extension EditViewModel {
         // result.
         var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
         restored.plugins = restored.plugins + wrapperPlugins
+        restored.sends = sendsWithLiveStates(of: placement)   // the sends' own plugins, states live
 
         removeFromEngine(placement)
         update(id: placementID) { $0 = restored }

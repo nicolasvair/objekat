@@ -193,6 +193,11 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// The object or stem keying this plugin's sidechain input (nil = none). Meaningful on a leaf
     /// plugin or an instrument only. Session format 19. @see SidechainSource
     var sidechain: SidechainSource? = nil
+    /// Non-nil ⇒ this entry is NOT a plugin but the PLACE a send takes on the trunk: the point of the
+    /// chain where the send towards `sendMarker.auxID` taps the signal. A third kind of container,
+    /// beside `rack` and `fxBlock`, with no series of its own. Top level of `plugins` only. Session
+    /// format 22. @see SendMarker, SoundObject.sendPosition(auxID:)
+    var sendMarker: SendMarker? = nil
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
@@ -200,7 +205,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
          rack: PluginRack? = nil,
          fxBlock: FXLinkBlock? = nil,
          colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
-         sidechain: SidechainSource? = nil) {
+         sidechain: SidechainSource? = nil,
+         sendMarker: SendMarker? = nil) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -214,6 +220,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.fxBlock = fxBlock
         self.colorIndex = colorIndex
         self.sidechain = sidechain
+        self.sendMarker = sendMarker
     }
 
     /// True if this entry represents a parallel block (and not a plain plugin).
@@ -239,7 +246,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -259,6 +266,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
                         ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
         sidechain = try c.decodeIfPresent(SidechainSource.self, forKey: .sidechain)
+        sendMarker = try c.decodeIfPresent(SendMarker.self, forKey: .sendMarker)
     }
 }
 
@@ -297,14 +305,39 @@ let sendMinDb: Float = -60.0
 /// A send's gain ceiling (dB).
 let sendMaxDb: Float = 6.0
 
-/// A POST-FADER send from an object (clip or group) towards an AUX object, by its id.
-/// The level is in dB. Routing and time gating are handled on the aux's side (its in/out window).
+/// Where a send takes its signal, when it is NOT written in the chain as a marker. Session format 22.
+/// `postFader` is the default and the oldest behaviour: after the object's fader and window (what is
+/// heard of it). The fourth position, "in the chain", is not a case here: it is a `SendMarker` entry of
+/// `plugins` (@see SoundObject.sendPosition(auxID:)).
+enum SendTapPoint: String, Codable, Equatable {
+    case postFader, preFader, input
+}
+
+/// The place of a send on the trunk of its object's chain: a marker entry of `plugins`, named after the
+/// aux it belongs to. One per (object, aux) at most; at the top level of the chain only.
+struct SendMarker: Codable, Equatable {
+    var auxID: UUID
+}
+
+/// A send from an object (clip or group) towards an AUX object, by its id. The level is in dB.
+/// Routing and time gating are handled on the aux's side (its in/out window). Taken POST-FADER unless
+/// `tap` or a chain marker says otherwise (@see SoundObject.sendPosition(auxID:)).
 /// `enabled` = the user's intent (the inspector's toggle); the level is remembered even when
 /// off. The send is only audible/wired if `enabled && levelDb > sendMinDb`.
 struct AuxSend: Codable, Equatable, Identifiable {
     var auxID: UUID
     var levelDb: Float = 0.0
     var enabled: Bool = true
+    /// Where the signal is taken when the chain holds no marker for this send. Encoded ONLY when it is
+    /// not `.postFader`: a session of format 21 re-encodes without the key.
+    var tap: SendTapPoint = .postFader
+    /// The send's PLUGINS (INC 3, session format 23): a mini-chain processed on the send's copy, in
+    /// this order, BEFORE the sender's window and fades (laid on the copy after them) and BEFORE `levelDb`. Leaves only
+    /// (@see SendChain.sanitised). Encoded ONLY when non-empty: a session without any send plugin
+    /// differs from its format-22 self by the version number alone. A copy of the object must
+    /// freshen these ids like the chain's (@see SendChain.mapping) — never copy `sends` by value
+    /// into a NEW object.
+    var plugins: [ObjectPlugin] = []
     var id: UUID { auxID }
 
     /// True if the level is -∞ (≤ sendMinDb).
@@ -312,19 +345,38 @@ struct AuxSend: Codable, Equatable, Identifiable {
     /// True if the send really has to be routed to the engine.
     var isRouted: Bool { enabled && !isSilent }
 
-    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true) {
+    init(auxID: UUID, levelDb: Float = 0.0, enabled: Bool = true, tap: SendTapPoint = .postFader,
+         plugins: [ObjectPlugin] = []) {
         self.auxID = auxID
         self.levelDb = levelDb
         self.enabled = enabled
+        self.tap = tap
+        self.plugins = plugins
     }
 
-    // Backwards-compatible decoding: `enabled` absent (old projects) ⇒ true.
-    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled }
+    // Backwards-compatible decoding: `enabled` absent (old projects) ⇒ true; `tap` absent (or a value
+    // this build does not know) ⇒ post-fader; `plugins` absent (every session before format 23) ⇒ none.
+    enum CodingKeys: String, CodingKey { case auxID, levelDb, enabled, tap, plugins }
     init(from decoder: Decoder) throws {
         let c   = try decoder.container(keyedBy: CodingKeys.self)
         auxID   = try c.decode(UUID.self, forKey: .auxID)
         levelDb = try c.decodeIfPresent(Float.self, forKey: .levelDb) ?? 0.0
         enabled = try c.decodeIfPresent(Bool.self,  forKey: .enabled) ?? true
+        tap     = ((try? c.decodeIfPresent(SendTapPoint.self, forKey: .tap)) ?? nil) ?? .postFader
+        let read = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []
+        plugins  = SendChain.sanitised(read)
+        if plugins.count != read.count {
+            NSLog("[SENDS] %d entry(ies) dropped from a send's plugins: a block, a bin or a marker may not sit on a send",
+                  read.count - plugins.count)
+        }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(auxID, forKey: .auxID)
+        try c.encode(levelDb, forKey: .levelDb)
+        try c.encode(enabled, forKey: .enabled)
+        if tap != .postFader { try c.encode(tap, forKey: .tap) }
+        if !plugins.isEmpty { try c.encode(plugins, forKey: .plugins) }
     }
 }
 
@@ -570,10 +622,18 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// exist without a compile), OR an AUTOMATION of those gains: a trim curve laid on an object
     /// whose static trim stayed at 0 dB would otherwise have no plugin to write itself into, and
     /// would never be heard.
+    ///
+    /// A send's marker alone does NOT count: with no plugin and no trim there is no chain to order a
+    /// send in, and a send placed "in the chain" of an empty chain taps exactly the signal the fader
+    /// receives (docs/plan_sends_rework.md §A.d).
+    ///
+    /// A send that CARRIES plugins does (INC 3): the compile owns the content of every mini-chain,
+    /// and an object whose only plugins sit on a send would otherwise never instantiate them.
     var needsChainCompile: Bool {
-        !plugins.isEmpty || chainInGainDb != 0 || chainOutGainDb != 0
+        plugins.contains(where: { !$0.isSendMarker }) || chainInGainDb != 0 || chainOutGainDb != 0
             || automation.contains { ($0.param == .chainInGain || $0.param == .chainOutGain)
                                      && !$0.points.isEmpty }
+            || (!isAux && sends.contains { !$0.plugins.isEmpty })
     }
 
     // MARK: Kind
@@ -895,7 +955,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case .plugin(let pluginKey, _):
             return Self.containsPlugin(pluginKey, in: plugins)
                 || Self.containsPlugin(pluginKey, in: instruments)
+                || holdsSendPlugin(pluginKey)
         }
+    }
+
+    /// True if `pluginKey` is a plugin of one of this object's SENDS (the third root, @see SendChain).
+    func holdsSendPlugin(_ pluginKey: UUID) -> Bool {
+        sends.contains { $0.plugins.contains { $0.id == pluginKey } }
     }
 
     /// True if this automation target, carried by the ROOT of this subtree, is BAKED IN when the
@@ -913,7 +979,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// laid on a plugin BELONGING to the instance (added over the baked content) while its content
     /// is open for editing — it belongs to the instance and has to follow it.
     func automationTargetIsBakedIntoRender(_ ref: ParamRef) -> Bool {
-        guard case .plugin = ref else { return false }
+        guard case .plugin(let pluginKey, _) = ref else { return false }
+        // A plugin laid ON A SEND is not rendered: the send is carried over to the placement with its
+        // plugins, and a curve driving one of them stays alive there, like the send's level curve.
+        if holdsSendPlugin(pluginKey) { return false }
         return resolvesAutomationTarget(ref)
     }
 
@@ -935,8 +1004,13 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// The invariant that follows, and which has to be preserved: re-editing then re-baking a
     /// definition does not wipe out a rendered instance's own automation.
     var asConsolidateDefinition: SoundObject {
-        guard !automation.isEmpty || !automationTouchOrder.isEmpty else { return self }
+        let rootSendsCarryPlugins = sends.contains { !$0.plugins.isEmpty }
+        guard !automation.isEmpty || !automationTouchOrder.isEmpty || rootSendsCarryPlugins else { return self }
         var copy = self
+        // The ROOT's sends belong to the instance (the placement keeps them, @see restoredSubtree):
+        // the definition must not hold a second copy of their plugins — same ids as the placement's,
+        // which a re-bake materialising the sidecar beside it would hand to the engine twice.
+        if rootSendsCarryPlugins { copy.sends = SendChain.strippingPlugins(sends) }
         copy.automation = automation.filter { automationTargetIsBakedIntoRender($0.param) }
         // The 'last parameter touched' memory: pure interface convenience, and belonging to whoever
         // touched it. It has no business in a shared definition.
@@ -1112,12 +1186,19 @@ struct SoundObject: Identifiable, Codable, Equatable {
                      fadeIn: Double, fadeOut: Double,
                      fadeInCurve: FadeCurve? = nil, fadeOutCurve: FadeCurve? = nil,
                      plugins: [ObjectPlugin], instruments: [ObjectPlugin] = [],
+                     sends: [AuxSend]? = nil,
                      automation: [AutomationLane]? = nil,
                      markers: [Marker]? = nil,
                      araSource: ARASource?? = nil,
                      kind: Kind) -> SoundObject {
         var remap = Self.pluginIDRemap(from: self.plugins,     to: plugins)
         remap.merge(Self.pluginIDRemap(from: self.instruments, to: instruments)) { a, _ in a }
+        // The THIRD root (INC 3): the copy keeps its sends, and their plugins are COPIES under fresh
+        // ids like the chain's. `sends` = the caller's copy (`copiedSends(of:)`, which re-reads the
+        // live states); nil = a cold copy made here — never the by-value one, which would give two
+        // objects the same plugin ids.
+        let derivedSends = sends ?? SendChain.mapPluginIDs(in: self.sends) { _ in UUID() }
+        remap.merge(SendChain.pluginIDRemap(from: self.sends, to: derivedSends)) { a, _ in a }
         let inherited = automation ?? self.automation
         // Markers travel exactly like the curves: inherited as they are unless the caller, which
         // has just cut or fragmented, hands over the half that belongs to this copy.
@@ -1137,7 +1218,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     isMuted: isMuted, stemID: stemID,
                     plugins: plugins, instruments: instruments,
                     label: label, colorIndex: colorIndex,
-                    sends: sends, baseBPM: baseBPM,
+                    sends: derivedSends, baseBPM: baseBPM,
                     consolidateID: consolidateID,
                     independentAttrs: independentAttrs,
                     chainInGainDb: chainInGainDb, chainOutGainDb: chainOutGainDb,

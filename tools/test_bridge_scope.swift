@@ -106,9 +106,35 @@ enum BridgeScopeTest {
             ("stemRanks", byName(plan.stemRanks, names) == expectedInts(expect["stemRanks"])),
             ("readerRanks", readers == expectedInts(expect["readerRanks"])),
             ("taps", byName(plan.taps, names) == expectedInts(expect["taps"])),
+            ("sendRoutes", plan.sendRoutes == ((expect["sendRoutes"] as? [NSNumber] ?? []).map { $0.intValue })),
         ]
         let bad = got.filter { !$0.1 }.map { $0.0 }
         check(label, bad.isEmpty, "differs on: \(bad.joined(separator: ", "))")
+
+        for q in (c["sendCandidates"] as? [[String: Any]] ?? []) {
+            let sender = names.id(q["sender"] as! String)
+            let result = BridgeScope.sendCandidates(sender: sender, nodes: nodes, routes: routes)
+            var gotC: [String: String] = [:]
+            for r in result { gotC[names.name(r.id)] = r.refusal?.rawValue ?? "-" }
+            var wantC: [String: String] = [:]
+            for (k, v) in (q["expect"] as! [String: Any]) { wantC[k] = (v as? String) ?? "-" }
+            check("\(label) / send candidates for \(q["sender"] as! String)", gotC == wantC, "got \(gotC), wanted \(wantC)")
+        }
+
+        let sendIndex = BridgeScope.SendIndex(nodes: nodes)
+        for q in (c["near"] as? [[String: Any]] ?? []) {
+            let got = sendIndex.isNear(sender: names.id(q["sender"] as! String), aux: names.id(q["aux"] as! String))
+            check("\(label) / near \(q["sender"] as! String) -> \(q["aux"] as! String)", got == (q["expect"] as! Bool), "got \(got)")
+        }
+
+        // The per-pair door answers what the plan answers for every send of the case (the cycle apart).
+        for (i, r) in routes.enumerated() {
+            guard case .auxInput = r.consumer else { continue }
+            let pair = sendIndex.staticRefusal(sender: r.source, aux: r.host)
+            let planned = plan.refused[i]
+            let want: BridgeScope.Refusal? = planned == .cycle ? nil : planned
+            check("\(label) / the pair door for route \(i)", pair == want, "got \(String(describing: pair)), the plan said \(String(describing: planned))")
+        }
 
         for q in (c["candidates"] as? [[String: Any]] ?? []) {
             let host = names.id(q["host"] as! String)
@@ -121,6 +147,28 @@ enum BridgeScopeTest {
             check("\(label) / candidates for \(q["host"] as! String) (replacing \(replacing.map(String.init) ?? "nil"))",
                   gotC == wantC, "got \(gotC), wanted \(wantC)")
         }
+    }
+
+    // The offer's order (Q-U3): the sender's own level first, then the rest of its stem, then the Main.
+    do {
+        func id(_ n: UInt8) -> UUID { UUID(uuid: (n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)) }
+        let main = id(1), stem = id(2), a = id(3), x = id(4), g = id(5), y = id(6), c = id(7), z = id(8)
+        let nodes: [BridgeScope.Node] = [
+            .init(id: a, kind: .object, parent: nil, stem: stem),
+            .init(id: x, kind: .aux, parent: nil, stem: stem),
+            .init(id: g, kind: .group, parent: nil, stem: stem),
+            .init(id: y, kind: .aux, parent: g, stem: nil),
+            .init(id: c, kind: .object, parent: g, stem: nil),
+            .init(id: z, kind: .aux, parent: nil, stem: nil),
+            .init(id: main, kind: .main, parent: nil, stem: nil),
+            .init(id: stem, kind: .stem, parent: nil, stem: nil)]
+        let idx = BridgeScope.SendIndex(nodes: nodes)
+        check("tier: top-level sender, aux of its level", idx.offerTier(sender: a, aux: x) == 0, "")
+        check("tier: top-level sender, aux inside a group of its stem", idx.offerTier(sender: a, aux: y) == 1, "")
+        check("tier: top-level sender in a stem, aux of the Main", idx.offerTier(sender: a, aux: z) == 2, "")
+        check("tier: child, aux of its own group", idx.offerTier(sender: c, aux: y) == 0, "")
+        check("tier: child, top-level aux of the same stem", idx.offerTier(sender: c, aux: x) == 1, "")
+        check("tier: child, aux of the Main", idx.offerTier(sender: c, aux: z) == 2, "")
     }
 
     print("\n\(total) assertions, \(fails.count) failed")

@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 20
+    static let formatVersion = 23
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -67,7 +67,31 @@ enum SessionSchema {
         "",
         "stems — the output buses. An object leaves through the bus named by its stemID; stemID",
         "  absent = the main bus.",
-        "sends — sends towards an aux object: { auxID, levelDb, enabled }.",
+        "sends — sends towards an aux object: { auxID, levelDb, enabled, tap? }. ONE per (object, aux). Since",
+        "  format 21 an object reaches ANY aux of its own stem or of the Main, in any group at any depth",
+        "  (a send to an aux in another stem, to a non-aux, or that would make the aux's return run before",
+        "  its own sender stays written and is silent: the app says why). A group's mute silences its",
+        "  children's sends towards an aux OUTSIDE that group; its fader, effects and fades do not act on",
+        "  them. A session of an earlier format opens unchanged — sends once silent only because the",
+        "  old, narrower scope did not reach their aux now SOUND. A send naming an aux that no longer",
+        "  exists is dropped at load, with its automation.",
+        "  WHERE a send takes its signal (format 22): by default AFTER the object's fader and window (what",
+        "  is heard of it). `tap` — \"preFader\" (before the pan / volume / mute, after the chain's output",
+        "  gain) or \"input\" (before the chain's input gain) — says otherwise; it is WRITTEN ONLY WHEN IT IS",
+        "  NOT the default, so a session of format 21 re-encodes without the key. The fourth place, IN THE",
+        "  CHAIN, is not a `tap` value: it is an entry of `plugins` carrying a `sendMarker` key (below).",
+        "  A pre-fader or in-chain send still follows the object's fades and window, not its volume or pan.",
+        "  PLUGINS ON a send (format 23): `plugins` on a send entry is a mini-chain of plugin entries (the",
+        "  same shape as an entry of the object's `plugins`), processed in order on what THIS object sends",
+        "  to THIS aux — after the object's fades and window, BEFORE `levelDb` — and on nothing else: the",
+        "  object's direct sound and the other senders' sends are untouched. Plain plugins only: no rack,",
+        "  no `fxBlock`, no `sendMarker`, no instrument (the app drops such an entry at load). WRITTEN ONLY",
+        "  WHEN NOT EMPTY. A plugin id there is as unique in the file as any other plugin's, and its",
+        "  parameters are automated by the SENDING object's `automation` ({type:plugin, pluginKey, paramID}).",
+        "  They are processed while the object plays (a delay or a reverb on a send stops with the object;",
+        "  to let it ring, put it on the aux). A send switched off or at -inf keeps its plugins. A build",
+        "  from before format 23 ignores the key: the send plays without its plugins, and saving from that",
+        "  build loses them (their automation rows stay written, aimed at nothing).",
         "plugins / instruments — the effect chain, and virtual instruments at the head for MIDI.",
         "  A plugin can be a rack (parallel branches) and hold other plugins.",
         "  An entry with an `fxBlock` key is neither: it is the place an FX LINK (a bin of shared",
@@ -75,6 +99,16 @@ enum SessionSchema {
         "  object's own instances of the bin's plugins; each names the bin's definition plugin",
         "  through its linkGroupID (detachedLinkGroupID once detached). A reader that does not know",
         "  the key (a build from before format 17) cannot decode the entry: forward incompatibility.",
+        "  An entry with a `sendMarker` key, { auxID }, is none of these either: it is where the send",
+        "  towards that aux takes the signal on the chain — before the entries that follow it in `plugins`,",
+        "  after the ones that precede it. It has an id of its own and no plugin identity (name, identifier",
+        "  and format empty). Rules a hand-edited file must keep: at the TOP level of `plugins` only; a",
+        "  marker if and only if the object has a send towards that aux (marker <-> send is a bijection,",
+        "  at most one marker per aux); never on an aux object, a stem or the Main; a send that has its",
+        "  marker leaves `tap` absent (the marker wins). The app repairs a file that breaks them at load",
+        "  (a nested marker is hoisted after its top-level ancestor, an orphan or a duplicate is dropped).",
+        "  A build from before format 22 reads the entry as a plugin it cannot find and drops it: forward",
+        "  incompatibility, the send then falls back to post-fader.",
         "sidechain — on a plugin entry, { sourceID }: the object or stem whose sound feeds that plugin's",
         "  sidechain input, tapped after its fader and its window (what is heard of it). The source must",
         "  not contain the plugin's host, and no chain of keys may loop. A key whose source is gone or out",

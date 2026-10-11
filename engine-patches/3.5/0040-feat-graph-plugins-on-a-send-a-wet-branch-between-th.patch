@@ -1,0 +1,344 @@
+From e69b952520afcb5a96d68cc411e1fc0c44d1026a Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 13:23:34 +0200
+Subject: [PATCH] =?UTF-8?q?feat(graph):=20plugins=20on=20a=20send=20?=
+ =?UTF-8?q?=E2=80=94=20a=20wet=20branch=20between=20the=20tap=20and=20its?=
+ =?UTF-8?q?=20level?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A BridgeTapSource may expose a mini-chain (getTapChain) and an envelope step
+(processTapEnvelope). When the chain holds an enabled plugin the builder shares
+the tapped node between the tap (dry, untouched) and a wet branch: head node
+(a plain 2-channel copy), the chain's nodes, a priming gag; the tap's age is
+the wet's latency. The tap lays the envelope on its copy AFTER the chain and
+BEFORE the level, at the edit time the signal was made (block time minus the
+copy's age): an effect's tail follows the owner's fade-out and dies at its
+window's end, and a chain that adds latency keeps the envelope on the sample.
+Without a chain the graph is the previous one, node for node.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 32 ++++++-
+ .../graph/tracktion_ObjBridgeNodes.cpp        | 91 +++++++++++++++++--
+ .../playback/graph/tracktion_ObjBridgeNodes.h | 36 +++++++-
+ .../plugins/tracktion_ObjBridge.h             | 13 +++
+ 4 files changed, 161 insertions(+), 11 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index def4238db6a..1b448d111cc 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -1902,16 +1902,44 @@ std::unique_ptr<tracktion::graph::Node> createPluginNodeForList (PluginList& lis
+             if (node == nullptr)
+                 continue;
+ 
+-            const int age = node->getNodeProperties().latencyNumSamples;
+             const int rank = (int) p->state.getProperty (objbridge_ids::rank, -1);
+ 
++            // A send that carries plugins (docs/plan_sends_rework.md §D.2.A): the tapped signal is
++            // shared between the tap node (which passes it through, untouched) and a WET branch —
++            // head (the copy), the send's mini-chain, a gag for its residue; the tap node then lays the
++            // send's envelope and level on that branch's output. The tap's age is the wet's latency:
++            // the mini-chain's latency ages the tap, at the aux return, and never delays the signal
++            // that passes through.
++            PluginList* tapChain = p->isEnabled() ? tap->getTapChain() : nullptr;
++            bool hasTapChain = false;
++
++            if (tapChain != nullptr)
++                for (auto cp : *tapChain)
++                    if (cp->isEnabled())
++                        { hasTapChain = true; break; }
++
++            std::shared_ptr<Node> sharedInput (std::move (node));
++            std::unique_ptr<Node> wet;
++
++            if (hasTapChain)
++            {
++                wet = makeNode<BridgeTapHeadNode> (params.processState, sharedInput, p->itemID);
++                wet = createPluginNodeForList (*tapChain, trackMuteState, std::move (wet), playHeadState, params);
++
++                if (const int wetLatency = wet->getNodeProperties().latencyNumSamples; wetLatency > 0)
++                    wet = makeNode<LatencyPrimingNode> (std::move (wet), params.processState, wetLatency);
++            }
++
++            const int age = (wet != nullptr ? wet.get() : sharedInput.get())->getNodeProperties().latencyNumSamples;
++
+             tap->cachedAgeNumSamples = age;
+             tap->cachedAgeSampleRate = params.sampleRate;
+ 
+             if (params.bridgeBuild != nullptr)
+                 params.bridgeBuild->registerTap (*p, *tap, age, rank);
+ 
+-            node = makeNode<BridgeTapNode> (params.processState, std::move (node), p, *tap, params.bridgeBuild, rank,
++            node = makeNode<BridgeTapNode> (params.processState, std::move (sharedInput), std::move (wet), p, *tap,
++                                            params.bridgeBuild, rank,
+                                             params.sampleRate, params.blockSize, params.forRendering);
+         }
+         else if (auto meterPlugin = dynamic_cast<LevelMeterPlugin*> (p))
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+index 2d5306024e3..08e88d7371d 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.cpp
+@@ -8,6 +8,7 @@ namespace tracktion::inline engine
+ namespace
+ {
+     constexpr size_t bridgeTapMagicHash     = size_t (0x62726964676574);    // "bridget"
++    constexpr size_t bridgeHeadMagicHash    = size_t (0x62726964676568);    // "bridgeh"
+     constexpr size_t bridgeReaderMagicHash  = size_t (0x62726964676572);    // "bridger"
+     constexpr size_t bridgeGateMagicHash    = size_t (0x62726964676761);    // "bridgga"
+     constexpr size_t gateCacheKey           = size_t (0x0B76A7E0C0DEull);   // TransformCache key
+@@ -15,15 +16,18 @@ namespace
+ 
+ //==============================================================================
+ BridgeTapNode::BridgeTapNode (ProcessState& ps,
+-                              std::unique_ptr<tracktion::graph::Node> inputNode,
++                              std::shared_ptr<tracktion::graph::Node> inputNode,
++                              std::unique_ptr<tracktion::graph::Node> wetNode,
+                               Plugin::Ptr tapPluginToUse,
+-                              BridgeTapSource& source,
++                              BridgeTapSource& sourceToUse,
+                               std::shared_ptr<BridgeBuild> buildToUse,
+                               int rankToUse,
+                               double sampleRate, int blockSize, bool rendering)
+     : TracktionEngineNode (ps),
+       input (std::move (inputNode)),
++      wet (std::move (wetNode)),
+       tapPlugin (std::move (tapPluginToUse)),
++      source (sourceToUse),
+       build (std::move (buildToUse)),
+       rank (rankToUse),
+       tapID (tapPlugin->itemID),
+@@ -31,6 +35,7 @@ BridgeTapNode::BridgeTapNode (ProcessState& ps,
+       isRendering (rendering)
+ {
+     jassert (input != nullptr);
++    jassert (wet == nullptr || copyMode);        // a wet branch only makes sense for a send
+ 
+     if (copyMode)
+     {
+@@ -39,7 +44,10 @@ BridgeTapNode::BridgeTapNode (ProcessState& ps,
+         // time the signal was MADE at, as PluginNode does.
+         tapPlugin->baseClassInitialise ({ 0_tp, sampleRate, blockSize });
+         pluginInitialised = true;
+-        automationAdjustmentTime = TimeDuration::fromSamples (-input->getNodeProperties().latencyNumSamples, sampleRate);
++        // With a wet branch the level is applied to the WET, whose age is its own latency (the input's
++        // plus the mini-chain's).
++        const int ageNumSamples = (wet != nullptr ? wet.get() : input.get())->getNodeProperties().latencyNumSamples;
++        automationAdjustmentTime = TimeDuration::fromSamples (-ageNumSamples, sampleRate);
+     }
+ 
+     // The output IS the input (copied unless aliased): nothing to clear, the copy overwrites it.
+@@ -68,12 +76,15 @@ tracktion::graph::NodeProperties BridgeTapNode::getNodeProperties()
+ 
+ std::vector<tracktion::graph::Node*> BridgeTapNode::getDirectInputNodes()
+ {
++    if (wet != nullptr)
++        return { input.get(), wet.get() };
++
+     return { input.get() };
+ }
+ 
+ bool BridgeTapNode::isReadyToProcess()
+ {
+-    return input->hasProcessed();
++    return input->hasProcessed() && (wet == nullptr || wet->hasProcessed());
+ }
+ 
+ void BridgeTapNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+@@ -109,7 +120,10 @@ void BridgeTapNode::process (ProcessContext& pc)
+         if (n > scratch.getNumSamples())
+             return;                                  // a block longer than prepared: write nothing
+ 
+-        const int inChannels = (int) pc.buffers.audio.getNumChannels();
++        // What the envelope and the level are applied to: the wet branch's output when the send carries
++        // plugins, else a copy of what passes through.
++        auto copySource = wet != nullptr ? wet->getProcessedOutput().audio : pc.buffers.audio;
++        const int inChannels = (int) copySource.getNumChannels();
+ 
+         for (int c = 0; c < 2; ++c)
+         {
+@@ -118,7 +132,7 @@ void BridgeTapNode::process (ProcessContext& pc)
+             if (inChannels <= 0)
+                 juce::FloatVectorOperations::clear (dst, n);
+             else
+-                juce::FloatVectorOperations::copy (dst, pc.buffers.audio.getIterator ((choc::buffer::ChannelCount) std::min (c, inChannels - 1)).sample, n);
++                juce::FloatVectorOperations::copy (dst, copySource.getIterator ((choc::buffer::ChannelCount) std::min (c, inChannels - 1)).sample, n);
+         }
+ 
+         if (tapPlugin->isEnabled())
+@@ -128,6 +142,10 @@ void BridgeTapNode::process (ProcessContext& pc)
+                                              blockTime.getEnd() + automationAdjustmentTime);
+             juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), 2, n);
+ 
++            // The envelope, AFTER the send's plugins and before its level, at the wet's own age (so a
++            // latent mini-chain does not make the fade fall early on the wet).
++            source.processTapEnvelope (view, 0, n, adjusted);
++
+             midiScratch.clear();
+             tapPlugin->prepareForNextBlock (adjusted.getStart());
+             tapPlugin->applyToBufferWithAutomation ({ &view, 0, n, &midiScratch, 0.0, adjusted,
+@@ -155,6 +173,67 @@ void BridgeTapNode::process (ProcessContext& pc)
+                  channels, numChannels, getPlayHeadState().didPlayheadJump());
+ }
+ 
++//==============================================================================
++BridgeTapHeadNode::BridgeTapHeadNode (ProcessState& ps, std::shared_ptr<tracktion::graph::Node> inputNode,
++                                      EditItemID tapIDToUse)
++    : TracktionEngineNode (ps),
++      input (std::move (inputNode)),
++      tapID (tapIDToUse)
++{
++    jassert (input != nullptr);
++
++    // Every sample of the output is written by process.
++    setOptimisations ({ tracktion::graph::ClearBuffers::no,
++                        tracktion::graph::AllocateAudioBuffer::yes });
++}
++
++tracktion::graph::NodeProperties BridgeTapHeadNode::getNodeProperties()
++{
++    auto props = input->getNodeProperties();     // latency unchanged
++    props.hasAudio = true;
++    props.hasMidi = false;
++    props.numberOfChannels = 2;
++
++    if (props.nodeID != 0)
++    {
++        hash_combine (props.nodeID, (size_t) tapID.getRawID());
++        hash_combine (props.nodeID, bridgeHeadMagicHash);
++    }
++
++    return props;
++}
++
++std::vector<tracktion::graph::Node*> BridgeTapHeadNode::getDirectInputNodes()
++{
++    return { input.get() };
++}
++
++bool BridgeTapHeadNode::isReadyToProcess()
++{
++    return input->hasProcessed();
++}
++
++void BridgeTapHeadNode::process (ProcessContext& pc)
++{
++    auto sourceAudio = input->getProcessedOutput().audio;
++    const int n = (int) pc.numSamples;
++    const int inChannels = (int) sourceAudio.getNumChannels();
++
++    if (pc.buffers.audio.getNumChannels() < 2 || n <= 0)
++        return;
++
++    float* channels[2] = { pc.buffers.audio.getIterator (0).sample,
++                           pc.buffers.audio.getIterator (1).sample };
++
++    for (int c = 0; c < 2; ++c)
++    {
++        if (inChannels <= 0)
++            juce::FloatVectorOperations::clear (channels[c], n);
++        else
++            juce::FloatVectorOperations::copy (channels[c], sourceAudio.getIterator ((choc::buffer::ChannelCount) std::min (c, inChannels - 1)).sample, n);
++    }
++}
++
+ //==============================================================================
+ BridgeReaderNode::BridgeReaderNode (ProcessState& ps, std::shared_ptr<BridgeBuild> buildToUse,
+                                     int index, int rank, size_t id)
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+index 88f161dd7fe..b8ad4d7df8b 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ObjBridgeNodes.h
+@@ -23,14 +23,21 @@ namespace tracktion::inline engine
+ 
+     It reports its input's properties unchanged (latency included): the tap's age is the age of
+     its input, which is what the readers' arithmetic needs. It never relies on `numOutputNodes`
+-    (-1 inside a TimedNode: the trap that killed LatencyMaskingNode, patch 0019). */
++    (-1 inside a TimedNode: the trap that killed LatencyMaskingNode, patch 0019).
++
++    A send that carries plugins has a SECOND input, `wet`: the head node below, then the send's
++    mini-chain. The node is not a sum — what it outputs is still the dry input, untouched, and that
++    is what it declares; the wet is what the envelope (BridgeTapSource::processTapEnvelope) and the level
++    are applied to and what the ring receives, at the age the builder registered for it (the wet's own
++    latency). docs/plan_sends_rework.md §D.2.A. */
+ class BridgeTapNode final : public tracktion::graph::Node,
+                             public TracktionEngineNode,
+                             public BridgeRankedNode
+ {
+ public:
+     BridgeTapNode (ProcessState&,
+-                   std::unique_ptr<tracktion::graph::Node> input,
++                   std::shared_ptr<tracktion::graph::Node> input,
++                   std::unique_ptr<tracktion::graph::Node> wet,     // null = no mini-chain
+                    Plugin::Ptr tapPlugin,
+                    BridgeTapSource&,   // the tap's persistent state; the ring is reached through BridgeBuild
+                    std::shared_ptr<BridgeBuild>,
+@@ -48,8 +55,10 @@ public:
+     int getBridgeRank() const override                  { return rank; }
+ 
+ private:
+-    std::unique_ptr<tracktion::graph::Node> input;
++    std::shared_ptr<tracktion::graph::Node> input;      // shared with the head node when there is a wet
++    std::unique_ptr<tracktion::graph::Node> wet;
+     Plugin::Ptr tapPlugin;
++    BridgeTapSource& source;
+     std::shared_ptr<BridgeBuild> build;
+     const int rank;
+     const EditItemID tapID;
+@@ -64,6 +73,27 @@ private:
+     MidiMessageArray midiScratch;
+ };
+ 
++//==============================================================================
++/** The head of a send's wet branch: a 2-channel COPY of the tapped signal, for the send's mini-chain to
++    process (the plugins must never write into what passes through). The second consumer of the tap's
++    input. Nothing else: the send's envelope and level come AFTER the mini-chain, in BridgeTapNode. */
++class BridgeTapHeadNode final : public tracktion::graph::Node,
++                                public TracktionEngineNode
++{
++public:
++    BridgeTapHeadNode (ProcessState&, std::shared_ptr<tracktion::graph::Node> input, EditItemID tapID);
++
++    //==============================================================================
++    tracktion::graph::NodeProperties getNodeProperties() override;
++    std::vector<tracktion::graph::Node*> getDirectInputNodes() override;
++    bool isReadyToProcess() override;
++    void process (ProcessContext&) override;
++
++private:
++    std::shared_ptr<tracktion::graph::Node> input;
++    const EditItemID tapID;
++};
++
+ //==============================================================================
+ /** Delivers a key: stereo audio read from a tap's ring, `delay` stream samples back, declaring
+     the latency `X` fixed when it was registered (BridgeBuild::registerReader).
+diff --git a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+index fdcab8bae77..a2f78e0cecb 100644
+--- a/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
++++ b/modules/tracktion_engine/plugins/tracktion_ObjBridge.h
+@@ -57,6 +57,19 @@ struct BridgeTapSource
+     // level, applied at the tap: the signal passing through is never touched).
+     virtual EditItemID getBridgeTargetAuxClipID() const     { return {}; }
+     virtual bool processesTapCopy() const                   { return false; }
++
++    // A send that carries PLUGINS (docs/plan_sends_rework.md §D.2.A): its mini-chain, processed on the
++    // copy between the tap and the envelope. Null or without an enabled plugin = no wet branch is built
++    // and the tap node is exactly the one above. Message thread (the builder).
++    virtual PluginList* getTapChain()                       { return nullptr; }
++
++    /// The ENVELOPE a send lays on its copy (the sender's window and fades): called by the tap node once
++    /// per block, in both modes, on the audio thread — AFTER the send's plugins when it carries any, and
++    /// always BEFORE its level — at the edit time the signal was MADE (the copy's own age: the
++    /// mini-chain's latency included). So an effect's tail on a send follows the sender's fade-out and
++    /// is exact silence past its window, as a plugin of the sender's own chain is.
++    virtual void processTapEnvelope (juce::AudioBuffer<float>&, int /*start*/, int /*numSamples*/,
++                                     TimeRange /*editTime*/) {}
+ };
+ 
+ //==============================================================================
+-- 
+2.50.1 (Apple Git-155)
+

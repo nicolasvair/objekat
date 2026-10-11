@@ -186,6 +186,7 @@ extension EditViewModel {
                         // either (@see freshCutCurve). The mirror of `clearFadeOut` on the left.
                         fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: ex),
+                        sends: copiedSends(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
                         markers: ex.markers.shiftedInTime(by: -(ne - es)),
@@ -289,6 +290,7 @@ extension EditViewModel {
                         // either (@see freshCutCurve). The mirror of `clearFadeOut` on the left.
                         fadeInCurve: Self.freshCutCurve,
                         plugins: copiedPlugins(of: ex),
+                        sends: copiedSends(of: ex),
                         // The RIGHT-hand piece: its start is `ne`, the curves rebase on it.
                         automation: ex.automation.shiftedInTime(by: -(ne - es)),
                         markers: ex.markers.shiftedInTime(by: -(ne - es)),

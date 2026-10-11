@@ -117,6 +117,8 @@ struct ToolSendLayer: View {
             }
             .padding(.vertical, 2)
         }
+        // A send the bridge refuses although it is alive (Q-U10) reads faded, as a locked one does.
+        .opacity(row.refusal == nil ? 1 : 0.4)
     }
 
     /// A rotary knob: a background arc plus a value arc (red), and a pointer. A 270° sweep — drawn by

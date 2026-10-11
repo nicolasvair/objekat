@@ -118,12 +118,61 @@ extension EditViewModel {
 
     // MARK: Applying it to the engine
 
+    // MARK: The audibility gate of a send (docs/plan_sends_rework.md §1.6, Q-U1)
+
+    /// True when the send `sender` → `aux` must be silent although its sender's own fader is open: an
+    /// ANCESTOR group of the sender is silenced (muted, not reopened by a direct solo) and that group
+    /// does not also hold the aux — a group's mute acts downstream of the sender's tap, so without
+    /// this a muted group would go on feeding an aux outside itself. The group's FADER, FX and fades
+    /// do not act on the send (Q-U1b): only its silence does.
+    ///
+    /// Since INC 2 (Q-U12): also true when the SENDER itself is silenced — its own mute, its stem's, or a
+    /// solo that filters it out — for a send that taps BEFORE the fader (pre-fader, in the chain, at the
+    /// input). The mute is a -96 dB push onto the fader, and the fader sits DOWNSTREAM of such a tap: left
+    /// alone, a muted object would go on feeding its aux. A post-fader send needs nothing — the fader
+    /// already silenced what it taps — and a gate there would only duplicate it.
+    func sendIsGated(sender: UUID, aux: UUID) -> Bool {
+        if let object = find(id: sender), let position = object.sendPosition(auxID: aux), position != .postFader,
+           audibility.isSilenced(object) {
+            return true
+        }
+        let parents = parentIDMap()
+        guard var group = parents[sender] else { return false }       // a top-level sender: nothing above
+        var auxAncestors: Set<UUID> = []
+        var a = parents[aux]
+        while let x = a { auxAncestors.insert(x); a = parents[x] }
+        while true {
+            if !auxAncestors.contains(group), let g = find(id: group), audibility.isSilenced(g) { return true }
+            guard let up = parents[group] else { return false }
+            group = up
+        }
+    }
+
+    /// Pushes the gate of every laid send of `object` and of its descendants (hot: no rebuild).
+    func pushSendGates(inSubtreeOf object: SoundObject) {
+        guard let engine, !bridgeLaidSends.isEmpty else { return }
+        func walk(_ o: SoundObject) {
+            for send in o.sends where bridgeLaidSends.contains(SendKey(sender: o.id, aux: send.auxID)) {
+                engine.setSendGated(sendIsGated(sender: o.id, aux: send.auxID),
+                                    from: o.id.uuidString, toAux: send.auxID.uuidString)
+            }
+            if case .group(let children, _) = o.kind { for c in children { walk(c) } }
+        }
+        walk(object)
+    }
+
     /// Pushes the composed volume + pan for `id`. EVERY path that touches volume, pan or
     /// mute goes through here: a hard-coded `engine.updateVolume` would contradict the composition —
     /// moving the fader of a muted but soloed clip would send it back to silence.
     func pushMix(_ id: UUID) {
         guard let engine, let obj = find(id: id) else { return }
         engine.updateVolume(engineVolume(for: obj), pan: obj.pan, forID: id.uuidString)
+        // A group's silence acts downstream of its children's sends: their gates follow (§1.6).
+        if obj.isGroup { pushSendGates(inSubtreeOf: obj) }
+        else if obj.sends.contains(where: { obj.sendPosition(auxID: $0.auxID) != .postFader }) {
+            // A send that taps before the fader is not silenced by the fader this call just pushed (Q-U12).
+            pushSendGates(inSubtreeOf: obj)
+        }
         // The composed silence cannot be read from the fader's value alone when a volume CURVE
         // rules: it would crush it at the next block. `pushAutomation` removes it for as long as
         // the object is reduced to silence, and puts it back when it becomes audible again. Guarded by
@@ -233,6 +282,13 @@ extension EditViewModel {
             engine.updateVolume(engineVolume(for: obj), pan: obj.pan, forID: obj.id.uuidString)
             // As in `pushMix`: a volume curve must disappear (or come back) with the silence.
             if !obj.automation.isEmpty { pushAutomation(obj) }
+        }
+        // Every laid send: its gate is a function of the same snapshot (§1.6).
+        if !bridgeLaidSends.isEmpty {
+            for key in bridgeLaidSends {
+                engine.setSendGated(sendIsGated(sender: key.sender, aux: key.aux),
+                                    from: key.sender.uuidString, toAux: key.aux.uuidString)
+            }
         }
     }
 

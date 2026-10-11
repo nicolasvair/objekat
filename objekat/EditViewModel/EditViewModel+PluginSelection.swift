@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // MARK: - A selection of plugin cards, and what one does to several at once
 //
@@ -153,7 +154,7 @@ extension EditViewModel {
             }
         }
         for p in ownSelected {
-            engine.setPlugin(p.id.uuidString, enabled: newEnabled, forObjectID: host.uuidString)
+            engine.setPlugin(p.id.uuidString, enabled: newEnabled, forObjectID: engineHostKey(host).uuidString)
         }
         updateChainPlugins(host) { plugins in
             for p in ownSelected { plugins = Self.settingEnabled(p.id, newEnabled, in: plugins) }
@@ -178,6 +179,7 @@ extension EditViewModel {
         guard !selected.isEmpty, let plugins = chainPlugins(host), engine != nil else { return [] }
         guard let anchor = selected.last,
               let (loc, idx) = Self.locateOutsideFXBlock(anchor.id, in: plugins) else { return [] }
+        guard sendChainRefusal(adding: selected.count, to: host) == nil else { NSSound.beep(); return [] }
         let copies = selected.map { independentCopy(of: $0) }
         pushUndo()
         updateChainPlugins(host) { p in
@@ -209,6 +211,7 @@ extension EditViewModel {
     func pastePlugins(into host: UUID) -> [UUID] {
         guard !pluginClipboard.isEmpty,
               let plugins = chainPlugins(host), engine != nil else { return [] }
+        guard sendChainRefusal(adding: pluginClipboard.count, to: host) == nil else { NSSound.beep(); return [] }
         let fresh = pluginClipboard.map { independentCopy(of: $0) }
         // The insertion point: after the last selected card IF the selection is this host's.
         var target: (SeriesLocation, Int)? = nil
@@ -244,10 +247,12 @@ extension EditViewModel {
     /// own point and this is one of its parts.
     @discardableResult
     func transferPlugins(_ ids: [UUID], from sourceHostID: UUID, to targetHostID: UUID,
-                         mode: PluginTransferMode, at place: (SeriesLocation, Int)? = nil,
+                         mode requested: PluginTransferMode, at place: (SeriesLocation, Int)? = nil,
                          undo: Bool = true) -> [UUID] {
         guard let engine, chainPlugins(targetHostID) != nil,
               let sourcePlugins = chainPlugins(sourceHostID) else { return [] }
+        // No link on a send: ⌘ to or from a mini-chain is a plain copy (@see effectiveTransferMode).
+        let mode = effectiveTransferMode(requested, from: sourceHostID, to: targetHostID)
         // Moving or linking a chain onto ITSELF means nothing: a move would be a no-op that still
         // burnt an undo point, and a link would tie a plugin to its own instance.
         if mode != .copy && sourceHostID == targetHostID { return [] }
@@ -259,6 +264,9 @@ extension EditViewModel {
             wanted.contains(p.id) && (mode == .copy || fxDefinition(ofInstance: p.id, on: sourceHostID) == nil)
         }
         guard !ordered.isEmpty else { return [] }
+        // A send's mini-chain has its own limit; a move inside the same box adds nothing.
+        let adding = (mode == .move && sourceHostID == targetHostID) ? 0 : ordered.count
+        guard sendChainRefusal(adding: adding, to: targetHostID) == nil else { NSSound.beep(); return [] }
 
         if undo { pushUndo() }
 

@@ -172,19 +172,22 @@ extension CommandRegistry {
             var byKind: [String: Int] = ["clip": 0, "group": 0, "aux": 0, "midi": 0]
             var pluginCount = 0, rackCount = 0, sendCount = 0, noteCount = 0
             var instanceCount = 0, maxDepth = 0
+            var pluginsOnSends = 0                 // INC 3: the third root, counted apart
 
             for entry in vm.laneEntries {
                 let item = entry.item
                 byKind[CommandAdapters.kindName(item), default: 0] += 1
                 maxDepth = max(maxDepth, entry.depth)
                 sendCount += item.sends.count
+                pluginsOnSends += item.sends.reduce(0) { $0 + $1.plugins.count }
                 noteCount += item.midiNotes.count
                 if item.isConsolidateInstance { instanceCount += 1 }
                 for plugin in item.plugins + item.instruments {
+                    if plugin.isSendMarker { continue }       // the place of a send, not a plugin
                     if plugin.isRack { rackCount += 1 } else { pluginCount += 1 }
                 }
             }
-            for stem in vm.stems { pluginCount += stem.plugins.count }
+            for stem in vm.stems { pluginCount += stem.plugins.filter { !$0.isSendMarker }.count }
 
             return .object([
                 "objects": .object(byKind.mapValues { .int($0) }),
@@ -196,6 +199,7 @@ extension CommandRegistry {
                 "plugins": .int(pluginCount),
                 "racks": .int(rackCount),
                 "sends": .int(sendCount),
+                "plugins_on_sends": .int(pluginsOnSends),
                 "midi_notes": .int(noteCount),
                 "undo_depth": .int(vm.undoStack.count),
                 // Cumulative since launch: writes of `items` and O(N) rebuilds of the lane entries

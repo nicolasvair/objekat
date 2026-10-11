@@ -24,34 +24,11 @@ extension EditViewModel {
 
     // MARK: - Reading the model
 
-    /// The model in `BridgeScope`'s terms: every object (depth first, array order), then the stems
-    /// (the first is the Main), and one route per plugin that carries a key — the leaves of every
-    /// chain (racks and FX link blocks walked down) and the instruments. `routeOwners[i]` names the
-    /// host and the plugin of `routes[i]`.
-    func bridgeTopology() -> (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
-                              routeOwners: [(host: UUID, plugin: UUID)]) {
+    /// The nodes of the model in `BridgeScope`'s terms: every object (depth first, array order), then
+    /// the stems (the first is the Main). What the send rules (`sendScopeIndex`) read on their own.
+    func bridgeNodes() -> [BridgeScope.Node] {
         var nodes: [BridgeScope.Node] = []
-        var routes: [BridgeScope.Route] = []
-        var owners: [(host: UUID, plugin: UUID)] = []
         let main = mainStemID
-
-        func collectLeaves(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
-            for p in plugins {
-                if let rack = p.rack { for voice in rack.voices { collectLeaves(voice, into: &out) } }
-                else if let block = p.fxBlock { collectLeaves(block.plugins, into: &out) }
-                else { out.append(p) }
-            }
-        }
-        func addRoutes(host: UUID, chain: [ObjectPlugin], instruments: [ObjectPlugin]) {
-            var leaves: [ObjectPlugin] = []
-            collectLeaves(chain, into: &leaves)
-            collectLeaves(instruments, into: &leaves)
-            for p in leaves {
-                guard let key = p.sidechain else { continue }
-                routes.append(BridgeScope.Route(source: key.sourceID, host: host, consumer: .sidechain(plugin: p.id)))
-                owners.append((host: host, plugin: p.id))
-            }
-        }
         func walk(_ array: [SoundObject], parent: UUID?) {
             for o in array {
                 let kind: BridgeScope.Kind
@@ -59,16 +36,81 @@ extension EditViewModel {
                 // A child follows its top-level ancestor: only a top-level object names its stem.
                 let stem: UUID? = parent == nil ? ((o.stemID == nil || o.stemID == main) ? nil : o.stemID) : nil
                 nodes.append(BridgeScope.Node(id: o.id, kind: kind, parent: parent, stem: stem))
-                addRoutes(host: o.id, chain: o.plugins, instruments: o.instruments)
                 if case .group(let children, _) = o.kind { walk(children, parent: o.id) }
             }
         }
         walk(items, parent: nil)
         for s in stems {
             nodes.append(BridgeScope.Node(id: s.id, kind: s.id == main ? .main : .stem, parent: nil, stem: nil))
-            addRoutes(host: s.id, chain: s.plugins, instruments: [])
         }
+        return nodes
+    }
+
+    /// Is this send ALIVE — worth laying in the engine at all? Cut or at -∞ with no curve, it costs
+    /// nothing and blocks nothing; a CURVE needs the plugin even when the static level is -∞.
+    func isSendAlive(_ send: AuxSend, on object: SoundObject) -> Bool {
+        send.enabled && (!send.isSilent || isAutomated(.send(auxID: send.auxID), on: object))
+    }
+
+    /// The model in `BridgeScope`'s terms: the nodes (@see bridgeNodes) and one route per plugin that
+    /// carries a key — the leaves of every chain (racks and FX link blocks walked down) and the
+    /// instruments — followed, after each object's keys, by one route per ALIVE send (in `sends`
+    /// order). `routeOwners[i]` names the owner
+    /// of `routes[i]`.
+    func bridgeTopology() -> (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
+                              routeOwners: [BridgeRouteOwner]) {
+        let nodes = bridgeNodes()
+        var routes: [BridgeScope.Route] = []
+        var owners: [BridgeRouteOwner] = []
+
+        func collectLeaves(_ plugins: [ObjectPlugin], into out: inout [ObjectPlugin]) {
+            for p in plugins {
+                if p.isSendMarker { continue }       // the place of a send, not a plugin
+                if let rack = p.rack { for voice in rack.voices { collectLeaves(voice, into: &out) } }
+                else if let block = p.fxBlock { collectLeaves(block.plugins, into: &out) }
+                else { out.append(p) }
+            }
+        }
+        func addRoutes(host: UUID, chain: [ObjectPlugin], instruments: [ObjectPlugin], onSends: [ObjectPlugin] = []) {
+            var leaves: [ObjectPlugin] = []
+            collectLeaves(chain, into: &leaves)
+            collectLeaves(instruments, into: &leaves)
+            // A keyed plugin a SEND carries (INC 3): its reader sits in the sender's clip like a
+            // trunk leaf's — the route's host is the SENDER.
+            collectLeaves(onSends, into: &leaves)
+            for p in leaves {
+                guard let key = p.sidechain else { continue }
+                routes.append(BridgeScope.Route(source: key.sourceID, host: host, consumer: .sidechain(plugin: p.id)))
+                owners.append(.plugin(host: host, plugin: p.id))
+            }
+        }
+        func walk(_ array: [SoundObject]) {
+            for o in array {
+                addRoutes(host: o.id, chain: o.plugins, instruments: o.instruments,
+                          onSends: o.isAux ? [] : SendChain.sendPlugins(of: o))
+                if !o.isAux {
+                    for send in o.sends where isSendAlive(send, on: o) {
+                        routes.append(BridgeScope.Route(source: o.id, host: send.auxID, consumer: .auxInput(sender: o.id)))
+                        owners.append(.send(sender: o.id, aux: send.auxID))
+                    }
+                }
+                if case .group(let children, _) = o.kind { walk(children) }
+            }
+        }
+        walk(items)
+        for s in stems { addRoutes(host: s.id, chain: s.plugins, instruments: []) }
         return (nodes, routes, owners)
+    }
+
+    /// The send rules over the current tree, built once per change of `items` / `stems`. What
+    /// `canRouteSend`, the offer (`reachableAuxes`) and the inspector read instead of each carrying a
+    /// copy of the rule.
+    var sendScopeIndex: BridgeScope.SendIndex {
+        _ = items
+        if let sendScopeIndexCache { return sendScopeIndexCache }
+        let index = BridgeScope.SendIndex(nodes: bridgeNodes())
+        sendScopeIndexCache = index
+        return index
     }
 
     // MARK: - Syncing the engine
@@ -90,7 +132,9 @@ extension EditViewModel {
     /// only) but STILL pushes it: the engine can have changed under an unchanged model (a chain remade,
     /// an AU re-instantiated, a clip recreated at rank 0), and every engine call is idempotent — it
     /// marks the transaction dirty, hence rebuilds, only on a real change.
-    func syncBridge() {
+    /// `pushingAutomation: false` for the caller that pushes the curves itself right after
+    /// (`resyncAllSends`).
+    func syncBridge(pushingAutomation: Bool = true) {
         guard let engine else { return }
         // Never modify the Edit during an export (the engine's own rule). Try again shortly: the
         // model may have changed in the meantime and nothing else would sync it.
@@ -101,10 +145,17 @@ extension EditViewModel {
             return
         }
 
+        pruneOrphanSends()     // an aux deleted since the last sync: the sends that named it go with it
         let topology = bridgeTopology()
-        if topology.routes.isEmpty && !bridgeEngineHasTaps {
+        // The MATERIALISATION rule (INC 3, docs/plan_sends_rework.md §D.2.A.g): a send that is not
+        // alive but CARRIES plugins is laid all the same — disabled, no route, no reader — so that its
+        // plugins stay loaded with their editors. Not a route of the plan: it blocks nothing.
+        let carriers = deadSendCarriers()
+        if topology.routes.isEmpty && carriers.isEmpty && !bridgeEngineHasTaps {
             if bridgePlan != BridgeScope.Plan() { bridgePlan = BridgeScope.Plan() }
             if !bridgeRouteStatus.isEmpty { bridgeRouteStatus = [:] }
+            if !sendRouteStatus.isEmpty { sendRouteStatus = [:] }
+            bridgeLaidSends = []
             bridgeLastTopology = nil
             return
         }
@@ -116,13 +167,20 @@ extension EditViewModel {
         }
 
         var status: [UUID: BridgeScope.Refusal] = [:]
+        var sendStatus: [SendKey: BridgeScope.Refusal] = [:]
         for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
-            status[topology.routeOwners[i].plugin] = why
+            switch topology.routeOwners[i] {
+            case .plugin(_, let plugin): status[plugin] = why
+            case .send(let sender, let aux): sendStatus[SendKey(sender: sender, aux: aux)] = why
+            }
         }
         // Written only on change: both are observed, and an equal value assigned at every sync would
         // invalidate every view that reads them.
         if plan != bridgePlan { bridgePlan = plan }
         if status != bridgeRouteStatus { bridgeRouteStatus = status }
+        // `sendRouteStatus` is written AFTER the engine laid the sends: a send whose plugin the engine
+        // could not insert (a full chain) joins the plan's refusals, and writing twice per sync would
+        // flicker every view that reads it.
 
         engine.beginBridgeSync()
         // Sorted: the order the engine sees must not depend on a dictionary's.
@@ -130,7 +188,8 @@ extension EditViewModel {
             engine.ensureBridgeTap(forSource: source.uuidString, rank: rank)
         }
         for (i, route) in topology.routes.enumerated() where topology.routeOwners.indices.contains(i) {
-            let plugin = topology.routeOwners[i].plugin.uuidString
+            guard let pluginID = topology.routeOwners[i].pluginID else { continue }     // a send: below
+            let plugin = pluginID.uuidString
             if plan.refused[i] == nil {
                 engine.setSidechain(forPlugin: plugin, source: route.source.uuidString, rank: plan.readerRanks[i] ?? 0)
             } else {
@@ -140,10 +199,84 @@ extension EditViewModel {
         for (id, rank) in plan.rootRanks.sorted(by: { $0.key.uuidString < $1.key.uuidString }) { engine.setBridgeRank(rank, forID: id.uuidString) }
         for (id, rank) in plan.auxRanks.sorted(by: { $0.key.uuidString < $1.key.uuidString }) { engine.setBridgeRank(rank, forID: id.uuidString) }
         for (id, rank) in plan.innerRanks.sorted(by: { $0.key.uuidString < $1.key.uuidString }) { engine.setBridgeRank(rank, forID: id.uuidString) }
-        engine.commitBridgeSync()
 
-        bridgeEngineHasTaps = !plan.taps.isEmpty
+        // The sends the plan accepts: one engine-only plugin each, at the end of the sender's chain.
+        // `0` = the engine could not lay it yet (its aux is not born): it is NOT counted as laid, so
+        // the next sync — which the aux's birth provokes — finds it new. `-1` = the sender's list is
+        // full: refused, with a reason (`chainFull`). `2` = a brand-new plugin, whose curve is gone:
+        // the automation is pushed again below.
+        var laid: Set<SendKey> = []
+        var bornAgain = false
+        // A send plugin that is NEW in the engine and carries plugins in the model has an empty
+        // mini-chain: its sender's chain is compiled again (the compile owns that content).
+        var refill: [UUID] = []
+        for i in plan.sendRoutes where topology.routeOwners.indices.contains(i) {
+            guard let key = topology.routeOwners[i].sendKey else { continue }
+            let entry = sendEntry(from: key.sender, to: key.aux)
+            let level = entry?.levelDb ?? sendMinDb
+            let gated = sendIsGated(sender: key.sender, aux: key.aux)
+            let result = engine.ensureBridgeSend(from: key.sender.uuidString, toAux: key.aux.uuidString,
+                                                 levelDb: level, gated: gated,
+                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)),
+                                                 alive: true)
+            if result > 0 { laid.insert(key) }
+            if result == 2 { bornAgain = true }
+            if result == 2, entry?.plugins.isEmpty == false, !refill.contains(key.sender) { refill.append(key.sender) }
+            if result < 0 { sendStatus[key] = .chainFull }      // the engine's own verdict
+        }
+        var laidCarriers = 0
+        for key in carriers {
+            let entry = sendEntry(from: key.sender, to: key.aux)
+            let result = engine.ensureBridgeSend(from: key.sender.uuidString, toAux: key.aux.uuidString,
+                                                 levelDb: entry?.levelDb ?? sendMinDb,
+                                                 gated: sendIsGated(sender: key.sender, aux: key.aux),
+                                                 position: Self.enginePosition(of: find(id: key.sender)?.sendPosition(auxID: key.aux)),
+                                                 alive: false)
+            if result > 0 { laidCarriers += 1 }
+            if result == 2, !refill.contains(key.sender) { refill.append(key.sender) }
+        }
+        engine.commitBridgeSync()
+        if sendStatus != sendRouteStatus { sendRouteStatus = sendStatus }
+
+        bridgeEngineHasTaps = !plan.taps.isEmpty || !laid.isEmpty || laidCarriers > 0
+        bridgeLaidSends = laid
         bridgeLastTopology = (topology.nodes, topology.routes, plan)
+        // Not during a load: the deferred queue compiles every chain itself, after this.
+        if deferredChainCompiles == nil {
+            for sender in refill { compileRack(objectID: sender) }
+        }
+        if bornAgain && pushingAutomation { pushAllAutomation() }
+    }
+
+    /// The sends that are NOT alive but carry plugins, and that the static scope allows — in tree
+    /// order (@see the materialisation rule in `syncBridge`). `bridgeLaidSends` never holds them: it
+    /// means "laid AND alive" (the hot level path, the gate).
+    func deadSendCarriers() -> [SendKey] {
+        var out: [SendKey] = []
+        func walk(_ array: [SoundObject]) {
+            for o in array {
+                if !o.isAux {
+                    for send in o.sends where !send.plugins.isEmpty && !isSendAlive(send, on: o)
+                        && sendScopeIndex.staticRefusal(sender: o.id, aux: send.auxID) == nil {
+                        out.append(SendKey(sender: o.id, aux: send.auxID))
+                    }
+                }
+                if case .group(let children, _) = o.kind { walk(children) }
+            }
+        }
+        walk(items)
+        return out
+    }
+
+    /// The engine's code for a send's position (OBJBridgeSendPlugin::TapPosition): 0 post-fader,
+    /// 1 pre-fader, 2 input, 3 on the trunk (the root order of the last compile places it).
+    static func enginePosition(of position: SendPosition?) -> Int {
+        switch position {
+        case .none, .some(.postFader): return 0
+        case .some(.preFader):         return 1
+        case .some(.input):            return 2
+        case .some(.chain):            return 3
+        }
     }
 
     /// Plugin id → why its key is refused, computed NOW from the model (pure: no engine call, no
@@ -155,7 +288,27 @@ extension EditViewModel {
         let plan = BridgeScope.plan(nodes: topology.nodes, routes: topology.routes)
         var status: [UUID: BridgeScope.Refusal] = [:]
         for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
-            status[topology.routeOwners[i].plugin] = why
+            if let plugin = topology.routeOwners[i].pluginID { status[plugin] = why }
+        }
+        return status
+    }
+
+    /// The same for the SENDS: (sender, aux) → why it is refused, computed NOW from the model. The
+    /// ENGINE's one verdict (`chainFull`: the sender's list had no room) cannot be computed from the
+    /// model: it is the last sync's, kept while the send is still in the plan.
+    func sendStatusNow() -> [SendKey: BridgeScope.Refusal] {
+        let topology = bridgeTopology()
+        if topology.routes.isEmpty { return [:] }
+        let plan = BridgeScope.plan(nodes: topology.nodes, routes: topology.routes)
+        var status: [SendKey: BridgeScope.Refusal] = [:]
+        for (i, why) in plan.refused where topology.routeOwners.indices.contains(i) {
+            if let key = topology.routeOwners[i].sendKey { status[key] = why }
+        }
+        for (key, why) in sendRouteStatus where why == .chainFull && status[key] == nil {
+            if plan.sendRoutes.contains(where: { topology.routeOwners.indices.contains($0)
+                                                  && topology.routeOwners[$0].sendKey == key }) {
+                status[key] = why
+            }
         }
         return status
     }
@@ -166,6 +319,7 @@ extension EditViewModel {
     private func bridgeLeafExists(_ pluginID: UUID, host: UUID) -> Bool {
         func has(_ plugins: [ObjectPlugin]) -> Bool {
             plugins.contains { p in
+                if p.isSendMarker { return false }
                 if let rack = p.rack { return rack.voices.contains { has($0) } }
                 if let block = p.fxBlock { return block.plugins.contains { $0.id == pluginID } }
                 return p.id == pluginID
@@ -173,6 +327,7 @@ extension EditViewModel {
         }
         if let chain = chainPlugins(host), has(chain) { return true }
         if let o = find(id: host), has(o.instruments) { return true }
+        if let o = find(id: host), has(SendChain.sendPlugins(of: o)) { return true }     // on one of its sends
         return false
     }
 
@@ -194,7 +349,7 @@ extension EditViewModel {
                     q.fxBlock?.plugins = inner
                     found = true
                 }
-            } else if p.id == pluginID {
+            } else if p.id == pluginID && !p.isSendMarker {
                 q.sidechain = key
                 found = true
             }
@@ -210,11 +365,14 @@ extension EditViewModel {
     /// belongs to the DEFINITION and is mirrored on every attached instance; on a detached one, only
     /// that instance.
     func setSidechain(host: UUID, plugin: UUID, source: UUID?) throws {
+        // A send's mini-chain named as the host: the route's host is the SENDER (the object whose clip
+        // the reader sits in); the write below finds the chain that holds the plugin.
+        let host = chainOwnerObjectID(host)
         guard bridgeLeafExists(plugin, host: host) else { throw BridgeSidechainError.notAPlugin }
 
         if let source {
             let topology = bridgeTopology()
-            let replacing = topology.routeOwners.firstIndex { $0.plugin == plugin }
+            let replacing = topology.routeOwners.firstIndex { $0.pluginID == plugin }
             let verdict = BridgeScope.candidates(host: host, nodes: topology.nodes, routes: topology.routes,
                                                  replacing: replacing)
             if let entry = verdict.first(where: { $0.id == source }) {
@@ -247,6 +405,12 @@ extension EditViewModel {
             updateChainPlugins(host) { $0 = updated }
         } else if let o = find(id: host), let updated = Self.settingSidechain(key, on: plugin, in: o.instruments) {
             update(id: host) { $0.instruments = updated }
+        } else {
+            // On one of the object's sends (INC 3).
+            let sendHost = chainHost(holding: plugin, on: host)
+            if sendHost != host, let updated = chainPlugins(sendHost).flatMap({ Self.settingSidechain(key, on: plugin, in: $0) }) {
+                updateChainPlugins(sendHost) { $0 = updated }
+            }
         }
         isDirty = true
         syncBridge()
@@ -258,7 +422,7 @@ extension EditViewModel {
     func sidechainCandidates(host: UUID, plugin: UUID, among: Set<UUID>? = nil)
         -> [(id: UUID, kind: BridgeScope.Kind, name: String, refusal: BridgeScope.Refusal?)] {
         let topology = bridgeTopology()
-        let replacing = topology.routeOwners.firstIndex { $0.plugin == plugin }
+        let replacing = topology.routeOwners.firstIndex { $0.pluginID == plugin }
         let kinds = Dictionary(topology.nodes.map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
         return BridgeScope.candidates(host: host, nodes: topology.nodes, routes: topology.routes,
                                       replacing: replacing, among: among).compactMap { entry in
@@ -283,6 +447,23 @@ extension EditViewModel {
         case .auxSource:                   return L("plugin.sidechain.reason.auxSource")
         case .mainSource:                  return L("plugin.sidechain.reason.mainSource")
         case .cycle:                       return L("plugin.sidechain.reason.cycle")
+        // Send-only refusals: a key never meets them (`staticRefusal` branches on the consumer).
+        case .hostNotAux, .stemSource, .outOfStem, .chainFull: return Self.sendReasonText(why)
+        }
+    }
+
+    /// The reason a SEND is refused, for a person (docs/plan_sends_rework.md §A.3). A literal key per case.
+    static func sendReasonText(_ why: BridgeScope.Refusal) -> String {
+        switch why {
+        case .unknownSource, .unknownHost: return L("send.reason.unknown")
+        case .hostNotAux:                  return L("send.reason.hostNotAux")
+        case .selfSource:                  return L("send.reason.selfSource")
+        case .auxSource:                   return L("send.reason.auxSource")
+        case .mainSource, .stemSource:     return L("send.reason.stemSource")
+        case .ancestorSource:              return L("send.reason.ancestorSource")
+        case .outOfStem:                   return L("send.reason.outOfStem")
+        case .cycle:                       return L("send.reason.cycle")
+        case .chainFull:                   return L("send.reason.chainFull")
         }
     }
 
