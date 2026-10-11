@@ -2599,7 +2599,7 @@ a second one elsewhere. The most exposed points:
   assumes the Main is delivered as a stem.
 - **Plugins on a send — INC 3 of the sends rework** (10 October 2026, branch `feature/sends-inc3-plugins`, stacked
   on `feature/sends-inc2-position`, **nothing merged, nothing pushed**; engine patch **`0040`**, fork branch
-  `objekat-sends-0040` LOCAL ONLY — `engine-patches/3.5/0040-*.patch` is its only backup; the next free number is
+  `objekat-sends-0040` published on the fork on 11 October (as is `objekat-patches-3.5`) — `engine-patches/3.5/0040-*.patch` is its backup; the next free number is
   `0041`). A send carries a mini-chain of plain plugins that process the SENT signal only, between the tap and the
   send's level (level AFTER the plugins); a latency there ages the tap and never delays the dry. Session format
   **23** (`sends[].plugins`). Authority: `docs/plan_sends_rework.md` D.2 (design, steps 3.0-3.12, journal with every

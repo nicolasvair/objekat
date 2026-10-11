@@ -448,8 +448,9 @@ Checked as still biting: `develop` still had the linear `std::find`.
   `0039` (the only addition on that path is the call of `processTapEnvelope`, empty unless the app
   overrides it). **Regenerated on 10 October** (the fork commit was AMENDED, not followed by a `0041`:
   the first version, `2cd66f2668f`, called the hook `processTapHead` and ran it in the head node, BEFORE
-  the plugins — a tail rang past the owner's end). Local branch `objekat-sends-0040`, commit
-  `e69b952520a`, **published nowhere**: this file is the only copy of that code. Files:
+  the plugins — a tail rang past the owner's end). Branch `objekat-sends-0040`, commit
+  `e69b952520a`, **published on the fork on 11 October** (with `objekat-sends-0039`, the tag
+  `objekat-sends-0040-v1` on the first version, and `objekat-patches-3.5` moved to it). Files:
   `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`, `tracktion_EditNodeBuilder.cpp`. The next
   number is `0041`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
