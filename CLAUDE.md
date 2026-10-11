@@ -38,7 +38,7 @@ unproven perf patch: its tree is `eb3956b9dad`'s, the tree of 27 September; `5a6
 An engine series of **37** patches on `main` in `engine-patches/3.5/`, numbered `0001`→`0038` with two
 holes: `0004` and `0010`, the only JUCE ones, were set aside on 3 September 2026 into `pending/`
 (see its README). `0037`, the audio bridge, came in with the sidechain merge of 6 October 2026 (see its
-entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); `0038` (the ARA source, see its entry below) followed it; **`0039` (sends on the audio bridge) exists on the branch `feature/sends-inc1-scope`, not yet on `main`, and the next one after it will be `0040`** (INC 2 adds no engine patch) (so the series is 38 patches once `0039` is merged). (`0035` and `0036`, the FX link state fixes of
+entry below; `main`'s gitlink is the fork's `objekat-bridge-0037`, `1508f752f62`); `0038` (the ARA source, see its entry below) followed it; **`0039` (sends on the audio bridge) and `0040` (plugins on a send) are on `main` since 11 October 2026 (merge `036c06a2`), published on the fork; the next one is `0041`** (INC 2 added no engine patch). (`0035` and `0036`, the FX link state fixes of
 4 October 2026, merged into `main`; the fork's branch is at `17215d464fb`.) It is the ONLY series left: the four archives of
 the 3.2 base went out on 4 September and were DELETED the same day, archive folder included —
 they insured only `sav-moteur-en-pistes`, which is published nowhere. Nothing is lost for all
@@ -2508,7 +2508,7 @@ What has landed since mid-August, in order:
   (width in the 300 pt sidebar, the selected look), the click heard live in Selection.
 
 - **Sends on the audio bridge — INC 1 of the sends rework** (9 October 2026, branch
-  `feature/sends-inc1-scope`, **nothing merged, nothing pushed**, engine patch `0039` on the fork branch
+  `feature/sends-inc1-scope`, **MERGED into `main` and pushed on 11 October 2026 (merge `036c06a2`)**, engine patch `0039` on the fork branch
   `objekat-sends-0039`). A send is no longer an `ObjAuxSendPlugin` read through a delay line: it is a ROUTE of the audio
   bridge (`ObjBridgeSendPlugin` at the end of the sender's chain, tap in COPY mode, level applied once per block on the
   copy, read by `ObjAuxReturnNode` through the same `BridgeReader`s as a sidechain). The legacy path survives ONLY behind
@@ -2530,7 +2530,7 @@ What has landed since mid-August, in order:
   curve by ear (procedure in `plan_sends_rework.md` C.5).
 
 - **A positionable send, and the send card — INC 2 of the sends rework** (9-10 October 2026, branch
-  `feature/sends-inc2-position`, stacked on `feature/sends-inc1-scope`, **nothing merged, nothing pushed, no engine
+  `feature/sends-inc2-position`, stacked on `feature/sends-inc1-scope`, **MERGED into `main` and pushed on 11 October 2026 (merge `036c06a2`), no engine
   patch**: `0039` stays the last one, the next free number is `0040`). A send taps its sender at `input`, in the
   `chain` (between two plugins of the trunk), `pre_fader` or `post_fader` (default). Session format **22**. The
   pre-bridge send path (`ObjAuxSendPlugin`, `OBJ_SENDS_LEGACY`) is DELETED. Authority: `docs/plan_sends_rework.md`
@@ -2598,7 +2598,7 @@ a second one elsewhere. The most exposed points:
   fades (the tap is upstream of them) but does obey its MUTE; the wet leaves its stem, so "Σ stems = mix"
   assumes the Main is delivered as a stem.
 - **Plugins on a send — INC 3 of the sends rework** (10 October 2026, branch `feature/sends-inc3-plugins`, stacked
-  on `feature/sends-inc2-position`, **nothing merged, nothing pushed**; engine patch **`0040`**, fork branch
+  on `feature/sends-inc2-position`, **MERGED into `main` and pushed on 11 October 2026 (merge `036c06a2`)**; engine patch **`0040`**, fork branch
   `objekat-sends-0040` published on the fork on 11 October (as is `objekat-patches-3.5`) — `engine-patches/3.5/0040-*.patch` is its backup; the next free number is
   `0041`). A send carries a mini-chain of plain plugins that process the SENT signal only, between the tap and the
   send's level (level AFTER the plugins); a latency there ages the tap and never delays the dry. Session format
