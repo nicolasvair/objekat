@@ -236,6 +236,12 @@ stays empty. There is no command to repair after the load: reopen with `repair_p
   "Some FX links in this project have members that do not sound alike" (Repair / Copy report / Don't
   repair, and a box "Align on the state most members share rather than on the definition"); the API
   never shows it, and repairs only through `fxlink.repair_divergences`.
+- `legacy_gain_migration`: `{trims, fx_outputs, automation_lanes, clamped}` — what the load turned into
+  GAIN STAGES (session format 25, see "Gain stages" below): the old chain trims (a stage at index 0 for
+  the in, at the end for the out, on objects, groups, stems, the Main and consolidate definitions), the
+  old FX link output sections (a `gain_pan_mute` stage at the end of the bin, or of a detached block),
+  the automation lanes re-aimed at a stage's gain, and the FX outputs CLAMPED to ±24 dB. All zero for a
+  format-25 file; a second save writes none of the old keys.
 
 **While a project is loading, almost every other command answers `invalid_state` ("project
 loading")** — the model is being rewritten under it. The only exceptions: `app.info`,
@@ -849,8 +855,11 @@ delete it first.
 
 DEBUG, INC 2: `debug.send_marker_audit {}` -> `{violations, markers, engine_senders_checked, engine_layouts, ok}`
 (model rules: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`; engine rule: the
-index of each laid send plugin against the model; call after `wait_idle`); `debug.set_chain_gain {host, in_db?,
-out_db?}` (a measuring gain on a chain's ends); `debug.add_test_plugin` also takes `gainTester` (+ `gain_db`);
+index of each laid send plugin against the model; call after `wait_idle`; each `engine_layouts` entry carries
+`segment_start` / `segment_end` on the first and last entry of the USER SEGMENT — a plugin, a gain stage or a
+chain send — the bounds the old `trimIn` / `trimOut` roles gave, gone with format 25); a measuring gain on a
+chain's ends is now two gain stages (`plugin.add_gain_stage`, `debug.set_chain_gain` is gone);
+`debug.add_test_plugin` also takes `gainTester` (+ `gain_db`);
 `debug.send_target_menu {id, retargeting?}` -> the data of the signal view's "Send to..." menu as the pure builder
 makes it (`sections` [{tier, title_key, entries [{aux, name, enabled, reason}]}]); `debug.route_pick {action,...}`
 drives the timeline's "choose an object" mode without a screen (`begin_send` with `id` and a position,
@@ -951,6 +960,32 @@ read from the module's real factory; opens no window) and `debug.ara_picker {hos
 rows the "+" picker would offer for that object NOW, and the click on one of them, exactly as the row does it:
 `{candidates, refusal, has_source, disproved, picked?}`).
 
+### Gain stages (session format 25)
+
+A **gain stage** is a plugin leaf of a chain — `identifier` `objGainStage` (face `gain`, name "Gain") or
+`objGainPanMute` (face `gain_pan_mute`, name "Gain · Pan") — with ONE parameter list: index 0 gain (dB,
+−24…24), 1 pan (−1…1), 2 mute (0/1). It replaces the chain's old trims (in / out) and an FX link's old output
+section: since format 25 neither exists, and a file that carried them is migrated at load (`last_load
+.legacy_gain_migration`). Everything a plugin does, a stage does — `plugin.list` (a row says `gain_stage`:
+the face, `null` on any other plugin), `plugin.remove` / `move` / `copy` / `drop`, `plugin.set_param` /
+`get_params` (a set is an undo point), automation, copies, cut, cross-project paste, consolidation, a send's
+mini-chain, an FX link's definition (mirrored on every member). Except: it has NO bypass (`plugin.toggle` /
+`toggle_selected` / `fxlink.set_plugin_enabled` refuse it, `invalid_state`, `gain_stage_no_bypass`) — a bin's
+common on/off still bypasses it with the rest of the bin — and no editor window.
+
+- `plugin.add_gain_stage {host, face, series?, index?, gain_db?, pan?, muted?}` lays one (the "+" drag's
+  gesture). `series`: `"root"` (default), `{voice: {block, index}}`, `{block}` (an FX link's block: in an
+  ATTACHED block the stage joins the bin's definition and every member gets a linked instance — the answer
+  then names the `definition`; in a DETACHED block it stays in that copy), `{send: aux}` (the mini-chain of
+  `host`'s send towards `aux`). `index`: the view's index in that series (send markers do not count at the
+  root; default the end). Refused: a value out of range (`bad_params`, `gain_out_of_range` /
+  `pan_out_of_range`), an unknown series (`not_found`), a full chain (`invalid_state`, `chainFull`). One undo
+  point. Answers `{host, plugin}` (+ `definition`).
+- `plugin.gain_stage {plugin}` → `{plugin, host, face, gain_db, pan, muted}`, read from the live instance.
+
+A stage counts like any plugin: in a send's `chain` index (a stage at index 0 makes `chain 1` the place after
+it), in the engine's list, and in the chain's capacity.
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that
@@ -1017,9 +1052,12 @@ knowing before driving one:
   instance carries `link_group == the definition plugin's id`). So `plugin.set_param` on any member's
   instance reaches the others, and editing the bin never reloads a live plugin (an instance keeps its id).
 - **In a host's chain the bin is ONE entry**, a block (`is_fx_block: true`, with `link`, `detached`
-  and its instances under `plugins`). It is placed anywhere between the trims and reordered like any
-  other plugin (`fxlink.move_block`, or the synoptic's drop). It carries an **output section** —
-  volume, pan, mute — and a **common on/off**, both the bin's while the block follows it.
+  and its instances under `plugins`). It is placed anywhere in the chain and reordered like any
+  other plugin (`fxlink.move_block`, or the synoptic's drop). It carries a **common on/off** (the bin's
+  while the block follows it) that bypasses every leaf, gain stages included. Since format 25 a bin has
+  **no output section**: its level, pan and mute are a `gain_pan_mute` GAIN STAGE among its plugins
+  (`plugin.add_gain_stage {host, face: "gain_pan_mute", series: {block}}`, then `plugin.set_param` on any
+  member's instance); an old file's output section becomes one at load. `fxlink.set_output` is gone.
 - **Two kinds of id**, and telling them apart is the family's trap: the DEFINITION plugin's id
   (`plugins[].id` of a link — what `add_plugin` returns and `remove_plugin` / `move_plugin` /
   `set_plugin_enabled` take) and the INSTANCE's id (`members[].instances[].id` — an ordinary plugin of
@@ -1029,8 +1067,9 @@ knowing before driving one:
   attached instance (`plugin.toggle`, `plugin.remove`, a reorder in the synoptic) is a gesture on the
   DEFINITION. An instance is never edited on its own.
 - **Detaching is per host** (`fxlink.detach`): the block stays where it is but stops following; the host
-  keeps an independent copy with the settings of the moment, and its own output section
-  (`fxlink.set_local_output`). `fxlink.reattach` realigns the host on the bin — it adopts the bin's
+  keeps an independent copy with the settings of the moment (its gain stages included), and its own
+  on/off (`fxlink.set_local_output {host, link|block, enabled}`; `gain_db` / `pan` / `muted` are refused,
+  `bad_params`). `fxlink.reattach` realigns the host on the bin — it adopts the bin's
   settings, never the reverse. `fxlink.release` leaves for good and keeps the plugins as plain ones;
   `fxlink.remove_block` drops the block and its plugins from this host; `fxlink.delete` dissolves the
   bin everywhere (every block replaced by its plugins, inline and independent).
@@ -1045,7 +1084,7 @@ knowing before driving one:
 - **Crossing a project** (paste into another tab) and **consolidating** never share a bin: they
   recreate a NEW one from the plugins' states as they were.
 - **Undo**: every mutator pushes ONE point (`undo: handled`), the registry restoring with the chains.
-  `fxlink.set_output` and `fxlink.set_local_output` are hot (no recompile) — a drag's frames.
+  `fxlink.set_local_output` is hot (no recompile).
 - **A resting-state sync backs the parameter mirror up** (external plugins only, same plugin model,
   instance loaded). The mirror carries what the plugin PUBLISHES to the host; a plugin like FabFilter
   Pro-Q 4 keeps other settings (86 parameters the host cannot write, such as a dynamic band's
@@ -1260,7 +1299,7 @@ the engine is really playing, on a clip) — a script can assert that the model 
 after an undo above all.
 
 The engine carries it as a small service plugin, `ObjChannelMode`, at the HEAD of the clip's chain —
-before the trims, the effects and the fader, so what follows works on the channel that was chosen. It
+before the effects (gain stages included) and the fader, so what follows works on the channel that was chosen. It
 exists only while the mode is not `lr`. Export and consolidation therefore follow with nothing to
 do: they render the engine's graph, and a consolidated wave carries the choice baked in (its
 placement is `lr` again). The choice follows the clip through a cut, a duplication, a paste

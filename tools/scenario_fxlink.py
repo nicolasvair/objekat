@@ -20,13 +20,14 @@ What it is really out to prove, beyond the commands answering:
     realigns the host on the bin — order, membership, output section, parameters;
   • ONE undo point per gesture, the registry restoring together with the chains;
   • the bin survives a save and a reopen, mirrors included;
-  • and the half only an export can settle — the ENGINE followed, not just the model: the output
-    section (volume, mute, common on/off) is heard, per member, detached or not.
+  • and the half only an export can settle — the ENGINE followed, not just the model: a bin's level
+    (a gain + pan + mute STAGE among its plugins since format 25 — a bin has no output section any
+    more) and its common on/off are heard, per member, detached or not.
 
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
-import array, os, shutil, sys, tempfile, wave
+import array, os, shutil, sys, tempfile, time, wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -121,6 +122,29 @@ try:
 
         def member(link, host):
             return next(m for m in cmd("fxlink.get", link=link)["members"] if m["host"] == host)
+
+        # A bin's level is a gain + pan + mute stage among its plugins (format 25). Laid in the
+        # host's block: in an attached bin it joins the definition, every member gets an instance.
+        def add_bin_stage(host, **values):
+            return cmd("plugin.add_gain_stage", host=host, face="gain_pan_mute",
+                       series={"block": block_of(host)["id"]}, **values)
+
+        def bin_stage(host):
+            return next(p for p in block_of(host)["plugins"] if p.get("gain_stage"))["id"]
+
+        def stage(pid):
+            return cmd("plugin.gain_stage", plugin=pid)
+
+        def wait_stage(pid, gain_db, muted=None, timeout=5.0):
+            # the mirror carries a set to the other members asynchronously
+            dl = time.time() + timeout
+            while True:
+                s_ = stage(pid)
+                if abs(s_["gain_db"] - gain_db) < 1e-3 and (muted is None or s_["muted"] is muted):
+                    return s_
+                if time.time() > dl:
+                    return s_
+                time.sleep(0.1)
 
         A = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         B = cmd("object.add", path=BIP, lane=1, start=0)["id"]
@@ -252,8 +276,12 @@ try:
         check("and the copy's change does not reach the bin", abs(param(revA, WET) - 0.9) < 1e-3)
         check("...while C, a member, still follows A",
               abs(param(next(p for p in block_of(C)["plugins"] if p["identifier"] == "reverb")["id"], WET) - 0.9) < 1e-3)
-        check("a detached block refuses the bin's output edit through set_local_output only",
-              refused("fxlink.set_local_output", host=A, link=LID, gain_db=-3) == "invalid_state")
+        check("an ATTACHED block has no on/off of its own (set_local_output refused)",
+              refused("fxlink.set_local_output", host=A, link=LID, enabled=False) == "invalid_state")
+        check("a bin has no output section any more: set_local_output refuses a gain",
+              refused("fxlink.set_local_output", host=B, link=LID, gain_db=-3) == "bad_params")
+        check("...and fxlink.set_output is gone",
+              refused("fxlink.set_output", link=LID, gain_db=-3) is not None)
 
         # the definition is edited while B is away
         cmd("fxlink.move_plugin", link=LID, plugin=d_rev, index=0); idle()
@@ -302,10 +330,12 @@ try:
               not any(p.get("is_fx_block") for p in chain(STEM)) and len(cmd("fxlink.get", link=LID)["members"]) == 3)
 
         # ── save / reopen ───────────────────────────────────────────────────
-        cmd("fxlink.set_output", link=LID, gain_db=-4.5, pan=0.25)
+        add_bin_stage(A, gain_db=-4.5, pan=0.25); idle()
         cmd("fxlink.rename", link=LID, name="Bus FX")
         cmd("fxlink.detach", host=C, link=LID); idle()
-        cmd("fxlink.set_local_output", host=C, link=LID, gain_db=-9.0, muted=True)
+        cS = bin_stage(C)
+        cmd("plugin.set_param", plugin=cS, index=0, value=-9.0)
+        cmd("plugin.set_param", plugin=cS, index=2, value=1); idle()
         before = cmd("fxlink.get", link=LID)
         proj = os.path.join(TMP, "p.objekat")
         cmd("project.save_as", path=proj); idle()
@@ -316,15 +346,20 @@ try:
         after = cmd("fxlink.list")
         check("the bin is back", after["count"] == 1)
         g = after["links"][0]
-        check("...with its name, output and definition",
-              g["name"] == "Bus FX" and abs(g["gain_db"] + 4.5) < 1e-6 and abs(g["pan"] - 0.25) < 1e-6
-              and [d["identifier"] for d in g["plugins"]] == [d["identifier"] for d in before["plugins"]],
+        check("...with its name and definition, the gain + pan + mute stage among its plugins",
+              g["name"] == "Bus FX"
+              and [d["identifier"] for d in g["plugins"]] == [d["identifier"] for d in before["plugins"]]
+              and "objGainPanMute" in [d["identifier"] for d in g["plugins"]],
               str(g))
         check("...its three members, C detached",
               len(g["members"]) == 3 and sum(1 for m in g["members"] if m["detached"]) == 1)
-        check("...and C's own output section",
-              any(m.get("local", {}).get("muted") is True and abs(m["local"]["gain_db"] + 9.0) < 1e-6
-                  for m in g["members"]))
+        att = [stage(bin_stage(m["host"])) for m in g["members"] if not m["detached"]]
+        check("...the attached members' stage at -4.5 dB / pan 0.25",
+              len(att) == 2 and all(abs(v["gain_db"] + 4.5) < 1e-4 and abs(v["pan"] - 0.25) < 1e-4
+                                    and v["muted"] is False for v in att), str(att))
+        det = [stage(bin_stage(m["host"])) for m in g["members"] if m["detached"]]
+        check("...and C's own stage (-9 dB, muted)",
+              len(det) == 1 and abs(det[0]["gain_db"] + 9.0) < 1e-4 and det[0]["muted"] is True, str(det))
         # the mirror was re-armed by the load
         a2 = next(m for m in g["members"] if not m["detached"])
         rr = [i for i in a2["instances"] if i["name"] == "Reverb"][0]["id"]
@@ -443,7 +478,7 @@ try:
         se, sr_ = add(S1, "4bandEq"), add(S1, "reverb")
         SRC = cmd("fxlink.create", host=S1, plugins=[se, sr_], name="Src bin")["id"]
         cmd("fxlink.attach", link=SRC, host=S2)
-        cmd("fxlink.set_output", link=SRC, gain_db=-6.0)
+        add_bin_stage(S1, gain_db=-6.0); idle()
         cmd("selection.set", ids=[S1, S2])
         cmd("clipboard.copy")
         cmd("tab.select", index=2); idle()
@@ -452,8 +487,10 @@ try:
         check("a cross-project paste makes ONE new bin in the target",
               lst["count"] == 1 and lst["links"][0]["id"] != SRC, str(lst["count"]))
         g = lst["links"][0]
-        check("...named and set as the source's (name, volume), both pasted objects its members",
-              g["name"] == "Src bin" and abs(g["gain_db"] + 6.0) < 1e-6 and len(g["members"]) == 2, str(g))
+        pv = [stage(bin_stage(m["host"])) for m in g["members"]]
+        check("...named and set as the source's (name, stage at -6 dB), both pasted objects its members",
+              g["name"] == "Src bin" and len(g["members"]) == 2
+              and len(pv) == 2 and all(abs(v["gain_db"] + 6.0) < 1e-4 for v in pv), "%s %s" % (g, pv))
         ti = [next(i for i in m["instances"] if i["name"] == "Reverb")["id"] for m in g["members"]]
         cmd("plugin.set_param", plugin=ti[0], index=WET, value=0.66); idle()
         check("...and it mirrors", abs(param(ti[1], WET) - 0.66) < 1e-3, "%s" % param(ti[1], WET))
@@ -472,7 +509,7 @@ try:
         ke = add(K1, "4bandEq")
         KL = cmd("fxlink.create", host=K1, plugins=[ke], name="Inner")["id"]
         cmd("fxlink.attach", link=KL, host=K2)
-        cmd("fxlink.set_output", link=KL, gain_db=-9.0)
+        add_bin_stage(K1, gain_db=-9.0); idle()
         grp = cmd("group.create", ids=[K1, K2])["id"]
         cmd("project.save_as", path=cproj); idle()
         r = cmd("consolidate.make", id=grp)
@@ -483,8 +520,9 @@ try:
         lst = cmd("fxlink.list")
         check("unmaking gives the content back with a NEW bin (not the old id), both members",
               lst["count"] == 1 and lst["links"][0]["id"] != KL and len(lst["links"][0]["members"]) == 2, str(lst))
-        check("...its output section carried through the sidecar (-9 dB)",
-              abs(lst["links"][0]["gain_db"] + 9.0) < 1e-6, str(lst["links"][0]))
+        kv = [stage(bin_stage(m["host"])) for m in lst["links"][0]["members"]]
+        check("...its stage carried through the sidecar (-9 dB on both members)",
+              len(kv) == 2 and all(abs(v["gain_db"] + 9.0) < 1e-4 for v in kv), str(kv))
         check("...and its name",  lst["links"][0]["name"] == "Inner")
 
         # ── the ENGINE follows: an export re-read ──────────────────────────
@@ -495,8 +533,10 @@ try:
         eqX = add(X, "4bandEq")
         LX = cmd("fxlink.create", host=X, plugins=[eqX])["id"]
         cmd("fxlink.attach", link=LX, host=Y)
+        add_bin_stage(X)                            # neutral: the bin's level, 0 dB
         cmd("object.set_mute", ids=[Y], muted=True)
         idle()
+        sX, sY = bin_stage(X), bin_stage(Y)
 
         def render(name):
             out = os.path.join(TMP, name)
@@ -507,13 +547,13 @@ try:
 
         p0 = render("neutral.wav")
         check("the bin plays (signal through the block)", p0 > 0.05, "%s" % p0)
-        cmd("fxlink.set_output", link=LX, gain_db=-20.0)
+        cmd("plugin.set_param", plugin=sX, index=0, value=-20.0); idle()
         p1 = render("minus20.wav")
         check("the bin's volume is HEARD (-20 dB)", abs(p1 / p0 - 0.1) < 0.02, "%s / %s" % (p1, p0))
-        cmd("fxlink.set_output", link=LX, muted=True)
+        cmd("plugin.set_param", plugin=sX, index=2, value=1); idle()
         p2 = render("muted.wav")
         check("the bin's mute is HEARD", p2 < p0 * 0.001, "%s" % p2)
-        cmd("fxlink.set_output", link=LX, muted=False)
+        cmd("plugin.set_param", plugin=sX, index=2, value=0); idle()
         cmd("fxlink.set_enabled", link=LX, enabled=False)
         p3 = render("off.wav")
         check("a bin that is off bypasses its output stage too (level back to unity)",
@@ -526,21 +566,23 @@ try:
         cmd("object.set_mute", ids=[Y], muted=False)
         cmd("object.set_mute", ids=[X], muted=True)
         idle()
+        wait_stage(sY, -20.0, muted=False)
         py = render("member_Y.wav")
         check("the OTHER member hears the bin's volume too", abs(py / p0 - 0.1) < 0.02, "%s / %s" % (py, p0))
-        cmd("fxlink.detach", host=Y, link=LX)
-        cmd("fxlink.set_local_output", host=Y, link=LX, gain_db=0.0)
+        cmd("fxlink.detach", host=Y, link=LX); idle()
+        check("the detached member keeps its stage instance", bin_stage(Y) == sY)
+        cmd("plugin.set_param", plugin=sY, index=0, value=0.0); idle()
         py2 = render("member_Y_detached.wav")
         check("a detached member plays its OWN output section (0 dB, unlike the bin's -20)",
               abs(py2 / p0 - 1.0) < 0.05, "%s / %s" % (py2, p0))
-        cmd("fxlink.set_local_output", host=Y, link=LX, muted=True)
+        cmd("plugin.set_param", plugin=sY, index=2, value=1); idle()
         py3 = render("member_Y_localmute.wav")
         check("...its local mute is heard", py3 < p0 * 0.001, "%s" % py3)
         cmd("fxlink.reattach", host=Y, link=LX)
         py4 = render("member_Y_reattached.wav")
         check("reattached, it plays the bin's again", abs(py4 / p0 - 0.1) < 0.02, "%s / %s" % (py4, p0))
         cmd("edit.undo")      # the reattach
-        cmd("edit.undo")      # the local mute
+        cmd("edit.undo")      # the local mute (a stage's set is an undo point)
         idle()
         py5 = render("member_Y_undone.wav")
         check("undo restores the detached member's local section in the engine (0 dB)",

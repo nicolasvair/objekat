@@ -17,7 +17,7 @@ out to prove, beyond the commands answering:
   • D1  a bin's BLOCK dragged onto another object MOVES: the target joins the bin, the source loses its
         block, the others are untouched — in ONE undo point, with no duplicated plugin id;
   • D2  with ⌥ it is a COPY that stays on the same bin (every copy of a bin is a link): the mirror holds;
-  • D3  a DETACHED block travels as it is (its own output section, fresh instance ids);
+  • D3  a DETACHED block travels as it is (its own gain + pan + mute stage, fresh instance ids);
   • D4  what cannot happen is REFUSED, said by the dry run, and changes nothing — not even an undo point;
   • D5  a plain plugin let go INSIDE a bin joins the definition (same host or another): its instance keeps
         its id, every other member gets one;
@@ -228,7 +228,12 @@ try:
         # D3 — a DETACHED block travels as it is
         # ═════════════════════════════════════════════════════════════════
         cmd("fxlink.detach", host=C, link=LID); idle()
-        cmd("fxlink.set_local_output", host=C, link=LID, gain_db=-6.0, pan=0.5); idle()
+        # its own level: a gain + pan + mute stage laid in the DETACHED copy only (format 25: a bin has
+        # no output section; the stage is a leaf of the block, local to C while it is detached)
+        cmd("plugin.add_gain_stage", host=C, face="gain_pan_mute", series={"block": block_of(C)["id"]},
+            gain_db=-6.0, pan=0.5); idle()
+        check("D3 the stage stays in C's detached copy (the bin's definition is untouched)",
+              len(inst_ids(C)) == 3 and "objGainPanMute" not in def_idents(LID), str(idents(C)))
         c_ids = inst_ids(C)
         blockC = block_of(C)["id"]
         D = obj(3)
@@ -237,11 +242,12 @@ try:
         idle()
         check("D3 a detached block dropped on D is a move_block", r["outcome"] == "move_block" and r["placed"], str(r))
         mD = member(LID, D)
-        check("D3 D holds it DETACHED, with the source's own output section",
-              mD is not None and mD["detached"] is True and abs(mD["local"]["gain_db"] + 6.0) < 1e-6
-              and abs(mD["local"]["pan"] - 0.5) < 1e-6, str(mD))
+        sD = [cmd("plugin.gain_stage", plugin=p["id"]) for p in block_of(D)["plugins"] if p.get("gain_stage")]
+        check("D3 D holds it DETACHED, with the source's own stage (-6 dB, pan 0.5)",
+              mD is not None and mD["detached"] is True and len(sD) == 1
+              and abs(sD[0]["gain_db"] + 6.0) < 1e-4 and abs(sD[0]["pan"] - 0.5) < 1e-4, "%s %s" % (mD, sD))
         check("D3 C lost its block", len(blocks(C)) == 0 and member(LID, C) is None)
-        check("D3 D's instances are fresh ids", len(inst_ids(D)) == 2 and not set(inst_ids(D)) & set(c_ids))
+        check("D3 D's instances are fresh ids", len(inst_ids(D)) == 3 and not set(inst_ids(D)) & set(c_ids))
         check("D3 ONE undo point", depth() == d0 + 1)
         cmd("edit.undo"); idle()
         check("D3 ONE undo gives C its detached block back",
@@ -469,7 +475,8 @@ try:
         X, Y = obj(0), obj(1)
         eqX = add(X, "4bandEq")
         LX = cmd("fxlink.create", host=X, plugins=[eqX])["id"]
-        cmd("fxlink.set_output", link=LX, gain_db=-20.0)
+        cmd("plugin.add_gain_stage", host=X, face="gain_pan_mute", series={"block": block_of(X)["id"]},
+            gain_db=-20.0)
         cmd("object.set_mute", ids=[X], muted=True)
         idle()
 
@@ -484,7 +491,7 @@ try:
         check("D12 Y alone, with no bin, plays at unity", r0 > 0.01, "%s" % r0)
         drop(**{"from": X, "plugin": block_of(X)["id"], "to": Y}); idle()
         r1 = render("Y_after_move.wav")
-        check("D12 after the block moved onto Y, Y plays the bin's output section (-20 dB, RMS)",
+        check("D12 after the block moved onto Y, Y plays the bin's stage (-20 dB, RMS)",
               abs(r1 / r0 - 0.1) < 0.02, "%s / %s" % (r1, r0))
         cmd("edit.undo"); idle()
         r2 = render("Y_after_undo.wav")

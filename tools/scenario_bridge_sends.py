@@ -155,6 +155,23 @@ def add_test(c, host, kind, latency_ms=None, gain_db=None):
     return c.send("debug.add_test_plugin", p)
 
 
+def lay_trim_stages(c, host, in_db=-6.0, out_db=-3.0):
+    """The old measuring trims (`debug.set_chain_gain`, gone with format 25) as GAIN STAGES: one at
+    index 0 of the root series (the old IN), one at its end (the old OUT), laid by
+    `plugin.add_gain_stage` and set by `plugin.set_param` (index 0 = gain dB). They are plugins of the
+    chain now, so a send's `chain` index counts the IN stage: what the trims' tables called chain(n)
+    is chain(n + 1) here, and `where_in_list` names it chain<n + 1>."""
+    ids = []
+    for index in (0, None):
+        params = {"host": host, "face": "gain"}
+        if index is not None:
+            params["index"] = index
+        ids.append(c.send("plugin.add_gain_stage", params)["plugin"]["id"])
+    for pid, db in zip(ids, (in_db, out_db)):
+        c.send("plugin.set_param", {"plugin": pid, "index": 0, "value": db})
+    return ids
+
+
 def lay_send(c, x, aux, db):
     c.send("send.set_level", {"id": x, "aux": aux, "db": db})
 
@@ -1306,19 +1323,25 @@ def audit(c, label, want_senders=None):
 
 def where_in_list(layout, aux):
     """Reads a sender's engine list (the audit's `engine_layouts`) and names the place of its send:
-    input | chain<n> (n plugins upstream) | pre | post."""
-    roles = {e["role"]: e["index"] for e in layout if e["role"] in ("trimIn", "trimOut", "fader", "windowFade")}
+    input | chain<n> (n plugins upstream, gain stages included) | pre | post.
+    Format 25: no trims any more — the USER SEGMENT's bounds are the engine's `segment_start` /
+    `segment_end` flags (its first and last entries: a plugin, a stage or a chain send); before the
+    start is `input`, after the end and before the fader is `pre`. An empty segment (no flag) names
+    everything before the fader chain<n>, as the old list did with no trim."""
+    roles = {e["role"]: e["index"] for e in layout if e["role"] in ("fader", "windowFade")}
+    start = next((e["index"] for e in layout if e.get("segment_start")), None)
+    end = next((e["index"] for e in layout if e.get("segment_end")), None)
     mine = [e for e in layout if e["role"] == "send" and e.get("aux") == aux]
     if not mine:
         return "absent"
     i = mine[0]["index"]
-    if "trimIn" in roles and i < roles["trimIn"]:
+    if start is not None and i < start:
         return "input"
     if "windowFade" in roles and i > roles["windowFade"]:
         return "post"
     if "fader" in roles and i > roles["fader"]:
         return "post"
-    if "trimOut" in roles and i > roles["trimOut"]:
+    if end is not None and i > end:
         return "pre"
     return "chain%d" % sum(1 for e in layout if e["role"] == "fx" and e["index"] < i)
 
@@ -1370,20 +1393,21 @@ def section_Q2(c):
     pipeline_offset_db(c)
     x, a = cast_siblings(c, "Q2")
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     created = c.send("send.create", {"id": x, "aux": a, "position": "input"})
     check("Q2: send.create answers the position", created.get("position") == "input" and created.get("level_db") <= -59.0, created)
     lay_send(c, x, a, 0.0)
     audit(c, "Q2 created at input", want_senders=1)
-    # IN -6, [G -12], OUT -3, fader -20: what is upstream of each place
+    # [IN -6, G -12, OUT -3] (the IN / OUT are gain stages, plugins of the chain), fader -20: what is
+    # upstream of each place. chain 1 = after the IN stage (the trims' old chain 0), chain 2 = after G.
     steps = [("input",   {"position": "input"},                  0.0,   "input"),
-             ("chain 0", {"position": "chain", "index": 0},      -6.0,  "chain0"),
-             ("chain 1", {"position": "chain", "index": 1},      -18.0, "chain1"),
+             ("chain 1", {"position": "chain", "index": 1},      -6.0,  "chain1"),
+             ("chain 2", {"position": "chain", "index": 2},      -18.0, "chain2"),
              ("pre",     {"position": "pre_fader"},               -21.0, "pre"),
              ("post",    {"position": "post_fader"},              -41.0, "post"),
              ("input again", {"position": "input"},              0.0,   "input"),
-             ("chain 1 again", {"position": "chain", "index": 1}, -18.0, "chain1")]
+             ("chain 2 again", {"position": "chain", "index": 2}, -18.0, "chain2")]
     for name, params, expect, place in steps:
         r = c.send("send.set_position", dict({"id": x, "aux": a}, **params))
         check("Q2 %s: send.set_position answers %s" % (name, params["position"]), r.get("position") == params["position"], r)
@@ -1744,20 +1768,21 @@ def section_T2REF(c):
 # W2 — copies end to end: duplicate, cut, copy/paste, group/ungroup, cross-project paste
 # --------------------------------------------------------------------------------------------------
 
+# [IN -6, G -12, OUT -3]: the IN / OUT gain stages are plugins, so chain 1 is after IN, chain 2 after G.
 W2_POSITIONS = (("input",  {"position": "input"},                 0.0),
-                ("chain0", {"position": "chain", "index": 0},    -6.0),
-                ("chain1", {"position": "chain", "index": 1},    -18.0),
+                ("chain1", {"position": "chain", "index": 1},    -6.0),
+                ("chain2", {"position": "chain", "index": 2},    -18.0),
                 ("pre",    {"position": "pre_fader"},            -21.0),
                 ("post",   {"position": "post_fader"},           -41.0))
 
 
 def w2_build(c, name, params):
-    """X = impulse with [G(-12)], IN -6, OUT -3, fader -20, its send to a root aux at 0 dB at `params`."""
+    """X = impulse with [IN -6, G(-12), OUT -3] (gain stages around G), fader -20, its send to a root aux at 0 dB at `params`."""
     fresh(c, name)
     x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
     a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 8})["id"]
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     c.send("send.create", dict({"id": x, "aux": a}, **params))
     lay_send(c, x, a, 0.0)
@@ -1807,14 +1832,23 @@ def section_W2(c):
         right = max(starts, key=starts.get)
         w2_check_one(c, tag + " cut, left half", left, a, pname, params, expect, others=[x])
         w2_check_one(c, tag + " cut, right half", right, a, pname, params, expect, measure_it=False)
-        if pname == "chain1":
-            shape = {}
+        if pname == "chain2":
+            shape, flat, g_in_bin = {}, {}, {}
             for half, h in (("left", left), ("right", right)):
                 plist = c.send("plugin.list", {"host": h})["plugins"]
                 shape[half] = [("bin" if e.get("is_fx_block") else "marker" if e.get("is_send_marker") else "plugin") for e in plist]
-            print("       W2 chain1: top level of each half after the cut: %s" % shape)
-            check(tag + " cut: each half holds one bin {G} and the marker after it (the tap measures -18 above)",
-                  shape["left"] == ["bin", "marker"] and shape["right"] == ["bin", "marker"], shape)
+                leaves, inbin = [], False
+                for e in plist:
+                    for q in (e["plugins"] if e.get("is_fx_block") else [e]):
+                        leaves.append("marker" if q.get("is_send_marker") else "stage" if q.get("gain_stage") else "G")
+                        if e.get("is_fx_block") and not q.get("gain_stage") and not q.get("is_send_marker"):
+                            inbin = True
+                flat[half], g_in_bin[half] = leaves, inbin
+            print("       W2 chain2: top level of each half after the cut: %s, leaves %s" % (shape, flat))
+            check(tag + " cut: each half holds {G} in a bin, the marker after it, between the IN and OUT stages "
+                  "(the tap measures -18 above)",
+                  all(flat[h] == ["stage", "G", "marker", "stage"] and g_in_bin[h] for h in ("left", "right")),
+                  (shape, flat))
         # --- copy / paste on another lane, same time
         c.send("selection.set", {"ids": [x]})
         c.send("clipboard.copy", {})
@@ -1928,7 +1962,7 @@ def section_X2(c):
     pipeline_offset_db(c)
     x, a = cast_siblings(c, "X2")
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
     lay_send(c, x, a, 0.0)
@@ -1945,12 +1979,13 @@ def section_X2(c):
 
     P = [("post",   {"position": "post_fader"},               -41.0),
          ("input",  {"position": "input"},                      0.0),
-         ("chain0", {"position": "chain", "index": 0},         -6.0),
-         ("chain1", {"position": "chain", "index": 1},        -18.0),
+         ("chain1", {"position": "chain", "index": 1},         -6.0),
+         ("chain2", {"position": "chain", "index": 2},        -18.0),
          ("pre",    {"position": "pre_fader"},                -21.0),
          ("post",   {"position": "post_fader"},               -41.0)]
     base_inst = fx_instances(c, x)
-    check("X2: the chain holds one plugin, with an engine instance", len(base_inst) == 1 and base_inst[0][1], base_inst)
+    check("X2: the chain holds G and the two gain stages, each with an engine instance",
+          len(base_inst) == 3 and all(i for _, i in base_inst), base_inst)
 
     def state_is(label, k):
         name, params, expect = P[k]
@@ -1962,7 +1997,7 @@ def section_X2(c):
         print("       %s: wet %s dB re source" % (label, None if db is None else "%.3f" % db))
         check("%s: wet %.0f dB re source (0.05)" % (label, expect), db is not None and abs(db - expect) <= 0.05, db)
         inst = fx_instances(c, x)
-        check("%s: the plugin instance is the SAME engine object" % label, inst == base_inst, (inst, base_inst))
+        check("%s: the plugin instances are the SAME engine objects" % label, inst == base_inst, (inst, base_inst))
 
     # forward: five moves, each one undo point
     for k in range(1, 6):
@@ -1990,7 +2025,7 @@ def section_X2(c):
         state_is("X2 redo %d (forward to %s)" % (j, P[j][0]), j)
 
     # the card's deletion: removes the send AND its marker, one undo point; undo brings both back
-    c.send("send.set_position", {"id": x, "aux": a, "position": "chain", "index": 1})
+    c.send("send.set_position", {"id": x, "aux": a, "position": "chain", "index": 2})
     settle(c)
     c.send("send.remove", {"id": x, "aux": a})
     settle(c)
@@ -2001,7 +2036,7 @@ def section_X2(c):
     tr = undo_trace_since(before)
     print("       X2: undo of the card's deletion -> %s" % (tr[-1].strip() if tr else None))
     row = position_row(c, x, a)
-    check("X2: undo of the deletion brings the send back at chain 1", row.get("position") == "chain" and row.get("index") == 1, row)
+    check("X2: undo of the deletion brings the send back at chain 2", row.get("position") == "chain" and row.get("index") == 2, row)
     audit(c, "X2 after the undo of the deletion")
     db = wet_now("X2 after undo deletion")
     check("X2: ... and the wet is -18 dB again", db is not None and abs(db - (-18.0)) <= 0.05, db)
@@ -2012,12 +2047,12 @@ def section_X2(c):
 # --------------------------------------------------------------------------------------------------
 
 def y2_build(c, name, params, fader_db=None):
-    """X = impulse with [G(-12)], IN -6, OUT -3, its send to a root aux at 0 dB at `params`."""
+    """X = impulse with [IN -6, G(-12), OUT -3] (gain stages around G), its send to a root aux at 0 dB at `params`."""
     fresh(c, name)
     x = c.send("object.add", {"path": out("imp.wav"), "lane": 0, "start": 0.0})["id"]
     a = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 8})["id"]
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     if fader_db is not None:
         c.send("object.set_gain", {"ids": [x], "db": fader_db})
     c.send("send.create", dict({"id": x, "aux": a}, **params))
@@ -2052,7 +2087,7 @@ def section_Y2(c):
         print("       (skipped in --ref)")
         return
     pipeline_offset_db(c)
-    chain = {"position": "chain", "index": 1}
+    chain = {"position": "chain", "index": 2}      # after G (the IN stage counts: chain 1 is after it)
 
     # --- refuse (the default)
     x, a = y2_build(c, "Y2refuse", chain)
@@ -2117,8 +2152,8 @@ def section_Y2(c):
               rr is not None and len(rr) == 1 and rr[0]["position"] == "post_fader", rr)
         c.send("edit.undo", {}); settle(c)
         rr = sends_of(x)
-        check("Y2 fold: undo 3 takes back the fold: chain 1 again",
-              rr is not None and len(rr) == 1 and rr[0]["position"] == "chain" and rr[0].get("index") == 1, rr)
+        check("Y2 fold: undo 3 takes back the fold: chain 2 again",
+              rr is not None and len(rr) == 1 and rr[0]["position"] == "chain" and rr[0].get("index") == 2, rr)
         audit(c, "Y2 fold undone")
         # (the by-difference measure toggles send.enable, an undo point: it comes AFTER the undo checks)
         _, _, dbu = measure_wet_db(c, "Y2_fold_undone", x, a)
@@ -2438,10 +2473,10 @@ def section_Z2(c):
     a2 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2})["id"]
     a3 = c.send("aux.create", {"start": 0.0, "end": 3.0, "lane": 4})["id"]
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     w = c.send("object.add", {"path": out("imp.wav"), "lane": 6, "start": 0.0})["id"]
-    c.send("send.create", {"id": x, "aux": a1, "position": "chain", "index": 1})
+    c.send("send.create", {"id": x, "aux": a1, "position": "chain", "index": 2})      # after G (IN stage, G)
     c.send("send.create", {"id": x, "aux": a2, "position": "input"})
     c.send("send.create", {"id": x, "aux": a3, "position": "pre_fader"})
     c.send("send.create", {"id": w, "aux": a1, "position": "post_fader"})
@@ -2449,7 +2484,7 @@ def section_Z2(c):
         lay_send(c, snd, aux, db)
     audit(c, "Z2 before save", want_senders=2)
 
-    cases = (("X chain(1)", x, a1, "chain", -18.0), ("X input", x, a2, "input", 0.0),
+    cases = (("X chain(2)", x, a1, "chain", -18.0), ("X input", x, a2, "input", 0.0),
              ("X pre", x, a3, "pre_fader", -21.0), ("W post", w, a1, "post_fader", -6.0 - 0.0))
     before = {}
     for name, snd, aux, pos, expect in cases:
@@ -2514,7 +2549,7 @@ def section_PF(c):
     pipeline_offset_db(c)
     # ---- (1) format 21: no tap, no marker
     x, a = cast_siblings(c, "PF1")
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
     lay_send(c, x, a, -6.0)
@@ -2545,13 +2580,13 @@ def section_PF(c):
 
     # ---- (2) format 22 that breaks the rules: marker + tap, a duplicate marker, an orphan marker
     x, a = cast_siblings(c, "PF2")
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
-    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 0})
+    lay_trim_stages(c, x, -6.0, -3.0)
+    c.send("send.create", {"id": x, "aux": a, "position": "chain", "index": 1})     # after the IN stage
     lay_send(c, x, a, 0.0)
     dry, wet = measure(c, "PF2 before", x, a, 0.0)
     v1 = wet_db(wet)
-    print("       PF2 chain(0) wet before: %s dB re source (the tap before the chain: only the IN gain, -6)" % (None if v1 is None else "%.3f" % v1))
-    check("PF2: chain(0) taps after the chain's in gain only (-6 dB, 0.05)", v1 is not None and abs(v1 + 6.0) <= 0.05, v1)
+    print("       PF2 chain(1) wet before: %s dB re source (the tap after the IN stage only, -6)" % (None if v1 is None else "%.3f" % v1))
+    check("PF2: chain(1) taps after the IN stage only (-6 dB, 0.05)", v1 is not None and abs(v1 + 6.0) <= 0.05, v1)
     c.send("project.save")
     path = out("PF2/project.objekat")
     d = json.load(open(path))
@@ -2570,12 +2605,12 @@ def section_PF(c):
     c.send("project.open", {"path": path})
     wait(c)
     row = position_row(c, x, a)
-    check("PF2: the marker wins over the tap: position chain, index 0", row.get("position") == "chain" and row.get("index") == 0, row)
+    check("PF2: the marker wins over the tap: position chain, index 1", row.get("position") == "chain" and row.get("index") == 1, row)
     r = audit(c, "PF2 after open", want_senders=1)
     check("PF2: ONE marker is left (the duplicate and the orphan were dropped)", r.get("markers") == 1, r.get("markers"))
     dry, wet = measure(c, "PF2 after", x, a, 0.0)
     v2 = wet_db(wet)
-    check("PF2: the wet is the chain(0) one, not a pre-fader one (-6 dB, 0.05)", v2 is not None and abs(v2 + 6.0) <= 0.05, v2)
+    check("PF2: the wet is the chain(1) one, not a pre-fader one (-6 dB, 0.05)", v2 is not None and abs(v2 + 6.0) <= 0.05, v2)
     c.send("project.save")
     d3 = json.load(open(path))
     ox3 = find_obj(d3["items"], x)
@@ -3572,7 +3607,7 @@ def section_R3(c):
     pipeline_offset_db(c)
     x, a = cast_siblings(c, "R3pos")
     add_test(c, x, "gainTester", gain_db=-12.0)
-    c.send("debug.set_chain_gain", {"host": x, "in_db": -6.0, "out_db": -3.0})
+    lay_trim_stages(c, x, -6.0, -3.0)
     c.send("object.set_gain", {"ids": [x], "db": -20.0})
     c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
     lay_send(c, x, a, 0.0)
@@ -3582,7 +3617,7 @@ def section_R3(c):
     set_gain3(c, pid, -9.0)
     inst0 = send_instance(c, x, a)
     for name, prm, expect in (("post", {"position": "post_fader"}, -41.0), ("input", {"position": "input"}, 0.0),
-                              ("chain0", {"position": "chain", "index": 0}, -6.0), ("chain1", {"position": "chain", "index": 1}, -18.0),
+                              ("chain1", {"position": "chain", "index": 1}, -6.0), ("chain2", {"position": "chain", "index": 2}, -18.0),
                               ("pre", {"position": "pre_fader"}, -21.0), ("post again", {"position": "post_fader"}, -41.0)):
         c.send("send.set_position", dict({"id": x, "aux": a}, **prm))
         settle(c)
