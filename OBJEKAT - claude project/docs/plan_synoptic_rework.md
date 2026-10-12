@@ -607,4 +607,31 @@ behaviour (skip pre/post stages in those bakes) — needs a marker of "migrated 
 
 # H. Journal
 
-(empty — lot by lot: commit, build, tests and their measured durations, deviations)
+(lot by lot: commit, build, tests and their measured durations, deviations)
+
+**Lot M (gain stages, format 25)** — branch `feat/synoptic-rework-M`, clone `objekat-synM`, 12 October.
+Commits `82f42db8` M.1, `b56db484` M.2, `75401216` M.3, `df215b38` (L0 merged), `2bcbded1` M.4, `caac1af1`
+M.5 (part), `d31f65f7` engine patch 0041, `767de7d4` M.5 tests. Debug build OK, no new warning.
+- **Engine patch 0041** (user decision, option A): a mono clip's chain doubled (+6.02 dB) once the `trimIn`
+  `ObjGain` was gone — `ChannelRemappingNode`'s explicit mapping ADDS into a destination that, in a linear
+  chain, IS its input. Fixed in the node (copy aside + clear + map when the views overlap). Engine branch
+  `objekat-gainstage-0041`, commit `8f3e51a6beb`, LOCAL (not on the fork); archive in `engine-patches/3.5`.
+- **Capacity**: 20 entries = fader + window + one per laid send + plugins and stages: 18 without a send, 17
+  with one (16 / 15 before format 25). `scenario_bridge_sends` F2 / M3 / X3 follow it.
+- **D.3, measured**: pure tests 68 s (+ 7 s for the three synoptic ones) · `scenario_gain_stage` 21 s ·
+  `scenario_gain_migration` 41 s · `scenario_fxlink` 19 s · `scenario_plugin_selection` 5 s · `smoke.jsonl`
+  ~1 s of work (15/15 ok; the process does not exit when the user's API preference is on — killed) ·
+  `scenario_send_plugins_reopen` 65 s → ≈ 3 min 40 s.
+- **Null test** (base = archive 12 October 12-15-59, format 24): mono and stereo, all nine sections 0.00 LSB
+  from the base, NEW2 == NEW bit for bit, 80/80.
+- **Outside the budget**: `scenario_bridge_sends` in full (two runs: everything up to U3, then W2 + M3…P3
+  855/0 after the capacity / W2 updates), `fxlink_drag` 92/0, `consolidate` 139 ok, `cross_paste` 37/0,
+  `families` 304/0, `sidechain` 55/0.
+- **M.6 / N3 (bakes)**, measured on both builds (strong compressor + trims −6 / +3, 1 kHz + noise):
+  a GROUP's own trims were DROPPED by the base's consolidation bake (`keepOwnTail == false` bypasses every
+  `ObjGain` of the target's list): +2.6 dB after consolidating (mono −20.18 → −17.55 dBFS, stereo −21.04 →
+  −18.37). With stages the bake keeps them: −20.18 → −20.23 / −21.04 → −21.04, the same residual as a lone
+  clip's consolidation in BOTH builds (a lone clip is wrapped in a group, its trims were content: base and new
+  bakes identical, 0 LSB). So option A holds and the bakes that now differ are: consolidating a GROUP that
+  carried non-neutral trims (and the re-bakes / edit commits of such a definition) — they now sound like the
+  group did before the bake.
