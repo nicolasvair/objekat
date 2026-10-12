@@ -15434,48 +15434,71 @@
         }
       }
     },
-    "synoptic.send.plugin.add.help": {
+    "synoptic.send.plus.ghost.gain": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add a plugin on this send"
+            "value": "Gain"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Añadir un plugin en este envío"
+            "value": "Ganancia"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ajouter un plugin sur cet envoi"
+            "value": "Gain"
           }
         }
       }
     },
-    "synoptic.send.plugin.remove.help": {
+    "synoptic.send.plus.ghost.gainPanMute": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove this plugin from the send"
+            "value": "Gain · pan · mute"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quitar este plugin del envío"
+            "value": "Ganancia · pan · mute"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Retirer ce plugin de l'envoi"
+            "value": "Gain · pan · mute"
+          }
+        }
+      }
+    },
+    "synoptic.send.plus.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click: add a plugin on this send. Drag right: a gain stage (further: gain, pan and mute)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic: añadir un plugin en este envío. Arrastrar a la derecha: una etapa de ganancia (más lejos: ganancia, pan y mute)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic : ajouter un plugin sur cet envoi. Glisser vers la droite : un étage de gain (plus loin : gain, pan et mute)."
           }
         }
       }
@@ -15660,6 +15683,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Supprimer cet envoi"
+          }
+        }
+      }
+    },
+    "synoptic.send.tap.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where this send is taken from. Drag it along the chain to take the send somewhere else."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De dónde sale este envío. Arrástralo a lo largo de la cadena para que salga de otro sitio."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Là où cet envoi est pris. Glissez-le le long de la chaîne pour le faire partir d'ailleurs."
           }
         }
       }
