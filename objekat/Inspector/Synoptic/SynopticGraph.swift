@@ -240,10 +240,16 @@ struct SynopticSend: Identifiable, Equatable {
     var plugins: [SynopticSendPlugin] = []
 }
 
-/// One plugin of a send's mini-chain, as the box draws it: a compact row. Never linked (a send's
-/// plugin carries no link), so the row has no link pastille.
+/// One plugin of a send's mini-chain, as the box draws it: a CARD like any plugin of the chain (the
+/// same `SynopticCardView`), laid at the box's width. Never linked (a send's plugin carries no link), so
+/// the card has no link badge.
 struct SynopticSendPlugin: Identifiable, Equatable {
     let id: UUID
     let name: String
     var enabled: Bool = true
+    /// The plugin's identity colour (@see ObjectPlugin.color): the card's halo and its on/off. Grey until
+    /// the binding feeds it.
+    var color: Color = .gray
+    /// Non-nil = this plugin is a GAIN STAGE (@see SynopticPlugin.gainStage): its card takes that face.
+    var gainStage: SynopticGainStageFace? = nil
 }
