@@ -1273,10 +1273,19 @@ def section_F2(c):
         return
     x, a = cast_siblings(c, "F2")
     plugs = []
-    for _ in range(16):             # the engine caps a list at 20: trims, fader and window leave 16
+    # The engine caps a list at 20: the fader and the window leave 18 (format 25 — the two trims of the
+    # earlier formats took two more, and 16 filled it). A laid send takes one slot of its own.
+    for _ in range(18):
         plugs.append(add_test(c, x, "objKeyProbe")["plugin"])
         wait(c)
-    check("F2: 16 plugins fit", len(c.send("plugin.list", {"host": x})["plugins"]) == 16)
+    check("F2: 18 plugins fit", len(c.send("plugin.list", {"host": x})["plugins"]) == 18)
+    try:
+        add_test(c, x, "objKeyProbe")
+        check("F2: a 19th plugin is refused (the list is full)", False, "accepted")
+    except ObjekatError as e:
+        check("F2: a 19th plugin is refused (the list is full)", True, e.code)
+    wait(c)
+    check("F2: ...and nothing was added", len(c.send("plugin.list", {"host": x})["plugins"]) == 18)
     lay_send(c, x, a, -6.0)
     wait(c)
     time.sleep(0.5)
@@ -1793,8 +1802,17 @@ def w2_check_one(c, label, obj, a, pname, params, expect, others=(), measure_it=
     """The copy `obj` carries the same position, one marker iff in the chain, and (if asked) the same wet."""
     row = position_row(c, obj, a)
     want_name = params["position"]
-    ok = row.get("position") == want_name and (want_name != "chain" or row.get("index") == params["index"])
-    check("%s: send.list says %s%s" % (label, want_name, "" if want_name != "chain" else " %d" % params["index"]), ok, row)
+    # The marker's place is counted in LEAVES: a copy links its plugin runs into bins (the gain stages
+    # with them, since format 25), which moves the top-level `index` but not the marker's place.
+    leaves_before = None
+    if want_name == "chain":
+        leaves_before = 0
+        for e in c.send("plugin.list", {"host": obj})["plugins"]:
+            if e.get("is_send_marker"):
+                break
+            leaves_before += len(e["plugins"]) if e.get("is_fx_block") else 1
+    ok = row.get("position") == want_name and (want_name != "chain" or leaves_before == params["index"])
+    check("%s: send.list says %s%s (top-level index %s)" % (label, want_name, "" if want_name != "chain" else " after %d leaves" % params["index"], row.get("index")), ok, row)
     mk = markers_and_positions(c, [obj], a)[0][2]
     check("%s: %d marker(s) in the chain" % (label, 1 if want_name == "chain" else 0), mk == (1 if want_name == "chain" else 0), mk)
     if measure_it:
@@ -3104,7 +3122,7 @@ def section_M3(c):
     # the object's chain full: the send is refused, its plugins are NOT instantiated; a slot freed lays them
     x, a = cast_siblings(c, "M3full")
     plugs = []
-    for _ in range(16):
+    for _ in range(18):          # since format 25 the trims no longer hold two places: 18 fill the list
         plugs.append(add_test(c, x, "gainTester", gain_db=0.0)["plugin"])
     wait(c)
     c.send("send.create", {"id": x, "aux": a, "position": "post_fader"})
@@ -3160,29 +3178,29 @@ def section_X3(c):
     db, _ = wet3(c, "X3_20", a)
     near("X3: twenty -1 dB plugins: the wet", db, -20.0, tol=0.1)
     trunk = []
-    for _ in range(15):
+    for _ in range(17):
         trunk.append(add_test(c, x, "gainTester", gain_db=0.0)["plugin"])
     settle(c)
     row = send_entry(c, x, a) or {}
-    check("X3: 15 plugins on the object + the send carrying 20: the send is active", row.get("status") == "active", row)
-    db, _ = wet3(c, "X3_15", a)
+    check("X3: 17 plugins on the object + the send carrying 20: the send is active", row.get("status") == "active", row)
+    db, _ = wet3(c, "X3_17", a)
     near("X3: ... and its wet is unchanged", db, -20.0, tol=0.1)
     # The engine caps a list at 20 and the send holds one slot of the object's list: with a send, the
-    # object takes 15 plugins and the 16th is the one turned away (INC 2's behaviour, unchanged — the
-    # send's own twenty plugins are NOT on that list).
+    # object takes 17 plugins and the 18th is the one turned away (15 / 16th before format 25, when the
+    # two trims held two places; the send's own twenty plugins are NOT on that list).
     try:
         add_test(c, x, "gainTester", gain_db=0.0)
-        took16 = True
+        took18 = True
     except ObjekatError as e:
-        took16 = False
-        print("       X3: a 16th plugin on the object: %s" % e)
+        took18 = False
+        print("       X3: an 18th plugin on the object: %s" % e)
     settle(c)
     n = len(c.send("plugin.list", {"host": x})["plugins"])
     row = send_entry(c, x, a) or {}
-    print("       X3: after the 16th: the object holds %d, the send is %s (refusal %s)" % (n, row.get("status"), row.get("refusal")))
-    check("X3: a 16th plugin on the object is turned away exactly as with a plain send (15 stay, the send stays active)",
-          not took16 and n == 15 and row.get("status") == "active", (took16, n, row))
-    db, _ = wet3(c, "X3_16", a)
+    print("       X3: after the 18th: the object holds %d, the send is %s (refusal %s)" % (n, row.get("status"), row.get("refusal")))
+    check("X3: an 18th plugin on the object is turned away exactly as with a plain send (17 stay, the send stays active)",
+          not took18 and n == 17 and row.get("status") == "active", (took18, n, row))
+    db, _ = wet3(c, "X3_18", a)
     near("X3: ... and the wet is still the twenty plugins'", db, -20.0, tol=0.1)
     audits3(c, "X3")
 
