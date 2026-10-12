@@ -139,7 +139,8 @@ extension EditViewModel {
     @discardableResult
     func toggleSelectedPluginsEnabled() -> Bool? {
         guard let host = selectedPluginHostID, let engine else { return nil }
-        let selected = orderedSelectedPlugins()
+        // A gain stage has no bypass: the gesture passes over it (@see GainStage.swift).
+        let selected = orderedSelectedPlugins().filter { !$0.isGainStage }
         guard !selected.isEmpty else { return nil }
         let newEnabled = !selected.contains { $0.isEnabled }
         pushUndo()

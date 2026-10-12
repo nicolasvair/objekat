@@ -167,6 +167,13 @@ extension CommandAdapters {
                            details: .object(["reason": .string(why.rawValue)]))
     }
 
+    /// A gain stage has no bypass (@see GainStage.swift): every on/off verb aimed at one refuses it.
+    static func gainStageNoBypass(_ pluginID: UUID) -> CommandError {
+        CommandError(code: .invalid_state,
+                     message: "plugin \(pluginID.uuidString) is a gain stage: it has no bypass",
+                     details: .object(["reason": .string("gain_stage_no_bypass")]))
+    }
+
     /// `plugin.link` and a send's mini-chain: refused on either side (a send's plugin is never linked).
     static func refuseLinkOnSend(_ hosts: [UUID], in vm: EditViewModel) throws {
         guard hosts.contains(where: { vm.isSendChainHost($0) && vm.find(id: $0) == nil }) else { return }
@@ -373,6 +380,8 @@ extension CommandAdapters {
             }
         }
         if let group = plugin.linkGroupID { payload["link_group"] = .string(group.uuidString) }
+        // A leaf says whether it is a gain stage, and which face (@see GainStage.swift).
+        if !plugin.isContainer { payload["gain_stage"] = .stringOrNull(plugin.gainStageFace?.rawValue) }
         return .object(payload)
     }
 

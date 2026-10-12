@@ -9,6 +9,7 @@
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"
+#include "OBJGainStagePlugin.h"
 #include "OBJWindowFadePlugin.h"
 #include "OBJChannelModePlugin.h"
 #include "OBJParallelBlockPlugin.h"
@@ -1721,6 +1722,13 @@ static BOOL gOBJAudioDisabled = NO;
         // avant toute création/restauration de clip.
         _wavFormat = std::make_unique<OBJWavAudioFormat>();
         _engine->getPluginManager().createBuiltInType<te::ObjGainPlugin>();
+        // The user GAIN STAGE (a "+" gesture, or a migrated trim / FX link output): one class, two
+        // type names — its two faces (@see OBJGainStagePlugin.h). Not in tracktionBuiltInPluginList():
+        // it is never offered by the browser.
+        _engine->getPluginManager().registerBuiltInType(
+            std::make_unique<te::ObjGainStageBuiltInType>(te::ObjGainStagePlugin::xmlTypeName));
+        _engine->getPluginManager().registerBuiltInType(
+            std::make_unique<te::ObjGainStageBuiltInType>(te::ObjGainStagePlugin::panMuteXmlTypeName));
         // Enveloppe fenêtre+fade de bus de groupe (folder). Enregistrer avant toute
         // création/restauration de folder de groupe.
         _engine->getPluginManager().createBuiltInType<te::ObjWindowFadePlugin>();

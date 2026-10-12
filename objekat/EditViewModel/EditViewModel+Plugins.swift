@@ -546,6 +546,12 @@ extension EditViewModel {
         guard let plugins = chainPlugins(objectID),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }),
               let engine else { return }
+        // A gain stage has no bypass of its own (its card has no power button): neutral is 0 dB.
+        // A bin's common on/off still takes it with the rest of the bin (@see GainStage.swift).
+        guard !plug.isGainStage else {
+            NSLog("[GAIN] no bypass on a gain stage (%@)", pluginID.uuidString)
+            return
+        }
         let newEnabled = !plug.isEnabled
         // The bypass of an attached FX link's instance is the bin's: every member's instance follows.
         if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
@@ -652,7 +658,8 @@ extension EditViewModel {
     /// (`openEditorPluginID`), but with a window managed on the Swift side rather than by the JUCE engine
     /// since the built-in UI is already 100% SwiftUI (@see BuiltInPluginEditorWindowController).
     func openBuiltInPluginEditor(plug: ObjectPlugin) {
-        guard hasInterface else { return }
+        // A gain stage has no editor: its controls are its card's (@see GainStage.swift).
+        guard hasInterface, !plug.isGainStage else { return }
         if let existing = builtInEditorWindows[plug.id] {
             existing.window?.makeKeyAndOrderFront(nil)
             placeTiledEditor(plug.id)

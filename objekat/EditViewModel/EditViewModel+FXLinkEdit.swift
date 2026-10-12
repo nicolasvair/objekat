@@ -739,7 +739,8 @@ extension EditViewModel {
     @discardableResult
     func fxSetPluginEnabled(linkID: UUID, definitionID: UUID, enabled: Bool, undo: Bool = true) -> Bool {
         guard let link = fxLink(linkID),
-              let cur = link.plugins.first(where: { $0.id == definitionID }), cur.isEnabled != enabled
+              let cur = link.plugins.first(where: { $0.id == definitionID }), cur.isEnabled != enabled,
+              !cur.isGainStage   // a gain stage has no bypass of its own (@see GainStage.swift)
         else { return false }
         if undo { pushUndo() }
         updateFXLink(linkID) { l in

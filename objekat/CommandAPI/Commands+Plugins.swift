@@ -224,7 +224,8 @@ extension CommandRegistry {
         }
 
         register("plugin.toggle",
-                 summary: "Enables or bypasses a plugin (a toggle, without recompiling the chain).",
+                 summary: "Enables or bypasses a plugin (a toggle, without recompiling the chain). "
+                        + "Refused on a gain stage (`invalid_state`, reason `gain_stage_no_bypass`).",
                  params: [ParamSpec("host", "uuid", "Carrying object or stem."),
                           ParamSpec("plugin", "uuid", "Target plugin.")],
                  // `.handled` since 15 September 2026: the method pushes its own point now, and
@@ -234,6 +235,7 @@ extension CommandRegistry {
             let host = try p.uuid("host")
             let pluginID = try p.uuid("plugin")
             let plugin = try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            if plugin.isGainStage { throw CommandAdapters.gainStageNoBypass(pluginID) }
             vm.togglePluginEnabled(objectID: host, pluginID: pluginID)
             return .object(["plugin": .string(pluginID.uuidString),
                             "enabled": .bool(!plugin.isEnabled)])
@@ -489,9 +491,16 @@ extension CommandRegistry {
 
         register("plugin.toggle_selected",
                  summary: "Bypasses or re-enables every selected card. Mixed states go to OFF: "
-                        + "if a single one is still on, they all go off. ONE undo step.",
+                        + "if a single one is still on, they all go off. ONE undo step. Gain stages "
+                        + "have no bypass: they are passed over (`invalid_state`, reason "
+                        + "`gain_stage_no_bypass`, when only stages are selected).",
                  params: [], undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            // Only gain stages selected: nothing can be bypassed (they have no bypass).
+            let picked = vm.orderedSelectedPlugins()
+            if !picked.isEmpty, picked.allSatisfy(\.isGainStage) {
+                throw CommandAdapters.gainStageNoBypass(picked[0].id)
+            }
             guard let enabled = vm.toggleSelectedPluginsEnabled() else {
                 throw CommandError(code: .invalid_state, message: "no card selected")
             }
@@ -571,7 +580,8 @@ extension CommandRegistry {
         }
 
         register("plugin.set_param",
-                 summary: "Writes a parameter of a live instance (by index).",
+                 summary: "Writes a parameter of a live instance (by index). On a gain stage "
+                        + "(0 gain dB, 1 pan, 2 mute) the write takes one undo point.",
                  params: [ParamSpec("plugin", "uuid", "Target plugin."),
                           ParamSpec("index", "int", "Parameter index (see plugin.get_params)."),
                           ParamSpec("value", "number", "New value, within [min, max].")],
@@ -590,6 +600,9 @@ extension CommandRegistry {
                                    message: "unknown parameter \(index) (\(params.count) available)")
             }
             let value = Float(try p.double("value")).clamped(to: target.min...target.max)
+            // A GAIN STAGE's parameters are the hand's (its card): one undo point per write, as the
+            // card's drag takes one (@see EditViewModel.setGainStage). Any other plugin: unchanged.
+            if vm.gainStageEntry(pluginID) != nil { vm.pushUndo() }
             vm.setPluginParam(pluginID: pluginID, index: index, value: value)
             return .object(["plugin": .string(pluginID.uuidString),
                             "index": .int(index),

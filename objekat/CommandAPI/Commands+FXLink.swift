@@ -279,9 +279,10 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             let id = try p.uuid("plugin")
-            guard link.plugins.contains(where: { $0.id == id }) else {
+            guard let def = link.plugins.first(where: { $0.id == id }) else {
                 throw CommandError(code: .not_found, message: "unknown definition plugin")
             }
+            if def.isGainStage { throw CommandAdapters.gainStageNoBypass(id) }
             vm.fxSetPluginEnabled(linkID: link.id, definitionID: id, enabled: try p.bool("enabled"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
         }
