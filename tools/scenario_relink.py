@@ -28,6 +28,9 @@ What it is really out to prove, beyond the commands answering:
     for one ⌘Z;
   • the CLAMP: a shorter file slides the window back, and cuts its length only when the file is
     shorter than the window itself — never a clip reading past the end of its own file;
+  • a file on an UNMOUNTED volume (`volumeOffline`) goes through the same repair path as a lost
+    one — preview, propagation in one undo point, folder sweep, and the sound itself (an export
+    re-read at RMS) — since the menus now offer "Repair Link…" for it too (section 7);
   • and the line between the two gestures: `object.replace_source` is deliberate and NEVER
     propagates, even when the pair it is given would have taught a substitution that mends
     something else.
@@ -382,6 +385,150 @@ try:
                                                       "to": os.path.join(d5, "nowhere.wav")}))
         refused("sweeping a folder that is not there is refused", "not_found",
                 lambda: cmd("project.relink_folder", folder=os.path.join(d5, "no-folder")))
+
+        # ── 7. A file on a volume that is NOT MOUNTED is repairable all the same ──────────
+        # (11 October 2026.) `volumeOffline` used to take "Repair Link…" out of the menus: the drive
+        # was assumed to be in a drawer. The doors of the model never refused it — only the menus
+        # did — and the menus no longer do (`RelinkMenuRules`, asserted in
+        # `test_relink_menu_rules.swift`). What this block pins is that the whole REPAIR PATH works
+        # for such a file, end to end, since the menu now leads there: the preview, the propagation
+        # (one undo point), the folder sweep, and the sound itself (an export re-read at RMS —
+        # the model alone moving proves nothing about the engine).
+        #
+        # The project is made with REAL files, saved, then its paths are rewritten in the saved JSON
+        # to a `/Volumes/<name>` that does not exist, and reopened: there is no other honest way to
+        # get clips whose file lives on a drive that is not there.
+        OFFLINE = "/Volumes/__objekat_offline_test__"
+        cmd("project.new")
+        d7 = tmproot("offline")
+        proj7 = os.path.join(d7, "proj", "offline.objekat")
+        os.makedirs(os.path.dirname(proj7), exist_ok=True)
+        cmd("project.save_as", path=proj7)
+        real_a = make_wav(os.path.join(d7, "real", "s", "x", "a.wav"), 0.8, 440.0)
+        real_b = make_wav(os.path.join(d7, "real", "s", "x", "b.wav"), 0.8, 660.0)
+        copy_a = os.path.join(d7, "copy", "s", "x", "a.wav")
+        copy_b = os.path.join(d7, "copy", "s", "x", "b.wav")
+        make_wav(copy_a, 0.8, 440.0)
+        make_wav(copy_b, 0.8, 660.0)
+        cmd("object.add", path=real_a, lane=0, start=0.0)
+        cmd("object.add", path=real_b, lane=1, start=0.0)
+        cmd("wait_idle", timeout_ms=5000)
+        cmd("project.save")
+
+        real_root = os.path.join(d7, "real")
+
+        def rewrite(node):
+            """Every string that names a file under the real root now names the offline volume."""
+            if isinstance(node, str):
+                return OFFLINE + node[len(real_root):] if node.startswith(real_root + "/") else node
+            if isinstance(node, list):
+                return [rewrite(v) for v in node]
+            if isinstance(node, dict):
+                return {k: rewrite(v) for k, v in node.items()}
+            return node
+
+        import json
+        with open(proj7, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        with open(proj7, "w", encoding="utf-8") as fh:
+            json.dump(rewrite(doc), fh)
+        off_a = OFFLINE + "/s/x/a.wav"
+        off_b = OFFLINE + "/s/x/b.wav"
+        check("(the fixture's volume really is not mounted)", not os.path.exists(OFFLINE))
+
+        cmd("project.open", path=proj7)
+        cmd("wait_idle", timeout_ms=10000)
+        cmd("project.rescan_missing")
+        mf = cmd("project.missing_files")
+        check("two clips on an unmounted volume: two paths, both volumeOffline",
+              mf["path_count"] == 2
+              and sorted(f["path"] for f in mf["files"]) == sorted([off_a, off_b])
+              and all(f["reason"] == "volumeOffline" for f in mf["files"]), str(mf))
+        offl = [o for o in objects() if o.get("missing")]
+        check("each object says volumeOffline",
+              len(offl) == 2 and all(o["missing_reason"] == "volumeOffline" for o in offl),
+              str([(o["id"], o.get("missing_reason")) for o in objects()]))
+        id_a = [o["id"] for o in objects() if o["file"] == off_a][0]
+        id_b = [o["id"] for o in objects() if o["file"] == off_b][0]
+
+        # The ear first, while it is still offline: the ghosts are silent.
+        def wav_rms(path):
+            with wave.open(path, "rb") as w:
+                width, raw = w.getsampwidth(), w.readframes(w.getnframes())
+            if width == 2:
+                vals = array.array("h", raw)
+                scale = 32768.0
+            elif width == 3:
+                vals = [int.from_bytes(raw[i:i + 3], "little", signed=True)
+                        for i in range(0, len(raw) - 2, 3)]
+                scale = 8388608.0
+            else:
+                raise RuntimeError("unexpected sample width: %d" % width)
+            n = len(vals)
+            return math.sqrt(sum((v / scale) ** 2 for v in vals) / n) if n else 0.0
+
+        def render(tag):
+            out = os.path.join(d7, "render-%s.wav" % tag)
+            job = cmd("export.run", format="wav", sample_rate=48000, dithering=False,
+                      start=0.0, end=1.0, path=out)["job_id"]
+            done = cmd("job.wait", id=job, timeout_ms=60000)
+            if not os.path.exists(out):
+                # A project of ghosts has no audio to render at all: the engine refuses outright.
+                return None if "any audio" in str(done["result"].get("error")) else \
+                    (_ for _ in ()).throw(RuntimeError("export failed: %s" % json.dumps(done)))
+            return wav_rms(out)
+
+        silent = render("offline")
+        check("offline, the ghosts give nothing to hear (the render finds no audio, or silence)",
+              silent is None or silent < 1e-4, "rms %s" % silent)
+
+        # The preview: a pure read, and the pair teaches the VOLUME as a root.
+        pv = cmd("project.relink_preview", **{"from": off_a, "to": copy_a})
+        check("the preview learns the volume as a root and names the other file",
+              pv["substitution"] == {"from": OFFLINE, "to": os.path.join(d7, "copy")}
+              and pv["path_count"] == 1 and pv["resolves"][0]["path"] == off_b
+              and pv["resolves"][0]["new_path"] == copy_b, str(pv))
+        check("…and changed nothing",
+              cmd("project.missing_files")["path_count"] == 2
+              and row(id_a)["file"] == off_a)
+
+        # Without propagation only the path asked for moves; a second repair mends the other.
+        rp = cmd("project.relink_path", **{"from": off_a, "to": copy_a})
+        check("a path on an offline volume is repaired by hand (objects 1, paths 1, one left)",
+              rp["objects"] == 1 and rp["paths"] == 1 and rp["missing_paths"] == 1
+              and row(id_a)["file"] == copy_a and row(id_a)["missing"] is False, str(rp))
+        cmd("edit.undo")
+        cmd("project.rescan_missing")
+        check("one undo gives the offline path back",
+              row(id_a)["file"] == off_a and cmd("project.missing_files")["path_count"] == 2)
+
+        # With propagation: both, ONE undo point.
+        rp = cmd("project.relink_path", **{"from": off_a, "to": copy_a}, propagate=True)
+        check("propagate repairs the second offline path too",
+              rp["objects"] == 2 and rp["paths"] == 2 and rp["missing_paths"] == 0
+              and row(id_a)["file"] == copy_a and row(id_b)["file"] == copy_b, str(rp))
+        sound = render("repaired")
+        check("…and the object SOUNDS (the engine followed, not just the model)",
+              sound is not None and sound > 0.05, "rms %s" % sound)
+        undone = cmd("edit.undo")
+        check("a single undo takes the whole propagated repair back",
+              row(id_a)["file"] == off_a and row(id_b)["file"] == off_b, str(undone))
+        check("…and there was no second repair point behind it", undone["can_undo"] is False,
+              str(undone))
+        scan = cmd("project.rescan_missing")
+        check("both offline again after the undo", scan["path_count"] == 2, str(scan))
+
+        # The folder sweep finds them by name — an offline path is a broken path like another.
+        rf = cmd("project.relink_folder", folder=os.path.join(d7, "copy"))
+        check("the folder sweep repairs offline-volume paths too",
+              rf["objects"] == 2 and rf["paths"] == 2 and rf["missing_paths"] == 0
+              and row(id_a)["file"] == copy_a and row(id_b)["file"] == copy_b, str(rf))
+        sound = render("swept")
+        check("…and they sound", sound is not None and sound > 0.05, "rms %s" % sound)
+
+        cmd("edit.undo")
+        check("the sweep is one undo point as well",
+              row(id_a)["file"] == off_a and row(id_b)["file"] == off_b)
 
         # The app must not be left holding the temporary files while they are taken away.
         cmd("project.new")

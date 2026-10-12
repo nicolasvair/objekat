@@ -1054,6 +1054,10 @@ enum CommandAdapters {
         ]
         if let defID = item.consolidateID { payload["definition"] = .string(defID.uuidString) }
         if let stemID = item.stemID { payload["stem"] = .string(stemID.uuidString) }
+        // The object's own colour: the free one ("#RRGGBB") and/or the old pastel's index; both
+        // null = the stem's colour (@see `object.set_color`).
+        payload["color_hex"] = .stringOrNull(item.colorHex.map(ObjectColorChoice.format))
+        payload["color_index"] = item.colorIndex.map(JSONValue.int) ?? .null
         if case .clip(let filePath, _, _, _, _) = item.kind { payload["file"] = .string(filePath) }
         // Whether this object's source file was found at the last scan. A dictionary lookup, no
         // disk: building this payload for every object of the project must not cost one stat per

@@ -613,10 +613,23 @@ Two things nothing headless could set before, and that decide how the timeline d
   a tool is released; Esc also does. `stem` (1-based, 1 = Main; default 1) goes with `stem` alone.
   `tool.get` answers `tool`, `locked`, `held_by_key`, and for the stem tool `stem` / `stem_name`.
   Session state: undo policy `.none`, never saved.
-- `object.set_color {color_index?, ids?}` is `setObjectColor(ids:colorIndex:)` — one undo point for
-  the whole batch — with `color_index` 0…15 into the object palette, or absent / null to go back to
-  the stem's colour. A coloured clip is drawn by the batched Canvas like any other (its name band and
-  its border are part of phase 1), so painting 600 clips no longer puts anything on the rich path.
+- `object.set_color {color_hex?, color_index?, ids?}` — one undo point for the whole batch (`undo:
+  handled`; none when nothing changes). An object holds ONE colour in one of two storages, and
+  writing either clears the other: **`color_hex`** (`"#RRGGBB"`, the `#` optional, case free; six
+  hexadecimal digits or `bad_params`) is the FREE colour the context menu offers (seven base colours
+  plus the ones the hand added with the "+", @see `ObjectColorChoice`), stored as
+  `SoundObject.colorHex`; **`color_index`** 0…15 into the 16 old pastels (`SoundObject.colorIndex`)
+  is what a project written before the free colours carries, and stays writable. If both are given
+  `color_hex` wins; neither (or both null) goes back to the stem's colour. The answer carries
+  `count`, `color_index` and `color_hex` (null for the storage not used). For a consolidated
+  object the colour is synchronised across every placement of the definition. Writing a colour
+  through the API does NOT add it to the menu's list (that list is the app's preferences, filled only by
+  the "+" grid; ephemeral under `--headless` / `--no-recent`). `object.get` / `object.list` answer
+  **`color_hex`** (`"#RRGGBB"` or null) beside `color_index` (int or null). Session format 24 writes
+  `colorHex` as the text `"#RRGGBB"` (only when set); the name band is drawn at
+  `ObjectColorChoice.bandOpacity` (0.60, 0.85 selected), a coloured clip is drawn by the batched
+  Canvas like any other (its name band and its border are part of phase 1), so painting 600 clips
+  no longer puts anything on the rich path.
 - **`input.drag` / `input.release` (E7).** A synthetic left-button drag through the app's queue,
   the way `input.scroll` goes: a press, `dragged` events along a straight line, a release. They are
   real `CGEvent`s (`leftMouseDown/Dragged/Up`, click state 1, pressure 1 then 0, one event number per
@@ -897,16 +910,25 @@ reads the file, retouches it, and its output is the clip's sound). It is not an 
 first, it is unique per object, and a copy of the object gets its own fresh instance (never linked).
 Design, rules and the user's decisions (Q1–Q5): `ara_melodyne_plan.md`.
 
-It is added and removed with the plugin commands; the `object.ara.*` family only reads it.
-**No command opens an editor** (the window is a user gesture), and none of them is an edit.
+It is added and removed with the plugin commands; the `object.ara.*` family reads it and switches it on and off.
+**No command opens an editor** (the window is a user gesture); `object.ara.set_enabled` is the only edit here.
+
+**On / off (the card's power button).** The ARA card is a plugin card (on/off column, name, ✕, VU line) minus link,
+drag and selection. OFF means: the object plays its dry file, the Melodyne instance is UNLOADED (no cost, the
+editor closes), and the model KEEPS the source with `plugin.enabled = false` and the archive captured on the way
+out — the retouches are not lost. ON loads the source again from that archive. A bypassed object stays bypassed
+through a cut, a paste, a duplicate, an undo, a save and a tab round trip, and keeps its archive (a copy gets its
+own plugin id as always). Speed / reverse / loop stay locked while it is off. The plugin commands (`plugin.toggle`…)
+still refuse the source (`slot = ara_source`): `object.ara.set_enabled` is the one door. One undo step.
 
 | | |
 |---|---|
 | `plugin.add` | `host` = an audio object, `plugin` = an ARA-capable VST3 → `{host, slot: "ara_source", plugin}`: the plugin becomes the object's source, it is not an insert. Refused (`invalid_state`, `details.reason`) when the object cannot carry one (below). One undo step |
 | `plugin.list` | the source comes FIRST in `plugins`, with `slot: "ara_source"` |
 | `plugin.remove` | on the source's id: the clip plays its file again, retouches are lost (undo brings them back from the archive). Every other plugin command (`set_param`, `set_bypass`, `move`, `link`, `set_sidechain`…) answers `invalid_state` with `details.slot = "ara_source"` |
-| `object.ara.status` | `{has_source, plugin, engine_valid, analysing, regions, archive_bytes, archive_stale, model_archive_bytes, model_archive_sha1, sync_failure}`. Reads only |
-| `object.ara.wait_analysis` | `id`, `timeout_ms` (default 120000) → like `status` + `waited_ms`. `timeout` when Melodyne does not finish; `invalid_state` when the source cannot be set up |
+| `object.ara.status` | `{has_source, enabled, plugin, engine_valid, analysing, regions, archive_bytes, archive_stale, model_archive_bytes, model_archive_sha1, sync_failure}`. `enabled` false = bypassed (`engine_valid` is then false and `mode` not `ara`, `model_archive_*` is what the model keeps). Reads only |
+| `object.ara.set_enabled` | `id`, `enabled` (bool) → `{id, enabled, changed, ara_valid}`. Exactly the power button of the card (`undo: handled`: one undo step, none when already in that state). `invalid_state` when the object has no source. OFF reads the live archive into the model first; ON may leave the object dry with `sync_failure` if the plugin cannot be loaded |
+| `object.ara.wait_analysis` | `id`, `timeout_ms` (default 120000) → like `status` + `waited_ms`. `timeout` when Melodyne does not finish; `invalid_state` when the source cannot be set up or is switched off |
 | `object.ara.capture` | reads the archive from the live instance NOW → `{bytes, ms, sha1, source_id, modification_id, stale_before}`. Not an undo point; marks the project modified when the archive changed |
 | `object.ara.notes` | the notes Melodyne analysed, `[{pitch, start, duration, velocity}]` (seconds from the source's start) |
 
@@ -1086,6 +1108,9 @@ knowing before driving one:
   into every member of the instance's FX link; with `0035` `program` moves nothing, and with `0036`
   neither does `paraminfo` (the rebuilt AU list re-reads the unit instead of relaying its defaults). Answers `{plugin, details}`
   at once (`invalid_state` for a built-in or an unloaded instance); wait > 0.5 s before reading.
+  DEBUG builds also add `debug.fxlink_create_empty {host, index?, block?}` → `{id, name}`: the plugin
+  browser's "New FX link" — an EMPTY bin whose block is laid on `host` at `index` (end by default), ONE
+  undo point; `block` aims inside a bin's own block and is refused (`invalid_state`: a bin does not hold a bin).
   DEBUG builds also add `debug.plugin_id_audit {}` → `{duplicates: [{id, hosts}], count,
   engine_foreign_refusals}`: every plugin id held more than once in the live project (leaves, rack
   carriers, bin blocks and their instances, instruments, bus chains) with the hosts holding it, and
@@ -1266,6 +1291,42 @@ clip whose file cannot be read. It is what a script needs to hand back a file "l
 `object.add` accepts `name`: the object's label, set BEFORE the clip is laid down, so it costs no
 second undo step. It is what lets a script place a file and name it inside ONE `batch` (a
 sub-command cannot use the id an earlier sub-command returned). Empty or absent = the file's name.
+
+### Importing a folder as a group
+
+**`object.import_folder {path, lane?, start?, mode?}`** is the scriptable twin of dropping a FOLDER on the
+timeline (undo: the bus, so the whole import is **ONE undo**). The folder becomes **one folded group named
+after it**, the hierarchy kept: one lane per audio file, then one lane per sub-folder — each sub-folder a
+folded sub-group, to the depth the disk has. Always recursive.
+
+| param | |
+|---|---|
+| `path` | the folder (`not_found` if it does not exist, `bad_params` if it is a file — `object.add` is for those) |
+| `lane`, `start` | where it lands, like `object.add` (a **display** lane — inside an OPEN group's band the new group nests in that group, on that group's stem; `start` in seconds, default 0) |
+| `mode` | `stacked` (default): everything starts together, one lane per file and per sub-folder; `sequential`: one lane, end to end in the listed order (the drop's ⌘). A sub-folder is laid out by the same rule inside itself |
+
+What is read: audio files by extension (`wav aif aiff mp3 m4a flac caf ogg`), the files first then the
+sub-folders, each sorted the way the Finder sorts (`take 2` before `take 10`). Hidden entries (a leading dot),
+packages (`.logicx`, `.app`…) and symlinked folders are ignored; folders with no audio below are left out; a
+folder with no audio at all is `invalid_state` and creates nothing. A folder holding ONE file still yields a
+group.
+
+**A group's bounds are the union of its children**, never an infinite extent (an unbounded container is
+processed by the engine at every block and stutters from ~20 of them): `start` is the earliest child start,
+`duration` runs to the latest child end.
+
+Bounds: **8 levels** below the folder are read (deeper folders holding audio are left out and counted in
+`omitted_deep_folders`); **more than 2000 audio files refuse the whole import** (`bad_params`, nothing
+created). Over 200 files the drop on the timeline asks for a confirmation — **the command never does**.
+
+Returns `{id, parent, files, omitted_deep_folders, mode, lane, start, duration, tree}`, where `tree` is the
+nested `{id, name, kind: "group"|"clip", lane, start, duration, expanded?, children?, path?}` of what was
+laid down (a child's `lane` is relative to its group; `start` is absolute). A folded group shows only itself
+in `object.list`: open it (`group.expand`) to list what it holds.
+
+`tools/scenario_import_folder.py` asserts all of this headless (structure, bounds heard through an export,
+one undo / redo, save and reopen, import into an open group and its stem, the refusals, the two bounds, no
+confirmation for 230 files); the rules alone (scan, plan, bounds) are `tools/test_folder_import.swift`.
 
 ### Exploding an object into sub-lanes
 
@@ -1754,7 +1815,7 @@ entry by its machine name. `id` is the object under the click (omit it for an em
 is the selection by default (the object clicked is selected first, as the right click does), or the
 time selection with `apply_to_zone` (`invalid_state` without one). An entry that is not offered in
 that scope, or greyed, answers `invalid_state` (with the list of the `offered` ones). `args`:
-`color_index` (int, or null for the stem's) for `set_color`; `plugin` (name) and `entry` (index,
+`color_hex` ("#RRGGBB") or `color_index` (int; or null / both absent for the stem's) for `set_color` (the entries answer both); `plugin` (name) and `entry` (index,
 default 0) for `run_script`. `dry_run` checks and says what the action WOULD apply to, touching
 nothing. It answers `action`, `scope`, `target_ids` (in zone scope: the objects the range crosses),
 `needs_isolation` (zone scope: an object straddles a bound, so a cut will happen) and the resulting
@@ -2262,6 +2323,12 @@ file is on a disk in a drawer, not that it is lost. The app watches the mount no
 rescans by itself when the drive comes back, so that state mends itself with nobody asking. The
 boot volume never reads as offline.
 
+It does not make the path unrepairable, though: every door above (`project.relink_path`,
+`project.relink_preview` and its propagation, `project.relink_folder`, `object.replace_source`)
+accepts a `volumeOffline` path exactly like an `absent` one — a drive that is never coming back
+has to be repairable too. The menus say the same: "Repair Link…" is offered for both reasons, and
+`volumeOffline` only adds a disabled line naming the volume above it (`RelinkMenuRules`).
+
 `tools/scenario_relink.py` asserts all of the above against a running instance, making and moving
 its own wav files on disk.
 
@@ -2338,6 +2405,7 @@ A few points of vocabulary that save mistakes:
 | `tools/smoke.jsonl` | an `--exec` scenario (with no identifiers reused) |
 | `tools/scenario_families.py` | a non-regression scenario, 131 steps and assertions over the eight families |
 | `tools/scenario_markers.py` | markers / regions / comments: 78 assertions, including a cut, a reverse, an undo, a reload, the marks as snap targets, a region cropped and a mark that does not catch on itself |
+| `tools/scenario_import_folder.py` | `object.import_folder`: a folder → one folded group, hierarchy kept; 43 assertions (stacked / end to end, bounds heard through an export, one undo, save / reopen, into an open group and its stem, refusals, depth and size bounds) |
 | `tools/scenario_plugin_selection.py` | several plugin cards at once: 58 assertions (order, one undo per batch, stems, move/copy/link) |
 | `tools/scenario_plugin_state_undo.py` | undoing a plugin's state: 10 assertions, a built-in and (with `--external=IDENTIFIER`) an AU — the value comes back, the plugin answers straight away, and the undo stays under 150 ms, which no reload can |
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |

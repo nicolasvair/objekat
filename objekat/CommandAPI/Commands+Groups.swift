@@ -27,9 +27,9 @@ extension CommandRegistry {
             guard !ids.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no object to group")
             }
-            // The only reliable way to name the group just created: compare the identifiers before
-            // and after. `createGroup(from:in:)` does leave the selection on the new group, but the
-            // root variant does not — so it cannot be relied on.
+            // Naming the group just created: compare the identifiers before and after. (All the
+            // grouping paths now leave the selection on the new group, but a time-selection or
+            // no-op path would not say so; the comparison needs no assumption about it.)
             let before = Set(vm.laneEntries.map(\.item.id))
             vm.createGroupFromSelection(ids)
             let created = vm.laneEntries.map(\.item.id).filter { !before.contains($0) }

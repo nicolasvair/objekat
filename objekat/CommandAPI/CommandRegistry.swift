@@ -234,6 +234,7 @@ final class CommandRegistry {
         // The increment-5 families: one file per family, no business logic, each adapter wired onto
         // the method the interface already calls.
         registerObjectCommands()
+        registerImportFolderCommands()
         registerGroupCommands()
         registerStemCommands()
         registerSoloCommands()

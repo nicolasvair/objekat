@@ -150,7 +150,10 @@ struct FileDropGhostOverlay: View {
                         )
                         .overlay(alignment: .leading) {
                             if w > 46, let name = preview?.name, !name.isEmpty {
-                                Text(name)
+                                // A folder says what it will become: its name and how many files.
+                                Text(preview?.isFolder == true
+                                     ? (preview?.fileCount).map { Ln("drop.folder.label", $0, name, $0) } ?? name
+                                     : name)
                                     .font(.system(size: 10, weight: .medium))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -205,17 +208,13 @@ extension TimelineView {
 
         guard !fileProviders.isEmpty else { return true }
         Task { @MainActor in
-            let files = await Self.loadDroppedFiles(from: fileProviders)
-            placeDroppedFiles(files, at: location, mode: dropMode)
+            let urls = await Self.loadDroppedURLs(from: fileProviders).compactMap { $0 }
+            // Files are measured, folders are read down to their leaves (off the main thread, the
+            // lengths a few at a time): both come back in the order they were dropped.
+            let load = await EditViewModel.loadDropEntries(from: urls)
+            placeDroppedEntries(load, at: location, mode: dropMode)
         }
         return true
-    }
-
-    /// One dropped file, resolved: its URL and its length. Both are read together because both
-    /// are read asynchronously and no placement is possible without both.
-    struct DroppedFile: Sendable {
-        let url: URL
-        let duration: Double
     }
 
     /// Resolves the providers' URLs **keeping the selection's order**, and in parallel:
@@ -250,22 +249,6 @@ extension TimelineView {
         }
     }
 
-    /// The URL plus the length of each dropped file, in order, the lengths read in parallel (in
-    /// series, a handful of files would have meant waiting for one read after another).
-    private static func loadDroppedFiles(from providers: [NSItemProvider]) async -> [DroppedFile] {
-        let urls = await loadDroppedURLs(from: providers)
-        return await withTaskGroup(of: (Int, DroppedFile).self) { group in
-            for (index, url) in urls.enumerated() {
-                guard let url else { continue }
-                group.addTask { (index, DroppedFile(url: url, duration: await Self.audioDuration(url: url))) }
-            }
-            var resolved: [(Int, DroppedFile)] = []
-            for await pair in group { resolved.append(pair) }
-            // (no `\.1` key path here: Swift does not accept one on a tuple element)
-            return resolved.sorted { $0.0 < $1.0 }.map { $0.1 }
-        }
-    }
-
     // MARK: - Preview during the hover
 
     /// Files being hovered: it opens/updates the band, makes the preview rectangles follow the
@@ -281,94 +264,60 @@ extension TimelineView {
         let vm = viewModel
         Task { @MainActor in
             let urls = await Self.loadDroppedURLs(from: providers)
-            var previews = urls.map {
-                EditViewModel.FileDropPreview(name: $0?.deletingPathExtension().lastPathComponent ?? "",
-                                              duration: nil)
+            var previews = urls.map { url in
+                EditViewModel.FileDropPreview(
+                    name: url?.deletingPathExtension().lastPathComponent ?? "",
+                    duration: nil,
+                    // A folder keeps its full name (a dot in it is not an extension).
+                    isFolder: url.map(EditViewModel.isDirectoryURL) ?? false)
+            }
+            for (i, url) in urls.enumerated() where previews[i].isFolder {
+                previews[i].name = url?.lastPathComponent ?? ""
             }
             vm.setFileDropPreviews(previews)
-            await withTaskGroup(of: (Int, Double).self) { group in
+            await withTaskGroup(of: (Int, EditViewModel.FolderPreviewMeasure).self) { group in
                 for (index, url) in urls.enumerated() {
                     guard let url else { continue }
-                    group.addTask { (index, await Self.audioDuration(url: url)) }
+                    group.addTask { (index, await EditViewModel.measureForPreview(url)) }
                 }
-                for await (index, duration) in group {
+                for await (index, measure) in group {
                     // The hover is over (dropped, left, cancelled): nothing left to reset.
                     guard vm.fileDropHint != nil else { break }
-                    previews[index].duration = duration
+                    previews[index].duration = measure.duration
+                    previews[index].sequentialDuration = measure.sequentialDuration
+                    previews[index].fileCount = measure.fileCount
                     vm.setFileDropPreviews(previews)
                 }
             }
         }
     }
 
-    /// Lays the batch of files down in a single gesture: one `pushUndo` (the import is undone in
-    /// one go), one snapshot of `laneEntries` (the display lanes are the ones the user was seeing
-    /// at the moment of the drop, not the ones after the first additions).
+    /// Lays the batch down in a single gesture: one `pushUndo` (the import is undone in one go),
+    /// one snapshot of `laneEntries` (the display lanes are the ones the user was seeing at the
+    /// moment of the drop, not the ones after the first additions). A dropped FOLDER becomes one
+    /// folded group named after it, the hierarchy kept (@see FolderImport); it takes one lane and
+    /// one slot of the layout, like a file of the same length.
     @MainActor
-    private func placeDroppedFiles(_ files: [DroppedFile], at location: CGPoint,
-                                   mode: EditViewModel.FileDropMode) {
-        guard !files.isEmpty else { return }
+    private func placeDroppedEntries(_ load: EditViewModel.DropLoad, at location: CGPoint,
+                                     mode: EditViewModel.FileDropMode) {
+        let vm = viewModel
+        defer { vm.reportFolderImportIssues(load) }
+        guard !load.entries.isEmpty else { return }
+        // A big folder is a big decision (hundreds of tracks): ask before. A multiple drop of plain
+        // files was never asked about and stays so.
+        let hasFolder = load.entries.contains { if case .folder = $0 { return true } else { return false } }
+        if hasFolder, load.fileCount > FolderImport.confirmThreshold {
+            guard vm.confirm(L("import.folder.confirm.title"),
+                             L("import.folder.confirm.info", load.fileCount),
+                             yes: L("import.folder.confirm.yes"),
+                             no: L("import.folder.confirm.no"),
+                             style: .informational) else { return }
+        }
         let baseLane  = max(0, Int((location.y - rulerHeight) / laneStep))
-        let baseStart = max(0, viewModel.snappedTimePure(location.x / pixelsPerSecond))
-
-        let snapshot = viewModel.laneEntries
-        viewModel.pushUndo()
-
+        let baseStart = max(0, vm.snappedTimePure(location.x / pixelsPerSecond))
+        vm.pushUndo()
         // The same layout computation as the hover's ghost preview (`fileDropLayout`): what is laid
         // down has to be exactly what was shown under the cursor.
-        let slots = EditViewModel.fileDropLayout(durations: files.map(\.duration), mode: mode,
-                                                 baseLane: baseLane, baseStart: baseStart)
-        // A SINGLE display → base round trip, on the first item's lane; the following ones are
-        // derived in the coordinates of the container it landed in (top level, or the inside of an
-        // open group). `baseLaneForDisplay` is not injective: under an unfolded area that is not a
-        // group — an open automation band, an open piano roll — several consecutive display lanes
-        // fall back onto the SAME base lane. Converted one by one, two pieces of the batch landed at
-        // the same instant on the same row and chased each other away through `resolveOverlaps`.
-        var containerID: UUID? = nil
-        var firstBaseLane = 0
-        for (index, (slot, file)) in zip(slots, files).enumerated() {
-            var obj = SoundObject(
-                id: UUID(),
-                startTime: slot.startTime,
-                duration: slot.duration,
-                lane: slot.lane,
-                volume: 0.0,
-                pan: 0.0,
-                kind: .clip(
-                    filePath: file.url.path,
-                    sourceOffset: 0,
-                    fileDuration: slot.duration,
-                    speedRatio: 1.0,
-                    isReversed: false
-                )
-            )
-            // The file's size, recorded as it is laid down: what settles two homonyms the day
-            // this link breaks and a folder is swept for it (@see EditViewModel+Relink).
-            obj.fileSize = EditViewModel.fileSize(atPath: file.url.path)
-            if index == 0 {
-                obj = viewModel.placeClip(obj, snapshot: snapshot)
-                containerID   = viewModel.parentGroup(for: obj.id)?.id
-                firstBaseLane = obj.lane
-            } else {
-                obj.lane = firstBaseLane + (slot.lane - slots[0].lane)
-                if let containerID {
-                    viewModel.addChild(obj, toGroupID: containerID)
-                } else {
-                    viewModel.add(obj)
-                }
-            }
-            viewModel.resolveOverlaps(for: obj.id)
-        }
-    }
-
-    private static func audioDuration(url: URL) async -> Double {
-        let asset = AVURLAsset(url: url)
-        do {
-            let d = try await asset.load(.duration)
-            let s = CMTimeGetSeconds(d)
-            return (s.isNaN || s <= 0) ? 5.0 : s
-        } catch {
-            return 5.0
-        }
+        vm.placeDropEntries(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode)
     }
 }

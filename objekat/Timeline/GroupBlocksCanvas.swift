@@ -65,6 +65,8 @@ struct CanvasGroup {
 
     var customColor: Color? { item.customColor }
     var outlineColor: Color { item.customColor ?? stem }   // GroupBlockView.effectiveColor
+    /// The name is written in white over a dark band (@see `SoundObject.bandWantsLightInk`).
+    var lightInk: Bool { item.bandWantsLightInk(selected: selected) }
 }
 
 /// The text of a block's name run, shared by the clips' pass and the groups' pass of the Canvas:
@@ -78,22 +80,23 @@ struct CanvasLabelCache {
     private var missingOnes: [String: GraphicsContext.ResolvedText] = [:]
 
     mutating func resolve(_ ctx: GraphicsContext, _ s: String, icon: String, missing: Bool,
-                          meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
-        // The key carries the icon AND the name: two blocks can share a name and not a kind.
-        let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "")
+                          meta: String, muteBadge: Bool, lightInk: Bool = false) -> GraphicsContext.ResolvedText {
+        // The key carries the icon AND the name: two blocks can share a name and not a kind. And the
+        // ink: the same name over a dark band and over a pale one is two different runs.
+        let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "") + (lightInk ? "\u{0}L" : "")
         func build() -> GraphicsContext.ResolvedText {
             // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the rich views
             // read too: a red — or a glyph — that only one regime knows about is one that appears
             // or disappears with the number of objects on screen.
             let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
-            let colour = missing ? MissingFileLabel.color : Color.black
+            let colour = missing ? MissingFileLabel.color : BlockInk.color(light: lightInk)
             let glyph = Text(Image(systemName: icon))
                 .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
             var run = glyph + Text(verbatim: " ") + Text(s)
             if !meta.isEmpty {
                 run = run + Text(verbatim: " ").font(.system(size: 9))
                           + Text(verbatim: meta).font(.system(size: 9, weight: .regular))
-                                .foregroundColor(.black.opacity(0.5))
+                                .foregroundColor(BlockInk.metaColor(light: lightInk))
             }
             if muteBadge {
                 run = run + Text(verbatim: " ").font(.system(size: 9))
@@ -209,7 +212,9 @@ enum GroupBlocksCanvas {
             }
             let tintAlpha = selected ? 0.55 : 0.30
             for (color, path) in b.tint { c.fill(path, with: .color(color.opacity(tintAlpha))) }
-            for (color, path) in b.band { c.fill(path, with: .color(color.opacity(tintAlpha))) }
+            // The name band in the object's own colour has ITS opacity (@see `ObjectColorChoice`).
+            let bandAlpha = ObjectColorChoice.bandOpacity(selected: selected)
+            for (color, path) in b.band { c.fill(path, with: .color(color.opacity(bandAlpha))) }
             for (color, path) in b.border {
                 c.stroke(path, with: .color(color.opacity(selected ? 0.9 : 0.5)), lineWidth: 2)
             }
@@ -291,7 +296,8 @@ enum GroupBlocksCanvas {
         let hasMeta = w >= 80
             && (item.volume <= -96 || abs(item.volume) >= 0.5 || abs(item.pan) >= 0.01)
         lc.draw(labels.resolve(c, g.name, icon: g.icon, missing: g.missing,
-                               meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false),
+                               meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false,
+                               lightInk: g.lightInk),
                 at: CGPoint(x: labelX,
                             y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
                 anchor: .topLeading)
@@ -316,15 +322,15 @@ enum GroupBlocksCanvas {
     /// name row (glyph, name, meta, chevron).
     static func drawOverlays(into ctx: GraphicsContext, groups: [CanvasGroup], geo: Geometry,
                              labels: inout CanvasLabelCache, sticky: StickyLabelPass? = nil) {
-        var chevronDown: GraphicsContext.ResolvedText?
-        var chevronRight: GraphicsContext.ResolvedText?
-        func chevron(_ down: Bool) -> GraphicsContext.ResolvedText {
-            if down, let r = chevronDown { return r }
-            if !down, let r = chevronRight { return r }
+        // Four chevrons at most: (down | right) x (black | white ink).
+        var chevrons: [Int: GraphicsContext.ResolvedText] = [:]
+        func chevron(_ down: Bool, light: Bool) -> GraphicsContext.ResolvedText {
+            let k = (down ? 1 : 0) + (light ? 2 : 0)
+            if let r = chevrons[k] { return r }
             let r = ctx.resolve(Text(Image(systemName: down ? "chevron.down" : "chevron.right"))
                 .font(.system(size: 8, weight: .semibold))
-                .foregroundColor(.black.opacity(0.5)))
-            if down { chevronDown = r } else { chevronRight = r }
+                .foregroundColor(BlockInk.metaColor(light: light)))
+            chevrons[k] = r
             return r
         }
 
@@ -389,7 +395,7 @@ enum GroupBlocksCanvas {
             if showChevron {
                 // 6 pt from the right edge, centred on the name row (3 pt of top inset + half a
                 // 12 pt line).
-                c.draw(chevron(g.expanded),
+                c.draw(chevron(g.expanded, light: g.lightInk),
                        at: CGPoint(x: x + w - 6, y: y + TimelineLabelMetrics.topInset + 8),
                        anchor: .trailing)
             }

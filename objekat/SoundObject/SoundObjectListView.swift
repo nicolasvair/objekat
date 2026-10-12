@@ -547,9 +547,16 @@ private struct SoundListRowView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Rectangle()
-                .fill(edgeColor ?? .clear)
-                .frame(width: SoundListRowView.edgeStripWidth)
+            // The counterpart of the block's name band, so drawn the same way: over a white base, at
+            // the band's opacity (60 %, 85 % selected — @see `ObjectColorChoice`). Over the row's own
+            // stem-tinted ground the colour would be mixed with it and no longer match the timeline.
+            ZStack {
+                if let edge = edgeColor {
+                    Color.white
+                    edge.opacity(ObjectColorChoice.bandOpacity(selected: isSelected))
+                }
+            }
+            .frame(width: SoundListRowView.edgeStripWidth)
 
             HStack(spacing: 4) {
                 chevron

@@ -548,6 +548,18 @@ final class EditViewModel {
     struct FileDropPreview: Equatable {
         var name: String
         var duration: Double?
+        /// A dropped FOLDER (it becomes one group, @see FolderImport): `duration` is then its span
+        /// laid out stacked, `sequentialDuration` its span laid out end to end (⌘), and `fileCount`
+        /// the audio files it holds. All nil while they are being read — and they stay nil for a
+        /// folder too big to be measured on the way (the rectangle keeps the waiting width).
+        var isFolder = false
+        var fileCount: Int? = nil
+        var sequentialDuration: Double? = nil
+
+        /// The width to draw for `mode`, nil while it is unknown.
+        func duration(for mode: FileDropMode) -> Double? {
+            isFolder && mode == .sequential ? sequentialDuration : duration
+        }
     }
 
     /// The waiting width, in seconds, of a rectangle whose duration has not been read yet.
@@ -604,7 +616,7 @@ final class EditViewModel {
         /// `count` values, so that the rectangles appear as soon as the hover begins.
         var previewDurations: [Double] {
             (0..<max(count, 0)).map { i in
-                (i < previews.count ? previews[i].duration : nil)
+                (i < previews.count ? previews[i].duration(for: mode) : nil)
                     ?? EditViewModel.fileDropPlaceholderDuration
             }
         }
@@ -1429,6 +1441,13 @@ final class EditViewModel {
 
     var availablePlugins: [AvailablePlugin] = []
     var isScanning: Bool = false
+
+    /// The plugin browser's sheet is up. Read LIVE by the app-wide key monitor (@see
+    /// `TimelineKeyHandler.registerKeyMonitor`): while it is true the keys belong to the sheet, whatever
+    /// holds the focus in it — otherwise ⌫ / space / digits go to the timeline the moment the focus leaves
+    /// the search field (and ⌫ deletes the selected object). A class member on purpose: a copy captured
+    /// from a View struct would be frozen. Set by `PluginBrowserView` (appear / disappear).
+    @ObservationIgnored var pluginBrowserOpen: Bool = false
 
     /// An accumulator of the plugins that could not be found during a LOAD (a project or an object).
     /// `compileRack` drops into it the name of the plugins the engine could not resolve for as long as it is

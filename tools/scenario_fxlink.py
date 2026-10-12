@@ -662,6 +662,77 @@ try:
         check("an unknown plugin is refused",
               refused("plugin.link_overlay", plugin="00000000-0000-0000-0000-000000000000") == "not_found")
 
+        # ── an EMPTY bin, born from the plugin browser's "New FX link" ───────────
+        # `debug.fxlink_create_empty` is the exact function the hand calls (createEmptyFXLink). What it has
+        # to prove: an empty block compiles in the engine (the signal passes), is one undo, survives a
+        # save / reopen (the registry only writes the bins a block refers to — this one has its block),
+        # takes a plugin afterwards, can be joined, and keeps the audit at zero.
+        audit_clean("before the empty-bin phase")
+        cmd("project.new")
+        EA = cmd("object.add", path=BIP, lane=0, start=0)["id"]
+        EB = cmd("object.add", path=BIP, lane=1, start=0)["id"]
+        e_before = add(EA, "chorus")                # a plain plugin before the bin's place
+        idle()
+        e_peak0 = render("empty_bin_before.wav")
+        E = cmd("debug.fxlink_create_empty", host=EA, index=1); idle()
+        ELID = E["id"]
+        check("an empty bin is created: one bin, one member, no plugin",
+              cmd("fxlink.list")["count"] == 1 and defs(ELID) == []
+              and len(cmd("fxlink.get", link=ELID)["members"]) == 1)
+        eb = block_of(EA)
+        check("...its block sits at the asked place (after the plain plugin) and holds nothing",
+              [p["id"] for p in chain(EA)][0] == e_before and chain(EA)[1].get("is_fx_block") is True
+              and eb["plugins"] == [], str(chain(EA)))
+        e_peak1 = render("empty_bin_after.wav")
+        check("the engine compiles an empty block: the signal still passes unchanged",
+              e_peak1 > 0.05 and abs(e_peak1 / e_peak0 - 1.0) < 0.02, "%s / %s" % (e_peak1, e_peak0))
+        ecards = cmd("synoptic.cards", host=EA)["cards"]
+        check("the signal view builds the host's cards without the empty block's (no card to draw)",
+              len(ecards) == 1, str(ecards))
+        audit_clean("with an empty bin")
+        cmd("edit.undo"); idle()
+        check("ONE undo takes the bin and its block away",
+              cmd("fxlink.list")["count"] == 0 and not any(p.get("is_fx_block") for p in chain(EA)))
+        cmd("edit.redo"); idle()
+        check("...and redo gives them back",
+              cmd("fxlink.list")["count"] == 1 and any(p.get("is_fx_block") for p in chain(EA)))
+        ELID = cmd("fxlink.list")["links"][0]["id"]
+        check("a bin does not hold a bin: aiming INSIDE a block is refused, nothing changes",
+              refused("debug.fxlink_create_empty", host=EA, block=block_of(EA)["id"]) == "invalid_state"
+              and cmd("fxlink.list")["count"] == 1)
+
+        # saved EMPTY and reopened
+        eproj = os.path.join(TMP, "empty.objekat")
+        cmd("project.save_as", path=eproj); idle()
+        cmd("project.new")
+        check("(a fresh project holds no bin)", cmd("fxlink.list")["count"] == 0)
+        cmd("project.open", path=eproj); idle()
+        el = cmd("fxlink.list")
+        check("the empty bin survives a save and a reopen, still empty, with its block",
+              el["count"] == 1 and el["links"][0]["plugins"] == [] and len(el["links"][0]["members"]) == 1, str(el))
+        ELID = el["links"][0]["id"]
+        EA2 = el["links"][0]["members"][0]["host"]
+        audit_clean("after reopening an empty bin")
+
+        # filled afterwards, then joined, then undone
+        r = cmd("fxlink.add_plugin", link=ELID, identifier="reverb", format="TracktionInternal"); idle()
+        check("a plugin added to the empty bin lands in its block",
+              len(defs(ELID)) == 1 and len(block_of(EA2)["plugins"]) == 1, str(r))
+        EB2 = [o["id"] for o in cmd("object.list")["objects"] if o["id"] != EA2][0]
+        cmd("fxlink.attach", link=ELID, host=EB2); idle()
+        check("the other object joins it and gets an instance",
+              len(block_of(EB2)["plugins"]) == 1 and len(cmd("fxlink.get", link=ELID)["members"]) == 2)
+        inst_a, inst_b = block_of(EA2)["plugins"][0]["id"], block_of(EB2)["plugins"][0]["id"]
+        cmd("plugin.set_param", plugin=inst_a, index=WET, value=0.63); idle()
+        check("...and the two instances mirror each other", abs(param(inst_b, WET) - 0.63) < 1e-3, "%s" % param(inst_b, WET))
+        cmd("edit.undo"); cmd("edit.undo"); idle()
+        check("two undos empty the bin again (attach, then the plugin) and keep its block",
+              defs(ELID) == [] and cmd("fxlink.list")["count"] == 1
+              and block_of(EA2)["plugins"] == [] and not any(p.get("is_fx_block") for p in chain(EB2)))
+        ep2 = render("empty_bin_reopened.wav")
+        check("...and it still passes the signal", ep2 > 0.05, "%s" % ep2)
+        audit_clean("at the end of the empty-bin phase")
+
         audit_clean("at the end of the scenario (signal view, overlay)")
 
 finally:

@@ -385,6 +385,53 @@ with ObjekatClient(SOCK) as c:
     check("a selected CHILD of an open group keeps its own selection after being cut near its start",
           c.send("selection.get")["ids"] == [e], str(c.send("selection.get")))
 
+    # --- ⌘G LEAVES THE NEW GROUP SELECTED (11 October 2026). The three grouping paths — a root
+    #     selection, a selection of children of one group (sub-group), and a time selection — all end
+    #     with the selection on EXACTLY the group just made. The root path used to drop its members
+    #     from the selection and select nothing. One undo takes the group away and gives the members
+    #     back as top-level objects. (The selection is NOT part of an undo snapshot: the id of the
+    #     vanished group stays in `selectedIDs` after the undo, as it already did for the sub-group
+    #     and time-selection paths — so it is not asserted here.)
+    def top_ids():
+        return {o["id"] for o in c.send("object.list")["objects"] if o["parent"] is None}
+    g1a = add(90); g1b = add(91)
+    c.send("selection.set", {"ids": [g1a, g1b]})
+    g1 = step("group.create (root)", lambda: c.send("group.create", {"ids": [g1a, g1b]}))["id"]
+    check("⌘G, root: the selection is exactly the new group",
+          c.send("selection.get")["ids"] == [g1], str(c.send("selection.get")))
+    c.send("edit.undo")
+    check("…one undo gives the members back at top level and removes the group",
+          {g1a, g1b} <= top_ids() and g1 not in top_ids(),
+          "top=%s" % sorted(top_ids() & {g1a, g1b, g1}))
+
+    g2a = add(92); g2b = add(93); g2c = add(94)
+    g2 = c.send("group.create", {"ids": [g2a, g2b, g2c]})["id"]
+    c.send("group.expand", {"id": g2, "expanded": True})
+    kids = [o["id"] for o in c.send("object.list")["objects"] if o["parent"] == g2]
+    c.send("selection.set", {"ids": [g2]})
+    sub = step("group.create (sub-group)", lambda: c.send("group.create", {"ids": kids[:2]}))["id"]
+    check("⌘G, sub-group: the selection is exactly the new sub-group",
+          c.send("selection.get")["ids"] == [sub]
+          and c.send("object.get", {"id": sub})["parent"] == g2, str(c.send("selection.get")))
+    c.send("edit.undo")
+    check("…one undo removes the sub-group, its members are back under the parent",
+          all(c.send("object.get", {"id": k})["parent"] == g2 for k in kids)
+          and sub not in {o["id"] for o in c.send("object.list")["objects"]},
+          "kids=%s" % kids)
+    c.send("group.expand", {"id": g2, "expanded": False})
+
+    g3 = add(95)
+    c.send("selection.set", {"ids": [g2]})
+    dl3 = c.send("object.get", {"id": g3})["display_lane"]
+    d3 = c.send("object.get", {"id": g3})["duration"]
+    c.send("timesel.set", {"start": 0.0, "end": d3, "lanes": [dl3]})
+    tg = step("timesel.group", lambda: c.send("timesel.group"))["id"]
+    check("⌘G, time selection: the selection is exactly the new group",
+          c.send("selection.get")["ids"] == [tg], str(c.send("selection.get")))
+    c.send("edit.undo")
+    check("…one undo gives the clip back at top level",
+          g3 in top_ids() and tg not in top_ids(), "g3=%s tg=%s" % (g3, tg))
+
     # --- SOLO ACROSS A CUT (30 September 2026). Solo is keyed by id, and a cut gives the right
     #     piece a fresh one: the piece has to inherit the DIRECT solo of the object cut, and a piece
     #     cut out of a child of a soloed group has to be audible by ancestry. `solo.get` answers
@@ -960,6 +1007,68 @@ with ObjekatClient(SOCK) as c:
                 step("consolidate.state",  lambda: c.send("consolidate.state"))
                 step("consolidate.edit_cancel", lambda: c.send("consolidate.edit_cancel"))
                 step("consolidate.unmake", lambda: c.send("consolidate.unmake", {"placement": pl[0]}))
+
+    # --- object colour: a free colour (color_hex), the old pastel (color_index), undo, file, shared
+    def col(i):
+        o = c.send("object.get", {"id": i})
+        return o.get("color_hex"), o.get("color_index")
+    cx = step("colour: object.add", lambda: c.send("object.add", {"path": BIP, "lane": 7, "start": 30.0}))
+    if cx:
+        icx = cx["id"]
+        check("colour: none at first", col(icx) == (None, None), col(icx))
+        r = step("object.set_color hex", lambda: c.send("object.set_color", {"ids": [icx], "color_hex": "#ff2d2d"}))
+        check("colour: answer carries the hex", r and r.get("color_hex") == "#FF2D2D" and r.get("count") == 1, r)
+        check("colour: get = hex, no index", col(icx) == ("#FF2D2D", None), col(icx))
+        listed = [o for o in c.send("object.list")["objects"] if o["id"] == icx]
+        check("colour: object.list carries color_hex", listed and listed[0].get("color_hex") == "#FF2D2D", listed)
+        step("object.set_color index", lambda: c.send("object.set_color", {"ids": [icx], "color_index": 5}))
+        check("colour: index replaces the hex", col(icx) == (None, 5), col(icx))
+        step("object.set_color index 15", lambda: c.send("object.set_color", {"ids": [icx], "color_index": 15}))
+        check("colour: index 0..15 still works", col(icx) == (None, 15), col(icx))
+        for bad in ({"ids": [icx], "color_index": 16}, {"ids": [icx], "color_hex": "red"},
+                    {"ids": [icx], "color_hex": "#12345"}):
+            try:
+                c.send("object.set_color", bad)
+                check("colour: refused %s" % bad, False, "accepted")
+            except ObjekatError:
+                check("colour: refused %s" % (list(bad.items())[1],), True)
+        check("colour: a refusal changes nothing", col(icx) == (None, 15), col(icx))
+        step("object.set_color hex 2", lambda: c.send("object.set_color", {"ids": [icx], "color_hex": "00C8FF"}))
+        check("colour: hex without # accepted, index cleared", col(icx) == ("#00C8FF", None), col(icx))
+        step("edit.undo (colour)", lambda: c.send("edit.undo"))
+        check("colour: undo restores the pastel", col(icx) == (None, 15), col(icx))
+        step("edit.redo (colour)", lambda: c.send("edit.redo"))
+        check("colour: redo restores the hex", col(icx) == ("#00C8FF", None), col(icx))
+        step("object.set_color reset", lambda: c.send("object.set_color", {"ids": [icx]}))
+        check("colour: no argument = back to the stem's colour", col(icx) == (None, None), col(icx))
+        step("edit.undo (reset)", lambda: c.send("edit.undo"))
+        check("colour: undo of the reset", col(icx) == ("#00C8FF", None), col(icx))
+        # file: written as "#RRGGBB", read back
+        c.send("object.set_color", {"ids": [icx], "color_hex": "#FF8A00"})
+        c.send("project.save")
+        txt = open(PROJ).read()
+        check("colour: file carries colorHex as text", '"colorHex" : "#FF8A00"' in txt, "colorHex missing")
+        check("colour: file format 24", json.load(open(PROJ)).get("version") == 24)
+        c.send("project.open", {"path": PROJ})
+        c.send("wait_idle", {"timeout_ms": 30000})
+        check("colour: reopened", col(icx) == ("#FF8A00", None), col(icx))
+        # a consolidated definition: the colour is synchronised across its placements
+        sh = step("colour: consolidate.make", lambda: c.send("consolidate.make", {"id": icx}))
+        if sh:
+            step("colour: job.wait", lambda: c.send("job.wait", {"id": sh["job_id"], "timeout_ms": 30000}))
+            lst = c.send("consolidate.list")
+            pls = [p for d in lst["definitions"] for p in d["placements"] if p == icx or True]
+            if pls:
+                p0 = pls[-1]
+                p1 = c.send("object.duplicate", {"ids": [p0]})["ids"][0]
+                c.send("object.set_color", {"ids": [p0], "color_hex": "#00FF5A"})
+                check("colour: placement 0", col(p0) == ("#00FF5A", None), col(p0))
+                check("colour: placement 1 follows", col(p1) == ("#00FF5A", None), col(p1))
+                c.send("object.set_color", {"ids": [p1], "color_index": 3})
+                check("colour: placement 0 follows the other way", col(p0) == (None, 3), col(p0))
+                step("edit.undo (shared colour)", lambda: c.send("edit.undo"))
+                check("colour: one undo restores both",
+                      col(p0) == ("#00FF5A", None) and col(p1) == ("#00FF5A", None), (col(p0), col(p1)))
 
     # absent from bare `help`, and `help name=` names the canonical command an alias points to.
     helped = step("help",     lambda: c.send("help"))

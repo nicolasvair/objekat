@@ -21,6 +21,8 @@ struct FileDragSource: NSViewRepresentable {
     let urls: () -> [URL]
     /// A click without a drag: the selection remains the SwiftUI view's business.
     let onClick: () -> Void
+    /// A double click (a folder row: go down into it). nil = a double click is two clicks.
+    var onDoubleClick: (() -> Void)? = nil
     /// The row's tooltip: this view covers the whole row, so a SwiftUI `.help` underneath would
     /// never be reached — the tooltip has to live on the AppKit view itself.
     var toolTip: String? = nil
@@ -29,6 +31,7 @@ struct FileDragSource: NSViewRepresentable {
         let view = DragView()
         view.urls = urls
         view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
         view.toolTip = toolTip
         return view
     }
@@ -36,12 +39,14 @@ struct FileDragSource: NSViewRepresentable {
     func updateNSView(_ view: DragView, context: Context) {
         view.urls = urls
         view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
         if view.toolTip != toolTip { view.toolTip = toolTip }
     }
 
     final class DragView: NSView, NSDraggingSource {
         var urls: () -> [URL] = { [] }
         var onClick: () -> Void = {}
+        var onDoubleClick: (() -> Void)? = nil
 
         private var pressOrigin: NSPoint?
         private var dragging = false
@@ -66,6 +71,7 @@ struct FileDragSource: NSViewRepresentable {
         override func mouseUp(with event: NSEvent) {
             defer { pressOrigin = nil }
             guard !dragging else { return }
+            if event.clickCount >= 2, let onDoubleClick { onDoubleClick(); return }
             onClick()   // `selectRow` rereads the modifiers: ⇧ and ⌘ keep working
         }
 
@@ -759,7 +765,7 @@ struct SoundLibraryView: View {
             onToggleExpand: { listFocused = true; vm.toggleExpand(node) },
             onEnter: { listFocused = true; vm.enterFolder(node) },
             onSelect: { listFocused = true; selectRow(node) },
-            dragURLsProvider: node.isDirectory ? nil : { vm.dragURLs(for: node) }
+            dragURLsProvider: { vm.dragURLs(for: node) }
         )
     }
 
@@ -786,7 +792,8 @@ private struct SoundLibraryRowView: View {
     let onEnter: () -> Void
     let onSelect: () -> Void
     /// The batch the drag carries, computed the instant the drag starts (it reflects the current
-    /// multiple selection, not the one of the last render). `nil` for a folder.
+    /// multiple selection, not the one of the last render). A folder carries itself: dropped on the
+    /// timeline it becomes a group (@see FolderImport).
     let dragURLsProvider: (() -> [URL])?
 
     private var indent: CGFloat { indented ? CGFloat(node.depth) * 12 : 0 }
@@ -800,9 +807,10 @@ private struct SoundLibraryRowView: View {
         .background((isSelected || isCursor) ? Color.accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
         // Files hand click and drag over to AppKit: it is the only way to emit a batch of N
-        // elements (@see FileDragSource). Folders keep their SwiftUI gestures.
+        // elements (@see FileDragSource). A folder does the same on its icon and name only — the
+        // chevron stays a SwiftUI button — and its double click (go down into it) travels with it.
         .overlay {
-            if let dragURLsProvider {
+            if let dragURLsProvider, !node.isDirectory {
                 FileDragSource(urls: dragURLsProvider, onClick: onSelect, toolTip: node.name)
             }
         }
@@ -824,21 +832,29 @@ private struct SoundLibraryRowView: View {
             }
             .buttonStyle(.plain)
 
-            Image(systemName: "folder.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.accentColor.opacity(0.8))
-                .frame(width: 16)
+            HStack(spacing: 6) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .frame(width: 16)
 
-            Text(node.name)
-                .font(.system(size: 11))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(.primary)
-                // Takes the room that is left, and only that: a zero ideal width keeps a long name
-                // from widening the row (hence the left panel) or pushing what follows out.
-                .padding(.trailing, 14)   // the minimum gap the former `Spacer` kept (spacing + 8)
-                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .help(node.name)
+                Text(node.name)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.primary)
+                    // Takes the room that is left, and only that: a zero ideal width keeps a long name
+                    // from widening the row (hence the left panel) or pushing what follows out.
+                    .padding(.trailing, 14)   // the minimum gap the former `Spacer` kept (spacing + 8)
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+            }
+            // The drag handle of the folder (the tooltip lives on it, it covers the name).
+            .overlay {
+                if let dragURLsProvider {
+                    FileDragSource(urls: dragURLsProvider, onClick: onSelect,
+                                   onDoubleClick: onEnter, toolTip: node.name)
+                }
+            }
         }
         // Double click = go down into the folder; plain click = cursor/focus
         .onTapGesture(count: 2) { onEnter() }

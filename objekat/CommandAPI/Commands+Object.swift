@@ -365,32 +365,48 @@ extension CommandRegistry {
         }
 
         register("object.set_color",
-                 summary: "Gives objects a custom colour (an index into the 16-hue object palette, "
-                        + "independent of the stem) or takes it away — WITHOUT `color_index` (or with "
-                        + "null) the object goes back to its stem's colour. One undo point for the "
-                        + "whole batch, however many ids. The colour of a consolidated object is "
+                 summary: "Gives objects a custom colour — a FREE colour (`color_hex`, \"#RRGGBB\") or "
+                        + "one of the 16 old pastels (`color_index`, independent of the stem) — or "
+                        + "takes it away: with neither (or both null) the object goes back to its "
+                        + "stem's colour. An object holds ONE of the two: setting either clears the "
+                        + "other. `color_hex` wins if both are given. The colour is NOT added to the "
+                        + "menu's list of added colours (that is the hand's \"+\"). One undo point for "
+                        + "the whole batch, however many ids. The colour of a consolidated object is "
                         + "shared by every placement of its definition, so those follow (`count` is "
                         + "the ids asked, not the placements painted). Note that a coloured clip is "
                         + "drawn as a rich SwiftUI view, not in the batched Canvas "
                         + "(`perf.census.regimes.rich_reasons.color`).",
-                 params: [ParamSpec("color_index", "int", required: false,
-                                    "A hue from the object palette (0…15). Absent / null = no custom colour."),
+                 params: [ParamSpec("color_hex", "string", required: false,
+                                    "A free colour, \"#RRGGBB\" (the \"#\" is optional). Absent / null = see color_index."),
+                          ParamSpec("color_index", "int", required: false,
+                                    "A hue from the old pastel palette (0…15). Absent / null (and no color_hex) = no custom colour."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Target objects; default = current selection.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let ids = try CommandAdapters.targetIDs(p, in: vm)
-            var color: Int? = nil
-            if let raw = p.raw["color_index"], raw != .null {
+            var value: ObjectColorValue? = nil
+            if let raw = p.raw["color_hex"], raw != .null {
+                guard let text = raw.stringValue, let rgb = ObjectColorChoice.parse(text) else {
+                    throw CommandError(code: .bad_params, message: "'color_hex': \"#RRGGBB\"")
+                }
+                value = .hex(rgb)
+            } else if let raw = p.raw["color_index"], raw != .null {
                 let i = try p.int("color_index")
                 guard i >= 0, i < ObjectColorPalette.count else {
                     throw CommandError(code: .bad_params,
                                        message: "'color_index': 0…\(ObjectColorPalette.count - 1)")
                 }
-                color = i
+                value = .index(i)
             }
-            vm.setObjectColor(ids: Set(ids), colorIndex: color)
-            return .object(["count": .int(ids.count), "color_index": color.map { JSONValue.int($0) } ?? JSONValue.null])
+            vm.setObjectColor(ids: Set(ids), value: value)
+            var out: [String: JSONValue] = ["count": .int(ids.count), "color_index": .null, "color_hex": .null]
+            switch value {
+            case .index(let i)?: out["color_index"] = .int(i)
+            case .hex(let h)?:   out["color_hex"] = .string(ObjectColorChoice.format(h))
+            case nil: break
+            }
+            return .object(out)
         }
 
         register("object.set_infinite",

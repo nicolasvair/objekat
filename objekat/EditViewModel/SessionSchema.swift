@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 23
+    static let formatVersion = 24
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -47,6 +47,14 @@ enum SessionSchema {
         "  WRITTEN ONLY WHEN IT IS NOT the default: no key = both channels as they are (\"lr\"),",
         "  which is every session written before format 18 and every mono or multichannel clip.",
         "  A consolidated instance never carries one: the choice was baked into its wave.",
+        "colorHex — an object's OWN colour, on any object (clip, midiClip, group, aux): \"#RRGGBB\" (sRGB,",
+        "  opaque). The name band of the object's block is drawn in it, at 60 % over white (85 % when",
+        "  selected); the body keeps the stem's colour. WRITTEN ONLY WHEN SET. It is the successor of",
+        "  `colorIndex` (an index 0-15 into 16 pastels): a session written before format 24 only has",
+        "  that, and keeps it — still read, drawn as before, never converted. An object holds ONE of",
+        "  the two (setting one clears the other); `colorHex` wins if a hand-edited file carries both.",
+        "  A build from before format 24 ignores the key: the object loses its colour, and saving from",
+        "  that build drops it. Neither key = the object keeps only its stem's colour.",
         "",
         "araSource — on a clip only (never a consolidated instance): the object is played THROUGH an",
         "  ARA plugin (Melodyne VST3) instead of straight off its file. { plugin, archive? }.",
@@ -57,6 +65,8 @@ enum SessionSchema {
         "  never captured (a fresh analysis at the next load). Treat `data` as opaque and copy it as",
         "  is; any copy of the object needs a NEW `plugin.id`. While it is there the clip's speed must be 1,",
         "  and it is neither reversed nor looped. A format earlier than 20 opens without a source.",
+        "  `plugin.isEnabled` false = the source is BYPASSED: the clip plays its file, no plugin is loaded,",
+        "  and the archive is kept as it is (switching it on loads the source from that archive).",
         "",
         "TIME — startTime, duration, fadeIn, fadeOut are in SECONDS. MIDI notes, on the other",
         "  hand, are in MUSICAL TIME (startBeat, lengthBeats): converted at the current tempo.",

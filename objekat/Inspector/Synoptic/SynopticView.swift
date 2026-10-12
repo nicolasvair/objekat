@@ -200,6 +200,9 @@ struct SynopticActions {
     /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
     var onOpenARAEditor: (() -> Void)? = nil
     var onRemoveARA: (() -> Void)? = nil
+    /// The power button of the ARA card: the source plays / the object plays its dry file. Not a
+    /// plugin bypass (@see `EditViewModel.setARAEnabled`): the source is unloaded while it is off.
+    var onToggleARABypass: (() -> Void)? = nil
 }
 
 /// The ARA source an audio object plays THROUGH. It is drawn as a CARD, the first one out of the 'audio file'
@@ -209,6 +212,9 @@ struct SynopticARA: Equatable {
     var name: String
     /// The plugin is still analysing the audio (a spinner on the card, and the editor cannot be opened yet).
     var analysing: Bool
+    /// False = the source is switched off: the object plays its dry file, the card is dimmed with a grey
+    /// power button, and the editor cannot be opened (there is no instance).
+    var isEnabled: Bool = true
     /// The source's identity colour, like any plugin card's halo.
     var color: Color = .gray
 }
@@ -452,11 +458,12 @@ struct SynopticView: View {
             // object), cannot be dragged, bypassed, linked or dropped upon, and has no '+' around it.
             if let r = d.araCard, let ara = audioFile?.ara {
                 SynopticCardView(
-                    plugin: SynopticPlugin(name: ara.name, category: .utility, formatLabel: "VST3", color: ara.color),
+                    plugin: SynopticPlugin(name: ara.name, category: .utility, isEnabled: ara.isEnabled,
+                                           formatLabel: "VST3", color: ara.color),
                     isSelected: false,
                     onSelect: {},
-                    onOpenEditor: ara.analysing ? nil : actions.onOpenARAEditor,
-                    onToggleBypass: {},
+                    onOpenEditor: (ara.analysing || !ara.isEnabled) ? nil : actions.onOpenARAEditor,
+                    onToggleBypass: { actions.onToggleARABypass?() },
                     onRemove: { actions.onRemoveARA?() },
                     width: r.width,
                     ara: ara
@@ -1263,10 +1270,12 @@ struct SynopticCardView: View {
     /// nil = sized on its own name (@see SynopticLayout.cardWidth); the MIDI zone's instrument
     /// slot passes its fixed width.
     var width: CGFloat? = nil
-    /// Non-nil = this card is the ARA SOURCE of the object (Melodyne), not an FX: the same chrome, minus
-    /// what a source has no business with — no on/off (there is no bypass: take the source off), no VU
-    /// meter, no link, no drag, nothing dropped on it — plus an "ARA" tag and, while the plugin analyses the
-    /// audio, a spinner. The ✕ takes the source off.
+    /// Non-nil = this card is the ARA SOURCE of the object (Melodyne), not an FX: the SAME card as any
+    /// plugin's (on/off column, name, ✕, VU line), minus what a source has no business with — no link, no
+    /// drag, no selection, nothing dropped on it — plus an "ARA" tag and, while the plugin analyses the
+    /// audio, a spinner. The power button switches the source off WITHOUT losing its retouches (the
+    /// object then plays its dry file; @see `EditViewModel.setARAEnabled`); the ✕ takes the source off for
+    /// good. The VU line is the one every card has: a plugin's level, still 0 for a source.
     var ara: SynopticARA? = nil
     private var isARA: Bool { ara != nil }
     private var cardW: CGFloat { width ?? SynopticLayout.cardWidth(for: plugin) }
@@ -1290,27 +1299,23 @@ struct SynopticCardView: View {
     var body: some View {
         HStack(spacing: 0) {
             // on/off — a REAL button, full height, square edges (the identity colour = active)
-            if !isARA {
-                Button(action: onToggleBypass) {
-                    ZStack {
-                        Rectangle()
-                            .fill(plugin.isEnabled ? plugin.color : Color.secondary.opacity(0.18))
-                        Image(systemName: "power")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(plugin.isEnabled ? .white : .secondary)
-                    }
-                    .frame(width: toggleW)
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
+            Button(action: onToggleBypass) {
+                ZStack {
+                    Rectangle()
+                        .fill(plugin.isEnabled ? plugin.color : Color.secondary.opacity(0.18))
+                    Image(systemName: "power")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(plugin.isEnabled ? .white : .secondary)
                 }
-                .buttonStyle(.plain)
-                .help(L("synoptic.bypass"))
+                .frame(width: toggleW)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(isARA ? L("synoptic.ara.bypass") : L("synoptic.bypass"))
 
             // Content: NAME (the drag area) · ✕  +  a thin VU meter
             VStack(spacing: 0) {
-                // The source has no VU line under it: its row is centred in the card instead.
-                if isARA { Spacer(minLength: 0) }
                 HStack(spacing: 6) {
                     // NAME — the ONLY drag area (reorder / move) plus a double click for the editor
                     Text(plugin.name)
@@ -1367,17 +1372,15 @@ struct SynopticCardView: View {
                 Spacer(minLength: 0)
 
                 // VU meter: a very thin horizontal line, right at the bottom
-                if !isARA {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(height: 2)
-                        .overlay(alignment: .leading) {
-                            GeometryReader { g in
-                                Capsule().fill(Color.green)
-                                    .frame(width: max(0, g.size.width * plugin.vu))
-                            }
+                Capsule()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(height: 2)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { g in
+                            Capsule().fill(Color.green)
+                                .frame(width: max(0, g.size.width * plugin.vu))
                         }
-                }
+                    }
             }
             .padding(.horizontal, 8)
             .padding(.top, 5)
@@ -3164,7 +3167,8 @@ struct SynopticBoundView: View {
         let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
-                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing, color: $0.plugin.color) }) }
+                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
+                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) }) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
@@ -3536,7 +3540,8 @@ struct SynopticBoundView: View {
             joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
             onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
             onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
-            onRemoveARA: { viewModel.removeARASource(objectID: objectID) }
+            onRemoveARA: { viewModel.removeARASource(objectID: objectID) },
+            onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) }
         ))
         .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
         .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
@@ -3545,7 +3550,7 @@ struct SynopticBoundView: View {
         .sheet(item: $activeSheet) { kind in
             switch kind {
             case .insert(let location, let index):
-                pickerSheet { available in
+                pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index)) { available in
                     viewModel.synopticInsert(objectID: objectID, available: available, into: location, at: index)
                 }
             case .instrument:
@@ -3571,31 +3576,21 @@ struct SynopticBoundView: View {
     /// provides, and through its dedicated MIDI zone), so it belongs in NO FX chain.
     @ViewBuilder
     private func pickerSheet(instrumentsOnly: Bool = false, title: String? = nil, showsARASource: Bool = true,
+                             insertion: PluginBrowserInsertion? = nil,
                              onSelect: @escaping (AvailablePlugin) -> Void) -> some View {
-        let filter: (AvailablePlugin) -> Bool =
-            instrumentsOnly ? { $0.isInstrument } : { !$0.isInstrument }
-        VStack(spacing: 0) {
-            HStack {
-                Text(title ?? (instrumentsOnly ? L("synoptic.sheet.chooseInstrument") : L("synoptic.sheet.addPlugin")))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button(L("common.cancel")) { activeSheet = nil }
-            }
-            .padding(12)
-            Divider()
-            PluginPickerPopover(
-                viewModel: viewModel,
-                objectID: objectID,
-                searchText: $pickerSearch,
-                dismiss: { activeSheet = nil },
-                onSelect: { available in onSelect(available); activeSheet = nil },
-                filter: filter,
-                showsARASource: showsARASource && !instrumentsOnly
-            )
-        }
-        .frame(width: 280, height: 420)
+        let size = PluginBrowserLayout.sheetSize()
+        PluginBrowserView(
+            viewModel: viewModel,
+            objectID: objectID,
+            title: title ?? (instrumentsOnly ? L("synoptic.sheet.chooseInstrument") : L("synoptic.sheet.addPlugin")),
+            searchText: $pickerSearch,
+            dismiss: { activeSheet = nil },
+            onSelect: { available in onSelect(available); activeSheet = nil },
+            kind: instrumentsOnly ? .instrumentsOnly : .effectsOnly,
+            showsARASource: showsARASource && !instrumentsOnly,
+            insertion: insertion
+        )
+        .frame(width: size.width, height: size.height)
     }
 
     // MARK: FX link helpers (a block's id → what the model needs)

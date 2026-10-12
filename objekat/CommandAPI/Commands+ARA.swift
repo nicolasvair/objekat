@@ -6,8 +6,9 @@ import Darwin
 //
 // An audio object can carry an ARA SOURCE: a Melodyne VST3 the clip plays through (docs/ara_melodyne_plan.md).
 // It is added and removed through the plugin commands (`plugin.add` with an ARA plugin, `plugin.remove`
-// on its id, `plugin.list` showing it first with `slot: "ara_source"`); this family only READS it and
-// waits for its analysis. None of these commands opens an editor, and none is an edit.
+// on its id, `plugin.list` showing it first with `slot: "ara_source"`); this family READS it, waits for
+// its analysis and switches it on and off (`object.ara.set_enabled`, the only edit here). None of these
+// commands opens an editor.
 
 extension CommandRegistry {
 
@@ -20,7 +21,9 @@ extension CommandRegistry {
                  `analysing`, `regions`, `archive_bytes` (the freshest archive known to the app) and \
                  `archive_stale` (a retouch or an end of analysis since the last capture), \
                  `model_archive_bytes` / `model_archive_sha1` (what a save would write right now) and \
-                 `sync_failure` (the engine's reason when the source could not be set up). Reads only.
+                 `sync_failure` (the engine's reason when the source could not be set up) and `enabled` \
+                 (false = the source is switched off: the object plays its dry file, no instance runs, \
+                 the model keeps the archive). Reads only.
                  """,
                  params: [ParamSpec("id", "uuid", "Audio object.")],
                  undo: .none) { p in
@@ -49,8 +52,11 @@ extension CommandRegistry {
             let engine = try CommandContext.shared.requireEngine()
             let id = try p.uuid("id")
             let budget = Duration.milliseconds(max(0, try p.int("timeout_ms", or: 120_000)))
-            guard vm.find(id: id)?.araSource != nil else {
+            guard let current = vm.find(id: id)?.araSource else {
                 throw CommandError(code: .invalid_state, message: "the object has no ARA source")
+            }
+            guard current.plugin.isEnabled else {
+                throw CommandError(code: .invalid_state, message: "the ARA source is switched off")
             }
             let started = ContinuousClock.now
             while true {
@@ -78,6 +84,32 @@ extension CommandRegistry {
                 }
                 try? await Task.sleep(for: .milliseconds(50))
             }
+        }
+
+        register("object.ara.set_enabled",
+                 summary: """
+                 Switches the ARA source of an audio object on or off, exactly as the power button of its \
+                 card does. OFF: the object plays its dry file, the Melodyne instance is unloaded (its \
+                 editor closes), and the model KEEPS the source and its retouches (the archive is captured \
+                 on the way out). ON: the source is loaded again from that archive. One undo step, none \
+                 when the source is already in that state. Answers `{id, enabled, changed}` and, when on, \
+                 `ara_valid`. `invalid_state` when the object has no ARA source.
+                 """,
+                 params: [ParamSpec("id", "uuid", "Audio object."),
+                          ParamSpec("enabled", "bool", "true = the source plays, false = bypassed.")],
+                 // `setARAEnabled` pushes its own undo point (and none when nothing changes).
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let enabled = try p.bool("enabled")
+            guard vm.find(id: id)?.araSource != nil else {
+                throw CommandError(code: .invalid_state, message: "the object has no ARA source")
+            }
+            let changed = vm.setARAEnabled(objectID: id, enabled: enabled)
+            return .object(["id": .string(id.uuidString),
+                            "enabled": .bool(vm.araIsEnabled(id)),
+                            "changed": .bool(changed),
+                            "ara_valid": .bool(vm.araSynced.contains(id) && vm.araSyncFailures[id] == nil)])
         }
 
         register("object.ara.capture",
@@ -240,6 +272,7 @@ extension CommandAdapters {
             "model_archive_bytes": .int(source.archive?.bytes ?? 0),
             "model_archive_sha1": .stringOrNull(source.archive.map { sha1($0.data) }),
             "sync_failure": .stringOrNull(vm.araSyncFailures[id]),
+            "enabled": .bool(source.plugin.isEnabled),
         ]
         if let engine = vm.engine {
             let st = engine.araStatus(forObjectID: id.uuidString)

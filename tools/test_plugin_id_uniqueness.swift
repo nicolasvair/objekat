@@ -17,6 +17,7 @@
 //         ../objekat/SoundObject/FXLink.swift \
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \

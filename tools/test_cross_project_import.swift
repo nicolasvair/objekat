@@ -25,6 +25,7 @@
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
@@ -90,7 +91,8 @@ enum CrossProjectImportTest {
         // MARK: - Fresh ids for objects, plugins, notes
 
         do {
-            let src = clip(startTime: 10, lane: 2, plugins: [plugin()])
+            var src = clip(startTime: 10, lane: 2, plugins: [plugin()])
+            src.colorHex = 0xFF2D2D
             let cb = CrossProjectImport.Clipboard(clips: [src], comments: [],
                                                   consolidateDefinitions: [:],
                                                   originFolder: originFolder,
@@ -101,6 +103,7 @@ enum CrossProjectImportTest {
             check("a fresh plugin id is issued", plan.clips[0].plugins[0].id != src.plugins[0].id)
             check("the plugin state travels across, frozen as-is",
                   plan.clips[0].plugins[0].stateXML == "<state/>")
+            check("an object's free colour travels across", plan.clips[0].colorHex == 0xFF2D2D)
         }
 
         do {

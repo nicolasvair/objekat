@@ -1111,7 +1111,7 @@ def section_P(c):
     level_and_index("P the old-session send now sounds", dry, wet, -6.0)
     c.send("project.save")
     d2 = json.load(open(path))
-    check("P: saved again as format 23", d2.get("version") == 23, d2.get("version"))
+    check("P: saved again as format 24", d2.get("version") == 24, d2.get("version"))
     blob = json.dumps(d2)
     check("P: neither the ghost send nor its curve survive the save", ghost not in blob, "")
 
@@ -2464,7 +2464,7 @@ def section_Z2(c):
     c.send("project.save")
     path = out("Z2/project.objekat")
     d1 = json.load(open(path))
-    check("Z2 file: saved as format 23", d1.get("version") == 23, d1.get("version"))
+    check("Z2 file: saved as format 24", d1.get("version") == 24, d1.get("version"))
     ox = find_obj(d1["items"], x)
     ow = find_obj(d1["items"], w)
     markers = [p_ for p_ in ox.get("plugins", []) if "sendMarker" in p_]
@@ -2540,7 +2540,7 @@ def section_PF(c):
     c.send("project.save")
     d2 = json.load(open(path))
     blob2 = json.dumps(d2["items"])
-    check("PF1: saved as format 23, and still without marker or tap", d2.get("version") == 23 and "sendMarker" not in blob2 and '"tap"' not in blob2,
+    check("PF1: saved as format 24, and still without marker or tap", d2.get("version") == 24 and "sendMarker" not in blob2 and '"tap"' not in blob2,
           d2.get("version"))
 
     # ---- (2) format 22 that breaks the rules: marker + tap, a duplicate marker, an orphan marker
@@ -3323,7 +3323,7 @@ def send_instance(c, x, a):
 # --------------------------------------------------------------------------------------------------
 
 def section_Z3(c):
-    print("\n--- Z3  save / reopen: the send's plugins, their ids and states come back; format 23; a hand-written file is sanitised")
+    print("\n--- Z3  save / reopen: the send's plugins, their ids and states come back; format 24; a hand-written file is sanitised")
     if REF:
         print("       (skipped in --ref: plugins on a send are INC 3)")
         return
@@ -3346,7 +3346,7 @@ def section_Z3(c):
     c.send("project.save")
     path = out("Z3/project.objekat")
     d1 = json.load(open(path))
-    check("Z3 file: saved as format 23", d1.get("version") == 23, d1.get("version"))
+    check("Z3 file: saved as format 24", d1.get("version") == 24, d1.get("version"))
     ox, ow = find_obj(d1["items"], x), find_obj(d1["items"], w)
     fp = [p_["id"].upper() for p_ in (ox["sends"][0].get("plugins") or [])]
     check("Z3 file: the send carries its two plugins, same ids, in order", fp == [pid.upper(), lp.upper()], fp)
@@ -3388,8 +3388,8 @@ def section_Z3(c):
     audit(c, "Z3b reopened as 22")
     c.send("project.save")
     d2 = json.load(open(path))
-    check("Z3b: the format-22 file is re-saved as 23 with `items` identical",
-          d2.get("version") == 23 and json.dumps(d2["items"], sort_keys=True) == items0, d2.get("version"))
+    check("Z3b: the format-22 file is re-saved as 24 with `items` identical",
+          d2.get("version") == 24 and json.dumps(d2["items"], sort_keys=True) == items0, d2.get("version"))
 
     # ---- a hand-written 23 file: a bin, a marker and a LINKED leaf inside a send's plugins
     pipeline_offset_db(c)

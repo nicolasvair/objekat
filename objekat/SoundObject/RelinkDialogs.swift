@@ -38,20 +38,23 @@ enum RelinkUI {
     // MARK: - What a menu may offer
 
     /// The items a right click on `object` is entitled to, decided ONCE and read by the two menus
-    /// that draw them (the list's SwiftUI `.contextMenu`, the timeline's `NSMenu`). The rules:
+    /// that draw them (the list's SwiftUI `.contextMenu`, the timeline's `NSMenu`). The rules
+    /// themselves are a pure unit, `RelinkMenuRules`, asserted alone; this struct only feeds it
+    /// from the model. They are:
     ///
     /// - **Replace is always available on a sound**, missing or not: "I have re-edited that file
     ///   outside" is an edit, not an accident (@see CONTRACTS, decision 1). It is withheld from an
     ///   INSTANCE of a consolidated object, whose content is not its own — `replaceSource` refuses one,
     ///   and an item that can only fail is worse than no item. It is also the one flag only ONE of
     ///   the two menus reads: the item lives in the sound list (@see `addRelinkItems`).
-    /// - **Repair only when the file is actually gone**, since there is nothing to repair
+    /// - **Repair whenever the file is gone, for ANY reason.** There is nothing to repair
     ///   otherwise.
-    /// - **An offline volume is not a lost file.** The drive is in a drawer; it comes back on its
-    ///   own at the next mount (@see `armMissingFileWatch`). Sending someone hunting through a
-    ///   panel for a file that is where it has always been is telling them the wrong thing, so the
-    ///   repair item gives way to a disabled line naming the volume — the menu still answers the
-    ///   question "why is this red?", which is what one opened it for.
+    /// - **An offline volume is information, not a veto.** The drive may be in a drawer and come
+    ///   back on its own at the next mount (@see `armMissingFileWatch`) — so the menu still names
+    ///   it, in a disabled line that answers "why is this red?" — but it may just as well be a
+    ///   drive that is never coming back, and then withholding the repair left no way to say "this
+    ///   file is HERE now". `offlineVolume` therefore stays a piece of information and no longer
+    ///   excludes `canRepair`; the line is drawn above the repair item.
     /// - **The folder sweep answers to the PROJECT** and not to the object aimed at: it mends
     ///   whatever it finds, so it shows as soon as anything at all is missing. That is also what
     ///   makes it reachable from a group's menu, where the three object items say nothing.
@@ -60,7 +63,7 @@ enum RelinkUI {
         let canReplace: Bool
         let canRepair: Bool
         /// The name of the `/Volumes/<name>` that is not mounted, when that is why the file is
-        /// missing. Non-nil excludes `canRepair`.
+        /// missing. Information only: it coexists with `canRepair`.
         let offlineVolume: String?
         let canSweepFolder: Bool
 
@@ -68,12 +71,21 @@ enum RelinkUI {
 
         init(vm: EditViewModel, object: SoundObject) {
             objectID = object.id
-            let reason = vm.missingReason(for: object)
-            let offline = reason == .volumeOffline
-            offlineVolume = offline ? RelinkUI.volumeName(of: object.filePath) : nil
-            canReplace = object.isClip && object.consolidateID == nil
-            canRepair = reason != nil && !offline
-            canSweepFolder = vm.missingFileCount > 0
+            let cause: RelinkMenuRules.Cause?
+            switch vm.missingReason(for: object) {
+            case .some(.absent):        cause = .absent
+            case .some(.volumeOffline): cause = .volumeOffline
+            case .none:                 cause = nil
+            }
+            let items = RelinkMenuRules.items(cause: cause,
+                                              isClip: object.isClip,
+                                              isConsolidateInstance: object.consolidateID != nil,
+                                              anythingMissingInProject: vm.missingFileCount > 0)
+            canReplace = items.canReplace
+            canRepair = items.canRepair
+            offlineVolume = items.showsOfflineVolumeLine
+                ? RelinkUI.volumeName(of: object.filePath) : nil
+            canSweepFolder = items.canSweepFolder
         }
     }
 
@@ -146,6 +158,20 @@ enum RelinkUI {
 
     // MARK: - Repairing a missing link (and what it teaches)
 
+    /// The folder the last relink of this SESSION was pointed at (the file's folder for a repair,
+    /// the folder itself for a sweep). Memory of the process only, never persisted: files that went
+    /// missing together tend to come back together, and it is where a panel for a file on a drive
+    /// that is not mounted should open (@see `RelinkMenuRules.panelStart`).
+    private static var lastRelinkFolder: URL?
+
+    /// `url` if it is a folder that exists right now, else nil. A panel handed a folder that has
+    /// since gone would fall back on its own default, so the check is made at the gesture's door.
+    private static func existingDirectory(_ url: URL) -> URL? {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue ? url : nil
+    }
+
     /// "Repair Link…": the file is gone, here is where it went. The unit of the repair is the
     /// PATH, so every object naming it is mended at once — and the pair may teach where the OTHER
     /// missing files went, which is what the propagation asks about.
@@ -153,14 +179,25 @@ enum RelinkUI {
         guard vm.hasInterface else { return }
         guard let object = vm.find(id: objectID), object.isClip else { return }
         let oldPath = object.filePath
-        guard !oldPath.isEmpty, vm.missingReason(for: object) != nil else { return }
+        guard !oldPath.isEmpty, let reason = vm.missingReason(for: object) else { return }
+
+        // Where the panel opens. On an OFFLINE volume the walk up from the lost file would end at
+        // `/Volumes`, a list of drives and not a place anything was put: the last folder a relink
+        // of this session went to, then the project's own folder, are better guesses.
+        let cause: RelinkMenuRules.Cause = reason == .volumeOffline ? .volumeOffline : .absent
+        let start = RelinkMenuRules.panelStart(
+            cause: cause,
+            nearestExisting: cause == .volumeOffline ? nil : nearestExistingDirectory(of: oldPath),
+            lastRelinkFolder: lastRelinkFolder.flatMap(existingDirectory),
+            projectFolder: vm.projectURL.map { $0.deletingLastPathComponent() }.flatMap(existingDirectory))
 
         guard let url = chooseFile(vm: vm,
                                    title: L("relink.panel.repair.title"),
                                    message: L("relink.panel.repair.message",
                                               (oldPath as NSString).lastPathComponent),
                                    prompt: L("relink.panel.repair.prompt"),
-                                   startingAt: nearestExistingDirectory(of: oldPath)) else { return }
+                                   startingAt: start) else { return }
+        lastRelinkFolder = url.deletingLastPathComponent()
         guard url.path != oldPath else { return }
 
         // **The question comes FIRST**, and this is the whole reason: `resolvableByPropagation`
@@ -209,6 +246,7 @@ enum RelinkUI {
                                         title: L("relink.panel.folder.title"),
                                         message: L("relink.panel.folder.message"),
                                         prompt: L("relink.panel.folder.prompt")) else { return }
+        lastRelinkFolder = folder
 
         let mended = vm.relinkFromFolder(folder)
         // Both outcomes are reported here, unlike the two gestures above, and for one reason: a
@@ -361,26 +399,26 @@ func addRelinkItems(menu: NSMenu, proxies: inout [MenuActionProxy],
     // `isEmpty` counts the replace item this menu does not offer, so the emptiness is recomputed
     // from what is really about to be drawn: without it a sound with nothing missing would open a
     // menu holding one separator and no entry at all.
-    guard plan.canRepair || plan.offlineVolume != nil || plan.canSweepFolder else { return }
+    guard plan.canRepair || plan.canSweepFolder else { return }
     if !menu.items.isEmpty { menu.addItem(.separator()) }
 
-    if plan.canRepair {
-        addRelinkItem(menu, &proxies, L("menu.context.repairLink")) {
-            RelinkUI.repairLink(vm: vm, objectID: plan.objectID)
-        }
-    }
     if let volume = plan.offlineVolume {
         // Disabled on purpose: it is a STATEMENT, not an action. The menu answers "why is this
-        // red?" without offering to go and find a file that will come back by itself.
+        // red?" — and the repair, just below, stays available for the drive that is not coming back.
         let item = NSMenuItem(title: L("menu.context.volumeOffline", volume),
                               action: nil, keyEquivalent: "")
         item.isEnabled = false
         menu.addItem(item)
     }
+    if plan.canRepair {
+        addRelinkItem(menu, &proxies, L("menu.context.repairLink")) {
+            RelinkUI.repairLink(vm: vm, objectID: plan.objectID)
+        }
+    }
     if plan.canSweepFolder {
         // The sweep is aimed at the PROJECT where the two above are aimed at one sound, so it
         // stands apart — the same separator the SwiftUI side draws, for the same reason.
-        if plan.canRepair || plan.offlineVolume != nil {
+        if plan.canRepair {
             menu.addItem(.separator())
         }
         addRelinkItem(menu, &proxies, L("menu.context.repairFromFolder")) {
@@ -445,18 +483,19 @@ struct RelinkContextMenuItems: View {
                 RelinkUI.replaceSource(vm: viewModel, objectIDs: targets)
             }
         }
+        if let volume = plan.offlineVolume {
+            // Disabled: a statement of why the file is red; the repair just below stays available.
+            // @see addRelinkItems.
+            Button(L("menu.context.volumeOffline", volume)) { }
+                .disabled(true)
+        }
         if plan.canRepair {
             Button(L("menu.context.repairLink")) {
                 RelinkUI.repairLink(vm: viewModel, objectID: plan.objectID)
             }
         }
-        if let volume = plan.offlineVolume {
-            // Disabled: the drive is in a drawer, not the file lost. @see addRelinkItems.
-            Button(L("menu.context.volumeOffline", volume)) { }
-                .disabled(true)
-        }
         if plan.canSweepFolder {
-            if plan.canReplace || plan.canRepair || plan.offlineVolume != nil { Divider() }
+            if plan.canReplace || plan.canRepair { Divider() }
             Button(L("menu.context.repairFromFolder")) {
                 RelinkUI.repairFromFolder(vm: viewModel)
             }

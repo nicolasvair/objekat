@@ -77,6 +77,8 @@ struct GroupBlockView: View {
 
     private var laneStep: Double { blockHeight + laneGap }
     private var effectiveColor: Color { group.customColor ?? stemColor }
+    /// White ink on a dark name band (@see `SoundObject.bandWantsLightInk`).
+    private var lightInk: Bool { group.bandWantsLightInk(selected: isSelected) }
 
     /// Everything that depends on a gesture under way is read from ONE definition shared with the
     /// batched Canvas (@see BlockPreviewGeometry). A group shows its fades as they are (no
@@ -138,7 +140,7 @@ struct GroupBlockView: View {
             if let custom = group.customColor {
                 VStack(spacing: 0) {
                     UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
-                        .fill(custom.opacity(isSelected ? 0.55 : 0.30))
+                        .fill(custom.opacity(ObjectColorChoice.bandOpacity(selected: isSelected)))
                         .frame(height: max(3, blockHeight * 0.20))
                     UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
                         .fill(stemColor.opacity(isSelected ? 0.55 : 0.30))
@@ -264,14 +266,14 @@ struct GroupBlockView: View {
                         // (black, red and haloed when the file is gone).
                         Image(systemName: ObjectKindIcon.name(for: group, isOpenConsolidate: isOpenConsolidate))
                             .font(.system(size: TimelineLabelMetrics.groupIconSize, weight: .medium))
-                            .blockIconStyle(missingFile: containsMissingFile)
+                            .blockIconStyle(missingFile: containsMissingFile, lightInk: lightInk)
 
                         Spacer().frame(width: 4)
 
                         if isRenaming {
                             TextField(noLabel, text: $editLabel)
                                 .font(.system(size: MissingFileLabel.size, weight: .medium))
-                                .foregroundStyle(.black)
+                                .foregroundStyle(BlockInk.color(light: lightInk))
                                 .textFieldStyle(.plain)
                                 .focused($renameFocused)
                                 .onSubmit { onRename(editLabel) }
@@ -279,7 +281,7 @@ struct GroupBlockView: View {
                                 .onAppear { beginRename(group.label) }
                         } else {
                             Text(displayName)
-                                .blockNameStyle(missingFile: containsMissingFile)
+                                .blockNameStyle(missingFile: containsMissingFile, lightInk: lightInk)
                                 .lineLimit(1)
                                 .layoutPriority(1)
                         }
@@ -290,7 +292,7 @@ struct GroupBlockView: View {
                                 Spacer().frame(width: 4)
                                 Text(meta)
                                     .font(.system(size: 9, weight: .regular))
-                                    .foregroundStyle(.black.opacity(0.5))
+                                    .foregroundStyle(BlockInk.metaColor(light: lightInk))
                                     .lineLimit(1)
                             }
                         }
@@ -300,7 +302,7 @@ struct GroupBlockView: View {
                         if blockWidth >= 60 {
                             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                                 .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.black.opacity(0.5))
+                                .foregroundStyle(BlockInk.metaColor(light: lightInk))
                                 .padding(.trailing, 6)
                         }
                     }

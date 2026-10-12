@@ -755,6 +755,32 @@ extension CommandRegistry {
                             "engine_foreign_refusals": .int(engine.foreignPluginKeyRefusals())])
         }
 
+        register("debug.fxlink_create_empty",
+                 summary: """
+                 DEBUG. The door of the plugin browser's "New FX link": a bin with NO plugin, its block laid \
+                 on `host` at `index` of the main chain (end by default), or inside `block` (an FX link's \
+                 block — refused: a bin does not hold a bin). ONE undo point. Answers the link (as \
+                 `fxlink.get`). Not a product command: it exists so a scenario can drive the exact function \
+                 the hand calls.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Carrying object or stem."),
+                          ParamSpec("index", "int", required: false, "Place in the main chain (default: end)."),
+                          ParamSpec("block", "uuid", required: false, "An FX link block of the host: aim INSIDE it (refused).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard let chain = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let place: (SeriesLocation, Int)
+            if let b = try p.optionalUUID("block") { place = (.block(blockID: b), 0) }
+            else { place = (.root, try p.optionalInt("index") ?? chain.count) }
+            guard let id = vm.createEmptyFXLink(on: host, at: place), let link = vm.fxLink(id) else {
+                throw CommandError(code: .invalid_state, message: "no empty FX link could be made there")
+            }
+            return .object(["id": .string(link.id.uuidString), "name": .string(link.name)])
+        }
+
         register("debug.bridge_report",
                  summary: """
                  DEBUG. The audio bridge as the engine built it, plus the model's plan. `engine` (null if no \

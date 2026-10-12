@@ -21,6 +21,7 @@
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
@@ -389,7 +390,7 @@ enum SendPositionTest {
             check("named() inverts them", SendPosition.named("pre_fader") == .preFader
                   && SendPosition.named("chain", index: 2) == .chain(2)
                   && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
-            check("the session format is 23", SessionSchema.formatVersion == 23)
+            check("the session format is 24", SessionSchema.formatVersion == 24)
             check("the notice mentions both new keys",
                   SessionSchema.note.joined(separator: "\n").contains("sendMarker")
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))

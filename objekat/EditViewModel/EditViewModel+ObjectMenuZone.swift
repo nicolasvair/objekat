@@ -67,10 +67,10 @@ extension EditViewModel {
                 let pieces = isolateTimeSelection(sel)
                 if let id = piece(of: pieces) { deconsolidate(placementID: id) }
             }
-        case .setColor(let index):
+        case .setColor(let value):
             singleUndoStep {
                 let pieces = isolateTimeSelection(sel)
-                setObjectColor(ids: Set(pieces), colorIndex: index)
+                setObjectColor(ids: Set(pieces), value: value)
             }
         case .createFXLink:
             singleUndoStep {

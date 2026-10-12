@@ -209,6 +209,10 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
         let epl = SynopticLayout.place(SynopticNode(id: UUID(), kind: .series([card("x"), empty])), at: .zero)
         check(epl.fxBlocks.count == 1 && epl.fxBlocks[0].pluginCount == 0, "an empty block is laid, with no entry")
         checkBlock(epl.fxBlocks[0], in: epl, "empty")
+        // The plugin browser's "New FX link" lays an EMPTY bin: its "+" is how it gets filled afterwards.
+        let emptyZones = epl.inserts.filter { $0.seriesID == empty.id }
+        check(emptyZones.count == 1 && emptyZones[0].insertIndex == 0, "an empty block has exactly one '+', at index 0")
+        check(emptyZones.first.map { epl.fxBlocks[0].rect.contains($0.center) } ?? false, "the empty block's '+' sits inside the block")
 
         // MARK: detached = the same geometry
         let det = block([a, b], detached: true)
@@ -252,6 +256,18 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
             check(false, "an ARA card is laid when asked")
         }
         check(noARA.araCard == nil, "no ARA card when not asked")
+        // The card is a plugin card now (on/off column, name, ✕, VU line): as wide as any card of that name
+        // plus the analysis spinner, never wider than the frame, and the trunk's axis does not move.
+        let plainW = SynopticLayout.cardWidth(for: SynopticPlugin(name: "Melodyne", category: .utility))
+        let araW = SynopticLayout.araCardWidth(name: "Melodyne")
+        check(araW >= plainW, "the ARA card is at least as wide as a plugin card of the same name (\(araW) vs \(plainW))")
+        check(araW <= SynopticLayout.audioZoneW, "the ARA card is no wider than the audio frame")
+        let longW = SynopticLayout.araCardWidth(name: String(repeating: "Melodyne ", count: 12))
+        check(longW == SynopticLayout.audioZoneW, "a very long name is capped at the audio frame's width")
+        if let fa = withARA.placement.cards.first?.frame, let fb = noARA.placement.cards.first?.frame {
+            check(abs(fa.midX - fb.midX) < 0.5, "the trunk's axis is the same with and without the ARA card")
+            check(abs(withARA.canvasSize.width - noARA.canvasSize.width) < 0.5, "the ARA card does not widen the canvas")
+        }
 
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)

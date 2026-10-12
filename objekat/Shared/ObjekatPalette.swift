@@ -45,24 +45,16 @@ enum ObjekatPalette {
         Color(hex: 0xE27000)    // 9 amber
     ]
 
-    static let objects: [Color] = [
-        Color(hex: 0xFFA1AA),
-        Color(hex: 0xFFAA86),
-        Color(hex: 0xFFB966),
-        Color(hex: 0xFFCC3E),
-        Color(hex: 0xF5E322),
-        Color(hex: 0xC9F045),
-        Color(hex: 0x9AF57F),
-        Color(hex: 0x72EFAC),
-        Color(hex: 0x49ECD0),
-        Color(hex: 0x4CEBF6),
-        Color(hex: 0x6DD8FF),
-        Color(hex: 0x8DC6FF),
-        Color(hex: 0xA2B4FF),
-        Color(hex: 0xCBB3FF),
-        Color(hex: 0xF0A9FF),
-        Color(hex: 0xFDA5D8)
+    /// The 16 pastels in 0xRRGGBB — what a project written before the free colours still points
+    /// at (`SoundObject.colorIndex`). They are no longer OFFERED for an object (the menu now opens
+    /// on `ObjectColorChoice.baseHex`), but they are still READ, and the band's ink is chosen
+    /// from their channels, hence the numbers beside the `Color`s.
+    static let objectsHex: [Int] = [
+        0xFFA1AA, 0xFFAA86, 0xFFB966, 0xFFCC3E, 0xF5E322, 0xC9F045, 0x9AF57F, 0x72EFAC,
+        0x49ECD0, 0x4CEBF6, 0x6DD8FF, 0x8DC6FF, 0xA2B4FF, 0xCBB3FF, 0xF0A9FF, 0xFDA5D8
     ]
+
+    static let objects: [Color] = objectsHex.map { Color(hex: UInt32($0)) }
 
     static let plugins: [Color] = [
         Color(hex: 0x890C2E),
@@ -90,10 +82,25 @@ enum ObjekatPalette {
         0x024F57, 0x044C6C, 0x054282, 0x2B3189, 0x481C97, 0x611586, 0x771170, 0x830E50
     ]
 
+    /// The plugin hues a notch lighter, for the plugin browser's CATEGORIES (a dot on a row, a tab,
+    /// a swatch of the menu): the card colours are made to sit under white text, and are too dark
+    /// to be told apart as 7 pt dots. Same indices as `plugins`.
+    static let pluginCategoriesHex: [Int] = pluginsHex.map { rgb in
+        func lift(_ c: Int) -> Int { c + Int((Double(255 - c) * 0.30).rounded()) }
+        return (lift((rgb >> 16) & 0xFF) << 16) | (lift((rgb >> 8) & 0xFF) << 8) | lift(rgb & 0xFF)
+    }
+    static func pluginCategoryHex(_ i: Int) -> Int {
+        pluginCategoriesHex[((i % pluginCategoriesHex.count) + pluginCategoriesHex.count) % pluginCategoriesHex.count]
+    }
+    static func pluginCategory(_ i: Int) -> Color { color(rgb: pluginCategoryHex(i)) }
+
     static let stemNames: [String] = ["blue", "purple", "pink", "yellow", "green", "cyan", "red", "emerald", "magenta", "amber"]
 
     static func stem(_ i: Int) -> Color   { stems[((i % stems.count) + stems.count) % stems.count] }
     static func object(_ i: Int) -> Color { objects[((i % objects.count) + objects.count) % objects.count] }
+    static func objectHex(_ i: Int) -> Int { objectsHex[((i % objectsHex.count) + objectsHex.count) % objectsHex.count] }
+    /// An opaque sRGB colour from 0xRRGGBB (an object's free colour, `SoundObject.colorHex`).
+    static func color(rgb: Int) -> Color { Color(hex: UInt32(truncatingIfNeeded: rgb & 0xFFFFFF)) }
     static func plugin(_ i: Int) -> Color { plugins[((i % plugins.count) + plugins.count) % plugins.count] }
     static func pluginHex(_ i: Int) -> Int { pluginsHex[((i % pluginsHex.count) + pluginsHex.count) % pluginsHex.count] }
     static func stemName(_ i: Int) -> String { stemNames[((i % stemNames.count) + stemNames.count) % stemNames.count] }

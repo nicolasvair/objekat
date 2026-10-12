@@ -39,8 +39,24 @@ enum MissingFileLabel {
     /// glow always has something to separate the glyphs against. It is also the only remedy that
     /// costs no layout: a pill behind the name would push the meta summary and the mute badge
     /// along the row.
+    ///
+    /// A custom colour of the object's own makes it harder again (11 October 2026): the band is
+    /// drawn at `ObjectColorChoice.bandOpacity` (60 %, 85 % selected) — the red object colour gives
+    /// a salmon band, and black a dark grey one on which the ordinary NAME turns white
+    /// (@see `BlockInk`). The red alarm keeps its white halo on all of them: against the dark grey
+    /// the halo is what lifts the glyphs, against the salmon what separates red from red.
     static let haloColor = Color.white
     static let haloRadius: CGFloat = 1.5
+}
+
+/// The ink of a block's name, icon and meta summary over its band. Black by default; WHITE when the
+/// band's colour, drawn at the shared opacity over its white base, is dark
+/// (@see `SoundObject.bandWantsLightInk`, `ObjectColorChoice.prefersLightInk`). The four drawings of
+/// a block's name read it, so black on a dark-grey band cannot appear in one regime and not another.
+enum BlockInk {
+    static func color(light: Bool) -> Color { light ? Color.white : Color.black }
+    /// The meta summary's (`-3 dB`, `L 20 %`…): the ink at half strength.
+    static func metaColor(light: Bool) -> Color { color(light: light).opacity(0.5) }
 }
 
 extension View {
@@ -48,12 +64,12 @@ extension View {
     /// One modifier rather than the same ternary repeated at each site: the ordinary look and the
     /// alarm are decided together, here. The `Canvas` resolves its own `Text` and cannot use this,
     /// so it reads the constants above instead — same values, one definition.
-    func blockNameStyle(missingFile: Bool) -> some View {
+    func blockNameStyle(missingFile: Bool, lightInk: Bool = false) -> some View {
         self
             .font(.system(size: MissingFileLabel.size,
                           weight: missingFile ? MissingFileLabel.weight
                                               : MissingFileLabel.normalWeight))
-            .foregroundStyle(missingFile ? MissingFileLabel.color : Color.black)
+            .foregroundStyle(missingFile ? MissingFileLabel.color : BlockInk.color(light: lightInk))
             // `.clear` at radius 0 rather than an `if`: a conditional branch would change the
             // label's view identity the moment a file came back, so SwiftUI would rebuild the text
             // instead of merely recolouring it.
