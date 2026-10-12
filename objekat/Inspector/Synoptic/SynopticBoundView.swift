@@ -1,0 +1,800 @@
+import SwiftUI
+import AppKit
+import Combine
+import UniformTypeIdentifiers
+
+// MARK: - Real model → graph adapter (step 1: a pure series)
+
+extension PluginCategory {
+    /// Guesses a category from the name/manufacturer (purely cosmetic, for the badge).
+    static func infer(from p: ObjectPlugin) -> PluginCategory {
+        let n = (p.name + " " + p.manufacturer).lowercased()
+        if n.contains("eq") || n.contains("equal") { return .eq }
+        if n.contains("comp") || n.contains("limit") || n.contains("gate") || n.contains("dyn") { return .dynamics }
+        if n.contains("sat") || n.contains("dist") || n.contains("drive") || n.contains("crush") || n.contains("amp") { return .distortion }
+        if n.contains("reverb") || n.contains("verb") || n.contains("room") || n.contains("hall") || n.contains("space") { return .space }
+        if n.contains("delay") || n.contains("chorus") || n.contains("flang") || n.contains("phas") || n.contains("mod") { return .modulation }
+        return .utility
+    }
+}
+
+// MARK: - The core wired to the engine (step 1) — reused inline AND in a window
+
+enum SynopticSheetKind: Identifiable {
+    case insert(location: SeriesLocation, index: Int)   // a series '+' inside a target series
+    case instrument                                      // the '+' of the instruments zone (a MIDI clip)
+    case insertSend(aux: UUID)                           // the '+' of a send's box (INC 3): the end of its mini-chain
+
+    var id: String {
+        switch self {
+        case .insert(let loc, let i): return "insert-\(loc.key)-\(i)"
+        case .instrument:             return "instrument"
+        case .insertSend(let aux):    return "insertSend-\(aux.uuidString)"
+        }
+    }
+}
+
+struct SynopticBoundView: View {
+    var viewModel: EditViewModel
+    let objectID: UUID
+    var scrolls: Bool = true
+
+    /// The instrument card's highlight only — the FX selection lives in the view-model, since
+    /// every gesture that acts on several cards needs the chain (@see pluginSelection).
+    @State private var selectedInstrumentID: UUID? = nil
+    @State private var activeSheet: SynopticSheetKind? = nil
+    @State private var pickerSearch: String = ""
+    // The live state of the external instances (loading/ready/error), refreshed by a timer.
+    @State private var instanceStates: [UUID: Int] = [:]
+    @State private var loadErrors: [UUID: String] = [:]
+    // VU meter levels per plugin (0..1), polled read-only.
+    @State private var levels: [UUID: Double] = [:]
+    // The ARA source of this object is still analysing (polled with the instance states).
+    @State private var araAnalysing = false
+    // An aux: the senders listed at the head (the sends it receives). A STICKY list — a row taken
+    // down to -∞ stays shown until the selection changes, otherwise it would vanish mid-drag
+    // (activeSenders filters silent sends out) and SwiftUI would re-associate the gesture with a neighbour.
+    @State private var receivedIDs: [UUID] = []
+    private let poll = Timer.publish(every: 0.6, on: .main, in: .common).autoconnect()
+    private let vuPoll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        // Builds the graph plus the seriesID→location table from the real model. The closures below
+        // capture `locations` from THIS build (consistent with the series ids being rendered).
+        // The host = a timeline object OR a stem/master bus (INC 2). `obj` is nil for a bus:
+        // a bus has neither a MIDI clip nor an instrument → isMIDI=false, midiInstrument=nil.
+        let obj = viewModel.find(id: objectID)
+        let model = viewModel.chainPlugins(objectID) ?? []
+        let gains = viewModel.chainGains(objectID)
+        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
+                                                       fxLinkInfo: { viewModel.synopticFXInfo($0) })
+
+        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
+
+        // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
+        // groups / auxes keep the Source pill).
+        let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
+            ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
+                                                       channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
+                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
+                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) }) }
+            : nil
+
+        // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
+        let mix: SynopticMix? = obj.map { o in
+            let title = L(o.isGroup ? "synoptic.mix.kind.group"
+                        : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip"))
+            let links: SynopticMixLinks? = o.isConsolidateInstance
+                ? SynopticMixLinks(volumeSynced: viewModel.isAttrSynced(o, .volume),
+                                   panSynced:    viewModel.isAttrSynced(o, .pan),
+                                   muteSynced:   viewModel.isAttrSynced(o, .mute))
+                : nil
+            // Volume / pan AUTOMATED: we show what the curve plays at the playback
+            // position, not the static setting it has replaced (@see liveAutomationValue).
+            // The control stays neutralised — it shows, it no longer sets.
+            let vol = viewModel.liveAutomationValue(.volume, on: o.id) ?? o.volume
+            let pan = viewModel.liveAutomationValue(.pan,    on: o.id) ?? o.pan
+            let solo: SynopticSoloState = viewModel.soloedIDs.contains(o.id) ? .hold
+                : ((viewModel.tempSoloRoots?.contains(o.id) ?? false) ? .temporary : .off)
+            return SynopticMix(title: title, volumeDb: vol, pan: pan, isMuted: o.isMuted,
+                               solo: solo,
+                               volumeAutomated: viewModel.isAutomated(.volume, on: o),
+                               panAutomated:    viewModel.isAutomated(.pan, on: o),
+                               attrLinks: links)
+        }
+
+        // Output zone: a group's CHILD is routed to its group (read only, the stem being
+        // carried by the group); a top-level object chooses its stem (badges for every stem,
+        // the current one ringed).
+        let parentGroup = obj.flatMap { viewModel.parentGroup(for: $0.id) }
+        let groupRouting: SynopticGroupRouting? = parentGroup.map { p in
+            SynopticGroupRouting(groupName: p.displayName,
+                                 stemColor: viewModel.stemColor(for: p.id))
+        }
+        let stems: [SynopticStem]? = (parentGroup != nil) ? nil : obj.map { o in
+            viewModel.stems.map { s in
+                let isCurrent = (o.stemID == s.id) || (o.stemID == nil && s.id == viewModel.mainStemID)
+                return SynopticStem(id: s.id, name: s.name, color: s.color, isCurrent: isCurrent)
+            }
+        }
+
+        // Sends: the departures that EXIST are cards beside the trunk (Q-U7, Q-U13), each at the slot its
+        // position names; the reachable auxes without a send are reached through "Send to…". A card whose
+        // aux no longer overlaps the object in time, or that the scope refuses, stays — greyed, with the
+        // reason (Q-U15): moving an object never makes a send vanish from the chain. An aux shows at its
+        // HEAD what it receives.
+        let canSend = obj != nil && !(obj?.isAux ?? true)
+        let sends: [SynopticSend] = canSend ? (obj?.sends ?? []).compactMap { snd in
+            guard let aux = viewModel.find(id: snd.auxID) else { return nil }
+            return SynopticSend(id: snd.auxID, name: aux.displayName,
+                                enabled: snd.enabled, levelDb: snd.levelDb,
+                                isAutomated: viewModel.isAutomated(.send(auxID: snd.auxID), on: objectID),
+                                refusal: viewModel.sendCardRefusalText(from: objectID, to: snd.auxID),
+                                slot: EditViewModel.synopticSlot(obj?.sendPosition(auxID: snd.auxID)),
+                                plugins: snd.plugins.map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
+        } : []
+        let received: [SynopticSend] = (obj?.isAux ?? false)
+            ? receivedIDs.compactMap { sid in
+                viewModel.find(id: sid).map { sender in
+                    SynopticSend(id: sid, name: sender.displayName,
+                                 enabled: viewModel.isSendEnabled(from: sid, to: objectID),
+                                 levelDb: viewModel.sendLevel(from: sid, to: objectID),
+                                 // A send lives on the SENDER: it is ITS curve we read, even
+                                 // if the row is shown at the head of the receiving aux.
+                                 isAutomated: viewModel.isAutomated(.send(auxID: objectID), on: sender),
+                                 refusal: { if case .refused(let why) = viewModel.sendStatus(from: sid, to: objectID) {
+                                                return EditViewModel.sendReasonText(why) } else { return nil } }(),
+                                 slot: EditViewModel.synopticSlot(sender.sendPosition(auxID: objectID)),
+                                 // Only their presence is shown at the aux's head (a mark on the row).
+                                 plugins: (sender.sends.first { $0.auxID == objectID }?.plugins ?? [])
+                                    .map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
+                }
+              }
+            : []
+
+        // The 'infinite' option: carried by the chain head of top-level auxes / groups.
+        let infinite: SynopticInfinite? = obj.flatMap { o in
+            guard o.canBeInfinite, viewModel.items.contains(where: { $0.id == o.id }) else { return nil }
+            return SynopticInfinite(isOn: o.isInfinite, kindLabel: o.isAux ? L("synoptic.infinite.kind.aux") : L("synoptic.infinite.kind.group"))
+        }
+        // Looping: a group (the chain head) or a MIDI clip (the MIDI zone) — audio has its own
+        // badge in `audioFile`. No top-level restriction here, unlike `infinite`.
+        let loop: SynopticLoop? = obj.flatMap { o in
+            (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
+        }
+
+        // A drop target's aim, as a place of THIS host's chain: the table of series ids is the one of the
+        // build being rendered, and a card's place is looked up in the model as it is now.
+        let dropSite: (SynopticDropTarget) -> PluginDropSite? = { target in
+            switch target {
+            case .series(let seriesID, let index):
+                return locations[seriesID].map { .series($0, index: index) }
+            case .beforeCard(let cardID):
+                return EditViewModel.locate(cardID, in: model).map { .series($0.0, index: $0.1) }
+            case .blockEnd(let blockID):
+                return EditViewModel.findBlock(blockID, in: model)?.fxBlock
+                    .map { .series(.block(blockID: blockID), index: $0.plugins.count) }
+            }
+        }
+
+        // A send card in the hand (@see SendDrop): where it is aimed, as the pure table reads it, and what a
+        // release there would do. A place of the chain is the trunk only if it is of the ROOT series.
+        let sendAim: (SynopticSendTarget) -> SendDropAim = { t in
+            switch t {
+            case .slot(let slot): return .slot(slot)
+            case .place(let target):
+                guard case .series(let loc, let index)? = dropSite(target) else { return .elsewhere }
+                switch loc {
+                case .root:  return .trunk(index: index)
+                case .voice: return .parallelBranch
+                case .block: return .fxBlock
+                }
+            }
+        }
+        let sendOutcome: (SynopticSendTarget) -> PluginDropOutcome? = { t in
+            guard let payload = SendDragSession.shared.current else { return nil }
+            if payload.sendSender != objectID { return .sendRefused(.refusedElsewhere) }
+            switch SendDrop.decide(sendAim(t)) {
+            case .move(_, let line): return .sendTaken(line)
+            case .refuse(let line):  return .sendRefused(line)
+            }
+        }
+
+        return SynopticView(root: root, selection: pluginSelection,
+                            selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
+                            chainInDb: gains.inDb, chainOutDb: gains.outDb,
+                            chainInAutomated:  viewModel.isAutomated(.chainInGain, on: objectID),
+                            chainOutAutomated: viewModel.isAutomated(.chainOutGain, on: objectID),
+                            isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
+                            audioFile: audioFile, mix: mix, stems: stems,
+                            groupRouting: groupRouting,
+                            sends: sends, canSend: canSend, receivedSends: received, infinite: infinite, loop: loop,
+                            // A closed consolidated object → read-only FX ('Open to edit'). While editing, the
+                            // placement is materialised (no longer isConsolidateInstance) so the FX become
+                            // interactive again.
+                            fxReadOnly: (obj?.isConsolidateInstance ?? false),
+                            actions: SynopticActions(
+            onOpenEditor: { openEditor($0) },
+            onOpenEditors: { openEditors(clicked: $0, ids: $1) },
+            // The power button of a card that is IN the selection speaks for the WHOLE selection;
+            // one outside it speaks for itself alone. The same rule as the drag just below and as
+            // the clips before it: what you GRAB is what decides. Without this the batch on/off
+            // existed in the model and in the API and was unreachable from the hand.
+            onToggleBypass: { id in
+                if pluginSelection.wrappedValue.contains(id) {
+                    viewModel.toggleSelectedPluginsEnabled()
+                } else {
+                    viewModel.togglePluginEnabled(objectID: objectID, pluginID: id)
+                }
+            },
+            // Same rule for the ✕: it takes the selection when the card clicked is part of it,
+            // in ONE undo step, and that card alone otherwise.
+            onRemove: { id in
+                if pluginSelection.wrappedValue.contains(id) {
+                    viewModel.removeSelectedPlugins()
+                } else {
+                    viewModel.removePlugin(objectID: objectID, pluginID: id)
+                }
+            },
+            onInsertSeries: { seriesID, index in
+                if let loc = locations[seriesID] { activeSheet = .insert(location: loc, index: index) }
+            },
+            onBranch: { elementID in viewModel.synopticBranch(objectID: objectID, elementID: elementID) },
+            instanceState: { instanceStates[$0] ?? 0 },
+            loadError: { loadErrors[$0] },
+            onDiagnose: { viewModel.diagnosePlugin(objectID: objectID, pluginID: $0) },
+            onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
+            onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
+            linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
+            sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
+            dragProvider: { dragProvider($0) },
+            dropOutcome: { target, flags in
+                // A send card in the hand is answered by the send table (a plugin never is one).
+                if SendDragSession.shared.current != nil { return sendOutcome(.place(target)) }
+                // The drag in flight says what it carries (@see PluginDragSession); with none to read,
+                // the target falls back on its legacy reading.
+                guard let payload = PluginDragSession.shared.current else { return nil }
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return .refuse("dropped on itself") }
+                guard let site = dropSite(target) else { return .refuse("no such place in the chain") }
+                return viewModel.pluginDropOutcome(payload, toHost: objectID, at: site, flags: flags)
+            },
+            onDrop: { target, payload, flags in
+                if case .beforeCard(let id) = target, payload.ids.contains(id) { return }
+                guard let site = dropSite(target) else { return }
+                viewModel.synopticDrop(payload, host: objectID, at: site, flags: flags)
+            },
+            onSetVoiceGain: { blockID, voiceIndex, dB in
+                viewModel.setVoiceGain(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, dB: dB)
+            },
+            onRemoveVoice: { blockID, voiceIndex in
+                viewModel.removeVoice(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex)
+            },
+            onSetVoiceMute: { blockID, voiceIndex, muted in
+                // A discreet toggle → one undo per flip (like the mix's toggleMute).
+                viewModel.edit {
+                    viewModel.setVoiceMute(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, muted: muted)
+                }
+            },
+            onSetChainGain: { isOutput, dB in
+                viewModel.setChainGain(objectID: objectID, output: isOutput, dB: dB)
+            },
+            onBeginGainEdit: { viewModel.pushUndo() },
+            onAddInstrument: { activeSheet = .instrument },
+            onRemoveInstrument: {
+                let instID = obj?.instruments.first?.id
+                viewModel.removeInstrument(objectID: objectID)
+                if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
+            },
+            onOpenInstrumentEditor: { if let id = obj?.instruments.first?.id { openEditor(id) } },
+            onToggleInstrumentBypass: {
+                if let id = obj?.instruments.first?.id {
+                    viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
+                }
+            },
+            onSetSpeed: { viewModel.updateSpeed(id: objectID, ratio: $0) },
+            onSetBaseBPM: { bpm in viewModel.edit { viewModel.updateBaseBPM(id: objectID, bpm: bpm) } },
+            onToggleReverse: {
+                let rev = !(obj?.isReversed ?? false)
+                viewModel.edit { viewModel.updateReversed(id: objectID, reversed: rev) }
+            },
+            onToggleLoop: {
+                let loop = !(obj?.loopEnabled ?? false)
+                viewModel.edit { viewModel.updateLoopEnabled(id: objectID, enabled: loop) }
+            },
+            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
+            onBeginSpeedEdit: { viewModel.pushUndo() },
+            // Touching a control: it names the 'future automation' row, without changing anything. An
+            // aux lists the sends it RECEIVES, so the send row belongs to the SENDER — the same
+            // inversion as `onSetSendLevel`, failing which we would remember the touch on the wrong
+            // object.
+            onTouchParam: { ref in
+                let isAux = viewModel.find(id: objectID)?.isAux ?? false
+                if isAux, case .send(let senderID) = ref {
+                    viewModel.recordAutomationTouch(senderID, .send(auxID: objectID))
+                } else {
+                    viewModel.recordAutomationTouch(objectID, ref)
+                }
+            },
+            onSetVolume: { viewModel.updateVolume(id: objectID, volume: $0) },
+            // A HAND's door, not `updatePan`: the pan lands on its tenth (@see EditViewModel+Pan).
+            onSetPan: { viewModel.setPanFromHand(id: objectID, pan: $0) },
+            onToggleMute: { viewModel.edit { viewModel.toggleMute(id: objectID) } },
+            // Solo is a session listening state, outside the model and outside undo (@see
+            // EditViewModel+Solo): no `edit {}`, no undo point, like a stem's mute — otherwise ⌘Z
+            // would replay auditions instead of undoing edits.
+            onToggleSolo: { viewModel.toggleSoloHold(objectID: objectID) },
+            onBeginMixEdit: { viewModel.pushUndo() },
+            onToggleAttrSync: { attr in
+                guard let o = viewModel.find(id: objectID) else { return }
+                let mask: ConsolidateAttrLinks
+                switch attr {
+                case .volume: mask = .volume
+                case .pan:    mask = .pan
+                case .mute:   mask = .mute
+                }
+                viewModel.setAttrSynced(mask, !viewModel.isAttrSynced(o, mask), forPlacement: objectID)
+            },
+            onAssignStem: { stemID in viewModel.edit { viewModel.assignStem(objectID: objectID, stemID: stemID) } },
+            // An aux lists the sends it RECEIVES: the row carries the SENDER's id, and so it is the
+            // sender we set (sender → this aux). Otherwise we set this object → the target aux.
+            onSetSendLevel: { rowID, db in
+                let isAux = viewModel.find(id: objectID)?.isAux ?? false
+                let from = isAux ? rowID : objectID
+                let to   = isAux ? objectID : rowID
+                guard viewModel.handMayCreateSend(from: from, to: to) else { return }
+                viewModel.setSendLevel(from: from, to: to, levelDb: db)
+            },
+            onToggleSend: { rowID in
+                let isAux = viewModel.find(id: objectID)?.isAux ?? false
+                let from = isAux ? rowID : objectID
+                let to   = isAux ? objectID : rowID
+                guard viewModel.isSendEnabled(from: from, to: to) || viewModel.handMayCreateSend(from: from, to: to) else { return }
+                viewModel.edit {
+                    viewModel.setSendEnabled(from: from, to: to,
+                                             enabled: !viewModel.isSendEnabled(from: from, to: to))
+                }
+            },
+            onBeginSendEdit: { viewModel.pushUndo() },
+            onRemoveSend: { auxID in viewModel.edit { viewModel.removeSend(from: objectID, to: auxID) } },
+            onMoveSend: { auxID, slot in
+                viewModel.setSendPositionFromHand(from: objectID, to: auxID, EditViewModel.sendPosition(of: slot))
+            },
+            sendDragProvider: { sendDragProvider($0) },
+            sendTargetSections: { viewModel.sendTargetSections(for: objectID, retargeting: $0) },
+            onCreateSend: { aux, slot in
+                viewModel.createSendFromHand(from: objectID, to: aux, at: EditViewModel.sendPosition(of: slot))
+            },
+            onPickSendTarget: { slot, retargeting in
+                viewModel.beginSendPick(sender: objectID, position: EditViewModel.sendPosition(of: slot),
+                                        retargeting: retargeting)
+            },
+            onRetargetSend: { old, new in viewModel.retargetSendFromHand(from: objectID, aux: old, to: new) },
+            onSendDrop: { target, payload in
+                guard payload.sendSender == objectID,
+                      case .move(let slot, _) = SendDrop.decide(sendAim(target)) else { return }
+                viewModel.setSendPositionFromHand(from: objectID, to: payload.sendAux,
+                                                  EditViewModel.sendPosition(of: slot))
+            },
+            sendDropOutcome: { sendOutcome($0) },
+            // The plugins ON a send: the trunk's gestures, aimed at the send's own chain host.
+            sendPluginSelection: { aux in
+                viewModel.selectedPluginHostID == sendHost(aux) ? viewModel.selectedPluginIDs : []
+            },
+            onSendPluginClick: { aux, id, flags in clickSendPlugin(aux: aux, id: id, flags: flags) },
+            onSendPluginOpen: { aux, id in openSendPluginEditor(aux: aux, id: id) },
+            // A row IN the selection speaks for the whole selection (the trunk's rule).
+            onSendPluginToggle: { aux, id in
+                let host = sendHost(aux)
+                if viewModel.selectedPluginHostID == host, viewModel.selectedPluginIDs.contains(id) {
+                    viewModel.toggleSelectedPluginsEnabled()
+                } else {
+                    viewModel.togglePluginEnabled(objectID: host, pluginID: id)
+                }
+            },
+            onSendPluginRemove: { aux, id in
+                let host = sendHost(aux)
+                if viewModel.selectedPluginHostID == host, viewModel.selectedPluginIDs.contains(id) {
+                    viewModel.removeSelectedPlugins()
+                } else {
+                    viewModel.removePlugin(objectID: host, pluginID: id)
+                }
+            },
+            onSendPluginAdd: { aux in activeSheet = .insertSend(aux: aux) },
+            sendPluginDragProvider: { aux, id in sendPluginDragProvider(aux: aux, pluginID: id) },
+            sendBoxDropOutcome: { aux, index, flags in
+                // A send card in the hand: a box takes plugins, not sends.
+                if SendDragSession.shared.current != nil {
+                    return .sendRefused(SendDrop.decide(.sendBox).banner)
+                }
+                guard let payload = PluginDragSession.shared.current else { return nil }
+                return viewModel.pluginDropOutcome(payload, toHost: sendHost(aux),
+                                                   at: .series(.root, index: index), flags: flags)
+            },
+            onSendBoxDrop: { aux, index, payload, flags in
+                viewModel.synopticDrop(payload, host: sendHost(aux), at: .series(.root, index: index), flags: flags)
+            },
+            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) },
+            // FX links. The block's id is what every one of these carries; the model resolves the
+            // bin (attached) or the block's own copy (detached) itself.
+            onFXToggleEnabled: { blockID in fxToggleEnabled(blockID) },
+            onFXSetGain: { blockID, dB in fxSetOutput(blockID, gain: dB) },
+            onFXSetPan: { blockID, pan in fxSetOutput(blockID, pan: Float((pan * 10).rounded() / 10)) },
+            onFXToggleMute: { blockID in fxSetOutput(blockID, toggleMute: true) },
+            onFXBeginEdit: { viewModel.pushUndo() },
+            onFXRename: { blockID, name in
+                if let id = fxLinkID(of: blockID) { viewModel.renameFXLink(id, to: name) }
+            },
+            onFXCycleColor: { blockID in
+                if let id = fxLinkID(of: blockID) { viewModel.cycleFXLinkColor(id) }
+            },
+            onFXToggleDetach: { blockID in
+                guard let block = fxBlock(blockID) else { return }
+                if block.fxBlock?.isDetached == true {
+                    viewModel.reattachFXBlock(hostID: objectID, blockID: blockID)
+                } else {
+                    viewModel.detachFXBlock(hostID: objectID, blockID: blockID)
+                }
+            },
+            onFXRelease: { viewModel.releaseFXBlock(hostID: objectID, blockID: $0) },
+            onFXRemove: { viewModel.removeFXBlock(hostID: objectID, blockID: $0) },
+            onFXDelete: { blockID in
+                if let id = fxLinkID(of: blockID) { viewModel.deleteFXLink(id) }
+            },
+            canCreateFXLink: { viewModel.canCreateFXLink(host: objectID, pluginIDs: $0) },
+            onCreateFXLink: { ids in
+                if viewModel.createFXLink(from: objectID, pluginIDs: ids) != nil {
+                    viewModel.setPluginSelection([], host: objectID)
+                }
+            },
+            joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
+            onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
+            onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
+            onRemoveARA: { viewModel.removeARASource(objectID: objectID) },
+            onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) }
+        ))
+        .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
+        .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
+        .onReceive(poll) { _ in refreshStates(); refreshReceived() }
+        .onReceive(vuPoll) { _ in refreshLevels() }
+        .sheet(item: $activeSheet) { kind in
+            switch kind {
+            case .insert(let location, let index):
+                pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index)) { available in
+                    viewModel.synopticInsert(objectID: objectID, available: available, into: location, at: index)
+                }
+            case .instrument:
+                pickerSheet(instrumentsOnly: true) { available in
+                    viewModel.setInstrument(objectID: objectID, available: available)
+                }
+            case .insertSend(let aux):
+                // The send's own chain host: the plugin lands at the END of its mini-chain. No ARA source
+                // there (a source is an object's), and instruments are left out like in any FX chain.
+                let host = sendHost(aux)
+                pickerSheet(title: L("synoptic.sheet.addPluginOnSend", viewModel.find(id: aux)?.displayName ?? ""),
+                            showsARASource: false) { available in
+                    viewModel.synopticInsert(objectID: host, available: available, into: .root,
+                                             at: viewModel.chainPlugins(host)?.count ?? 0)
+                }
+            }
+        }
+    }
+
+    /// A plugin selection sheet reused by '+' (insert), '//' (branch) and the instruments zone.
+    /// `instrumentsOnly` restricts it to instruments (the MIDI zone); otherwise we ALWAYS exclude
+    /// instruments from the FX zone — an instrument needs MIDI at its input (which only a MIDI clip
+    /// provides, and through its dedicated MIDI zone), so it belongs in NO FX chain.
+    @ViewBuilder
+    private func pickerSheet(instrumentsOnly: Bool = false, title: String? = nil, showsARASource: Bool = true,
+                             insertion: PluginBrowserInsertion? = nil,
+                             onSelect: @escaping (AvailablePlugin) -> Void) -> some View {
+        let size = PluginBrowserLayout.sheetSize()
+        PluginBrowserView(
+            viewModel: viewModel,
+            objectID: objectID,
+            title: title ?? (instrumentsOnly ? L("synoptic.sheet.chooseInstrument") : L("synoptic.sheet.addPlugin")),
+            searchText: $pickerSearch,
+            dismiss: { activeSheet = nil },
+            onSelect: { available in onSelect(available); activeSheet = nil },
+            kind: instrumentsOnly ? .instrumentsOnly : .effectsOnly,
+            showsARASource: showsARASource && !instrumentsOnly,
+            insertion: insertion
+        )
+        .frame(width: size.width, height: size.height)
+    }
+
+    // MARK: FX link helpers (a block's id → what the model needs)
+
+    private func fxBlock(_ blockID: UUID) -> ObjectPlugin? {
+        viewModel.chainPlugins(objectID).flatMap { EditViewModel.findBlock(blockID, in: $0) }
+    }
+
+    private func fxLinkID(of blockID: UUID) -> UUID? { fxBlock(blockID)?.fxBlock?.linkID }
+
+    /// The common on/off: the bin's while the block follows it, the block's own once detached.
+    private func fxToggleEnabled(_ blockID: UUID) {
+        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
+        let now = viewModel.fxOutput(of: block).isEnabled
+        if fb.isDetached {
+            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, enabled: !now)
+        } else {
+            viewModel.fxSetEnabled(linkID: fb.linkID, enabled: !now)
+        }
+    }
+
+    /// The output section (volume / pan / mute) — the bin's while attached, the block's own while
+    /// detached. No undo point of its own: the control asked for one when the gesture began
+    /// (`onFXBeginEdit`).
+    private func fxSetOutput(_ blockID: UUID, gain: Float? = nil, pan: Float? = nil,
+                             toggleMute: Bool = false) {
+        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
+        let muted: Bool? = toggleMute ? !viewModel.fxOutput(of: block).muted : nil
+        if fb.isDetached {
+            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, gainDb: gain, pan: pan,
+                                       muted: muted, undo: false)
+        } else {
+            viewModel.fxSetOutput(linkID: fb.linkID, gainDb: gain, pan: pan, muted: muted, undo: false)
+        }
+    }
+
+    /// Toggles the editor: a native window for an external plugin, a dedicated window for a
+    /// Tracktion built-in (the same path as the chip list). The double click that opens also
+    /// closes (@see EditViewModel.togglePluginEditor).
+    private func openEditor(_ pluginID: UUID) {
+        // A recursive search: the plugin may live in the branch of a parallel block, or be the
+        // instrument at the head of the chain (a MIDI clip).
+        let candidates = viewModel.leafPlugins(objectID: objectID)
+            + (viewModel.find(id: objectID)?.instruments ?? [])
+        guard let plug = candidates.first(where: { $0.id == pluginID })
+        else { return }
+        viewModel.togglePluginEditor(objectID: objectID, plug: plug)
+    }
+
+    /// The double click on a card of a multiple selection: one editor per selected plugin, each
+    /// through the SAME opening path as a single double click (an external one goes through the
+    /// engine, which prepares the unit before showing its GUI; a built-in gets its SwiftUI window).
+    /// The clicked card decides for all: its editor open → close those of the selection, otherwise
+    /// open them all (one already open is brought to the front).
+    private func openEditors(clicked: UUID, ids: Set<UUID>) {
+        let candidates = viewModel.leafPlugins(objectID: objectID)
+            + (viewModel.find(id: objectID)?.instruments ?? [])
+        let plugs = candidates.filter { ids.contains($0.id) }      // reading order
+        guard let clickedPlug = plugs.first(where: { $0.id == clicked }) else { return }
+        if viewModel.isPluginEditorOpen(plug: clickedPlug) {
+            for p in plugs where viewModel.isPluginEditorOpen(plug: p) { viewModel.closePluginEditor(plug: p) }
+            return
+        }
+        viewModel.openPluginEditors(objectID: objectID, plugs: plugs)
+    }
+
+    /// The FX selection of THIS chain, seen as a `Set`. It reads EMPTY as soon as the view-model's
+    /// selection belongs to another host — which is what makes changing object in the inspector
+    /// drop the highlight with no `onChange` anywhere: the question "is this selection mine?" is
+    /// asked at every read rather than answered once and left to go stale.
+    private var pluginSelection: Binding<Set<UUID>> {
+        Binding(get: { viewModel.selectedPluginHostID == objectID ? viewModel.selectedPluginIDs : [] },
+                set: { viewModel.setPluginSelection($0, host: objectID) })
+    }
+
+    /// A card's drag payload (the same format as the chips → it reuses the timeline drop to
+    /// move/copy/link to another object, and the '+'s to reorder).
+    ///
+    /// A card taken WHILE IT IS IN THE SELECTION carries the whole selection with it; a card taken
+    /// from outside carries itself alone. The clips' rule word for word (@see the timeline's drag
+    /// handler): what you GRAB is what decides, and grabbing something you had not chosen is a new
+    /// choice rather than a mistake to be punished by losing the old one.
+    private func dragProvider(_ pluginID: UUID) -> NSItemProvider {
+        let all = pluginSelection.wrappedValue.contains(pluginID)
+            ? viewModel.orderedSelectedPluginIDs()
+            : [pluginID]
+        let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID,
+                                        pluginIDs: all)
+        let data = (try? JSONEncoder().encode(payload)) ?? Data()
+        // The drag begins: the targets read what it carries from here (@see PluginDragSession).
+        PluginDragSession.shared.begin(payload)
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                             visibility: .all) { completion in
+            completion(data, nil); return nil
+        }
+        return provider
+    }
+
+    // MARK: A send's box (INC 3): the chain host behind it and the trunk's gestures aimed at it
+
+    /// The chain host of the send from THIS object to `aux` (@see SendChain.hostID).
+    private func sendHost(_ aux: UUID) -> UUID { SendChain.hostID(sender: objectID, aux: aux) }
+
+    /// A click on a row of a send's box. Plain = that row alone; ⌘ = toggle it; ⇧ = from the rows
+    /// already held to this one, in the box's order. The selection is the view-model's, with the send
+    /// as its host — so the trunk's highlight drops by itself (@see pluginSelection) and ⌫ ⌘C ⌘V ⌘D
+    /// reach the box.
+    private func clickSendPlugin(aux: UUID, id: UUID, flags: NSEvent.ModifierFlags) {
+        let host = sendHost(aux)
+        selectedInstrumentID = nil
+        let order = (viewModel.chainPlugins(host) ?? []).map(\.id)
+        let current = viewModel.selectedPluginHostID == host ? viewModel.selectedPluginIDs : []
+        if flags.contains(.command) {
+            viewModel.selectPlugin(id, host: host, additive: true)
+        } else if flags.contains(.shift), let clicked = order.firstIndex(of: id) {
+            let held = order.indices.filter { current.contains(order[$0]) } + [clicked]
+            viewModel.setPluginSelection(Set(order[(held.min() ?? clicked)...(held.max() ?? clicked)]), host: host)
+        } else {
+            viewModel.setPluginSelection([id], host: host)
+        }
+    }
+
+    /// The double click on a row: the plugin's editor, through the same path as a trunk card's.
+    private func openSendPluginEditor(aux: UUID, id: UUID) {
+        let host = sendHost(aux)
+        guard let plug = viewModel.leafPlugins(objectID: host).first(where: { $0.id == id }) else { return }
+        viewModel.togglePluginEditor(objectID: host, plug: plug)
+    }
+
+    /// A row taken in the hand: the trunk's payload with the SEND as its source host. A row taken while
+    /// it is in the selection carries the selection (the rows of that box). Announced as coming from a
+    /// send: such a drag never links, wherever it lands (@see PluginDragSession.fromSend).
+    private func sendPluginDragProvider(aux: UUID, pluginID: UUID) -> NSItemProvider {
+        let host = sendHost(aux)
+        let all = (viewModel.selectedPluginHostID == host && viewModel.selectedPluginIDs.contains(pluginID))
+            ? viewModel.orderedSelectedPluginIDs()
+            : [pluginID]
+        let payload = PluginDragPayload(sourceObjectID: host, pluginID: pluginID, pluginIDs: all)
+        let data = (try? JSONEncoder().encode(payload)) ?? Data()
+        PluginDragSession.shared.begin(payload, fromSend: true)
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                             visibility: .all) { completion in
+            completion(data, nil); return nil
+        }
+        return provider
+    }
+
+    /// A send card taken in the hand: its payload (sender + aux), announced to the doors that read a drag
+    /// before it hovers them (@see SendDragSession) — the signal view's own targets, the timeline, a strip.
+    private func sendDragProvider(_ auxID: UUID) -> NSItemProvider {
+        let payload = SendDragPayload(sendSender: objectID, sendAux: auxID)
+        let data = (try? JSONEncoder().encode(payload)) ?? Data()
+        SendDragSession.shared.begin(payload)
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                             visibility: .all) { completion in
+            completion(data, nil); return nil
+        }
+        return provider
+    }
+
+    /// Refreshes the list of the sends an aux RECEIVES: we ADD the new senders without removing
+    /// those already shown (a sticky row, see `receivedIDs`); only objects that have gone from
+    /// the project are removed.
+    private func refreshReceived() {
+        guard viewModel.find(id: objectID)?.isAux == true else {
+            if !receivedIDs.isEmpty { receivedIDs = [] }
+            return
+        }
+        let live = viewModel.activeSenders(toAux: objectID)
+        var merged = receivedIDs.filter { viewModel.find(id: $0) != nil }
+        for id in live where !merged.contains(id) { merged.append(id) }
+        if merged != receivedIDs { receivedIDs = merged }
+    }
+
+    /// Polls the VU meter levels (during playback only; otherwise it decays to 0 once).
+    private func refreshLevels() {
+        guard viewModel.isTransportPlaying else {
+            if !levels.isEmpty { levels = [:] }
+            return
+        }
+        var l: [UUID: Double] = [:]
+        for p in viewModel.leafPlugins(objectID: objectID) {
+            l[p.id] = viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id)
+        }
+        levels = l
+    }
+
+    /// Polls the loading state of the external instances (built-ins ignored).
+    private func refreshStates() {
+        let analysing = viewModel.araIsAnalysing(objectID)
+        if analysing != araAnalysing { araAnalysing = analysing }
+        guard viewModel.chainPlugins(objectID) != nil else { return }   // an object OR a stem bus
+        var st: [UUID: Int] = [:]
+        var errs: [UUID: String] = [:]
+        for p in viewModel.leafPlugins(objectID: objectID) where !p.isBuiltIn {
+            let s = viewModel.pluginInstanceState(pluginID: p.id)
+            st[p.id] = s
+            if s == 3, let e = viewModel.pluginLoadError(pluginID: p.id) { errs[p.id] = e }
+        }
+        if st != instanceStates { instanceStates = st }
+        if errs != loadErrors { loadErrors = errs }
+    }
+}
+
+// MARK: - Presenting in a large window (comfortable editing)
+
+struct SynopticEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    var viewModel: EditViewModel
+    let objectID: UUID
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(L("synoptic.window.title", title)).font(.headline)
+                Spacer()
+                Button(L("common.close")) { dismiss() }
+            }
+            .padding(12)
+
+            Divider()
+
+            SynopticBoundView(viewModel: viewModel, objectID: objectID, scrolls: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Text(L("synoptic.window.legend"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(8)
+        }
+        .frame(minWidth: 780, minHeight: 480)
+    }
+}
+
+// MARK: - Demonstration sheet (phase A: made-up data, parallel active)
+
+struct SynopticSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+
+    @State private var root: SynopticNode = .demo
+    @State private var selection: Set<UUID> = []
+    @State private var selectedInstrumentID: UUID? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(L("synoptic.demo.title", title)).font(.headline)
+                Spacer()
+                Button(L("common.close")) { dismiss() }
+            }
+            .padding(12)
+
+            Divider()
+
+            SynopticView(root: root, selection: $selection,
+                         selectedInstrumentID: $selectedInstrumentID,
+                         actions: SynopticActions(
+                onToggleBypass: { root = root.togglingBypass($0) },
+                onRemove: {
+                    root = root.removingPluginAtRoot($0)
+                    selection.remove($0)
+                },
+                onInsertSeries: { sid, idx in root = root.insertingPlaceholder(intoSeries: sid, atIndex: idx) },
+                onBranch: { root = root.branching($0) }
+            ))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Text(L("synoptic.demo.legend"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(L("common.reset")) { root = .demo; selection = [] }
+                    .controlSize(.small)
+            }
+            .padding(8)
+        }
+        .frame(minWidth: 780, minHeight: 480)
+    }
+}
+
+#Preview {
+    SynopticSheet(title: "Demo")
+}
