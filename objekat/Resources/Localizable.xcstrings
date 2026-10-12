@@ -7430,29 +7430,6 @@
         }
       }
     },
-    "inspector.diagnostic": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnostic"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnóstico"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnostic"
-          }
-        }
-      }
-    },
     "inspector.empty": {
       "extractionState": "manual",
       "localizations": {

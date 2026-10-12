@@ -87,20 +87,6 @@ struct ObjectInspectorView: View {
     private func pluginsSynopticColumn(id: UUID, obj: SoundObject) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             SynopticBoundView(viewModel: viewModel, objectID: id, scrolls: false)
-
-            HStack(spacing: 12) {
-                if !obj.plugins.isEmpty {
-                    Button {
-                        viewModel.diagnosticPluginStates(objectID: id)
-                    } label: {
-                        Label(L("inspector.diagnostic"), systemImage: "ant.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 8)
         }
         .padding(.vertical, 8)
     }

@@ -242,7 +242,6 @@ struct SynopticBoundView: View {
             onBranch: { elementID in viewModel.synopticBranch(objectID: objectID, elementID: elementID) },
             instanceState: { instanceStates[$0] ?? 0 },
             loadError: { loadErrors[$0] },
-            onDiagnose: { viewModel.diagnosePlugin(objectID: objectID, pluginID: $0) },
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
