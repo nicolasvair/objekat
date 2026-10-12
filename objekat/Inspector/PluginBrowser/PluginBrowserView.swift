@@ -81,6 +81,7 @@ struct PluginBrowserView: View {
 
     @FocusState private var searchFocused: Bool
     @State private var page: PluginBrowserPage = .all
+    @State private var outsideClickMonitor: Any? = nil
     /// The colour tab being dragged along the bar (its place in the row, the hand's travel).
     @State private var colourDrag: (from: Int, dx: CGFloat)? = nil
 
@@ -186,8 +187,17 @@ struct PluginBrowserView: View {
             viewModel.setPluginEditorsFloating(false)
             // Deferred by one runloop turn: the field is not in the window yet at this point.
             DispatchQueue.main.async { searchFocused = true }
+            // A click in the app's window, beside the sheet, closes it (and is not passed on: it
+            // must not also move a clip). A menu's clicks never come this way.
+            outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+                guard let window = event.window, window.attachedSheet != nil else { return event }
+                dismiss()
+                return nil
+            }
         }
         .onDisappear {
+            if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+            outsideClickMonitor = nil
             viewModel.setPluginEditorsFloating(true)
             viewModel.pluginBrowserOpen = false
         }
@@ -393,8 +403,11 @@ struct PluginBrowserView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(sections, id: \.kind) { section in
-                        sectionHeader(title(of: section.kind))
+                    ForEach(listedSections, id: \.kind) { section in
+                        // ONE list for the plugins — built-in or external is what the row's badge
+                        // says. Only the ARA sources, which are another gesture, keep a title.
+                        if section.kind == .ara { sectionHeader(L("plugins.section.ara")) }
+                        else { Color.clear.frame(height: 8) }
                         LazyVGrid(columns: columns, spacing: 6) {
                             if section.kind == .ara {
                                 // Own identity: these plugins are ALSO rows of the external section above,
@@ -435,11 +448,21 @@ struct PluginBrowserView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func title(of kind: PluginBrowserSectionKind) -> String {
-        switch kind {
-        case .builtIn:  return L("plugins.section.builtIn")
-        case .external: return L("plugins.section.external")
-        case .ara:      return L("plugins.section.ara")
+    /// The model's sections with the built-in and the external plugins folded into one list, by name.
+    private var listedSections: [PluginBrowserSection<AvailablePlugin>] {
+        let all = sections
+        let plugins = all.filter { $0.kind != .ara }.flatMap(\.plugins)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return (plugins.isEmpty ? [] : [PluginBrowserSection(kind: .external, plugins: plugins)])
+            + all.filter { $0.kind == .ara }
+    }
+
+    /// What a format badge stands for, spelled out (its tooltip).
+    private func formatFullName(_ formatName: String) -> String {
+        switch formatName {
+        case "TracktionInternal": return L("plugins.section.builtIn")
+        case "AudioUnit":         return "Audio Unit"
+        default:                  return formatName
         }
     }
 
@@ -527,6 +550,14 @@ struct PluginBrowserView: View {
         }
         .overlay(categoryMenuOverlay(for: plugin))
         .help(L("pluginBrowser.row.help"))
+        // Above the right-click layer, over the badge alone: the badge's own tooltip.
+        .overlay(alignment: .trailing) {
+            Text(plugin.formatLabel)
+                .font(.system(size: 9, design: .monospaced))
+                .padding(.vertical, 6).padding(.horizontal, 8)
+                .hidden()
+                .help(formatFullName(plugin.formatName))
+        }
     }
 
     // MARK: Category menu (right click on a row)
