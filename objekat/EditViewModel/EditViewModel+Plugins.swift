@@ -226,17 +226,15 @@ extension EditViewModel {
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
             if let block = p.fxBlock {
-                // An FX link's block: its instances (already in the bin's order) + the bin's output
-                // section, which the engine unfolds into leaves and one ObjGain. The common on/off
-                // is folded into each leaf's own, so the engine has one flag per plugin to read.
+                // An FX link's block: its instances (already in the bin's order), which the engine
+                // unfolds into leaves. The common on/off is folded into each leaf's own, so the engine
+                // has one flag per plugin to read. The bin has no output section on the engine side
+                // any more (format 25): its output is a gain stage, one of its leaves.
                 let out = fxOutput(of: p)
                 return ["id":      p.id.uuidString,
                         "kind":    "fxlink",
                         "plugins": rackSpec(for: block.plugins.map { leaf in
-                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l }),
-                        "enabled": out.isEnabled,
-                        "gainDb":  Double(out.effectiveGainDb),
-                        "pan":     Double(out.pan)]
+                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l })]
             }
             var d: [String: Any] = [
                 "id":         p.id.uuidString,
@@ -258,17 +256,14 @@ extension EditViewModel {
     /// `sends`: the object's sends, whose plugins are compiled into the send plugins' own lists (INC 3).
     /// nil = read from the model (a bus has none); a caller that compiles BY VALUE (`syncPlugins`) hands
     /// over the object's.
-    func compileRack(objectID: UUID, plugins: [ObjectPlugin],
-                     chainInDb: Float, chainOutDb: Float, sends: [AuxSend]? = nil) -> [UUID] {
+    func compileRack(objectID: UUID, plugins: [ObjectPlugin], sends: [AuxSend]? = nil) -> [UUID] {
         guard let engine else { return [] }
         let owner = find(id: objectID)
         let sendChains = sendChainSpec(sender: objectID, sends: sends ?? owner?.sends ?? [],
                                        isAux: owner?.isAux ?? false) { rackSpec(for: $0) }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
                                                 tree: rackSpec(for: plugins, topLevel: true),
-                                                sendChains: sendChains,
-                                                chainInDb: chainInDb,
-                                                chainOutDb: chainOutDb) as? [String] ?? []
+                                                sendChains: sendChains) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
         if !failed.isEmpty {
             // During a load, remembers the name of the plugins that cannot be found (before removing them from the
@@ -286,9 +281,9 @@ extension EditViewModel {
                 }
             }
         }
-        // The chain start/end trims carry the `chainInGain`/`chainOutGain` curves:
-        // a compilation makes them anew. No effect for a BUS (stem or master), which is
-        // not a sound object and has no automation.
+        // A compilation makes plugin instances anew, and their curves live on them (a gain stage's
+        // included). No effect for a BUS (stem or master), which is not a sound object and has no
+        // automation.
         pushAutomation(objectID)
         // A recompiled AU is a NEW instance with its sidechain stripped (the model, not the engine,
         // is the authority on keys): lay them again. Coalesced — a load compiles every object.
@@ -296,24 +291,20 @@ extension EditViewModel {
         return Array(failed)
     }
 
-    /// The variant that reads the plugins + chain gains from the current model (object OR bus).
+    /// The variant that reads the plugins from the current model (object OR bus).
     @discardableResult
     func compileRack(objectID: UUID) -> [UUID] {
         // A send's mini-chain is compiled with its SENDER's chain (the engine owns it there).
         if let k = sendChainKey(objectID), find(id: objectID) == nil { return compileRack(objectID: k.sender) }
         guard let plugins = chainPlugins(objectID) else { return [] }
-        let g = chainGains(objectID)
-        return compileRack(objectID: objectID, plugins: plugins,
-                           chainInDb: g.inDb, chainOutDb: g.outDb)
+        return compileRack(objectID: objectID, plugins: plugins)
     }
 
-    /// The chain start (output:false) / end (output:true) gain in dB: model + the live plugin (cheap).
-    /// If the rack does not exist yet (an object with no chain), it is materialised once (compile).
+    /// The chain start (output:false) / end (output:true) gain in dB — the MODEL only. The engine has
+    /// no trims any more (format 25, plan_synoptic_rework B.0.3): a gain before / after the plugins is
+    /// a gain stage (@see insertGainStage). Transitional: this door and the fields it writes go in M.4.
     func setChainGain(objectID: UUID, output: Bool, dB: Float) {
         setChainGainModel(objectID, output: output, dB: dB)
-        recordAutomationTouch(objectID, output ? .chainOutGain : .chainInGain)
-        let applied = engine?.setChainGain(dB, output: output, objectID: objectID.uuidString) ?? false
-        if !applied { compileRack(objectID: objectID) }   // creates the rack + gains from the model
         isDirty = true
     }
 
@@ -1087,9 +1078,7 @@ extension EditViewModel {
         // Recompiles the rack from the model (project loading, paste, split, groups).
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
         // applied on the compiler side (setEnabled per leaf during the reconciliation).
-        compileRack(objectID: object.id, plugins: chain,
-                    chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb,
-                    sends: object.sends)
+        compileRack(objectID: object.id, plugins: chain, sends: object.sends)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
         if rewireLinks { rewireLinkGroups() }
     }

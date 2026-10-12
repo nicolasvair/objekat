@@ -392,7 +392,7 @@ enum SendPositionTest {
             check("named() inverts them", SendPosition.named("pre_fader") == .preFader
                   && SendPosition.named("chain", index: 2) == .chain(2)
                   && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
-            check("the session format is 24", SessionSchema.formatVersion == 24)
+            check("the session format is 25", SessionSchema.formatVersion == 25)
             check("the notice mentions both new keys",
                   SessionSchema.note.joined(separator: "\n").contains("sendMarker")
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))
@@ -505,13 +505,15 @@ enum SendPositionTest {
             do {
                 let host = clip(plugins: [g], sends: [AuxSend(auxID: auxA, plugins: [lp])])
                 func layout(sendAt k: Int, carries: Int?) -> [SendMarkerAudit.LayoutEntry] {
-                    var roles = ["trimIn", "fx", "trimOut", "fader", "windowFade"]
+                    // Format 25: no trims — the user segment (here the one fx) carries its frontier flags.
+                    var roles = ["fx", "fader", "windowFade"]
                     roles.insert("send", at: k)
                     return roles.enumerated().map { i, r in
                         SendMarkerAudit.LayoutEntry(index: i, role: r, key: r == "fx" ? g.id.uuidString : nil,
                                                     aux: r == "send" ? auxA.uuidString : nil,
                                                     tapPosition: r == "send" ? 0 : nil,
-                                                    chainPlugins: r == "send" ? carries : nil)
+                                                    chainPlugins: r == "send" ? carries : nil,
+                                                    segmentStart: r == "fx", segmentEnd: r == "fx")
                     }
                 }
                 func rules(_ l: [SendMarkerAudit.LayoutEntry], _ o: SoundObject) -> [String] {
@@ -519,16 +521,45 @@ enum SendPositionTest {
                 }
                 let bare = clip(plugins: [g], sends: [AuxSend(auxID: auxA)])
                 check("audit: post-fader WITH plugins sits between the fader and the window-fade",
-                      rules(layout(sendAt: 4, carries: 1), host) == [])
+                      rules(layout(sendAt: 2, carries: 1), host) == [])
                 check("audit: post-fader with plugins AFTER the window-fade is a violation",
-                      rules(layout(sendAt: 5, carries: 1), host) == ["index_before_windowFade"])
+                      rules(layout(sendAt: 3, carries: 1), host) == ["index_before_windowFade"])
                 check("audit: post-fader with plugins BEFORE the fader is a violation",
-                      rules(layout(sendAt: 3, carries: 1), host) == ["index_after_fader"])
+                      rules(layout(sendAt: 1, carries: 1), host) == ["index_after_fader"])
                 check("audit: post-fader WITHOUT plugins stays after the window-fade",
-                      rules(layout(sendAt: 5, carries: 0), bare) == [] && rules(layout(sendAt: 4, carries: 0), bare) == ["index_after_windowFade"])
+                      rules(layout(sendAt: 3, carries: 0), bare) == [] && rules(layout(sendAt: 2, carries: 0), bare) == ["index_after_windowFade"])
                 check("audit: the engine's count wins over the model's; without it the model's is used",
-                      rules(layout(sendAt: 5, carries: 0), host) == [] && rules(layout(sendAt: 4, carries: nil), host) == []
-                      && rules(layout(sendAt: 5, carries: nil), bare) == [])
+                      rules(layout(sendAt: 3, carries: 0), host) == [] && rules(layout(sendAt: 2, carries: nil), host) == []
+                      && rules(layout(sendAt: 3, carries: nil), bare) == [])
+
+                // Format 25: the user segment's frontier replaces the trims (pre / post gain stages are
+                // its first / last entries). Layout [stage-in, fx, stage-out, fader, windowFade].
+                let sin = plugin("stageIn"), sout = plugin("stageOut")
+                func seg(sendAt k: Int, tap: Int) -> [SendMarkerAudit.LayoutEntry] {
+                    var rows: [(String, UUID?)] = [("fx", sin.id), ("fx", g.id), ("fx", sout.id), ("fader", nil), ("windowFade", nil)]
+                    rows.insert(("send", nil), at: k)
+                    return rows.enumerated().map { i, r in
+                        SendMarkerAudit.LayoutEntry(index: i, role: r.0, key: r.1?.uuidString,
+                                                    aux: r.0 == "send" ? auxA.uuidString : nil,
+                                                    tapPosition: r.0 == "send" ? tap : nil,
+                                                    segmentStart: r.1 == sin.id, segmentEnd: r.1 == sout.id)
+                    }
+                }
+                let preHost = clip(plugins: [sin, g, sout], sends: [AuxSend(auxID: auxA)]).settingSendPosition(auxID: auxA, .preFader)
+                let inHost = clip(plugins: [sin, g, sout], sends: [AuxSend(auxID: auxA)]).settingSendPosition(auxID: auxA, .input)
+                check("audit (segment): pre-fader after the post stage and before the fader is clean",
+                      rules(seg(sendAt: 3, tap: 1), preHost) == [])
+                check("audit (segment): pre-fader before the post stage is a violation",
+                      rules(seg(sendAt: 2, tap: 1), preHost) == ["index_after_segmentEnd"])
+                check("audit (segment): input before the pre stage is clean, after it a violation",
+                      rules(seg(sendAt: 0, tap: 2), inHost) == [] && rules(seg(sendAt: 1, tap: 2), inHost) == ["index_before_segmentStart"])
+                let emptyIn = clip(plugins: [], sends: [AuxSend(auxID: auxA)]).settingSendPosition(auxID: auxA, .input)
+                let bareRows = ["send", "fader", "windowFade"].enumerated().map { i, r in
+                    SendMarkerAudit.LayoutEntry(index: i, role: r, key: nil, aux: r == "send" ? auxA.uuidString : nil,
+                                                tapPosition: r == "send" ? 2 : nil)
+                }
+                check("audit (segment): an empty segment puts the input before the fader",
+                      rules(bareRows, emptyIn) == [])
             }
 
             // On disk: `plugins` is written only when the send has some.

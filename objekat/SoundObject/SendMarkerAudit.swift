@@ -112,12 +112,16 @@ enum SendMarkerAudit {
     /// One entry of the engine's list for a sender (`OBJEngineCore chainLayoutForObjectID:`).
     struct LayoutEntry: Equatable {
         let index: Int
-        let role: String            // trimIn, trimOut, fader, windowFade, fx, send, other
+        let role: String            // fader, windowFade, fx, send, other
         let key: String?            // fx: the model plugin id
         let aux: String?            // send: the aux id
         let tapPosition: Int?       // send: the code the plugin was told (0 post, 1 pre, 2 input, 3 chain)
         /// send: how many plugins the ENGINE's send carries (nil = not told: the model's count is used).
         var chainPlugins: Int? = nil
+        /// The user segment's first / last entry (format 25: what the trimIn / trimOut roles marked
+        /// before — the segment's frontier, @see OBJEngineCore userSegmentBoundsForKey:in:).
+        var segmentStart: Bool = false
+        var segmentEnd: Bool = false
     }
 
     /// Where the engine put each of `object`'s sends against where the model asks (PURE: the layout is
@@ -127,7 +131,9 @@ enum SendMarkerAudit {
     static func engineViolations(object: SoundObject, layout: [LayoutEntry]) -> [Violation] {
         var out: [Violation] = []
         func first(_ role: String) -> Int? { layout.first { $0.role == role }?.index }
-        let trimIn = first("trimIn"), trimOut = first("trimOut"), fader = first("fader"), window = first("windowFade")
+        let fader = first("fader"), window = first("windowFade")
+        let segmentStart = layout.first { $0.segmentStart }?.index
+        let segmentEnd = layout.last { $0.segmentEnd }?.index
         func fx(_ id: UUID?) -> Int? {
             guard let id else { return nil }
             return layout.first { $0.role == "fx" && $0.key?.lowercased() == id.uuidString.lowercased() }?.index
@@ -152,17 +158,21 @@ enum SendMarkerAudit {
                 if carries { before(window, "windowFade") } else { after(window, "windowFade") }
             case .preFader:
                 code = 1
-                after(trimOut, "trimOut"); before(fader, "fader")
+                // After the whole user segment (the post gain stage included), before the fader.
+                after(segmentEnd, "segmentEnd"); before(fader, "fader")
             case .input:
                 code = 2
-                before(trimIn ?? fader, trimIn != nil ? "trimIn" : "fader")
+                // Before the segment's first entry (the pre gain stage included); an empty segment:
+                // before the fader (the same signal).
+                before(segmentStart ?? fader, segmentStart != nil ? "segmentStart" : "fader")
             case .chain:
                 code = 3
-                after(trimIn, "trimIn")
+                // Between its neighbours in the model; no next plugin: before the fader. (No lower
+                // frontier of its own: a marker at the head of the chain IS the segment's start.)
                 let n = ObjectPlugin.neighbours(ofMarkerFor: aux, in: object.plugins)
                 after(fx(n?.after), "previous_plugin")
                 if let nextIndex = fx(n?.before) { before(nextIndex, "next_plugin") }
-                else { before(trimOut ?? fader, trimOut != nil ? "trimOut" : "fader") }
+                else { before(fader, "fader") }
             }
             if let t = entry.tapPosition, t != code { bad("tap_position") }
         }

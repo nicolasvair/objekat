@@ -181,15 +181,13 @@ extension EditViewModel {
 
     // MARK: Engine — hot pushes (no recompile)
 
-    /// Pushes one block's output section and the effective on/off of its instances to the engine,
-    /// with no recompile: a volume drag, a mute or the bin's common on/off must not glitch the
-    /// chain. Silent for a block the engine has not compiled yet — the model holds the value, the
-    /// next compile lays it down.
+    /// Pushes the effective on/off of one block's instances to the engine, with no recompile: the
+    /// bin's common on/off must not glitch the chain. Silent for a block the engine has not compiled
+    /// yet — the model holds the value, the next compile lays it down. (The bin's output section has
+    /// no engine side any more — format 25: its output is a gain stage, one of the leaves.)
     func pushFXBlockOutput(hostID: UUID, block: ObjectPlugin) {
         guard let engine, let fb = block.fxBlock else { return }
         let out = fxOutput(of: block)
-        engine.setFXBlockOutput(block.id.uuidString, gainDb: out.effectiveGainDb, pan: out.pan,
-                                enabled: out.isEnabled)
         for leaf in fb.plugins {
             engine.setPlugin(leaf.id.uuidString, enabled: leaf.isEnabled && out.isEnabled,
                              forObjectID: hostID.uuidString)

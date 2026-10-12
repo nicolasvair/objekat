@@ -933,7 +933,9 @@ extension CommandRegistry {
                                 guard let i = d["index"] as? Int, let role = d["role"] as? String else { return nil }
                                 return SendMarkerAudit.LayoutEntry(index: i, role: role, key: d["key"] as? String,
                                                                    aux: d["aux"] as? String, tapPosition: d["tap_position"] as? Int,
-                                                                   chainPlugins: d["chain_plugins"] as? Int)
+                                                                   chainPlugins: d["chain_plugins"] as? Int,
+                                                                   segmentStart: d["segment_start"] as? Bool ?? false,
+                                                                   segmentEnd: d["segment_end"] as? Bool ?? false)
                             }
                             engineChecked += 1
                             layouts[o.id.uuidString] = JSONValue.fromFoundation(raw)
