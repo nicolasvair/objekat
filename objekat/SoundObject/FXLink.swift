@@ -68,6 +68,11 @@ struct FXLink: Identifiable, Codable, Equatable {
     var gainDb: Float = 0
     var pan: Float = 0
     var muted: Bool = false
+    /// The object whose name the bin FOLLOWS (B.0.6 of plan_synoptic_rework): set when a bin is
+    /// created from an object, cleared once the user names the bin. nil = follows nobody.
+    var nameSourceID: UUID? = nil
+    /// True once the user has named the bin by hand: its name then never follows an object again.
+    var userNamed: Bool = false
 
     var output: FXLinkOutput {
         get { FXLinkOutput(isEnabled: isEnabled, gainDb: gainDb, pan: pan, muted: muted) }
@@ -87,7 +92,7 @@ struct FXLink: Identifiable, Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, colorIndex, plugins, isEnabled, gainDb, pan, muted
+        case id, name, colorIndex, plugins, isEnabled, gainDb, pan, muted, nameSourceID, userNamed
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -99,6 +104,24 @@ struct FXLink: Identifiable, Codable, Equatable {
         gainDb     = try c.decodeIfPresent(Float.self, forKey: .gainDb) ?? 0
         pan        = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
         muted      = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        nameSourceID = try c.decodeIfPresent(UUID.self, forKey: .nameSourceID)
+        userNamed  = try c.decodeIfPresent(Bool.self, forKey: .userNamed) ?? false
+    }
+
+    /// The output section is written only when it is not neutral: since format 25 it is turned into a
+    /// gain stage at load (@see LegacyGainMigration), so a file written now never carries one.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encode(plugins, forKey: .plugins)
+        try c.encode(isEnabled, forKey: .isEnabled)
+        if gainDb != 0 { try c.encode(gainDb, forKey: .gainDb) }
+        if pan != 0    { try c.encode(pan, forKey: .pan) }
+        if muted       { try c.encode(true, forKey: .muted) }
+        try c.encodeIfPresent(nameSourceID, forKey: .nameSourceID)
+        if userNamed   { try c.encode(true, forKey: .userNamed) }
     }
 
     var color: Color { ObjekatPalette.plugin(colorIndex) }

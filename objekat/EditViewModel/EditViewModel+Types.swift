@@ -44,6 +44,9 @@ struct ProjectDocument: Codable {
     /// viewport (changing it never marks the project modified). nil/absent ⇒ none. See
     /// `CanvasProjectSettings`.
     var canvasSettings: [String: CanvasProjectSettings]?
+    /// TRANSIENT, never encoded: what `LegacyGainMigration` did to this document when it was decoded
+    /// (nil = not decoded from a file). Read by the load to report it (`project.load_status`).
+    var legacyGainMigration: LegacyGainMigration.Report? = nil
 
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"

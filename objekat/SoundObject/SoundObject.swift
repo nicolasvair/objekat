@@ -92,6 +92,21 @@ struct Stem: Identifiable, Codable, Equatable {
         routeToMain   = try c.decodeIfPresent(Bool.self, forKey: .routeToMain) ?? true
         muted         = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     }
+    /// The trims are written only when not neutral: since format 25 they are turned into gain stages
+    /// at load (@see LegacyGainMigration), so a file written now never carries one.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encode(format, forKey: .format)
+        try c.encodeIfPresent(gainDb, forKey: .gainDb)
+        try c.encode(plugins, forKey: .plugins)
+        if chainInGainDb  != 0 { try c.encode(chainInGainDb,  forKey: .chainInGainDb) }
+        if chainOutGainDb != 0 { try c.encode(chainOutGainDb, forKey: .chainOutGainDb) }
+        try c.encode(routeToMain, forKey: .routeToMain)
+        try c.encode(muted, forKey: .muted)
+    }
 }
 
 // MARK: - An object's custom colour

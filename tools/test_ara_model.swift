@@ -20,6 +20,8 @@
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
+//         ../objekat/SoundObject/GainStage.swift \
+//         ../objekat/SoundObject/LegacyGainMigration.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \

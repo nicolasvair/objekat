@@ -147,7 +147,10 @@ extension EditViewModel {
 
     /// Decodes a sidecar and makes its paths absolute in the CURRENT project.
     func decodedConsolidateSidecar(_ data: Data, projectFolder folder: URL?) throws -> SoundObject {
-        let subtree = try JSONDecoder().decode(SoundObject.self, from: data)
+        var subtree = try JSONDecoder().decode(SoundObject.self, from: data)
+        // A sidecar written before format 25 carries trims and frozen FX outputs: the same
+        // conversion as the session's (@see LegacyGainMigration).
+        LegacyGainMigration.migrate(&subtree)
         guard let folder else { return subtree }
         return ProjectPaths.rewritingClipPaths(subtree) {
             ProjectPaths.resolved($0, projectFolder: folder)

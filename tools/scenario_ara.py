@@ -536,7 +536,7 @@ try:
             audio_before = render_iso(a, "g_before")
             send("project.save")
             doc = json.load(open(manifest))
-            check("version == 24", doc.get("version") == 24, doc.get("version"))
+            check("version == 25", doc.get("version") == 25, doc.get("version"))
 
             def find_ara(o):
                 if isinstance(o, dict):
