@@ -202,6 +202,43 @@ struct SynopticActions {
     /// The power button of the ARA card: the source plays / the object plays its dry file. Not a
     /// plugin bypass (@see `EditViewModel.setARAEnabled`): the source is unloaded while it is off.
     var onToggleARABypass: (() -> Void)? = nil
+
+    // MARK: Wave 2 of the signal view rework (docs/plan_synoptic_rework.md, contract laid by L2)
+    //
+    // All optional, nil by default: a view that finds one nil offers nothing for it. How a gesture on a
+    // '+' reaches them is decided by the layout (@see SynopticPlusCommand, which names the closure each
+    // command goes to); the existing `onInsertSeries`, `onBranch`, `onSendPluginAdd` and
+    // `presentSendMenu(slot:)` carry the click, the branch and the send.
+
+    /// A gain stage asked for by a drag out of a '+' of a series (the trunk, a parallel's branch, a bin's
+    /// series — a bin's joins its DEFINITION): insert it at `index` of `seriesID`. `result` is `.gain` or
+    /// `.gainPanMute` (the face); any other value is ignored. One undo point.
+    var onPlusGesture: ((_ seriesID: UUID, _ index: Int, _ result: PlusGestureResult) -> Void)? = nil
+    /// The same, out of the "+" of a send's mini-chain (`aux` = the send's id): a gain stage on the send.
+    var onSendPlusGesture: ((_ aux: UUID, _ index: Int, _ result: PlusGestureResult) -> Void)? = nil
+    /// A gain stage's card sets its values (nil = left as it is): gain in dB (±24), pan (−1…1), mute.
+    /// The undo point is the caller's at the drag's start (`onBeginGainEdit`).
+    var onSetGainStage: ((_ pluginID: UUID, _ gainDb: Float?, _ pan: Float?, _ muted: Bool?) -> Void)? = nil
+    /// A gain stage's current values, read from the engine (nil = unknown: the card shows a dash).
+    var gainStageValues: ((_ pluginID: UUID) -> SynopticGainStageValues?)? = nil
+    /// The audio zone's fold (a double click on the zone, its chevron): @see SynopticUIState.
+    var onToggleClipOptions: (() -> Void)? = nil
+    /// An FX link block's fold (a double click on its header, its chevron): @see SynopticUIState.
+    var onToggleFXFold: ((_ blockID: UUID) -> Void)? = nil
+    /// Starts the inline renaming of an FX link block (⌘R, the header's menu): @see
+    /// SynopticUIState.renamingFXLinkID. The name itself is committed through `onFXRename`.
+    var onRenameFXLink: ((_ blockID: UUID) -> Void)? = nil
+}
+
+/// The values of a gain stage, as its card shows them (@see SynopticActions.gainStageValues).
+struct SynopticGainStageValues: Equatable {
+    var gainDb: Float
+    var pan: Float = 0
+    var muted: Bool = false
+    /// A curve drives the parameter: its box is greyed, the hand does not move it.
+    var gainAutomated: Bool = false
+    var panAutomated: Bool = false
+    var muteAutomated: Bool = false
 }
 
 /// The ARA source an audio object plays THROUGH. It is drawn as a CARD, the first one out of the 'audio file'
@@ -232,6 +269,34 @@ struct SynopticAudioFile: Equatable {
     /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
     /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
     var ara: SynopticARA? = nil
+}
+
+/// A setting of the 'audio file' zone that the FOLDED zone hides and that is not neutral: the folded row
+/// shows a pill for each (§B.7). Order = the pills' order.
+enum SynopticHiddenSetting: Equatable {
+    /// The speed is not 1 and no base tempo is set: shown as semitones (`−3 st`) or a ratio (`×1.07`).
+    case pitch(semitones: Double, ratio: Double)
+    /// A base tempo is set and the speed is not 1: the object is stretched to `targetBPM` (`→ 120`).
+    case tempo(targetBPM: Double)
+    /// A stereo file played other than LR (`L`, `R`, `C`).
+    case channel(ChannelMode)
+}
+
+extension SynopticAudioFile {
+    /// The hidden settings that are not neutral, for the folded zone's pills (empty = no pill).
+    var hiddenNonNeutralSettings: [SynopticHiddenSetting] {
+        var out: [SynopticHiddenSetting] = []
+        let ratio = speedRatio
+        if abs(ratio - 1) > 1e-6 {
+            if let base = baseBPM, base > 0 {
+                out.append(.tempo(targetBPM: base * ratio))
+            } else {
+                out.append(.pitch(semitones: 12 * log2(max(1e-6, ratio)), ratio: ratio))
+            }
+        }
+        if let mode = channelMode, mode != .lr { out.append(.channel(mode)) }
+        return out
+    }
 }
 
 /// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
